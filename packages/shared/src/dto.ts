@@ -135,9 +135,15 @@ export const discoveryNetworkSchema = z
   .object({
     scope: z.enum(NETWORK_SCOPES),
     subnet: str(64).min(1),
-    mask: z.coerce.number().int().min(0).max(32).nullable().optional(),
+    mask: z.preprocess(
+      (v) => (v === '' || v == null ? null : v),
+      z.coerce.number().int().min(0).max(32).nullable().optional(),
+    ),
     location: optStr(200),
-    network_type: z.enum(NETWORK_TYPES).nullable().optional(),
+    network_type: z.preprocess(
+      (v) => (v === '' ? null : v),
+      z.enum(NETWORK_TYPES).nullable().optional(),
+    ),
   })
   .strict();
 export type DiscoveryNetworkInput = z.infer<typeof discoveryNetworkSchema>;
@@ -168,10 +174,12 @@ export const callingPolicySchema = z
   .strict();
 export type CallingPolicyInput = z.infer<typeof callingPolicySchema>;
 
-const callerId = z.enum(CALLER_ID_OPTIONS).nullable().optional();
-const uuidOrNull = z.string().uuid().nullable().optional();
+const blankToNull = <T extends z.ZodTypeAny>(inner: T) =>
+  z.preprocess((v) => (v === '' ? null : v), inner.nullable().optional());
+
+const callerId = blankToNull(z.enum(CALLER_ID_OPTIONS));
 /** '' from a cleared dropdown is treated as null. */
-const refId = z.preprocess((v) => (v === '' ? null : v), uuidOrNull);
+const refId = blankToNull(z.string().uuid());
 
 export const discoveryUserSchema = z
   .object({
