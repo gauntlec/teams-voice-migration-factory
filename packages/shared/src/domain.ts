@@ -38,6 +38,26 @@ export const NETWORK_TYPES = ['LAN', 'WLAN'] as const;
 export const FLOW_KINDS = ['auto_attendant', 'call_queue', 'other'] as const;
 export type FlowKind = (typeof FLOW_KINDS)[number];
 
+/* -- Telephony discovery (per the ATTC Telephony Discovery Template) -- */
+
+/** Every phone number belongs to exactly one holder (or none, while free). */
+export const NUMBER_HOLDER_TYPES = ['user', 'cap', 'resource_account', 'analogue'] as const;
+export type NumberHolderType = (typeof NUMBER_HOLDER_TYPES)[number];
+
+export const NUMBER_STATUSES = ['available', 'reserved', 'assigned'] as const;
+export type NumberStatus = (typeof NUMBER_STATUSES)[number];
+
+/** Users / CAPs / analogue devices: how outbound caller ID is presented. */
+export const CALLER_ID_OPTIONS = ['user', 'anonymous', 'main_number'] as const;
+export type CallerIdOption = (typeof CALLER_ID_OPTIONS)[number];
+
+/** discovery_resource_accounts.kind (the "Virtual Numbers" tab). */
+export const RESOURCE_ACCOUNT_KINDS = ['auto_attendant', 'call_queue'] as const;
+export type ResourceAccountKind = (typeof RESOURCE_ACCOUNT_KINDS)[number];
+
+/** Max numbers a single range may generate into the inventory. */
+export const MAX_RANGE_SIZE = 5000;
+
 /** Shape stored in discovery.general (jsonb). */
 export interface DiscoveryGeneral {
   migrationId?: string;

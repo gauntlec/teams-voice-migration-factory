@@ -4,12 +4,10 @@ import {
   discoveryFlowSchema,
   discoveryGeneralSchema,
   discoveryNetworkSchema,
-  discoveryNumberRangeSchema,
   discoverySiteSchema,
   type DiscoveryFlowInput,
   type DiscoveryGeneralInput,
   type DiscoveryNetworkInput,
-  type DiscoveryNumberRangeInput,
   type DiscoverySiteInput,
 } from '@tvmf/shared';
 import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
@@ -95,34 +93,7 @@ export class DataCollectionController {
     return this.svc.deleteSite(t, u, id, this.review(u));
   }
 
-  /* ---------------------------- number ranges --------------------------- */
-
-  @Post('number-ranges')
-  @RequirePermission('discovery:write')
-  addRange(
-    @TenantCtx() t: TenantContext,
-    @CurrentUser() u: AuthedUser,
-    @Body(new ZodBody(discoveryNumberRangeSchema)) body: DiscoveryNumberRangeInput,
-  ) {
-    return this.svc.addRange(t, u, body, this.review(u));
-  }
-
-  @Patch('number-ranges/:id')
-  @RequirePermission('discovery:write')
-  updateRange(
-    @TenantCtx() t: TenantContext,
-    @CurrentUser() u: AuthedUser,
-    @Param('id') id: string,
-    @Body(new ZodBody(discoveryNumberRangeSchema.partial())) body: Partial<DiscoveryNumberRangeInput>,
-  ) {
-    return this.svc.updateRange(t, u, id, body, this.review(u));
-  }
-
-  @Delete('number-ranges/:id')
-  @RequirePermission('discovery:write')
-  deleteRange(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Param('id') id: string) {
-    return this.svc.deleteRange(t, u, id, this.review(u));
-  }
+  /* number ranges + telephony -> data-collection.telephony.controller.ts */
 
   /* ------------------------------- network ----------------------------- */
 

@@ -22,14 +22,23 @@ Derived from the current artifacts:
 ## tenant `tenant_<shortid>` schema
 
 ### Data Collection (discovery)
+Aligned to `Overland Park - ATTC MS Teams Telephony Discovery Template`.
 | Table | Notes |
 |-------|-------|
-| `discovery` | one row: id, status (`draft`/`submitted`/`accepted`), submitted_by, submitted_at, general jsonb (migration id, region, author, licensing model) |
+| `discovery` | one row: id, status (`draft`/`submitted`/`accepted`), submitted_by/at, accepted_by/at, general jsonb (migration id, region, author, licensing model, contact, notes) |
 | `discovery_sites` | site/company code, address, country, region, paging info |
-| `discovery_number_ranges` | range_start, range_end, type (`new`/`port`/`retain`), carrier, port_status |
-| `discovery_flows` | free-form AA/CQ/IVR descriptions (`kind`, `name`, `description`) + optional `diagram_attachment_id` |
+| `discovery_calling_policies` | customer-defined outbound dialling restrictions: name, description, allow_local/national/international/service/premium. Seeded with Unrestricted / International / National / Local |
+| `discovery_number_ranges` | range_start, range_end, kind (`new`/`port`/`retain`), carrier, loa_sent, loa_completed, comments. Adding a range generates the `phone_numbers` inventory |
+| `phone_numbers` | one row per E.164 (`e164` unique). status (`available`/`reserved`/`assigned`), holder_type (`user`/`cap`/`resource_account`/`analogue`) + holder_id — **at most one holder**; unique per holder except resource accounts (which may hold several). Assignment is atomic |
+| `discovery_users` | upn (unique), display_name, calling_policy_id, caller_id (`user`/`anonymous`/`main_number`), voicemail_enabled + language, requires_handset + model, access_port_id, comments. Number tracked on `phone_numbers` |
+| `discovery_caps` | display_name, upn, device_model, calling_policy_id, caller_id, access_port_id, comments |
+| `discovery_resource_accounts` | name, kind (`auto_attendant`/`call_queue`), directory_entry, business_hours, who_answers, ooh_action, exception_conditions/action, holiday, advanced_features, comments. Holds 0..n numbers |
+| `discovery_flows` | free-form notes: `kind`, `name`, `description` + optional `diagram_attachment_id` |
 | `discovery_network` | e911 internal/external subnets, LAN/WLAN data |
 | `attachments` | id, filename, content_type, bytes (bytea) or object key, uploaded_by |
+
+Deferred from the template (later pass): Analogue/SIP/paging devices, the
+Features & Settings feature-discovery questionnaire, detailed E911 tables.
 
 ### Design & Build
 Mirrors the build sheet. Column short-codes kept as-is for traceability.

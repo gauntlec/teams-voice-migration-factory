@@ -9,7 +9,6 @@ import type {
   DiscoveryFlowInput,
   DiscoveryGeneralInput,
   DiscoveryNetworkInput,
-  DiscoveryNumberRangeInput,
   DiscoverySiteInput,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
@@ -44,7 +43,7 @@ export class DataCollectionService {
   }
 
   /** Guards every mutation: draft is open, submitted needs review rights, accepted is locked. */
-  private async assertEditable(t: TenantContext, canReview: boolean) {
+  async assertEditable(t: TenantContext, canReview: boolean) {
     const { status } = await this.discoveryRow(t);
     if (status === 'accepted') {
       throw new ConflictException('Discovery is accepted and locked. Reopen it to make changes.');
@@ -58,14 +57,13 @@ export class DataCollectionService {
 
   async get(t: TenantContext) {
     const s = this.scoped(t);
-    const [discovery, sites, ranges, network, flows] = await Promise.all([
+    const [discovery, sites, network, flows] = await Promise.all([
       this.discoveryRow(t),
       s.selectFrom('discovery_sites').selectAll().orderBy('name').orderBy('site_code').execute(),
-      s.selectFrom('discovery_number_ranges').selectAll().orderBy('range_start').execute(),
       s.selectFrom('discovery_network').selectAll().orderBy('scope').orderBy('subnet').execute(),
       s.selectFrom('discovery_flows').selectAll().orderBy('kind').orderBy('name').execute(),
     ]);
-    return { discovery, sites, ranges, network, flows };
+    return { discovery, sites, network, flows };
   }
 
   async updateGeneral(t: TenantContext, user: AuthedUser, patch: DiscoveryGeneralInput, canReview: boolean) {
@@ -202,71 +200,8 @@ export class DataCollectionService {
     return { ok: true };
   }
 
-  /* ---------------------------- number ranges --------------------------- */
-
-  async addRange(
-    t: TenantContext,
-    user: AuthedUser,
-    input: DiscoveryNumberRangeInput,
-    canReview: boolean,
-  ) {
-    await this.assertEditable(t, canReview);
-    const row = await this.scoped(t)
-      .insertInto('discovery_number_ranges')
-      .values({
-        range_start: input.range_start,
-        range_end: input.range_end,
-        kind: input.kind,
-        carrier: input.carrier || null,
-        port_status: input.port_status || null,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    await this.audit.tenant(t.schema, 'discovery.range_added', {
-      actor: actorOf(user),
-      targetType: 'discovery_number_range',
-      targetId: row.id,
-    });
-    return row;
-  }
-
-  async updateRange(
-    t: TenantContext,
-    user: AuthedUser,
-    id: string,
-    patch: Partial<DiscoveryNumberRangeInput>,
-    canReview: boolean,
-  ) {
-    await this.assertEditable(t, canReview);
-    const row = await this.scoped(t)
-      .updateTable('discovery_number_ranges')
-      .set(cleanPatch(patch))
-      .where('id', '=', id)
-      .returningAll()
-      .executeTakeFirst();
-    if (!row) throw new NotFoundException('range not found');
-    await this.audit.tenant(t.schema, 'discovery.range_updated', {
-      actor: actorOf(user),
-      targetType: 'discovery_number_range',
-      targetId: id,
-    });
-    return row;
-  }
-
-  async deleteRange(t: TenantContext, user: AuthedUser, id: string, canReview: boolean) {
-    await this.assertEditable(t, canReview);
-    const res = await this.scoped(t)
-      .deleteFrom('discovery_number_ranges')
-      .where('id', '=', id)
-      .executeTakeFirst();
-    if (!res.numDeletedRows) throw new NotFoundException('range not found');
-    await this.audit.tenant(t.schema, 'discovery.range_deleted', {
-      actor: actorOf(user),
-      targetType: 'discovery_number_range',
-      targetId: id,
-    });
-    return { ok: true };
-  }
+  /* Number ranges, inventory, calling policies, users, CAPs and resource
+   * accounts now live in TelephonyService (data-collection.telephony.service). */
 
   /* ------------------------------- network ----------------------------- */
 

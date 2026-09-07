@@ -125,7 +125,80 @@ export interface DiscoveryNumberRangesTable {
   kind: 'new' | 'port' | 'retain';
   carrier: string | null;
   port_status: string | null;
+  loa_sent: ColumnType<boolean, boolean | undefined, boolean>;
+  loa_completed: ColumnType<boolean, boolean | undefined, boolean>;
+  comments: string | null;
   created_at: Ts;
+}
+
+export interface DiscoveryCallingPoliciesTable {
+  id: Generated<string>;
+  name: string;
+  description: string | null;
+  allow_local: ColumnType<boolean, boolean | undefined, boolean>;
+  allow_national: ColumnType<boolean, boolean | undefined, boolean>;
+  allow_international: ColumnType<boolean, boolean | undefined, boolean>;
+  allow_service: ColumnType<boolean, boolean | undefined, boolean>;
+  allow_premium: ColumnType<boolean, boolean | undefined, boolean>;
+  created_at: Ts;
+  updated_at: Ts;
+}
+
+export interface PhoneNumbersTable {
+  id: Generated<string>;
+  range_id: string;
+  e164: string;
+  status: ColumnType<'available' | 'reserved' | 'assigned', 'available' | 'reserved' | 'assigned' | undefined, 'available' | 'reserved' | 'assigned'>;
+  holder_type: 'user' | 'cap' | 'resource_account' | 'analogue' | null;
+  holder_id: string | null;
+  note: string | null;
+  created_at: Ts;
+}
+
+export interface DiscoveryUsersTable {
+  id: Generated<string>;
+  upn: string;
+  display_name: string | null;
+  calling_policy_id: string | null;
+  caller_id: 'user' | 'anonymous' | 'main_number' | null;
+  voicemail_enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  voicemail_language: string | null;
+  requires_handset: ColumnType<boolean, boolean | undefined, boolean>;
+  handset_model: string | null;
+  access_port_id: string | null;
+  comments: string | null;
+  created_at: Ts;
+  updated_at: Ts;
+}
+
+export interface DiscoveryCapsTable {
+  id: Generated<string>;
+  display_name: string;
+  upn: string | null;
+  device_model: string | null;
+  calling_policy_id: string | null;
+  caller_id: 'user' | 'anonymous' | 'main_number' | null;
+  access_port_id: string | null;
+  comments: string | null;
+  created_at: Ts;
+  updated_at: Ts;
+}
+
+export interface DiscoveryResourceAccountsTable {
+  id: Generated<string>;
+  name: string;
+  kind: 'auto_attendant' | 'call_queue';
+  directory_entry: string | null;
+  business_hours: string | null;
+  who_answers: string | null;
+  ooh_action: string | null;
+  exception_conditions: string | null;
+  exception_action: string | null;
+  holiday: string | null;
+  advanced_features: string | null;
+  comments: string | null;
+  created_at: Ts;
+  updated_at: Ts;
 }
 
 export interface DiscoveryNetworkTable {
@@ -338,6 +411,11 @@ export interface DB {
   discovery_number_ranges: DiscoveryNumberRangesTable;
   discovery_network: DiscoveryNetworkTable;
   discovery_flows: DiscoveryFlowsTable;
+  discovery_calling_policies: DiscoveryCallingPoliciesTable;
+  phone_numbers: PhoneNumbersTable;
+  discovery_users: DiscoveryUsersTable;
+  discovery_caps: DiscoveryCapsTable;
+  discovery_resource_accounts: DiscoveryResourceAccountsTable;
   attachments: AttachmentsTable;
   build_users: BuildUsersTable;
   build_caps: BuildCapsTable;
