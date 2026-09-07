@@ -680,6 +680,9 @@ export function DataCollection() {
     const cur = row && row.phone_number_id ? [{ value: String(row.phone_number_id), label: `${row.phone_number} (current)` }] : [];
     return [...cur, ...availableChoices];
   };
+  const siteChoices: Choice[] = (d.sites as { sitecode?: string; name?: string }[])
+    .filter((s0) => !!s0.sitecode)
+    .map((s0) => ({ value: s0.sitecode!, label: s0.name ? `${s0.sitecode} — ${s0.name}` : s0.sitecode! }));
 
   return (
     <Page
@@ -753,12 +756,17 @@ export function DataCollection() {
 
       <CrudSection
         title="Number ranges"
-        hint="Create a range first — the system generates the individual numbers into the inventory below."
+        hint={
+          siteChoices.length === 0
+            ? 'Add a Site (below) first — every range must be linked to a site by its sitecode.'
+            : 'Linked to a site by sitecode. Creating a range generates its individual numbers into the inventory below.'
+        }
         basePath={`${base}/number-ranges`}
-        readOnly={locked}
+        readOnly={locked || siteChoices.length === 0}
         onChanged={refetch}
         rows={tel.ranges}
         columns={[
+          { key: 'sitecode', label: 'Site' },
           { key: 'range_start', label: 'From' },
           { key: 'range_end', label: 'To' },
           { key: 'kind', label: 'Kind' },
@@ -768,6 +776,7 @@ export function DataCollection() {
           { key: 'loa', label: 'LOA', render: (r) => `${r.loa_sent ? 'sent' : '—'} / ${r.loa_completed ? 'done' : '—'}` },
         ]}
         fields={[
+          { key: 'sitecode', label: 'Site', type: 'ref', choices: siteChoices, required: true },
           { key: 'range_start', label: 'Range start', required: true, placeholder: '19133743250' },
           { key: 'range_end', label: 'Range end', required: true, placeholder: '19133743257' },
           { key: 'kind', label: 'Kind', type: 'select', options: NUMBER_RANGE_KINDS, required: true },
@@ -888,21 +897,21 @@ export function DataCollection() {
 
       <CrudSection
         title="Sites"
-        hint="Physical locations in scope, with any paging / overhead requirements."
+        hint="Physical locations in scope. The Sitecode is the site's unique key — number ranges link to it."
         basePath={`${base}/sites`}
         readOnly={locked}
         onChanged={refetch}
         rows={d.sites}
         columns={[
+          { key: 'sitecode', label: 'Sitecode' },
           { key: 'name', label: 'Name' },
-          { key: 'site_code', label: 'Code' },
           { key: 'address', label: 'Address' },
           { key: 'country', label: 'Country' },
           { key: 'region', label: 'Region' },
         ]}
         fields={[
+          { key: 'sitecode', label: 'Sitecode', required: true, placeholder: 'OVP012' },
           { key: 'name', label: 'Site name' },
-          { key: 'site_code', label: 'Site / company code' },
           { key: 'address', label: 'Address', type: 'textarea', full: true },
           { key: 'country', label: 'Country' },
           { key: 'region', label: 'Region' },

@@ -186,13 +186,26 @@ export class TelephonyService {
 
   /* ========================= number ranges ========================= */
 
+  private async assertSiteExists(t: TenantContext, sitecode: string) {
+    const site = await this.s(t)
+      .selectFrom('discovery_sites')
+      .select('sitecode')
+      .where('sitecode', '=', sitecode)
+      .executeTakeFirst();
+    if (!site) {
+      throw new BadRequestException(`No site with code "${sitecode}". Add the site first.`);
+    }
+  }
+
   async addRange(t: TenantContext, u: AuthedUser, i: DiscoveryNumberRangeInput, canReview: boolean) {
     await this.base.assertEditable(t, canReview);
     const e164s = expandRange(i.range_start, i.range_end);
+    await this.assertSiteExists(t, i.sitecode);
 
     const range = await this.s(t)
       .insertInto('discovery_number_ranges')
       .values({
+        sitecode: i.sitecode,
         range_start: i.range_start,
         range_end: i.range_end,
         kind: i.kind,
@@ -235,9 +248,10 @@ export class TelephonyService {
     await this.base.assertEditable(t, canReview);
     // Bounds are fixed once numbers are generated - recreate the range to change them.
     const set: Record<string, unknown> = {};
-    for (const k of ['kind', 'carrier', 'loa_sent', 'loa_completed', 'comments'] as const) {
+    for (const k of ['kind', 'carrier', 'loa_sent', 'loa_completed', 'comments', 'sitecode'] as const) {
       if (k in patch) set[k] = k === 'carrier' || k === 'comments' ? nz(patch[k]) : patch[k];
     }
+    if (typeof set.sitecode === 'string') await this.assertSiteExists(t, set.sitecode);
     const row = await this.s(t)
       .updateTable('discovery_number_ranges')
       .set(set)

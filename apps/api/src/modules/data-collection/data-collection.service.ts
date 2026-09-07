@@ -59,7 +59,7 @@ export class DataCollectionService {
     const s = this.scoped(t);
     const [discovery, sites, network, flows] = await Promise.all([
       this.discoveryRow(t),
-      s.selectFrom('discovery_sites').selectAll().orderBy('name').orderBy('site_code').execute(),
+      s.selectFrom('discovery_sites').selectAll().orderBy('sitecode').execute(),
       s.selectFrom('discovery_network').selectAll().orderBy('scope').orderBy('subnet').execute(),
       s.selectFrom('discovery_flows').selectAll().orderBy('kind').orderBy('name').execute(),
     ]);
@@ -145,18 +145,26 @@ export class DataCollectionService {
 
   async addSite(t: TenantContext, user: AuthedUser, input: DiscoverySiteInput, canReview: boolean) {
     await this.assertEditable(t, canReview);
-    const row = await this.scoped(t)
-      .insertInto('discovery_sites')
-      .values({
-        site_code: input.site_code || null,
-        name: input.name || null,
-        address: input.address || null,
-        country: input.country || null,
-        region: input.region || null,
-        paging: input.paging ?? {},
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
+    let row;
+    try {
+      row = await this.scoped(t)
+        .insertInto('discovery_sites')
+        .values({
+          sitecode: input.sitecode,
+          name: input.name || null,
+          address: input.address || null,
+          country: input.country || null,
+          region: input.region || null,
+          paging: input.paging ?? {},
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+    } catch (e) {
+      if (/duplicate key|unique/i.test((e as Error).message)) {
+        throw new ConflictException(`A site with code "${input.sitecode}" already exists.`);
+      }
+      throw e;
+    }
     await this.audit.tenant(t.schema, 'discovery.site_added', {
       actor: actorOf(user),
       targetType: 'discovery_site',
@@ -173,12 +181,24 @@ export class DataCollectionService {
     canReview: boolean,
   ) {
     await this.assertEditable(t, canReview);
-    const row = await this.scoped(t)
-      .updateTable('discovery_sites')
-      .set(cleanPatch(patch))
-      .where('id', '=', id)
-      .returningAll()
-      .executeTakeFirst();
+    const set = cleanPatch(patch);
+    if ('sitecode' in set && set.sitecode == null) {
+      throw new ConflictException('A site must have a site code.');
+    }
+    let row;
+    try {
+      row = await this.scoped(t)
+        .updateTable('discovery_sites')
+        .set(set)
+        .where('id', '=', id)
+        .returningAll()
+        .executeTakeFirst();
+    } catch (e) {
+      if (/duplicate key|unique/i.test((e as Error).message)) {
+        throw new ConflictException(`A site with code "${patch.sitecode}" already exists.`);
+      }
+      throw e;
+    }
     if (!row) throw new NotFoundException('site not found');
     await this.audit.tenant(t.schema, 'discovery.site_updated', {
       actor: actorOf(user),

@@ -99,9 +99,17 @@ export const discoveryGeneralSchema = z
   .strict();
 export type DiscoveryGeneralInput = z.infer<typeof discoveryGeneralSchema>;
 
+/** A site's unique key. Alnum, dash, dot, underscore. */
+export const sitecodeSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(60)
+  .regex(/^[A-Za-z0-9._-]+$/, 'letters, digits, dot, dash or underscore only');
+
 export const discoverySiteSchema = z
   .object({
-    site_code: optStr(60),
+    sitecode: sitecodeSchema,
     name: optStr(200),
     address: optStr(500),
     country: optStr(80),
@@ -120,6 +128,7 @@ const e164ish = z
 
 export const discoveryNumberRangeSchema = z
   .object({
+    sitecode: sitecodeSchema,
     range_start: e164ish,
     range_end: e164ish,
     kind: z.enum(NUMBER_RANGE_KINDS),

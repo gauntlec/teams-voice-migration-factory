@@ -109,7 +109,8 @@ export interface DiscoveryFlowsTable {
 
 export interface DiscoverySitesTable {
   id: Generated<string>;
-  site_code: string | null;
+  /** Unique key for the site; DID ranges link to it by this value. */
+  sitecode: string;
   name: string | null;
   address: string | null;
   country: string | null;
@@ -125,6 +126,8 @@ export interface DiscoveryNumberRangesTable {
   kind: 'new' | 'port' | 'retain';
   carrier: string | null;
   port_status: string | null;
+  /** FK -> discovery_sites.sitecode (ON UPDATE CASCADE, ON DELETE SET NULL). */
+  sitecode: string | null;
   loa_sent: ColumnType<boolean, boolean | undefined, boolean>;
   loa_completed: ColumnType<boolean, boolean | undefined, boolean>;
   comments: string | null;
