@@ -183,21 +183,26 @@ export class AuthService {
 
     let tenants: Me['tenants'];
     if (user.role === 'SUPER_ADMIN') {
-      tenants = await platformDb(this.db)
+      const rows = await platformDb(this.db)
         .selectFrom('tenants')
         .select(['id', 'slug', 'name'])
         .where('status', '=', 'active')
         .orderBy('name')
         .execute();
+      tenants = rows.map((r) => ({ ...r, siteScoped: false, siteIds: [] }));
     } else {
-      tenants = await platformDb(this.db)
+      const rows = await platformDb(this.db)
         .selectFrom('tenant_memberships as m')
         .innerJoin('tenants as t', 't.id', 'm.tenant_id')
-        .select(['t.id as id', 't.slug as slug', 't.name as name'])
+        .select(['t.id as id', 't.slug as slug', 't.name as name', 'm.site_ids as siteIds'])
         .where('m.user_id', '=', userId)
         .where('t.status', '=', 'active')
         .orderBy('t.name')
         .execute();
+      tenants = rows.map((r) => {
+        const siteIds = Array.isArray(r.siteIds) ? r.siteIds : [];
+        return { id: r.id, slug: r.slug, name: r.name, siteScoped: siteIds.length > 0, siteIds };
+      });
     }
 
     return {

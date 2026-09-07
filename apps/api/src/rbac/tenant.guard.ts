@@ -34,14 +34,20 @@ export class TenantGuard implements CanActivate {
       .executeTakeFirst();
     if (!tenant || tenant.status !== 'active') throw new NotFoundException('tenant not found');
 
+    // null = whole-customer access. A CUSTOMER membership may pin `site_ids`,
+    // making the caller a "site contact" limited to those sites.
+    let siteScope: string[] | null = null;
     if (!isGlobalRole(user.role)) {
       const member = await platformDb(this.db)
         .selectFrom('tenant_memberships')
-        .select('user_id')
+        .select(['user_id', 'site_ids'])
         .where('user_id', '=', user.id)
         .where('tenant_id', '=', tenantId)
         .executeTakeFirst();
       if (!member) throw new ForbiddenException('Not a member of this tenant');
+      if (Array.isArray(member.site_ids) && member.site_ids.length > 0) {
+        siteScope = member.site_ids;
+      }
     }
 
     // schema_name is authoritative; fall back to the deterministic name.
@@ -50,6 +56,7 @@ export class TenantGuard implements CanActivate {
       slug: tenant.slug,
       name: tenant.name,
       schema: tenant.schema_name || tenantSchemaName(tenant.id),
+      siteScope,
     };
     return true;
   }

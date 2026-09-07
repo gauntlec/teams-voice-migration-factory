@@ -22,6 +22,7 @@ export const PERMISSIONS = [
   'discovery:read',
   'discovery:write',
   'discovery:review', // engineer/admin: accept or reopen a submitted discovery
+  'discovery:sites:manage', // add / edit / delete sites - admin & engineer only
   'build:read',
   'build:write',
   'deployment:read',
@@ -45,9 +46,12 @@ export const PERMISSION_MATRIX: Record<Role, ReadonlySet<Permission>> = {
   ENGINEER: new Set<Permission>([
     'tenant:read',
     'tenant:member:manage', // add CUSTOMER users only - enforced in service
+    'user:create', // CUSTOMER users only, in their own customers - enforced in service
+    'user:read', // list is scoped to their customers' users - enforced in service
     'discovery:read',
     'discovery:write',
     'discovery:review',
+    'discovery:sites:manage',
     'build:read',
     'build:write',
     'deployment:read',
@@ -78,4 +82,15 @@ export const GLOBAL_ROLES: ReadonlySet<Role> = new Set<Role>(['SUPER_ADMIN']);
 
 export function isGlobalRole(role: Role): boolean {
   return GLOBAL_ROLES.has(role);
+}
+
+/**
+ * A CUSTOMER membership can be limited to specific sites (a "site contact") via
+ * `tenant_memberships.site_ids` (empty = the whole customer). Site scoping never
+ * narrows SUPER_ADMIN or ENGINEER - they always see the whole customer, and are
+ * the only roles that may add or edit sites (`discovery:sites:manage`).
+ * Enforced by `TenantGuard` and the Data Collection services. See docs/RBAC.md.
+ */
+export function siteScopeApplies(role: Role): boolean {
+  return role === 'CUSTOMER';
 }

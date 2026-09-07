@@ -635,7 +635,9 @@ const STATUS_COLOR: Record<string, 'informative' | 'warning' | 'success'> = {
 
 export function DataCollection() {
   const s = useStyles();
-  const { activeTenantId, can } = useAuth();
+  const { activeTenantId, can, me } = useAuth();
+  const activeTenant = me?.tenants.find((t) => t.id === activeTenantId);
+  const siteScoped = !!activeTenant?.siteScoped;
   const qc = useQueryClient();
   const baseKey = ['discovery', activeTenantId];
   const telKey = ['discovery-telephony', activeTenantId];
@@ -683,6 +685,20 @@ export function DataCollection() {
   const siteChoices: Choice[] = (d.sites as { sitecode?: string; name?: string }[])
     .filter((s0) => !!s0.sitecode)
     .map((s0) => ({ value: s0.sitecode!, label: s0.name ? `${s0.sitecode} — ${s0.name}` : s0.sitecode! }));
+  // Sites keyed by id, for the per-row "Site" link on users / CAPs / RAs / network / flows.
+  const siteIdChoices: Choice[] = (d.sites as { id: string; sitecode?: string; name?: string }[]).map(
+    (s0) => ({ value: s0.id, label: [s0.sitecode, s0.name].filter(Boolean).join(' — ') || s0.id }),
+  );
+  const siteLabelById = (id: unknown) => siteIdChoices.find((c) => c.value === id)?.label ?? '—';
+  const siteField: FieldDef = {
+    key: 'site_id',
+    label: 'Site',
+    type: 'ref',
+    choices: siteIdChoices,
+    required: siteScoped,
+    default: siteScoped && siteIdChoices.length === 1 ? siteIdChoices[0].value : undefined,
+  };
+  const siteColumn = { key: 'site_id', label: 'Site', render: (r: Row) => siteLabelById(r.site_id) };
 
   return (
     <Page
@@ -690,7 +706,7 @@ export function DataCollection() {
       subtitle="The customer's current voice estate — sites, numbers, users, CAPs and resource accounts. Feeds Design & Build."
       actions={
         <div style={{ display: 'flex', gap: 8 }}>
-          {canWrite && status === 'draft' && (
+          {canWrite && status === 'draft' && !siteScoped && (
             <Button appearance="primary" disabled={action.isPending} onClick={() => action.mutate('submit')}>
               Submit for review
             </Button>
@@ -725,13 +741,25 @@ export function DataCollection() {
       </div>
       {action.isError && <LoadError message={(action.error as Error).message} />}
 
-      <GeneralForm value={d.discovery?.general ?? {}} readOnly={locked} tenantId={activeTenantId} onChanged={refetch} />
+      {siteScoped && (
+        <MessageBar intent="info">
+          <MessageBarBody>
+            You are a site contact for this customer. You can see and edit only the data for your
+            assigned site{siteIdChoices.length === 1 ? '' : 's'}. Sites, the overview, calling
+            policies and submitting for review are handled by the migration engineer.
+          </MessageBarBody>
+        </MessageBar>
+      )}
+
+      {!siteScoped && (
+        <GeneralForm value={d.discovery?.general ?? {}} readOnly={locked} tenantId={activeTenantId} onChanged={refetch} />
+      )}
 
       <CrudSection
         title="Outbound calling policies"
         hint="Customer-defined dialling restrictions. Users and CAPs reference one of these."
         basePath={`${base}/calling-policies`}
-        readOnly={locked}
+        readOnly={locked || siteScoped}
         onChanged={refetch}
         rows={tel.callingPolicies}
         columns={[
@@ -804,6 +832,7 @@ export function DataCollection() {
         onChanged={refetch}
         rows={tel.users}
         columns={[
+          siteColumn,
           { key: 'upn', label: 'UPN' },
           { key: 'display_name', label: 'Name' },
           { key: 'phone_number', label: 'Number' },
@@ -812,6 +841,7 @@ export function DataCollection() {
           { key: 'voicemail_enabled', label: 'Voicemail', render: (r) => yesNo(r.voicemail_enabled) },
         ]}
         fields={[
+          siteField,
           { key: 'upn', label: 'M365 UPN', required: true, placeholder: 'user@customer.com' },
           { key: 'display_name', label: 'Display name' },
           { key: 'phone_number_id', label: 'Phone number', type: 'ref', choices: numberChoicesFor },
@@ -834,6 +864,7 @@ export function DataCollection() {
         onChanged={refetch}
         rows={tel.caps}
         columns={[
+          siteColumn,
           { key: 'display_name', label: 'Display name' },
           { key: 'phone_number', label: 'Number' },
           { key: 'device_model', label: 'Device' },
@@ -841,6 +872,7 @@ export function DataCollection() {
           { key: 'caller_id', label: 'Caller ID' },
         ]}
         fields={[
+          siteField,
           { key: 'display_name', label: 'Display name', required: true },
           { key: 'upn', label: 'UPN (if known)' },
           { key: 'phone_number_id', label: 'Phone number', type: 'ref', choices: numberChoicesFor },
@@ -870,6 +902,7 @@ export function DataCollection() {
           ) : null
         }
         columns={[
+          siteColumn,
           { key: 'name', label: 'Name' },
           { key: 'kind', label: 'Kind' },
           {
@@ -881,6 +914,7 @@ export function DataCollection() {
           { key: 'who_answers', label: 'Who answers' },
         ]}
         fields={[
+          siteField,
           { key: 'name', label: 'Name of service', required: true, placeholder: 'Main Line' },
           { key: 'kind', label: 'Kind', type: 'select', options: RESOURCE_ACCOUNT_KINDS, required: true },
           { key: 'directory_entry', label: 'Directory entry' },
@@ -897,9 +931,13 @@ export function DataCollection() {
 
       <CrudSection
         title="Sites"
-        hint="Physical locations in scope. The Sitecode is the site's unique key — number ranges link to it."
+        hint={
+          can('discovery:sites:manage')
+            ? "Physical locations in scope. The Sitecode is the site's unique key — number ranges link to it."
+            : 'Managed by the migration engineer. Your access is limited to the site(s) shown here.'
+        }
         basePath={`${base}/sites`}
-        readOnly={locked}
+        readOnly={locked || !can('discovery:sites:manage')}
         onChanged={refetch}
         rows={d.sites}
         columns={[
@@ -926,6 +964,7 @@ export function DataCollection() {
         onChanged={refetch}
         rows={d.network}
         columns={[
+          siteColumn,
           { key: 'scope', label: 'Scope' },
           { key: 'subnet', label: 'Subnet' },
           { key: 'mask', label: 'Mask' },
@@ -933,6 +972,7 @@ export function DataCollection() {
           { key: 'network_type', label: 'Type' },
         ]}
         fields={[
+          siteField,
           { key: 'scope', label: 'Scope', type: 'select', options: NETWORK_SCOPES, required: true },
           { key: 'subnet', label: 'Subnet', required: true, placeholder: '10.20.0.0' },
           { key: 'mask', label: 'Mask (bits)', type: 'number', placeholder: '24' },
@@ -949,6 +989,7 @@ export function DataCollection() {
         onChanged={refetch}
         rows={d.flows}
         columns={[
+          siteColumn,
           { key: 'kind', label: 'Kind' },
           { key: 'name', label: 'Name' },
           {
@@ -961,6 +1002,7 @@ export function DataCollection() {
           },
         ]}
         fields={[
+          siteField,
           { key: 'kind', label: 'Kind', type: 'select', options: FLOW_KINDS, required: true },
           { key: 'name', label: 'Name', required: true },
           { key: 'description', label: 'Description', type: 'textarea', full: true },

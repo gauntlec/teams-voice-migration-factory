@@ -1,10 +1,17 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import * as argon2 from 'argon2';
-import { platformDb } from '@tvmf/db';
-import type { CreateUserInput } from '@tvmf/shared';
+import { platformDb, tenantDb } from '@tvmf/db';
+import type { CreateUserInput, Role } from '@tvmf/shared';
 import { AuditService } from '../common/audit.service';
 import type { AuditActor } from '../common/audit.service';
 import { InjectDb, type Db } from '../db/db.module';
+
+type UserActor = AuditActor & { role: Role };
 
 const ARGON = { type: argon2.argon2id, memoryCost: 19456, timeCost: 2, parallelism: 1 } as const;
 
@@ -15,15 +22,29 @@ export class UsersService {
     private readonly audit: AuditService,
   ) {}
 
-  list() {
-    return platformDb(this.db)
+  list(actor: { id: string; role: Role }) {
+    const q = platformDb(this.db)
       .selectFrom('users')
       .select(['id', 'email', 'display_name', 'role', 'status', 'totp_enrolled', 'created_at'])
-      .orderBy('created_at', 'desc')
+      .orderBy('created_at', 'desc');
+    if (actor.role === 'SUPER_ADMIN') return q.execute();
+    // Engineers only see users who belong to a customer they are assigned to.
+    return q
+      .where('id', 'in', (eb) =>
+        eb
+          .selectFrom('tenant_memberships')
+          .select('user_id')
+          .where('tenant_id', 'in', (eb2) =>
+            eb2
+              .selectFrom('tenant_memberships')
+              .select('tenant_id')
+              .where('user_id', '=', actor.id),
+          ),
+      )
       .execute();
   }
 
-  async create(input: CreateUserInput, actor: AuditActor) {
+  async create(input: CreateUserInput, actor: UserActor) {
     const exists = await platformDb(this.db)
       .selectFrom('users')
       .select('id')
@@ -31,8 +52,51 @@ export class UsersService {
       .executeTakeFirst();
     if (exists) throw new BadRequestException('A user with that email already exists');
 
-    if (input.role === 'CUSTOMER' && (input.tenantIds?.length ?? 0) !== 1) {
+    const tenantIds = input.tenantIds ?? [];
+
+    // Engineers may only create CUSTOMER users, and only inside their own customers.
+    if (actor.role === 'ENGINEER') {
+      if (input.role !== 'CUSTOMER') {
+        throw new ForbiddenException('Engineers may only create customer users');
+      }
+      if (!tenantIds.length) {
+        throw new BadRequestException('Pick the customer this user belongs to');
+      }
+      const own = await platformDb(this.db)
+        .selectFrom('tenant_memberships')
+        .select('tenant_id')
+        .where('user_id', '=', actor.id!)
+        .where('tenant_id', 'in', tenantIds)
+        .execute();
+      const ownSet = new Set(own.map((r) => r.tenant_id));
+      if (tenantIds.some((id) => !ownSet.has(id))) {
+        throw new ForbiddenException('You can only add users to customers you are assigned to');
+      }
+    }
+
+    if (input.role === 'CUSTOMER' && tenantIds.length !== 1) {
       throw new BadRequestException('Customer users must belong to exactly one tenant');
+    }
+
+    // Site scoping only applies to a customer user (who has exactly one tenant).
+    const siteIds = input.role === 'CUSTOMER' ? [...new Set(input.siteIds ?? [])] : [];
+    if (siteIds.length) {
+      const tenant = await platformDb(this.db)
+        .selectFrom('tenants')
+        .select('schema_name')
+        .where('id', '=', tenantIds[0])
+        .executeTakeFirst();
+      if (!tenant) throw new BadRequestException('Unknown customer');
+      const rows = await tenantDb(this.db, tenant.schema_name)
+        .selectFrom('discovery_sites')
+        .select('id')
+        .where('id', 'in', siteIds)
+        .execute();
+      const found = new Set(rows.map((r) => r.id));
+      const missing = siteIds.filter((id) => !found.has(id));
+      if (missing.length) {
+        throw new BadRequestException(`Unknown site(s) for this customer: ${missing.join(', ')}`);
+      }
     }
 
     const passwordHash = await argon2.hash(input.password, ARGON);
@@ -47,10 +111,15 @@ export class UsersService {
       .returning(['id', 'email', 'display_name', 'role', 'status'])
       .executeTakeFirstOrThrow();
 
-    for (const tenantId of input.tenantIds ?? []) {
+    for (const tenantId of tenantIds) {
       await platformDb(this.db)
         .insertInto('tenant_memberships')
-        .values({ user_id: user.id, tenant_id: tenantId, added_by: actor.id ?? null })
+        .values({
+          user_id: user.id,
+          tenant_id: tenantId,
+          added_by: actor.id ?? null,
+          site_ids: tenantId === tenantIds[0] ? siteIds : [],
+        })
         .onConflict((oc) => oc.doNothing())
         .execute();
     }
@@ -59,7 +128,7 @@ export class UsersService {
       actor,
       targetType: 'user',
       targetId: user.id,
-      detail: { role: user.role, tenantIds: input.tenantIds ?? [] },
+      detail: { role: user.role, tenantIds, siteIds },
     });
     return user;
   }

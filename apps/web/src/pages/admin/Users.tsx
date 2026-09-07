@@ -33,6 +33,11 @@ interface TenantRow {
   id: string;
   name: string;
 }
+interface SiteRow {
+  id: string;
+  sitecode: string;
+  name: string | null;
+}
 
 export function AdminUsers() {
   const qc = useQueryClient();
@@ -41,10 +46,30 @@ export function AdminUsers() {
   const [role, setRole] = useState<Role>('ENGINEER');
   const [password, setPassword] = useState('');
   const [tenantIds, setTenantIds] = useState<string[]>([]);
+  const [siteScope, setSiteScope] = useState<'all' | 'sites'>('all');
+  const [siteIds, setSiteIds] = useState<string[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
   const users = useQuery({ queryKey: ['users'], queryFn: () => api<UserRow[]>('/users') });
   const tenants = useQuery({ queryKey: ['tenants'], queryFn: () => api<TenantRow[]>('/tenants') });
+
+  // For a customer user with one tenant picked, offer to limit them to sites.
+  const scopeTenantId = role === 'CUSTOMER' && tenantIds.length === 1 ? tenantIds[0] : null;
+  const sites = useQuery({
+    queryKey: ['tenant-sites', scopeTenantId],
+    enabled: !!scopeTenantId,
+    queryFn: () => api<SiteRow[]>(`/tenants/${scopeTenantId}/sites`),
+  });
+
+  const resetForm = () => {
+    setEmail('');
+    setDisplayName('');
+    setPassword('');
+    setTenantIds([]);
+    setSiteScope('all');
+    setSiteIds([]);
+    setErr(null);
+  };
 
   const create = useMutation({
     mutationFn: () =>
@@ -56,14 +81,12 @@ export function AdminUsers() {
           role,
           password,
           tenantIds: role === 'SUPER_ADMIN' ? undefined : tenantIds,
+          siteIds:
+            role === 'CUSTOMER' && scopeTenantId && siteScope === 'sites' ? siteIds : undefined,
         }),
       }),
     onSuccess: () => {
-      setEmail('');
-      setDisplayName('');
-      setPassword('');
-      setTenantIds([]);
-      setErr(null);
+      resetForm();
       qc.invalidateQueries({ queryKey: ['users'] });
     },
     onError: (e) => setErr(e instanceof Error ? e.message : 'Failed'),
@@ -119,9 +142,49 @@ export function AdminUsers() {
               </Dropdown>
             </Field>
           )}
+          {scopeTenantId && (
+            <Field label="Site access" hint="Limit a site contact to specific sites">
+              <Dropdown
+                value={siteScope === 'all' ? 'Whole customer' : 'Specific sites'}
+                selectedOptions={[siteScope]}
+                onOptionSelect={(_, d) => setSiteScope((d.optionValue as 'all' | 'sites') ?? 'all')}
+                style={{ minWidth: 200 }}
+              >
+                <Option value="all">Whole customer</Option>
+                <Option value="sites">Specific sites</Option>
+              </Dropdown>
+            </Field>
+          )}
+          {scopeTenantId && siteScope === 'sites' && (
+            <Field
+              label="Sites"
+              hint={sites.data && sites.data.length === 0 ? 'This customer has no sites yet' : undefined}
+            >
+              <Dropdown
+                multiselect
+                placeholder="Select sites…"
+                selectedOptions={siteIds}
+                onOptionSelect={(_, d) => setSiteIds(d.selectedOptions)}
+                style={{ minWidth: 220 }}
+              >
+                {(sites.data ?? []).map((st) => (
+                  <Option key={st.id} value={st.id} text={st.sitecode}>
+                    {st.sitecode}
+                    {st.name ? ` — ${st.name}` : ''}
+                  </Option>
+                ))}
+              </Dropdown>
+            </Field>
+          )}
           <Button
             appearance="primary"
-            disabled={!email || !displayName || password.length < 12 || create.isPending}
+            disabled={
+              !email ||
+              !displayName ||
+              password.length < 12 ||
+              create.isPending ||
+              (!!scopeTenantId && siteScope === 'sites' && siteIds.length === 0)
+            }
             onClick={() => create.mutate()}
           >
             Create

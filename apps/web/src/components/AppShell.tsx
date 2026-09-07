@@ -137,6 +137,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           Teams Voice Migration Factory
         </Text>
         <div className={s.headerRight}>
+          {activeTenant?.siteScoped && (
+            <Text size={200} style={{ color: tokens.colorNeutralForegroundOnBrand, opacity: 0.85 }}>
+              Site contact
+            </Text>
+          )}
           {tenants.length > 0 ? (
             <Dropdown
               appearance="filled-lighter"

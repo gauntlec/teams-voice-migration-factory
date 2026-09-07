@@ -11,13 +11,13 @@ export class UsersController {
   constructor(private readonly users: UsersService) {}
 
   private actor(u: AuthedUser) {
-    return { id: u.id, email: u.email };
+    return { id: u.id, email: u.email, role: u.role };
   }
 
   @Get()
   @RequirePermission('user:read')
-  list() {
-    return this.users.list();
+  list(@CurrentUser() user: AuthedUser) {
+    return this.users.list({ id: user.id, role: user.role });
   }
 
   @Post()

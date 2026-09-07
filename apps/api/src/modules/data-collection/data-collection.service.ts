@@ -14,6 +14,7 @@ import type {
 import { AuditService } from '../../common/audit.service';
 import type { AuthedUser, TenantContext } from '../../common/request';
 import { InjectDb, type Db } from '../../db/db.module';
+import { assertCustomerWide, assertSiteInScope } from './site-scope';
 
 type Actor = Pick<AuthedUser, 'id' | 'email'>;
 const actorOf = (u: AuthedUser): Actor => ({ id: u.id, email: u.email });
@@ -57,16 +58,27 @@ export class DataCollectionService {
 
   async get(t: TenantContext) {
     const s = this.scoped(t);
+    const scope = t.siteScope;
+    let sitesQ = s.selectFrom('discovery_sites').selectAll().orderBy('sitecode');
+    let networkQ = s.selectFrom('discovery_network').selectAll().orderBy('scope').orderBy('subnet');
+    let flowsQ = s.selectFrom('discovery_flows').selectAll().orderBy('kind').orderBy('name');
+    if (scope) {
+      // A site contact only ever sees their own sites and the rows tied to them.
+      sitesQ = sitesQ.where('id', 'in', scope);
+      networkQ = networkQ.where('site_id', 'in', scope);
+      flowsQ = flowsQ.where('site_id', 'in', scope);
+    }
     const [discovery, sites, network, flows] = await Promise.all([
       this.discoveryRow(t),
-      s.selectFrom('discovery_sites').selectAll().orderBy('sitecode').execute(),
-      s.selectFrom('discovery_network').selectAll().orderBy('scope').orderBy('subnet').execute(),
-      s.selectFrom('discovery_flows').selectAll().orderBy('kind').orderBy('name').execute(),
+      sitesQ.execute(),
+      networkQ.execute(),
+      flowsQ.execute(),
     ]);
     return { discovery, sites, network, flows };
   }
 
   async updateGeneral(t: TenantContext, user: AuthedUser, patch: DiscoveryGeneralInput, canReview: boolean) {
+    assertCustomerWide(t, 'The discovery overview');
     await this.assertEditable(t, canReview);
     const current = await this.discoveryRow(t);
     const next = { ...(current.general ?? {}), ...patch };
@@ -83,6 +95,7 @@ export class DataCollectionService {
   }
 
   async submit(t: TenantContext, user: AuthedUser) {
+    assertCustomerWide(t, 'Submitting the discovery for review');
     const current = await this.discoveryRow(t);
     if (current.status !== 'draft') {
       throw new ConflictException(`Cannot submit discovery from status "${current.status}".`);
@@ -144,6 +157,7 @@ export class DataCollectionService {
   /* -------------------------------- sites -------------------------------- */
 
   async addSite(t: TenantContext, user: AuthedUser, input: DiscoverySiteInput, canReview: boolean) {
+    assertCustomerWide(t, 'Sites');
     await this.assertEditable(t, canReview);
     let row;
     try {
@@ -180,6 +194,7 @@ export class DataCollectionService {
     patch: Partial<DiscoverySiteInput>,
     canReview: boolean,
   ) {
+    assertCustomerWide(t, 'Sites');
     await this.assertEditable(t, canReview);
     const set = cleanPatch(patch);
     if ('sitecode' in set && set.sitecode == null) {
@@ -209,6 +224,7 @@ export class DataCollectionService {
   }
 
   async deleteSite(t: TenantContext, user: AuthedUser, id: string, canReview: boolean) {
+    assertCustomerWide(t, 'Sites');
     await this.assertEditable(t, canReview);
     const res = await this.scoped(t).deleteFrom('discovery_sites').where('id', '=', id).executeTakeFirst();
     if (!res.numDeletedRows) throw new NotFoundException('site not found');
@@ -223,6 +239,27 @@ export class DataCollectionService {
   /* Number ranges, inventory, calling policies, users, CAPs and resource
    * accounts now live in TelephonyService (data-collection.telephony.service). */
 
+  /**
+   * For the site-linked discovery tables (network / flows): a site contact may
+   * only touch a row whose `site_id` is one of theirs. No-op for whole-customer
+   * callers.
+   */
+  private async assertRowSiteInScope(
+    t: TenantContext,
+    table: 'discovery_network' | 'discovery_flows',
+    id: string,
+    notFound: string,
+  ) {
+    if (!t.siteScope) return;
+    const row = await this.scoped(t)
+      .selectFrom(table)
+      .select('site_id')
+      .where('id', '=', id)
+      .executeTakeFirst();
+    if (!row) throw new NotFoundException(notFound);
+    assertSiteInScope(t, row.site_id);
+  }
+
   /* ------------------------------- network ----------------------------- */
 
   async addNetwork(
@@ -232,9 +269,11 @@ export class DataCollectionService {
     canReview: boolean,
   ) {
     await this.assertEditable(t, canReview);
+    assertSiteInScope(t, input.site_id ?? null);
     const row = await this.scoped(t)
       .insertInto('discovery_network')
       .values({
+        site_id: input.site_id ?? null,
         scope: input.scope,
         subnet: input.subnet,
         mask: input.mask ?? null,
@@ -259,6 +298,8 @@ export class DataCollectionService {
     canReview: boolean,
   ) {
     await this.assertEditable(t, canReview);
+    await this.assertRowSiteInScope(t, 'discovery_network', id, 'subnet not found');
+    if ('site_id' in patch) assertSiteInScope(t, patch.site_id ?? null);
     const row = await this.scoped(t)
       .updateTable('discovery_network')
       .set(cleanPatch(patch))
@@ -276,6 +317,7 @@ export class DataCollectionService {
 
   async deleteNetwork(t: TenantContext, user: AuthedUser, id: string, canReview: boolean) {
     await this.assertEditable(t, canReview);
+    await this.assertRowSiteInScope(t, 'discovery_network', id, 'subnet not found');
     const res = await this.scoped(t).deleteFrom('discovery_network').where('id', '=', id).executeTakeFirst();
     if (!res.numDeletedRows) throw new NotFoundException('subnet not found');
     await this.audit.tenant(t.schema, 'discovery.network_deleted', {
@@ -290,9 +332,11 @@ export class DataCollectionService {
 
   async addFlow(t: TenantContext, user: AuthedUser, input: DiscoveryFlowInput, canReview: boolean) {
     await this.assertEditable(t, canReview);
+    assertSiteInScope(t, input.site_id ?? null);
     const row = await this.scoped(t)
       .insertInto('discovery_flows')
       .values({
+        site_id: input.site_id ?? null,
         kind: input.kind,
         name: input.name,
         description: input.description || null,
@@ -315,6 +359,8 @@ export class DataCollectionService {
     canReview: boolean,
   ) {
     await this.assertEditable(t, canReview);
+    await this.assertRowSiteInScope(t, 'discovery_flows', id, 'flow not found');
+    if ('site_id' in patch) assertSiteInScope(t, patch.site_id ?? null);
     const row = await this.scoped(t)
       .updateTable('discovery_flows')
       .set({ ...cleanPatch(patch), updated_at: new Date().toISOString() })
@@ -332,6 +378,7 @@ export class DataCollectionService {
 
   async deleteFlow(t: TenantContext, user: AuthedUser, id: string, canReview: boolean) {
     await this.assertEditable(t, canReview);
+    await this.assertRowSiteInScope(t, 'discovery_flows', id, 'flow not found');
     const res = await this.scoped(t).deleteFrom('discovery_flows').where('id', '=', id).executeTakeFirst();
     if (!res.numDeletedRows) throw new NotFoundException('flow not found');
     await this.audit.tenant(t.schema, 'discovery.flow_deleted', {

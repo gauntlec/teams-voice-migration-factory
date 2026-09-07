@@ -19,6 +19,7 @@ import { AuditService } from '../../common/audit.service';
 import type { AuthedUser, TenantContext } from '../../common/request';
 import { InjectDb, type Db } from '../../db/db.module';
 import { DataCollectionService } from './data-collection.service';
+import { assertCustomerWide, assertSiteInScope } from './site-scope';
 
 type Scoped = ReturnType<typeof tenantDb>;
 const actorOf = (u: AuthedUser) => ({ id: u.id, email: u.email });
@@ -38,21 +39,107 @@ export class TelephonyService {
     return tenantDb(this.db as Kysely<DB>, t.schema);
   }
 
+  /* ========================= site scoping ========================= */
+
+  /** The sitecodes a site contact is limited to, or null for whole-customer. */
+  private async scopedSitecodes(t: TenantContext): Promise<string[] | null> {
+    if (!t.siteScope) return null;
+    const rows = await this.s(t)
+      .selectFrom('discovery_sites')
+      .select('sitecode')
+      .where('id', 'in', t.siteScope)
+      .execute();
+    // '\x00' can never be a real sitecode - keeps `in ()` from being emitted.
+    return rows.length ? rows.map((r) => r.sitecode) : ['\x00'];
+  }
+
+  /** Resolve a sitecode to its site row and check it is in the caller's scope. */
+  private async siteByCode(t: TenantContext, sitecode: string) {
+    const site = await this.s(t)
+      .selectFrom('discovery_sites')
+      .select(['id', 'sitecode'])
+      .where('sitecode', '=', sitecode)
+      .executeTakeFirst();
+    if (!site) {
+      throw new BadRequestException(`No site with code "${sitecode}". Add the site first.`);
+    }
+    assertSiteInScope(t, site.id);
+    return site;
+  }
+
+  /** Throw if the number range is outside the caller's site scope. No-op when unscoped. */
+  private async assertRangeInScope(t: TenantContext, rangeId: string) {
+    if (!t.siteScope) return;
+    const row = await this.s(t)
+      .selectFrom('discovery_number_ranges as r')
+      .leftJoin('discovery_sites as st', 'st.sitecode', 'r.sitecode')
+      .select('st.id as site_id')
+      .where('r.id', '=', rangeId)
+      .executeTakeFirst();
+    if (!row) throw new NotFoundException('range not found');
+    assertSiteInScope(t, row.site_id);
+  }
+
+  /** Throw if the phone number's range is outside the caller's site scope. */
+  private async assertNumberInScope(t: TenantContext, numberId: string) {
+    if (!t.siteScope) return;
+    const row = await this.s(t)
+      .selectFrom('phone_numbers as n')
+      .innerJoin('discovery_number_ranges as r', 'r.id', 'n.range_id')
+      .leftJoin('discovery_sites as st', 'st.sitecode', 'r.sitecode')
+      .select('st.id as site_id')
+      .where('n.id', '=', numberId)
+      .executeTakeFirst();
+    if (!row) throw new NotFoundException('phone number not found');
+    assertSiteInScope(t, row.site_id);
+  }
+
+  /** Throw if the holder row (user / cap / resource account) is out of scope. */
+  private async assertHolderInScope(
+    t: TenantContext,
+    table: 'discovery_users' | 'discovery_caps' | 'discovery_resource_accounts',
+    id: string,
+    notFound: string,
+  ) {
+    if (!t.siteScope) return;
+    const row = await this.s(t)
+      .selectFrom(table)
+      .select('site_id')
+      .where('id', '=', id)
+      .executeTakeFirst();
+    if (!row) throw new NotFoundException(notFound);
+    assertSiteInScope(t, row.site_id);
+  }
+
   /* ============================ snapshot ============================ */
 
   async snapshot(t: TenantContext) {
     const s = this.s(t);
+    const scope = t.siteScope;
+    const sitecodes = await this.scopedSitecodes(t);
+
+    let rangesQ = s.selectFrom('discovery_number_ranges').selectAll().orderBy('range_start');
+    let numbersQ = s.selectFrom('phone_numbers').selectAll().orderBy('e164');
+    let usersQ = s.selectFrom('discovery_users').selectAll().orderBy('upn');
+    let capsQ = s.selectFrom('discovery_caps').selectAll().orderBy('display_name');
+    let rasQ = s.selectFrom('discovery_resource_accounts').selectAll().orderBy('name');
+    if (scope && sitecodes) {
+      rangesQ = rangesQ.where('sitecode', 'in', sitecodes);
+      numbersQ = numbersQ.where('range_id', 'in', (eb) =>
+        eb.selectFrom('discovery_number_ranges').select('id').where('sitecode', 'in', sitecodes),
+      );
+      usersQ = usersQ.where('site_id', 'in', scope);
+      capsQ = capsQ.where('site_id', 'in', scope);
+      rasQ = rasQ.where('site_id', 'in', scope);
+    }
+
     const [callingPolicies, ranges, numbers, users, caps, resourceAccounts] = await Promise.all([
       s.selectFrom('discovery_calling_policies').selectAll().orderBy('name').execute(),
-      s.selectFrom('discovery_number_ranges').selectAll().orderBy('range_start').execute(),
-      s
-        .selectFrom('phone_numbers')
-        .selectAll()
-        .orderBy('e164')
-        .execute(),
-      s.selectFrom('discovery_users').selectAll().orderBy('upn').execute(),
-      s.selectFrom('discovery_caps').selectAll().orderBy('display_name').execute(),
-      s.selectFrom('discovery_resource_accounts').selectAll().orderBy('name').execute(),
+      rangesQ.execute(),
+      numbersQ.execute(),
+      usersQ.execute(),
+      capsQ.execute(),
+      rasQ.execute(),
     ]);
 
     // resolve holder display names + per-holder number(s)
@@ -111,6 +198,7 @@ export class TelephonyService {
   /* ====================== calling policies ====================== */
 
   async addCallingPolicy(t: TenantContext, u: AuthedUser, i: CallingPolicyInput, canReview: boolean) {
+    assertCustomerWide(t, 'Outbound calling policies');
     await this.base.assertEditable(t, canReview);
     try {
       const row = await this.s(t)
@@ -144,6 +232,7 @@ export class TelephonyService {
     patch: Partial<CallingPolicyInput>,
     canReview: boolean,
   ) {
+    assertCustomerWide(t, 'Outbound calling policies');
     await this.base.assertEditable(t, canReview);
     const set: Record<string, unknown> = { updated_at: new Date().toISOString() };
     for (const k of [
@@ -173,6 +262,7 @@ export class TelephonyService {
   }
 
   async deleteCallingPolicy(t: TenantContext, u: AuthedUser, id: string, canReview: boolean) {
+    assertCustomerWide(t, 'Outbound calling policies');
     await this.base.assertEditable(t, canReview);
     const res = await this.s(t).deleteFrom('discovery_calling_policies').where('id', '=', id).executeTakeFirst();
     if (!Number(res.numDeletedRows)) throw new NotFoundException('calling policy not found');
@@ -186,21 +276,10 @@ export class TelephonyService {
 
   /* ========================= number ranges ========================= */
 
-  private async assertSiteExists(t: TenantContext, sitecode: string) {
-    const site = await this.s(t)
-      .selectFrom('discovery_sites')
-      .select('sitecode')
-      .where('sitecode', '=', sitecode)
-      .executeTakeFirst();
-    if (!site) {
-      throw new BadRequestException(`No site with code "${sitecode}". Add the site first.`);
-    }
-  }
-
   async addRange(t: TenantContext, u: AuthedUser, i: DiscoveryNumberRangeInput, canReview: boolean) {
     await this.base.assertEditable(t, canReview);
     const e164s = expandRange(i.range_start, i.range_end);
-    await this.assertSiteExists(t, i.sitecode);
+    await this.siteByCode(t, i.sitecode);
 
     const range = await this.s(t)
       .insertInto('discovery_number_ranges')
@@ -246,12 +325,13 @@ export class TelephonyService {
     canReview: boolean,
   ) {
     await this.base.assertEditable(t, canReview);
+    await this.assertRangeInScope(t, id);
     // Bounds are fixed once numbers are generated - recreate the range to change them.
     const set: Record<string, unknown> = {};
     for (const k of ['kind', 'carrier', 'loa_sent', 'loa_completed', 'comments', 'sitecode'] as const) {
       if (k in patch) set[k] = k === 'carrier' || k === 'comments' ? nz(patch[k]) : patch[k];
     }
-    if (typeof set.sitecode === 'string') await this.assertSiteExists(t, set.sitecode);
+    if (typeof set.sitecode === 'string') await this.siteByCode(t, set.sitecode);
     const row = await this.s(t)
       .updateTable('discovery_number_ranges')
       .set(set)
@@ -269,6 +349,7 @@ export class TelephonyService {
 
   async deleteRange(t: TenantContext, u: AuthedUser, id: string, canReview: boolean) {
     await this.base.assertEditable(t, canReview);
+    await this.assertRangeInScope(t, id);
     const inUse = await this.s(t)
       .selectFrom('phone_numbers')
       .select((eb) => eb.fn.countAll<string>().as('n'))
@@ -293,6 +374,7 @@ export class TelephonyService {
 
   async reserveNumber(t: TenantContext, u: AuthedUser, id: string, reserved: boolean, canReview: boolean) {
     await this.base.assertEditable(t, canReview);
+    await this.assertNumberInScope(t, id);
     const n = await this.s(t).selectFrom('phone_numbers').selectAll().where('id', '=', id).executeTakeFirst();
     if (!n) throw new NotFoundException('phone number not found');
     if (n.status === 'assigned') throw new ConflictException('That number is assigned to a holder.');
@@ -360,15 +442,42 @@ export class TelephonyService {
     if (numberId) await this.claimNumber(t, numberId, holderType, holderId);
   }
 
+  /**
+   * Validate an incoming holder `site_id`: it must exist in this customer and,
+   * for a site contact, be one of their sites (they must always name one).
+   * Returns the id to store (or null for a whole-customer caller who left it blank).
+   */
+  private async resolveHolderSite(
+    t: TenantContext,
+    siteId: string | null | undefined,
+  ): Promise<string | null> {
+    const id = nz(siteId ?? null) as string | null;
+    if (id == null) {
+      assertSiteInScope(t, null); // a site contact must pick a site
+      return null;
+    }
+    const site = await this.s(t)
+      .selectFrom('discovery_sites')
+      .select('id')
+      .where('id', '=', id)
+      .executeTakeFirst();
+    if (!site) throw new BadRequestException('Unknown site for this customer.');
+    assertSiteInScope(t, id);
+    return id;
+  }
+
   /* ============================= users ============================= */
 
   async addUser(t: TenantContext, u: AuthedUser, i: DiscoveryUserInput, canReview: boolean) {
     await this.base.assertEditable(t, canReview);
+    const siteId = await this.resolveHolderSite(t, i.site_id);
+    if (nz(i.phone_number_id)) await this.assertNumberInScope(t, nz(i.phone_number_id)!);
     let row;
     try {
       row = await this.s(t)
         .insertInto('discovery_users')
         .values({
+          site_id: siteId,
           upn: i.upn,
           display_name: nz(i.display_name),
           calling_policy_id: nz(i.calling_policy_id),
@@ -404,6 +513,7 @@ export class TelephonyService {
     canReview: boolean,
   ) {
     await this.base.assertEditable(t, canReview);
+    await this.assertHolderInScope(t, 'discovery_users', id, 'user not found');
     const set: Record<string, unknown> = { updated_at: new Date().toISOString() };
     for (const k of [
       'upn',
@@ -418,6 +528,10 @@ export class TelephonyService {
       'comments',
     ] as const) {
       if (k in patch) set[k] = typeof patch[k] === 'boolean' ? patch[k] : nz(patch[k] as string);
+    }
+    if ('site_id' in patch) set.site_id = await this.resolveHolderSite(t, patch.site_id);
+    if ('phone_number_id' in patch && nz(patch.phone_number_id ?? null)) {
+      await this.assertNumberInScope(t, nz(patch.phone_number_id ?? null)!);
     }
     const row = await this.s(t)
       .updateTable('discovery_users')
@@ -439,6 +553,7 @@ export class TelephonyService {
 
   async deleteUser(t: TenantContext, u: AuthedUser, id: string, canReview: boolean) {
     await this.base.assertEditable(t, canReview);
+    await this.assertHolderInScope(t, 'discovery_users', id, 'user not found');
     await this.releaseHolder(t, 'user', id);
     const res = await this.s(t).deleteFrom('discovery_users').where('id', '=', id).executeTakeFirst();
     if (!Number(res.numDeletedRows)) throw new NotFoundException('user not found');
@@ -454,9 +569,12 @@ export class TelephonyService {
 
   async addCap(t: TenantContext, u: AuthedUser, i: DiscoveryCapInput, canReview: boolean) {
     await this.base.assertEditable(t, canReview);
+    const siteId = await this.resolveHolderSite(t, i.site_id);
+    if (nz(i.phone_number_id)) await this.assertNumberInScope(t, nz(i.phone_number_id)!);
     const row = await this.s(t)
       .insertInto('discovery_caps')
       .values({
+        site_id: siteId,
         display_name: i.display_name,
         upn: nz(i.upn),
         device_model: nz(i.device_model),
@@ -486,6 +604,7 @@ export class TelephonyService {
     canReview: boolean,
   ) {
     await this.base.assertEditable(t, canReview);
+    await this.assertHolderInScope(t, 'discovery_caps', id, 'CAP not found');
     const set: Record<string, unknown> = { updated_at: new Date().toISOString() };
     for (const k of [
       'display_name',
@@ -497,6 +616,10 @@ export class TelephonyService {
       'comments',
     ] as const) {
       if (k in patch) set[k] = nz(patch[k] as string);
+    }
+    if ('site_id' in patch) set.site_id = await this.resolveHolderSite(t, patch.site_id);
+    if ('phone_number_id' in patch && nz(patch.phone_number_id ?? null)) {
+      await this.assertNumberInScope(t, nz(patch.phone_number_id ?? null)!);
     }
     const row = await this.s(t)
       .updateTable('discovery_caps')
@@ -518,6 +641,7 @@ export class TelephonyService {
 
   async deleteCap(t: TenantContext, u: AuthedUser, id: string, canReview: boolean) {
     await this.base.assertEditable(t, canReview);
+    await this.assertHolderInScope(t, 'discovery_caps', id, 'CAP not found');
     await this.releaseHolder(t, 'cap', id);
     const res = await this.s(t).deleteFrom('discovery_caps').where('id', '=', id).executeTakeFirst();
     if (!Number(res.numDeletedRows)) throw new NotFoundException('CAP not found');
@@ -538,9 +662,11 @@ export class TelephonyService {
     canReview: boolean,
   ) {
     await this.base.assertEditable(t, canReview);
+    const siteId = await this.resolveHolderSite(t, i.site_id);
     const row = await this.s(t)
       .insertInto('discovery_resource_accounts')
       .values({
+        site_id: siteId,
         name: i.name,
         kind: i.kind,
         directory_entry: nz(i.directory_entry),
@@ -571,6 +697,7 @@ export class TelephonyService {
     canReview: boolean,
   ) {
     await this.base.assertEditable(t, canReview);
+    await this.assertHolderInScope(t, 'discovery_resource_accounts', id, 'resource account not found');
     const set: Record<string, unknown> = { updated_at: new Date().toISOString() };
     for (const k of [
       'name',
@@ -587,6 +714,7 @@ export class TelephonyService {
     ] as const) {
       if (k in patch) set[k] = k === 'kind' || k === 'name' ? patch[k] : nz(patch[k] as string);
     }
+    if ('site_id' in patch) set.site_id = await this.resolveHolderSite(t, patch.site_id);
     const row = await this.s(t)
       .updateTable('discovery_resource_accounts')
       .set(set)
@@ -604,6 +732,7 @@ export class TelephonyService {
 
   async deleteResourceAccount(t: TenantContext, u: AuthedUser, id: string, canReview: boolean) {
     await this.base.assertEditable(t, canReview);
+    await this.assertHolderInScope(t, 'discovery_resource_accounts', id, 'resource account not found');
     await this.releaseHolder(t, 'resource_account', id);
     const res = await this.s(t)
       .deleteFrom('discovery_resource_accounts')
@@ -620,6 +749,8 @@ export class TelephonyService {
 
   async attachRaNumber(t: TenantContext, u: AuthedUser, raId: string, numberId: string, canReview: boolean) {
     await this.base.assertEditable(t, canReview);
+    await this.assertHolderInScope(t, 'discovery_resource_accounts', raId, 'resource account not found');
+    await this.assertNumberInScope(t, numberId);
     const ra = await this.s(t)
       .selectFrom('discovery_resource_accounts')
       .select('id')
@@ -638,6 +769,7 @@ export class TelephonyService {
 
   async detachRaNumber(t: TenantContext, u: AuthedUser, raId: string, numberId: string, canReview: boolean) {
     await this.base.assertEditable(t, canReview);
+    await this.assertHolderInScope(t, 'discovery_resource_accounts', raId, 'resource account not found');
     const res = await this.s(t)
       .updateTable('phone_numbers')
       .set({ holder_type: null, holder_id: null, status: 'available' })

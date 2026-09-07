@@ -35,6 +35,8 @@ export interface TenantMembershipsTable {
   user_id: string;
   tenant_id: string;
   added_by: string | null;
+  /** empty = whole customer; otherwise the discovery_sites.id values this member is limited to */
+  site_ids: ColumnType<string[], string[] | undefined, string[]>;
   created_at: Ts;
 }
 
@@ -99,6 +101,8 @@ export interface DiscoveryTable {
 
 export interface DiscoveryFlowsTable {
   id: Generated<string>;
+  /** FK -> discovery_sites.id (ON DELETE SET NULL). null = not tied to a site. */
+  site_id: string | null;
   kind: 'auto_attendant' | 'call_queue' | 'other';
   name: string;
   description: string | null;
@@ -160,6 +164,8 @@ export interface PhoneNumbersTable {
 
 export interface DiscoveryUsersTable {
   id: Generated<string>;
+  /** FK -> discovery_sites.id (ON DELETE SET NULL). null = not tied to a site. */
+  site_id: string | null;
   upn: string;
   display_name: string | null;
   calling_policy_id: string | null;
@@ -176,6 +182,8 @@ export interface DiscoveryUsersTable {
 
 export interface DiscoveryCapsTable {
   id: Generated<string>;
+  /** FK -> discovery_sites.id (ON DELETE SET NULL). null = not tied to a site. */
+  site_id: string | null;
   display_name: string;
   upn: string | null;
   device_model: string | null;
@@ -189,6 +197,8 @@ export interface DiscoveryCapsTable {
 
 export interface DiscoveryResourceAccountsTable {
   id: Generated<string>;
+  /** FK -> discovery_sites.id (ON DELETE SET NULL). null = not tied to a site. */
+  site_id: string | null;
   name: string;
   kind: 'auto_attendant' | 'call_queue';
   directory_entry: string | null;
@@ -206,6 +216,8 @@ export interface DiscoveryResourceAccountsTable {
 
 export interface DiscoveryNetworkTable {
   id: Generated<string>;
+  /** FK -> discovery_sites.id (ON DELETE SET NULL). null = not tied to a site. */
+  site_id: string | null;
   scope: 'internal' | 'external';
   subnet: string;
   mask: number | null;

@@ -16,6 +16,12 @@ export interface TenantContext {
   slug: string;
   name: string;
   schema: string;
+  /**
+   * null  -> whole-customer access (SUPER_ADMIN, ENGINEER, unscoped CUSTOMER).
+   * array -> a "site contact": limited to these discovery_sites.id values.
+   * Set by TenantGuard; enforced by the Data Collection services.
+   */
+  siteScope: string[] | null;
 }
 
 export interface AppRequest extends Request {

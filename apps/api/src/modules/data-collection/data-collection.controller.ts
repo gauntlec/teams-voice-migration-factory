@@ -67,7 +67,7 @@ export class DataCollectionController {
   /* -------------------------------- sites -------------------------------- */
 
   @Post('sites')
-  @RequirePermission('discovery:write')
+  @RequirePermission('discovery:sites:manage')
   addSite(
     @TenantCtx() t: TenantContext,
     @CurrentUser() u: AuthedUser,
@@ -77,7 +77,7 @@ export class DataCollectionController {
   }
 
   @Patch('sites/:id')
-  @RequirePermission('discovery:write')
+  @RequirePermission('discovery:sites:manage')
   updateSite(
     @TenantCtx() t: TenantContext,
     @CurrentUser() u: AuthedUser,
@@ -88,7 +88,7 @@ export class DataCollectionController {
   }
 
   @Delete('sites/:id')
-  @RequirePermission('discovery:write')
+  @RequirePermission('discovery:sites:manage')
   deleteSite(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Param('id') id: string) {
     return this.svc.deleteSite(t, u, id, this.review(u));
   }

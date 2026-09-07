@@ -35,6 +35,11 @@ export const createUserSchema = z.object({
   role: z.enum(ROLES),
   password: passwordSchema,
   tenantIds: z.array(z.string().uuid()).optional(),
+  /**
+   * For a CUSTOMER user with exactly one tenant: limit them to these sites
+   * (a "site contact"). Omit / empty = access to the whole customer.
+   */
+  siteIds: z.array(z.string().uuid()).max(500).optional(),
 });
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 
@@ -58,6 +63,13 @@ export type CreateTenantInput = z.infer<typeof createTenantSchema>;
 
 export const addMembershipSchema = z.object({
   userId: z.string().uuid(),
+  /** Limit a CUSTOMER member to these site ids; omit / empty = whole customer. */
+  siteIds: z.array(z.string().uuid()).max(500).optional(),
+});
+
+/** Change an existing member's site scope. Empty array = whole customer. */
+export const updateMembershipSchema = z.object({
+  siteIds: z.array(z.string().uuid()).max(500),
 });
 
 export const startConnectionSchema = z.object({
@@ -85,6 +97,16 @@ export type CreateDeploymentInput = z.infer<typeof createDeploymentSchema>;
 
 const str = (max = 400) => z.string().trim().max(max);
 const optStr = (max = 400) => str(max).optional().or(z.literal(''));
+
+/**
+ * Optional link to a `discovery_sites.id`. A cleared dropdown sends '' -> null.
+ * The API requires this to be set (and in scope) for site-scoped "site contact"
+ * users; for whole-customer users it may be left blank.
+ */
+const siteIdRef = z.preprocess(
+  (v) => (v === '' || v == null ? null : v),
+  z.string().uuid().nullable().optional(),
+);
 
 export const discoveryGeneralSchema = z
   .object({
@@ -142,6 +164,7 @@ export type DiscoveryNumberRangeInput = z.infer<typeof discoveryNumberRangeSchem
 
 export const discoveryNetworkSchema = z
   .object({
+    site_id: siteIdRef,
     scope: z.enum(NETWORK_SCOPES),
     subnet: str(64).min(1),
     mask: z.preprocess(
@@ -159,6 +182,7 @@ export type DiscoveryNetworkInput = z.infer<typeof discoveryNetworkSchema>;
 
 export const discoveryFlowSchema = z
   .object({
+    site_id: siteIdRef,
     kind: z.enum(FLOW_KINDS),
     name: str(200).min(1),
     description: optStr(8000),
@@ -192,6 +216,7 @@ const refId = blankToNull(z.string().uuid());
 
 export const discoveryUserSchema = z
   .object({
+    site_id: siteIdRef,
     upn: emailSchema,
     display_name: optStr(160),
     calling_policy_id: refId,
@@ -210,6 +235,7 @@ export type DiscoveryUserInput = z.infer<typeof discoveryUserSchema>;
 
 export const discoveryCapSchema = z
   .object({
+    site_id: siteIdRef,
     display_name: str(160).min(1),
     upn: optStr(320),
     device_model: optStr(120),
@@ -224,6 +250,7 @@ export type DiscoveryCapInput = z.infer<typeof discoveryCapSchema>;
 
 export const discoveryResourceAccountSchema = z
   .object({
+    site_id: siteIdRef,
     name: str(160).min(1),
     kind: z.enum(RESOURCE_ACCOUNT_KINDS),
     directory_entry: optStr(160),

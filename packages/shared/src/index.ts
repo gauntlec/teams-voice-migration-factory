@@ -5,6 +5,17 @@ export * from './dto';
 /** Header the web app sends to select the active tenant for `/t/:tenantId/*`. */
 export const TENANT_HEADER = 'x-tenant-id';
 
+/** One customer the signed-in user can act in. */
+export interface MeTenant {
+  id: string;
+  slug: string;
+  name: string;
+  /** true when this membership is limited to specific sites (a "site contact"). */
+  siteScoped: boolean;
+  /** the site ids this membership is limited to; empty when not site-scoped. */
+  siteIds: string[];
+}
+
 /** Shape of the authenticated principal returned by `GET /auth/me`. */
 export interface Me {
   id: string;
@@ -12,5 +23,5 @@ export interface Me {
   displayName: string;
   role: import('./rbac').Role;
   totpEnrolled: boolean;
-  tenants: { id: string; slug: string; name: string }[];
+  tenants: MeTenant[];
 }

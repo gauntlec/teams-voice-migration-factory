@@ -13,7 +13,7 @@ Derived from the current artifacts:
 |-------|-------------|
 | `tenants` | id (uuid), slug, name, schema_name, status (`active`/`archived`), created_by, created_at |
 | `users` | id, email (citext, unique), password_hash, display_name, role (`SUPER_ADMIN`/`ENGINEER`/`CUSTOMER`), status (`active`/`disabled`), totp_enrolled, failed_logins, locked_until, created_at |
-| `tenant_memberships` | user_id, tenant_id, added_by, created_at  (PK user_id+tenant_id) |
+| `tenant_memberships` | user_id, tenant_id, added_by, **`site_ids uuid[]`** (empty = whole customer; else the `discovery_sites.id` values a CUSTOMER "site contact" is limited to — no cross-schema FK, validated by the API), created_at  (PK user_id+tenant_id) |
 | `totp_secrets` | user_id (PK), secret_enc, confirmed_at |
 | `auth_sessions` | id, user_id, refresh_hash, family_id, user_agent, ip, expires_at, revoked_at, replaced_by |
 | `invitations` | id, email, role, tenant_id, token_hash, invited_by, expires_at, accepted_at |
@@ -30,11 +30,11 @@ Aligned to `Overland Park - ATTC MS Teams Telephony Discovery Template`.
 | `discovery_calling_policies` | customer-defined outbound dialling restrictions: name, description, allow_local/national/international/service/premium. Seeded with Unrestricted / International / National / Local |
 | `discovery_number_ranges` | **`sitecode`** FK -> `discovery_sites.sitecode` (ON UPDATE CASCADE / ON DELETE SET NULL), range_start, range_end, kind (`new`/`port`/`retain`), carrier, loa_sent, loa_completed, comments. Adding a range generates the `phone_numbers` inventory |
 | `phone_numbers` | one row per E.164 (`e164` unique). status (`available`/`reserved`/`assigned`), holder_type (`user`/`cap`/`resource_account`/`analogue`) + holder_id — **at most one holder**; unique per holder except resource accounts (which may hold several). Assignment is atomic |
-| `discovery_users` | upn (unique), display_name, calling_policy_id, caller_id (`user`/`anonymous`/`main_number`), voicemail_enabled + language, requires_handset + model, access_port_id, comments. Number tracked on `phone_numbers` |
-| `discovery_caps` | display_name, upn, device_model, calling_policy_id, caller_id, access_port_id, comments |
-| `discovery_resource_accounts` | name, kind (`auto_attendant`/`call_queue`), directory_entry, business_hours, who_answers, ooh_action, exception_conditions/action, holiday, advanced_features, comments. Holds 0..n numbers |
-| `discovery_flows` | free-form notes: `kind`, `name`, `description` + optional `diagram_attachment_id` |
-| `discovery_network` | e911 internal/external subnets, LAN/WLAN data |
+| `discovery_users` | **`site_id`** FK -> `discovery_sites.id` (ON DELETE SET NULL), upn (unique), display_name, calling_policy_id, caller_id (`user`/`anonymous`/`main_number`), voicemail_enabled + language, requires_handset + model, access_port_id, comments. Number tracked on `phone_numbers` |
+| `discovery_caps` | **`site_id`**, display_name, upn, device_model, calling_policy_id, caller_id, access_port_id, comments |
+| `discovery_resource_accounts` | **`site_id`**, name, kind (`auto_attendant`/`call_queue`), directory_entry, business_hours, who_answers, ooh_action, exception_conditions/action, holiday, advanced_features, comments. Holds 0..n numbers |
+| `discovery_flows` | free-form notes: **`site_id`**, `kind`, `name`, `description` + optional `diagram_attachment_id` |
+| `discovery_network` | **`site_id`**, e911 internal/external subnets, LAN/WLAN data |
 | `attachments` | id, filename, content_type, bytes (bytea) or object key, uploaded_by |
 
 Deferred from the template (later pass): Analogue/SIP/paging devices, the
