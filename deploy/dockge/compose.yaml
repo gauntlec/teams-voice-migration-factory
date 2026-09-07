@@ -39,6 +39,7 @@ services:
     build:
       context: "https://github.com/gauntlec/teams-voice-migration-factory.git#main"
       dockerfile: apps/api/Dockerfile
+    pull_policy: build   # `docker compose up` (Dockge "Update") rebuilds from the pinned git ref
     restart: unless-stopped
     env_file: .env
     environment:
@@ -57,6 +58,7 @@ services:
     build:
       context: "https://github.com/gauntlec/teams-voice-migration-factory.git#main"
       dockerfile: apps/worker/Dockerfile
+    pull_policy: build   # `docker compose up` (Dockge "Update") rebuilds from the pinned git ref
     restart: unless-stopped
     env_file: .env
     environment:
@@ -73,6 +75,7 @@ services:
     build:
       context: "https://github.com/gauntlec/teams-voice-migration-factory.git#main"
       dockerfile: apps/web/Dockerfile
+    pull_policy: build   # `docker compose up` (Dockge "Update") rebuilds from the pinned git ref
     restart: unless-stopped
     ports:
       - "5173:80"
