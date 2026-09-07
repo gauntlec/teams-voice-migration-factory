@@ -1,7 +1,8 @@
-import type { ReactNode } from 'react';
-import { NavLink } from 'react-router-dom';
+import { useEffect, type ReactNode } from 'react';
+import { NavLink, useNavigate } from 'react-router-dom';
 import {
   Avatar,
+  Button,
   Dropdown,
   Menu,
   MenuItem,
@@ -95,10 +96,22 @@ const ADMIN: NavDef[] = [
 
 export function AppShell({ children }: { children: ReactNode }) {
   const s = useStyles();
+  const navigate = useNavigate();
   const { me, can, activeTenantId, setActiveTenant, logout } = useAuth();
+
+  const tenants = me?.tenants ?? [];
+
+  // Keep a valid customer selected whenever the user has any (covers first login,
+  // a customer just created this session, and a stale/removed selection).
+  useEffect(() => {
+    if (tenants.length === 0) return;
+    if (!activeTenantId || !tenants.some((t) => t.id === activeTenantId)) {
+      setActiveTenant(tenants[0].id);
+    }
+  }, [tenants, activeTenantId, setActiveTenant]);
+
   if (!me) return null;
 
-  const tenants = me.tenants;
   const activeTenant = tenants.find((t) => t.id === activeTenantId) ?? tenants[0];
   const adminItems = ADMIN.filter((i) => !i.permission || can(i.permission));
 
@@ -124,14 +137,15 @@ export function AppShell({ children }: { children: ReactNode }) {
           Teams Voice Migration Factory
         </Text>
         <div className={s.headerRight}>
-          {tenants.length > 0 && (
+          {tenants.length > 0 ? (
             <Dropdown
               appearance="filled-lighter"
               size="small"
+              placeholder="Select a customer"
               selectedOptions={activeTenant ? [activeTenant.id] : []}
-              value={activeTenant?.name ?? 'No customer'}
+              value={activeTenant?.name ?? ''}
               onOptionSelect={(_, d) => d.optionValue && setActiveTenant(d.optionValue)}
-              style={{ minWidth: '200px' }}
+              style={{ minWidth: '220px' }}
             >
               {tenants.map((t) => (
                 <Option key={t.id} value={t.id} text={t.name}>
@@ -139,6 +153,19 @@ export function AppShell({ children }: { children: ReactNode }) {
                 </Option>
               ))}
             </Dropdown>
+          ) : can('tenant:create') ? (
+            <Button
+              size="small"
+              appearance="primary"
+              icon={<BuildingMultiple24Regular />}
+              onClick={() => navigate('/admin/tenants')}
+            >
+              Add a customer
+            </Button>
+          ) : (
+            <Text size={200} style={{ color: tokens.colorNeutralForegroundOnBrand, opacity: 0.8 }}>
+              No customers assigned
+            </Text>
           )}
           <Menu>
             <MenuTrigger disableButtonEnhancement>

@@ -15,6 +15,7 @@ import {
   Text,
 } from '@fluentui/react-components';
 import { api } from '../../api';
+import { useAuth } from '../../auth';
 import { Page } from '../../components/Page';
 import { LoadError } from '../DataCollection';
 
@@ -29,6 +30,7 @@ interface Tenant {
 
 export function AdminTenants() {
   const qc = useQueryClient();
+  const { refreshMe, setActiveTenant } = useAuth();
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [domain, setDomain] = useState('');
@@ -37,16 +39,19 @@ export function AdminTenants() {
   const list = useQuery({ queryKey: ['tenants'], queryFn: () => api<Tenant[]>('/tenants') });
   const create = useMutation({
     mutationFn: () =>
-      api('/tenants', {
+      api<Tenant>('/tenants', {
         method: 'POST',
         body: JSON.stringify({ name, slug, primaryDomain: domain || undefined }),
       }),
-    onSuccess: () => {
+    onSuccess: async (created) => {
       setName('');
       setSlug('');
       setDomain('');
       setErr(null);
       qc.invalidateQueries({ queryKey: ['tenants'] });
+      // Pull the new customer into the header switcher and select it.
+      await refreshMe();
+      if (created?.id) setActiveTenant(created.id);
     },
     onError: (e) => setErr(e instanceof Error ? e.message : 'Failed'),
   });
