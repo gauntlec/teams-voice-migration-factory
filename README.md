@@ -37,7 +37,12 @@ Stubbed, with the data model and interfaces in place:
 - `apps/worker` ships `SimulatedTeamsExecutor`; `PwshTeamsExecutor` (real
   `MicrosoftTeams` module + device-code sign-in) is defined and ready to build.
 
-## Quick start (Docker)
+## Deploying to Dockge
+
+See [`deploy/dockge/`](deploy/dockge/) — a `compose.yaml` that builds the images
+directly from this repo's `main` branch, plus step-by-step instructions.
+
+## Quick start (Docker, local)
 
 ```bash
 cp .env.example .env
