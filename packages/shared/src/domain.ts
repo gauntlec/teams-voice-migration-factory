@@ -1,0 +1,80 @@
+/**
+ * Domain value lists lifted from the current build workbook
+ * (ATTC MS Teams Build 5.3.xlsx) and the migration PowerShell script.
+ * Shared by the API, the worker and the web forms so options never drift.
+ */
+
+export const MODULES = [
+  'data-collection',
+  'build',
+  'deployment',
+  'handover',
+] as const;
+export type ModuleId = (typeof MODULES)[number];
+
+/** Set-CsPhoneNumberAssignment -PhoneNumberType */
+export const NUMBER_TYPES = [
+  'DirectRouting',
+  'CallingPlan',
+  'OperatorConnect',
+  'SharedCalling',
+] as const;
+export type NumberType = (typeof NUMBER_TYPES)[number];
+
+/** Grant-Cs*Policy families the build sheet assigns per user / CAP. */
+export const POLICY_KINDS = [
+  { key: 'voice_routing_policy', label: 'Voice Routing Policy', cmdlet: 'Grant-CsOnlineVoiceRoutingPolicy' },
+  { key: 'dial_out_policy', label: 'Dial Out Policy', cmdlet: 'Grant-CsDialoutPolicy' },
+  { key: 'shared_calling_policy', label: 'Shared Calling Policy', cmdlet: 'Grant-CsTeamsSharedCallingRoutingPolicy' },
+  { key: 'dial_plan', label: 'Tenant Dial Plan', cmdlet: 'Grant-CsTenantDialPlan' },
+  { key: 'calling_policy', label: 'Teams Calling Policy', cmdlet: 'Grant-CsTeamsCallingPolicy' },
+  { key: 'call_hold_policy', label: 'Call Hold Policy', cmdlet: 'Grant-CsTeamsCallHoldPolicy' },
+  { key: 'call_park_policy', label: 'Call Park Policy', cmdlet: 'Grant-CsTeamsCallParkPolicy' },
+  { key: 'caller_id_policy', label: 'Caller ID Policy', cmdlet: 'Grant-CsCallingLineIdentity' },
+  { key: 'voice_app_policy', label: 'Voice Application Policy', cmdlet: 'Grant-CsTeamsVoiceApplicationsPolicy' },
+  { key: 'voicemail_policy', label: 'Voicemail Policy', cmdlet: 'Grant-CsOnlineVoicemailPolicy' },
+  { key: 'emergency_calling_policy', label: 'Emergency Calling Policy', cmdlet: 'Grant-CsTeamsEmergencyCallingPolicy' },
+  { key: 'emergency_call_routing_policy', label: 'Emergency Call Routing Policy', cmdlet: 'Grant-CsTeamsEmergencyCallRoutingPolicy' },
+  { key: 'ip_phone_policy', label: 'IP Phone Policy', cmdlet: 'Grant-CsTeamsIPPhonePolicy' },
+] as const;
+export type PolicyKey = (typeof POLICY_KINDS)[number]['key'];
+
+export const CALL_FORWARDING_TYPES = ['Off', 'Immediate', 'Simultaneous'] as const;
+export const CALL_FORWARD_TARGET_TYPES = ['Voicemail', 'SingleTarget', 'Delegates', 'MyDelegates'] as const;
+export const VOICEMAIL_ANSWERING_RULES = ['PromptOnly', 'PromptOnlyWithTransfer', 'RegularVoicemail', 'VoicemailWithTransferOption'] as const;
+
+export const CALL_QUEUE_ROUTING_METHODS = [
+  'Attendant',
+  'Serial',
+  'RoundRobin',
+  'LongestIdle',
+] as const;
+
+export const GREETING_TYPES = ['None', 'Text', 'AudioFile'] as const;
+
+/** Sections of the Service Hand-Over Pack (from V1.18.docx). */
+export const HANDOVER_SECTIONS = [
+  { key: 'site_information', title: 'Site Information' },
+  { key: 'service_support_model', title: 'Service Support Model' },
+  { key: 'phone_numbers', title: 'Phone Numbers' },
+  { key: 'teams_users', title: 'Teams Users' },
+  { key: 'common_area_phones', title: 'Common Area Phones (CAPS)' },
+  { key: 'analogue_phones', title: 'Analogue (SIP) Phones' },
+  { key: 'paging', title: "The Site 'Paging' Information" },
+  { key: 'auto_attendants', title: 'Auto Attendants' },
+  { key: 'call_queues', title: 'Call Queues' },
+  { key: 'resource_accounts', title: 'Resource Accounts' },
+  { key: 'voicemail_groups', title: 'Voicemail Groups' },
+  { key: 'teams_configuration', title: 'MS Teams Configuration Information' },
+  { key: 'network_data', title: 'Network Data' },
+  { key: 'outstanding_actions', title: 'Outstanding Actions' },
+] as const;
+
+export const DEPLOYMENT_MODES = ['dry_run', 'execute'] as const;
+export type DeploymentMode = (typeof DEPLOYMENT_MODES)[number];
+
+export const DEPLOYMENT_CHANGE_RESULTS = ['applied', 'skipped', 'failed', 'whatif'] as const;
+export type DeploymentChangeResult = (typeof DEPLOYMENT_CHANGE_RESULTS)[number];
+
+export const CONNECTION_STATUSES = ['pending', 'active', 'expired', 'closed'] as const;
+export type ConnectionStatus = (typeof CONNECTION_STATUSES)[number];

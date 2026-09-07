@@ -1,0 +1,35 @@
+{
+  "name": "@tvmf/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "migrations"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "migrate": "tsx src/migrate.ts",
+    "seed": "tsx src/seed.ts"
+  },
+  "dependencies": {
+    "@tvmf/shared": "0.1.0",
+    "argon2": "0.41.1",
+    "dotenv": "16.4.5",
+    "kysely": "0.27.4",
+    "pg": "8.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.15",
+    "@types/pg": "8.11.6",
+    "tsx": "4.17.0",
+    "typescript": "5.5.4"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "name": "teams-voice-migration-factory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Multi-tenant web platform that replaces the manual Microsoft Teams voice migration workflow (discovery, design/build, deployment, service handover).",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20 <23"
+  },
+  "scripts": {
+    "build:packages": "npm run build --workspace @tvmf/shared && npm run build --workspace @tvmf/db",
+    "build": "npm run build:packages && npm run build --workspace @tvmf/api && npm run build --workspace @tvmf/worker && npm run build --workspace @tvmf/web",
+    "dev:api": "npm run dev --workspace @tvmf/api",
+    "dev:web": "npm run dev --workspace @tvmf/web",
+    "dev:worker": "npm run dev --workspace @tvmf/worker",
+    "migrate": "npm run migrate --workspace @tvmf/db",
+    "seed": "npm run seed --workspace @tvmf/db",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "typescript": "5.5.4"
+  },
+  "allowScripts": {
+    "esbuild@0.23.1": true,
+    "esbuild@0.21.5": true
+  }
+}
