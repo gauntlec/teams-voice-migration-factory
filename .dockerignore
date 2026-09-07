@@ -1,10 +1,19 @@
+# Dependencies (reinstalled in the image)
 **/node_modules
-**/dist
-**/build
+
+# Build output ONLY — anchored so it never swallows source folders such as
+# apps/api/src/modules/build/ (a bare `**/build` did exactly that).
+/dist
+/build
+apps/*/dist
+apps/*/build
+packages/*/dist
 **/coverage
 **/.turbo
 **/.vite
 **/*.tsbuildinfo
+
+# Local-only
 .git
 .env
 *.log
