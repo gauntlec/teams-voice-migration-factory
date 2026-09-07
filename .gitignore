@@ -1,15 +1,25 @@
+# Dependencies
 node_modules/
-dist/
-build/
+
+# Build output (anchored — do NOT use bare `build/`, it would swallow
+# apps/api/src/modules/build/ and similar source folders)
+/dist/
+/build/
+apps/*/dist/
+apps/*/build/
+packages/*/dist/
 coverage/
+
+# Logs & caches
 *.log
-.env
-.env.local
-.env.*.local
-.DS_Store
 .turbo/
 .vite/
 *.tsbuildinfo
-apps/web/dist/
-apps/api/dist/
-apps/worker/dist/
+
+# Local env / secrets
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
