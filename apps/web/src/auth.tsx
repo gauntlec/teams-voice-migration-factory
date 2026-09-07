@@ -19,7 +19,8 @@ interface AuthContextValue {
   activeTenantId: string | null;
   setActiveTenant: (id: string | null) => void;
   login: (email: string, password: string, totp?: string) => Promise<'ok' | 'enrol' | 'mfa'>;
-  completeEnrol: () => Promise<void>;
+  /** Verify the first TOTP code, adopt the returned session, and finish sign-in. */
+  confirmEnrol: (code: string) => Promise<void>;
   logout: () => Promise<void>;
   can: (p: Permission) => boolean;
   refreshMe: () => Promise<void>;
@@ -82,9 +83,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [loadMe],
   );
 
-  const completeEnrol = useCallback(async () => {
-    await loadMe();
-  }, [loadMe]);
+  const confirmEnrol = useCallback(
+    async (code: string) => {
+      // Adopt the full-session access token the server hands back on a
+      // successful enrolment BEFORE calling /auth/me, otherwise the request
+      // still carries the limited "enrol" token and 403s.
+      const res = await api<{ accessToken: string; expiresIn: number }>('/auth/totp/confirm', {
+        method: 'POST',
+        body: JSON.stringify({ totp: code }),
+      });
+      apiAuth.setToken(res.accessToken);
+      await loadMe();
+    },
+    [loadMe],
+  );
 
   const logout = useCallback(async () => {
     try {
@@ -104,12 +116,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       activeTenantId,
       setActiveTenant,
       login,
-      completeEnrol,
+      confirmEnrol,
       logout,
       can: (p) => (me ? can(me.role, p) : false),
       refreshMe: loadMe,
     }),
-    [status, me, activeTenantId, setActiveTenant, login, completeEnrol, logout, loadMe],
+    [status, me, activeTenantId, setActiveTenant, login, confirmEnrol, logout, loadMe],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

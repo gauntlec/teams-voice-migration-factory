@@ -45,6 +45,9 @@ export function Login() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 401 && /MFA code required/i.test(err.message)) {
         setNeedMfa(true);
+      } else if (err instanceof ApiError && err.status === 401 && /MFA/i.test(err.message)) {
+        setNeedMfa(true);
+        setError('That code was incorrect or expired. Check your authenticator and try the current code.');
       } else {
         setError(err instanceof Error ? err.message : 'Sign in failed');
       }

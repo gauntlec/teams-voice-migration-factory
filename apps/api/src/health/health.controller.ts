@@ -16,6 +16,12 @@ export class HealthController {
     } catch {
       db = 'down';
     }
-    return { status: db === 'ok' ? 'ok' : 'degraded', db, ts: new Date().toISOString() };
+    return {
+      status: db === 'ok' ? 'ok' : 'degraded',
+      db,
+      // Compare `ts` / `epoch` to your own clock — TOTP needs them within ~60s.
+      ts: new Date().toISOString(),
+      epoch: Math.floor(Date.now() / 1000),
+    };
   }
 }

@@ -29,7 +29,7 @@ const useStyles = makeStyles({
 
 export function EnrolTotp() {
   const s = useStyles();
-  const { completeEnrol, logout } = useAuth();
+  const { confirmEnrol, logout } = useAuth();
   const [data, setData] = useState<{ secret: string; otpauthUrl: string } | null>(null);
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
@@ -46,8 +46,7 @@ export function EnrolTotp() {
     setBusy(true);
     setError(null);
     try {
-      await api('/auth/totp/confirm', { method: 'POST', body: JSON.stringify({ totp: code }) });
-      await completeEnrol();
+      await confirmEnrol(code);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Incorrect code');
     } finally {

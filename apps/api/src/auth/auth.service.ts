@@ -101,7 +101,13 @@ export class AuthService {
       .where('user_id', '=', user.id)
       .executeTakeFirst();
     if (!secretRow || !this.totp.verify(totpCode, decryptSecret(secretRow.secret_enc))) {
-      return fail('bad-totp');
+      // Password already verified, so a distinct message here leaks nothing and
+      // lets the UI keep showing the code field.
+      await this.audit.platform('auth.login.failed', {
+        actor: { id: user.id, email, ip: meta.ip },
+        detail: { reason: 'bad-totp' },
+      });
+      throw new UnauthorizedException('MFA code incorrect or expired');
     }
 
     return this.issueLogin(user.id, user.role, user.email, meta);
