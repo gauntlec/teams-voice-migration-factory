@@ -1,11 +1,12 @@
 # Teams Voice Migration Factory — Dockge stack
 # ---------------------------------------------------------------------------
-# Paste this into Dockge's compose editor, paste deploy/dockge/.env.example
-# (with real values) into the .env editor, then Start.
+# Images are built by GitHub Actions (.github/workflows/build-images.yml) and
+# pushed to GHCR on every push to main. Dockge just pulls them, so a redeploy
+# is ~30 s:  push to main  ->  wait for the Action  ->  Dockge "Update".
 #
-# Images are built by BuildKit directly from the public GitHub repo, so nothing
-# but this compose.yaml and .env needs to live on the Dockge host.
-# First start builds 3 images (~3-6 min); watch the build logs in Dockge.
+# One-time: make ghcr.io/gauntlec/tvmf-{api,worker,web} packages Public
+# (GitHub -> profile -> Packages -> each package -> Package settings ->
+#  Change visibility). Until then Dockge can't pull them anonymously.
 # ---------------------------------------------------------------------------
 services:
   postgres:
@@ -36,15 +37,13 @@ services:
       retries: 15
 
   api:
-    build:
-      context: "https://github.com/gauntlec/teams-voice-migration-factory.git#main"
-      dockerfile: apps/api/Dockerfile
-    pull_policy: build   # `docker compose up` (Dockge "Update") rebuilds from the pinned git ref
+    image: ghcr.io/gauntlec/tvmf-api:latest
+    pull_policy: always
     restart: unless-stopped
     env_file: .env
     environment:
       NODE_ENV: production
-    # Apply platform migrations + upsert the bootstrap admin, then start.
+    # Apply platform + tenant migrations, upsert the bootstrap admin, then start.
     command: ["sh", "-c", "node packages/db/dist/migrate.js && node packages/db/dist/seed.js && node apps/api/dist/main.js"]
     ports:
       - "4000:4000"
@@ -55,10 +54,8 @@ services:
         condition: service_healthy
 
   worker:
-    build:
-      context: "https://github.com/gauntlec/teams-voice-migration-factory.git#main"
-      dockerfile: apps/worker/Dockerfile
-    pull_policy: build   # `docker compose up` (Dockge "Update") rebuilds from the pinned git ref
+    image: ghcr.io/gauntlec/tvmf-worker:latest
+    pull_policy: always
     restart: unless-stopped
     env_file: .env
     environment:
@@ -72,10 +69,8 @@ services:
         condition: service_started
 
   web:
-    build:
-      context: "https://github.com/gauntlec/teams-voice-migration-factory.git#main"
-      dockerfile: apps/web/Dockerfile
-    pull_policy: build   # `docker compose up` (Dockge "Update") rebuilds from the pinned git ref
+    image: ghcr.io/gauntlec/tvmf-web:latest
+    pull_policy: always
     restart: unless-stopped
     ports:
       - "5173:80"
