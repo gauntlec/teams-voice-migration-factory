@@ -12,6 +12,43 @@ export const MODULES = [
 ] as const;
 export type ModuleId = (typeof MODULES)[number];
 
+/* --------------------------- Data Collection --------------------------- */
+
+export const DISCOVERY_STATUSES = ['draft', 'submitted', 'accepted'] as const;
+export type DiscoveryStatus = (typeof DISCOVERY_STATUSES)[number];
+
+/** How the customer will get PSTN connectivity - drives the build later. */
+export const LICENSING_MODELS = [
+  'CallingPlan',
+  'OperatorConnect',
+  'DirectRouting',
+  'Mixed',
+] as const;
+export type LicensingModel = (typeof LICENSING_MODELS)[number];
+
+/** discovery_number_ranges.kind */
+export const NUMBER_RANGE_KINDS = ['new', 'port', 'retain'] as const;
+export type NumberRangeKind = (typeof NUMBER_RANGE_KINDS)[number];
+
+/** discovery_network.scope / network_type */
+export const NETWORK_SCOPES = ['internal', 'external'] as const;
+export const NETWORK_TYPES = ['LAN', 'WLAN'] as const;
+
+/** discovery_flows.kind - narrative descriptions of existing call routing */
+export const FLOW_KINDS = ['auto_attendant', 'call_queue', 'other'] as const;
+export type FlowKind = (typeof FLOW_KINDS)[number];
+
+/** Shape stored in discovery.general (jsonb). */
+export interface DiscoveryGeneral {
+  migrationId?: string;
+  region?: string;
+  author?: string;
+  licensingModel?: LicensingModel | '';
+  targetGoLive?: string;
+  primaryContactEmail?: string;
+  notes?: string;
+}
+
 /** Set-CsPhoneNumberAssignment -PhoneNumberType */
 export const NUMBER_TYPES = [
   'DirectRouting',

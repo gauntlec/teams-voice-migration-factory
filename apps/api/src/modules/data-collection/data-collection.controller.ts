@@ -1,98 +1,184 @@
-import { Body, Controller, Get, Post, Put, UseGuards } from '@nestjs/common';
-import { tenantDb } from '@tvmf/db';
+import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import {
+  can,
+  discoveryFlowSchema,
+  discoveryGeneralSchema,
+  discoveryNetworkSchema,
+  discoveryNumberRangeSchema,
+  discoverySiteSchema,
+  type DiscoveryFlowInput,
+  type DiscoveryGeneralInput,
+  type DiscoveryNetworkInput,
+  type DiscoveryNumberRangeInput,
+  type DiscoverySiteInput,
+} from '@tvmf/shared';
 import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
-import { AuditService } from '../../common/audit.service';
 import type { AuthedUser, TenantContext } from '../../common/request';
-import { InjectDb, type Db } from '../../db/db.module';
+import { ZodBody } from '../../common/zod.pipe';
 import { RequirePermission } from '../../rbac/require-permission.decorator';
 import { TenantGuard } from '../../rbac/tenant.guard';
+import { DataCollectionService } from './data-collection.service';
 
 /**
- * Data Collection view — replaces the customer-filled discovery workbook.
- * Scaffold: the discovery header record + sites. The full form set is a
- * follow-up (see docs/DATA-MODEL.md "Data Collection").
+ * Data Collection view - the customer's discovery of their current voice
+ * estate. Replaces the discovery workbook. See docs/DATA-MODEL.md.
  */
 @Controller('t/:tenantId/discovery')
 @UseGuards(TenantGuard)
 export class DataCollectionController {
-  constructor(
-    @InjectDb() private readonly db: Db,
-    private readonly audit: AuditService,
-  ) {}
+  constructor(private readonly svc: DataCollectionService) {}
+
+  private review(u: AuthedUser) {
+    return can(u.role, 'discovery:review');
+  }
 
   @Get()
   @RequirePermission('discovery:read')
-  async get(@TenantCtx() t: TenantContext) {
-    const scoped = tenantDb(this.db, t.schema);
-    const [discovery, sites, ranges, network] = await Promise.all([
-      scoped.selectFrom('discovery').selectAll().executeTakeFirst(),
-      scoped.selectFrom('discovery_sites').selectAll().orderBy('name').execute(),
-      scoped.selectFrom('discovery_number_ranges').selectAll().orderBy('range_start').execute(),
-      scoped.selectFrom('discovery_network').selectAll().execute(),
-    ]);
-    return { discovery, sites, ranges, network };
+  get(@TenantCtx() t: TenantContext) {
+    return this.svc.get(t);
   }
 
-  @Put('general')
+  @Patch('general')
   @RequirePermission('discovery:write')
-  async putGeneral(
+  updateGeneral(
     @TenantCtx() t: TenantContext,
-    @CurrentUser() user: AuthedUser,
-    @Body() body: Record<string, unknown>,
+    @CurrentUser() u: AuthedUser,
+    @Body(new ZodBody(discoveryGeneralSchema)) body: DiscoveryGeneralInput,
   ) {
-    const row = await tenantDb(this.db, t.schema)
-      .updateTable('discovery')
-      .set({ general: body ?? {}, updated_at: new Date().toISOString() })
-      .returning(['id', 'general', 'status'])
-      .executeTakeFirst();
-    await this.audit.tenant(t.schema, 'discovery.general_updated', {
-      actor: { id: user.id, email: user.email },
-    });
-    return row;
-  }
-
-  @Post('sites')
-  @RequirePermission('discovery:write')
-  async addSite(
-    @TenantCtx() t: TenantContext,
-    @CurrentUser() user: AuthedUser,
-    @Body() body: { site_code?: string; name?: string; address?: string; country?: string; region?: string },
-  ) {
-    const site = await tenantDb(this.db, t.schema)
-      .insertInto('discovery_sites')
-      .values({
-        site_code: body.site_code ?? null,
-        name: body.name ?? null,
-        address: body.address ?? null,
-        country: body.country ?? null,
-        region: body.region ?? null,
-        paging: {},
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    await this.audit.tenant(t.schema, 'discovery.site_added', {
-      actor: { id: user.id, email: user.email },
-      targetType: 'discovery_site',
-      targetId: site.id,
-    });
-    return site;
+    return this.svc.updateGeneral(t, u, body, this.review(u));
   }
 
   @Post('submit')
   @RequirePermission('discovery:write')
-  async submit(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser) {
-    const row = await tenantDb(this.db, t.schema)
-      .updateTable('discovery')
-      .set({ status: 'submitted', submitted_by: user.id, submitted_at: new Date().toISOString() })
-      .returning(['id', 'status', 'submitted_at'])
-      .executeTakeFirst();
-    await this.audit.tenant(t.schema, 'discovery.submitted', {
-      actor: { id: user.id, email: user.email },
-    });
-    await this.audit.platform('discovery.submitted', {
-      actor: { id: user.id, email: user.email },
-      tenantId: t.id,
-    });
-    return row;
+  submit(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser) {
+    return this.svc.submit(t, u);
+  }
+
+  @Post('accept')
+  @RequirePermission('discovery:review')
+  accept(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser) {
+    return this.svc.accept(t, u);
+  }
+
+  @Post('reopen')
+  @RequirePermission('discovery:review')
+  reopen(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser) {
+    return this.svc.reopen(t, u);
+  }
+
+  /* -------------------------------- sites -------------------------------- */
+
+  @Post('sites')
+  @RequirePermission('discovery:write')
+  addSite(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() u: AuthedUser,
+    @Body(new ZodBody(discoverySiteSchema)) body: DiscoverySiteInput,
+  ) {
+    return this.svc.addSite(t, u, body, this.review(u));
+  }
+
+  @Patch('sites/:id')
+  @RequirePermission('discovery:write')
+  updateSite(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() u: AuthedUser,
+    @Param('id') id: string,
+    @Body(new ZodBody(discoverySiteSchema.partial())) body: Partial<DiscoverySiteInput>,
+  ) {
+    return this.svc.updateSite(t, u, id, body, this.review(u));
+  }
+
+  @Delete('sites/:id')
+  @RequirePermission('discovery:write')
+  deleteSite(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Param('id') id: string) {
+    return this.svc.deleteSite(t, u, id, this.review(u));
+  }
+
+  /* ---------------------------- number ranges --------------------------- */
+
+  @Post('number-ranges')
+  @RequirePermission('discovery:write')
+  addRange(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() u: AuthedUser,
+    @Body(new ZodBody(discoveryNumberRangeSchema)) body: DiscoveryNumberRangeInput,
+  ) {
+    return this.svc.addRange(t, u, body, this.review(u));
+  }
+
+  @Patch('number-ranges/:id')
+  @RequirePermission('discovery:write')
+  updateRange(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() u: AuthedUser,
+    @Param('id') id: string,
+    @Body(new ZodBody(discoveryNumberRangeSchema.partial())) body: Partial<DiscoveryNumberRangeInput>,
+  ) {
+    return this.svc.updateRange(t, u, id, body, this.review(u));
+  }
+
+  @Delete('number-ranges/:id')
+  @RequirePermission('discovery:write')
+  deleteRange(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Param('id') id: string) {
+    return this.svc.deleteRange(t, u, id, this.review(u));
+  }
+
+  /* ------------------------------- network ----------------------------- */
+
+  @Post('network')
+  @RequirePermission('discovery:write')
+  addNetwork(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() u: AuthedUser,
+    @Body(new ZodBody(discoveryNetworkSchema)) body: DiscoveryNetworkInput,
+  ) {
+    return this.svc.addNetwork(t, u, body, this.review(u));
+  }
+
+  @Patch('network/:id')
+  @RequirePermission('discovery:write')
+  updateNetwork(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() u: AuthedUser,
+    @Param('id') id: string,
+    @Body(new ZodBody(discoveryNetworkSchema.partial())) body: Partial<DiscoveryNetworkInput>,
+  ) {
+    return this.svc.updateNetwork(t, u, id, body, this.review(u));
+  }
+
+  @Delete('network/:id')
+  @RequirePermission('discovery:write')
+  deleteNetwork(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Param('id') id: string) {
+    return this.svc.deleteNetwork(t, u, id, this.review(u));
+  }
+
+  /* -------------------------------- flows ------------------------------- */
+
+  @Post('flows')
+  @RequirePermission('discovery:write')
+  addFlow(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() u: AuthedUser,
+    @Body(new ZodBody(discoveryFlowSchema)) body: DiscoveryFlowInput,
+  ) {
+    return this.svc.addFlow(t, u, body, this.review(u));
+  }
+
+  @Patch('flows/:id')
+  @RequirePermission('discovery:write')
+  updateFlow(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() u: AuthedUser,
+    @Param('id') id: string,
+    @Body(new ZodBody(discoveryFlowSchema.partial())) body: Partial<DiscoveryFlowInput>,
+  ) {
+    return this.svc.updateFlow(t, u, id, body, this.review(u));
+  }
+
+  @Delete('flows/:id')
+  @RequirePermission('discovery:write')
+  deleteFlow(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Param('id') id: string) {
+    return this.svc.deleteFlow(t, u, id, this.review(u));
   }
 }

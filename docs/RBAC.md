@@ -35,7 +35,7 @@ Belongs to exactly **one** tenant.
 tenant:create  tenant:read  tenant:update  tenant:archive  tenant:delete
 tenant:member:manage
 user:create  user:read  user:update  user:disable  user:mfa:reset
-discovery:read  discovery:write
+discovery:read  discovery:write  discovery:review
 build:read     build:write
 deployment:read  deployment:connect  deployment:dryrun  deployment:execute
 handover:read  handover:generate

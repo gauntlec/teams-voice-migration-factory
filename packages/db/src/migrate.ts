@@ -83,6 +83,21 @@ export async function provisionTenant(pool: Pool, schema: string): Promise<strin
   );
 }
 
+/**
+ * Bring every existing tenant schema up to the latest tenant migration.
+ * Runs on API start so schema changes roll out to customers created earlier.
+ */
+export async function migrateAllTenants(pool: Pool): Promise<Record<string, string[]>> {
+  const { rows } = await pool.query<{ schema_name: string }>(
+    `SELECT schema_name FROM platform.tenants ORDER BY created_at`,
+  );
+  const result: Record<string, string[]> = {};
+  for (const { schema_name } of rows) {
+    result[schema_name] = await provisionTenant(pool, schema_name);
+  }
+  return result;
+}
+
 async function main() {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   try {
@@ -91,6 +106,17 @@ async function main() {
     const applied = await migratePlatform(pool);
     // eslint-disable-next-line no-console
     console.log(applied.length ? `Done (${applied.length} applied).` : 'Already up to date.');
+
+    // eslint-disable-next-line no-console
+    console.log('Applying tenant migrations to existing customers...');
+    const perTenant = await migrateAllTenants(pool);
+    const changed = Object.entries(perTenant).filter(([, v]) => v.length > 0);
+    // eslint-disable-next-line no-console
+    console.log(
+      changed.length
+        ? changed.map(([s, v]) => `  ${s}: ${v.join(', ')}`).join('\n')
+        : `  ${Object.keys(perTenant).length} tenant(s) already up to date.`,
+    );
   } finally {
     await pool.end();
   }

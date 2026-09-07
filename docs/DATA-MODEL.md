@@ -27,7 +27,7 @@ Derived from the current artifacts:
 | `discovery` | one row: id, status (`draft`/`submitted`/`accepted`), submitted_by, submitted_at, general jsonb (migration id, region, author, licensing model) |
 | `discovery_sites` | site/company code, address, country, region, paging info |
 | `discovery_number_ranges` | range_start, range_end, type (`new`/`port`/`retain`), carrier, port_status |
-| `discovery_flows` | free-form AA/CQ/IVR descriptions + uploaded diagrams (attachment ref) |
+| `discovery_flows` | free-form AA/CQ/IVR descriptions (`kind`, `name`, `description`) + optional `diagram_attachment_id` |
 | `discovery_network` | e911 internal/external subnets, LAN/WLAN data |
 | `attachments` | id, filename, content_type, bytes (bytea) or object key, uploaded_by |
 

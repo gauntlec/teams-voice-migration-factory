@@ -1,5 +1,12 @@
 import { z } from 'zod';
 import { ROLES } from './rbac';
+import {
+  FLOW_KINDS,
+  LICENSING_MODELS,
+  NETWORK_SCOPES,
+  NETWORK_TYPES,
+  NUMBER_RANGE_KINDS,
+} from './domain';
 
 export const emailSchema = z.string().email().max(320).transform((s) => s.toLowerCase().trim());
 
@@ -71,3 +78,64 @@ export const createDeploymentSchema = z.object({
     .strict(),
 });
 export type CreateDeploymentInput = z.infer<typeof createDeploymentSchema>;
+
+/* ------------------------- Data Collection DTOs ------------------------- */
+
+const str = (max = 400) => z.string().trim().max(max);
+const optStr = (max = 400) => str(max).optional().or(z.literal(''));
+
+export const discoveryGeneralSchema = z
+  .object({
+    migrationId: optStr(80),
+    region: optStr(120),
+    author: optStr(160),
+    licensingModel: z.enum(LICENSING_MODELS).or(z.literal('')).optional(),
+    targetGoLive: optStr(40),
+    primaryContactEmail: z.string().trim().max(320).email().or(z.literal('')).optional(),
+    notes: optStr(4000),
+  })
+  .strict();
+export type DiscoveryGeneralInput = z.infer<typeof discoveryGeneralSchema>;
+
+export const discoverySiteSchema = z
+  .object({
+    site_code: optStr(60),
+    name: optStr(200),
+    address: optStr(500),
+    country: optStr(80),
+    region: optStr(120),
+    paging: z.record(z.unknown()).optional(),
+  })
+  .strict();
+export type DiscoverySiteInput = z.infer<typeof discoverySiteSchema>;
+
+export const discoveryNumberRangeSchema = z
+  .object({
+    range_start: str(40).min(1),
+    range_end: str(40).min(1),
+    kind: z.enum(NUMBER_RANGE_KINDS),
+    carrier: optStr(160),
+    port_status: optStr(120),
+  })
+  .strict();
+export type DiscoveryNumberRangeInput = z.infer<typeof discoveryNumberRangeSchema>;
+
+export const discoveryNetworkSchema = z
+  .object({
+    scope: z.enum(NETWORK_SCOPES),
+    subnet: str(64).min(1),
+    mask: z.coerce.number().int().min(0).max(32).nullable().optional(),
+    location: optStr(200),
+    network_type: z.enum(NETWORK_TYPES).nullable().optional(),
+  })
+  .strict();
+export type DiscoveryNetworkInput = z.infer<typeof discoveryNetworkSchema>;
+
+export const discoveryFlowSchema = z
+  .object({
+    kind: z.enum(FLOW_KINDS),
+    name: str(200).min(1),
+    description: optStr(8000),
+  })
+  .strict();
+export type DiscoveryFlowInput = z.infer<typeof discoveryFlowSchema>;

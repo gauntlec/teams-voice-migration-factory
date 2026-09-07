@@ -3,7 +3,7 @@ import { Pool } from 'pg';
 import type { DB } from './schema';
 
 export * from './schema';
-export { migratePlatform, provisionTenant } from './migrate';
+export { migratePlatform, provisionTenant, migrateAllTenants } from './migrate';
 
 export interface DbHandle {
   db: Kysely<DB>;

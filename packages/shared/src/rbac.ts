@@ -21,6 +21,7 @@ export const PERMISSIONS = [
   'user:mfa:reset',
   'discovery:read',
   'discovery:write',
+  'discovery:review', // engineer/admin: accept or reopen a submitted discovery
   'build:read',
   'build:write',
   'deployment:read',
@@ -46,6 +47,7 @@ export const PERMISSION_MATRIX: Record<Role, ReadonlySet<Permission>> = {
     'tenant:member:manage', // add CUSTOMER users only - enforced in service
     'discovery:read',
     'discovery:write',
+    'discovery:review',
     'build:read',
     'build:write',
     'deployment:read',

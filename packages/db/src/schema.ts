@@ -88,9 +88,21 @@ export interface PlatformAuditLogTable {
 export interface DiscoveryTable {
   id: Generated<string>;
   status: ColumnType<'draft' | 'submitted' | 'accepted', 'draft' | 'submitted' | 'accepted' | undefined, 'draft' | 'submitted' | 'accepted'>;
-  general: Json;
+  general: Json<import('@tvmf/shared').DiscoveryGeneral>;
   submitted_by: string | null;
   submitted_at: string | null;
+  accepted_by: string | null;
+  accepted_at: string | null;
+  created_at: Ts;
+  updated_at: Ts;
+}
+
+export interface DiscoveryFlowsTable {
+  id: Generated<string>;
+  kind: 'auto_attendant' | 'call_queue' | 'other';
+  name: string;
+  description: string | null;
+  diagram_attachment_id: string | null;
   created_at: Ts;
   updated_at: Ts;
 }
@@ -325,6 +337,7 @@ export interface DB {
   discovery_sites: DiscoverySitesTable;
   discovery_number_ranges: DiscoveryNumberRangesTable;
   discovery_network: DiscoveryNetworkTable;
+  discovery_flows: DiscoveryFlowsTable;
   attachments: AttachmentsTable;
   build_users: BuildUsersTable;
   build_caps: BuildCapsTable;
