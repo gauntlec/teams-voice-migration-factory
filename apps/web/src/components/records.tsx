@@ -122,7 +122,9 @@ export interface GeocodeConfig {
   latField: string;
   lonField: string;
   /** returns coordinates for an address, or null if none found */
-  run: (address: string) => Promise<{ latitude: number; longitude: number; label?: string } | null>;
+  run: (
+    address: string,
+  ) => Promise<{ latitude: number; longitude: number; label?: string; approximate?: boolean } | null>;
 }
 
 export function RecordDialog({
@@ -163,14 +165,19 @@ export function RecordDialog({
     try {
       const hit = await geocode.run(addr);
       if (!hit) {
-        setGeoMsg('No coordinates found for that address.');
+        setGeoMsg('No coordinates found for that address — enter them manually.');
       } else {
         setValues((v) => ({
           ...v,
           [geocode.latField]: String(hit.latitude),
           [geocode.lonField]: String(hit.longitude),
         }));
-        setGeoMsg(`Matched ${hit.label ?? `${hit.latitude}, ${hit.longitude}`}`);
+        const where = hit.label ?? `${hit.latitude}, ${hit.longitude}`;
+        setGeoMsg(
+          hit.approximate
+            ? `Approximate (area only): ${where}. Adjust if you have the exact spot.`
+            : `Matched ${where}`,
+        );
       }
     } catch {
       setGeoMsg('Lookup failed — enter coordinates manually.');
