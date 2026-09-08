@@ -122,7 +122,8 @@ export class AuthService {
         oc.column('user_id').doUpdateSet({ secret_enc: encryptSecret(secret), confirmed_at: null }),
       )
       .execute();
-    return { secret, otpauthUrl: this.totp.otpauthUrl(email, secret) };
+    const otpauthUrl = this.totp.otpauthUrl(email, secret);
+    return { secret, otpauthUrl, qrDataUrl: await this.totp.qrDataUrl(otpauthUrl) };
   }
 
   async confirmTotpEnrol(userId: string, role: string, email: string, code: string, meta: Meta) {

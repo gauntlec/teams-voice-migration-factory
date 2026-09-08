@@ -4,7 +4,7 @@
  * can never disagree. See docs/RBAC.md.
  */
 
-export const ROLES = ['SUPER_ADMIN', 'ENGINEER', 'CUSTOMER'] as const;
+export const ROLES = ['SUPER_ADMIN', 'PROJECT_MANAGER', 'ENGINEER', 'CUSTOMER'] as const;
 export type Role = (typeof ROLES)[number];
 
 export const PERMISSIONS = [
@@ -43,6 +43,24 @@ export type Permission = (typeof PERMISSIONS)[number];
  */
 export const PERMISSION_MATRIX: Record<Role, ReadonlySet<Permission>> = {
   SUPER_ADMIN: new Set<Permission>(PERMISSIONS), // everything
+  // Delivery lead for their assigned customers. Coordinates the project:
+  // manages members/users, adds sites, runs & reviews discovery, produces the
+  // handover. Does NOT do the technical build or run live deployments.
+  PROJECT_MANAGER: new Set<Permission>([
+    'tenant:read',
+    'tenant:member:manage', // add CUSTOMER users only - enforced in service
+    'user:create', // CUSTOMER users only, in their own customers - enforced in service
+    'user:read', // list is scoped to their customers' users - enforced in service
+    'discovery:read',
+    'discovery:write',
+    'discovery:review',
+    'discovery:sites:manage',
+    'build:read',
+    'deployment:read',
+    'handover:read',
+    'handover:generate',
+    'audit:read:tenant',
+  ]),
   ENGINEER: new Set<Permission>([
     'tenant:read',
     'tenant:member:manage', // add CUSTOMER users only - enforced in service
@@ -87,9 +105,10 @@ export function isGlobalRole(role: Role): boolean {
 /**
  * A CUSTOMER membership can be limited to specific sites (a "site contact") via
  * `tenant_memberships.site_ids` (empty = the whole customer). Site scoping never
- * narrows SUPER_ADMIN or ENGINEER - they always see the whole customer, and are
- * the only roles that may add or edit sites (`discovery:sites:manage`).
- * Enforced by `TenantGuard` and the Data Collection services. See docs/RBAC.md.
+ * narrows SUPER_ADMIN, PROJECT_MANAGER or ENGINEER - they always see the whole
+ * customer. Sites are added/edited from the Sites admin page by SUPER_ADMIN,
+ * PROJECT_MANAGER or ENGINEER (`discovery:sites:manage`). Enforced by
+ * `TenantGuard` and the Data Collection services. See docs/RBAC.md.
  */
 export function siteScopeApplies(role: Role): boolean {
   return role === 'CUSTOMER';

@@ -18,25 +18,43 @@ import { useAuth } from '../auth';
 const useStyles = makeStyles({
   root: { display: 'grid', placeItems: 'center', minHeight: '100vh', backgroundColor: tokens.colorNeutralBackground2 },
   card: { width: '440px', ...shorthands.padding('28px'), ...shorthands.gap('16px') },
+  qr: {
+    display: 'block',
+    width: '200px',
+    height: '200px',
+    ...shorthands.margin('0', 'auto'),
+    ...shorthands.padding('8px'),
+    backgroundColor: '#ffffff',
+    ...shorthands.borderRadius(tokens.borderRadiusMedium),
+    ...shorthands.border('1px', 'solid', tokens.colorNeutralStroke2),
+  },
   secret: {
     fontFamily: tokens.fontFamilyMonospace,
     backgroundColor: tokens.colorNeutralBackground3,
     ...shorthands.padding('8px', '12px'),
     ...shorthands.borderRadius(tokens.borderRadiusMedium),
     wordBreak: 'break-all',
+    letterSpacing: '1px',
   },
 });
+
+interface EnrolData {
+  secret: string;
+  otpauthUrl: string;
+  qrDataUrl: string;
+}
 
 export function EnrolTotp() {
   const s = useStyles();
   const { confirmEnrol, logout } = useAuth();
-  const [data, setData] = useState<{ secret: string; otpauthUrl: string } | null>(null);
+  const [data, setData] = useState<EnrolData | null>(null);
+  const [showKey, setShowKey] = useState(false);
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api<{ secret: string; otpauthUrl: string }>('/auth/totp/start', { method: 'POST' })
+    api<EnrolData>('/auth/totp/start', { method: 'POST' })
       .then(setData)
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to start enrolment'));
   }, []);
@@ -59,19 +77,21 @@ export function EnrolTotp() {
       <Card className={s.card}>
         <Title2>Set up two-factor authentication</Title2>
         <Body1>
-          Multi-factor authentication is required. Add this account to an authenticator app
-          (Microsoft Authenticator, 1Password, Authy…), then enter the 6-digit code.
+          Scan this QR code with an authenticator app (Microsoft Authenticator, Google
+          Authenticator, 1Password, Authy…), then enter the 6-digit code it shows.
         </Body1>
         {!data && !error && <Spinner label="Preparing…" />}
         {data && (
           <>
-            <Field label="Setup key (enter manually)">
-              <div className={s.secret}>{data.secret}</div>
-            </Field>
-            <Text size={200}>
-              Or use this otpauth URL:{' '}
-              <span style={{ wordBreak: 'break-all' }}>{data.otpauthUrl}</span>
-            </Text>
+            <img className={s.qr} src={data.qrDataUrl} alt="Two-factor setup QR code" />
+            <Button appearance="transparent" size="small" onClick={() => setShowKey((v) => !v)}>
+              {showKey ? 'Hide setup key' : "Can't scan? Enter a key instead"}
+            </Button>
+            {showKey && (
+              <Field label="Setup key">
+                <div className={s.secret}>{data.secret}</div>
+              </Field>
+            )}
             <form onSubmit={confirm} style={{ display: 'grid', gap: 12 }}>
               <Field label="Authenticator code" required>
                 <Input

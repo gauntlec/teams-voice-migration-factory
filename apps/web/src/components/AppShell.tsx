@@ -24,6 +24,7 @@ import {
   Home24Regular,
   People24Regular,
   BuildingMultiple24Regular,
+  Location24Regular,
   History24Regular,
 } from '@fluentui/react-icons';
 import type { Permission } from '@tvmf/shared';
@@ -91,6 +92,7 @@ const MAIN: NavDef[] = [
 const ADMIN: NavDef[] = [
   { to: '/admin/users', label: 'Users', icon: <People24Regular />, permission: 'user:read' },
   { to: '/admin/tenants', label: 'Customers', icon: <BuildingMultiple24Regular />, permission: 'tenant:create' },
+  { to: '/admin/sites', label: 'Sites', icon: <Location24Regular />, permission: 'discovery:sites:manage' },
   { to: '/admin/audit', label: 'Platform Audit', icon: <History24Regular />, permission: 'audit:read:platform' },
 ];
 

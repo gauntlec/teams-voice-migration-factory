@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { authenticator } from 'otplib';
+import * as QRCode from 'qrcode';
 import { APP_CONFIG, type AppConfig } from '../common/config';
 
 // Accept codes from +/- N 30-second steps to tolerate clock drift between the
@@ -16,6 +17,11 @@ export class TotpService {
 
   otpauthUrl(email: string, secret: string): string {
     return authenticator.keyuri(email, this.cfg.TOTP_ISSUER, secret);
+  }
+
+  /** PNG data URI of the otpauth URL, to scan directly from an authenticator app. */
+  qrDataUrl(otpauthUrl: string): Promise<string> {
+    return QRCode.toDataURL(otpauthUrl, { width: 240, margin: 1, errorCorrectionLevel: 'M' });
   }
 
   verify(token: string, secret: string): boolean {

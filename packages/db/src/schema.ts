@@ -22,7 +22,7 @@ export interface UsersTable {
   email: string;
   password_hash: string;
   display_name: string;
-  role: 'SUPER_ADMIN' | 'ENGINEER' | 'CUSTOMER';
+  role: 'SUPER_ADMIN' | 'PROJECT_MANAGER' | 'ENGINEER' | 'CUSTOMER';
   status: ColumnType<'active' | 'disabled', 'active' | 'disabled' | undefined, 'active' | 'disabled'>;
   totp_enrolled: ColumnType<boolean, boolean | undefined, boolean>;
   failed_logins: ColumnType<number, number | undefined, number>;
@@ -63,7 +63,7 @@ export interface AuthSessionsTable {
 export interface InvitationsTable {
   id: Generated<string>;
   email: string;
-  role: 'SUPER_ADMIN' | 'ENGINEER' | 'CUSTOMER';
+  role: 'SUPER_ADMIN' | 'PROJECT_MANAGER' | 'ENGINEER' | 'CUSTOMER';
   tenant_id: string | null;
   token_hash: string;
   invited_by: string;

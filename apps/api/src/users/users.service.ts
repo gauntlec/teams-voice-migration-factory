@@ -54,10 +54,11 @@ export class UsersService {
 
     const tenantIds = input.tenantIds ?? [];
 
-    // Engineers may only create CUSTOMER users, and only inside their own customers.
-    if (actor.role === 'ENGINEER') {
+    // Engineers and project managers may only create CUSTOMER users, and only
+    // inside customers they are assigned to.
+    if (actor.role === 'ENGINEER' || actor.role === 'PROJECT_MANAGER') {
       if (input.role !== 'CUSTOMER') {
-        throw new ForbiddenException('Engineers may only create customer users');
+        throw new ForbiddenException('You may only create customer users');
       }
       if (!tenantIds.length) {
         throw new BadRequestException('Pick the customer this user belongs to');

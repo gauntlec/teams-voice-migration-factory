@@ -78,7 +78,7 @@ export class TenantsService {
   /** Sites in a customer, for the admin scope pickers. Admin & engineer only. */
   async sites(tenantId: string, actor: { id?: string; role: Role }) {
     const t = await this.getTenantOrThrow(tenantId);
-    if (actor.role === 'ENGINEER') await this.assertActorIsMember(tenantId, actor.id!);
+    if (actor.role !== 'SUPER_ADMIN') await this.assertActorIsMember(tenantId, actor.id!);
     return tenantDb(this.db, t.schema_name)
       .selectFrom('discovery_sites')
       .select(['id', 'sitecode', 'name'])
@@ -88,7 +88,7 @@ export class TenantsService {
 
   async members(tenantId: string, actor: { id?: string; role: Role }) {
     await this.getTenantOrThrow(tenantId);
-    if (actor.role === 'ENGINEER') await this.assertActorIsMember(tenantId, actor.id!);
+    if (actor.role !== 'SUPER_ADMIN') await this.assertActorIsMember(tenantId, actor.id!);
     return platformDb(this.db)
       .selectFrom('tenant_memberships as m')
       .innerJoin('users as u', 'u.id', 'm.user_id')
@@ -119,10 +119,10 @@ export class TenantsService {
       .executeTakeFirst();
     if (!target) throw new NotFoundException('user not found');
 
-    if (actor.role === 'ENGINEER') {
+    if (actor.role !== 'SUPER_ADMIN') {
       await this.assertActorIsMember(tenantId, actor.id!);
       if (target.role !== 'CUSTOMER') {
-        throw new ForbiddenException('Engineers may only add customer users to a tenant');
+        throw new ForbiddenException('Only super admins can assign staff to a customer');
       }
     }
     if (target.role === 'SUPER_ADMIN') {
@@ -171,7 +171,7 @@ export class TenantsService {
     actor: AuditActor & { role: Role },
   ) {
     const tenant = await this.getTenantOrThrow(tenantId);
-    if (actor.role === 'ENGINEER') await this.assertActorIsMember(tenantId, actor.id!);
+    if (actor.role !== 'SUPER_ADMIN') await this.assertActorIsMember(tenantId, actor.id!);
 
     const member = await platformDb(this.db)
       .selectFrom('tenant_memberships as m')
@@ -219,7 +219,7 @@ export class TenantsService {
 
   async removeMember(tenantId: string, userId: string, actor: AuditActor & { role: Role }) {
     await this.getTenantOrThrow(tenantId);
-    if (actor.role === 'ENGINEER') await this.assertActorIsMember(tenantId, actor.id!);
+    if (actor.role !== 'SUPER_ADMIN') await this.assertActorIsMember(tenantId, actor.id!);
     await platformDb(this.db)
       .deleteFrom('tenant_memberships')
       .where('tenant_id', '=', tenantId)

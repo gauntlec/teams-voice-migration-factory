@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import {
   Badge,
   Button,
@@ -12,6 +12,12 @@ import {
   MessageBarBody,
   Option,
   Spinner,
+  Table,
+  TableBody,
+  TableCell,
+  TableHeader,
+  TableHeaderCell,
+  TableRow,
   TabList,
   Tab,
   Text,
@@ -308,9 +314,16 @@ export function DataCollection() {
 
       <Card className={s.card}>
         <div className={s.cardHead}>
-          <Text weight="semibold">
-            Sites <span className={s.muted}>({d.sites.length})</span>
-          </Text>
+          <div>
+            <Text weight="semibold">
+              Sites <span className={s.muted}>({d.sites.length})</span>
+            </Text>
+            {canManageSites && (
+              <Text size={200} className={s.muted} block>
+                Add or edit sites in <Link to="/admin/sites">Sites admin</Link>.
+              </Text>
+            )}
+          </div>
           <TabList
             size="small"
             selectedValue={view}
@@ -325,90 +338,69 @@ export function DataCollection() {
           </TabList>
         </div>
 
-        {view === 'map' ? (
-          <>
-            {d.sites.length === 0 ? (
-              <Text size={200} className={s.muted}>
-                No sites yet. {canManageSites ? 'Switch to List view to add one.' : ''}
-              </Text>
+        {d.sites.length === 0 ? (
+          <Text size={200} className={s.muted}>
+            No sites yet.{' '}
+            {canManageSites ? (
+              <>
+                Add the first one in <Link to="/admin/sites">Sites admin</Link>.
+              </>
             ) : (
-              <SitesMap sites={d.sites as unknown as MapSite[]} onOpen={open} />
+              'The migration team will add them.'
             )}
-            {d.sites.length > 0 && placed < d.sites.length && (
+          </Text>
+        ) : view === 'map' ? (
+          <>
+            <SitesMap sites={d.sites as unknown as MapSite[]} onOpen={open} />
+            {placed < d.sites.length && (
               <Text size={200} className={s.muted}>
-                {d.sites.length - placed} site(s) not on the map yet — set latitude / longitude in
-                List view.
+                {d.sites.length - placed} site(s) not on the map yet — set their coordinates in{' '}
+                <Link to="/admin/sites">Sites admin</Link>.
               </Text>
             )}
           </>
         ) : (
-          <CrudSection
-            title="Site"
-            hint={
-              canManageSites
-                ? "The Sitecode is the site's unique key — number ranges link to it. Add latitude / longitude to pin it on the map."
-                : 'Managed by the migration engineer.'
-            }
-            basePath={`${base}/sites`}
-            readOnly={locked || !canManageSites}
-            onChanged={refetch}
-            rows={d.sites}
-            geocode={{
-              addressField: 'address',
-              latField: 'latitude',
-              lonField: 'longitude',
-              run: (address) =>
-                api<{ latitude: number; longitude: number; label?: string } | null>(
-                  `${base}/geocode?q=${encodeURIComponent(address)}`,
-                ),
-            }}
-            extraRowAction={(r) => (
-              <Button
-                size="small"
-                appearance="subtle"
-                icon={<ArrowRightRegular />}
-                aria-label="Open site"
-                onClick={() => open(r.id)}
-              />
-            )}
-            columns={[
-              { key: 'sitecode', label: 'Sitecode' },
-              { key: 'name', label: 'Name' },
-              { key: 'country', label: 'Country' },
-              {
-                key: 'users',
-                label: 'Users',
-                render: (r) => String((r as SiteRollup).counts?.users ?? 0),
-              },
-              {
-                key: 'numbers',
-                label: 'Numbers',
-                render: (r) => {
-                  const c = (r as SiteRollup).counts;
-                  return c ? `${c.numbersAssigned}/${c.numbers}` : '0/0';
-                },
-              },
-              {
-                key: 'caps',
-                label: 'CAPs',
-                render: (r) => String((r as SiteRollup).counts?.caps ?? 0),
-              },
-              {
-                key: 'ras',
-                label: 'Res. accts',
-                render: (r) => String((r as SiteRollup).counts?.resourceAccounts ?? 0),
-              },
-            ]}
-            fields={[
-              { key: 'sitecode', label: 'Sitecode', required: true, placeholder: 'OVP012' },
-              { key: 'name', label: 'Site name' },
-              { key: 'address', label: 'Address', type: 'textarea', full: true },
-              { key: 'country', label: 'Country' },
-              { key: 'region', label: 'Region' },
-              { key: 'latitude', label: 'Latitude', type: 'number', placeholder: '38.9201' },
-              { key: 'longitude', label: 'Longitude', type: 'number', placeholder: '-94.6559' },
-            ]}
-          />
+          <div style={{ overflowX: 'auto' }}>
+            <Table size="small">
+              <TableHeader>
+                <TableRow>
+                  <TableHeaderCell>Sitecode</TableHeaderCell>
+                  <TableHeaderCell>Name</TableHeaderCell>
+                  <TableHeaderCell>Country</TableHeaderCell>
+                  <TableHeaderCell>Users</TableHeaderCell>
+                  <TableHeaderCell>Numbers</TableHeaderCell>
+                  <TableHeaderCell>CAPs</TableHeaderCell>
+                  <TableHeaderCell>Res. accts</TableHeaderCell>
+                  <TableHeaderCell />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {d.sites.map((r) => (
+                  <TableRow key={r.id}>
+                    <TableCell>{r.sitecode}</TableCell>
+                    <TableCell>{r.name || '—'}</TableCell>
+                    <TableCell>{r.country || '—'}</TableCell>
+                    <TableCell>{r.counts?.users ?? 0}</TableCell>
+                    <TableCell>
+                      {r.counts ? `${r.counts.numbersAssigned}/${r.counts.numbers}` : '0/0'}
+                    </TableCell>
+                    <TableCell>{r.counts?.caps ?? 0}</TableCell>
+                    <TableCell>{r.counts?.resourceAccounts ?? 0}</TableCell>
+                    <TableCell>
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={<ArrowRightRegular />}
+                        onClick={() => open(r.id)}
+                      >
+                        Open
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
         )}
       </Card>
     </Page>
