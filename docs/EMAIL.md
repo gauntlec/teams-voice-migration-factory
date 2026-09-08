@@ -46,7 +46,7 @@ SMTP_PORT=587
 SMTP_SECURE=false   # true only for implicit-TLS ports (usually 465)
 SMTP_USER=
 SMTP_PASS=
-MAIL_FROM=no-reply@directrouting.online
+MAIL_FROM=no-reply@voxshift.io
 MAIL_FROM_NAME=Teams Voice Migration Factory
 ```
 

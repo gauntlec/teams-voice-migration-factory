@@ -19,7 +19,7 @@ so nothing is compiled on the Dockge host.
      `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `DATA_ENCRYPTION_KEY`,
      `BOOTSTRAP_ADMIN_PASSWORD`, `WEB_ORIGIN`.
    - Optional (email): `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`,
-     `SMTP_PASS` (`MAIL_FROM` defaults to `no-reply@directrouting.online`). Leave
+     `SMTP_PASS` (`MAIL_FROM` defaults to `no-reply@voxshift.io`). Leave
      `SMTP_HOST` empty to disable delivery — the worker then logs each message
      instead. See [`docs/EMAIL.md`](../../docs/EMAIL.md).
 4. The `api` container runs DB migrations (platform **and** every tenant
