@@ -20,6 +20,12 @@ export class UsersController {
     return this.users.list({ id: user.id, role: user.role });
   }
 
+  @Get(':id/memberships')
+  @RequirePermission('user:read')
+  memberships(@Param('id') id: string, @CurrentUser() user: AuthedUser) {
+    return this.users.memberships(id, { id: user.id, role: user.role });
+  }
+
   @Post()
   @RequirePermission('user:create')
   create(

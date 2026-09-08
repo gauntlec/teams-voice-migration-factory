@@ -1,8 +1,16 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  Badge,
   Button,
   Card,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
+  DialogTrigger,
   Dropdown,
   Field,
   Input,
@@ -16,10 +24,11 @@ import {
   TableRow,
   Text,
 } from '@fluentui/react-components';
+import { DeleteRegular, PeopleTeamRegular } from '@fluentui/react-icons';
 import { ROLES, type Role } from '@tvmf/shared';
 import { api } from '../../api';
 import { Page } from '../../components/Page';
-import { LoadError } from '../DataCollection';
+import { LoadError } from '../../components/records';
 
 interface UserRow {
   id: string;
@@ -28,6 +37,7 @@ interface UserRow {
   role: string;
   status: string;
   totp_enrolled: boolean;
+  tenants?: { id: string; name: string }[];
 }
 interface TenantRow {
   id: string;
@@ -38,6 +48,19 @@ interface SiteRow {
   sitecode: string;
   name: string | null;
 }
+interface Membership {
+  tenantId: string;
+  tenantName: string;
+  tenantSlug: string;
+  siteIds: string[];
+}
+
+const useSites = (tenantId: string) =>
+  useQuery({
+    queryKey: ['tenant-sites', tenantId],
+    enabled: !!tenantId,
+    queryFn: () => api<SiteRow[]>(`/tenants/${tenantId}/sites`),
+  });
 
 export function AdminUsers() {
   const qc = useQueryClient();
@@ -49,17 +72,13 @@ export function AdminUsers() {
   const [siteScope, setSiteScope] = useState<'all' | 'sites'>('all');
   const [siteIds, setSiteIds] = useState<string[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  const [manage, setManage] = useState<UserRow | null>(null);
 
   const users = useQuery({ queryKey: ['users'], queryFn: () => api<UserRow[]>('/users') });
   const tenants = useQuery({ queryKey: ['tenants'], queryFn: () => api<TenantRow[]>('/tenants') });
 
-  // For a customer user with one tenant picked, offer to limit them to sites.
   const scopeTenantId = role === 'CUSTOMER' && tenantIds.length === 1 ? tenantIds[0] : null;
-  const sites = useQuery({
-    queryKey: ['tenant-sites', scopeTenantId],
-    enabled: !!scopeTenantId,
-    queryFn: () => api<SiteRow[]>(`/tenants/${scopeTenantId}/sites`),
-  });
+  const sites = useSites(scopeTenantId ?? '');
 
   const resetForm = () => {
     setEmail('');
@@ -99,7 +118,7 @@ export function AdminUsers() {
   });
 
   return (
-    <Page title="Users" subtitle="Platform staff and customer users.">
+    <Page title="Users" subtitle="Platform staff and customer users, and which customers they can work in.">
       <Card>
         <Text weight="semibold">New user</Text>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'end' }}>
@@ -126,7 +145,9 @@ export function AdminUsers() {
             <Input type="text" value={password} onChange={(_, d) => setPassword(d.value)} />
           </Field>
           {role !== 'SUPER_ADMIN' && (
-            <Field label={role === 'CUSTOMER' ? 'Customer (exactly one)' : 'Assigned customers'}>
+            <Field
+              label={role === 'CUSTOMER' ? 'Customer (exactly one)' : 'Assigned customers (one or more)'}
+            >
               <Dropdown
                 multiselect
                 placeholder="Select…"
@@ -190,6 +211,9 @@ export function AdminUsers() {
             Create
           </Button>
         </div>
+        <Text size={200} style={{ color: '#666' }}>
+          You can change a user's customers and site access any time with <b>Manage</b> below.
+        </Text>
         {err && <Text style={{ color: '#b10e1c' }}>{err}</Text>}
       </Card>
 
@@ -205,6 +229,7 @@ export function AdminUsers() {
                 <TableHeaderCell>Name</TableHeaderCell>
                 <TableHeaderCell>Email</TableHeaderCell>
                 <TableHeaderCell>Role</TableHeaderCell>
+                <TableHeaderCell>Customers</TableHeaderCell>
                 <TableHeaderCell>Status</TableHeaderCell>
                 <TableHeaderCell>MFA</TableHeaderCell>
                 <TableHeaderCell>Actions</TableHeaderCell>
@@ -216,10 +241,25 @@ export function AdminUsers() {
                   <TableCell>{u.display_name}</TableCell>
                   <TableCell>{u.email}</TableCell>
                   <TableCell>{u.role}</TableCell>
+                  <TableCell>
+                    {u.role === 'SUPER_ADMIN'
+                      ? 'all'
+                      : (u.tenants ?? []).map((t) => t.name).join(', ') || '—'}
+                  </TableCell>
                   <TableCell>{u.status}</TableCell>
                   <TableCell>{u.totp_enrolled ? 'enrolled' : '—'}</TableCell>
                   <TableCell>
-                    <div style={{ display: 'flex', gap: 6 }}>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      {u.role !== 'SUPER_ADMIN' && (
+                        <Button
+                          size="small"
+                          appearance="primary"
+                          icon={<PeopleTeamRegular />}
+                          onClick={() => setManage(u)}
+                        >
+                          Manage
+                        </Button>
+                      )}
                       <Button
                         size="small"
                         onClick={() =>
@@ -239,6 +279,307 @@ export function AdminUsers() {
           </Table>
         )}
       </Card>
+
+      {manage && (
+        <UserMembershipsDialog
+          user={manage}
+          tenants={tenants.data ?? []}
+          onClose={() => setManage(null)}
+        />
+      )}
     </Page>
+  );
+}
+
+/* --------------------- per-user membership management --------------------- */
+
+function UserMembershipsDialog({
+  user,
+  tenants,
+  onClose,
+}: {
+  user: UserRow;
+  tenants: TenantRow[];
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const memberships = useQuery({
+    queryKey: ['user-memberships', user.id],
+    queryFn: () => api<Membership[]>(`/users/${user.id}/memberships`),
+  });
+  const refetch = () => {
+    qc.invalidateQueries({ queryKey: ['user-memberships', user.id] });
+    qc.invalidateQueries({ queryKey: ['users'] });
+  };
+  const taken = new Set((memberships.data ?? []).map((m) => m.tenantId));
+
+  return (
+    <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
+      <DialogSurface style={{ maxWidth: 640 }}>
+        <DialogBody>
+          <DialogTitle>
+            {user.display_name} — customer access{' '}
+            <Badge appearance="tint" color="informative">
+              {user.role}
+            </Badge>
+          </DialogTitle>
+          <DialogContent>
+            <div style={{ display: 'grid', gap: 14, minWidth: 520 }}>
+              {memberships.isLoading ? (
+                <Spinner size="tiny" />
+              ) : memberships.isError ? (
+                <LoadError message={(memberships.error as Error).message} />
+              ) : memberships.data!.length === 0 ? (
+                <Text size={200}>Not assigned to any customer yet.</Text>
+              ) : (
+                <Table size="small">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHeaderCell>Customer</TableHeaderCell>
+                      <TableHeaderCell>Site access</TableHeaderCell>
+                      <TableHeaderCell />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {memberships.data!.map((m) => (
+                      <MembershipRow key={m.tenantId} user={user} m={m} onChanged={refetch} />
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+              <AddMembershipRow
+                user={user}
+                tenants={tenants}
+                taken={taken}
+                onChanged={refetch}
+              />
+            </div>
+          </DialogContent>
+          <DialogActions>
+            <DialogTrigger disableButtonEnhancement>
+              <Button appearance="secondary" onClick={onClose}>
+                Close
+              </Button>
+            </DialogTrigger>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  );
+}
+
+const sameIds = (a: string[], b: string[]) =>
+  a.length === b.length && [...a].sort().join() === [...b].sort().join();
+
+function MembershipRow({
+  user,
+  m,
+  onChanged,
+}: {
+  user: UserRow;
+  m: Membership;
+  onChanged: () => void;
+}) {
+  const isCustomer = user.role === 'CUSTOMER';
+  const sites = useSites(isCustomer ? m.tenantId : '');
+  const [mode, setMode] = useState<'all' | 'sites'>(m.siteIds.length ? 'sites' : 'all');
+  const [ids, setIds] = useState<string[]>(m.siteIds);
+  const [err, setErr] = useState<string | null>(null);
+
+  const dirty =
+    isCustomer &&
+    (mode === 'all' ? m.siteIds.length > 0 : !sameIds(ids, m.siteIds) || m.siteIds.length === 0);
+
+  const save = useMutation({
+    mutationFn: () =>
+      api(`/tenants/${m.tenantId}/members/${user.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ siteIds: mode === 'sites' ? ids : [] }),
+      }),
+    onSuccess: () => {
+      setErr(null);
+      onChanged();
+    },
+    onError: (e) => setErr(e instanceof Error ? e.message : 'Failed'),
+  });
+  const remove = useMutation({
+    mutationFn: () => api(`/tenants/${m.tenantId}/members/${user.id}`, { method: 'DELETE' }),
+    onSuccess: onChanged,
+    onError: (e) => setErr(e instanceof Error ? e.message : 'Failed'),
+  });
+
+  return (
+    <TableRow>
+      <TableCell>{m.tenantName}</TableCell>
+      <TableCell>
+        {isCustomer ? (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <Dropdown
+              size="small"
+              value={mode === 'all' ? 'Whole customer' : 'Specific sites'}
+              selectedOptions={[mode]}
+              onOptionSelect={(_, d) => setMode((d.optionValue as 'all' | 'sites') ?? 'all')}
+              style={{ minWidth: 140 }}
+            >
+              <Option value="all">Whole customer</Option>
+              <Option value="sites">Specific sites</Option>
+            </Dropdown>
+            {mode === 'sites' && (
+              <Dropdown
+                size="small"
+                multiselect
+                placeholder="Select sites…"
+                selectedOptions={ids}
+                onOptionSelect={(_, d) => setIds(d.selectedOptions)}
+                style={{ minWidth: 190 }}
+              >
+                {(sites.data ?? []).map((st) => (
+                  <Option key={st.id} value={st.id} text={st.sitecode}>
+                    {st.sitecode}
+                    {st.name ? ` — ${st.name}` : ''}
+                  </Option>
+                ))}
+              </Dropdown>
+            )}
+            {dirty && (
+              <Button
+                size="small"
+                appearance="primary"
+                disabled={save.isPending || (mode === 'sites' && ids.length === 0)}
+                onClick={() => save.mutate()}
+              >
+                Save
+              </Button>
+            )}
+          </div>
+        ) : (
+          <Text size={200}>Whole customer</Text>
+        )}
+        {err && <Text size={200} style={{ color: '#b10e1c' }}>{err}</Text>}
+      </TableCell>
+      <TableCell>
+        <Button
+          size="small"
+          appearance="subtle"
+          icon={<DeleteRegular />}
+          disabled={remove.isPending}
+          onClick={() => remove.mutate()}
+        >
+          Remove
+        </Button>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+function AddMembershipRow({
+  user,
+  tenants,
+  taken,
+  onChanged,
+}: {
+  user: UserRow;
+  tenants: TenantRow[];
+  taken: Set<string>;
+  onChanged: () => void;
+}) {
+  const isCustomer = user.role === 'CUSTOMER';
+  const [tid, setTid] = useState('');
+  const [mode, setMode] = useState<'all' | 'sites'>('all');
+  const [ids, setIds] = useState<string[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+  const sites = useSites(isCustomer ? tid : '');
+  const options = tenants.filter((t) => !taken.has(t.id));
+
+  const add = useMutation({
+    mutationFn: () =>
+      api(`/tenants/${tid}/members`, {
+        method: 'POST',
+        body: JSON.stringify({
+          userId: user.id,
+          siteIds: isCustomer && mode === 'sites' ? ids : [],
+        }),
+      }),
+    onSuccess: () => {
+      setTid('');
+      setMode('all');
+      setIds([]);
+      setErr(null);
+      onChanged();
+    },
+    onError: (e) => setErr(e instanceof Error ? e.message : 'Failed'),
+  });
+
+  if (isCustomer && taken.size >= 1) {
+    return (
+      <Text size={200} style={{ color: '#666' }}>
+        Customer users belong to a single customer. Remove the current one first to move them.
+      </Text>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'end', flexWrap: 'wrap' }}>
+      <Field label="Add to customer">
+        <Dropdown
+          placeholder={options.length ? 'Select…' : 'All customers assigned'}
+          selectedOptions={tid ? [tid] : []}
+          value={options.find((t) => t.id === tid)?.name ?? ''}
+          onOptionSelect={(_, d) => {
+            setTid(d.optionValue ?? '');
+            setIds([]);
+            setMode('all');
+          }}
+          style={{ minWidth: 220 }}
+        >
+          {options.map((t) => (
+            <Option key={t.id} value={t.id}>
+              {t.name}
+            </Option>
+          ))}
+        </Dropdown>
+      </Field>
+      {isCustomer && tid && (
+        <>
+          <Field label="Site access">
+            <Dropdown
+              value={mode === 'all' ? 'Whole customer' : 'Specific sites'}
+              selectedOptions={[mode]}
+              onOptionSelect={(_, d) => setMode((d.optionValue as 'all' | 'sites') ?? 'all')}
+              style={{ minWidth: 160 }}
+            >
+              <Option value="all">Whole customer</Option>
+              <Option value="sites">Specific sites</Option>
+            </Dropdown>
+          </Field>
+          {mode === 'sites' && (
+            <Field label="Sites">
+              <Dropdown
+                multiselect
+                placeholder="Select sites…"
+                selectedOptions={ids}
+                onOptionSelect={(_, d) => setIds(d.selectedOptions)}
+                style={{ minWidth: 200 }}
+              >
+                {(sites.data ?? []).map((st) => (
+                  <Option key={st.id} value={st.id} text={st.sitecode}>
+                    {st.sitecode}
+                    {st.name ? ` — ${st.name}` : ''}
+                  </Option>
+                ))}
+              </Dropdown>
+            </Field>
+          )}
+        </>
+      )}
+      <Button
+        appearance="primary"
+        disabled={!tid || add.isPending || (isCustomer && mode === 'sites' && ids.length === 0)}
+        onClick={() => add.mutate()}
+      >
+        Add
+      </Button>
+      {err && <Text size={200} style={{ color: '#b10e1c' }}>{err}</Text>}
+    </div>
   );
 }
