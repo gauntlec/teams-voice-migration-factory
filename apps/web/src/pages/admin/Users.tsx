@@ -28,7 +28,13 @@ import {
   TableRow,
   Text,
 } from '@fluentui/react-components';
-import { DeleteRegular, MailRegular, PeopleTeamRegular } from '@fluentui/react-icons';
+import {
+  CheckmarkRegular,
+  CopyRegular,
+  DeleteRegular,
+  MailRegular,
+  PeopleTeamRegular,
+} from '@fluentui/react-icons';
 import { ROLES, type Role } from '@tvmf/shared';
 import { api } from '../../api';
 import { Page } from '../../components/Page';
@@ -57,6 +63,46 @@ interface Membership {
   tenantName: string;
   tenantSlug: string;
   siteIds: string[];
+}
+
+/**
+ * Copy-to-clipboard that also works outside a secure context (e.g. the app
+ * reached over plain http on the LAN), where `navigator.clipboard` is undefined.
+ */
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'absolute';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard blocked - the password is still selectable in the banner */
+    }
+  };
+
+  return (
+    <Button
+      size="small"
+      icon={copied ? <CheckmarkRegular /> : <CopyRegular />}
+      onClick={() => void copy()}
+    >
+      {copied ? 'Copied' : 'Copy password'}
+    </Button>
+  );
 }
 
 const useSites = (tenantId: string) =>
@@ -159,13 +205,7 @@ export function AdminUsers() {
             Shown once.
           </MessageBarBody>
           <MessageBarActions>
-            <Button
-              size="small"
-              icon={<MailRegular />}
-              onClick={() => void navigator.clipboard?.writeText(invited.tempPassword)}
-            >
-              Copy password
-            </Button>
+            <CopyButton text={invited.tempPassword} />
             <Button size="small" appearance="subtle" onClick={() => setInvited(null)}>
               Dismiss
             </Button>
