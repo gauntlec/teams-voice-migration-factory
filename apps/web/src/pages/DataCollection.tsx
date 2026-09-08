@@ -353,6 +353,15 @@ export function DataCollection() {
             readOnly={locked || !canManageSites}
             onChanged={refetch}
             rows={d.sites}
+            geocode={{
+              addressField: 'address',
+              latField: 'latitude',
+              lonField: 'longitude',
+              run: (address) =>
+                api<{ latitude: number; longitude: number; label?: string } | null>(
+                  `${base}/geocode?q=${encodeURIComponent(address)}`,
+                ),
+            }}
             extraRowAction={(r) => (
               <Button
                 size="small"

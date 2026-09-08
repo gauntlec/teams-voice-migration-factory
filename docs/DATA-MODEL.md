@@ -26,7 +26,7 @@ Aligned to `Overland Park - ATTC MS Teams Telephony Discovery Template`.
 | Table | Notes |
 |-------|-------|
 | `discovery` | one row: id, status (`draft`/`submitted`/`accepted`), submitted_by/at, accepted_by/at, general jsonb (migration id, region, author, licensing model, contact, notes) |
-| `discovery_sites` | **`sitecode`** (unique key), name, address, country, region, paging info |
+| `discovery_sites` | **`sitecode`** (unique key), name, address, country, region, `latitude`/`longitude` (nullable; for the site map — geocoded from the address via OpenStreetMap Nominatim), paging info |
 | `discovery_calling_policies` | customer-defined outbound dialling restrictions: name, description, allow_local/national/international/service/premium. Seeded with Unrestricted / International / National / Local |
 | `discovery_number_ranges` | **`sitecode`** FK -> `discovery_sites.sitecode` (ON UPDATE CASCADE / ON DELETE SET NULL), range_start, range_end, kind (`new`/`port`/`retain`), carrier, loa_sent, loa_completed, comments. Adding a range generates the `phone_numbers` inventory |
 | `phone_numbers` | one row per E.164 (`e164` unique). status (`available`/`reserved`/`assigned`), holder_type (`user`/`cap`/`resource_account`/`analogue`) + holder_id — **at most one holder**; unique per holder except resource accounts (which may hold several). Assignment is atomic |

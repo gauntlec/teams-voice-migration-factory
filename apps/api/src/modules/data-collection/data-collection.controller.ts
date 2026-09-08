@@ -18,6 +18,7 @@ import { ZodBody } from '../../common/zod.pipe';
 import { RequirePermission } from '../../rbac/require-permission.decorator';
 import { TenantGuard } from '../../rbac/tenant.guard';
 import { DataCollectionService } from './data-collection.service';
+import { GeocodeService } from './geocode.service';
 
 /**
  * Data Collection view - the customer's discovery of their current voice
@@ -26,7 +27,10 @@ import { DataCollectionService } from './data-collection.service';
 @Controller('t/:tenantId/discovery')
 @UseGuards(TenantGuard)
 export class DataCollectionController {
-  constructor(private readonly svc: DataCollectionService) {}
+  constructor(
+    private readonly svc: DataCollectionService,
+    private readonly geo: GeocodeService,
+  ) {}
 
   private review(u: AuthedUser) {
     return can(u.role, 'discovery:review');
@@ -36,6 +40,13 @@ export class DataCollectionController {
   @RequirePermission('discovery:read')
   get(@TenantCtx() t: TenantContext) {
     return this.svc.get(t);
+  }
+
+  /** Street address -> { latitude, longitude, label } | null. Admin/engineer only. */
+  @Get('geocode')
+  @RequirePermission('discovery:sites:manage')
+  geocode(@Query('q') q?: string) {
+    return this.geo.lookup(q ?? '');
   }
 
   @Get('sites/:siteId')

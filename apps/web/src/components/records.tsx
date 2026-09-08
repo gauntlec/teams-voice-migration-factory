@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Button,
@@ -115,6 +115,16 @@ export function buildPayload(fields: FieldDef[], values: Record<string, string>)
 
 /* ---------------------------- the add/edit modal ---------------------------- */
 
+export interface GeocodeConfig {
+  /** field key holding the street address to look up */
+  addressField: string;
+  /** field keys the result is written into */
+  latField: string;
+  lonField: string;
+  /** returns coordinates for an address, or null if none found */
+  run: (address: string) => Promise<{ latitude: number; longitude: number; label?: string } | null>;
+}
+
 export function RecordDialog({
   open,
   onOpenChange,
@@ -124,6 +134,7 @@ export function RecordDialog({
   saving,
   error,
   onSave,
+  geocode,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -133,9 +144,40 @@ export function RecordDialog({
   saving: boolean;
   error: string | null;
   onSave: (payload: Record<string, unknown>) => void;
+  geocode?: GeocodeConfig;
 }) {
   const s = useRecordStyles();
   const [values, setValues] = useState<Record<string, string>>({});
+  const [geoBusy, setGeoBusy] = useState(false);
+  const [geoMsg, setGeoMsg] = useState<string | null>(null);
+
+  const runGeocode = async () => {
+    if (!geocode) return;
+    const addr = (values[geocode.addressField] ?? '').trim();
+    if (!addr) {
+      setGeoMsg('Enter the address first.');
+      return;
+    }
+    setGeoBusy(true);
+    setGeoMsg(null);
+    try {
+      const hit = await geocode.run(addr);
+      if (!hit) {
+        setGeoMsg('No coordinates found for that address.');
+      } else {
+        setValues((v) => ({
+          ...v,
+          [geocode.latField]: String(hit.latitude),
+          [geocode.lonField]: String(hit.longitude),
+        }));
+        setGeoMsg(`Matched ${hit.label ?? `${hit.latitude}, ${hit.longitude}`}`);
+      }
+    } catch {
+      setGeoMsg('Lookup failed — enter coordinates manually.');
+    } finally {
+      setGeoBusy(false);
+    }
+  };
 
   const initial = useMemo(
     () => (r: Row | null) =>
@@ -152,7 +194,10 @@ export function RecordDialog({
   );
 
   useEffect(() => {
-    if (open) setValues(initial(editing));
+    if (open) {
+      setValues(initial(editing));
+      setGeoMsg(null);
+    }
   }, [open, editing, initial]);
 
   const resolveChoices = (f: FieldDef): Choice[] =>
@@ -168,8 +213,8 @@ export function RecordDialog({
           <DialogContent>
             <div className={s.dialogForm}>
               {fields.map((f) => (
+                <Fragment key={f.key}>
                 <Field
-                  key={f.key}
                   label={f.label}
                   required={f.required}
                   style={f.full ? { gridColumn: '1 / -1' } : undefined}
@@ -216,6 +261,24 @@ export function RecordDialog({
                     />
                   )}
                 </Field>
+                {geocode && f.key === geocode.addressField && (
+                  <div style={{ gridColumn: '1 / -1', display: 'grid', gap: 4 }}>
+                    <Button
+                      size="small"
+                      appearance="secondary"
+                      disabled={geoBusy}
+                      onClick={() => void runGeocode()}
+                    >
+                      {geoBusy ? <Spinner size="tiny" /> : 'Get coordinates from address'}
+                    </Button>
+                    {geoMsg && (
+                      <Text size={200} className={s.muted}>
+                        {geoMsg}
+                      </Text>
+                    )}
+                  </div>
+                )}
+                </Fragment>
               ))}
               {error && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{error}</Text>}
             </div>
@@ -250,6 +313,7 @@ export function CrudSection({
   readOnly,
   onChanged,
   extraRowAction,
+  geocode,
 }: {
   title: string;
   hint?: string;
@@ -260,6 +324,7 @@ export function CrudSection({
   readOnly: boolean;
   onChanged: () => void;
   extraRowAction?: (r: Row) => ReactNode;
+  geocode?: GeocodeConfig;
 }) {
   const s = useRecordStyles();
   const [open, setOpen] = useState(false);
@@ -342,6 +407,7 @@ export function CrudSection({
         saving={save.isPending}
         error={error}
         onSave={(payload) => save.mutate(payload)}
+        geocode={geocode}
       />
     </Card>
   );
