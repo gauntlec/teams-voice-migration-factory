@@ -10,10 +10,14 @@ let transporter: Transporter | null = null;
 
 function transport(): Transporter {
   if (!transporter) {
+    const secure = (process.env.SMTP_SECURE ?? 'false') === 'true';
     transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: Number(process.env.SMTP_PORT ?? 587),
-      secure: (process.env.SMTP_SECURE ?? 'false') === 'true',
+      secure,
+      // Office 365 / most relays on 587 use STARTTLS - insist on the upgrade
+      // rather than ever falling back to a plaintext session.
+      requireTLS: !secure,
       auth: process.env.SMTP_USER
         ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS ?? '' }
         : undefined,

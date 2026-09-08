@@ -57,6 +57,31 @@ works: the admin copies the temporary password from the Users screen (shown once
 and shares it securely. Add real SMTP values and click **Resend invite** to
 deliver for real.
 
+### Office 365
+
+Production uses Microsoft 365 SMTP AUTH client submission:
+
+```
+SMTP_HOST=smtp.office365.com
+SMTP_PORT=587
+SMTP_SECURE=false          # STARTTLS; the worker sets requireTLS
+SMTP_USER=no-reply@voxshift.io
+SMTP_PASS=<app password>
+MAIL_FROM=no-reply@voxshift.io
+```
+
+Tenant-side prerequisites (one-time):
+1. `no-reply@voxshift.io` is a mailbox with an Exchange Online licence (a shared
+   mailbox needs a licence + a set password to authenticate).
+2. **Authenticated SMTP** is enabled for it — M365 admin center → the user →
+   Mail → *Manage email apps* → tick *Authenticated SMTP*, or
+   `Set-CASMailbox no-reply@voxshift.io -SmtpClientAuthenticationDisabled $false`.
+   The org-wide switch (`Get-TransportConfig`) must not be blocking it.
+3. If that account has MFA / Security Defaults, `SMTP_PASS` must be an **app
+   password** (basic-auth SMTP can't do interactive MFA).
+4. SPF for `voxshift.io` includes `include:spf.protection.outlook.com`; enable
+   DKIM for the domain in the Defender portal so invitations don't get filtered.
+
 ## Invitations & first sign-in
 
 1. A super admin / project manager / engineer creates a user (Users admin). No
