@@ -359,6 +359,9 @@ function ScopeDialog({
                     multiselect
                     placeholder="Select sites…"
                     selectedOptions={ids}
+                    value={ids
+                      .map((id) => sites.find((st) => st.id === id)?.sitecode ?? id.slice(0, 6))
+                      .join(', ')}
                     onOptionSelect={(_, d) => setIds(d.selectedOptions)}
                   >
                     {sites.map((st) => (

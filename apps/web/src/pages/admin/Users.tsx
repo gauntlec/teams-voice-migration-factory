@@ -185,6 +185,7 @@ export function AdminUsers() {
                 multiselect
                 placeholder="Select sites…"
                 selectedOptions={siteIds}
+                value={siteLabels(siteIds, sites.data ?? [])}
                 onOptionSelect={(_, d) => setSiteIds(d.selectedOptions)}
                 style={{ minWidth: 220 }}
               >
@@ -371,6 +372,12 @@ function UserMembershipsDialog({
 const sameIds = (a: string[], b: string[]) =>
   a.length === b.length && [...a].sort().join() === [...b].sort().join();
 
+/** Collapsed-display text for a multiselect site Dropdown. */
+const siteLabels = (ids: string[], sites: SiteRow[]) =>
+  ids
+    .map((id) => sites.find((st) => st.id === id)?.sitecode ?? id.slice(0, 6))
+    .join(', ');
+
 function MembershipRow({
   user,
   m,
@@ -430,6 +437,7 @@ function MembershipRow({
                 multiselect
                 placeholder="Select sites…"
                 selectedOptions={ids}
+                value={siteLabels(ids, sites.data ?? [])}
                 onOptionSelect={(_, d) => setIds(d.selectedOptions)}
                 style={{ minWidth: 190 }}
               >
@@ -558,6 +566,7 @@ function AddMembershipRow({
                 multiselect
                 placeholder="Select sites…"
                 selectedOptions={ids}
+                value={siteLabels(ids, sites.data ?? [])}
                 onOptionSelect={(_, d) => setIds(d.selectedOptions)}
                 style={{ minWidth: 200 }}
               >
