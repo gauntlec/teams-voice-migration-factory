@@ -15,6 +15,7 @@ import { Handover } from './pages/Handover';
 import { AdminUsers } from './pages/admin/Users';
 import { AdminTenants } from './pages/admin/Tenants';
 import { AdminSites } from './pages/admin/Sites';
+import { AdminEmailLog } from './pages/admin/EmailLog';
 import { AdminAudit } from './pages/admin/Audit';
 
 export function App() {
@@ -75,6 +76,14 @@ export function App() {
           element={
             <RequirePermission permission="discovery:sites:manage">
               <AdminSites />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="/admin/email"
+          element={
+            <RequirePermission permission="audit:read:platform">
+              <AdminEmailLog />
             </RequirePermission>
           }
         />

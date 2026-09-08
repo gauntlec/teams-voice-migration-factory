@@ -35,6 +35,15 @@ The auditable comms log. Key columns: `to_email`, `template`, `context` (jsonb),
 `error`, `attempts`, `related_type` + `related_id` (e.g. `user` + the user id),
 `created_by`, `created_at`, `sent_at`.
 
+### Email log page
+
+`Administration -> Email log` (`/admin/email`, `audit:read:platform` -> SUPER_ADMIN)
+shows the current SMTP relay config and every message with its status, last SMTP
+error and retry count, and a **Resend** button for failed/queued rows. Backed by
+`GET /email-messages` (which never returns `context` - it can hold an invitation
+password) and `POST /email-messages/:id/resend`. Lower-level SMTP conversation
+logs are only in the worker container's stdout (`docker logs`).
+
 ## SMTP configuration
 
 Set in the deploy `.env` (see `.env.example`). Works with any provider (a mail
