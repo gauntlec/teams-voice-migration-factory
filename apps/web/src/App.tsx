@@ -7,6 +7,7 @@ import { Login } from './pages/Login';
 import { EnrolTotp } from './pages/EnrolTotp';
 import { Dashboard } from './pages/Dashboard';
 import { DataCollection } from './pages/DataCollection';
+import { SiteWorkspace } from './pages/SiteWorkspace';
 import { Build } from './pages/Build';
 import { Deployment } from './pages/Deployment';
 import { Handover } from './pages/Handover';
@@ -32,6 +33,7 @@ export function App() {
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/data-collection" element={<DataCollection />} />
+        <Route path="/data-collection/sites/:siteId" element={<SiteWorkspace />} />
         <Route path="/build" element={<Build />} />
         <Route path="/deployment" element={<Deployment />} />
         <Route path="/handover" element={<Handover />} />

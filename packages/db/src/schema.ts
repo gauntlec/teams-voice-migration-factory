@@ -119,6 +119,9 @@ export interface DiscoverySitesTable {
   address: string | null;
   country: string | null;
   region: string | null;
+  /** WGS84 coordinates for the site map; null until placed. */
+  latitude: number | null;
+  longitude: number | null;
   paging: Json;
   created_at: Ts;
 }

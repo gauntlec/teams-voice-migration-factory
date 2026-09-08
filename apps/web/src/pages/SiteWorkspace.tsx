@@ -1,0 +1,699 @@
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import {
+  Badge,
+  Button,
+  Card,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
+  DialogTrigger,
+  Dropdown,
+  Field,
+  Option,
+  SearchBox,
+  Spinner,
+  Tab,
+  TabList,
+  Table,
+  TableBody,
+  TableCell,
+  TableHeader,
+  TableHeaderCell,
+  TableRow,
+  Text,
+} from '@fluentui/react-components';
+import { ArrowLeftRegular, DeleteRegular } from '@fluentui/react-icons';
+import {
+  CALLER_ID_OPTIONS,
+  FLOW_KINDS,
+  NETWORK_SCOPES,
+  NETWORK_TYPES,
+  NUMBER_RANGE_KINDS,
+  RESOURCE_ACCOUNT_KINDS,
+  type Paginated,
+} from '@tvmf/shared';
+import { api, ApiError } from '../api';
+import { useAuth } from '../auth';
+import { Page } from '../components/Page';
+import {
+  LoadError,
+  NoTenant,
+  PagedSection,
+  useRecordStyles,
+  type Choice,
+  type Row,
+} from '../components/records';
+
+interface SiteSummary {
+  site: {
+    id: string;
+    sitecode: string;
+    name: string | null;
+    address: string | null;
+    country: string | null;
+    region: string | null;
+  };
+  status: 'draft' | 'submitted' | 'accepted';
+  callingPolicies: (Row & { name: string })[];
+  numberSummary: { total: number; available: number; reserved: number; assigned: number };
+}
+
+const TABS = [
+  'ranges',
+  'numbers',
+  'users',
+  'caps',
+  'resource-accounts',
+  'network',
+  'flows',
+] as const;
+type TabKey = (typeof TABS)[number];
+const TAB_LABEL: Record<TabKey, string> = {
+  ranges: 'Number ranges',
+  numbers: 'Numbers',
+  users: 'Users',
+  caps: 'Common area phones',
+  'resource-accounts': 'Resource accounts',
+  network: 'Network (E911)',
+  flows: 'Call flows',
+};
+
+export function SiteWorkspace() {
+  const s = useRecordStyles();
+  const { siteId = '' } = useParams();
+  const { activeTenantId, can } = useAuth();
+  const [tab, setTab] = useState<TabKey>('ranges');
+
+  const tid = activeTenantId;
+  const base = `/t/${tid}/discovery`;
+
+  const summary = useQuery({
+    queryKey: ['site-summary', tid, siteId],
+    enabled: !!tid && !!siteId,
+    queryFn: () => api<SiteSummary>(`${base}/sites/${siteId}`),
+  });
+
+  // Available numbers for this site, for the phone-number pickers.
+  const avail = useQuery({
+    queryKey: ['site-avail-numbers', tid, siteId],
+    enabled: !!tid && !!siteId,
+    queryFn: () =>
+      api<Paginated<{ id: string; e164: string }>>(
+        `${base}/numbers?siteId=${siteId}&status=available&limit=200`,
+      ),
+  });
+
+  const availableChoices: Choice[] = useMemo(
+    () => (avail.data?.items ?? []).map((n) => ({ value: n.id, label: n.e164 })),
+    [avail.data],
+  );
+  const numberChoicesFor = (row: Row | null): Choice[] => {
+    const cur =
+      row && row.phone_number_id
+        ? [{ value: String(row.phone_number_id), label: `${row.phone_number} (current)` }]
+        : [];
+    return [...cur, ...availableChoices];
+  };
+
+  if (!tid) return <NoTenant />;
+  if (summary.isLoading) return <Spinner label="Loading site…" />;
+  if (summary.isError) return <LoadError message={(summary.error as Error).message} />;
+
+  const { site, status, callingPolicies, numberSummary } = summary.data!;
+  const canReview = can('discovery:review');
+  const locked = !can('discovery:write') || status === 'accepted' || (status === 'submitted' && !canReview);
+
+  const policyChoices: Choice[] = callingPolicies.map((p) => ({ value: p.id, label: p.name }));
+  const policyName = (id: unknown) => callingPolicies.find((p) => p.id === id)?.name ?? '—';
+  const yesNo = (v: unknown) => (v ? 'Yes' : 'No');
+
+  const refreshSummary = () => summary.refetch();
+
+  return (
+    <Page
+      title={site.name || site.sitecode}
+      subtitle={[site.sitecode, site.address, site.country].filter(Boolean).join(' · ')}
+      actions={
+        <Link to="/data-collection">
+          <Button appearance="subtle" icon={<ArrowLeftRegular />}>
+            All sites
+          </Button>
+        </Link>
+      }
+    >
+      <div className={s.summary}>
+        <Text size={200}>
+          Numbers: <b>{numberSummary.total}</b>
+        </Text>
+        <Text size={200}>
+          Available: <b>{numberSummary.available}</b>
+        </Text>
+        <Text size={200}>
+          Reserved: <b>{numberSummary.reserved}</b>
+        </Text>
+        <Text size={200}>
+          Assigned: <b>{numberSummary.assigned}</b>
+        </Text>
+        {locked && (
+          <Badge appearance="tint" color="warning">
+            {status === 'accepted' ? 'accepted — locked' : 'submitted — read-only'}
+          </Badge>
+        )}
+      </div>
+
+      <TabList selectedValue={tab} onTabSelect={(_, d) => setTab(d.value as TabKey)}>
+        {TABS.map((t) => (
+          <Tab key={t} value={t}>
+            {TAB_LABEL[t]}
+          </Tab>
+        ))}
+      </TabList>
+
+      {tab === 'ranges' && (
+        <PagedSection
+          title="Number ranges"
+          hint="Creating a range generates its individual numbers into this site's inventory."
+          endpoint={`${base}/number-ranges`}
+          queryKey={['ranges', tid, siteId]}
+          params={{ siteId }}
+          fixed={{ sitecode: site.sitecode }}
+          readOnly={locked}
+          onChanged={refreshSummary}
+          columns={[
+            { key: 'range_start', label: 'From' },
+            { key: 'range_end', label: 'To' },
+            { key: 'kind', label: 'Kind' },
+            {
+              key: 'size',
+              label: 'Numbers',
+              render: (r) => String((r as Row & { counts: { total: number } }).counts?.total ?? 0),
+            },
+            {
+              key: 'assigned',
+              label: 'Assigned',
+              render: (r) =>
+                String((r as Row & { counts: { assigned: number } }).counts?.assigned ?? 0),
+            },
+            { key: 'carrier', label: 'Carrier' },
+            {
+              key: 'loa',
+              label: 'LOA',
+              render: (r) => `${r.loa_sent ? 'sent' : '—'} / ${r.loa_completed ? 'done' : '—'}`,
+            },
+          ]}
+          fields={[
+            { key: 'range_start', label: 'Range start', required: true, placeholder: '19133743250' },
+            { key: 'range_end', label: 'Range end', required: true, placeholder: '19133743257' },
+            { key: 'kind', label: 'Kind', type: 'select', options: NUMBER_RANGE_KINDS, required: true },
+            { key: 'carrier', label: 'Carrier' },
+            { key: 'loa_sent', label: 'LOA sent to customer', type: 'boolean' },
+            { key: 'loa_completed', label: 'LOA completed', type: 'boolean' },
+            { key: 'comments', label: 'Comments', type: 'textarea', full: true },
+          ]}
+        />
+      )}
+
+      {tab === 'numbers' && (
+        <NumberInventory base={base} siteId={siteId} locked={locked} onChanged={refreshSummary} />
+      )}
+
+      {tab === 'users' && (
+        <PagedSection
+          title="Users"
+          hint="Teams users with Enterprise Voice. Each holds at most one number from this site's inventory."
+          endpoint={`${base}/users`}
+          queryKey={['users', tid, siteId]}
+          params={{ siteId }}
+          fixed={{ site_id: siteId }}
+          readOnly={locked}
+          onChanged={refreshSummary}
+          columns={[
+            { key: 'upn', label: 'UPN' },
+            { key: 'display_name', label: 'Name' },
+            { key: 'phone_number', label: 'Number' },
+            {
+              key: 'calling_policy_id',
+              label: 'Calling policy',
+              render: (r) => policyName(r.calling_policy_id),
+            },
+            { key: 'caller_id', label: 'Caller ID' },
+            { key: 'voicemail_enabled', label: 'Voicemail', render: (r) => yesNo(r.voicemail_enabled) },
+          ]}
+          fields={[
+            { key: 'upn', label: 'M365 UPN', required: true, placeholder: 'user@customer.com' },
+            { key: 'display_name', label: 'Display name' },
+            { key: 'phone_number_id', label: 'Phone number', type: 'ref', choices: numberChoicesFor },
+            { key: 'calling_policy_id', label: 'Calling policy', type: 'ref', choices: policyChoices },
+            { key: 'caller_id', label: 'Caller ID', type: 'select', options: CALLER_ID_OPTIONS },
+            { key: 'voicemail_enabled', label: 'Voicemail enabled', type: 'boolean', default: 'true' },
+            { key: 'voicemail_language', label: 'Voicemail language', placeholder: 'English' },
+            { key: 'requires_handset', label: 'Requires a physical handset', type: 'boolean' },
+            { key: 'handset_model', label: 'Handset model' },
+            { key: 'access_port_id', label: 'Access port ID' },
+            { key: 'comments', label: 'Comments', type: 'textarea', full: true },
+          ]}
+        />
+      )}
+
+      {tab === 'caps' && (
+        <PagedSection
+          title="Common area phones"
+          hint="Shared / lobby / meeting-room phones. Each holds at most one number."
+          endpoint={`${base}/caps`}
+          queryKey={['caps', tid, siteId]}
+          params={{ siteId }}
+          fixed={{ site_id: siteId }}
+          readOnly={locked}
+          onChanged={refreshSummary}
+          columns={[
+            { key: 'display_name', label: 'Display name' },
+            { key: 'phone_number', label: 'Number' },
+            { key: 'device_model', label: 'Device' },
+            {
+              key: 'calling_policy_id',
+              label: 'Calling policy',
+              render: (r) => policyName(r.calling_policy_id),
+            },
+            { key: 'caller_id', label: 'Caller ID' },
+          ]}
+          fields={[
+            { key: 'display_name', label: 'Display name', required: true },
+            { key: 'upn', label: 'UPN (if known)' },
+            { key: 'phone_number_id', label: 'Phone number', type: 'ref', choices: numberChoicesFor },
+            { key: 'device_model', label: 'Device model' },
+            { key: 'calling_policy_id', label: 'Calling policy', type: 'ref', choices: policyChoices },
+            { key: 'caller_id', label: 'Caller ID', type: 'select', options: CALLER_ID_OPTIONS },
+            { key: 'access_port_id', label: 'Access port ID' },
+            { key: 'comments', label: 'Comments', type: 'textarea', full: true },
+          ]}
+        />
+      )}
+
+      {tab === 'resource-accounts' && (
+        <PagedSection
+          title="Resource accounts"
+          hint="Auto attendants & call queues. May hold several numbers — use the Numbers button."
+          endpoint={`${base}/resource-accounts`}
+          queryKey={['ras', tid, siteId]}
+          params={{ siteId }}
+          fixed={{ site_id: siteId }}
+          readOnly={locked}
+          onChanged={refreshSummary}
+          extraRowAction={(r) =>
+            !locked ? (
+              <RaNumbersButton
+                ra={r as Row & { name: string; phone_numbers: { id: string; e164: string }[] }}
+                available={availableChoices}
+                base={base}
+                onChanged={() => {
+                  refreshSummary();
+                  avail.refetch();
+                }}
+              />
+            ) : null
+          }
+          columns={[
+            { key: 'name', label: 'Name' },
+            { key: 'kind', label: 'Kind' },
+            {
+              key: 'phone_numbers',
+              label: 'Numbers',
+              render: (r) =>
+                (r.phone_numbers as { e164: string }[])?.map((n) => n.e164).join(', ') || '—',
+            },
+            { key: 'business_hours', label: 'Business hours' },
+            { key: 'who_answers', label: 'Who answers' },
+          ]}
+          fields={[
+            { key: 'name', label: 'Name of service', required: true, placeholder: 'Main Line' },
+            { key: 'kind', label: 'Kind', type: 'select', options: RESOURCE_ACCOUNT_KINDS, required: true },
+            { key: 'directory_entry', label: 'Directory entry' },
+            { key: 'business_hours', label: 'Business hours', placeholder: '24/7' },
+            { key: 'who_answers', label: 'Who should answer the call', type: 'textarea', full: true },
+            { key: 'ooh_action', label: 'Out-of-hours action', type: 'textarea', full: true },
+            { key: 'exception_conditions', label: 'Exception handling — conditions', type: 'textarea', full: true },
+            { key: 'exception_action', label: 'Exception handling — action', type: 'textarea', full: true },
+            { key: 'holiday', label: 'Holiday handling', type: 'textarea', full: true },
+            { key: 'advanced_features', label: 'Advanced features', type: 'textarea', full: true },
+            { key: 'comments', label: 'Comments', type: 'textarea', full: true },
+          ]}
+        />
+      )}
+
+      {tab === 'network' && (
+        <PagedSection
+          title="Network (E911)"
+          hint="Internal and external subnets used for emergency-call location and media routing."
+          endpoint={`${base}/network`}
+          queryKey={['network', tid, siteId]}
+          params={{ siteId }}
+          fixed={{ site_id: siteId }}
+          readOnly={locked}
+          columns={[
+            { key: 'scope', label: 'Scope' },
+            { key: 'subnet', label: 'Subnet' },
+            { key: 'mask', label: 'Mask' },
+            { key: 'location', label: 'Location' },
+            { key: 'network_type', label: 'Type' },
+          ]}
+          fields={[
+            { key: 'scope', label: 'Scope', type: 'select', options: NETWORK_SCOPES, required: true },
+            { key: 'subnet', label: 'Subnet', required: true, placeholder: '10.20.0.0' },
+            { key: 'mask', label: 'Mask (bits)', type: 'number', placeholder: '24' },
+            { key: 'location', label: 'Location' },
+            { key: 'network_type', label: 'Network type', type: 'select', options: NETWORK_TYPES },
+          ]}
+        />
+      )}
+
+      {tab === 'flows' && (
+        <PagedSection
+          title="Call flows"
+          hint="Free-text notes on existing routing. Structured AA/CQ config lives under Resource accounts."
+          endpoint={`${base}/flows`}
+          queryKey={['flows', tid, siteId]}
+          params={{ siteId }}
+          fixed={{ site_id: siteId }}
+          readOnly={locked}
+          columns={[
+            { key: 'kind', label: 'Kind' },
+            { key: 'name', label: 'Name' },
+            {
+              key: 'description',
+              label: 'Description',
+              render: (r) => {
+                const v = (r.description as string) ?? '';
+                return v.length > 90 ? `${v.slice(0, 90)}…` : v || '—';
+              },
+            },
+          ]}
+          fields={[
+            { key: 'kind', label: 'Kind', type: 'select', options: FLOW_KINDS, required: true },
+            { key: 'name', label: 'Name', required: true },
+            { key: 'description', label: 'Description', type: 'textarea', full: true },
+          ]}
+        />
+      )}
+    </Page>
+  );
+}
+
+/* --------------------------- number inventory --------------------------- */
+
+interface PhoneNumber {
+  id: string;
+  e164: string;
+  status: 'available' | 'reserved' | 'assigned';
+  holder_type: string | null;
+  holder_name: string | null;
+  range_start: string | null;
+}
+
+function NumberInventory({
+  base,
+  siteId,
+  locked,
+  onChanged,
+}: {
+  base: string;
+  siteId: string;
+  locked: boolean;
+  onChanged: () => void;
+}) {
+  const s = useRecordStyles();
+  const [statusFilter, setStatusFilter] = useState<'all' | 'available' | 'reserved' | 'assigned'>('all');
+  const [qInput, setQInput] = useState('');
+  const [q, setQ] = useState('');
+  const [page, setPage] = useState(1);
+  const limit = 50;
+
+  useEffect(() => {
+    const h = setTimeout(() => {
+      setQ(qInput.trim());
+      setPage(1);
+    }, 250);
+    return () => clearTimeout(h);
+  }, [qInput]);
+
+  const qs = new URLSearchParams({ siteId, page: String(page), limit: String(limit) });
+  if (statusFilter !== 'all') qs.set('status', statusFilter);
+  if (q) qs.set('q', q);
+
+  const list = useQuery({
+    queryKey: ['site-numbers', base, siteId, statusFilter, q, page],
+    queryFn: () => api<Paginated<PhoneNumber>>(`${base}/numbers?${qs.toString()}`),
+  });
+
+  const reserve = useMutation({
+    mutationFn: ({ id, reserved }: { id: string; reserved: boolean }) =>
+      api(`${base}/numbers/${id}/reserve`, { method: 'PATCH', body: JSON.stringify({ reserved }) }),
+    onSuccess: () => {
+      list.refetch();
+      onChanged();
+    },
+  });
+
+  const total = list.data?.total ?? 0;
+  const pages = Math.max(1, Math.ceil(total / limit));
+  const items = list.data?.items ?? [];
+
+  return (
+    <Card className={s.card}>
+      <div className={s.cardHead}>
+        <div>
+          <Text weight="semibold">
+            Numbers <span className={s.muted}>({total})</span>
+          </Text>
+          <Text size={200} className={s.muted} block>
+            Generated from this site's ranges. Assign numbers to users, CAPs or resource accounts.
+          </Text>
+        </div>
+        <div className={s.toolbar}>
+          <SearchBox
+            size="small"
+            placeholder="Search number…"
+            value={qInput}
+            onChange={(_, d) => setQInput(d.value)}
+            style={{ minWidth: 180 }}
+          />
+          <Dropdown
+            size="small"
+            value={statusFilter}
+            selectedOptions={[statusFilter]}
+            onOptionSelect={(_, d) => {
+              setStatusFilter((d.optionValue as typeof statusFilter) ?? 'all');
+              setPage(1);
+            }}
+            style={{ minWidth: 130 }}
+          >
+            {['all', 'available', 'reserved', 'assigned'].map((o) => (
+              <Option key={o} value={o}>
+                {o}
+              </Option>
+            ))}
+          </Dropdown>
+        </div>
+      </div>
+
+      {list.isError && <LoadError message={(list.error as Error).message} />}
+      {list.isLoading ? (
+        <Spinner size="tiny" />
+      ) : items.length === 0 ? (
+        <Text size={200} className={s.muted}>
+          {total === 0 && !q ? 'Add a number range to generate the inventory.' : 'No matches.'}
+        </Text>
+      ) : (
+        <>
+          <div style={{ overflowX: 'auto' }}>
+            <Table size="small">
+              <TableHeader>
+                <TableRow>
+                  <TableHeaderCell>Number</TableHeaderCell>
+                  <TableHeaderCell>Range</TableHeaderCell>
+                  <TableHeaderCell>Status</TableHeaderCell>
+                  <TableHeaderCell>Holder</TableHeaderCell>
+                  {!locked && <TableHeaderCell />}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {items.map((n) => (
+                  <TableRow key={n.id}>
+                    <TableCell style={{ fontFamily: 'ui-monospace, monospace' }}>{n.e164}</TableCell>
+                    <TableCell>{n.range_start ?? '—'}</TableCell>
+                    <TableCell>
+                      <Badge
+                        appearance="tint"
+                        color={
+                          n.status === 'assigned'
+                            ? 'success'
+                            : n.status === 'reserved'
+                              ? 'warning'
+                              : 'informative'
+                        }
+                      >
+                        {n.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {n.holder_name ? `${n.holder_name} (${n.holder_type})` : '—'}
+                    </TableCell>
+                    {!locked && (
+                      <TableCell>
+                        {n.status !== 'assigned' && (
+                          <Button
+                            size="small"
+                            appearance="subtle"
+                            disabled={reserve.isPending}
+                            onClick={() =>
+                              reserve.mutate({ id: n.id, reserved: n.status !== 'reserved' })
+                            }
+                          >
+                            {n.status === 'reserved' ? 'Release' : 'Reserve'}
+                          </Button>
+                        )}
+                      </TableCell>
+                    )}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          {pages > 1 && (
+            <div className={s.pager}>
+              <Text size={200} className={s.muted}>
+                Page {page} of {pages} · {total} total
+              </Text>
+              <Button
+                size="small"
+                appearance="subtle"
+                disabled={page <= 1 || list.isFetching}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                Prev
+              </Button>
+              <Button
+                size="small"
+                appearance="subtle"
+                disabled={page >= pages || list.isFetching}
+                onClick={() => setPage((p) => Math.min(pages, p + 1))}
+              >
+                Next
+              </Button>
+            </div>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
+/* --------------------- resource-account number manager --------------------- */
+
+function RaNumbersButton({
+  ra,
+  available,
+  base,
+  onChanged,
+}: {
+  ra: Row & { name: string; phone_numbers: { id: string; e164: string }[] };
+  available: Choice[];
+  base: string;
+  onChanged: () => void;
+}) {
+  const s = useRecordStyles();
+  const [open, setOpen] = useState(false);
+  const [pick, setPick] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const attach = useMutation({
+    mutationFn: () =>
+      api(`${base}/resource-accounts/${ra.id}/numbers`, {
+        method: 'POST',
+        body: JSON.stringify({ phone_number_id: pick }),
+      }),
+    onSuccess: () => {
+      setPick('');
+      setError(null);
+      onChanged();
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Failed'),
+  });
+  const detach = useMutation({
+    mutationFn: (numberId: string) =>
+      api(`${base}/resource-accounts/${ra.id}/numbers/${numberId}`, { method: 'DELETE' }),
+    onSuccess: onChanged,
+  });
+
+  return (
+    <>
+      <Button size="small" appearance="subtle" onClick={() => setOpen(true)}>
+        Numbers ({ra.phone_numbers?.length ?? 0})
+      </Button>
+      <Dialog open={open} onOpenChange={(_, d) => setOpen(d.open)}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>Numbers for {ra.name}</DialogTitle>
+            <DialogContent>
+              <div className={s.dialogForm}>
+                <div className={s.chips}>
+                  {(ra.phone_numbers?.length ?? 0) === 0 && (
+                    <Text size={200} className={s.muted}>
+                      None attached.
+                    </Text>
+                  )}
+                  {(ra.phone_numbers ?? []).map((n) => (
+                    <Badge key={n.id} appearance="outline" size="large">
+                      {n.e164}
+                      <Button
+                        size="small"
+                        appearance="transparent"
+                        icon={<DeleteRegular />}
+                        aria-label="Detach"
+                        onClick={() => detach.mutate(n.id)}
+                      />
+                    </Badge>
+                  ))}
+                </div>
+                <Field label="Attach an available number">
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <Dropdown
+                      placeholder="Select…"
+                      selectedOptions={pick ? [pick] : []}
+                      value={available.find((c) => c.value === pick)?.label ?? ''}
+                      onOptionSelect={(_, d) => setPick(d.optionValue ?? '')}
+                      style={{ flex: 1 }}
+                    >
+                      {available.map((c) => (
+                        <Option key={c.value} value={c.value}>
+                          {c.label}
+                        </Option>
+                      ))}
+                    </Dropdown>
+                    <Button
+                      appearance="primary"
+                      disabled={!pick || attach.isPending}
+                      onClick={() => attach.mutate()}
+                    >
+                      Attach
+                    </Button>
+                  </div>
+                </Field>
+                {error && <LoadError message={error} />}
+              </div>
+            </DialogContent>
+            <DialogActions>
+              <DialogTrigger disableButtonEnhancement>
+                <Button appearance="secondary">Close</Button>
+              </DialogTrigger>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+    </>
+  );
+}

@@ -1,8 +1,9 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import {
   callingPolicySchema,
   can,
   discoveryCapSchema,
+  discoveryListQuerySchema,
   discoveryNumberRangeSchema,
   discoveryResourceAccountSchema,
   discoveryUserSchema,
@@ -10,6 +11,7 @@ import {
   resourceAccountNumberSchema,
   type CallingPolicyInput,
   type DiscoveryCapInput,
+  type DiscoveryListQuery,
   type DiscoveryNumberRangeInput,
   type DiscoveryResourceAccountInput,
   type DiscoveryUserInput,
@@ -30,10 +32,51 @@ export class TelephonyController {
     return can(u.role, 'discovery:review');
   }
 
-  @Get('telephony')
+  /* --------------------- paginated list reads --------------------- */
+
+  @Get('users')
   @RequirePermission('discovery:read')
-  snapshot(@TenantCtx() t: TenantContext) {
-    return this.svc.snapshot(t);
+  listUsers(
+    @TenantCtx() t: TenantContext,
+    @Query(new ZodBody(discoveryListQuerySchema)) q: DiscoveryListQuery,
+  ) {
+    return this.svc.listUsers(t, q);
+  }
+
+  @Get('caps')
+  @RequirePermission('discovery:read')
+  listCaps(
+    @TenantCtx() t: TenantContext,
+    @Query(new ZodBody(discoveryListQuerySchema)) q: DiscoveryListQuery,
+  ) {
+    return this.svc.listCaps(t, q);
+  }
+
+  @Get('resource-accounts')
+  @RequirePermission('discovery:read')
+  listRas(
+    @TenantCtx() t: TenantContext,
+    @Query(new ZodBody(discoveryListQuerySchema)) q: DiscoveryListQuery,
+  ) {
+    return this.svc.listResourceAccounts(t, q);
+  }
+
+  @Get('number-ranges')
+  @RequirePermission('discovery:read')
+  listRanges(
+    @TenantCtx() t: TenantContext,
+    @Query(new ZodBody(discoveryListQuerySchema)) q: DiscoveryListQuery,
+  ) {
+    return this.svc.listRanges(t, q);
+  }
+
+  @Get('numbers')
+  @RequirePermission('discovery:read')
+  listNumbers(
+    @TenantCtx() t: TenantContext,
+    @Query(new ZodBody(discoveryListQuerySchema)) q: DiscoveryListQuery,
+  ) {
+    return this.svc.listNumbers(t, q);
   }
 
   /* ----------------------- calling policies ----------------------- */

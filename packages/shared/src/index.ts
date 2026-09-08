@@ -5,6 +5,14 @@ export * from './dto';
 /** Header the web app sends to select the active tenant for `/t/:tenantId/*`. */
 export const TENANT_HEADER = 'x-tenant-id';
 
+/** One page of a paginated Data Collection list endpoint. */
+export interface Paginated<T> {
+  items: T[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
 /** One customer the signed-in user can act in. */
 export interface MeTenant {
   id: string;

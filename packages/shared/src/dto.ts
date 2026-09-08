@@ -7,6 +7,7 @@ import {
   NETWORK_SCOPES,
   NETWORK_TYPES,
   NUMBER_RANGE_KINDS,
+  NUMBER_STATUSES,
   RESOURCE_ACCOUNT_KINDS,
 } from './domain';
 
@@ -129,6 +130,15 @@ export const sitecodeSchema = z
   .max(60)
   .regex(/^[A-Za-z0-9._-]+$/, 'letters, digits, dot, dash or underscore only');
 
+const latitude = z.preprocess(
+  (v) => (v === '' || v == null ? null : v),
+  z.coerce.number().min(-90).max(90).nullable().optional(),
+);
+const longitude = z.preprocess(
+  (v) => (v === '' || v == null ? null : v),
+  z.coerce.number().min(-180).max(180).nullable().optional(),
+);
+
 export const discoverySiteSchema = z
   .object({
     sitecode: sitecodeSchema,
@@ -136,6 +146,8 @@ export const discoverySiteSchema = z
     address: optStr(500),
     country: optStr(80),
     region: optStr(120),
+    latitude,
+    longitude,
     paging: z.record(z.unknown()).optional(),
   })
   .strict();
@@ -273,3 +285,19 @@ export const resourceAccountNumberSchema = z
 
 /** Manually flip a free number to/from 'reserved' (e.g. held for porting). */
 export const numberReserveSchema = z.object({ reserved: z.boolean() }).strict();
+
+/* ------------------- Data Collection list queries ------------------- */
+
+/**
+ * Query string for the paginated Data Collection list endpoints
+ * (`GET .../users`, `.../numbers`, etc). Everything is optional; `page`/`limit`
+ * default. `siteId` narrows to one site (ignored/clamped for site contacts).
+ */
+export const discoveryListQuerySchema = z.object({
+  siteId: z.string().uuid().optional(),
+  q: z.string().trim().max(160).optional(),
+  status: z.enum(NUMBER_STATUSES).optional(),
+  page: z.coerce.number().int().min(1).max(100000).default(1),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+});
+export type DiscoveryListQuery = z.infer<typeof discoveryListQuerySchema>;

@@ -1,12 +1,14 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import {
   can,
   discoveryFlowSchema,
   discoveryGeneralSchema,
+  discoveryListQuerySchema,
   discoveryNetworkSchema,
   discoverySiteSchema,
   type DiscoveryFlowInput,
   type DiscoveryGeneralInput,
+  type DiscoveryListQuery,
   type DiscoveryNetworkInput,
   type DiscoverySiteInput,
 } from '@tvmf/shared';
@@ -34,6 +36,12 @@ export class DataCollectionController {
   @RequirePermission('discovery:read')
   get(@TenantCtx() t: TenantContext) {
     return this.svc.get(t);
+  }
+
+  @Get('sites/:siteId')
+  @RequirePermission('discovery:read')
+  siteSummary(@TenantCtx() t: TenantContext, @Param('siteId') siteId: string) {
+    return this.svc.siteSummary(t, siteId);
   }
 
   @Patch('general')
@@ -97,6 +105,15 @@ export class DataCollectionController {
 
   /* ------------------------------- network ----------------------------- */
 
+  @Get('network')
+  @RequirePermission('discovery:read')
+  listNetwork(
+    @TenantCtx() t: TenantContext,
+    @Query(new ZodBody(discoveryListQuerySchema)) q: DiscoveryListQuery,
+  ) {
+    return this.svc.listNetwork(t, q);
+  }
+
   @Post('network')
   @RequirePermission('discovery:write')
   addNetwork(
@@ -125,6 +142,15 @@ export class DataCollectionController {
   }
 
   /* -------------------------------- flows ------------------------------- */
+
+  @Get('flows')
+  @RequirePermission('discovery:read')
+  listFlows(
+    @TenantCtx() t: TenantContext,
+    @Query(new ZodBody(discoveryListQuerySchema)) q: DiscoveryListQuery,
+  ) {
+    return this.svc.listFlows(t, q);
+  }
 
   @Post('flows')
   @RequirePermission('discovery:write')

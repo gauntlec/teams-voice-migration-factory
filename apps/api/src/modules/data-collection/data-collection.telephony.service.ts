@@ -4,12 +4,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import { tenantDb, type DB } from '@tvmf/db';
 import {
   MAX_RANGE_SIZE,
   type CallingPolicyInput,
   type DiscoveryCapInput,
+  type DiscoveryListQuery,
   type DiscoveryNumberRangeInput,
   type DiscoveryResourceAccountInput,
   type DiscoveryUserInput,
@@ -40,18 +41,6 @@ export class TelephonyService {
   }
 
   /* ========================= site scoping ========================= */
-
-  /** The sitecodes a site contact is limited to, or null for whole-customer. */
-  private async scopedSitecodes(t: TenantContext): Promise<string[] | null> {
-    if (!t.siteScope) return null;
-    const rows = await this.s(t)
-      .selectFrom('discovery_sites')
-      .select('sitecode')
-      .where('id', 'in', t.siteScope)
-      .execute();
-    // '\x00' can never be a real sitecode - keeps `in ()` from being emitted.
-    return rows.length ? rows.map((r) => r.sitecode) : ['\x00'];
-  }
 
   /** Resolve a sitecode to its site row and check it is in the caller's scope. */
   private async siteByCode(t: TenantContext, sitecode: string) {
@@ -111,88 +100,247 @@ export class TelephonyService {
     assertSiteInScope(t, row.site_id);
   }
 
-  /* ============================ snapshot ============================ */
+  /* ===================== paginated list reads ===================== */
 
-  async snapshot(t: TenantContext) {
+  /** page/limit/offset from a validated list query. */
+  private pageOf(q: DiscoveryListQuery) {
+    const page = q.page ?? 1;
+    const limit = q.limit ?? 50;
+    return { page, limit, offset: (page - 1) * limit };
+  }
+
+  /**
+   * The `site_id` values a list should be restricted to: `[siteId]` for a
+   * specific site (checked against the caller's scope), the caller's whole
+   * scope for a site contact, or `null` (no restriction) for whole-customer.
+   */
+  private siteIdFilter(t: TenantContext, siteId?: string): string[] | null {
+    if (siteId) {
+      assertSiteInScope(t, siteId);
+      return [siteId];
+    }
+    return t.siteScope;
+  }
+
+  /** Same as `siteIdFilter` but resolved to sitecodes (for ranges / numbers). */
+  private async sitecodeFilter(t: TenantContext, siteId?: string): Promise<string[] | null> {
+    const ids = this.siteIdFilter(t, siteId);
+    if (!ids) return null;
+    const rows = await this.s(t)
+      .selectFrom('discovery_sites')
+      .select('sitecode')
+      .where('id', 'in', ids)
+      .execute();
+    return rows.length ? rows.map((r) => r.sitecode) : ['\x00'];
+  }
+
+  async listUsers(t: TenantContext, q: DiscoveryListQuery) {
     const s = this.s(t);
-    const scope = t.siteScope;
-    const sitecodes = await this.scopedSitecodes(t);
-
-    let rangesQ = s.selectFrom('discovery_number_ranges').selectAll().orderBy('range_start');
-    let numbersQ = s.selectFrom('phone_numbers').selectAll().orderBy('e164');
-    let usersQ = s.selectFrom('discovery_users').selectAll().orderBy('upn');
-    let capsQ = s.selectFrom('discovery_caps').selectAll().orderBy('display_name');
-    let rasQ = s.selectFrom('discovery_resource_accounts').selectAll().orderBy('name');
-    if (scope && sitecodes) {
-      rangesQ = rangesQ.where('sitecode', 'in', sitecodes);
-      numbersQ = numbersQ.where('range_id', 'in', (eb) =>
-        eb.selectFrom('discovery_number_ranges').select('id').where('sitecode', 'in', sitecodes),
-      );
-      usersQ = usersQ.where('site_id', 'in', scope);
-      capsQ = capsQ.where('site_id', 'in', scope);
-      rasQ = rasQ.where('site_id', 'in', scope);
+    const sites = this.siteIdFilter(t, q.siteId);
+    const { page, limit, offset } = this.pageOf(q);
+    let b = s.selectFrom('discovery_users');
+    if (sites) b = b.where('site_id', 'in', sites);
+    if (q.q) {
+      const like = `%${q.q}%`;
+      b = b.where((eb) => eb.or([eb('upn', 'ilike', like), eb('display_name', 'ilike', like)]));
     }
-
-    const [callingPolicies, ranges, numbers, users, caps, resourceAccounts] = await Promise.all([
-      s.selectFrom('discovery_calling_policies').selectAll().orderBy('name').execute(),
-      rangesQ.execute(),
-      numbersQ.execute(),
-      usersQ.execute(),
-      capsQ.execute(),
-      rasQ.execute(),
+    const [items, cnt] = await Promise.all([
+      b.selectAll().orderBy('upn').limit(limit).offset(offset).execute(),
+      b.select((eb) => eb.fn.countAll<string>().as('n')).executeTakeFirst(),
     ]);
-
-    // resolve holder display names + per-holder number(s)
-    const byHolder = new Map<string, typeof numbers>();
-    for (const n of numbers) {
-      if (!n.holder_id) continue;
-      const arr = byHolder.get(n.holder_id) ?? [];
-      arr.push(n);
-      byHolder.set(n.holder_id, arr);
-    }
-    const numberOf = (id: string) => byHolder.get(id)?.[0]?.e164 ?? null;
-    const numberIdOf = (id: string) => byHolder.get(id)?.[0]?.id ?? null;
-    const numbersOf = (id: string) => (byHolder.get(id) ?? []).map((n) => ({ id: n.id, e164: n.e164 }));
-
-    const rangeCounts = new Map<string, { total: number; assigned: number; reserved: number }>();
-    for (const n of numbers) {
-      const c = rangeCounts.get(n.range_id) ?? { total: 0, assigned: 0, reserved: 0 };
-      c.total += 1;
-      if (n.status === 'assigned') c.assigned += 1;
-      if (n.status === 'reserved') c.reserved += 1;
-      rangeCounts.set(n.range_id, c);
-    }
-
+    const ids = items.map((u) => u.id);
+    const nums = ids.length
+      ? await s
+          .selectFrom('phone_numbers')
+          .select(['id', 'e164', 'holder_id'])
+          .where('holder_type', '=', 'user')
+          .where('holder_id', 'in', ids)
+          .execute()
+      : [];
+    const byHolder = new Map(nums.map((n) => [n.holder_id as string, n]));
     return {
-      callingPolicies,
-      ranges: ranges.map((r) => ({ ...r, counts: rangeCounts.get(r.id) ?? { total: 0, assigned: 0, reserved: 0 } })),
-      numbers: numbers.map((n) => ({
-        ...n,
-        holder_name: n.holder_id ? this.holderName(n.holder_type, n.holder_id, users, caps, resourceAccounts) : null,
+      items: items.map((u) => ({
+        ...u,
+        phone_number: byHolder.get(u.id)?.e164 ?? null,
+        phone_number_id: byHolder.get(u.id)?.id ?? null,
       })),
-      numberSummary: {
-        total: numbers.length,
-        available: numbers.filter((n) => n.status === 'available').length,
-        reserved: numbers.filter((n) => n.status === 'reserved').length,
-        assigned: numbers.filter((n) => n.status === 'assigned').length,
-      },
-      users: users.map((u) => ({ ...u, phone_number: numberOf(u.id), phone_number_id: numberIdOf(u.id) })),
-      caps: caps.map((c) => ({ ...c, phone_number: numberOf(c.id), phone_number_id: numberIdOf(c.id) })),
-      resourceAccounts: resourceAccounts.map((r) => ({ ...r, phone_numbers: numbersOf(r.id) })),
+      total: Number(cnt?.n ?? 0),
+      page,
+      limit,
     };
   }
 
-  private holderName(
-    type: string | null,
-    id: string,
-    users: { id: string; upn: string; display_name: string | null }[],
-    caps: { id: string; display_name: string }[],
-    ras: { id: string; name: string }[],
-  ): string | null {
-    if (type === 'user') return users.find((u) => u.id === id)?.display_name || users.find((u) => u.id === id)?.upn || null;
-    if (type === 'cap') return caps.find((c) => c.id === id)?.display_name ?? null;
-    if (type === 'resource_account') return ras.find((r) => r.id === id)?.name ?? null;
-    return null;
+  async listCaps(t: TenantContext, q: DiscoveryListQuery) {
+    const s = this.s(t);
+    const sites = this.siteIdFilter(t, q.siteId);
+    const { page, limit, offset } = this.pageOf(q);
+    let b = s.selectFrom('discovery_caps');
+    if (sites) b = b.where('site_id', 'in', sites);
+    if (q.q) {
+      const like = `%${q.q}%`;
+      b = b.where((eb) => eb.or([eb('display_name', 'ilike', like), eb('upn', 'ilike', like)]));
+    }
+    const [items, cnt] = await Promise.all([
+      b.selectAll().orderBy('display_name').limit(limit).offset(offset).execute(),
+      b.select((eb) => eb.fn.countAll<string>().as('n')).executeTakeFirst(),
+    ]);
+    const ids = items.map((c) => c.id);
+    const nums = ids.length
+      ? await s
+          .selectFrom('phone_numbers')
+          .select(['id', 'e164', 'holder_id'])
+          .where('holder_type', '=', 'cap')
+          .where('holder_id', 'in', ids)
+          .execute()
+      : [];
+    const byHolder = new Map(nums.map((n) => [n.holder_id as string, n]));
+    return {
+      items: items.map((c) => ({
+        ...c,
+        phone_number: byHolder.get(c.id)?.e164 ?? null,
+        phone_number_id: byHolder.get(c.id)?.id ?? null,
+      })),
+      total: Number(cnt?.n ?? 0),
+      page,
+      limit,
+    };
+  }
+
+  async listResourceAccounts(t: TenantContext, q: DiscoveryListQuery) {
+    const s = this.s(t);
+    const sites = this.siteIdFilter(t, q.siteId);
+    const { page, limit, offset } = this.pageOf(q);
+    let b = s.selectFrom('discovery_resource_accounts');
+    if (sites) b = b.where('site_id', 'in', sites);
+    if (q.q) b = b.where('name', 'ilike', `%${q.q}%`);
+    const [items, cnt] = await Promise.all([
+      b.selectAll().orderBy('name').limit(limit).offset(offset).execute(),
+      b.select((eb) => eb.fn.countAll<string>().as('n')).executeTakeFirst(),
+    ]);
+    const ids = items.map((r) => r.id);
+    const nums = ids.length
+      ? await s
+          .selectFrom('phone_numbers')
+          .select(['id', 'e164', 'holder_id'])
+          .where('holder_type', '=', 'resource_account')
+          .where('holder_id', 'in', ids)
+          .orderBy('e164')
+          .execute()
+      : [];
+    const byHolder = new Map<string, { id: string; e164: string }[]>();
+    for (const n of nums) {
+      const arr = byHolder.get(n.holder_id as string) ?? [];
+      arr.push({ id: n.id, e164: n.e164 });
+      byHolder.set(n.holder_id as string, arr);
+    }
+    return {
+      items: items.map((r) => ({ ...r, phone_numbers: byHolder.get(r.id) ?? [] })),
+      total: Number(cnt?.n ?? 0),
+      page,
+      limit,
+    };
+  }
+
+  async listRanges(t: TenantContext, q: DiscoveryListQuery) {
+    const s = this.s(t);
+    const codes = await this.sitecodeFilter(t, q.siteId);
+    const { page, limit, offset } = this.pageOf(q);
+    let b = s.selectFrom('discovery_number_ranges');
+    if (codes) b = b.where('sitecode', 'in', codes);
+    if (q.q) {
+      const like = `%${q.q}%`;
+      b = b.where((eb) =>
+        eb.or([
+          eb('range_start', 'ilike', like),
+          eb('range_end', 'ilike', like),
+          eb('carrier', 'ilike', like),
+          eb('sitecode', 'ilike', like),
+        ]),
+      );
+    }
+    const [items, cnt] = await Promise.all([
+      b.selectAll().orderBy('sitecode').orderBy('range_start').limit(limit).offset(offset).execute(),
+      b.select((eb) => eb.fn.countAll<string>().as('n')).executeTakeFirst(),
+    ]);
+    const ids = items.map((r) => r.id);
+    const grp = ids.length
+      ? await s
+          .selectFrom('phone_numbers')
+          .select('range_id')
+          .select(sql<string>`count(*)`.as('total'))
+          .select(sql<string>`count(*) filter (where status = 'assigned')`.as('assigned'))
+          .select(sql<string>`count(*) filter (where status = 'reserved')`.as('reserved'))
+          .where('range_id', 'in', ids)
+          .groupBy('range_id')
+          .execute()
+      : [];
+    const byRange = new Map(
+      grp.map((g) => [
+        g.range_id,
+        { total: Number(g.total), assigned: Number(g.assigned), reserved: Number(g.reserved) },
+      ]),
+    );
+    return {
+      items: items.map((r) => ({
+        ...r,
+        counts: byRange.get(r.id) ?? { total: 0, assigned: 0, reserved: 0 },
+      })),
+      total: Number(cnt?.n ?? 0),
+      page,
+      limit,
+    };
+  }
+
+  async listNumbers(t: TenantContext, q: DiscoveryListQuery) {
+    const s = this.s(t);
+    const codes = await this.sitecodeFilter(t, q.siteId);
+    const { page, limit, offset } = this.pageOf(q);
+    let b = s
+      .selectFrom('phone_numbers as n')
+      .innerJoin('discovery_number_ranges as r', 'r.id', 'n.range_id');
+    if (codes) b = b.where('r.sitecode', 'in', codes);
+    if (q.status) b = b.where('n.status', '=', q.status);
+    if (q.q) b = b.where('n.e164', 'ilike', `%${q.q}%`);
+    const [items, cnt] = await Promise.all([
+      b
+        .select([
+          'n.id as id',
+          'n.e164 as e164',
+          'n.status as status',
+          'n.holder_type as holder_type',
+          'n.holder_id as holder_id',
+          'n.range_id as range_id',
+          'r.range_start as range_start',
+          'r.sitecode as sitecode',
+        ])
+        .orderBy('n.e164')
+        .limit(limit)
+        .offset(offset)
+        .execute(),
+      b.select((eb) => eb.fn.countAll<string>().as('n')).executeTakeFirst(),
+    ]);
+    // resolve holder display names for this page
+    const byType: Record<string, string[]> = { user: [], cap: [], resource_account: [] };
+    for (const n of items) if (n.holder_id && n.holder_type && byType[n.holder_type]) byType[n.holder_type].push(n.holder_id);
+    const names = new Map<string, string>();
+    if (byType.user.length) {
+      for (const u of await s.selectFrom('discovery_users').select(['id', 'upn', 'display_name']).where('id', 'in', byType.user).execute())
+        names.set(u.id, u.display_name || u.upn);
+    }
+    if (byType.cap.length) {
+      for (const c of await s.selectFrom('discovery_caps').select(['id', 'display_name']).where('id', 'in', byType.cap).execute())
+        names.set(c.id, c.display_name);
+    }
+    if (byType.resource_account.length) {
+      for (const r of await s.selectFrom('discovery_resource_accounts').select(['id', 'name']).where('id', 'in', byType.resource_account).execute())
+        names.set(r.id, r.name);
+    }
+    return {
+      items: items.map((n) => ({ ...n, holder_name: n.holder_id ? names.get(n.holder_id) ?? null : null })),
+      total: Number(cnt?.n ?? 0),
+      page,
+      limit,
+    };
   }
 
   /* ====================== calling policies ====================== */
