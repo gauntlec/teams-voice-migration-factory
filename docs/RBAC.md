@@ -9,7 +9,9 @@ the API guard and the web UI both import it so they can never drift.
 ### `SUPER_ADMIN`
 Complete control of the whole platform.
 - Manage tenants (create → provisions a schema, rename, archive, delete).
-- Manage all users (create staff, assign roles, reset MFA, disable).
+- Manage all users (create staff, assign roles, reset MFA, disable, delete).
+  Delete is a hard delete (removes the account, its sessions, MFA and customer
+  assignments); the API blocks deleting yourself or the last active super admin.
 - Full read/write on every module of every tenant.
 - Read the platform audit log and every tenant audit log.
 
@@ -61,7 +63,7 @@ PROJECT_MANAGER, ENGINEER). The Data Collection module shows sites read-only
 ```
 tenant:create  tenant:read  tenant:update  tenant:archive  tenant:delete
 tenant:member:manage
-user:create  user:read  user:update  user:disable  user:mfa:reset
+user:create  user:read  user:update  user:disable  user:delete  user:mfa:reset
 discovery:read  discovery:write  discovery:review  discovery:sites:manage
 build:read     build:write
 deployment:read  deployment:connect  deployment:dryrun  deployment:execute
@@ -79,6 +81,7 @@ audit:read:tenant   audit:read:platform
 | tenant:member:manage | ✓ | ✓ (CUSTOMER only, own) | ✓ (CUSTOMER only, own) | |
 | user:create / read | ✓ | ✓ (CUSTOMER only, own) | ✓ (CUSTOMER only, own) | |
 | user:update / disable / mfa:reset | ✓ | | | |
+| user:delete | ✓ (not self / last super admin) | | | |
 | discovery:read / write | ✓ | ✓ | ✓ | ✓ (own sites if scoped) |
 | discovery:review | ✓ | ✓ | ✓ | |
 | discovery:sites:manage | ✓ | ✓ | ✓ | |

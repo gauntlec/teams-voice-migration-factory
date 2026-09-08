@@ -18,6 +18,7 @@ export const PERMISSIONS = [
   'user:read',
   'user:update',
   'user:disable',
+  'user:delete', // hard-delete an account - SUPER_ADMIN only
   'user:mfa:reset',
   'discovery:read',
   'discovery:write',

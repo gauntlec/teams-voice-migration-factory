@@ -37,6 +37,7 @@ import {
 } from '@fluentui/react-icons';
 import { ROLES, type Role } from '@tvmf/shared';
 import { api } from '../../api';
+import { useAuth } from '../../auth';
 import { Page } from '../../components/Page';
 import { LoadError } from '../../components/records';
 
@@ -112,8 +113,69 @@ const useSites = (tenantId: string) =>
     queryFn: () => api<SiteRow[]>(`/tenants/${tenantId}/sites`),
   });
 
+/** Hard-delete an account, behind a confirmation dialog. SUPER_ADMIN only. */
+function DeleteUserButton({ user, onDeleted }: { user: UserRow; onDeleted: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const del = useMutation({
+    mutationFn: () => api(`/users/${user.id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      setOpen(false);
+      onDeleted();
+    },
+    onError: (e) => setErr(e instanceof Error ? e.message : 'Failed'),
+  });
+
+  return (
+    <>
+      <Button
+        size="small"
+        appearance="subtle"
+        icon={<DeleteRegular />}
+        style={{ color: '#b10e1c' }}
+        onClick={() => {
+          setErr(null);
+          setOpen(true);
+        }}
+      >
+        Delete
+      </Button>
+      <Dialog open={open} onOpenChange={(_, d) => setOpen(d.open)}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>Delete {user.display_name}?</DialogTitle>
+            <DialogContent>
+              This permanently removes <b>{user.email}</b>. Their sign-in sessions, two-factor
+              enrolment and customer assignments are deleted with the account. This cannot be
+              undone.
+              {err && (
+                <Text style={{ color: '#b10e1c', display: 'block', marginTop: 8 }}>{err}</Text>
+              )}
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                appearance="primary"
+                style={{ backgroundColor: '#b10e1c' }}
+                disabled={del.isPending}
+                onClick={() => del.mutate()}
+              >
+                Delete account
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+    </>
+  );
+}
+
 export function AdminUsers() {
   const qc = useQueryClient();
+  const { can, me } = useAuth();
   const [email, setEmail] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [role, setRole] = useState<Role>('ENGINEER');
@@ -372,6 +434,12 @@ export function AdminUsers() {
                         >
                           Resend invite
                         </Button>
+                      )}
+                      {can('user:delete') && u.id !== me?.id && (
+                        <DeleteUserButton
+                          user={u}
+                          onDeleted={() => qc.invalidateQueries({ queryKey: ['users'] })}
+                        />
                       )}
                     </div>
                   </TableCell>

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post } from '@nestjs/common';
 import { createUserSchema, type CreateUserInput } from '@tvmf/shared';
 import { CurrentUser } from '../auth/auth.decorators';
 import type { AuthedUser } from '../common/request';
@@ -57,5 +57,11 @@ export class UsersController {
   @RequirePermission('user:mfa:reset')
   resetMfa(@Param('id') id: string, @CurrentUser() user: AuthedUser) {
     return this.users.resetMfa(id, this.actor(user));
+  }
+
+  @Delete(':id')
+  @RequirePermission('user:delete')
+  delete(@Param('id') id: string, @CurrentUser() user: AuthedUser) {
+    return this.users.delete(id, this.actor(user));
   }
 }

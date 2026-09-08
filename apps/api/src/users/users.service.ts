@@ -328,6 +328,50 @@ export class UsersService {
     return updated;
   }
 
+  /**
+   * Permanently delete an account. SUPER_ADMIN only (enforced by the permission
+   * guard). Cascades remove the user's memberships, TOTP secret and sessions;
+   * `email_messages.created_by` is nulled. Refuses to delete the caller or the
+   * last active super admin so nobody can lock everyone out.
+   */
+  async delete(id: string, actor: UserActor) {
+    if (id === actor.id) {
+      throw new BadRequestException('You cannot delete your own account');
+    }
+    const user = await platformDb(this.db)
+      .selectFrom('users')
+      .select(['id', 'email', 'role'])
+      .where('id', '=', id)
+      .executeTakeFirst();
+    if (!user) throw new NotFoundException('user not found');
+
+    if (user.role === 'SUPER_ADMIN') {
+      const others = await platformDb(this.db)
+        .selectFrom('users')
+        .select(({ fn }) => fn.countAll<string>().as('n'))
+        .where('role', '=', 'SUPER_ADMIN')
+        .where('status', '=', 'active')
+        .where('id', '!=', id)
+        .executeTakeFirstOrThrow();
+      if (Number(others.n) === 0) {
+        throw new BadRequestException('Cannot delete the last active super admin');
+      }
+    }
+
+    // `platform.invitations.invited_by` is NOT NULL with no ON DELETE action, so
+    // clear any (legacy) rows this user raised before removing the account.
+    await platformDb(this.db).deleteFrom('invitations').where('invited_by', '=', id).execute();
+    await platformDb(this.db).deleteFrom('users').where('id', '=', id).execute();
+
+    await this.audit.platform('user.deleted', {
+      actor,
+      targetType: 'user',
+      targetId: id,
+      detail: { email: user.email, role: user.role },
+    });
+    return { ok: true };
+  }
+
   async resetMfa(id: string, actor: AuditActor) {
     await platformDb(this.db).deleteFrom('totp_secrets').where('user_id', '=', id).execute();
     await platformDb(this.db)
