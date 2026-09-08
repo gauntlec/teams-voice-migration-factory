@@ -1,15 +1,19 @@
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import * as argon2 from 'argon2';
 import { platformDb, tenantDb } from '@tvmf/db';
-import type { CreateUserInput, Role } from '@tvmf/shared';
+import type { CreateUserInput, Role, UserInvitationContext } from '@tvmf/shared';
 import { AuditService } from '../common/audit.service';
 import type { AuditActor } from '../common/audit.service';
+import { APP_CONFIG, type AppConfig } from '../common/config';
 import { InjectDb, type Db } from '../db/db.module';
+import { MailService } from '../mail/mail.service';
+import { generateTempPassword } from './password.util';
 
 type UserActor = AuditActor & { role: Role };
 
@@ -20,6 +24,8 @@ export class UsersService {
   constructor(
     @InjectDb() private readonly db: Db,
     private readonly audit: AuditService,
+    private readonly mail: MailService,
+    @Inject(APP_CONFIG) private readonly cfg: AppConfig,
   ) {}
 
   async list(actor: { id: string; role: Role }) {
@@ -144,7 +150,10 @@ export class UsersService {
       }
     }
 
-    const passwordHash = await argon2.hash(input.password, ARGON);
+    // The system issues a one-time password, emails it, and forces a reset on
+    // first sign-in (before MFA enrolment).
+    const tempPassword = generateTempPassword();
+    const passwordHash = await argon2.hash(tempPassword, ARGON);
     const user = await platformDb(this.db)
       .insertInto('users')
       .values({
@@ -152,6 +161,7 @@ export class UsersService {
         password_hash: passwordHash,
         display_name: input.displayName,
         role: input.role,
+        must_change_password: true,
       })
       .returning(['id', 'email', 'display_name', 'role', 'status'])
       .executeTakeFirstOrThrow();
@@ -175,7 +185,122 @@ export class UsersService {
       targetId: user.id,
       detail: { role: user.role, tenantIds, siteIds },
     });
-    return user;
+
+    await this.sendInvitation(user.id, user.email, user.display_name, user.role, tenantIds, tempPassword, actor);
+
+    // tempPassword is surfaced to the admin once (the create dialog) as a
+    // fallback for when SMTP is not yet configured. Never audited/logged here.
+    return { ...user, tempPassword };
+  }
+
+  /** Build the invitation context and enqueue it on the mail queue. */
+  private async sendInvitation(
+    userId: string,
+    email: string,
+    displayName: string,
+    role: string,
+    tenantIds: string[],
+    tempPassword: string,
+    actor: UserActor,
+  ) {
+    const tenantNames = tenantIds.length
+      ? (
+          await platformDb(this.db)
+            .selectFrom('tenants')
+            .select('name')
+            .where('id', 'in', tenantIds)
+            .orderBy('name')
+            .execute()
+        ).map((r) => r.name)
+      : [];
+
+    const context: UserInvitationContext = {
+      displayName,
+      inviterEmail: actor.email ?? 'the platform team',
+      role,
+      tenantNames,
+      tempPassword,
+      signInUrl: this.cfg.WEB_ORIGIN,
+    };
+
+    await this.mail.enqueue({
+      template: 'user_invitation',
+      to: { email, name: displayName },
+      context: context as unknown as Record<string, unknown>,
+      related: { type: 'user', id: userId },
+      createdBy: actor.id ?? null,
+    });
+  }
+
+  /**
+   * Issue a fresh temporary password and re-send the invitation. Also acts as an
+   * admin "reset & re-invite" when the user never completed first sign-in.
+   */
+  async resendInvitation(id: string, actor: UserActor) {
+    const user = await platformDb(this.db)
+      .selectFrom('users')
+      .select(['id', 'email', 'display_name', 'role', 'status'])
+      .where('id', '=', id)
+      .executeTakeFirst();
+    if (!user) throw new NotFoundException('user not found');
+
+    if (actor.role === 'ENGINEER' || actor.role === 'PROJECT_MANAGER') {
+      if (user.role !== 'CUSTOMER') {
+        throw new ForbiddenException('You may only re-invite customer users');
+      }
+      const shared = await platformDb(this.db)
+        .selectFrom('tenant_memberships as mine')
+        .innerJoin('tenant_memberships as theirs', 'theirs.tenant_id', 'mine.tenant_id')
+        .select('theirs.user_id')
+        .where('mine.user_id', '=', actor.id!)
+        .where('theirs.user_id', '=', id)
+        .executeTakeFirst();
+      if (!shared) {
+        throw new ForbiddenException('You can only re-invite users in your own customers');
+      }
+    }
+
+    const memberships = await platformDb(this.db)
+      .selectFrom('tenant_memberships')
+      .select('tenant_id')
+      .where('user_id', '=', id)
+      .execute();
+    const tenantIds = memberships.map((m) => m.tenant_id);
+
+    const tempPassword = generateTempPassword();
+    const passwordHash = await argon2.hash(tempPassword, ARGON);
+    await platformDb(this.db)
+      .updateTable('users')
+      .set({
+        password_hash: passwordHash,
+        must_change_password: true,
+        updated_at: new Date().toISOString(),
+      })
+      .where('id', '=', id)
+      .execute();
+    await platformDb(this.db)
+      .updateTable('auth_sessions')
+      .set({ revoked_at: new Date().toISOString() })
+      .where('user_id', '=', id)
+      .where('revoked_at', 'is', null)
+      .execute();
+
+    await this.audit.platform('user.invite_resent', {
+      actor,
+      targetType: 'user',
+      targetId: id,
+    });
+
+    await this.sendInvitation(
+      user.id,
+      user.email,
+      user.display_name,
+      user.role,
+      tenantIds,
+      tempPassword,
+      actor,
+    );
+    return { id: user.id, email: user.email, tempPassword };
   }
 
   async setStatus(id: string, status: 'active' | 'disabled', actor: AuditActor) {

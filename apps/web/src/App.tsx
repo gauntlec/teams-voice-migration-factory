@@ -4,6 +4,7 @@ import { useAuth } from './auth';
 import { AppShell } from './components/AppShell';
 import { RequirePermission } from './components/RequirePermission';
 import { Login } from './pages/Login';
+import { SetPassword } from './pages/SetPassword';
 import { EnrolTotp } from './pages/EnrolTotp';
 import { Dashboard } from './pages/Dashboard';
 import { DataCollection } from './pages/DataCollection';
@@ -27,6 +28,7 @@ export function App() {
     );
   }
   if (status === 'anonymous') return <Login />;
+  if (status === 'pwreset') return <SetPassword />;
   if (status === 'enrol') return <EnrolTotp />;
 
   return (
@@ -35,8 +37,22 @@ export function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/data-collection" element={<DataCollection />} />
         <Route path="/data-collection/sites/:siteId" element={<SiteWorkspace />} />
-        <Route path="/build" element={<Build />} />
-        <Route path="/deployment" element={<Deployment />} />
+        <Route
+          path="/build"
+          element={
+            <RequirePermission permission="build:read">
+              <Build />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="/deployment"
+          element={
+            <RequirePermission permission="deployment:read">
+              <Deployment />
+            </RequirePermission>
+          }
+        />
         <Route path="/handover" element={<Handover />} />
         <Route
           path="/admin/users"

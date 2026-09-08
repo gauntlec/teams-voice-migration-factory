@@ -10,7 +10,7 @@ import { platformDb } from '@tvmf/db';
 import type { Role } from '@tvmf/shared';
 import type { AppRequest } from '../common/request';
 import { InjectDb, type Db } from '../db/db.module';
-import { ALLOW_ENROL, IS_PUBLIC } from './auth.decorators';
+import { ALLOW_ENROL, ALLOW_PWRESET, IS_PUBLIC } from './auth.decorators';
 import { TokenService } from './token.service';
 
 @Injectable()
@@ -43,14 +43,22 @@ export class JwtAuthGuard implements CanActivate {
     if (!user || user.status !== 'active') throw new UnauthorizedException('Account unavailable');
 
     const enrolOnly = payload.typ === 'enrol';
+    const pwresetOnly = payload.typ === 'pwreset';
     const allowEnrol = this.reflector.getAllAndOverride<boolean>(ALLOW_ENROL, [
       ctx.getHandler(),
       ctx.getClass(),
     ]);
+    const allowPwReset = this.reflector.getAllAndOverride<boolean>(ALLOW_PWRESET, [
+      ctx.getHandler(),
+      ctx.getClass(),
+    ]);
+    if (pwresetOnly && !allowPwReset) {
+      throw new ForbiddenException('Set a new password first');
+    }
     if (enrolOnly && !allowEnrol) {
       throw new ForbiddenException('Complete MFA enrolment first');
     }
-    if (!enrolOnly && !user.totp_enrolled && !allowEnrol) {
+    if (!enrolOnly && !pwresetOnly && !user.totp_enrolled && !allowEnrol) {
       throw new ForbiddenException('MFA enrolment required');
     }
 
@@ -61,6 +69,7 @@ export class JwtAuthGuard implements CanActivate {
       role: user.role as Role,
       totpEnrolled: user.totp_enrolled,
       enrolOnly,
+      pwresetOnly,
     };
     return true;
   }

@@ -9,6 +9,10 @@ export const ALLOW_ENROL = 'auth:allowEnrol';
 /** Route is reachable with a limited "enrol TOTP" token (and normal tokens). */
 export const AllowEnrol = () => SetMetadata(ALLOW_ENROL, true);
 
+export const ALLOW_PWRESET = 'auth:allowPwReset';
+/** Route is reachable with a limited "forced password reset" token. */
+export const AllowPwReset = () => SetMetadata(ALLOW_PWRESET, true);
+
 export const CurrentUser = createParamDecorator(
   (_data: unknown, ctx: ExecutionContext): AuthedUser => {
     const req = ctx.switchToHttp().getRequest<AppRequest>();

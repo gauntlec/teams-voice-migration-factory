@@ -25,7 +25,7 @@ depends on it.
 | API | **NestJS** (TypeScript) | Opinionated, heavily documented structure; guards/modules map cleanly to RBAC |
 | DB access | **Kysely** + `pg` | Type-safe SQL, no hidden magic, easy for AI to read and change |
 | Migrations | Plain **`.sql` files** + tiny runner | Fully legible; no ORM migration DSL to learn |
-| Job queue | **BullMQ** + Redis | Decouples the API from long-running tenant deployments |
+| Job queue | **BullMQ** + Redis | Decouples the API from long-running tenant deployments and from sending email (`deployments` + `mail` queues) |
 | PowerShell execution | **`apps/worker`** container `FROM mcr.microsoft.com/powershell` + Node | `MicrosoftTeams` module cmdlets have no Graph equivalent; kept off the API |
 | Auth | Local accounts, Argon2id, JWT access + rotating refresh cookie, mandatory TOTP | No external IdP dependency (per decision) |
 | Packaging | Docker Compose (single host) | One command to stand up; migrate later to k8s if needed |
@@ -48,8 +48,13 @@ depends on it.
                     │  Node + pwsh + MicrosoftTeams mod │
                     │  device-code sign-in (live)       │
                     │  runs cmdlets, streams audit rows │
+                    │  'mail' queue: renders + SMTP-sends│
                     └───────────────────────────────────┘
 ```
+
+Email: the API writes a `platform.email_messages` row and enqueues a `mail` job;
+the worker renders a branded template and sends it via SMTP. See
+[`EMAIL.md`](EMAIL.md).
 
 ## Multi-tenancy
 

@@ -81,6 +81,21 @@ export class AuthService {
         .execute();
     }
 
+    // Invited users sign in with a one-time password and must choose a new one
+    // before anything else (including MFA enrolment).
+    if (user.must_change_password) {
+      const { token } = this.tokens.signAccess({
+        sub: user.id,
+        role: user.role,
+        email: user.email,
+        typ: 'pwreset',
+      });
+      await this.audit.platform('auth.login.pwreset_required', {
+        actor: { id: user.id, email: user.email, ip: meta.ip },
+      });
+      return { passwordResetRequired: true as const, accessToken: token };
+    }
+
     if (!user.totp_enrolled) {
       const { token } = this.tokens.signAccess({
         sub: user.id,
@@ -111,6 +126,59 @@ export class AuthService {
     }
 
     return this.issueLogin(user.id, user.role, user.email, meta);
+  }
+
+  /**
+   * Forced first-sign-in password change. Reachable only with a `pwreset` token.
+   * On success the user still needs MFA, so this returns the same shape as
+   * `login()` - an enrol token when TOTP is not set up, otherwise a full session.
+   */
+  async changePassword(
+    userId: string,
+    role: string,
+    email: string,
+    newPassword: string,
+    meta: Meta,
+  ) {
+    const user = await platformDb(this.db)
+      .selectFrom('users')
+      .select(['id', 'password_hash', 'totp_enrolled'])
+      .where('id', '=', userId)
+      .executeTakeFirstOrThrow();
+
+    const reused = await argon2.verify(user.password_hash, newPassword).catch(() => false);
+    if (reused) {
+      throw new ForbiddenException('Choose a password you have not used before');
+    }
+
+    const passwordHash = await argon2.hash(newPassword, ARGON);
+    await platformDb(this.db)
+      .updateTable('users')
+      .set({
+        password_hash: passwordHash,
+        must_change_password: false,
+        password_changed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .where('id', '=', userId)
+      .execute();
+
+    await platformDb(this.db)
+      .updateTable('auth_sessions')
+      .set({ revoked_at: new Date().toISOString() })
+      .where('user_id', '=', userId)
+      .where('revoked_at', 'is', null)
+      .execute();
+
+    await this.audit.platform('auth.password.changed', {
+      actor: { id: userId, email, ip: meta.ip },
+    });
+
+    if (!user.totp_enrolled) {
+      const { token } = this.tokens.signAccess({ sub: userId, role, email, typ: 'enrol' });
+      return { enrolRequired: true as const, accessToken: token };
+    }
+    return this.issueLogin(userId, role, email, meta);
   }
 
   async beginTotpEnrol(userId: string, email: string) {

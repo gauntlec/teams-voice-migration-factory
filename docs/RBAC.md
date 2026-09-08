@@ -17,9 +17,8 @@ Complete control of the whole platform.
 Delivery lead for their assigned customers (via `tenant_memberships`, always
 whole-customer). Coordinates the project: manages members and creates CUSTOMER
 users, adds/edits **sites** (Sites admin page), runs and **reviews** discovery,
-and produces the handover pack. Read-only on Design & Build and Deployment —
-does **not** do the technical build or run live deployments. Cannot create
-tenants or manage staff accounts.
+and produces the handover pack. **Design & Build and Deployment are not shown** —
+those are engineer/admin only. Cannot create tenants or manage staff accounts.
 
 ### `ENGINEER`
 Delivery staff. Assigned to **one or more** customers via
@@ -33,9 +32,10 @@ accounts, cannot see tenants they are not assigned to.
 
 ### `CUSTOMER`
 Belongs to exactly **one** tenant. Data Collection: read + write (this is their
-job — fill in discovery). Design & Build, Deployment, Handover: read-only. Audit:
-read-only, own tenant only. **Cannot add or edit sites** (engineer/admin only).
-No access to users, tenants, or any other customer.
+job — fill in discovery). Service Handover: read-only. Audit: read-only, own
+tenant only. **Design & Build and Deployment are not shown**; **cannot add or
+edit sites** (engineer/admin only). No access to users, tenants, or any other
+customer.
 
 #### Site-scoped customer ("site contact")
 A `CUSTOMER` membership can carry `tenant_memberships.site_ids` (a list of
@@ -82,9 +82,9 @@ audit:read:tenant   audit:read:platform
 | discovery:read / write | ✓ | ✓ | ✓ | ✓ (own sites if scoped) |
 | discovery:review | ✓ | ✓ | ✓ | |
 | discovery:sites:manage | ✓ | ✓ | ✓ | |
-| build:read | ✓ | ✓ | ✓ | ✓ |
+| build:read | ✓ | | ✓ | |
 | build:write | ✓ | | ✓ | |
-| deployment:read | ✓ | ✓ | ✓ | ✓ |
+| deployment:read | ✓ | | ✓ | |
 | deployment:connect / dryrun / execute | ✓ | | ✓ | |
 | handover:read | ✓ | ✓ | ✓ | ✓ |
 | handover:generate | ✓ | ✓ | ✓ | |

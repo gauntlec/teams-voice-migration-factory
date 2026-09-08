@@ -8,9 +8,10 @@ Service Handover** — styled to feel like the Microsoft Teams Admin Center.
 > `docs/` folder is the contract: read it before changing anything.
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — services, stack, why
-- [`docs/RBAC.md`](docs/RBAC.md) — the three roles and the permission matrix
+- [`docs/RBAC.md`](docs/RBAC.md) — the four roles and the permission matrix
 - [`docs/SECURITY.md`](docs/SECURITY.md) — tenant isolation, no stored credentials, audit
 - [`docs/DATA-MODEL.md`](docs/DATA-MODEL.md) — tables, mapped to the current workbook
+- [`docs/EMAIL.md`](docs/EMAIL.md) — the queued email module + the invitation / first-sign-in flow
 
 ## What this scaffold contains
 
@@ -21,9 +22,13 @@ Working now:
 - `docker compose up --build` brings up Postgres, Redis, API, worker, web,
   Adminer.
 - **Auth**: local accounts, Argon2id, mandatory TOTP, JWT access + rotating
-  refresh cookie, session revocation.
-- **RBAC**: `SUPER_ADMIN` / `ENGINEER` / `CUSTOMER`, one shared permission matrix
-  used by both API guards and the web UI.
+  refresh cookie, session revocation. New users are emailed a one-time password
+  and must set their own password (then enrol MFA) on first sign-in.
+- **RBAC**: `SUPER_ADMIN` / `PROJECT_MANAGER` / `ENGINEER` / `CUSTOMER`, one
+  shared permission matrix used by both API guards and the web UI.
+- **Email**: queued (`mail` BullMQ queue) and sent by the worker via SMTP;
+  branded templates; every message logged in `platform.email_messages`. See
+  [`docs/EMAIL.md`](docs/EMAIL.md).
 - **Multi-tenancy**: schema-per-tenant. Creating a customer provisions a schema
   from `packages/db/migrations/tenant/*.sql`. Every tenant request resolves one
   schema via `TenantGuard`.

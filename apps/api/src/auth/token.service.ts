@@ -10,7 +10,12 @@ export interface AccessPayload {
   sub: string;
   role: string;
   email: string;
-  typ: 'access' | 'enrol';
+  /**
+   * access  -> full session token
+   * enrol   -> limited: may only complete TOTP enrolment
+   * pwreset -> limited: may only set a new password (forced first sign-in)
+   */
+  typ: 'access' | 'enrol' | 'pwreset';
 }
 
 export interface IssuedTokens {
@@ -28,7 +33,7 @@ export class TokenService {
   ) {}
 
   signAccess(payload: AccessPayload): { token: string; expiresIn: number } {
-    const expiresIn = payload.typ === 'enrol' ? 600 : this.cfg.ACCESS_TOKEN_TTL;
+    const expiresIn = payload.typ === 'access' ? this.cfg.ACCESS_TOKEN_TTL : 600;
     const token = jwt.sign(payload, this.cfg.JWT_ACCESS_SECRET, {
       expiresIn,
       issuer: 'tvmf',

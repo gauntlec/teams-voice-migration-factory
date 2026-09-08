@@ -1,6 +1,7 @@
 export * from './rbac';
 export * from './domain';
 export * from './dto';
+export * from './email';
 
 /** Header the web app sends to select the active tenant for `/t/:tenantId/*`. */
 export const TENANT_HEADER = 'x-tenant-id';

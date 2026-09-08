@@ -30,11 +30,18 @@ export const totpEnrolConfirmSchema = z.object({
   totp: z.string().regex(/^\d{6}$/),
 });
 
+/** Set a new password on the forced first-sign-in reset (before MFA enrolment). */
+export const passwordChangeSchema = z.object({
+  newPassword: passwordSchema,
+});
+export type PasswordChangeInput = z.infer<typeof passwordChangeSchema>;
+
 export const createUserSchema = z.object({
   email: emailSchema,
   displayName: z.string().min(1).max(120),
   role: z.enum(ROLES),
-  password: passwordSchema,
+  // No password: the system generates a temporary one, emails it, and forces a
+  // reset on first sign-in.
   tenantIds: z.array(z.string().uuid()).optional(),
   /**
    * For a CUSTOMER user with exactly one tenant: limit them to these sites

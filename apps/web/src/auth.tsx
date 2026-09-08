@@ -11,14 +11,20 @@ import type { Me, Permission } from '@tvmf/shared';
 import { can } from '@tvmf/shared';
 import { api, auth as apiAuth, tryRefresh } from './api';
 
-type Status = 'loading' | 'anonymous' | 'enrol' | 'authenticated';
+type Status = 'loading' | 'anonymous' | 'pwreset' | 'enrol' | 'authenticated';
 
 interface AuthContextValue {
   status: Status;
   me: Me | null;
   activeTenantId: string | null;
   setActiveTenant: (id: string | null) => void;
-  login: (email: string, password: string, totp?: string) => Promise<'ok' | 'enrol' | 'mfa'>;
+  login: (
+    email: string,
+    password: string,
+    totp?: string,
+  ) => Promise<'ok' | 'enrol' | 'mfa' | 'pwreset'>;
+  /** Set a new password on the forced first-sign-in reset, then move to enrol. */
+  changePassword: (newPassword: string) => Promise<void>;
   /** Verify the first TOTP code, adopt the returned session, and finish sign-in. */
   confirmEnrol: (code: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -70,15 +76,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback<AuthContextValue['login']>(
     async (email, password, totp) => {
       const res = await api<
-        { enrolRequired: true; accessToken: string } | { accessToken: string; expiresIn: number }
+        | { passwordResetRequired: true; accessToken: string }
+        | { enrolRequired: true; accessToken: string }
+        | { accessToken: string; expiresIn: number }
       >('/auth/login', { method: 'POST', body: JSON.stringify({ email, password, totp }) });
       apiAuth.setToken(res.accessToken);
+      if ('passwordResetRequired' in res) {
+        setStatus('pwreset');
+        return 'pwreset';
+      }
       if ('enrolRequired' in res) {
         setStatus('enrol');
         return 'enrol';
       }
       await loadMe();
       return 'ok';
+    },
+    [loadMe],
+  );
+
+  const changePassword = useCallback(
+    async (newPassword: string) => {
+      const res = await api<
+        { enrolRequired: true; accessToken: string } | { accessToken: string; expiresIn: number }
+      >('/auth/password/change', { method: 'POST', body: JSON.stringify({ newPassword }) });
+      apiAuth.setToken(res.accessToken);
+      if ('enrolRequired' in res) {
+        setStatus('enrol');
+        return;
+      }
+      await loadMe();
     },
     [loadMe],
   );
@@ -116,12 +143,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       activeTenantId,
       setActiveTenant,
       login,
+      changePassword,
       confirmEnrol,
       logout,
       can: (p) => (me ? can(me.role, p) : false),
       refreshMe: loadMe,
     }),
-    [status, me, activeTenantId, setActiveTenant, login, confirmEnrol, logout, loadMe],
+    [status, me, activeTenantId, setActiveTenant, login, changePassword, confirmEnrol, logout, loadMe],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

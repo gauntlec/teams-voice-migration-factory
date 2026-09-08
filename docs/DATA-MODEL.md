@@ -12,11 +12,12 @@ Derived from the current artifacts:
 | Table | Key columns |
 |-------|-------------|
 | `tenants` | id (uuid), slug, name, schema_name, status (`active`/`archived`), created_by, created_at |
-| `users` | id, email (citext, unique), password_hash, display_name, role (`SUPER_ADMIN`/`ENGINEER`/`CUSTOMER`), status (`active`/`disabled`), totp_enrolled, failed_logins, locked_until, created_at |
+| `users` | id, email (citext, unique), password_hash, display_name, role (`SUPER_ADMIN`/`PROJECT_MANAGER`/`ENGINEER`/`CUSTOMER`), status (`active`/`disabled`), totp_enrolled, **`must_change_password`** (true until the forced first-sign-in reset), **`password_changed_at`**, failed_logins, locked_until, created_at |
 | `tenant_memberships` | user_id, tenant_id, added_by, **`site_ids uuid[]`** (empty = whole customer; else the `discovery_sites.id` values a CUSTOMER "site contact" is limited to — no cross-schema FK, validated by the API), created_at  (PK user_id+tenant_id) |
 | `totp_secrets` | user_id (PK), secret_enc, confirmed_at |
 | `auth_sessions` | id, user_id, refresh_hash, family_id, user_agent, ip, expires_at, revoked_at, replaced_by |
 | `invitations` | id, email, role, tenant_id, token_hash, invited_by, expires_at, accepted_at |
+| `email_messages` | id, to_email (citext), to_name, template, context (jsonb), subject, status (`queued`/`sent`/`failed`/`skipped`), error, attempts, related_type + related_id, created_by, created_at, sent_at — the comms log; API inserts + enqueues, worker sends. See [`EMAIL.md`](EMAIL.md) |
 | `platform_audit_log` | id, at, actor_user_id, actor_email, action, target_type, target_id, tenant_id, detail (jsonb), ip |
 
 ## tenant `tenant_<shortid>` schema

@@ -35,6 +35,12 @@ export class UsersController {
     return this.users.create(body, this.actor(user));
   }
 
+  @Post(':id/resend-invitation')
+  @RequirePermission('user:create')
+  resendInvitation(@Param('id') id: string, @CurrentUser() user: AuthedUser) {
+    return this.users.resendInvitation(id, this.actor(user));
+  }
+
   @Post(':id/disable')
   @RequirePermission('user:disable')
   disable(@Param('id') id: string, @CurrentUser() user: AuthedUser) {

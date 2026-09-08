@@ -9,12 +9,12 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
-import { loginSchema, totpEnrolConfirmSchema } from '@tvmf/shared';
+import { loginSchema, passwordChangeSchema, totpEnrolConfirmSchema } from '@tvmf/shared';
 import { APP_CONFIG, type AppConfig } from '../common/config';
 import type { AppRequest } from '../common/request';
 import { ZodBody } from '../common/zod.pipe';
 import { AuthService } from './auth.service';
-import { AllowEnrol, CurrentUser, Public } from './auth.decorators';
+import { AllowEnrol, AllowPwReset, CurrentUser, Public } from './auth.decorators';
 import type { AuthedUser } from '../common/request';
 
 @Controller('auth')
@@ -60,6 +60,34 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const result = await this.auth.login(body.email, body.password, body.totp, this.meta(req));
+    if ('passwordResetRequired' in result) {
+      return { passwordResetRequired: true, accessToken: result.accessToken };
+    }
+    if (result.enrolRequired) {
+      return { enrolRequired: true, accessToken: result.accessToken };
+    }
+    this.setRefreshCookie(res, result.refreshCookieValue, result.refreshExpiresAt);
+    return { accessToken: result.accessToken, expiresIn: result.accessExpiresIn };
+  }
+
+  @AllowPwReset()
+  @Post('password/change')
+  async changePassword(
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(passwordChangeSchema)) body: { newPassword: string },
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    if (!user.pwresetOnly) {
+      throw new UnauthorizedException('Only available during first-sign-in password reset');
+    }
+    const result = await this.auth.changePassword(
+      user.id,
+      user.role,
+      user.email,
+      body.newPassword,
+      this.meta(req),
+    );
     if (result.enrolRequired) {
       return { enrolRequired: true, accessToken: result.accessToken };
     }

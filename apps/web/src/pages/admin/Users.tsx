@@ -14,6 +14,10 @@ import {
   Dropdown,
   Field,
   Input,
+  MessageBar,
+  MessageBarActions,
+  MessageBarBody,
+  MessageBarTitle,
   Option,
   Spinner,
   Table,
@@ -24,7 +28,7 @@ import {
   TableRow,
   Text,
 } from '@fluentui/react-components';
-import { DeleteRegular, PeopleTeamRegular } from '@fluentui/react-icons';
+import { DeleteRegular, MailRegular, PeopleTeamRegular } from '@fluentui/react-icons';
 import { ROLES, type Role } from '@tvmf/shared';
 import { api } from '../../api';
 import { Page } from '../../components/Page';
@@ -67,12 +71,16 @@ export function AdminUsers() {
   const [email, setEmail] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [role, setRole] = useState<Role>('ENGINEER');
-  const [password, setPassword] = useState('');
   const [tenantIds, setTenantIds] = useState<string[]>([]);
   const [siteScope, setSiteScope] = useState<'all' | 'sites'>('all');
   const [siteIds, setSiteIds] = useState<string[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [manage, setManage] = useState<UserRow | null>(null);
+  const [invited, setInvited] = useState<{
+    email: string;
+    tempPassword: string;
+    resent: boolean;
+  } | null>(null);
 
   const users = useQuery({ queryKey: ['users'], queryFn: () => api<UserRow[]>('/users') });
   const tenants = useQuery({ queryKey: ['tenants'], queryFn: () => api<TenantRow[]>('/tenants') });
@@ -83,7 +91,6 @@ export function AdminUsers() {
   const resetForm = () => {
     setEmail('');
     setDisplayName('');
-    setPassword('');
     setTenantIds([]);
     setSiteScope('all');
     setSiteIds([]);
@@ -92,20 +99,20 @@ export function AdminUsers() {
 
   const create = useMutation({
     mutationFn: () =>
-      api('/users', {
+      api<{ email: string; tempPassword: string }>('/users', {
         method: 'POST',
         body: JSON.stringify({
           email,
           displayName,
           role,
-          password,
           tenantIds: role === 'SUPER_ADMIN' ? undefined : tenantIds,
           siteIds:
             role === 'CUSTOMER' && scopeTenantId && siteScope === 'sites' ? siteIds : undefined,
         }),
       }),
-    onSuccess: () => {
+    onSuccess: (data) => {
       resetForm();
+      setInvited({ email: data.email, tempPassword: data.tempPassword, resent: false });
       qc.invalidateQueries({ queryKey: ['users'] });
     },
     onError: (e) => setErr(e instanceof Error ? e.message : 'Failed'),
@@ -117,8 +124,54 @@ export function AdminUsers() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
   });
 
+  const resend = useMutation({
+    mutationFn: (id: string) =>
+      api<{ email: string; tempPassword: string }>(`/users/${id}/resend-invitation`, {
+        method: 'POST',
+      }),
+    onSuccess: (data) => {
+      setInvited({ email: data.email, tempPassword: data.tempPassword, resent: true });
+      qc.invalidateQueries({ queryKey: ['users'] });
+    },
+    onError: (e) => setErr(e instanceof Error ? e.message : 'Failed'),
+  });
+
   return (
     <Page title="Users" subtitle="Platform staff and customer users, and which customers they can work in.">
+      {invited && (
+        <MessageBar intent="success">
+          <MessageBarBody>
+            <MessageBarTitle>
+              {invited.resent ? 'New invitation sent' : 'Invitation sent'} to {invited.email}
+            </MessageBarTitle>
+            Temporary password:{' '}
+            <code
+              style={{
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                background: 'rgba(0,0,0,0.06)',
+                padding: '2px 6px',
+                borderRadius: 4,
+              }}
+            >
+              {invited.tempPassword}
+            </code>
+            . It&rsquo;s in the email; share it another way only if email isn&rsquo;t set up yet.
+            Shown once.
+          </MessageBarBody>
+          <MessageBarActions>
+            <Button
+              size="small"
+              icon={<MailRegular />}
+              onClick={() => void navigator.clipboard?.writeText(invited.tempPassword)}
+            >
+              Copy password
+            </Button>
+            <Button size="small" appearance="subtle" onClick={() => setInvited(null)}>
+              Dismiss
+            </Button>
+          </MessageBarActions>
+        </MessageBar>
+      )}
       <Card>
         <Text weight="semibold">New user</Text>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'end' }}>
@@ -140,9 +193,6 @@ export function AdminUsers() {
                 </Option>
               ))}
             </Dropdown>
-          </Field>
-          <Field label="Temp password" hint="min 12 chars">
-            <Input type="text" value={password} onChange={(_, d) => setPassword(d.value)} />
           </Field>
           {role !== 'SUPER_ADMIN' && (
             <Field
@@ -203,17 +253,18 @@ export function AdminUsers() {
             disabled={
               !email ||
               !displayName ||
-              password.length < 12 ||
               create.isPending ||
               (!!scopeTenantId && siteScope === 'sites' && siteIds.length === 0)
             }
             onClick={() => create.mutate()}
           >
-            Create
+            Create & invite
           </Button>
         </div>
         <Text size={200} style={{ color: '#666' }}>
-          You can change a user's customers and site access any time with <b>Manage</b> below.
+          The user is emailed a temporary password and must set their own password, then set up
+          two-factor authentication, on first sign-in. Change their customers and site access any
+          time with <b>Manage</b> below.
         </Text>
         {err && <Text style={{ color: '#b10e1c' }}>{err}</Text>}
       </Card>
@@ -272,6 +323,16 @@ export function AdminUsers() {
                       <Button size="small" onClick={() => act.mutate({ id: u.id, action: 'reset-mfa' })}>
                         Reset MFA
                       </Button>
+                      {u.role !== 'SUPER_ADMIN' && (
+                        <Button
+                          size="small"
+                          icon={<MailRegular />}
+                          disabled={resend.isPending}
+                          onClick={() => resend.mutate(u.id)}
+                        >
+                          Resend invite
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>

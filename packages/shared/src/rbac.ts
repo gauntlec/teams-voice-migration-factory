@@ -55,8 +55,8 @@ export const PERMISSION_MATRIX: Record<Role, ReadonlySet<Permission>> = {
     'discovery:write',
     'discovery:review',
     'discovery:sites:manage',
-    'build:read',
-    'deployment:read',
+    // NB: no build:* or deployment:* - Design & Build and Deployment are
+    // engineer/admin-only and are hidden from the PM's left nav.
     'handover:read',
     'handover:generate',
     'audit:read:tenant',
@@ -84,8 +84,8 @@ export const PERMISSION_MATRIX: Record<Role, ReadonlySet<Permission>> = {
     'tenant:read',
     'discovery:read',
     'discovery:write',
-    'build:read',
-    'deployment:read',
+    // NB: no build:* or deployment:* - those areas are engineer/admin-only and
+    // are hidden from the customer's left nav.
     'handover:read',
     'audit:read:tenant',
   ]),

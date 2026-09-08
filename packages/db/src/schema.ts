@@ -25,10 +25,34 @@ export interface UsersTable {
   role: 'SUPER_ADMIN' | 'PROJECT_MANAGER' | 'ENGINEER' | 'CUSTOMER';
   status: ColumnType<'active' | 'disabled', 'active' | 'disabled' | undefined, 'active' | 'disabled'>;
   totp_enrolled: ColumnType<boolean, boolean | undefined, boolean>;
+  /** true until the user completes the forced reset on first sign-in */
+  must_change_password: ColumnType<boolean, boolean | undefined, boolean>;
+  password_changed_at: string | null;
   failed_logins: ColumnType<number, number | undefined, number>;
   locked_until: string | null;
   created_at: Ts;
   updated_at: Ts;
+}
+
+export interface EmailMessagesTable {
+  id: Generated<string>;
+  to_email: string;
+  to_name: string | null;
+  template: string;
+  context: Json;
+  subject: string | null;
+  status: ColumnType<
+    'queued' | 'sent' | 'failed' | 'skipped',
+    'queued' | 'sent' | 'failed' | 'skipped' | undefined,
+    'queued' | 'sent' | 'failed' | 'skipped'
+  >;
+  error: string | null;
+  attempts: ColumnType<number, number | undefined, number>;
+  related_type: string | null;
+  related_id: string | null;
+  created_by: string | null;
+  created_at: Ts;
+  sent_at: string | null;
 }
 
 export interface TenantMembershipsTable {
@@ -422,6 +446,7 @@ export interface DB {
   totp_secrets: TotpSecretsTable;
   auth_sessions: AuthSessionsTable;
   invitations: InvitationsTable;
+  email_messages: EmailMessagesTable;
   platform_audit_log: PlatformAuditLogTable;
   // tenant
   discovery: DiscoveryTable;

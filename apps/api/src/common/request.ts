@@ -9,6 +9,8 @@ export interface AuthedUser {
   totpEnrolled: boolean;
   /** true when the bearer token is a limited "enrol TOTP" token */
   enrolOnly: boolean;
+  /** true when the bearer token is a limited "forced password reset" token */
+  pwresetOnly: boolean;
 }
 
 export interface TenantContext {
