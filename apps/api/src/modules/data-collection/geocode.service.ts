@@ -8,7 +8,7 @@ export interface GeocodeHit {
   approximate: boolean;
 }
 
-const UA = 'TeamsVoiceMigrationFactory/1.0 (+https://www.directrouting.online)';
+const UA = 'TeamsVoiceMigrationFactory/1.0 (+https://www.voxshift.io)';
 const ENDPOINT = 'https://nominatim.openstreetmap.org/search';
 
 /**
