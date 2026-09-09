@@ -50,11 +50,12 @@ const useStyles = makeStyles({
   /* the wrapper scrolls; nowrap cells keep the table at its natural width so
      columns never collapse into each other on a narrow window */
   tableScroll: { overflowX: 'auto', overflowY: 'hidden', ...shorthands.padding('0', '0', '2px', '0') },
-  table: { width: '100%' },
-  /* short columns: never wrap, so the table keeps its natural width and the
-     wrapper scrolls on a narrow screen instead of columns colliding */
-  cell: { whiteSpace: 'nowrap' },
-  /* long free-text columns: clamp + ellipsis (full value in the title tooltip) */
+  /* auto layout + nowrap size columns to content; the min-width floor makes the
+     wrapper scroll on a narrow screen rather than Fluent's default fixed layout
+     squashing every column to an equal sliver and spilling text over neighbours */
+  table: { width: '100%', minWidth: '1040px', tableLayout: 'auto' },
+  cell: { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  /* long free-text columns: hard cap + ellipsis (full value in the title tooltip) */
   cellClamp: {
     whiteSpace: 'nowrap',
     overflow: 'hidden',

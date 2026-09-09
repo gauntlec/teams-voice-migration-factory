@@ -88,19 +88,20 @@ export const useRecordStyles = makeStyles({
     overflowY: 'hidden',
     ...shorthands.padding('0', '0', '2px', '0'),
   },
-  /* nowrap cells keep the table at its natural width so a narrow viewport
-     scrolls the wrapper instead of collapsing cells into each other */
-  table: { width: '100%' },
-  nowrapCell: { whiteSpace: 'nowrap' },
+  /* auto layout + nowrap cells size columns to their content, so a narrow
+     viewport scrolls the wrapper (min-width floor) instead of Fluent's
+     default fixed layout collapsing every column to an equal sliver */
+  table: { width: '100%', minWidth: '720px', tableLayout: 'auto' },
+  nowrapCell: { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
   cellText: {
     display: 'inline-block',
-    maxWidth: '280px',
+    maxWidth: '320px',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
     verticalAlign: 'middle',
   },
-  actionsCol: { width: '1%', whiteSpace: 'nowrap' },
+  actionsCol: { whiteSpace: 'nowrap' },
   cardHead: {
     display: 'flex',
     justifyContent: 'space-between',
