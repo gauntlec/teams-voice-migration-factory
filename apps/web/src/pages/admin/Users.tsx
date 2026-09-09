@@ -51,13 +51,17 @@ const useStyles = makeStyles({
      columns never collapse into each other on a narrow window */
   tableScroll: { overflowX: 'auto', overflowY: 'hidden', ...shorthands.padding('0', '0', '2px', '0') },
   table: { width: '100%' },
-  cell: {
+  /* short columns: never wrap, so the table keeps its natural width and the
+     wrapper scrolls on a narrow screen instead of columns colliding */
+  cell: { whiteSpace: 'nowrap' },
+  /* long free-text columns: clamp + ellipsis (full value in the title tooltip) */
+  cellClamp: {
     whiteSpace: 'nowrap',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
-    maxWidth: '280px',
+    maxWidth: '260px',
   },
-  actionsCell: { whiteSpace: 'nowrap', width: '1%' },
+  actionsCell: { whiteSpace: 'nowrap' },
   actions: { display: 'flex', ...shorthands.gap('4px'), flexWrap: 'nowrap' },
 });
 
@@ -408,7 +412,7 @@ export function AdminUsers() {
                 <TableHeaderCell className={s.cell}>Customers</TableHeaderCell>
                 <TableHeaderCell className={s.cell}>Status</TableHeaderCell>
                 <TableHeaderCell className={s.cell}>MFA</TableHeaderCell>
-                <TableHeaderCell className={s.actionsCell}>Actions</TableHeaderCell>
+                <TableHeaderCell className={s.cell}>Actions</TableHeaderCell>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -419,14 +423,12 @@ export function AdminUsers() {
                     : (u.tenants ?? []).map((t) => t.name).join(', ') || '—';
                 return (
                 <TableRow key={u.id}>
-                  <TableCell className={s.cell} title={u.display_name}>
-                    {u.display_name}
-                  </TableCell>
-                  <TableCell className={s.cell} title={u.email}>
+                  <TableCell className={s.cell}>{u.display_name}</TableCell>
+                  <TableCell className={s.cellClamp} title={u.email}>
                     {u.email}
                   </TableCell>
                   <TableCell className={s.cell}>{u.role}</TableCell>
-                  <TableCell className={s.cell} title={customers}>
+                  <TableCell className={s.cellClamp} title={customers}>
                     {customers}
                   </TableCell>
                   <TableCell className={s.cell}>{u.status}</TableCell>
