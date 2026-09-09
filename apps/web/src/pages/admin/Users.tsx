@@ -34,6 +34,9 @@ import {
   DeleteRegular,
   MailRegular,
   PeopleTeamRegular,
+  PersonAvailableRegular,
+  PersonProhibitedRegular,
+  ShieldKeyholeRegular,
 } from '@fluentui/react-icons';
 import { ROLES, type Role } from '@tvmf/shared';
 import { api } from '../../api';
@@ -134,13 +137,13 @@ function DeleteUserButton({ user, onDeleted }: { user: UserRow; onDeleted: () =>
         appearance="subtle"
         icon={<DeleteRegular />}
         style={{ color: '#b10e1c' }}
+        title="Delete account"
+        aria-label="Delete account"
         onClick={() => {
           setErr(null);
           setOpen(true);
         }}
-      >
-        Delete
-      </Button>
+      />
       <Dialog open={open} onOpenChange={(_, d) => setOpen(d.open)}>
         <DialogSurface>
           <DialogBody>
@@ -378,9 +381,9 @@ export function AdminUsers() {
           <LoadError message={(users.error as Error).message} />
         ) : (
           <div style={{ overflowX: 'auto', overflowY: 'hidden', paddingBottom: 2 }}>
-          {/* nowrap cells below force this table past the viewport on a narrow
-              window, so the wrapper scrolls instead of columns overlapping */}
-          <Table size="small" style={{ width: '100%' }}>
+          {/* min-width:max-content stops columns collapsing into each other on a
+              narrow window; the wrapper above scrolls instead */}
+          <Table size="small" style={{ minWidth: 'max-content' }}>
             <TableHeader>
               <TableRow>
                 <TableHeaderCell style={{ whiteSpace: 'nowrap' }}>Name</TableHeaderCell>
@@ -389,7 +392,7 @@ export function AdminUsers() {
                 <TableHeaderCell style={{ whiteSpace: 'nowrap' }}>Customers</TableHeaderCell>
                 <TableHeaderCell style={{ whiteSpace: 'nowrap' }}>Status</TableHeaderCell>
                 <TableHeaderCell style={{ whiteSpace: 'nowrap' }}>MFA</TableHeaderCell>
-                <TableHeaderCell style={{ whiteSpace: 'nowrap', width: 260 }}>Actions</TableHeaderCell>
+                <TableHeaderCell style={{ whiteSpace: 'nowrap', width: '1%' }}>Actions</TableHeaderCell>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -422,38 +425,48 @@ export function AdminUsers() {
                   <TableCell style={{ whiteSpace: 'nowrap' }}>
                     {u.totp_enrolled ? 'enrolled' : '—'}
                   </TableCell>
-                  <TableCell style={{ width: 260, whiteSpace: 'normal' }}>
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  <TableCell style={{ whiteSpace: 'nowrap', width: '1%' }}>
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'nowrap' }}>
                       {u.role !== 'SUPER_ADMIN' && (
                         <Button
                           size="small"
-                          appearance="primary"
+                          appearance="subtle"
                           icon={<PeopleTeamRegular />}
+                          title="Manage customers & sites"
+                          aria-label="Manage customers & sites"
                           onClick={() => setManage(u)}
-                        >
-                          Manage
-                        </Button>
+                        />
                       )}
                       <Button
                         size="small"
+                        appearance="subtle"
+                        icon={
+                          u.status === 'active' ? <PersonProhibitedRegular /> : <PersonAvailableRegular />
+                        }
+                        title={u.status === 'active' ? 'Disable account' : 'Enable account'}
+                        aria-label={u.status === 'active' ? 'Disable account' : 'Enable account'}
                         onClick={() =>
                           act.mutate({ id: u.id, action: u.status === 'active' ? 'disable' : 'enable' })
                         }
-                      >
-                        {u.status === 'active' ? 'Disable' : 'Enable'}
-                      </Button>
-                      <Button size="small" onClick={() => act.mutate({ id: u.id, action: 'reset-mfa' })}>
-                        Reset MFA
-                      </Button>
+                      />
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={<ShieldKeyholeRegular />}
+                        title="Reset two-factor enrolment"
+                        aria-label="Reset two-factor enrolment"
+                        onClick={() => act.mutate({ id: u.id, action: 'reset-mfa' })}
+                      />
                       {u.role !== 'SUPER_ADMIN' && (
                         <Button
                           size="small"
+                          appearance="subtle"
                           icon={<MailRegular />}
+                          title="Resend invitation email"
+                          aria-label="Resend invitation email"
                           disabled={resend.isPending}
                           onClick={() => resend.mutate(u.id)}
-                        >
-                          Resend invite
-                        </Button>
+                        />
                       )}
                       {can('user:delete') && u.id !== me?.id && (
                         <DeleteUserButton
