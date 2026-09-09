@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import {
   can,
   startConnectionSchema,
@@ -74,6 +74,17 @@ export class TenantDiscoveryController {
   @RequirePermission('tenantdiscovery:read')
   getRun(@TenantCtx() t: TenantContext, @Param('id') id: string) {
     return this.svc.getRun(t, id);
+  }
+
+  /**
+   * Delete every discovered object, projection and run for this customer. Same
+   * permission as running a discovery - the data is a re-fetchable snapshot, not
+   * authored content. Blocked while a run is in flight.
+   */
+  @Delete()
+  @RequirePermission('tenantdiscovery:run')
+  purge(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser) {
+    return this.svc.purge(t, user);
   }
 
   /* inventory */

@@ -98,9 +98,21 @@ without a second datastore to run, sync and back up.
 `POST|GET connections`, `GET connections/:id`, `POST|GET runs`, `GET runs/:id`,
 `GET summary`, `GET objects?type=&q=&page=&limit=`, `GET objects/:id`,
 `GET users?q=`, `GET users/lookup?upn=`, `GET policies?policyType=&q=`,
-`GET import-users/preview`, `POST import-users`.
+`GET import-users/preview`, `POST import-users`,
+`DELETE /t/:tenantId/tenant-discovery` (purge — see below).
 Other modules should read `GET policies` (e.g. Design & Build policy pickers) and
 `GET users/lookup` rather than querying the tables directly.
+
+### Purge
+
+`DELETE /t/:tenantId/tenant-discovery` (`tenantdiscovery:run`, and the **Delete
+discovered data** button on the Overview tab) wipes the whole inventory for one
+customer: `tenant_objects` (which cascades to `tenant_users` and
+`tenant_policies`), then `tenant_discovery_runs`. Data Collection users are kept —
+their `discovery_users.tenant_user_id` link is set null by the FK. `connections`
+are untouched. Blocked while a run is `queued`/`running`. Not reversible; re-run
+discovery to rebuild. Audited as `tenant_discovery.purged` (tenant + platform)
+with the deleted row counts.
 
 ## Operations
 

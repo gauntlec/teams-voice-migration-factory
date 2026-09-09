@@ -154,6 +154,75 @@ export class TenantDiscoveryService {
     return row;
   }
 
+  /* =============================== purge =============================== */
+
+  /**
+   * Delete every discovered object, the Users/Policies projections and the run
+   * history for this customer. `tenant_users` / `tenant_policies` cascade from
+   * `tenant_objects.object_id`; Data Collection users are kept but their
+   * `tenant_user_id` link is cleared (FK is ON DELETE SET NULL). Blocked while a
+   * discovery is queued or running. Not reversible - re-run discovery to rebuild.
+   */
+  async purge(t: TenantContext, user: AuthedUser) {
+    const s = this.s(t);
+
+    const running = await s
+      .selectFrom('tenant_discovery_runs')
+      .select('id')
+      .where('status', 'in', ['queued', 'running'])
+      .executeTakeFirst();
+    if (running) {
+      throw new BadRequestException(
+        'A discovery is running - wait for it to finish before deleting the data.',
+      );
+    }
+
+    const count = async (
+      table: 'tenant_objects' | 'tenant_users' | 'tenant_policies' | 'tenant_discovery_runs',
+    ) => {
+      const [{ n }] = await s
+        .selectFrom(table)
+        .select((eb) => eb.fn.countAll<number>().as('n'))
+        .execute();
+      return Number(n);
+    };
+    const [objects, users, policies, runs, linkedRow] = await Promise.all([
+      count('tenant_objects'),
+      count('tenant_users'),
+      count('tenant_policies'),
+      count('tenant_discovery_runs'),
+      s
+        .selectFrom('discovery_users')
+        .select((eb) => eb.fn.countAll<number>().as('n'))
+        .where('tenant_user_id', 'is not', null)
+        .executeTakeFirst(),
+    ]);
+    const dataCollectionLinksCleared = Number(linkedRow?.n ?? 0);
+
+    // tenant_objects first: cascades to tenant_users + tenant_policies and clears
+    // discovery_users.tenant_user_id (SET NULL). Then the now-unreferenced runs.
+    await s.deleteFrom('tenant_objects').execute();
+    await s.deleteFrom('tenant_users').execute();
+    await s.deleteFrom('tenant_policies').execute();
+    await s.deleteFrom('tenant_discovery_runs').execute();
+
+    const result = { objects, users, policies, runs, dataCollectionLinksCleared };
+    await this.audit.tenant(t.schema, 'tenant_discovery.purged', {
+      actor: actorOf(user),
+      targetType: 'tenant',
+      targetId: t.id,
+      detail: result,
+    });
+    await this.audit.platform('tenant_discovery.purged', {
+      actor: actorOf(user),
+      tenantId: t.id,
+      targetType: 'tenant',
+      targetId: t.id,
+      detail: result,
+    });
+    return result;
+  }
+
   /* =============================== summary =============================== */
 
   async summary(t: TenantContext): Promise<TenantDiscoverySummary> {

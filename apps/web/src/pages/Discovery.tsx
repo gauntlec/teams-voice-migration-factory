@@ -38,6 +38,7 @@ import {
   ChevronLeftRegular,
   ChevronRightRegular,
   CopyRegular,
+  DeleteRegular,
   EyeRegular,
   PlugConnectedRegular,
 } from '@fluentui/react-icons';
@@ -364,6 +365,112 @@ function RunCard({ base, summary }: { base: string; summary: TenantDiscoverySumm
           {run.error && <LoadError message={run.error} />}
         </>
       )}
+    </Card>
+  );
+}
+
+/** Danger zone: wipe the whole discovered inventory for this customer. */
+function PurgeCard({
+  base,
+  summary,
+  canRun,
+  onPurged,
+}: {
+  base: string;
+  summary: TenantDiscoverySummary | undefined;
+  canRun: boolean;
+  onPurged: () => void;
+}) {
+  const s = useStyles();
+  const [open, setOpen] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const total = Object.values(summary?.counts ?? {}).reduce((a, b) => a + (b ?? 0), 0);
+  const hasData = total > 0 || !!summary?.lastRun;
+  const running = !!summary?.lastRun && ['queued', 'running'].includes(summary.lastRun.status);
+
+  const purge = useMutation({
+    mutationFn: () =>
+      api<{
+        objects: number;
+        users: number;
+        policies: number;
+        runs: number;
+        dataCollectionLinksCleared: number;
+      }>(base, { method: 'DELETE' }),
+    onSuccess: () => {
+      setOpen(false);
+      setErr(null);
+      onPurged();
+    },
+    onError: (e) => setErr(e instanceof ApiError ? e.message : 'Could not delete the discovered data'),
+  });
+
+  if (!canRun) return null;
+
+  return (
+    <Card className={s.card}>
+      <Text weight="semibold">Delete discovered data</Text>
+      <Text size={200} className={s.muted}>
+        Removes every discovered object, the Users and Policies projections and the run history for
+        this customer. Data Collection entries are kept, but lose their link to a discovered user.
+        Re-run discovery to rebuild. This cannot be undone.
+      </Text>
+      <div className={s.row}>
+        <Button
+          appearance="secondary"
+          icon={<DeleteRegular />}
+          style={{ color: '#b10e1c' }}
+          disabled={!hasData}
+          onClick={() => {
+            setErr(null);
+            setOpen(true);
+          }}
+        >
+          Delete discovered data
+        </Button>
+        {!hasData && (
+          <Text size={200} className={s.muted}>
+            Nothing discovered yet.
+          </Text>
+        )}
+      </div>
+
+      <Dialog open={open} onOpenChange={(_, d) => setOpen(d.open)}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>Delete all discovered data?</DialogTitle>
+            <DialogContent>
+              This permanently deletes the discovery inventory for{' '}
+              <b>{summary?.tenant?.displayName ?? 'this customer'}</b>: {total.toLocaleString()} object
+              {total === 1 ? '' : 's'}, the Users and Policies projections
+              {summary?.lastRun ? ' and the run history' : ''}. Any Data Collection users stay, but
+              lose their link to a discovered identity. This cannot be undone.
+              {running && (
+                <Text style={{ color: '#b10e1c', display: 'block', marginTop: 8 }}>
+                  A discovery is running — wait for it to finish first.
+                </Text>
+              )}
+              {err && (
+                <Text style={{ color: '#b10e1c', display: 'block', marginTop: 8 }}>{err}</Text>
+              )}
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                appearance="primary"
+                style={{ backgroundColor: '#b10e1c' }}
+                disabled={purge.isPending || running}
+                onClick={() => purge.mutate()}
+              >
+                {purge.isPending ? 'Deleting…' : 'Delete everything'}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
     </Card>
   );
 }
@@ -971,6 +1078,12 @@ export function Discovery() {
               </Text>
             </Card>
           </div>
+          <PurgeCard
+            base={base}
+            summary={sm}
+            canRun={can('tenantdiscovery:run')}
+            onPurged={invalidateAll}
+          />
         </>
       )}
 
