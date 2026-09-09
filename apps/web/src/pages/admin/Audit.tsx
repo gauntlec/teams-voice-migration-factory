@@ -2,7 +2,6 @@ import { useQuery } from '@tanstack/react-query';
 import {
   Card,
   Spinner,
-  Table,
   TableBody,
   TableCell,
   TableHeader,
@@ -10,6 +9,7 @@ import {
   TableRow,
 } from '@fluentui/react-components';
 import { api } from '../../api';
+import { DataTable } from '../../components/DataTable';
 import { Page } from '../../components/Page';
 import { LoadError } from '../DataCollection';
 
@@ -38,7 +38,7 @@ export function AdminAudit() {
         ) : q.isError ? (
           <LoadError message={(q.error as Error).message} />
         ) : (
-          <Table size="small">
+          <DataTable size="small" minWidth={760}>
             <TableHeader>
               <TableRow>
                 <TableHeaderCell>When</TableHeaderCell>
@@ -59,7 +59,7 @@ export function AdminAudit() {
                 </TableRow>
               ))}
             </TableBody>
-          </Table>
+          </DataTable>
         )}
       </Card>
     </Page>

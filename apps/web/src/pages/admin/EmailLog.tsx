@@ -7,7 +7,6 @@ import {
   MessageBarBody,
   MessageBarTitle,
   Spinner,
-  Table,
   TableBody,
   TableCell,
   TableHeader,
@@ -17,6 +16,7 @@ import {
 } from '@fluentui/react-components';
 import { ArrowClockwiseRegular } from '@fluentui/react-icons';
 import { api } from '../../api';
+import { DataTable } from '../../components/DataTable';
 import { Page } from '../../components/Page';
 import { LoadError } from '../../components/records';
 
@@ -124,7 +124,7 @@ export function AdminEmailLog() {
         ) : items.length === 0 ? (
           <Text size={200}>No messages yet.</Text>
         ) : (
-          <Table size="small">
+          <DataTable size="small" minWidth={820}>
             <TableHeader>
               <TableRow>
                 <TableHeaderCell>Queued</TableHeaderCell>
@@ -139,18 +139,18 @@ export function AdminEmailLog() {
               {items.map((m) => (
                 <TableRow key={m.id}>
                   <TableCell>{fmt(m.created_at)}</TableCell>
-                  <TableCell>{m.to_email}</TableCell>
+                  <TableCell title={m.to_email}>{m.to_email}</TableCell>
                   <TableCell>{m.template}</TableCell>
                   <TableCell>
                     <Badge appearance="tint" color={STATUS_COLOR[m.status]}>
                       {m.status}
                     </Badge>
                   </TableCell>
-                  <TableCell>
+                  <TableCell title={m.status === 'failed' ? m.error ?? undefined : undefined}>
                     {m.status === 'sent' ? (
                       <Text size={200}>sent {fmt(m.sent_at)}</Text>
                     ) : m.status === 'failed' ? (
-                      <Text size={200} style={{ color: '#b10e1c', wordBreak: 'break-word' }}>
+                      <Text size={200} style={{ color: '#b10e1c' }}>
                         {m.error || 'failed'} · {m.attempts} {m.attempts === 1 ? 'try' : 'tries'}
                       </Text>
                     ) : (
@@ -175,7 +175,7 @@ export function AdminEmailLog() {
                 </TableRow>
               ))}
             </TableBody>
-          </Table>
+          </DataTable>
         )}
       </Card>
     </Page>

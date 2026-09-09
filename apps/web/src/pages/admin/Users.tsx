@@ -20,7 +20,6 @@ import {
   MessageBarTitle,
   Option,
   Spinner,
-  Table,
   TableBody,
   TableCell,
   TableHeader,
@@ -43,26 +42,11 @@ import {
 import { ROLES, type Role } from '@tvmf/shared';
 import { api } from '../../api';
 import { useAuth } from '../../auth';
+import { DataTable } from '../../components/DataTable';
 import { Page } from '../../components/Page';
 import { LoadError } from '../../components/records';
 
 const useStyles = makeStyles({
-  /* the wrapper scrolls; nowrap cells keep the table at its natural width so
-     columns never collapse into each other on a narrow window */
-  tableScroll: { overflowX: 'auto', overflowY: 'hidden', ...shorthands.padding('0', '0', '2px', '0') },
-  /* auto layout + nowrap size columns to content; the min-width floor makes the
-     wrapper scroll on a narrow screen rather than Fluent's default fixed layout
-     squashing every column to an equal sliver and spilling text over neighbours */
-  table: { width: '100%', minWidth: '1040px', tableLayout: 'auto' },
-  cell: { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
-  /* long free-text columns: hard cap + ellipsis (full value in the title tooltip) */
-  cellClamp: {
-    whiteSpace: 'nowrap',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    maxWidth: '260px',
-  },
-  actionsCell: { whiteSpace: 'nowrap' },
   actions: { display: 'flex', ...shorthands.gap('4px'), flexWrap: 'nowrap' },
 });
 
@@ -403,17 +387,16 @@ export function AdminUsers() {
         ) : users.isError ? (
           <LoadError message={(users.error as Error).message} />
         ) : (
-          <div className={s.tableScroll}>
-          <Table size="small" className={s.table}>
+          <DataTable size="small" minWidth={1040}>
             <TableHeader>
               <TableRow>
-                <TableHeaderCell className={s.cell}>Name</TableHeaderCell>
-                <TableHeaderCell className={s.cell}>Email</TableHeaderCell>
-                <TableHeaderCell className={s.cell}>Role</TableHeaderCell>
-                <TableHeaderCell className={s.cell}>Customers</TableHeaderCell>
-                <TableHeaderCell className={s.cell}>Status</TableHeaderCell>
-                <TableHeaderCell className={s.cell}>MFA</TableHeaderCell>
-                <TableHeaderCell className={s.cell}>Actions</TableHeaderCell>
+                <TableHeaderCell>Name</TableHeaderCell>
+                <TableHeaderCell>Email</TableHeaderCell>
+                <TableHeaderCell>Role</TableHeaderCell>
+                <TableHeaderCell>Customers</TableHeaderCell>
+                <TableHeaderCell>Status</TableHeaderCell>
+                <TableHeaderCell>MFA</TableHeaderCell>
+                <TableHeaderCell>Actions</TableHeaderCell>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -424,17 +407,13 @@ export function AdminUsers() {
                     : (u.tenants ?? []).map((t) => t.name).join(', ') || '—';
                 return (
                 <TableRow key={u.id}>
-                  <TableCell className={s.cell}>{u.display_name}</TableCell>
-                  <TableCell className={s.cellClamp} title={u.email}>
-                    {u.email}
-                  </TableCell>
-                  <TableCell className={s.cell}>{u.role}</TableCell>
-                  <TableCell className={s.cellClamp} title={customers}>
-                    {customers}
-                  </TableCell>
-                  <TableCell className={s.cell}>{u.status}</TableCell>
-                  <TableCell className={s.cell}>{u.totp_enrolled ? 'enrolled' : '—'}</TableCell>
-                  <TableCell className={s.actionsCell}>
+                  <TableCell title={u.display_name}>{u.display_name}</TableCell>
+                  <TableCell title={u.email}>{u.email}</TableCell>
+                  <TableCell>{u.role}</TableCell>
+                  <TableCell title={customers}>{customers}</TableCell>
+                  <TableCell>{u.status}</TableCell>
+                  <TableCell>{u.totp_enrolled ? 'enrolled' : '—'}</TableCell>
+                  <TableCell>
                     <div className={s.actions}>
                       {u.role !== 'SUPER_ADMIN' && (
                         <Button
@@ -489,8 +468,7 @@ export function AdminUsers() {
                 );
               })}
             </TableBody>
-          </Table>
-          </div>
+          </DataTable>
         )}
       </Card>
 
@@ -546,7 +524,7 @@ function UserMembershipsDialog({
               ) : memberships.data!.length === 0 ? (
                 <Text size={200}>Not assigned to any customer yet.</Text>
               ) : (
-                <Table size="small">
+                <DataTable size="small" minWidth={460}>
                   <TableHeader>
                     <TableRow>
                       <TableHeaderCell>Customer</TableHeaderCell>
@@ -559,7 +537,7 @@ function UserMembershipsDialog({
                       <MembershipRow key={m.tenantId} user={user} m={m} onChanged={refetch} />
                     ))}
                   </TableBody>
-                </Table>
+                </DataTable>
               )}
               <AddMembershipRow
                 user={user}

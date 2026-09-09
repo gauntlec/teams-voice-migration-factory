@@ -16,7 +16,6 @@ import {
   Input,
   Option,
   Spinner,
-  Table,
   TableBody,
   TableCell,
   TableHeader,
@@ -26,6 +25,7 @@ import {
 } from '@fluentui/react-components';
 import { api } from '../../api';
 import { useAuth } from '../../auth';
+import { DataTable } from '../../components/DataTable';
 import { Page } from '../../components/Page';
 import { LoadError } from '../DataCollection';
 
@@ -121,7 +121,7 @@ export function AdminTenants() {
         ) : list.isError ? (
           <LoadError message={(list.error as Error).message} />
         ) : (
-          <Table size="small">
+          <DataTable size="small" minWidth={640}>
             <TableHeader>
               <TableRow>
                 <TableHeaderCell>Name</TableHeaderCell>
@@ -140,7 +140,7 @@ export function AdminTenants() {
                 </TableRow>
               ))}
             </TableBody>
-          </Table>
+          </DataTable>
         )}
       </Card>
 
@@ -221,7 +221,7 @@ function CustomerMembers({ tenants }: { tenants: Tenant[] }) {
       ) : members.isError ? (
         <LoadError message={(members.error as Error).message} />
       ) : (
-        <Table size="small">
+        <DataTable size="small" minWidth={760}>
           <TableHeader>
             <TableRow>
               <TableHeaderCell>Name</TableHeaderCell>
@@ -267,7 +267,7 @@ function CustomerMembers({ tenants }: { tenants: Tenant[] }) {
               );
             })}
           </TableBody>
-        </Table>
+        </DataTable>
       )}
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'end', flexWrap: 'wrap' }}>

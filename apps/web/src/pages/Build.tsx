@@ -5,7 +5,6 @@ import {
   Card,
   Input,
   Spinner,
-  Table,
   TableBody,
   TableCell,
   TableHeader,
@@ -17,6 +16,7 @@ import {
 } from '@fluentui/react-components';
 import { api } from '../api';
 import { useAuth } from '../auth';
+import { DataTable } from '../components/DataTable';
 import { Page } from '../components/Page';
 import { LoadError, NoTenant } from './DataCollection';
 
@@ -123,7 +123,7 @@ export function Build() {
         ) : (users.data?.length ?? 0) === 0 ? (
           <Text size={200}>No user rows yet.</Text>
         ) : (
-          <Table size="small">
+          <DataTable size="small" minWidth={620}>
             <TableHeader>
               <TableRow>
                 <TableHeaderCell>UPN</TableHeaderCell>
@@ -142,7 +142,7 @@ export function Build() {
                 </TableRow>
               ))}
             </TableBody>
-          </Table>
+          </DataTable>
         )}
       </Card>
     </Page>

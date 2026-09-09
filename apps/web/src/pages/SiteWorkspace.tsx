@@ -20,7 +20,6 @@ import {
   Spinner,
   Tab,
   TabList,
-  Table,
   TableBody,
   TableCell,
   TableHeader,
@@ -45,6 +44,7 @@ import {
 } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { useAuth } from '../auth';
+import { DataTable } from '../components/DataTable';
 import { Page } from '../components/Page';
 import { NetworkDiagram, type NetworkRow } from '../components/NetworkDiagram';
 import {
@@ -757,8 +757,7 @@ function NumberInventory({
         </Text>
       ) : (
         <>
-          <div style={{ overflowX: 'auto' }}>
-            <Table size="small">
+          <DataTable size="small" minWidth={640}>
               <TableHeader>
                 <TableRow>
                   <TableHeaderCell>Number</TableHeaderCell>
@@ -809,8 +808,7 @@ function NumberInventory({
                   </TableRow>
                 ))}
               </TableBody>
-            </Table>
-          </div>
+          </DataTable>
           {pages > 1 && (
             <div className={s.pager}>
               <Text size={200} className={s.muted}>

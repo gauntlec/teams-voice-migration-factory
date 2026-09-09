@@ -19,7 +19,6 @@ import {
   SearchBox,
   Spinner,
   Switch,
-  Table,
   TableBody,
   TableCell,
   TableHeader,
@@ -40,6 +39,7 @@ import {
 } from '@fluentui/react-icons';
 import type { Paginated } from '@tvmf/shared';
 import { api, ApiError } from '../api';
+import { DataTable } from './DataTable';
 
 /* ------------------------------ shared bits ------------------------------ */
 
@@ -83,25 +83,6 @@ export interface ColumnDef {
 
 export const useRecordStyles = makeStyles({
   card: { ...shorthands.padding('14px'), display: 'grid', ...shorthands.gap('10px') },
-  tableWrap: {
-    overflowX: 'auto',
-    overflowY: 'hidden',
-    ...shorthands.padding('0', '0', '2px', '0'),
-  },
-  /* auto layout + nowrap cells size columns to their content, so a narrow
-     viewport scrolls the wrapper (min-width floor) instead of Fluent's
-     default fixed layout collapsing every column to an equal sliver */
-  table: { width: '100%', minWidth: '720px', tableLayout: 'auto' },
-  nowrapCell: { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
-  cellText: {
-    display: 'inline-block',
-    maxWidth: '320px',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-    verticalAlign: 'middle',
-  },
-  actionsCol: { whiteSpace: 'nowrap' },
   cardHead: {
     display: 'flex',
     justifyContent: 'space-between',
@@ -647,37 +628,30 @@ function RecordTable({
   onDelete: (id: string) => void;
 }) {
   const s = useRecordStyles();
+  const minWidth = Math.max(560, columns.length * 132 + (readOnly ? 0 : 96));
   return (
-    <div className={s.tableWrap}>
-      <Table size="small" className={s.table}>
-        <TableHeader>
-          <TableRow>
-            {columns.map((c) => (
-              <TableHeaderCell key={c.key} className={s.nowrapCell}>
-                {c.label}
-              </TableHeaderCell>
-            ))}
-            {!readOnly && <TableHeaderCell className={s.actionsCol} />}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
+    <DataTable size="small" minWidth={minWidth}>
+      <TableHeader>
+        <TableRow>
+          {columns.map((c) => (
+            <TableHeaderCell key={c.key}>{c.label}</TableHeaderCell>
+          ))}
+          {!readOnly && <TableHeaderCell />}
+        </TableRow>
+      </TableHeader>
+      <TableBody>
           {rows.map((r) => (
             <TableRow key={r.id}>
               {columns.map((c) => {
                 const content = c.render ? c.render(r) : ((r[c.key] as string) ?? '—') || '—';
                 return (
-                  <TableCell key={c.key} className={s.nowrapCell}>
-                    <span
-                      className={s.cellText}
-                      title={typeof content === 'string' ? content : undefined}
-                    >
-                      {content}
-                    </span>
+                  <TableCell key={c.key} title={typeof content === 'string' ? content : undefined}>
+                    {content}
                   </TableCell>
                 );
               })}
               {!readOnly && (
-                <TableCell className={s.actionsCol}>
+                <TableCell>
                   <div className={s.rowActions}>
                     {extraRowAction?.(r)}
                     <Button
@@ -700,8 +674,7 @@ function RecordTable({
               )}
             </TableRow>
           ))}
-        </TableBody>
-      </Table>
-    </div>
+      </TableBody>
+    </DataTable>
   );
 }

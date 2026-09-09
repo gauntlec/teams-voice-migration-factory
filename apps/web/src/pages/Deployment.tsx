@@ -6,7 +6,6 @@ import {
   Card,
   Link,
   Spinner,
-  Table,
   TableBody,
   TableCell,
   TableHeader,
@@ -18,6 +17,7 @@ import {
 } from '@fluentui/react-components';
 import { api } from '../api';
 import { useAuth } from '../auth';
+import { DataTable } from '../components/DataTable';
 import { Page } from '../components/Page';
 import { LoadError, NoTenant } from './DataCollection';
 
@@ -117,7 +117,7 @@ export function Deployment() {
                 <Text size={200}>Starts a device-code sign-in you complete in your browser.</Text>
               </div>
             )}
-            <Table size="small">
+            <DataTable size="small" minWidth={720}>
               <TableHeader>
                 <TableRow>
                   <TableHeaderCell>Started</TableHeaderCell>
@@ -153,7 +153,7 @@ export function Deployment() {
                   </TableRow>
                 ))}
               </TableBody>
-            </Table>
+            </DataTable>
           </>
         )}
       </Card>
@@ -177,7 +177,7 @@ export function Deployment() {
             </Button>
           </div>
         </div>
-        <Table size="small">
+        <DataTable size="small" minWidth={780}>
           <TableHeader>
             <TableRow>
               <TableHeaderCell>Created</TableHeaderCell>
@@ -208,7 +208,7 @@ export function Deployment() {
               </TableRow>
             ))}
           </TableBody>
-        </Table>
+        </DataTable>
       </Card>
 
       {selected && (
@@ -217,7 +217,7 @@ export function Deployment() {
           {changes.isLoading ? (
             <Spinner size="tiny" />
           ) : (
-            <Table size="small">
+            <DataTable size="small" minWidth={880}>
               <TableHeader>
                 <TableRow>
                   <TableHeaderCell>#</TableHeaderCell>
@@ -234,13 +234,13 @@ export function Deployment() {
                     <TableCell>{c.object_type}</TableCell>
                     <TableCell className={s.mono}>{c.cmdlet}</TableCell>
                     <TableCell>{c.result}</TableCell>
-                    <TableCell className={s.mono} style={{ maxWidth: 420, whiteSpace: 'pre-wrap' }}>
-                      {c.message ?? ''}
+                    <TableCell className={s.mono}>
+                      <div style={{ maxWidth: 420, whiteSpace: 'pre-wrap' }}>{c.message ?? ''}</div>
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
-            </Table>
+            </DataTable>
           )}
         </Card>
       )}

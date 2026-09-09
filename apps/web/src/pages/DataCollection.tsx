@@ -8,7 +8,6 @@ import {
   MessageBar,
   MessageBarBody,
   Spinner,
-  Table,
   TableBody,
   TableCell,
   TableHeader,
@@ -21,6 +20,7 @@ import {
 import { ArrowRightRegular, ListRegular, MapRegular } from '@fluentui/react-icons';
 import { api } from '../api';
 import { useAuth } from '../auth';
+import { DataTable } from '../components/DataTable';
 import { Page } from '../components/Page';
 import { LoadError, NoTenant, useRecordStyles, type Row } from '../components/records';
 import { SitesMap, type MapSite } from '../components/SitesMap';
@@ -206,8 +206,7 @@ export function DataCollection() {
             )}
           </>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <Table size="small">
+          <DataTable size="small" minWidth={900}>
               <TableHeader>
                 <TableRow>
                   <TableHeaderCell>Sitecode</TableHeaderCell>
@@ -245,8 +244,7 @@ export function DataCollection() {
                   </TableRow>
                 ))}
               </TableBody>
-            </Table>
-          </div>
+          </DataTable>
         )}
       </Card>
     </Page>

@@ -101,3 +101,18 @@ the worker renders a branded template and sends it via SMTP. See
 This scaffold ships the **auth / users / tenants / RBAC / tenancy** layer working
 end to end; the four migration modules are present as guarded stubs with the data
 model in place, to be filled in next.
+
+## Web conventions
+
+- **Tables — always use `components/DataTable.tsx`, never Fluent's `<Table>` directly.**
+  Fluent v9 tables default to `table-layout: fixed` + `width: 100%`, so on a
+  narrow window every column collapses to an equal sliver and cell text spills
+  across the column edge. `DataTable` renders the scroll wrapper + a `<Table>`
+  with `table-layout: auto`, a `minWidth` floor, and per-cell
+  `nowrap / overflow:hidden / ellipsis`, so the box scrolls sideways instead of
+  columns overlapping. Put `<TableHeader>` / `<TableBody>` inside as usual; pass
+  `minWidth` (~130px per column). For a cell that must wrap, put its content in
+  an inner `<div style={{ whiteSpace: 'pre-wrap' }}>`. The shared
+  `records.tsx` `CrudSection` / `PagedSection` already build on it.
+- Griffel `makeStyles` + `className` for styling — inline `style` on Fluent
+  slot components (`Table`, `TableCell`, …) is dropped and won't apply.

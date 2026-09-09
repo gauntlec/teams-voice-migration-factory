@@ -4,7 +4,6 @@ import {
   Button,
   Card,
   Spinner,
-  Table,
   TableBody,
   TableCell,
   TableHeader,
@@ -14,6 +13,7 @@ import {
 } from '@fluentui/react-components';
 import { api } from '../api';
 import { useAuth } from '../auth';
+import { DataTable } from '../components/DataTable';
 import { Page } from '../components/Page';
 import { LoadError, NoTenant } from './DataCollection';
 
@@ -59,7 +59,7 @@ export function Handover() {
         ) : (packs.data?.length ?? 0) === 0 ? (
           <Text size={200}>No handover packs generated yet.</Text>
         ) : (
-          <Table size="small">
+          <DataTable size="small" minWidth={460}>
             <TableHeader>
               <TableRow>
                 <TableHeaderCell>Version</TableHeaderCell>
@@ -80,7 +80,7 @@ export function Handover() {
                 </TableRow>
               ))}
             </TableBody>
-          </Table>
+          </DataTable>
         )}
       </Card>
     </Page>
