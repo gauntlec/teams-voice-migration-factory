@@ -18,6 +18,7 @@ import { AdminTenants } from './pages/admin/Tenants';
 import { AdminSites } from './pages/admin/Sites';
 import { AdminEmailLog } from './pages/admin/EmailLog';
 import { AdminAudit } from './pages/admin/Audit';
+import { FeatureRequests } from './pages/FeatureRequests';
 
 export function App() {
   const { status } = useAuth();
@@ -94,6 +95,14 @@ export function App() {
           element={
             <RequirePermission permission="audit:read:platform">
               <AdminAudit />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="/feature-requests"
+          element={
+            <RequirePermission permission="feature:read">
+              <FeatureRequests />
             </RequirePermission>
           }
         />

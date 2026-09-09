@@ -55,6 +55,35 @@ export interface EmailMessagesTable {
   sent_at: string | null;
 }
 
+export interface FeatureRequestsTable {
+  id: Generated<string>;
+  title: string;
+  area: string;
+  status: ColumnType<
+    import('@tvmf/shared').FeatureStatus,
+    import('@tvmf/shared').FeatureStatus | undefined,
+    import('@tvmf/shared').FeatureStatus
+  >;
+  priority: ColumnType<
+    import('@tvmf/shared').FeaturePriority,
+    import('@tvmf/shared').FeaturePriority | undefined,
+    import('@tvmf/shared').FeaturePriority
+  >;
+  problem: string;
+  proposal: string;
+  current_behavior: string | null;
+  examples: string | null;
+  acceptance: string | null;
+  constraints: string | null;
+  affected_roles: ColumnType<string[], string[] | undefined, string[]>;
+  decision_note: string | null;
+  submitted_by: string | null;
+  created_at: Ts;
+  updated_at: ColumnType<string, string | undefined, string>;
+  status_changed_at: ColumnType<string, string | undefined, string>;
+  status_changed_by: string | null;
+}
+
 export interface TenantMembershipsTable {
   user_id: string;
   tenant_id: string;
@@ -451,6 +480,7 @@ export interface DB {
   auth_sessions: AuthSessionsTable;
   invitations: InvitationsTable;
   email_messages: EmailMessagesTable;
+  feature_requests: FeatureRequestsTable;
   platform_audit_log: PlatformAuditLogTable;
   // tenant
   discovery: DiscoveryTable;

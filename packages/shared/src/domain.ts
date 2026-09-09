@@ -161,3 +161,54 @@ export type DeploymentChangeResult = (typeof DEPLOYMENT_CHANGE_RESULTS)[number];
 
 export const CONNECTION_STATUSES = ['pending', 'active', 'expired', 'closed'] as const;
 export type ConnectionStatus = (typeof CONNECTION_STATUSES)[number];
+
+/* ------------------------- Feature requests ------------------------- */
+
+/**
+ * Workflow for a feature request, in board order. An admin moves a card to
+ * `in_development` as the signal that Claude Code should pick it up; Claude sets
+ * it to `deployed` when the change ships. `declined` is the terminal "won't do"
+ * state (with a `decision_note`).
+ */
+export const FEATURE_STATUSES = [
+  'new',
+  'under_review',
+  'scheduled',
+  'in_development',
+  'deployed',
+  'declined',
+] as const;
+export type FeatureStatus = (typeof FEATURE_STATUSES)[number];
+
+export const FEATURE_STATUS_LABELS: Record<FeatureStatus, string> = {
+  new: 'New',
+  under_review: 'Under review',
+  scheduled: 'Scheduled',
+  in_development: 'In development',
+  deployed: 'Deployed',
+  declined: 'Declined',
+};
+
+export const FEATURE_PRIORITIES = ['low', 'medium', 'high', 'urgent'] as const;
+export type FeaturePriority = (typeof FEATURE_PRIORITIES)[number];
+
+export const FEATURE_PRIORITY_LABELS: Record<FeaturePriority, string> = {
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  urgent: 'Urgent',
+};
+
+/** Which part of the product a request is about — used as a filter/label. */
+export const FEATURE_AREAS = [
+  'Data Collection',
+  'Design & Build',
+  'Deployment',
+  'Service Handover',
+  'Users & Access',
+  'Email & Notifications',
+  'Reporting & Exports',
+  'Platform & Infrastructure',
+  'Other',
+] as const;
+export type FeatureArea = (typeof FEATURE_AREAS)[number];

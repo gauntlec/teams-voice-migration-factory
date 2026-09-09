@@ -9,6 +9,7 @@ import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './rbac/permissions.guard';
 import { AuthModule } from './auth/auth.module';
 import { MailModule } from './mail/mail.module';
+import { FeatureRequestsModule } from './feature-requests/feature-requests.module';
 import { UsersModule } from './users/users.module';
 import { TenantsModule } from './tenants/tenants.module';
 import { DataCollectionModule } from './modules/data-collection/data-collection.module';
@@ -27,6 +28,7 @@ import { HealthController } from './health/health.controller';
     QueueModule,
     AuthModule,
     MailModule,
+    FeatureRequestsModule,
     UsersModule,
     TenantsModule,
     DataCollectionModule,

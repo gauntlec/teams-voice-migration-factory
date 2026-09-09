@@ -18,6 +18,7 @@ Derived from the current artifacts:
 | `auth_sessions` | id, user_id, refresh_hash, family_id, user_agent, ip, expires_at, revoked_at, replaced_by |
 | `invitations` | id, email, role, tenant_id, token_hash, invited_by, expires_at, accepted_at |
 | `email_messages` | id, to_email (citext), to_name, template, context (jsonb), subject, status (`queued`/`sent`/`failed`/`skipped`), error, attempts, related_type + related_id, created_by, created_at, sent_at — the comms log; API inserts + enqueues, worker sends. See [`EMAIL.md`](EMAIL.md) |
+| `feature_requests` | id, title, area, status (`new`/`under_review`/`scheduled`/`in_development`/`deployed`/`declined`), priority (`low`/`medium`/`high`/`urgent`), problem, proposal, current_behavior, examples, acceptance, constraints, affected_roles (text[]), decision_note, submitted_by, created_at, updated_at, status_changed_at/by — the feature-request board. Staff submit; a SUPER_ADMIN moves a card to `in_development` (the cue for Claude Code) and to `deployed` on ship. Values in `packages/shared/src/domain.ts` |
 | `platform_audit_log` | id, at, actor_user_id, actor_email, action, target_type, target_id, tenant_id, detail (jsonb), ip |
 
 ## tenant `tenant_<shortid>` schema

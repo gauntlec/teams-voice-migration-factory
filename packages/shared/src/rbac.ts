@@ -34,6 +34,9 @@ export const PERMISSIONS = [
   'handover:generate',
   'audit:read:tenant',
   'audit:read:platform',
+  'feature:read', // view the feature-request board
+  'feature:create', // submit a feature request
+  'feature:manage', // move status, edit labels, delete - SUPER_ADMIN only
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -61,6 +64,8 @@ export const PERMISSION_MATRIX: Record<Role, ReadonlySet<Permission>> = {
     'handover:read',
     'handover:generate',
     'audit:read:tenant',
+    'feature:read',
+    'feature:create',
   ]),
   ENGINEER: new Set<Permission>([
     'tenant:read',
@@ -80,6 +85,8 @@ export const PERMISSION_MATRIX: Record<Role, ReadonlySet<Permission>> = {
     'handover:read',
     'handover:generate',
     'audit:read:tenant',
+    'feature:read',
+    'feature:create',
   ]),
   CUSTOMER: new Set<Permission>([
     'tenant:read',

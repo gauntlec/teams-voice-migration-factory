@@ -71,6 +71,7 @@ build:read     build:write
 deployment:read  deployment:connect  deployment:dryrun  deployment:execute
 handover:read  handover:generate
 audit:read:tenant   audit:read:platform
+feature:read  feature:create  feature:manage
 ```
 
 ## Matrix (✓ = allowed)
@@ -95,6 +96,8 @@ audit:read:tenant   audit:read:platform
 | handover:generate | ✓ | ✓ | ✓ | |
 | audit:read:tenant | ✓ | ✓ | ✓ | ✓ |
 | audit:read:platform | ✓ | | | |
+| feature:read / feature:create | ✓ | ✓ | ✓ | |
+| feature:manage (move / edit / delete cards) | ✓ | | | |
 
 ## Enforcement
 

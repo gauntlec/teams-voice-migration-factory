@@ -2,6 +2,9 @@ import { z } from 'zod';
 import { ROLES } from './rbac';
 import {
   CALLER_ID_OPTIONS,
+  FEATURE_AREAS,
+  FEATURE_PRIORITIES,
+  FEATURE_STATUSES,
   FLOW_KINDS,
   LICENSING_MODELS,
   NETWORK_SCOPES,
@@ -323,3 +326,49 @@ export const discoveryListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });
 export type DiscoveryListQuery = z.infer<typeof discoveryListQuerySchema>;
+
+/* -------------------------- Feature requests -------------------------- */
+
+const featureText = (min: number, max = 6000) => z.string().trim().min(min).max(max);
+
+/**
+ * A new feature request. The long fields feed the "prompt for Claude" the board
+ * generates, so the client guidance nudges towards Claude prompting best
+ * practice: state the goal and the pain, describe the desired end state, give a
+ * concrete example, list acceptance criteria, and call out anything off-limits.
+ */
+export const featureRequestCreateSchema = z
+  .object({
+    title: z.string().trim().min(6, 'Give a short, specific title').max(160),
+    area: z.enum(FEATURE_AREAS),
+    priority: z.enum(FEATURE_PRIORITIES).default('medium'),
+    problem: featureText(20),
+    proposal: featureText(20),
+    current_behavior: optStr(6000),
+    examples: optStr(6000),
+    acceptance: optStr(6000),
+    constraints: optStr(6000),
+    affected_roles: z.array(z.enum(ROLES)).max(ROLES.length).default([]),
+  })
+  .strict();
+export type FeatureRequestCreateInput = z.infer<typeof featureRequestCreateSchema>;
+
+/** Board edits: any field, plus the workflow `status` and a `decision_note`. */
+export const featureRequestUpdateSchema = z
+  .object({
+    title: z.string().trim().min(6).max(160).optional(),
+    area: z.enum(FEATURE_AREAS).optional(),
+    priority: z.enum(FEATURE_PRIORITIES).optional(),
+    status: z.enum(FEATURE_STATUSES).optional(),
+    problem: featureText(20).optional(),
+    proposal: featureText(20).optional(),
+    current_behavior: optStr(6000),
+    examples: optStr(6000),
+    acceptance: optStr(6000),
+    constraints: optStr(6000),
+    affected_roles: z.array(z.enum(ROLES)).max(ROLES.length).optional(),
+    decision_note: optStr(2000),
+  })
+  .strict()
+  .refine((v) => Object.keys(v).length > 0, { message: 'Nothing to update' });
+export type FeatureRequestUpdateInput = z.infer<typeof featureRequestUpdateSchema>;
