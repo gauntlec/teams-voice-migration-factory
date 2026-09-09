@@ -352,13 +352,13 @@ export class TenantDiscoveryService {
     const relinked = await s
       .updateTable('discovery_users')
       .set({
-        tenant_user_id: sql`(SELECT tu.id FROM ${sql.table('tenant_users')} tu
+        tenant_user_id: sql`(SELECT tu.id FROM ${sql.table(`${t.schema}.tenant_users`)} tu
                               WHERE lower(tu.upn) = lower(${sql.ref('discovery_users.upn')})
                                 AND tu.removed_at IS NULL LIMIT 1)`,
       })
       .where('tenant_user_id', 'is', null)
       .where(
-        sql<boolean>`EXISTS (SELECT 1 FROM ${sql.table('tenant_users')} tu
+        sql<boolean>`EXISTS (SELECT 1 FROM ${sql.table(`${t.schema}.tenant_users`)} tu
                      WHERE lower(tu.upn) = lower(${sql.ref('discovery_users.upn')})
                        AND tu.removed_at IS NULL)`,
       )
@@ -371,7 +371,7 @@ export class TenantDiscoveryService {
       .where('u.removed_at', 'is', null)
       .where((eb) => eb.or([eb('u.account_type', '=', 'User'), eb('u.account_type', 'is', null)]))
       .where(
-        sql<boolean>`NOT EXISTS (SELECT 1 FROM ${sql.table('discovery_users')} d
+        sql<boolean>`NOT EXISTS (SELECT 1 FROM ${sql.table(`${t.schema}.discovery_users`)} d
                          WHERE lower(d.upn) = lower(u.upn))`,
       );
     if (input.onlyEnterpriseVoice) cand = cand.where('u.enterprise_voice_enabled', '=', true);
@@ -414,7 +414,7 @@ export class TenantDiscoveryService {
       .where('u.removed_at', 'is', null)
       .where((eb) => eb.or([eb('u.account_type', '=', 'User'), eb('u.account_type', 'is', null)]))
       .where(
-        sql<boolean>`NOT EXISTS (SELECT 1 FROM ${sql.table('discovery_users')} d
+        sql<boolean>`NOT EXISTS (SELECT 1 FROM ${sql.table(`${t.schema}.discovery_users`)} d
                          WHERE lower(d.upn) = lower(u.upn))`,
       );
     if (onlyEnterpriseVoice) cand = cand.where('u.enterprise_voice_enabled', '=', true);

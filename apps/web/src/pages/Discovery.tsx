@@ -816,9 +816,13 @@ function ImportDialog({ base, onClose, onDone }: { base: string; onClose: () => 
                   onChange={(_, d) => setEvOnly(!!d.checked)}
                   label="Only users with Enterprise Voice enabled"
                 />
-                <Text size={200}>
-                  {preview.isLoading ? 'Counting…' : `${(preview.data?.wouldCreate ?? 0).toLocaleString()} user(s) would be created.`}
-                </Text>
+                {preview.isError ? (
+                  <LoadError message={`Could not count candidates: ${(preview.error as Error).message}`} />
+                ) : (
+                  <Text size={200}>
+                    {preview.isLoading ? 'Counting…' : `${(preview.data?.wouldCreate ?? 0).toLocaleString()} user(s) would be created.`}
+                  </Text>
+                )}
                 {err && <LoadError message={err} />}
               </div>
             )}
