@@ -105,3 +105,24 @@ Other modules should read `GET policies` (e.g. Design & Build policy pickers) an
   `docker exec <worker> pwsh -c "Get-Module -ListAvailable MicrosoftTeams"`.
 - Nothing about the sign-in is logged except the device code line the engineer is
   meant to see; `docker logs` shows counts per step only.
+
+### How the worker drives pwsh (hard-won details — keep them)
+
+- The session is `pwsh -NoLogo -NoProfile` with **plain piped stdin**. Do not use
+  `-Command -` / `-File -`: on pwsh 7 those read stdin to EOF before running
+  anything, so a long-lived session never executes.
+- Every script is sent as **one line**: `iex ([Text.Encoding]::Unicode.GetString(
+  [Convert]::FromBase64String('…')))` followed by a `__END__<uuid>` marker. The
+  stdin host echoes each input line back; the parser only reacts to marker lines
+  and `__JSON__` / `__ERR__` / `__SIGNIN__` prefixed output.
+- `Connect-MicrosoftTeams -UseDeviceAuthentication` writes
+  `To sign in, use a web browser to open the page https://login.microsoft.com/device
+  and enter the code XXXXXXXXX to authenticate.` to **stderr**, **without a trailing
+  newline** (the cursor parks there until sign-in completes). The executor therefore
+  matches the prompt against the partial stdout *and* stderr buffers, not just
+  complete lines. A stuck "Requesting a device code…" almost always means this
+  parsing broke.
+- The pwsh child holds the session; if the worker restarts, every `pending`/`active`
+  connection row is expired on start-up (`expireOrphanedConnections`) and the UI
+  asks for a fresh sign-in. BullMQ may re-deliver an interrupted `connection.start`
+  job to the new worker, which simply produces a new code.
