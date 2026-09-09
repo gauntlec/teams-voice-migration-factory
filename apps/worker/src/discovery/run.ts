@@ -352,6 +352,7 @@ async function runSpec(
   const base = progress.counts[spec.objectType] ?? 0;
   let stored = 0;
   let lastSaved = 0;
+  let expected = 0; // total this step will store, once known (non-paged pull)
   const handle = async (records: unknown[]) => {
     for (const raw of records) {
       if (!raw || typeof raw !== 'object') continue;
@@ -393,7 +394,9 @@ async function runSpec(
       // heartbeat the run row so the UI shows the count climbing on a big step
       if (stored - lastSaved >= 250) {
         lastSaved = stored;
-        progress.note = `Storing ${stored.toLocaleString()} ${noun}…`;
+        progress.note = expected
+          ? `Storing ${noun}: ${stored.toLocaleString()} / ${expected.toLocaleString()}…`
+          : `Storing ${stored.toLocaleString()} ${noun}…`;
         await saveProgress(s, runId, progress);
       }
     }
@@ -404,9 +407,15 @@ async function runSpec(
   if (!spec.page) {
     progress.note = `Fetching ${noun} from the tenant (this can take a few minutes on a large tenant)…`;
     await saveProgress(s, runId, progress);
-    await handle(
-      await exec.query(spec.command, spec.resultSize ? { ResultSize: spec.resultSize } : {}, qopts),
+    const records = await exec.query(
+      spec.command,
+      spec.resultSize ? { ResultSize: spec.resultSize } : {},
+      qopts,
     );
+    expected = base + records.length;
+    progress.note = `Fetched ${records.length.toLocaleString()} ${noun}, storing…`;
+    await saveProgress(s, runId, progress);
+    await handle(records);
     await flushVersions();
     return stored;
   }
