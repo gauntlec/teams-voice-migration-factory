@@ -148,18 +148,14 @@ async function runSpec(s: Scoped, exec: TeamsExecutor, runId: string, spec: Cmdl
   };
 
   if (!spec.page) {
-    await handle(await exec.query(spec.command, {}));
+    await handle(await exec.query(spec.command, spec.resultSize ? { ResultSize: spec.resultSize } : {}));
     return stored;
   }
 
   // Paged: keep going until a short page.
   const size = spec.page.size;
   for (let skip = 0; ; skip += size) {
-    const params =
-      spec.page.style === 'first-skip'
-        ? { First: size, Skip: skip }
-        : // Get-CsOnlineUser: -ResultSize is the page size; -Skip is supported from TPM 4.x
-          { ResultSize: size, Skip: skip };
+    const params = spec.page.style === 'first-skip' ? { First: size, Skip: skip } : { Top: size, Skip: skip };
     const batch = await exec.query(spec.command, params);
     await handle(batch);
     if (batch.length < size) break;

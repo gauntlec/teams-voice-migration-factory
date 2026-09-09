@@ -22,8 +22,16 @@ export interface CmdletSpec {
   key: (r: Rec) => string | null;
   name: (r: Rec) => string | null;
   policyType?: TenantPolicyType;
-  /** page size when the cmdlet supports -First/-Skip or -ResultSize/-Skip paging */
-  page?: { size: number; style: 'first-skip' | 'resultsize' };
+  /**
+   * Paging, where the cmdlet supports it:
+   *  - 'first-skip': -First N -Skip M   (Get-CsAutoAttendant, Get-CsCallQueue)
+   *  - 'top-skip':   -Top N -Skip M     (Get-CsPhoneNumberAssignment)
+   * Get-CsOnlineUser has no -Skip, so it is fetched in one call with a large
+   * -ResultSize instead (see `resultSize`).
+   */
+  page?: { size: number; style: 'first-skip' | 'top-skip' };
+  /** single-call cap for cmdlets that can't page (Get-CsOnlineUser -ResultSize) */
+  resultSize?: number;
   /** some cmdlets return one object holding an array (PSTN usages) - split it */
   explode?: (r: Rec) => Rec[];
 }
@@ -64,7 +72,7 @@ export const STEP_CMDLETS: Record<TenantDiscoveryStep, CmdletSpec[]> = {
       objectType: 'user',
       key: (r) => s(r.Identity) ?? s(r.UserPrincipalName),
       name: (r) => s(r.DisplayName),
-      page: { size: 500, style: 'resultsize' },
+      resultSize: 100000,
     },
   ],
   resource_accounts: [
@@ -81,7 +89,7 @@ export const STEP_CMDLETS: Record<TenantDiscoveryStep, CmdletSpec[]> = {
       objectType: 'phone_number',
       key: (r) => s(r.TelephoneNumber),
       name: (r) => s(r.TelephoneNumber),
-      page: { size: 500, style: 'first-skip' },
+      page: { size: 500, style: 'top-skip' },
     },
   ],
   policies: TENANT_POLICY_TYPES.map<CmdletSpec>((type) => ({
