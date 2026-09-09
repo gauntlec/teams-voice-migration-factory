@@ -353,6 +353,7 @@ async function runSpec(
   let stored = 0;
   let lastSaved = 0;
   let expected = 0; // total this step will store, once known (non-paged pull)
+  const seen = spec.buckets ? new Set<string>() : null; // de-dup across buckets
   const handle = async (records: unknown[]) => {
     for (const raw of records) {
       if (!raw || typeof raw !== 'object') continue;
@@ -365,6 +366,10 @@ async function runSpec(
           if (who) r = { ...r, AssignedTo: who };
         }
         const key = spec.key(r) ?? fallbackKey(r);
+        if (seen) {
+          if (seen.has(key)) continue;
+          seen.add(key);
+        }
         const name = spec.name(r);
         const p = prev.get(key);
         const { id: objectId, change } = await upsertObject(s, runId, spec.objectType, key, name, r, p);
@@ -403,6 +408,41 @@ async function runSpec(
   };
 
   const qopts = { select: spec.select, depth: spec.depth, timeoutMs: spec.timeoutMs };
+
+  // Bucketed fetch (Get-CsOnlineUser): one -Filter per disjoint slice, so a huge
+  // result comes back in visible chunks and no single call can time out. One
+  // bad bucket is recorded and skipped - it must not abort the others.
+  if (spec.buckets) {
+    const buckets = spec.buckets();
+    let fetched = 0;
+    for (let i = 0; i < buckets.length; i++) {
+      const bk = buckets[i];
+      progress.note = `Fetching ${noun}: ${fetched.toLocaleString()} so far (${bk.label}, ${i + 1}/${buckets.length})…`;
+      await saveProgress(s, runId, progress);
+      let recs: unknown[];
+      try {
+        recs = await exec.query(
+          spec.command,
+          { Filter: bk.filter, ...(spec.resultSize ? { ResultSize: spec.resultSize } : {}) },
+          qopts,
+        );
+      } catch (e) {
+        const message = (e as Error).message ?? String(e);
+        if (!exec.alive || /pwsh exited|could not start pwsh|executor disposed|not connected|session is disconnected/i.test(message)) {
+          throw e; // session really gone - let the step handler stop the run
+        }
+        progress.errors.push({
+          step: progress.step ?? 'users',
+          message: `bucket "${bk.label}": ${message}`,
+        });
+        continue;
+      }
+      fetched += recs.length;
+      await handle(recs);
+    }
+    await flushVersions();
+    return stored;
+  }
 
   if (!spec.page) {
     progress.note = `Fetching ${noun} from the tenant (this can take a few minutes on a large tenant)…`;

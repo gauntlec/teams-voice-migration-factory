@@ -167,12 +167,16 @@ with the deleted row counts.
   `summary` every 12 s while a run is going (the live progress bar uses the cheap
   `GET runs/:id` instead); pool size is `PG_POOL_MAX` (default 20) per process.
   On a worker restart the startup sweep fails any run left `queued`/`running`.
-- **`Get-CsOnlineUser` on a big tenant.** It can't page, so it returns every
-  account in one call. The worker (a) `Select-Object`s only the ~40 properties
-  `projectUser` stores, so the JSON is a fraction of the size and serialises in
-  seconds not minutes, and (b) gives that one cmdlet a 30-minute timeout
-  (`TEAMS_COMMAND_TIMEOUT_MS`, default 15 min, is the timeout for every other
-  cmdlet).
+- **`Get-CsOnlineUser` on a big tenant.** It has no `-Skip`, so instead of one
+  opaque multi-minute call the worker fetches it in **disjoint `-Filter`
+  buckets** (`userBuckets()` in `cmdlets.ts`): users split by first UPN
+  character (`a*`…`9*` + an "other" catch-all), then one call per remaining
+  `AccountType` (ResourceAccount, Guest, …). Each call is a small fraction of the
+  tenant, so the fetch phase shows real progress ("Fetching users: 8,400 so far
+  (users m*, 13/42)…") and no single call can time out. Records are also
+  `Select-Object`'d to the ~40 properties `projectUser` stores (depth 4). One bad
+  bucket is recorded in `progress.errors` and skipped, not fatal. Per-cmdlet
+  timeout is `TEAMS_COMMAND_TIMEOUT_MS` (default 15 min).
 - **A slow cmdlet no longer kills the run.** The runner only aborts with
   "lost the tenant sign-in" when the pwsh session is genuinely gone
   (`executor.alive` is false, or the error names a dropped connection). A plain

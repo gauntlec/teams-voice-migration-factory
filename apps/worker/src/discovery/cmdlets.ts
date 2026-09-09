@@ -40,7 +40,34 @@ export interface CmdletSpec {
   depth?: number;
   /** per-call timeout override (ms) - for cmdlets that can run long on big tenants */
   timeoutMs?: number;
+  /**
+   * For cmdlets with no `-Skip` (Get-CsOnlineUser): fetch in disjoint slices,
+   * one `-Filter` per bucket, so a huge result comes back in visible chunks
+   * instead of one opaque multi-minute call. Buckets must not overlap; the
+   * runner de-dups on `key(r)` defensively.
+   */
+  buckets?: () => { label: string; filter: string }[];
 }
+
+/**
+ * Get-CsOnlineUser slices: users split by first UPN character, plus the other
+ * account types. Together these cover every account exactly once (the "other
+ * users" bucket mops up UPNs that start with something odd). Each call is a
+ * small fraction of the tenant, so the fetch phase shows real progress and no
+ * single call can time out on a big tenant.
+ */
+const UPN_FIRST = [...'abcdefghijklmnopqrstuvwxyz0123456789'];
+const OTHER_ACCOUNT_TYPES = ['ResourceAccount', 'Guest', 'ApplicationEndpoint', 'SfBOnPremUser', 'Unknown'];
+const userBuckets = (): { label: string; filter: string }[] => {
+  const out = UPN_FIRST.map((c) => ({
+    label: `users ${c}*`,
+    filter: `AccountType -eq 'User' -and UserPrincipalName -like '${c}*'`,
+  }));
+  const notAny = UPN_FIRST.map((c) => `UserPrincipalName -notlike '${c}*'`).join(' -and ');
+  out.push({ label: 'users (other)', filter: `AccountType -eq 'User' -and ${notAny}` });
+  for (const t of OTHER_ACCOUNT_TYPES) out.push({ label: t, filter: `AccountType -eq '${t}'` });
+  return out;
+};
 
 /**
  * The `Get-CsOnlineUser` properties Discovery actually stores (see `projectUser`
@@ -120,7 +147,8 @@ export const STEP_CMDLETS: Record<TenantDiscoveryStep, CmdletSpec[]> = {
       resultSize: 100000,
       select: USER_PROPERTIES,
       depth: 4,
-      timeoutMs: 30 * 60_000,
+      timeoutMs: 15 * 60_000,
+      buckets: userBuckets,
     },
   ],
   resource_accounts: [
