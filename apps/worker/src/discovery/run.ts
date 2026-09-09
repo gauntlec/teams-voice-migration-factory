@@ -111,7 +111,15 @@ export async function handleTenantDiscoveryRun(
       progress.errors.push({ step, message });
       // eslint-disable-next-line no-console
       console.warn(`[discovery ${runId}] step ${step} failed: ${message}`);
-      if (/not connected|exited|disposed|timed out/i.test(message)) {
+      // Only stop the whole run if the pwsh session is actually gone. A single
+      // slow or failing cmdlet (a command timeout while the child is still up)
+      // is recorded as a step error and the run carries on.
+      const sessionGone =
+        !exec.alive ||
+        /pwsh exited|could not start pwsh|executor disposed|run connect-microsoftteams|not connected|session is disconnected|no valid connection|token.*expired/i.test(
+          message,
+        );
+      if (sessionGone) {
         signInLost = true;
         break;
       }
@@ -357,8 +365,12 @@ async function runSpec(
     }
   };
 
+  const qopts = { select: spec.select, depth: spec.depth, timeoutMs: spec.timeoutMs };
+
   if (!spec.page) {
-    await handle(await exec.query(spec.command, spec.resultSize ? { ResultSize: spec.resultSize } : {}));
+    await handle(
+      await exec.query(spec.command, spec.resultSize ? { ResultSize: spec.resultSize } : {}, qopts),
+    );
     await flushVersions();
     return stored;
   }
@@ -367,7 +379,7 @@ async function runSpec(
   const size = spec.page.size;
   for (let skip = 0; ; skip += size) {
     const params = spec.page.style === 'first-skip' ? { First: size, Skip: skip } : { Top: size, Skip: skip };
-    const batch = await exec.query(spec.command, params);
+    const batch = await exec.query(spec.command, params, qopts);
     await handle(batch);
     if (batch.length < size) break;
     if (skip > 500_000) break; // safety valve

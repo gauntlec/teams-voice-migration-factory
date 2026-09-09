@@ -33,17 +33,34 @@ export interface CmdletResult {
   message?: string;
 }
 
+/** Per-call tuning for `query()` - big pulls need a longer leash + smaller payload. */
+export interface QueryOpts {
+  /** ConvertTo-Json depth (default 6). */
+  depth?: number;
+  /** override the executor's command timeout for this call */
+  timeoutMs?: number;
+  /** `Select-Object` these properties before serialising - keeps a huge result small */
+  select?: readonly string[];
+}
+
 export interface TeamsExecutor {
   /** Begin device-code sign-in; resolves once the code is available to show. */
   beginDeviceCode(tenantDomain: string | null): Promise<DeviceCodePrompt>;
   /** Resolves when the engineer has completed sign-in (or rejects on timeout). */
   awaitSignIn(): Promise<{ upn: string; tenantId: string }>;
   /** Run a read-only Get-Cs* cmdlet and return its records (used by Discovery). */
-  query(command: string, params?: Record<string, unknown>, depth?: number): Promise<unknown[]>;
+  query(command: string, params?: Record<string, unknown>, opts?: QueryOpts): Promise<unknown[]>;
   /** Run one cmdlet. `whatIf` => generate the command text, do not change anything. */
   invoke(call: CmdletInvocation, opts: { whatIf: boolean }): Promise<CmdletResult>;
   /** Tear down the pwsh session and wipe the token from memory. */
   dispose(): Promise<void>;
+  /**
+   * False once the pwsh process / Teams session is genuinely gone (the child
+   * exited, was disposed by the idle sweeper, or never started). A single slow
+   * or failing cmdlet does NOT flip this - the discovery runner uses it to tell
+   * "this step errored" from "the sign-in is lost, stop the run".
+   */
+  readonly alive: boolean;
   /** epoch ms of the last command - lets main.ts expire idle sessions. */
   lastUsedAt: number;
 }
@@ -175,6 +192,10 @@ export class SimulatedTeamsExecutor implements TeamsExecutor {
   private signedIn = false;
   lastUsedAt = Date.now();
 
+  get alive(): boolean {
+    return this.signedIn;
+  }
+
   async beginDeviceCode(_tenantDomain: string | null = null): Promise<DeviceCodePrompt> {
     return {
       userCode: 'SIMULATED-CODE',
@@ -190,7 +211,11 @@ export class SimulatedTeamsExecutor implements TeamsExecutor {
     return { upn: 'engineer@customer.example', tenantId: SIM_TENANT };
   }
 
-  async query(command: string, params: Record<string, unknown> = {}): Promise<unknown[]> {
+  async query(
+    command: string,
+    params: Record<string, unknown> = {},
+    _opts: QueryOpts = {},
+  ): Promise<unknown[]> {
     if (!this.signedIn) throw new Error('not connected');
     this.lastUsedAt = Date.now();
     // one page only: any Skip > 0 is past the end of the fake data

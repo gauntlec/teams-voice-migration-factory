@@ -34,7 +34,50 @@ export interface CmdletSpec {
   resultSize?: number;
   /** some cmdlets return one object holding an array (PSTN usages) - split it */
   explode?: (r: Rec) => Rec[];
+  /** `Select-Object` these before serialising - keeps a huge result small/fast */
+  select?: readonly string[];
+  /** ConvertTo-Json depth for this cmdlet (default 6) */
+  depth?: number;
+  /** per-call timeout override (ms) - for cmdlets that can run long on big tenants */
+  timeoutMs?: number;
 }
+
+/**
+ * The `Get-CsOnlineUser` properties Discovery actually stores (see `projectUser`
+ * in run.ts) plus a few useful extras. Selecting these turns a ~100-property,
+ * deeply-nested per-user object into a small one, so a full pull on a large
+ * tenant serialises in seconds instead of timing out. Unknown names are
+ * harmless - `Select-Object` just yields $null for them.
+ */
+const USER_PROPERTIES: readonly string[] = [
+  'Identity',
+  'UserPrincipalName',
+  'DisplayName',
+  'AccountType',
+  'AccountEnabled',
+  'EnterpriseVoiceEnabled',
+  'LineUri',
+  'LineURI',
+  'OnPremLineURI',
+  'TelephoneNumbers',
+  'FeatureTypes',
+  'AssignedPlan',
+  'UsageLocation',
+  'Department',
+  'Title',
+  'JobTitle',
+  'InterpretedUserType',
+  'EffectivePolicyAssignments',
+  'WhenChanged',
+  'WhenCreated',
+  'SipAddress',
+  'Alias',
+  'City',
+  'CompanyName',
+  'HostingProvider',
+  // every policy assignment we project
+  ...TENANT_POLICY_TYPES,
+];
 
 const s = (v: unknown): string | null =>
   v == null ? null : typeof v === 'string' ? v : typeof v === 'object' && 'Id' in (v as Rec) ? String((v as Rec).Id) : String(v);
@@ -67,12 +110,17 @@ export const STEP_CMDLETS: Record<TenantDiscoveryStep, CmdletSpec[]> = {
   users: [
     {
       // All account types (users, resource accounts, guests, ineligible) - the
-      // AccountType field tells them apart and the UI filters.
+      // AccountType field tells them apart and the UI filters. Narrowed to the
+      // properties we store and given a long leash: this is the one call that
+      // can run for many minutes on a big tenant.
       command: 'Get-CsOnlineUser',
       objectType: 'user',
       key: (r) => s(r.Identity) ?? s(r.UserPrincipalName),
       name: (r) => s(r.DisplayName),
       resultSize: 100000,
+      select: USER_PROPERTIES,
+      depth: 4,
+      timeoutMs: 30 * 60_000,
     },
   ],
   resource_accounts: [

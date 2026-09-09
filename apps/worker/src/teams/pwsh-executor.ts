@@ -5,8 +5,19 @@ import {
   type CmdletInvocation,
   type CmdletResult,
   type DeviceCodePrompt,
+  type QueryOpts,
   type TeamsExecutor,
 } from './executor';
+
+/**
+ * Default per-command timeout. Big read cmdlets on a large tenant (a full
+ * `Get-CsOnlineUser`) can legitimately run for many minutes, so this is
+ * generous; `TEAMS_COMMAND_TIMEOUT_MS` overrides it.
+ */
+const DEFAULT_COMMAND_TIMEOUT_MS = Math.max(
+  60_000,
+  Number(process.env.TEAMS_COMMAND_TIMEOUT_MS) || 15 * 60_000,
+);
 
 /**
  * Real executor: one long-lived `pwsh` child per connection running the
@@ -31,6 +42,15 @@ export class PwshTeamsExecutor implements TeamsExecutor {
   lastUsedAt = Date.now();
 
   constructor(private readonly opts: { signInTimeoutMs?: number; commandTimeoutMs?: number } = {}) {}
+
+  /**
+   * True while the pwsh child is up and signed in. A slow or failing cmdlet does
+   * not clear this - only the child exiting, `dispose()`, or a failed start do
+   * (see `fail()` / `dispose()`).
+   */
+  get alive(): boolean {
+    return this.signedIn && !!this.child && !this.disposed;
+  }
 
   /* ------------------------------ process ------------------------------ */
 
@@ -127,7 +147,10 @@ export class PwshTeamsExecutor implements TeamsExecutor {
    * Run a script and return everything it printed up to the sentinel. Commands
    * are serialised - the module is not safe to drive concurrently.
    */
-  private exec(script: string, timeoutMs = this.opts.commandTimeoutMs ?? 10 * 60_000): Promise<string> {
+  private exec(
+    script: string,
+    timeoutMs = this.opts.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS,
+  ): Promise<string> {
     const run = () =>
       new Promise<string>((resolve, reject) => {
         if (this.disposed) return reject(new Error('executor disposed'));
@@ -201,16 +224,28 @@ try {
 
   /**
    * Run a read cmdlet and return its records as JSON. `params` are rendered as
-   * `-Name value`. Depth is bounded so huge nested objects stay parseable.
+   * `-Name value`. `opts.select` narrows the object (big pulls stay small),
+   * `opts.depth` bounds nesting, `opts.timeoutMs` extends the leash.
    */
-  async query(command: string, params: Record<string, unknown> = {}, depth = 6): Promise<unknown[]> {
+  async query(
+    command: string,
+    params: Record<string, unknown> = {},
+    opts: QueryOpts = {},
+  ): Promise<unknown[]> {
     if (!this.signedIn) throw new Error('not connected');
     const rendered = renderCommand({ cmdlet: command, parameters: params, objectType: '' });
+    const depth = opts.depth ?? 6;
+    // Select-Object drops the ~80 properties we never read, so a 15k-user
+    // response serialises in a fraction of the time and size.
+    const project = opts.select?.length
+      ? ` | Select-Object ${opts.select.map((f) => f.replace(/[^A-Za-z0-9_]/g, '')).join(',')}`
+      : '';
     const out = await this.exec(
       `try {
-  $r = @(${rendered} -ErrorAction Stop)
+  $r = @(${rendered} -ErrorAction Stop${project})
   Write-Output ('__JSON__' + (ConvertTo-Json -InputObject $r -Depth ${depth} -Compress))
 } catch { Write-Output ('__ERR__' + $_.Exception.Message) }`,
+      opts.timeoutMs,
     );
     for (const line of out.split('\n')) {
       if (line.startsWith('__JSON__')) {

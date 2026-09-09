@@ -167,6 +167,17 @@ with the deleted row counts.
   `summary` every 12 s while a run is going (the live progress bar uses the cheap
   `GET runs/:id` instead); pool size is `PG_POOL_MAX` (default 20) per process.
   On a worker restart the startup sweep fails any run left `queued`/`running`.
+- **`Get-CsOnlineUser` on a big tenant.** It can't page, so it returns every
+  account in one call. The worker (a) `Select-Object`s only the ~40 properties
+  `projectUser` stores, so the JSON is a fraction of the size and serialises in
+  seconds not minutes, and (b) gives that one cmdlet a 30-minute timeout
+  (`TEAMS_COMMAND_TIMEOUT_MS`, default 15 min, is the timeout for every other
+  cmdlet).
+- **A slow cmdlet no longer kills the run.** The runner only aborts with
+  "lost the tenant sign-in" when the pwsh session is genuinely gone
+  (`executor.alive` is false, or the error names a dropped connection). A plain
+  command timeout while the child is still up is recorded as a step error and the
+  run carries on to the next step; re-run just that step with a selective sync.
 
 ### How the worker drives pwsh (hard-won details — keep them)
 
