@@ -68,7 +68,15 @@ export function DataCollection() {
   const qc = useQueryClient();
   const key = ['discovery', activeTenantId];
   const refetch = () => qc.invalidateQueries({ queryKey: key });
-  const [view, setView] = useState<'map' | 'list'>('map');
+  // Sites default to the list; the last choice is remembered per browser.
+  const [view, setViewState] = useState<'map' | 'list'>(() => {
+    const saved = localStorage.getItem('tvmf.sitesView');
+    return saved === 'map' || saved === 'list' ? saved : 'list';
+  });
+  const setView = (v: 'map' | 'list') => {
+    setViewState(v);
+    localStorage.setItem('tvmf.sitesView', v);
+  };
 
   const q = useQuery({
     queryKey: key,
@@ -174,6 +182,7 @@ export function DataCollection() {
             size="small"
             selectedValue={view}
             onTabSelect={(_, data) => setView(data.value as 'map' | 'list')}
+            aria-label="Sites view"
           >
             <Tab value="map" icon={<MapRegular />}>
               Map
