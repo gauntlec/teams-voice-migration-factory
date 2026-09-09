@@ -414,6 +414,8 @@ export interface TenantDiscoveryRunsTable {
   started_by: string;
   started_at: string | null;
   finished_at: string | null;
+  /** object types this run covered; null = a full discovery */
+  scope_types: import('@tvmf/shared').TenantObjectType[] | null;
   progress: JsonOpt<import('@tvmf/shared').TenantDiscoveryProgress>;
   summary: JsonOpt<Record<string, unknown>>;
   error: string | null;
@@ -431,7 +433,25 @@ export interface TenantObjectsTable {
   first_seen_run_id: string | null;
   last_seen_run_id: string | null;
   discovered_at: Ts;
+  /** when `data` last actually changed (vs `discovered_at` = last seen) */
+  content_changed_at: string | null;
   removed_at: string | null;
+}
+
+/** One recorded change to a `tenant_objects` row on a given run. */
+export interface TenantObjectVersionsTable {
+  id: Generated<string>;
+  object_id: string;
+  run_id: string | null;
+  object_type: import('@tvmf/shared').TenantObjectType;
+  object_key: string;
+  display_name: string | null;
+  change_kind: import('@tvmf/shared').TenantObjectChangeKind;
+  changed_fields: ColumnType<string[], string[] | undefined, string[]>;
+  // objects (or null) - pg serialises a plain object to jsonb fine; only arrays need JSON.stringify
+  before: Json<Record<string, unknown>> | null;
+  after: Json<Record<string, unknown>> | null;
+  changed_at: Ts;
 }
 
 export interface TenantUsersTable {
@@ -577,6 +597,7 @@ export interface DB {
   connections: ConnectionsTable;
   tenant_discovery_runs: TenantDiscoveryRunsTable;
   tenant_objects: TenantObjectsTable;
+  tenant_object_versions: TenantObjectVersionsTable;
   tenant_users: TenantUsersTable;
   tenant_policies: TenantPoliciesTable;
   deployments: DeploymentsTable;

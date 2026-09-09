@@ -35,24 +35,34 @@ import {
 import {
   ArrowSyncRegular,
   CheckmarkRegular,
+  ChevronDownRegular,
   ChevronLeftRegular,
   ChevronRightRegular,
   CopyRegular,
   DeleteRegular,
   EyeRegular,
+  HistoryRegular,
   PlugConnectedRegular,
 } from '@fluentui/react-icons';
 import {
   TENANT_DISCOVERY_STEPS,
   TENANT_DISCOVERY_STEP_LABELS,
+  TENANT_DISCOVERY_STEP_TYPES,
+  TENANT_OBJECT_CHANGE_KIND_LABELS,
+  TENANT_OBJECT_TYPES,
   TENANT_OBJECT_TYPE_LABELS,
+  TENANT_OBJECT_TYPE_STEP,
   TENANT_POLICY_TYPE_LABELS,
   TENANT_POLICY_TYPES,
   type Paginated,
+  type TenantDiscoveryChangeCounts,
   type TenantDiscoveryRun,
+  type TenantDiscoveryStep,
   type TenantDiscoverySummary,
   type TenantObject,
+  type TenantObjectChangeKind,
   type TenantObjectType,
+  type TenantObjectVersion,
   type TenantPolicySummary,
   type TenantPolicyType,
   type TenantUserSummary,
@@ -98,9 +108,158 @@ const useStyles = makeStyles({
     ...shorthands.borderRadius(tokens.borderRadiusMedium),
   },
   pager: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', ...shorthands.gap('8px') },
+  scopePanel: {
+    display: 'grid',
+    ...shorthands.gap('2px'),
+    ...shorthands.padding('8px', '10px'),
+    ...shorthands.border('1px', 'solid', tokens.colorNeutralStroke2),
+    ...shorthands.borderRadius(tokens.borderRadiusMedium),
+    backgroundColor: tokens.colorNeutralBackground2,
+  },
+  scopeStep: { display: 'flex', alignItems: 'center', ...shorthands.gap('2px') },
+  scopeTypes: { display: 'flex', flexWrap: 'wrap', ...shorthands.gap('2px', '14px'), paddingLeft: '28px' },
+  diff: { display: 'grid', gridTemplateColumns: '1fr 1fr', ...shorthands.gap('10px') },
+  diffCol: { display: 'grid', ...shorthands.gap('4px'), minWidth: 0 },
 });
 
 const fmt = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString() : '—');
+
+const ZERO_CHANGES: TenantDiscoveryChangeCounts = { added: 0, updated: 0, removed: 0, readded: 0 };
+const changeCountsOf = (run: TenantDiscoveryRun | null | undefined): TenantDiscoveryChangeCounts => {
+  const c = run?.progress?.changed ?? (run?.summary?.changed as TenantDiscoveryChangeCounts | undefined);
+  return c ? { ...ZERO_CHANGES, ...c } : ZERO_CHANGES;
+};
+const totalChanges = (c: TenantDiscoveryChangeCounts) => c.added + c.updated + c.removed + c.readded;
+
+const CHANGE_KIND_COLOR: Record<TenantObjectChangeKind, 'success' | 'warning' | 'danger' | 'brand'> = {
+  added: 'success',
+  updated: 'warning',
+  removed: 'danger',
+  readded: 'brand',
+};
+
+function ChangeBadge({ kind }: { kind: TenantObjectChangeKind }) {
+  return (
+    <Badge appearance="tint" color={CHANGE_KIND_COLOR[kind]} size="small">
+      {TENANT_OBJECT_CHANGE_KIND_LABELS[kind]}
+    </Badge>
+  );
+}
+
+/** Before / after JSON for one recorded change. */
+function DiffDialog({ version, onClose }: { version: TenantObjectVersion; onClose: () => void }) {
+  const s = useStyles();
+  const before = version.before ? JSON.stringify(version.before, null, 2) : null;
+  const after = version.after ? JSON.stringify(version.after, null, 2) : null;
+  return (
+    <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
+      <DialogSurface style={{ maxWidth: 980, width: '94vw' }}>
+        <DialogBody>
+          <DialogTitle>
+            {version.display_name ?? version.object_key} · <ChangeBadge kind={version.change_kind} />
+          </DialogTitle>
+          <DialogContent>
+            <Text size={200} className={s.muted} block style={{ marginBottom: 8 }}>
+              {TENANT_OBJECT_TYPE_LABELS[version.object_type]} · {fmt(version.changed_at)}
+              {version.changed_fields.length > 0 && (
+                <> · changed: {version.changed_fields.join(', ')}</>
+              )}
+            </Text>
+            <div className={s.diff}>
+              <div className={s.diffCol}>
+                <Text size={200} weight="semibold">
+                  Before
+                </Text>
+                <pre className={s.json}>{before ?? '(new — did not exist)'}</pre>
+              </div>
+              <div className={s.diffCol}>
+                <Text size={200} weight="semibold">
+                  After
+                </Text>
+                <pre className={s.json}>{after ?? '(removed from the tenant)'}</pre>
+              </div>
+            </div>
+          </DialogContent>
+          <DialogActions>
+            <Button appearance="secondary" onClick={onClose}>
+              Close
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  );
+}
+
+/** "History" button + dialog: the change timeline for one discovered object. */
+function HistoryButton({ base, objectId, title }: { base: string; objectId: string; title: string }) {
+  const s = useStyles();
+  const [open, setOpen] = useState(false);
+  const [diff, setDiff] = useState<TenantObjectVersion | null>(null);
+  const list = useQuery({
+    queryKey: ['tdisc', 'versions', base, objectId],
+    enabled: open,
+    queryFn: () => api<TenantObjectVersion[]>(`${base}/objects/${objectId}/versions`),
+  });
+
+  return (
+    <>
+      <Button
+        size="small"
+        appearance="subtle"
+        icon={<HistoryRegular />}
+        title="Change history"
+        onClick={() => setOpen(true)}
+      >
+        History
+      </Button>
+      <Dialog open={open} onOpenChange={(_, d) => setOpen(d.open)}>
+        <DialogSurface style={{ maxWidth: 720, width: '92vw' }}>
+          <DialogBody>
+            <DialogTitle>History · {title}</DialogTitle>
+            <DialogContent>
+              {list.isLoading ? (
+                <Spinner size="tiny" />
+              ) : list.isError ? (
+                <LoadError message={(list.error as Error).message} />
+              ) : (list.data ?? []).length === 0 ? (
+                <Text size={200} className={s.muted}>
+                  No recorded changes — this item has looked the same in every sync.
+                </Text>
+              ) : (
+                <div style={{ display: 'grid', gap: 6 }}>
+                  {(list.data ?? []).map((v) => (
+                    <div key={v.id} className={s.row} style={{ justifyContent: 'space-between' }}>
+                      <div className={s.row}>
+                        <ChangeBadge kind={v.change_kind} />
+                        <Text size={200}>{fmt(v.changed_at)}</Text>
+                        {v.changed_fields.length > 0 && (
+                          <Text size={200} className={s.muted}>
+                            {v.changed_fields.slice(0, 6).join(', ')}
+                            {v.changed_fields.length > 6 ? '…' : ''}
+                          </Text>
+                        )}
+                      </div>
+                      <Button size="small" appearance="subtle" icon={<EyeRegular />} onClick={() => setDiff(v)}>
+                        View
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setOpen(false)}>
+                Close
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+      {diff && <DiffDialog version={diff} onClose={() => setDiff(null)} />}
+    </>
+  );
+}
 
 async function copyText(text: string): Promise<boolean> {
   try {
@@ -157,6 +316,103 @@ interface Connection {
   started_at: string;
 }
 
+/** Steps that carry more than one object type - only these get an expander. */
+const MULTI_TYPE_STEPS = TENANT_DISCOVERY_STEPS.filter(
+  (st) => TENANT_DISCOVERY_STEP_TYPES[st].length > 1,
+);
+
+/**
+ * Checkbox tree for a partial sync: tick a whole step, or expand it and tick
+ * individual object types. The selection is a flat set of object types.
+ */
+function ScopePicker({
+  selected,
+  onChange,
+  onRun,
+  disabled,
+}: {
+  selected: Set<TenantObjectType>;
+  onChange: (next: Set<TenantObjectType>) => void;
+  onRun: () => void;
+  disabled: boolean;
+}) {
+  const s = useStyles();
+  const [expanded, setExpanded] = useState<Set<TenantDiscoveryStep>>(new Set());
+
+  const setTypes = (types: readonly TenantObjectType[], on: boolean) => {
+    const next = new Set(selected);
+    for (const t of types) {
+      if (on) next.add(t);
+      else next.delete(t);
+    }
+    onChange(next);
+  };
+  const stepState = (st: TenantDiscoveryStep): 'all' | 'some' | 'none' => {
+    const types = TENANT_DISCOVERY_STEP_TYPES[st];
+    const n = types.filter((t) => selected.has(t)).length;
+    return n === 0 ? 'none' : n === types.length ? 'all' : 'some';
+  };
+
+  return (
+    <div className={s.scopePanel}>
+      {TENANT_DISCOVERY_STEPS.map((st) => {
+        const state = stepState(st);
+        const canExpand = MULTI_TYPE_STEPS.includes(st);
+        const isOpen = expanded.has(st);
+        return (
+          <div key={st}>
+            <div className={s.scopeStep}>
+              {canExpand ? (
+                <Button
+                  size="small"
+                  appearance="transparent"
+                  icon={isOpen ? <ChevronDownRegular /> : <ChevronRightRegular />}
+                  onClick={() =>
+                    setExpanded((prev) => {
+                      const n = new Set(prev);
+                      if (n.has(st)) n.delete(st);
+                      else n.add(st);
+                      return n;
+                    })
+                  }
+                  aria-label={isOpen ? 'Collapse' : 'Expand'}
+                />
+              ) : (
+                <span style={{ width: 24, display: 'inline-block' }} />
+              )}
+              <Checkbox
+                label={TENANT_DISCOVERY_STEP_LABELS[st]}
+                checked={state === 'all' ? true : state === 'some' ? 'mixed' : false}
+                onChange={(_, d) => setTypes(TENANT_DISCOVERY_STEP_TYPES[st], !!d.checked)}
+              />
+            </div>
+            {canExpand && isOpen && (
+              <div className={s.scopeTypes}>
+                {TENANT_DISCOVERY_STEP_TYPES[st].map((t) => (
+                  <Checkbox
+                    key={t}
+                    label={TENANT_OBJECT_TYPE_LABELS[t]}
+                    checked={selected.has(t)}
+                    onChange={(_, d) => setTypes([t], !!d.checked)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <div className={s.row} style={{ marginTop: 6 }}>
+        <Button appearance="primary" icon={<ArrowSyncRegular />} disabled={disabled} onClick={onRun}>
+          Sync selected{selected.size ? ` (${selected.size})` : ''}
+        </Button>
+        <Button size="small" appearance="subtle" onClick={() => onChange(new Set())} disabled={selected.size === 0}>
+          Clear
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function ConnectCard({
   base,
   summary,
@@ -171,6 +427,8 @@ function ConnectCard({
   const s = useStyles();
   const [connId, setConnId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [scopeOpen, setScopeOpen] = useState(false);
+  const [scopeSel, setScopeSel] = useState<Set<TenantObjectType>>(new Set());
 
   // Adopt the active connection from the summary when we didn't start one here.
   useEffect(() => {
@@ -196,19 +454,24 @@ function ConnectCard({
 
   const c = conn.data;
   const run = useMutation({
-    mutationFn: () =>
+    mutationFn: (scopeTypes?: TenantObjectType[]) =>
       api<TenantDiscoveryRun>(`${base}/runs`, {
         method: 'POST',
-        body: JSON.stringify({ connectionId: c!.id }),
+        body: JSON.stringify({
+          connectionId: c!.id,
+          ...(scopeTypes && scopeTypes.length ? { scopeTypes } : {}),
+        }),
       }),
     onSuccess: () => {
       setErr(null);
+      setScopeOpen(false);
       onChanged();
     },
     onError: (e) => setErr(e instanceof ApiError ? e.message : 'Could not start discovery'),
   });
 
   const running = summary?.lastRun && ['queued', 'running'].includes(summary.lastRun.status);
+  const runDisabled = !canRun || run.isPending || !!running;
 
   return (
     <Card className={s.card}>
@@ -276,15 +539,33 @@ function ConnectCard({
             <Button
               appearance="primary"
               icon={<ArrowSyncRegular />}
-              disabled={!canRun || run.isPending || !!running}
-              onClick={() => run.mutate()}
+              disabled={runDisabled}
+              onClick={() => run.mutate(undefined)}
             >
-              {running ? 'Discovery running…' : 'Run discovery'}
+              {running ? 'Discovery running…' : 'Run full discovery'}
+            </Button>
+            <Button
+              size="small"
+              appearance="subtle"
+              icon={<ChevronDownRegular />}
+              iconPosition="after"
+              disabled={runDisabled}
+              onClick={() => setScopeOpen((v) => !v)}
+            >
+              Sync part of the tenant
             </Button>
             <Button size="small" appearance="subtle" onClick={() => start.mutate()} disabled={!canRun}>
               Sign in again
             </Button>
           </div>
+          {scopeOpen && (
+            <ScopePicker
+              selected={scopeSel}
+              onChange={setScopeSel}
+              onRun={() => run.mutate([...scopeSel])}
+              disabled={runDisabled || scopeSel.size === 0}
+            />
+          )}
         </div>
       )}
       {err && <LoadError message={err} />}
@@ -304,8 +585,15 @@ function RunCard({ base, summary }: { base: string; summary: TenantDiscoverySumm
   });
   const run = live.data ?? last;
   const done = new Set(run?.progress?.completed ?? []);
-  const pct = run ? (run.status === 'completed' ? 1 : done.size / TENANT_DISCOVERY_STEPS.length) : 0;
+  // for a partial run only the in-scope steps count towards progress
+  const scopeSteps = run?.scope_types
+    ? TENANT_DISCOVERY_STEPS.filter((st) =>
+        TENANT_DISCOVERY_STEP_TYPES[st].some((t) => run.scope_types!.includes(t)),
+      )
+    : TENANT_DISCOVERY_STEPS;
+  const pct = run ? (run.status === 'completed' ? 1 : done.size / Math.max(1, scopeSteps.length)) : 0;
   const total = Object.values(run?.progress?.counts ?? {}).reduce((a, b) => a + (b ?? 0), 0);
+  const changed = changeCountsOf(run);
 
   return (
     <Card className={s.card}>
@@ -335,9 +623,45 @@ function RunCard({ base, summary }: { base: string; summary: TenantDiscoverySumm
               {total ? ` · ${total.toLocaleString()} objects` : ''}
             </Text>
           </div>
+          {run.scope_types && (
+            <div className={s.chips}>
+              <Badge appearance="outline" color="informative" size="small">
+                Partial sync
+              </Badge>
+              {scopeSteps.map((st) => (
+                <Badge key={st} appearance="tint" size="small">
+                  {TENANT_DISCOVERY_STEP_LABELS[st]}
+                </Badge>
+              ))}
+            </div>
+          )}
+          {totalChanges(changed) > 0 && (
+            <div className={s.chips}>
+              {changed.added > 0 && (
+                <Badge appearance="tint" color="success" size="small">
+                  +{changed.added} added
+                </Badge>
+              )}
+              {changed.updated > 0 && (
+                <Badge appearance="tint" color="warning" size="small">
+                  {changed.updated} changed
+                </Badge>
+              )}
+              {changed.removed > 0 && (
+                <Badge appearance="tint" color="danger" size="small">
+                  {changed.removed} removed
+                </Badge>
+              )}
+              {changed.readded > 0 && (
+                <Badge appearance="tint" color="brand" size="small">
+                  {changed.readded} re-added
+                </Badge>
+              )}
+            </div>
+          )}
           <ProgressBar value={pct} thickness="large" />
           <div className={s.steps}>
-            {TENANT_DISCOVERY_STEPS.map((st) => {
+            {scopeSteps.map((st) => {
               const isCur = run.progress?.step === st && run.status === 'running';
               const isDone = done.has(st);
               const errs = (run.progress?.errors ?? []).filter((e) => e.step === st);
@@ -605,9 +929,12 @@ function ObjectsTable({
                   ))}
                   <TableCell>{fmt(o.discovered_at)}</TableCell>
                   <TableCell>
-                    <Button size="small" appearance="subtle" icon={<EyeRegular />} onClick={() => setView(o)}>
-                      View
-                    </Button>
+                    <div className={s.row}>
+                      <Button size="small" appearance="subtle" icon={<EyeRegular />} onClick={() => setView(o)}>
+                        View
+                      </Button>
+                      <HistoryButton base={base} objectId={o.id} title={o.display_name ?? o.object_key} />
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -706,9 +1033,16 @@ function PoliciesTable({ base }: { base: string }) {
                     )}
                   </TableCell>
                   <TableCell>
-                    <Button size="small" appearance="subtle" icon={<EyeRegular />} onClick={() => setView(p)}>
-                      View
-                    </Button>
+                    <div className={s.row}>
+                      <Button size="small" appearance="subtle" icon={<EyeRegular />} onClick={() => setView(p)}>
+                        View
+                      </Button>
+                      <HistoryButton
+                        base={base}
+                        objectId={p.object_id}
+                        title={`${TENANT_POLICY_TYPE_LABELS[p.policy_type] ?? p.policy_type}: ${p.name}`}
+                      />
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -852,9 +1186,12 @@ function UsersTable({ base, canImport, onImported }: { base: string; canImport: 
                     )}
                   </TableCell>
                   <TableCell>
-                    <Button size="small" appearance="subtle" icon={<EyeRegular />} onClick={() => setView(u)}>
-                      View
-                    </Button>
+                    <div className={s.row}>
+                      <Button size="small" appearance="subtle" icon={<EyeRegular />} onClick={() => setView(u)}>
+                        View
+                      </Button>
+                      <HistoryButton base={base} objectId={u.object_id} title={u.display_name ?? u.upn} />
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -984,9 +1321,19 @@ function ImportDialog({ base, onClose, onDone }: { base: string; onClose: () => 
 
 /* --------------------------------- page --------------------------------- */
 
-type TabKey = 'overview' | 'users' | 'resource_accounts' | 'numbers' | 'policies' | 'voice_routing' | 'emergency' | 'voice_apps';
+type TabKey =
+  | 'overview'
+  | 'changes'
+  | 'users'
+  | 'resource_accounts'
+  | 'numbers'
+  | 'policies'
+  | 'voice_routing'
+  | 'emergency'
+  | 'voice_apps';
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'overview', label: 'Overview' },
+  { key: 'changes', label: 'Changes' },
   { key: 'users', label: 'Users' },
   { key: 'resource_accounts', label: 'Resource accounts' },
   { key: 'numbers', label: 'Phone numbers' },
@@ -995,6 +1342,150 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'emergency', label: 'Emergency' },
   { key: 'voice_apps', label: 'Voice apps' },
 ];
+
+/** The "what changed in this sync" log, with a run picker and type filter. */
+function ChangesTab({ base }: { base: string }) {
+  const s = useStyles();
+  const [runId, setRunId] = useState<string>('');
+  const [type, setType] = useState<TenantObjectType | ''>('');
+  const [qInput, setQInput] = useState('');
+  const q = useDebounced(qInput);
+  const [page, setPage] = useState(1);
+  const [diff, setDiff] = useState<TenantObjectVersion | null>(null);
+  const limit = 50;
+
+  const runs = useQuery({
+    queryKey: ['tdisc', 'runs', base],
+    queryFn: () => api<TenantDiscoveryRun[]>(`${base}/runs`),
+  });
+  const runList = runs.data ?? [];
+  const activeRun = runId || runList[0]?.id || '';
+  useEffect(() => setPage(1), [activeRun, type, q]);
+
+  const list = useQuery({
+    queryKey: ['tdisc', 'changes', base, activeRun, type, q, page],
+    enabled: !!activeRun,
+    queryFn: () =>
+      api<Paginated<TenantObjectVersion>>(
+        `${base}/runs/${activeRun}/changes?page=${page}&limit=${limit}` +
+          `${type ? `&type=${type}` : ''}${q ? `&q=${encodeURIComponent(q)}` : ''}`,
+      ),
+    placeholderData: keepPreviousData,
+  });
+  const items = list.data?.items ?? [];
+  const total = list.data?.total ?? 0;
+  const pages = Math.max(1, Math.ceil(total / limit));
+  const runLabel = (r: TenantDiscoveryRun) =>
+    `${fmt(r.started_at ?? r.created_at)} · ${r.scope_types ? 'partial' : 'full'} · ${r.status}`;
+
+  return (
+    <Card className={s.card}>
+      <div className={s.toolbar}>
+        <Text weight="semibold">
+          What changed <span className={s.muted}>({total.toLocaleString()})</span>
+        </Text>
+        <div className={s.row}>
+          <Dropdown
+            size="small"
+            style={{ minWidth: 240 }}
+            placeholder={runs.isLoading ? 'Loading runs…' : 'Pick a run'}
+            selectedOptions={activeRun ? [activeRun] : []}
+            value={runList.find((r) => r.id === activeRun) ? runLabel(runList.find((r) => r.id === activeRun)!) : ''}
+            onOptionSelect={(_, d) => setRunId(d.optionValue ?? '')}
+          >
+            {runList.map((r) => (
+              <Option key={r.id} value={r.id} text={runLabel(r)}>
+                {runLabel(r)}
+              </Option>
+            ))}
+          </Dropdown>
+          <Dropdown
+            size="small"
+            style={{ minWidth: 150 }}
+            placeholder="All types"
+            selectedOptions={type ? [type] : []}
+            value={type ? TENANT_OBJECT_TYPE_LABELS[type] : ''}
+            onOptionSelect={(_, d) => setType((d.optionValue as TenantObjectType) ?? '')}
+          >
+            <Option value="" text="All types">
+              All types
+            </Option>
+            {TENANT_OBJECT_TYPES.map((t) => (
+              <Option key={t} value={t} text={TENANT_OBJECT_TYPE_LABELS[t]}>
+                {TENANT_OBJECT_TYPE_LABELS[t]}
+              </Option>
+            ))}
+          </Dropdown>
+          <SearchBox
+            size="small"
+            placeholder="Search name or key…"
+            value={qInput}
+            onChange={(_, d) => setQInput(d.value)}
+            style={{ minWidth: 200 }}
+          />
+        </div>
+      </div>
+
+      {runList.length === 0 ? (
+        <Text size={200} className={s.muted}>
+          No discovery has been run yet.
+        </Text>
+      ) : list.isLoading ? (
+        <Spinner size="tiny" />
+      ) : list.isError ? (
+        <LoadError message={(list.error as Error).message} />
+      ) : items.length === 0 ? (
+        <Text size={200} className={s.muted}>
+          {q || type
+            ? 'No matching changes in this run.'
+            : 'Nothing changed in this run — every item matched the previous sync.'}
+        </Text>
+      ) : (
+        <>
+          <DataTable size="small" minWidth={760}>
+            <TableHeader>
+              <TableRow>
+                <TableHeaderCell>Type</TableHeaderCell>
+                <TableHeaderCell>Name</TableHeaderCell>
+                <TableHeaderCell>Change</TableHeaderCell>
+                <TableHeaderCell>Fields</TableHeaderCell>
+                <TableHeaderCell />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.map((v) => (
+                <TableRow key={v.id}>
+                  <TableCell>{TENANT_OBJECT_TYPE_LABELS[v.object_type]}</TableCell>
+                  <TableCell>{v.display_name ?? v.object_key}</TableCell>
+                  <TableCell>
+                    <ChangeBadge kind={v.change_kind} />
+                  </TableCell>
+                  <TableCell>
+                    {v.changed_fields.length ? (
+                      <span className={s.muted}>
+                        {v.changed_fields.slice(0, 5).join(', ')}
+                        {v.changed_fields.length > 5 ? ` +${v.changed_fields.length - 5}` : ''}
+                      </span>
+                    ) : (
+                      <span className={s.muted}>—</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Button size="small" appearance="subtle" icon={<EyeRegular />} onClick={() => setDiff(v)}>
+                      View
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </DataTable>
+          <Pager page={page} pages={pages} total={total} onPage={setPage} />
+        </>
+      )}
+      {diff && <DiffDialog version={diff} onClose={() => setDiff(null)} />}
+    </Card>
+  );
+}
 
 const str = (o: TenantObject, k: string) => {
   const v = o.data[k];
@@ -1086,6 +1577,8 @@ export function Discovery() {
           />
         </>
       )}
+
+      {tab === 'changes' && <ChangesTab base={base} />}
 
       {tab === 'users' && <UsersTable base={base} canImport={can('discovery:write')} onImported={invalidateAll} />}
 

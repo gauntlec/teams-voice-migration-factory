@@ -61,7 +61,7 @@ export class TenantDiscoveryController {
     @CurrentUser() user: AuthedUser,
     @Body(new ZodBody(tenantDiscoveryStartSchema)) body: TenantDiscoveryStartInput,
   ) {
-    return this.svc.startRun(t, user, body.connectionId);
+    return this.svc.startRun(t, user, body.connectionId, body.scopeTypes);
   }
 
   @Get('runs')
@@ -74,6 +74,17 @@ export class TenantDiscoveryController {
   @RequirePermission('tenantdiscovery:read')
   getRun(@TenantCtx() t: TenantContext, @Param('id') id: string) {
     return this.svc.getRun(t, id);
+  }
+
+  /** What a given run added / changed / removed. */
+  @Get('runs/:id/changes')
+  @RequirePermission('tenantdiscovery:read')
+  listRunChanges(
+    @TenantCtx() t: TenantContext,
+    @Param('id') id: string,
+    @Query(new ZodBody(tenantObjectsQuerySchema)) q: TenantObjectsQuery,
+  ) {
+    return this.svc.listRunChanges(t, id, q);
   }
 
   /**
@@ -108,6 +119,13 @@ export class TenantDiscoveryController {
   @RequirePermission('tenantdiscovery:read')
   getObject(@TenantCtx() t: TenantContext, @Param('id') id: string) {
     return this.svc.getObject(t, id);
+  }
+
+  /** Change timeline for one object (before/after per run). */
+  @Get('objects/:id/versions')
+  @RequirePermission('tenantdiscovery:read')
+  listObjectVersions(@TenantCtx() t: TenantContext, @Param('id') id: string) {
+    return this.svc.listObjectVersions(t, id);
   }
 
   @Get('users')

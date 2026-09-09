@@ -377,9 +377,16 @@ export type FeatureRequestUpdateInput = z.infer<typeof featureRequestUpdateSchem
 
 /* ------------------ Discovery (live customer-tenant inventory) ------------------ */
 
-/** Kick off a discovery run over an `active` tenant connection. */
+/**
+ * Kick off a discovery run over an `active` tenant connection. `scopeTypes`
+ * limits the run to part of the tenant (a whole step's types, or individual
+ * ones); omit it for a full discovery.
+ */
 export const tenantDiscoveryStartSchema = z
-  .object({ connectionId: z.string().uuid() })
+  .object({
+    connectionId: z.string().uuid(),
+    scopeTypes: z.array(z.enum(TENANT_OBJECT_TYPES)).min(1).max(TENANT_OBJECT_TYPES.length).optional(),
+  })
   .strict();
 export type TenantDiscoveryStartInput = z.infer<typeof tenantDiscoveryStartSchema>;
 

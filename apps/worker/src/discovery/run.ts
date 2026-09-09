@@ -5,6 +5,7 @@ import {
   TENANT_DISCOVERY_STEPS,
   TENANT_POLICY_TYPES,
   type TenantDiscoveryProgress,
+  type TenantObjectChangeKind,
   type TenantObjectType,
 } from '@tvmf/shared';
 import type { TeamsExecutor } from '../teams/executor';
@@ -13,7 +14,39 @@ import { STEP_CMDLETS, STEP_TYPES, policyValue, type CmdletSpec } from './cmdlet
 type Rec = Record<string, unknown>;
 type Scoped = ReturnType<typeof tenantDb>;
 
-const emptyProgress = (): TenantDiscoveryProgress => ({ step: null, completed: [], counts: {}, errors: [] });
+const emptyProgress = (): TenantDiscoveryProgress => ({
+  step: null,
+  completed: [],
+  counts: {},
+  changed: { added: 0, updated: 0, removed: 0, readded: 0 },
+  errors: [],
+});
+
+/** Stable JSON so two records compare equal regardless of key order. */
+const canon = (v: unknown): string => {
+  const sort = (x: unknown): unknown =>
+    Array.isArray(x)
+      ? x.map(sort)
+      : x && typeof x === 'object'
+        ? Object.fromEntries(
+            Object.keys(x as Rec)
+              .sort()
+              .map((k) => [k, sort((x as Rec)[k])]),
+          )
+        : x;
+  return JSON.stringify(sort(v));
+};
+
+/** Top-level keys whose value differs between two records (added, removed or changed). */
+function diffKeys(before: Rec | null, after: Rec | null): string[] {
+  const b = before ?? {};
+  const a = after ?? {};
+  const out: string[] = [];
+  for (const k of new Set([...Object.keys(b), ...Object.keys(a)])) {
+    if (canon(b[k]) !== canon(a[k])) out.push(k);
+  }
+  return out.sort();
+}
 
 /**
  * Pull every step's objects from the connected tenant and upsert the current
@@ -25,9 +58,16 @@ export async function handleTenantDiscoveryRun(
   db: Kysely<DB>,
   getExecutor: (connectionId: string) => TeamsExecutor | undefined,
 ) {
-  const { schema, runId, connectionId } = job.data as { schema: string; runId: string; connectionId: string };
+  const { schema, runId, connectionId, scopeTypes } = job.data as {
+    schema: string;
+    runId: string;
+    connectionId: string;
+    /** object types to discover; undefined = full run (every step) */
+    scopeTypes?: TenantObjectType[];
+  };
   const s = tenantDb(db, schema);
   const exec = getExecutor(connectionId);
+  const wantType = (t: TenantObjectType) => !scopeTypes || scopeTypes.includes(t);
 
   if (!exec) {
     await s
@@ -55,14 +95,16 @@ export async function handleTenantDiscoveryRun(
   const ctx: RunContext = { assignees: null };
 
   for (const step of TENANT_DISCOVERY_STEPS) {
+    const specs = STEP_CMDLETS[step].filter((sp) => wantType(sp.objectType));
+    if (!specs.length) continue; // step not in this run's scope
     progress.step = step;
     await saveProgress(s, runId, progress);
     try {
-      for (const spec of STEP_CMDLETS[step]) {
-        const n = await runSpec(s, exec, runId, spec, ctx);
+      for (const spec of specs) {
+        const n = await runSpec(s, exec, runId, spec, ctx, progress);
         progress.counts[spec.objectType] = (progress.counts[spec.objectType] ?? 0) + n;
       }
-      for (const t of STEP_TYPES[step]) succeededTypes.add(t);
+      for (const t of STEP_TYPES[step]) if (wantType(t)) succeededTypes.add(t);
       progress.completed.push(step);
     } catch (e) {
       const message = (e as Error).message ?? String(e);
@@ -80,9 +122,36 @@ export async function handleTenantDiscoveryRun(
   // Tombstone objects that a *successful* step no longer returned.
   if (succeededTypes.size) {
     const types = Array.from(succeededTypes);
+    const sweptAt = new Date().toISOString();
+    // Record a 'removed' version for each object about to be tombstoned.
+    const doomed = await s
+      .selectFrom('tenant_objects')
+      .select(['id', 'object_type', 'object_key', 'display_name', 'data'])
+      .where('object_type', 'in', types)
+      .where('removed_at', 'is', null)
+      .where((eb) => eb.or([eb('last_seen_run_id', '<>', runId), eb('last_seen_run_id', 'is', null)]))
+      .execute();
+    if (doomed.length) {
+      const rows = doomed.map((d) => ({
+        object_id: d.id,
+        run_id: runId,
+        object_type: d.object_type as TenantObjectType,
+        object_key: d.object_key,
+        display_name: d.display_name,
+        change_kind: 'removed' as TenantObjectChangeKind,
+        changed_fields: [],
+        before: d.data,
+        after: null,
+        changed_at: sweptAt,
+      }));
+      for (let i = 0; i < rows.length; i += 500) {
+        await s.insertInto('tenant_object_versions').values(rows.slice(i, i + 500)).execute();
+      }
+      progress.changed.removed += doomed.length;
+    }
     await s
       .updateTable('tenant_objects')
-      .set({ removed_at: new Date().toISOString() })
+      .set({ removed_at: sweptAt })
       .where('object_type', 'in', types)
       .where('removed_at', 'is', null)
       .where((eb) => eb.or([eb('last_seen_run_id', '<>', runId), eb('last_seen_run_id', 'is', null)]))
@@ -113,7 +182,12 @@ export async function handleTenantDiscoveryRun(
       status: signInLost ? 'failed' : 'completed',
       finished_at: new Date().toISOString(),
       progress,
-      summary: { total, counts: progress.counts, errors: progress.errors.length },
+      summary: {
+        total,
+        counts: progress.counts,
+        changed: progress.changed,
+        errors: progress.errors.length,
+      },
       error: signInLost ? 'Lost the tenant sign-in part-way through - sign in again and re-run.' : null,
     })
     .where('id', '=', runId)
@@ -122,7 +196,12 @@ export async function handleTenantDiscoveryRun(
     await s.updateTable('connections').set({ status: 'expired' }).where('id', '=', connectionId).execute();
   }
   // eslint-disable-next-line no-console
-  console.log(`[discovery ${runId}] ${signInLost ? 'failed' : 'completed'} - ${total} objects`, progress.counts);
+  console.log(
+    `[discovery ${runId}] ${signInLost ? 'failed' : 'completed'} - ${total} objects` +
+      `${scopeTypes ? ` (scope: ${scopeTypes.join(', ')})` : ''}`,
+    progress.counts,
+    progress.changed,
+  );
 }
 
 async function saveProgress(s: Scoped, runId: string, progress: TenantDiscoveryProgress) {
@@ -190,6 +269,7 @@ async function runSpec(
   runId: string,
   spec: CmdletSpec,
   ctx: RunContext,
+  progress: TenantDiscoveryProgress,
 ): Promise<number> {
   let stored = 0;
   const handle = async (records: unknown[]) => {
@@ -204,7 +284,8 @@ async function runSpec(
           if (who) r = { ...r, AssignedTo: who };
         }
         const key = spec.key(r) ?? fallbackKey(r);
-        const objectId = await upsertObject(s, runId, spec.objectType, key, spec.name(r), r);
+        const { id: objectId, change } = await upsertObject(s, runId, spec.objectType, key, spec.name(r), r);
+        if (change) progress.changed[change] += 1;
         if (spec.objectType === 'user') await projectUser(s, runId, objectId, r);
         if (spec.objectType === 'policy' && spec.policyType) {
           await projectPolicy(s, runId, objectId, spec.policyType, r);
@@ -238,6 +319,11 @@ function fallbackKey(r: Rec): string {
   return `h${(h >>> 0).toString(16)}`;
 }
 
+/**
+ * Upsert one object into the current snapshot and, when its `data` (or name)
+ * actually changed since the last run, record a `tenant_object_versions` row.
+ * Returns the object id and how it changed (null = seen again, unchanged).
+ */
 async function upsertObject(
   s: Scoped,
   runId: string,
@@ -245,7 +331,25 @@ async function upsertObject(
   objectKey: string,
   displayName: string | null,
   data: Rec,
-): Promise<string> {
+): Promise<{ id: string; change: TenantObjectChangeKind | null }> {
+  const existing = await s
+    .selectFrom('tenant_objects')
+    .select(['id', 'data', 'display_name', 'removed_at'])
+    .where('object_type', '=', objectType)
+    .where('object_key', '=', objectKey)
+    .executeTakeFirst();
+
+  let change: TenantObjectChangeKind | null = null;
+  if (!existing) change = 'added';
+  else if (existing.removed_at) change = 'readded';
+  else if (
+    canon(existing.data) !== canon(data) ||
+    (existing.display_name ?? null) !== (displayName ?? null)
+  ) {
+    change = 'updated';
+  }
+
+  const now = new Date().toISOString();
   const row = await s
     .insertInto('tenant_objects')
     .values({
@@ -255,20 +359,41 @@ async function upsertObject(
       data,
       first_seen_run_id: runId,
       last_seen_run_id: runId,
-      discovered_at: new Date().toISOString(),
+      discovered_at: now,
+      content_changed_at: change ? now : null,
     })
     .onConflict((oc) =>
       oc.columns(['object_type', 'object_key']).doUpdateSet({
         display_name: displayName,
         data,
         last_seen_run_id: runId,
-        discovered_at: new Date().toISOString(),
+        discovered_at: now,
         removed_at: null,
+        ...(change ? { content_changed_at: now } : {}),
       }),
     )
     .returning('id')
     .executeTakeFirstOrThrow();
-  return row.id;
+
+  if (change) {
+    const before = (existing?.data as Rec | undefined) ?? null;
+    await s
+      .insertInto('tenant_object_versions')
+      .values({
+        object_id: row.id,
+        run_id: runId,
+        object_type: objectType,
+        object_key: objectKey,
+        display_name: displayName,
+        change_kind: change,
+        changed_fields: change === 'updated' ? diffKeys(before, data) : [],
+        before,
+        after: data,
+        changed_at: now,
+      })
+      .execute();
+  }
+  return { id: row.id, change };
 }
 
 const str = (v: unknown): string | null => (v == null || v === '' ? null : String(v));

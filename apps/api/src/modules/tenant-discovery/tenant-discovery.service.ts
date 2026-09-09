@@ -11,6 +11,7 @@ import {
   type Paginated,
   type TenantDiscoverySummary,
   type TenantObjectType,
+  type TenantObjectVersion,
   type TenantObjectsQuery,
   type TenantUsersImportInput,
 } from '@tvmf/shared';
@@ -93,7 +94,17 @@ export class TenantDiscoveryService {
 
   /* ================================ runs ================================ */
 
-  async startRun(t: TenantContext, user: AuthedUser, connectionId: string) {
+  /**
+   * Queue a discovery run. `scopeTypes` limits it to part of the tenant (omit
+   * for a full run). The worker filters its cmdlets to the requested types and
+   * only tombstones within them.
+   */
+  async startRun(
+    t: TenantContext,
+    user: AuthedUser,
+    connectionId: string,
+    scopeTypes?: TenantObjectType[],
+  ) {
     const conn = await this.deployments.getConnection(t, connectionId);
     if (conn.status !== 'active') {
       throw new ForbiddenException('Connection is not active - sign in to the customer tenant first');
@@ -105,9 +116,14 @@ export class TenantDiscoveryService {
       .executeTakeFirst();
     if (running) throw new BadRequestException('A discovery is already running for this customer');
 
+    // de-dup + stable order; null = full run
+    const scope = scopeTypes?.length
+      ? TENANT_OBJECT_TYPES.filter((x) => scopeTypes.includes(x))
+      : null;
+
     const run = await this.s(t)
       .insertInto('tenant_discovery_runs')
-      .values({ connection_id: conn.id, status: 'queued', started_by: user.id })
+      .values({ connection_id: conn.id, status: 'queued', started_by: user.id, scope_types: scope })
       .returningAll()
       .executeTakeFirstOrThrow();
 
@@ -118,19 +134,22 @@ export class TenantDiscoveryService {
       runId: run.id,
       connectionId: conn.id,
       operatorUserId: user.id,
+      scopeTypes: scope ?? undefined,
     });
 
+    const scopeLabel = scope ? scope.join(', ') : 'full';
     await this.audit.tenant(t.schema, 'tenant_discovery.run_started', {
       actor: actorOf(user),
       targetType: 'tenant_discovery_run',
       targetId: run.id,
-      detail: { connectionId: conn.id, upn: conn.upn },
+      detail: { connectionId: conn.id, upn: conn.upn, scope: scopeLabel },
     });
     await this.audit.platform('tenant_discovery.run_started', {
       actor: actorOf(user),
       tenantId: t.id,
       targetType: 'tenant_discovery_run',
       targetId: run.id,
+      detail: { scope: scopeLabel },
     });
     return run;
   }
@@ -152,6 +171,57 @@ export class TenantDiscoveryService {
       .executeTakeFirst();
     if (!row) throw new NotFoundException('discovery run not found');
     return row;
+  }
+
+  /* ============================ version history ============================ */
+
+  /** Change timeline for one discovered object, newest first. */
+  async listObjectVersions(t: TenantContext, objectId: string): Promise<TenantObjectVersion[]> {
+    const obj = await this.s(t)
+      .selectFrom('tenant_objects')
+      .select('id')
+      .where('id', '=', objectId)
+      .executeTakeFirst();
+    if (!obj) throw new NotFoundException('object not found');
+    return this.s(t)
+      .selectFrom('tenant_object_versions')
+      .selectAll()
+      .where('object_id', '=', objectId)
+      .orderBy('changed_at', 'desc')
+      .limit(200)
+      .execute() as unknown as Promise<TenantObjectVersion[]>;
+  }
+
+  /** Everything a given run added / changed / removed (the "what changed in this sync" log). */
+  async listRunChanges(
+    t: TenantContext,
+    runId: string,
+    q: TenantObjectsQuery,
+  ): Promise<Paginated<TenantObjectVersion>> {
+    const run = await this.s(t)
+      .selectFrom('tenant_discovery_runs')
+      .select('id')
+      .where('id', '=', runId)
+      .executeTakeFirst();
+    if (!run) throw new NotFoundException('discovery run not found');
+
+    let base = this.s(t).selectFrom('tenant_object_versions').where('run_id', '=', runId);
+    if (q.type) base = base.where('object_type', '=', q.type);
+    if (q.q) {
+      const like = `%${q.q}%`;
+      base = base.where((eb) =>
+        eb.or([eb('object_key', 'ilike', like), eb('display_name', 'ilike', like)]),
+      );
+    }
+    const [{ n }] = await base.select((eb) => eb.fn.countAll<number>().as('n')).execute();
+    const items = (await base
+      .selectAll()
+      .orderBy('object_type')
+      .orderBy(sql`coalesce(display_name, object_key)`)
+      .limit(q.limit)
+      .offset((q.page - 1) * q.limit)
+      .execute()) as unknown as TenantObjectVersion[];
+    return { items, total: Number(n), page: q.page, limit: q.limit };
   }
 
   /* =============================== purge =============================== */
@@ -178,7 +248,12 @@ export class TenantDiscoveryService {
     }
 
     const count = async (
-      table: 'tenant_objects' | 'tenant_users' | 'tenant_policies' | 'tenant_discovery_runs',
+      table:
+        | 'tenant_objects'
+        | 'tenant_object_versions'
+        | 'tenant_users'
+        | 'tenant_policies'
+        | 'tenant_discovery_runs',
     ) => {
       const [{ n }] = await s
         .selectFrom(table)
@@ -186,8 +261,9 @@ export class TenantDiscoveryService {
         .execute();
       return Number(n);
     };
-    const [objects, users, policies, runs, linkedRow] = await Promise.all([
+    const [objects, versions, users, policies, runs, linkedRow] = await Promise.all([
       count('tenant_objects'),
+      count('tenant_object_versions'),
       count('tenant_users'),
       count('tenant_policies'),
       count('tenant_discovery_runs'),
@@ -199,14 +275,16 @@ export class TenantDiscoveryService {
     ]);
     const dataCollectionLinksCleared = Number(linkedRow?.n ?? 0);
 
-    // tenant_objects first: cascades to tenant_users + tenant_policies and clears
-    // discovery_users.tenant_user_id (SET NULL). Then the now-unreferenced runs.
+    // tenant_objects first: cascades to tenant_users + tenant_policies +
+    // tenant_object_versions, and clears discovery_users.tenant_user_id (SET
+    // NULL). Then the now-unreferenced runs.
     await s.deleteFrom('tenant_objects').execute();
+    await s.deleteFrom('tenant_object_versions').execute();
     await s.deleteFrom('tenant_users').execute();
     await s.deleteFrom('tenant_policies').execute();
     await s.deleteFrom('tenant_discovery_runs').execute();
 
-    const result = { objects, users, policies, runs, dataCollectionLinksCleared };
+    const result = { objects, versions, users, policies, runs, dataCollectionLinksCleared };
     await this.audit.tenant(t.schema, 'tenant_discovery.purged', {
       actor: actorOf(user),
       targetType: 'tenant',

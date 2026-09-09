@@ -59,6 +59,14 @@ export interface FeatureRequest {
 
 /* ------------------ Discovery (live customer-tenant inventory) ------------------ */
 
+/** Tally of how many objects changed in a run, by change kind. */
+export interface TenantDiscoveryChangeCounts {
+  added: number;
+  updated: number;
+  removed: number;
+  readded: number;
+}
+
 /** Progress the worker writes as a discovery run advances. */
 export interface TenantDiscoveryProgress {
   step: import('./domain').TenantDiscoveryStep | null;
@@ -66,6 +74,8 @@ export interface TenantDiscoveryProgress {
   completed: import('./domain').TenantDiscoveryStep[];
   /** objects stored per object type during this run */
   counts: Partial<Record<import('./domain').TenantObjectType, number>>;
+  /** how many objects were added / updated / removed / re-added this run */
+  changed: TenantDiscoveryChangeCounts;
   /** non-fatal step errors (the run carries on) */
   errors: { step: import('./domain').TenantDiscoveryStep; message: string }[];
 }
@@ -77,10 +87,28 @@ export interface TenantDiscoveryRun {
   started_by: string;
   started_at: string | null;
   finished_at: string | null;
+  /** object types this run covered; null = a full discovery */
+  scope_types: import('./domain').TenantObjectType[] | null;
   progress: TenantDiscoveryProgress;
   summary: Record<string, unknown>;
   error: string | null;
   created_at: string;
+}
+
+/** One recorded change to a discovered object (`tenant_object_versions`). */
+export interface TenantObjectVersion {
+  id: string;
+  object_id: string;
+  run_id: string | null;
+  object_type: import('./domain').TenantObjectType;
+  object_key: string;
+  display_name: string | null;
+  change_kind: import('./domain').TenantObjectChangeKind;
+  /** top-level `data` keys that differ between `before` and `after` */
+  changed_fields: string[];
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  changed_at: string;
 }
 
 /** A row of the current-snapshot inventory (`tenant_objects`). */

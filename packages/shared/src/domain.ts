@@ -243,8 +243,45 @@ export const TENANT_DISCOVERY_STEP_LABELS: Record<TenantDiscoveryStep, string> =
   voice_apps: 'Auto attendants & call queues',
 };
 
+/**
+ * The object types each step produces. Lets a run be scoped to part of the
+ * tenant (a whole step, or individual types within it) and the UI render the
+ * pick-list. The worker filters `STEP_CMDLETS` against the requested types.
+ */
+export const TENANT_DISCOVERY_STEP_TYPES: Record<TenantDiscoveryStep, readonly TenantObjectType[]> = {
+  tenant: ['tenant'],
+  users: ['user'],
+  resource_accounts: ['resource_account'],
+  numbers: ['phone_number'],
+  policies: ['policy'],
+  voice_routing: ['pstn_gateway', 'pstn_usage', 'voice_route'],
+  emergency: ['emergency_location', 'civic_address'],
+  voice_apps: ['auto_attendant', 'call_queue', 'schedule'],
+};
+
+/** The step a given object type belongs to (inverse of `TENANT_DISCOVERY_STEP_TYPES`). */
+export const TENANT_OBJECT_TYPE_STEP = Object.fromEntries(
+  (Object.keys(TENANT_DISCOVERY_STEP_TYPES) as TenantDiscoveryStep[]).flatMap((step) =>
+    TENANT_DISCOVERY_STEP_TYPES[step].map((t) => [t, step] as const),
+  ),
+) as Record<TenantObjectType, TenantDiscoveryStep>;
+
 export const TENANT_DISCOVERY_RUN_STATUSES = ['queued', 'running', 'completed', 'failed'] as const;
 export type TenantDiscoveryRunStatus = (typeof TENANT_DISCOVERY_RUN_STATUSES)[number];
+
+/**
+ * How a discovered object changed between two runs. `readded` = an object that
+ * was tombstoned (gone from the tenant) and has come back.
+ */
+export const TENANT_OBJECT_CHANGE_KINDS = ['added', 'updated', 'removed', 'readded'] as const;
+export type TenantObjectChangeKind = (typeof TENANT_OBJECT_CHANGE_KINDS)[number];
+
+export const TENANT_OBJECT_CHANGE_KIND_LABELS: Record<TenantObjectChangeKind, string> = {
+  added: 'Added',
+  updated: 'Changed',
+  removed: 'Removed',
+  readded: 'Re-added',
+};
 
 /** Every kind of object a discovery stores in `tenant_objects`. */
 export const TENANT_OBJECT_TYPES = [

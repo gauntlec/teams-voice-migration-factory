@@ -20,13 +20,39 @@ Voxshift so Data Collection, Design & Build and Deployment can reference reality
    module uses Microsoft's first-party app. The row flips to `active` with the UPN.
 3. **Run discovery.** The API inserts a `tenant_discovery_runs` row and queues
    `tenant_discovery.run`. The worker walks the steps below, upserting objects as it
-   goes and updating `progress` (`{step, completed[], counts{}, errors[]}`), which the
-   page polls every 3 s.
+   goes and updating `progress` (`{step, completed[], counts{}, changed{}, errors[]}`),
+   which the page polls every 3 s.
 4. Objects a successful step no longer returned are tombstoned (`removed_at`), kept
    for history and hidden by default. A step that fails is recorded in
    `progress.errors` and the run carries on; only a lost sign-in fails the run.
 5. Sessions expire after `TEAMS_SESSION_TTL_MINUTES` idle (default 60) or when the
    worker restarts — tokens only ever live inside the pwsh process.
+
+### Selective sync
+
+A run can cover **part** of the tenant. The *Sync part of the tenant* control on
+the connection card offers the eight steps as checkboxes; a step with more than
+one object type (voice routing, emergency, voice apps) expands to tick individual
+types (e.g. just call queues). The selection is sent as `scopeTypes` on
+`POST runs` and stored as `tenant_discovery_runs.scope_types` (`NULL` = a full
+run). The worker filters `STEP_CMDLETS` to the requested types, runs only those
+steps, and **only tombstones within the covered types** — a "users only" run
+never touches policies. Useful on large tenants to refresh one area quickly.
+
+### Version history
+
+`upsertObject` compares each incoming record against the stored one (order-
+independent JSON). When the data (or display name) actually changed it writes a
+`tenant_object_versions` row: `change_kind` (`added` / `updated` / `removed` /
+`readded`), `changed_fields` (the top-level `data` keys that differ) and the full
+`before` / `after`. `tenant_objects.content_changed_at` tracks when the data last
+changed (vs `discovered_at` = last seen). The run's `progress.changed` /
+`summary.changed` tally the four kinds.
+
+Seen in the UI three ways: **counts on the Latest run card** (`+N added · N
+changed · N removed`), a **Changes tab** (pick any past run, filter by type, see
+before/after per item), and a **History** button on every item (users, policies,
+numbers, …) showing that item's timeline.
 
 | Step | Cmdlets | Stored as (`object_type`) |
 |---|---|---|
@@ -53,12 +79,17 @@ definitions** (the settings inside a calling or voice-routing policy). The
 PowerShell module gives everything with the access the engineer already has. Graph
 can be layered in later behind the same `TeamsExecutor` if a customer consents.
 
-## Storage (tenant schema, migration 0009)
+## Storage (tenant schema, migrations 0009 + 0010)
 
 - `tenant_discovery_runs` — one row per run (status, progress, summary, error).
+  `scope_types` = the object types a partial run covered (`NULL` = full).
 - `tenant_objects` — **current snapshot**, one row per object (`object_type`,
   `object_key` unique). Raw record in `data` (JSONB, GIN-indexed) plus a generated
-  `search` tsvector; `first/last_seen_run_id`, `removed_at`.
+  `search` tsvector; `first/last_seen_run_id`, `content_changed_at`, `removed_at`.
+- `tenant_object_versions` — one row per **actual change** to an object on a run:
+  `change_kind`, `changed_fields[]`, `before`/`after` (JSONB), `run_id`. Denormalised
+  `object_type`/`object_key`/`display_name` so the per-run changelog is one scan.
+  Cascades with `tenant_objects` on purge.
 - `tenant_users` — hot projection of `Get-CsOnlineUser` for lists, lookups and
   autofill: UPN (unique on lower), EV enabled, `line_uri`, `telephone_numbers`,
   `feature_types` (Teams / PhoneSystem / CallingPlan …), `assigned_plans`, usage
@@ -95,8 +126,11 @@ without a second datastore to run, sync and back up.
 ## API
 
 `/t/:tenantId/tenant-discovery/…` (all `TenantGuard`):
-`POST|GET connections`, `GET connections/:id`, `POST|GET runs`, `GET runs/:id`,
+`POST|GET connections`, `GET connections/:id`,
+`POST runs` (`{connectionId, scopeTypes?}`), `GET runs`, `GET runs/:id`,
+`GET runs/:id/changes?type=&q=&page=&limit=` (the per-run changelog),
 `GET summary`, `GET objects?type=&q=&page=&limit=`, `GET objects/:id`,
+`GET objects/:id/versions` (an object's change timeline),
 `GET users?q=`, `GET users/lookup?upn=`, `GET policies?policyType=&q=`,
 `GET import-users/preview`, `POST import-users`,
 `DELETE /t/:tenantId/tenant-discovery` (purge — see below).
@@ -107,8 +141,8 @@ Other modules should read `GET policies` (e.g. Design & Build policy pickers) an
 
 `DELETE /t/:tenantId/tenant-discovery` (`tenantdiscovery:run`, and the **Delete
 discovered data** button on the Overview tab) wipes the whole inventory for one
-customer: `tenant_objects` (which cascades to `tenant_users` and
-`tenant_policies`), then `tenant_discovery_runs`. Data Collection users are kept —
+customer: `tenant_objects` (which cascades to `tenant_users`, `tenant_policies`
+and `tenant_object_versions`), then `tenant_discovery_runs`. Data Collection users are kept —
 their `discovery_users.tenant_user_id` link is set null by the FK. `connections`
 are untouched. Blocked while a run is `queued`/`running`. Not reversible; re-run
 discovery to rebuild. Audited as `tenant_discovery.purged` (tenant + platform)
