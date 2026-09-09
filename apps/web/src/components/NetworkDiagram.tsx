@@ -33,10 +33,10 @@ const LEFT_X = 150;
 const RIGHT_X = W - 150;
 const CLOUD_Y = 74;
 
-const sublabel = (r: NetworkRow) =>
-  [r.mask != null ? `/${r.mask}` : null, r.vlan_id != null ? `VLAN ${r.vlan_id}` : null]
-    .filter(Boolean)
-    .join(' · ');
+/** subnet with the mask appended as CIDR, e.g. "10.20.0.0/24" */
+const cidr = (r: NetworkRow) => `${r.subnet || '—'}${r.mask != null ? `/${r.mask}` : ''}`;
+/** second line under a node — just the VLAN ID when set */
+const sublabel = (r: NetworkRow) => (r.vlan_id != null ? `VLAN ${r.vlan_id}` : '');
 
 /* ------------------------------- glyphs ------------------------------- */
 
@@ -79,12 +79,16 @@ function Cloud({ x, y }: { x: number; y: number }) {
 function Switch({ x, y }: { x: number; y: number }) {
   return (
     <g transform={`translate(${x},${y})`}>
-      <rect x={-26} y={-12} width={52} height={24} rx={4} fill={BRAND} />
-      {[-18, -6, 6, 18].map((px) => (
-        <rect key={px} x={px - 3} y={4} width={6} height={5} rx={1} fill="#ffffff" />
+      {/* chassis */}
+      <rect x={-28} y={-11} width={56} height={22} rx={3} fill={BRAND} />
+      <rect x={-28} y={-11} width={56} height={6} rx={3} fill={ACCENT} />
+      {/* RJ45 port row */}
+      {[-21, -13, -5, 3, 11, 19].map((px) => (
+        <rect key={px} x={px} y={2} width={5.5} height={6} rx={1} fill="#ffffff" />
       ))}
-      <circle cx={-18} cy={-4} r={2} fill="#8fe3a2" />
-      <circle cx={-10} cy={-4} r={2} fill="#8fe3a2" />
+      {/* link LEDs */}
+      <circle cx={-22} cy={-4} r={1.8} fill="#8fe3a2" />
+      <circle cx={-15} cy={-4} r={1.8} fill="#ffd666" />
     </g>
   );
 }
@@ -92,10 +96,12 @@ function Switch({ x, y }: { x: number; y: number }) {
 function Wifi({ x, y }: { x: number; y: number }) {
   return (
     <g transform={`translate(${x},${y})`}>
-      <rect x={-20} y={4} width={40} height={12} rx={4} fill={BRAND} />
-      <circle cx={0} cy={10} r={2} fill="#ffffff" />
-      <path d="M-14 -2 a20 20 0 0 1 28 0" fill="none" stroke={ACCENT} strokeWidth={3} strokeLinecap="round" />
-      <path d="M-8 -8 a11 11 0 0 1 16 0" fill="none" stroke={ACCENT} strokeWidth={3} strokeLinecap="round" />
+      <g stroke={BRAND} strokeWidth={3.4} strokeLinecap="round" fill="none">
+        <path d="M-20 -4 a28 28 0 0 1 40 0" />
+        <path d="M-12 4 a17 17 0 0 1 24 0" />
+        <path d="M-4 12 a7 7 0 0 1 8 0" />
+      </g>
+      <circle cx={0} cy={16} r={2.8} fill={BRAND} />
     </g>
   );
 }
@@ -103,11 +109,15 @@ function Wifi({ x, y }: { x: number; y: number }) {
 function Phone({ x, y }: { x: number; y: number }) {
   return (
     <g transform={`translate(${x},${y})`}>
-      <rect x={-18} y={0} width={36} height={16} rx={3} fill={ACCENT} />
-      {[-10, 0, 10].map((px) => (
-        <rect key={px} x={px - 3} y={5} width={6} height={2.5} rx={1} fill="#ffffff" />
+      {/* sloped base */}
+      <path d="M-15 4 h30 l-3.5 15 h-23 Z" fill={BRAND} />
+      {/* body + keypad */}
+      <rect x={-15} y={-4} width={30} height={11} rx={2.5} fill={ACCENT} />
+      {[-7, 0, 7].map((px) => (
+        <circle key={px} cx={px} cy={1.5} r={1.7} fill="#ffffff" />
       ))}
-      <path d="M-16 -4 q-4 -12 8 -12 h16 q12 0 8 12 q-6 -3 -10 -3 h-12 q-4 0 -10 3 Z" fill={BRAND} />
+      {/* handset */}
+      <rect x={-17} y={-13} width={34} height={7} rx={3.5} fill={BRAND} />
     </g>
   );
 }
@@ -115,8 +125,8 @@ function Phone({ x, y }: { x: number; y: number }) {
 function Person({ x, y }: { x: number; y: number }) {
   return (
     <g transform={`translate(${x},${y})`}>
-      <circle cx={0} cy={-6} r={6} fill={STROKE} />
-      <path d="M-10 12 a10 10 0 0 1 20 0 Z" fill={STROKE} />
+      <circle cx={0} cy={-7} r={6.5} fill={STROKE} />
+      <path d="M-11 13 a11 11 0 0 1 22 0 Z" fill={STROKE} />
     </g>
   );
 }
@@ -137,10 +147,10 @@ function VlanNode({
   const sub = sublabel(row);
   return (
     <g>
-      <g transform={`translate(${x - 15},${y})`}>{kind === 'wireless' ? <Wifi x={0} y={0} /> : <Switch x={0} y={0} />}</g>
-      <g transform={`translate(${x + 26},${y})`}>{kind === 'voice' ? <Phone x={0} y={0} /> : <Person x={0} y={0} />}</g>
-      <text x={x} y={y + 28} textAnchor="middle" fontSize={11.5} fontWeight={600} fill={TEXT} fontFamily={FONT}>
-        {row.subnet || '—'}
+      <g transform={`translate(${x - 22},${y})`}>{kind === 'wireless' ? <Wifi x={0} y={0} /> : <Switch x={0} y={0} />}</g>
+      <g transform={`translate(${x + 30},${y})`}>{kind === 'voice' ? <Phone x={0} y={0} /> : <Person x={0} y={0} />}</g>
+      <text x={x} y={y + 30} textAnchor="middle" fontSize={11.5} fontWeight={600} fill={TEXT} fontFamily={FONT}>
+        {cidr(row)}
       </text>
       {sub && (
         <text x={x} y={y + 42} textAnchor="middle" fontSize={10.5} fill={MUTED} fontFamily={FONT}>
@@ -191,7 +201,7 @@ export function NetworkDiagram({ rows }: { rows: NetworkRow[] }) {
                 fill={MUTED}
                 fontFamily={FONT}
               >
-                {r.subnet || '—'}
+                {cidr(r)}
               </text>
             </g>
           );
