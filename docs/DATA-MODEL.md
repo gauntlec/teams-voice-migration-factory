@@ -35,7 +35,7 @@ Aligned to `Overland Park - ATTC MS Teams Telephony Discovery Template`.
 | `discovery_caps` | **`site_id`**, display_name, upn, device_model, calling_policy_id, caller_id, access_port_id, comments |
 | `discovery_resource_accounts` | **`site_id`**, name, kind (`auto_attendant`/`call_queue`), directory_entry, business_hours, who_answers, ooh_action, exception_conditions/action, holiday, advanced_features, comments. Holds 0..n numbers |
 | `discovery_flows` | free-form notes: **`site_id`**, `kind`, `name`, `description` + optional `diagram_attachment_id` |
-| `discovery_network` | **`site_id`**, e911 internal/external subnets, LAN/WLAN data |
+| `discovery_network` | **`site_id`**, e911 subnets: `scope` (internal/external), `subnet`, `mask`, `network_type` (LAN/WLAN), optional **`vlan_id`**, and `location` = one of `NETWORK_LOCATIONS` (External Subnet / User VLAN / Voice/VOIP VLAN / Wireless VLAN) — drives the live network diagram on the Network (E911) tab |
 | `attachments` | id, filename, content_type, bytes (bytea) or object key, uploaded_by |
 
 Deferred from the template (later pass): Analogue/SIP/paging devices, the

@@ -250,7 +250,9 @@ export interface DiscoveryNetworkTable {
   scope: 'internal' | 'external';
   subnet: string;
   mask: number | null;
+  /** one of NETWORK_LOCATIONS (or legacy free text); drives the network diagram */
   location: string | null;
+  vlan_id: number | null;
   network_type: 'LAN' | 'WLAN' | null;
   created_at: Ts;
 }

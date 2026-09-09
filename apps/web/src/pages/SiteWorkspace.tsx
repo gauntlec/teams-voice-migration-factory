@@ -34,6 +34,7 @@ import {
   CALLER_ID_OPTIONS,
   FLOW_KINDS,
   LICENSING_MODELS,
+  NETWORK_LOCATIONS,
   NETWORK_SCOPES,
   NETWORK_TYPES,
   NUMBER_RANGE_KINDS,
@@ -45,6 +46,7 @@ import {
 import { api, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { Page } from '../components/Page';
+import { NetworkDiagram, type NetworkRow } from '../components/NetworkDiagram';
 import {
   LoadError,
   NoTenant,
@@ -375,29 +377,34 @@ export function SiteWorkspace() {
       )}
 
       {tab === 'network' && (
-        <PagedSection
-          title="Network (E911)"
-          hint="Internal and external subnets used for emergency-call location and media routing."
-          endpoint={`${base}/network`}
-          queryKey={['network', tid, siteId]}
-          params={{ siteId }}
-          fixed={{ site_id: siteId }}
-          readOnly={locked}
-          columns={[
-            { key: 'scope', label: 'Scope' },
-            { key: 'subnet', label: 'Subnet' },
-            { key: 'mask', label: 'Mask' },
-            { key: 'location', label: 'Location' },
-            { key: 'network_type', label: 'Type' },
-          ]}
-          fields={[
-            { key: 'scope', label: 'Scope', type: 'select', options: NETWORK_SCOPES, required: true },
-            { key: 'subnet', label: 'Subnet', required: true, placeholder: '10.20.0.0' },
-            { key: 'mask', label: 'Mask (bits)', type: 'number', placeholder: '24' },
-            { key: 'location', label: 'Location' },
-            { key: 'network_type', label: 'Network type', type: 'select', options: NETWORK_TYPES },
-          ]}
-        />
+        <>
+          <NetworkDiagramCard base={base} tid={tid ?? ''} siteId={siteId} />
+          <PagedSection
+            title="Network (E911)"
+            hint="Internal and external subnets used for emergency-call location and media routing."
+            endpoint={`${base}/network`}
+            queryKey={['network', tid, siteId]}
+            params={{ siteId }}
+            fixed={{ site_id: siteId }}
+            readOnly={locked}
+            columns={[
+              { key: 'scope', label: 'Scope' },
+              { key: 'subnet', label: 'Subnet' },
+              { key: 'mask', label: 'Mask' },
+              { key: 'location', label: 'Location' },
+              { key: 'vlan_id', label: 'VLAN ID', render: (r) => (r.vlan_id as number | null) ?? '—' },
+              { key: 'network_type', label: 'Type' },
+            ]}
+            fields={[
+              { key: 'scope', label: 'Scope', type: 'select', options: NETWORK_SCOPES, required: true },
+              { key: 'subnet', label: 'Subnet', required: true, placeholder: '10.20.0.0' },
+              { key: 'mask', label: 'Mask (bits)', type: 'number', placeholder: '24' },
+              { key: 'location', label: 'Location', type: 'select', options: NETWORK_LOCATIONS },
+              { key: 'vlan_id', label: 'VLAN ID (optional)', type: 'number', placeholder: 'e.g. 20' },
+              { key: 'network_type', label: 'Network type', type: 'select', options: NETWORK_TYPES },
+            ]}
+          />
+        </>
       )}
 
       {tab === 'flows' && (
@@ -608,6 +615,38 @@ function OverviewTab({
       </div>
 
       {error && <LoadError message={error} />}
+    </Card>
+  );
+}
+
+/* ---------------------------- network diagram ---------------------------- */
+
+/**
+ * Fetches every network row for the site (not just the current page) and draws
+ * the diagram. Shares the `['network', tid, siteId]` key prefix with
+ * PagedSection, so a CRUD there invalidates this and the picture refreshes.
+ */
+function NetworkDiagramCard({ base, tid, siteId }: { base: string; tid: string; siteId: string }) {
+  const s = useRecordStyles();
+  const q = useQuery({
+    queryKey: ['network', tid, siteId, 'all'],
+    enabled: !!tid && !!siteId,
+    queryFn: () => api<Paginated<NetworkRow>>(`${base}/network?siteId=${siteId}&limit=200`),
+  });
+  const rows = q.data?.items ?? [];
+
+  return (
+    <Card className={s.card}>
+      <Text weight="semibold">Network diagram</Text>
+      {q.isLoading ? (
+        <Spinner size="tiny" />
+      ) : rows.length === 0 ? (
+        <Text size={200} className={s.muted}>
+          Add subnets below to build the diagram.
+        </Text>
+      ) : (
+        <NetworkDiagram rows={rows} />
+      )}
     </Card>
   );
 }

@@ -200,7 +200,12 @@ export const discoveryNetworkSchema = z
       (v) => (v === '' || v == null ? null : v),
       z.coerce.number().int().min(0).max(32).nullable().optional(),
     ),
+    /** kept permissive so legacy free-text rows still save; the UI offers NETWORK_LOCATIONS */
     location: optStr(200),
+    vlan_id: z.preprocess(
+      (v) => (v === '' || v == null ? null : v),
+      z.coerce.number().int().min(1).max(4094).nullable().optional(),
+    ),
     network_type: z.preprocess(
       (v) => (v === '' ? null : v),
       z.enum(NETWORK_TYPES).nullable().optional(),

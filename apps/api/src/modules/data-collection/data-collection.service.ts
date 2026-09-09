@@ -497,6 +497,7 @@ export class DataCollectionService {
         subnet: input.subnet,
         mask: input.mask ?? null,
         location: input.location || null,
+        vlan_id: input.vlan_id ?? null,
         network_type: input.network_type ?? null,
       })
       .returningAll()

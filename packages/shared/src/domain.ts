@@ -38,6 +38,18 @@ export type NumberRangeKind = (typeof NUMBER_RANGE_KINDS)[number];
 export const NETWORK_SCOPES = ['internal', 'external'] as const;
 export const NETWORK_TYPES = ['LAN', 'WLAN'] as const;
 
+/**
+ * discovery_network.location - the subnet's role on the site. Drives the network
+ * diagram on the Network (E911) tab.
+ */
+export const NETWORK_LOCATIONS = [
+  'External Subnet',
+  'User VLAN',
+  'Voice/VOIP VLAN',
+  'Wireless VLAN',
+] as const;
+export type NetworkLocation = (typeof NETWORK_LOCATIONS)[number];
+
 /** discovery_flows.kind - narrative descriptions of existing call routing */
 export const FLOW_KINDS = ['auto_attendant', 'call_queue', 'other'] as const;
 export type FlowKind = (typeof FLOW_KINDS)[number];
