@@ -61,6 +61,8 @@ export class PwshTeamsExecutor implements TeamsExecutor {
         this.errBuf = this.errBuf.slice(nl + 1);
         this.matchDevicePrompt(line);
       }
+      if (this.errBuf) this.matchDevicePrompt(this.errBuf);
+      if (this.errBuf.length > 64_000) this.errBuf = this.errBuf.slice(-8_000);
     });
     const fail = (err: Error) => {
       for (const p of this.pending.values()) p.reject(err);
@@ -84,6 +86,10 @@ export class PwshTeamsExecutor implements TeamsExecutor {
       this.buf = this.buf.slice(nl + 1);
       this.onLine(line);
     }
+    // The module prints the device-code message WITHOUT a trailing newline
+    // (the cursor parks there until sign-in completes), so also look at the
+    // partial line still sitting in the buffer.
+    if (this.buf) this.matchDevicePrompt(this.buf);
   }
 
   /** The device-code prompt while Connect-MicrosoftTeams is blocking. */
