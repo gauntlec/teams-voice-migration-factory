@@ -37,6 +37,8 @@ export const PERMISSIONS = [
   'feature:read', // view the feature-request board
   'feature:create', // submit a feature request
   'feature:manage', // move status, edit labels, delete - SUPER_ADMIN only
+  'tenantdiscovery:read', // view the live-tenant Discovery inventory - admin & engineer only
+  'tenantdiscovery:run', // connect to the customer tenant and run a discovery - admin & engineer only
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -87,6 +89,10 @@ export const PERMISSION_MATRIX: Record<Role, ReadonlySet<Permission>> = {
     'audit:read:tenant',
     'feature:read',
     'feature:create',
+    // Discovery (live tenant inventory) - engineer/admin only; PMs and
+    // customers never connect to the customer's Microsoft tenant.
+    'tenantdiscovery:read',
+    'tenantdiscovery:run',
   ]),
   CUSTOMER: new Set<Permission>([
     'tenant:read',

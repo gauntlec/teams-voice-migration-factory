@@ -64,5 +64,21 @@
 
 - Rate limiting is basic (in-memory); move to Redis-backed for multi-instance.
 - No secret-manager integration yet (env only).
-- Device-code executor in the worker is stubbed (`SimulatedTeamsExecutor`); the
-  real `PwshTeamsExecutor` interface is defined and ready to implement.
+
+## Customer tenant sessions (Discovery / Deployment)
+
+- The worker runs `Connect-MicrosoftTeams -UseDeviceAuthentication` in a `pwsh`
+  child per connection (`apps/worker/src/teams/pwsh-executor.ts`). The engineer
+  signs in with their own **Teams Administrator** account; Microsoft's first-party
+  app is used, so no Voxshift app registration or admin consent exists in the
+  customer tenant.
+- Access/refresh tokens exist only inside that child process. The worker reads
+  stdout solely to pick out the device-code line and to parse JSON it explicitly
+  requested between sentinel markers; stderr is discarded; raw output is never
+  logged. The `connections` table has no token columns by design.
+- Sessions end on `Disconnect-MicrosoftTeams` + process exit: after
+  `TEAMS_SESSION_TTL_MINUTES` idle (default 60), on worker restart, or on any
+  sign-in error. The row is marked `expired`; a new run needs a fresh sign-in.
+- Discovery is read-only (`Get-Cs*` only) and stores configuration, never
+  credentials. What it stores per customer is listed in `docs/DISCOVERY.md`.
+- `TEAMS_EXECUTOR=simulated` (dev/demo) never talks to Microsoft at all.

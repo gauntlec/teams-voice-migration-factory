@@ -3,7 +3,14 @@ import { Worker, type Job } from 'bullmq';
 import IORedis from 'ioredis';
 import { createDb, platformDb, tenantDb } from '@tvmf/db';
 import { planUserRow } from './planner';
-import { renderCommand, SimulatedTeamsExecutor, type CmdletInvocation } from './teams/executor';
+import {
+  renderCommand,
+  SimulatedTeamsExecutor,
+  type CmdletInvocation,
+  type TeamsExecutor,
+} from './teams/executor';
+import { PwshTeamsExecutor } from './teams/pwsh-executor';
+import { handleTenantDiscoveryRun } from './discovery/run';
 import { renderEmail } from './mail/templates';
 import { mailerConfigured, sendMail } from './mail/mailer';
 
@@ -14,8 +21,47 @@ const connection = new IORedis(process.env.REDIS_URL ?? 'redis://redis:6379', {
 });
 const { db } = createDb();
 
+/**
+ * TEAMS_EXECUTOR=pwsh (default) drives the real MicrosoftTeams module;
+ * =simulated returns fake data so the app runs without a customer tenant.
+ */
+const EXECUTOR_KIND = (process.env.TEAMS_EXECUTOR ?? 'pwsh').toLowerCase();
+const newExecutor = (): TeamsExecutor =>
+  EXECUTOR_KIND === 'simulated' ? new SimulatedTeamsExecutor() : new PwshTeamsExecutor();
+
+/** Idle sessions are torn down after this long (tokens die with the pwsh process). */
+const SESSION_TTL_MS = Math.max(5, Number(process.env.TEAMS_SESSION_TTL_MINUTES ?? 60)) * 60_000;
+
 /** In-memory registry of live executors, keyed by connectionId. Never persisted. */
-const executors = new Map<string, SimulatedTeamsExecutor>();
+const executors = new Map<string, TeamsExecutor>();
+/** connectionId -> tenant schema, so the sweeper can mark the row expired. */
+const executorSchema = new Map<string, string>();
+
+async function expireConnection(schema: string, connectionId: string, reason: string) {
+  const exec = executors.get(connectionId);
+  executors.delete(connectionId);
+  executorSchema.delete(connectionId);
+  if (exec) await exec.dispose().catch(() => undefined);
+  await tenantDb(db, schema)
+    .updateTable('connections')
+    .set({ status: 'expired', closed_at: new Date().toISOString() })
+    .where('id', '=', connectionId)
+    .where('status', 'in', ['pending', 'active'])
+    .execute()
+    .catch(() => undefined);
+  // eslint-disable-next-line no-console
+  console.log(`[connection ${connectionId}] expired (${reason})`);
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, exec] of executors) {
+    if (now - exec.lastUsedAt > SESSION_TTL_MS) {
+      const schema = executorSchema.get(id);
+      if (schema) void expireConnection(schema, id, 'idle timeout');
+    }
+  }
+}, 60_000).unref();
 
 async function handleConnectionStart(job: Job) {
   const { schema, connectionId, tenantDomain } = job.data as {
@@ -23,30 +69,40 @@ async function handleConnectionStart(job: Job) {
     connectionId: string;
     tenantDomain: string | null;
   };
-  const exec = new SimulatedTeamsExecutor();
+  const exec = newExecutor();
   executors.set(connectionId, exec);
+  executorSchema.set(connectionId, schema);
 
-  const prompt = await exec.beginDeviceCode(tenantDomain);
-  await tenantDb(db, schema)
-    .updateTable('connections')
-    .set({
-      status: 'pending',
-      user_code: prompt.userCode,
-      verification_uri: prompt.verificationUri,
-      expires_at: prompt.expiresAt.toISOString(),
-    })
-    .where('id', '=', connectionId)
-    .execute();
+  try {
+    const prompt = await exec.beginDeviceCode(tenantDomain);
+    await tenantDb(db, schema)
+      .updateTable('connections')
+      .set({
+        status: 'pending',
+        user_code: prompt.userCode,
+        verification_uri: prompt.verificationUri,
+        expires_at: prompt.expiresAt.toISOString(),
+      })
+      .where('id', '=', connectionId)
+      .execute();
 
-  const signIn = await exec.awaitSignIn();
-  await tenantDb(db, schema)
-    .updateTable('connections')
-    .set({ status: 'active', upn: signIn.upn })
-    .where('id', '=', connectionId)
-    .execute();
+    const signIn = await exec.awaitSignIn();
+    await tenantDb(db, schema)
+      .updateTable('connections')
+      .set({
+        status: 'active',
+        upn: signIn.upn,
+        expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+      })
+      .where('id', '=', connectionId)
+      .execute();
 
-  // eslint-disable-next-line no-console
-  console.log(`[connection ${connectionId}] active as ${signIn.upn}`);
+    // eslint-disable-next-line no-console
+    console.log(`[connection ${connectionId}] active as ${signIn.upn}`);
+  } catch (err) {
+    await expireConnection(schema, connectionId, (err as Error).message);
+    throw err;
+  }
 }
 
 async function handleDeploymentRun(job: Job) {
@@ -217,6 +273,8 @@ const worker = new Worker(
         return handleConnectionStart(job);
       case 'deployment.run':
         return handleDeploymentRun(job);
+      case 'tenant_discovery.run':
+        return handleTenantDiscoveryRun(job, db, (id) => executors.get(id));
       default:
         throw new Error(`unknown job: ${job.name}`);
     }

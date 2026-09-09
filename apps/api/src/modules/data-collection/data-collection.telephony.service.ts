@@ -616,10 +616,26 @@ export class TelephonyService {
 
   /* ============================= users ============================= */
 
+  /**
+   * Discovery link: the real tenant user (from the last Discovery run) whose UPN
+   * matches, or null. Purely additive - Data Collection works without a run.
+   */
+  private async tenantUserIdFor(t: TenantContext, upn: string | null | undefined) {
+    if (!upn) return null;
+    const row = await this.s(t)
+      .selectFrom('tenant_users')
+      .select('id')
+      .where(sql`lower(upn)`, '=', upn.trim().toLowerCase())
+      .where('removed_at', 'is', null)
+      .executeTakeFirst();
+    return row?.id ?? null;
+  }
+
   async addUser(t: TenantContext, u: AuthedUser, i: DiscoveryUserInput, canReview: boolean) {
     await this.base.assertEditable(t, canReview);
     const siteId = await this.resolveHolderSite(t, i.site_id);
     if (nz(i.phone_number_id)) await this.assertNumberInScope(t, nz(i.phone_number_id)!);
+    const tenantUserId = await this.tenantUserIdFor(t, i.upn);
     let row;
     try {
       row = await this.s(t)
@@ -627,6 +643,7 @@ export class TelephonyService {
         .values({
           site_id: siteId,
           upn: i.upn,
+          tenant_user_id: tenantUserId,
           display_name: nz(i.display_name),
           calling_policy_id: nz(i.calling_policy_id),
           caller_id: nz(i.caller_id),
@@ -677,6 +694,8 @@ export class TelephonyService {
     ] as const) {
       if (k in patch) set[k] = typeof patch[k] === 'boolean' ? patch[k] : nz(patch[k] as string);
     }
+    // a changed UPN re-resolves the Discovery link
+    if ('upn' in patch) set.tenant_user_id = await this.tenantUserIdFor(t, patch.upn);
     if ('site_id' in patch) set.site_id = await this.resolveHolderSite(t, patch.site_id);
     if ('phone_number_id' in patch && nz(patch.phone_number_id ?? null)) {
       await this.assertNumberInScope(t, nz(patch.phone_number_id ?? null)!);

@@ -12,6 +12,8 @@ import {
   NUMBER_RANGE_KINDS,
   NUMBER_STATUSES,
   RESOURCE_ACCOUNT_KINDS,
+  TENANT_OBJECT_TYPES,
+  TENANT_POLICY_TYPES,
 } from './domain';
 
 export const emailSchema = z.string().email().max(320).transform((s) => s.toLowerCase().trim());
@@ -372,3 +374,43 @@ export const featureRequestUpdateSchema = z
   .strict()
   .refine((v) => Object.keys(v).length > 0, { message: 'Nothing to update' });
 export type FeatureRequestUpdateInput = z.infer<typeof featureRequestUpdateSchema>;
+
+/* ------------------ Discovery (live customer-tenant inventory) ------------------ */
+
+/** Kick off a discovery run over an `active` tenant connection. */
+export const tenantDiscoveryStartSchema = z
+  .object({ connectionId: z.string().uuid() })
+  .strict();
+export type TenantDiscoveryStartInput = z.infer<typeof tenantDiscoveryStartSchema>;
+
+/** Query string for the paginated inventory lists (`GET .../objects`, `.../users`). */
+export const tenantObjectsQuerySchema = z.object({
+  type: z.enum(TENANT_OBJECT_TYPES).optional(),
+  policyType: z.enum(TENANT_POLICY_TYPES).optional(),
+  q: z.string().trim().max(160).optional(),
+  includeRemoved: z
+    .preprocess((v) => v === 'true' || v === true, z.boolean())
+    .optional(),
+  page: z.coerce.number().int().min(1).max(100000).default(1),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+});
+export type TenantObjectsQuery = z.infer<typeof tenantObjectsQuerySchema>;
+
+/** Exact-UPN lookup used by the Data Collection add-user autofill. */
+export const tenantUserLookupSchema = z.object({
+  upn: z.string().trim().min(3).max(320),
+});
+export type TenantUserLookupQuery = z.infer<typeof tenantUserLookupSchema>;
+
+/**
+ * Bulk-create Data Collection users from the discovered tenant users that are
+ * not already captured (matched on lower(upn)).
+ */
+export const tenantUsersImportSchema = z
+  .object({
+    siteId: z.string().uuid(),
+    onlyEnterpriseVoice: z.boolean().default(true),
+    calling_policy_id: z.string().uuid().nullable().optional(),
+  })
+  .strict();
+export type TenantUsersImportInput = z.infer<typeof tenantUsersImportSchema>;

@@ -56,3 +56,90 @@ export interface FeatureRequest {
   updated_at: string;
   status_changed_at: string;
 }
+
+/* ------------------ Discovery (live customer-tenant inventory) ------------------ */
+
+/** Progress the worker writes as a discovery run advances. */
+export interface TenantDiscoveryProgress {
+  step: import('./domain').TenantDiscoveryStep | null;
+  /** steps completed so far, in order */
+  completed: import('./domain').TenantDiscoveryStep[];
+  /** objects stored per object type during this run */
+  counts: Partial<Record<import('./domain').TenantObjectType, number>>;
+  /** non-fatal step errors (the run carries on) */
+  errors: { step: import('./domain').TenantDiscoveryStep; message: string }[];
+}
+
+export interface TenantDiscoveryRun {
+  id: string;
+  connection_id: string | null;
+  status: import('./domain').TenantDiscoveryRunStatus;
+  started_by: string;
+  started_at: string | null;
+  finished_at: string | null;
+  progress: TenantDiscoveryProgress;
+  summary: Record<string, unknown>;
+  error: string | null;
+  created_at: string;
+}
+
+/** A row of the current-snapshot inventory (`tenant_objects`). */
+export interface TenantObject {
+  id: string;
+  object_type: import('./domain').TenantObjectType;
+  object_key: string;
+  display_name: string | null;
+  data: Record<string, unknown>;
+  first_seen_run_id: string | null;
+  last_seen_run_id: string | null;
+  discovered_at: string;
+  removed_at: string | null;
+}
+
+/** The "hot" projection of a discovered user (`tenant_users`) - what the UI lists and autofill reads. */
+export interface TenantUserSummary {
+  id: string;
+  object_id: string;
+  upn: string;
+  entra_id: string | null;
+  display_name: string | null;
+  account_type: string | null;
+  account_enabled: boolean | null;
+  enterprise_voice_enabled: boolean;
+  line_uri: string | null;
+  telephone_numbers: { number: string; category?: string }[];
+  feature_types: string[];
+  assigned_plans: unknown[];
+  usage_location: string | null;
+  department: string | null;
+  job_title: string | null;
+  interpreted_user_type: string | null;
+  /** policy name per policy type, e.g. { TeamsCallingPolicy: 'Global' } */
+  policies: Record<string, string | null>;
+  when_changed: string | null;
+  last_seen_run_id: string | null;
+  removed_at: string | null;
+  /** id of the Data Collection user linked to this tenant user, when one exists */
+  discovery_user_id?: string | null;
+}
+
+export interface TenantPolicySummary {
+  id: string;
+  object_id: string;
+  policy_type: import('./domain').TenantPolicyType;
+  identity: string;
+  name: string;
+  is_global: boolean;
+  data: Record<string, unknown>;
+  last_seen_run_id: string | null;
+  removed_at: string | null;
+}
+
+/** `GET .../tenant-discovery/summary` */
+export interface TenantDiscoverySummary {
+  tenant: { id: string | null; displayName: string | null; domains: string[] } | null;
+  lastRun: TenantDiscoveryRun | null;
+  activeConnection: { id: string; upn: string | null; status: string; expires_at: string | null } | null;
+  counts: Partial<Record<import('./domain').TenantObjectType, number>>;
+  linkedDiscoveryUsers: number;
+}

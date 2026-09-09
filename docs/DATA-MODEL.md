@@ -39,6 +39,16 @@ Aligned to `Overland Park - ATTC MS Teams Telephony Discovery Template`.
 | `discovery_network` | **`site_id`**, e911 subnets: `scope` (internal/external), `subnet`, `mask`, `network_type` (LAN/WLAN), optional **`vlan_id`**, and `location` = one of `NETWORK_LOCATIONS` (External Subnet / User VLAN / Voice/VOIP VLAN / Wireless VLAN) — drives the live network diagram on the Network (E911) tab |
 | `attachments` | id, filename, content_type, bytes (bytea) or object key, uploaded_by |
 
+`discovery_users.tenant_user_id` links a captured user to the real tenant user found by Discovery (matched on `lower(upn)`).
+
+### Discovery (live tenant inventory) — see [`DISCOVERY.md`](DISCOVERY.md)
+| Table | Notes |
+|-------|-------|
+| `tenant_discovery_runs` | id, connection_id → `connections`, status (`queued`/`running`/`completed`/`failed`), started_by, started/finished_at, `progress` jsonb (`{step, completed[], counts{}, errors[]}`), `summary` jsonb, error |
+| `tenant_objects` | **current snapshot**, one row per object: `object_type` (`TENANT_OBJECT_TYPES`), `object_key` (unique per type), display_name, `data` jsonb (GIN), generated `search` tsvector (GIN), first/last_seen_run_id, discovered_at, `removed_at` (tombstone when a later successful run no longer returns it) |
+| `tenant_users` | hot projection of `Get-CsOnlineUser`: object_id, `upn` (unique on lower), entra_id, display_name, account_type, account_enabled, enterprise_voice_enabled, line_uri, telephone_numbers jsonb, feature_types text[], assigned_plans jsonb, usage_location, department, job_title, interpreted_user_type, `policies` jsonb (name per policy type), effective_policy_assignments jsonb, when_changed, last_seen_run_id, removed_at |
+| `tenant_policies` | hot projection of policy definitions: object_id, `policy_type` (`TENANT_POLICY_TYPES`), identity, name, is_global, `data` jsonb, last_seen_run_id, removed_at — the reference for Design & Build policy pickers |
+
 Deferred from the template (later pass): Analogue/SIP/paging devices, the
 Features & Settings feature-discovery questionnaire, detailed E911 tables.
 

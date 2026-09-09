@@ -212,3 +212,112 @@ export const FEATURE_AREAS = [
   'Other',
 ] as const;
 export type FeatureArea = (typeof FEATURE_AREAS)[number];
+
+/* ------------------ Discovery (live customer-tenant inventory) ------------------ */
+
+/**
+ * The ordered steps of a tenant discovery run. The worker drives the
+ * MicrosoftTeams PowerShell module through these in order; the UI shows them as
+ * a progress list. See docs/DISCOVERY.md.
+ */
+export const TENANT_DISCOVERY_STEPS = [
+  'tenant',
+  'users',
+  'resource_accounts',
+  'numbers',
+  'policies',
+  'voice_routing',
+  'emergency',
+  'voice_apps',
+] as const;
+export type TenantDiscoveryStep = (typeof TENANT_DISCOVERY_STEPS)[number];
+
+export const TENANT_DISCOVERY_STEP_LABELS: Record<TenantDiscoveryStep, string> = {
+  tenant: 'Tenant',
+  users: 'Users',
+  resource_accounts: 'Resource accounts',
+  numbers: 'Phone numbers',
+  policies: 'Policies',
+  voice_routing: 'Voice routing',
+  emergency: 'Emergency locations',
+  voice_apps: 'Auto attendants & call queues',
+};
+
+export const TENANT_DISCOVERY_RUN_STATUSES = ['queued', 'running', 'completed', 'failed'] as const;
+export type TenantDiscoveryRunStatus = (typeof TENANT_DISCOVERY_RUN_STATUSES)[number];
+
+/** Every kind of object a discovery stores in `tenant_objects`. */
+export const TENANT_OBJECT_TYPES = [
+  'tenant',
+  'user',
+  'resource_account',
+  'phone_number',
+  'policy',
+  'pstn_usage',
+  'voice_route',
+  'pstn_gateway',
+  'emergency_location',
+  'civic_address',
+  'auto_attendant',
+  'call_queue',
+  'schedule',
+] as const;
+export type TenantObjectType = (typeof TENANT_OBJECT_TYPES)[number];
+
+export const TENANT_OBJECT_TYPE_LABELS: Record<TenantObjectType, string> = {
+  tenant: 'Tenant',
+  user: 'Users',
+  resource_account: 'Resource accounts',
+  phone_number: 'Phone numbers',
+  policy: 'Policies',
+  pstn_usage: 'PSTN usages',
+  voice_route: 'Voice routes',
+  pstn_gateway: 'PSTN gateways',
+  emergency_location: 'Emergency locations',
+  civic_address: 'Civic addresses',
+  auto_attendant: 'Auto attendants',
+  call_queue: 'Call queues',
+  schedule: 'Schedules',
+};
+
+/**
+ * Teams policy types discovered (one `Get-Cs<Type>` cmdlet each). The value is
+ * the PowerShell noun; the worker maps it to the cmdlet. Kept here so Design &
+ * Build pickers can ask for "all TeamsCallingPolicy" by a stable key.
+ */
+export const TENANT_POLICY_TYPES = [
+  'TeamsCallingPolicy',
+  'OnlineVoiceRoutingPolicy',
+  'TenantDialPlan',
+  'TeamsEmergencyCallingPolicy',
+  'TeamsEmergencyCallRoutingPolicy',
+  'OnlineVoicemailPolicy',
+  'CallingLineIdentity',
+  'TeamsCallParkPolicy',
+  'TeamsCallHoldPolicy',
+  'TeamsIPPhonePolicy',
+  'TeamsSharedCallingRoutingPolicy',
+  'TeamsVoiceApplicationsPolicy',
+  'TeamsMeetingPolicy',
+  'TeamsMessagingPolicy',
+  'TeamsAppSetupPolicy',
+] as const;
+export type TenantPolicyType = (typeof TENANT_POLICY_TYPES)[number];
+
+export const TENANT_POLICY_TYPE_LABELS: Record<TenantPolicyType, string> = {
+  TeamsCallingPolicy: 'Calling policy',
+  OnlineVoiceRoutingPolicy: 'Voice routing policy',
+  TenantDialPlan: 'Dial plan',
+  TeamsEmergencyCallingPolicy: 'Emergency calling policy',
+  TeamsEmergencyCallRoutingPolicy: 'Emergency call routing policy',
+  OnlineVoicemailPolicy: 'Voicemail policy',
+  CallingLineIdentity: 'Caller ID policy',
+  TeamsCallParkPolicy: 'Call park policy',
+  TeamsCallHoldPolicy: 'Call hold policy',
+  TeamsIPPhonePolicy: 'IP phone policy',
+  TeamsSharedCallingRoutingPolicy: 'Shared calling routing policy',
+  TeamsVoiceApplicationsPolicy: 'Voice applications policy',
+  TeamsMeetingPolicy: 'Meeting policy',
+  TeamsMessagingPolicy: 'Messaging policy',
+  TeamsAppSetupPolicy: 'App setup policy',
+};

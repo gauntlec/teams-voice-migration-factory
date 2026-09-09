@@ -1,0 +1,150 @@
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  can,
+  startConnectionSchema,
+  tenantDiscoveryStartSchema,
+  tenantObjectsQuerySchema,
+  tenantUserLookupSchema,
+  tenantUsersImportSchema,
+  type TenantDiscoveryStartInput,
+  type TenantObjectsQuery,
+  type TenantUserLookupQuery,
+  type TenantUsersImportInput,
+} from '@tvmf/shared';
+import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
+import type { AuthedUser, TenantContext } from '../../common/request';
+import { ZodBody } from '../../common/zod.pipe';
+import { RequirePermission } from '../../rbac/require-permission.decorator';
+import { TenantGuard } from '../../rbac/tenant.guard';
+import { TenantDiscoveryService } from './tenant-discovery.service';
+
+/**
+ * Discovery - live customer-tenant inventory. SUPER_ADMIN and ENGINEER only
+ * (`tenantdiscovery:*`). No customer credentials are stored: the engineer signs
+ * in with a device code each time and tokens live only in the worker process.
+ */
+@Controller('t/:tenantId/tenant-discovery')
+@UseGuards(TenantGuard)
+export class TenantDiscoveryController {
+  constructor(private readonly svc: TenantDiscoveryService) {}
+
+  /* connections (shared with Deployment) */
+
+  @Post('connections')
+  @RequirePermission('tenantdiscovery:run')
+  startConnection(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(startConnectionSchema)) body: { tenantDomain?: string },
+  ) {
+    return this.svc.startConnection(t, user, body.tenantDomain);
+  }
+
+  @Get('connections')
+  @RequirePermission('tenantdiscovery:read')
+  listConnections(@TenantCtx() t: TenantContext) {
+    return this.svc.listConnections(t);
+  }
+
+  @Get('connections/:id')
+  @RequirePermission('tenantdiscovery:read')
+  getConnection(@TenantCtx() t: TenantContext, @Param('id') id: string) {
+    return this.svc.getConnection(t, id);
+  }
+
+  /* runs */
+
+  @Post('runs')
+  @RequirePermission('tenantdiscovery:run')
+  startRun(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(tenantDiscoveryStartSchema)) body: TenantDiscoveryStartInput,
+  ) {
+    return this.svc.startRun(t, user, body.connectionId);
+  }
+
+  @Get('runs')
+  @RequirePermission('tenantdiscovery:read')
+  listRuns(@TenantCtx() t: TenantContext) {
+    return this.svc.listRuns(t);
+  }
+
+  @Get('runs/:id')
+  @RequirePermission('tenantdiscovery:read')
+  getRun(@TenantCtx() t: TenantContext, @Param('id') id: string) {
+    return this.svc.getRun(t, id);
+  }
+
+  /* inventory */
+
+  @Get('summary')
+  @RequirePermission('tenantdiscovery:read')
+  summary(@TenantCtx() t: TenantContext) {
+    return this.svc.summary(t);
+  }
+
+  @Get('objects')
+  @RequirePermission('tenantdiscovery:read')
+  listObjects(
+    @TenantCtx() t: TenantContext,
+    @Query(new ZodBody(tenantObjectsQuerySchema)) q: TenantObjectsQuery,
+  ) {
+    return this.svc.listObjects(t, q);
+  }
+
+  @Get('objects/:id')
+  @RequirePermission('tenantdiscovery:read')
+  getObject(@TenantCtx() t: TenantContext, @Param('id') id: string) {
+    return this.svc.getObject(t, id);
+  }
+
+  @Get('users')
+  @RequirePermission('tenantdiscovery:read')
+  listUsers(
+    @TenantCtx() t: TenantContext,
+    @Query(new ZodBody(tenantObjectsQuerySchema)) q: TenantObjectsQuery,
+  ) {
+    return this.svc.listUsers(t, q);
+  }
+
+  /**
+   * Exact-UPN lookup for the Data Collection add-user autofill. Anyone who can
+   * write Data Collection may call it (they only learn about the UPN they typed).
+   */
+  @Get('users/lookup')
+  @RequirePermission('discovery:write')
+  lookupUser(
+    @TenantCtx() t: TenantContext,
+    @Query(new ZodBody(tenantUserLookupSchema)) q: TenantUserLookupQuery,
+  ) {
+    return this.svc.lookupUser(t, q.upn);
+  }
+
+  @Get('policies')
+  @RequirePermission('tenantdiscovery:read')
+  listPolicies(
+    @TenantCtx() t: TenantContext,
+    @Query(new ZodBody(tenantObjectsQuerySchema)) q: TenantObjectsQuery,
+  ) {
+    return this.svc.listPolicies(t, q);
+  }
+
+  /* import into Data Collection */
+
+  @Get('import-users/preview')
+  @RequirePermission('tenantdiscovery:read', 'discovery:write')
+  importPreview(@TenantCtx() t: TenantContext, @Query('onlyEnterpriseVoice') ev?: string) {
+    return this.svc.importPreview(t, ev !== 'false');
+  }
+
+  @Post('import-users')
+  @RequirePermission('tenantdiscovery:read', 'discovery:write')
+  importUsers(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(tenantUsersImportSchema)) body: TenantUsersImportInput,
+  ) {
+    return this.svc.importUsers(t, user, body, can(user.role, 'discovery:review'));
+  }
+}

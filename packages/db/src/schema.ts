@@ -234,6 +234,8 @@ export interface DiscoveryUsersTable {
   handset_model: string | null;
   access_port_id: string | null;
   comments: string | null;
+  /** FK -> tenant_users.id: the real tenant user this row was matched to (by lower(upn)). */
+  tenant_user_id: string | null;
   created_at: Ts;
   updated_at: Ts;
 }
@@ -396,6 +398,78 @@ export interface ConnectionsTable {
   /* deliberately NO token columns - see docs/SECURITY.md */
 }
 
+/* ------------- Discovery: live customer-tenant inventory (docs/DISCOVERY.md) ------------- */
+
+/** jsonb column with a DB default - optional on insert. */
+type JsonOpt<T> = ColumnType<T, T | undefined, T>;
+
+export interface TenantDiscoveryRunsTable {
+  id: Generated<string>;
+  connection_id: string | null;
+  status: ColumnType<
+    import('@tvmf/shared').TenantDiscoveryRunStatus,
+    import('@tvmf/shared').TenantDiscoveryRunStatus | undefined,
+    import('@tvmf/shared').TenantDiscoveryRunStatus
+  >;
+  started_by: string;
+  started_at: string | null;
+  finished_at: string | null;
+  progress: JsonOpt<import('@tvmf/shared').TenantDiscoveryProgress>;
+  summary: JsonOpt<Record<string, unknown>>;
+  error: string | null;
+  created_at: Ts;
+}
+
+/** Current snapshot of every discovered object; `search` is a generated tsvector (never written). */
+export interface TenantObjectsTable {
+  id: Generated<string>;
+  object_type: string;
+  object_key: string;
+  display_name: string | null;
+  data: Json<Record<string, unknown>>;
+  search: ColumnType<string, never, never>;
+  first_seen_run_id: string | null;
+  last_seen_run_id: string | null;
+  discovered_at: Ts;
+  removed_at: string | null;
+}
+
+export interface TenantUsersTable {
+  id: Generated<string>;
+  object_id: string;
+  upn: string;
+  entra_id: string | null;
+  display_name: string | null;
+  account_type: string | null;
+  account_enabled: boolean | null;
+  enterprise_voice_enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  line_uri: string | null;
+  telephone_numbers: JsonOpt<{ number: string; category?: string }[]>;
+  feature_types: ColumnType<string[], string[] | undefined, string[]>;
+  assigned_plans: JsonOpt<unknown[]>;
+  usage_location: string | null;
+  department: string | null;
+  job_title: string | null;
+  interpreted_user_type: string | null;
+  policies: JsonOpt<Record<string, string | null>>;
+  effective_policy_assignments: JsonOpt<unknown[]>;
+  when_changed: string | null;
+  last_seen_run_id: string | null;
+  removed_at: string | null;
+}
+
+export interface TenantPoliciesTable {
+  id: Generated<string>;
+  object_id: string;
+  policy_type: string;
+  identity: string;
+  name: string;
+  is_global: ColumnType<boolean, boolean | undefined, boolean>;
+  data: Json<Record<string, unknown>>;
+  last_seen_run_id: string | null;
+  removed_at: string | null;
+}
+
 export interface DeploymentsTable {
   id: Generated<string>;
   connection_id: string | null;
@@ -501,6 +575,10 @@ export interface DB {
   build_call_queues: BuildCallQueuesTable;
   build_m365_groups: BuildM365GroupsTable;
   connections: ConnectionsTable;
+  tenant_discovery_runs: TenantDiscoveryRunsTable;
+  tenant_objects: TenantObjectsTable;
+  tenant_users: TenantUsersTable;
+  tenant_policies: TenantPoliciesTable;
   deployments: DeploymentsTable;
   deployment_changes: DeploymentChangesTable;
   deployment_scripts: DeploymentScriptsTable;

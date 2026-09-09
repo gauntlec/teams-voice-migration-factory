@@ -41,6 +41,7 @@ import {
   SITE_REGIONS,
   type DiscoverySiteOverview,
   type Paginated,
+  type TenantUserSummary,
 } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { useAuth } from '../auth';
@@ -274,7 +275,39 @@ export function SiteWorkspace() {
             },
             { key: 'caller_id', label: 'Caller ID' },
             { key: 'voicemail_enabled', label: 'Voicemail', render: (r) => yesNo(r.voicemail_enabled) },
+            {
+              key: 'tenant_user_id',
+              label: 'Tenant',
+              render: (r) =>
+                r.tenant_user_id ? (
+                  <Badge appearance="tint" color="success" size="small">
+                    Linked
+                  </Badge>
+                ) : (
+                  '—'
+                ),
+            },
           ]}
+          suggest={{
+            field: 'upn',
+            run: async (upn) => {
+              const hit = await api<TenantUserSummary | null>(
+                `/t/${tid}/tenant-discovery/users/lookup?upn=${encodeURIComponent(upn)}`,
+              );
+              if (!hit) return { found: false, note: 'Not found in the last Discovery run.' };
+              const bits = [
+                hit.line_uri ? hit.line_uri.replace(/^tel:/, '') : null,
+                hit.enterprise_voice_enabled ? 'Enterprise Voice on' : 'Enterprise Voice off',
+                hit.policies?.TeamsCallingPolicy ? `Calling policy ${hit.policies.TeamsCallingPolicy}` : null,
+                hit.department,
+              ].filter(Boolean);
+              return {
+                found: true,
+                values: { display_name: hit.display_name ?? '' },
+                note: `Found in tenant: ${bits.join(' · ')}`,
+              };
+            },
+          }}
           fields={[
             { key: 'upn', label: 'M365 UPN', required: true, placeholder: 'user@customer.com' },
             { key: 'display_name', label: 'Display name' },

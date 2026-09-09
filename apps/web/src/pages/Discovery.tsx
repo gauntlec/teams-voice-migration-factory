@@ -1,0 +1,1006 @@
+import { useEffect, useState, type ReactNode } from 'react';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  Badge,
+  Button,
+  Card,
+  Checkbox,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
+  Dropdown,
+  Field,
+  Link,
+  MessageBar,
+  MessageBarBody,
+  Option,
+  ProgressBar,
+  SearchBox,
+  Spinner,
+  Tab,
+  TabList,
+  TableBody,
+  TableCell,
+  TableHeader,
+  TableHeaderCell,
+  TableRow,
+  Text,
+  makeStyles,
+  shorthands,
+  tokens,
+} from '@fluentui/react-components';
+import {
+  ArrowSyncRegular,
+  CheckmarkRegular,
+  ChevronLeftRegular,
+  ChevronRightRegular,
+  CopyRegular,
+  EyeRegular,
+  PlugConnectedRegular,
+} from '@fluentui/react-icons';
+import {
+  TENANT_DISCOVERY_STEPS,
+  TENANT_DISCOVERY_STEP_LABELS,
+  TENANT_OBJECT_TYPE_LABELS,
+  TENANT_POLICY_TYPE_LABELS,
+  TENANT_POLICY_TYPES,
+  type Paginated,
+  type TenantDiscoveryRun,
+  type TenantDiscoverySummary,
+  type TenantObject,
+  type TenantObjectType,
+  type TenantPolicySummary,
+  type TenantPolicyType,
+  type TenantUserSummary,
+} from '@tvmf/shared';
+import { api, ApiError } from '../api';
+import { useAuth } from '../auth';
+import { DataTable } from '../components/DataTable';
+import { Page } from '../components/Page';
+import { LoadError, NoTenant } from '../components/records';
+
+/* --------------------------------- styles --------------------------------- */
+
+const useStyles = makeStyles({
+  grid: { display: 'grid', gridTemplateColumns: '1fr 1fr', ...shorthands.gap('16px') },
+  card: { ...shorthands.padding('16px'), display: 'grid', ...shorthands.gap('10px'), alignContent: 'start' },
+  row: { display: 'flex', alignItems: 'center', ...shorthands.gap('8px'), flexWrap: 'wrap' },
+  code: {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize: tokens.fontSizeBase500,
+    letterSpacing: '.08em',
+    ...shorthands.padding('6px', '12px'),
+    backgroundColor: tokens.colorNeutralBackground3,
+    ...shorthands.borderRadius(tokens.borderRadiusMedium),
+  },
+  muted: { color: tokens.colorNeutralForeground3 },
+  steps: { display: 'grid', ...shorthands.gap('4px'), marginTop: '4px' },
+  step: { display: 'flex', alignItems: 'center', ...shorthands.gap('8px'), fontSize: tokens.fontSizeBase200 },
+  stats: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', ...shorthands.gap('10px') },
+  stat: { ...shorthands.padding('12px'), display: 'grid', ...shorthands.gap('2px') },
+  statN: { fontSize: tokens.fontSizeHero700, fontWeight: tokens.fontWeightSemibold, lineHeight: '1.1' },
+  toolbar: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', ...shorthands.gap('8px'), flexWrap: 'wrap' },
+  chips: { display: 'flex', ...shorthands.gap('4px'), flexWrap: 'wrap' },
+  json: {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize: tokens.fontSizeBase200,
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
+    maxHeight: '60vh',
+    overflowY: 'auto',
+    ...shorthands.margin('0'),
+    ...shorthands.padding('12px'),
+    backgroundColor: tokens.colorNeutralBackground3,
+    ...shorthands.borderRadius(tokens.borderRadiusMedium),
+  },
+  pager: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', ...shorthands.gap('8px') },
+});
+
+const fmt = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString() : '—');
+
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    /* fall through */
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <Button
+      size="small"
+      appearance="subtle"
+      icon={done ? <CheckmarkRegular /> : <CopyRegular />}
+      onClick={async () => {
+        if (await copyText(text)) {
+          setDone(true);
+          setTimeout(() => setDone(false), 1500);
+        }
+      }}
+    >
+      {done ? 'Copied' : label}
+    </Button>
+  );
+}
+
+/* --------------------------- connect + run cards --------------------------- */
+
+interface Connection {
+  id: string;
+  status: 'pending' | 'active' | 'expired' | 'closed';
+  user_code: string | null;
+  verification_uri: string | null;
+  upn: string | null;
+  expires_at: string | null;
+  started_at: string;
+}
+
+function ConnectCard({
+  base,
+  summary,
+  canRun,
+  onChanged,
+}: {
+  base: string;
+  summary: TenantDiscoverySummary | undefined;
+  canRun: boolean;
+  onChanged: () => void;
+}) {
+  const s = useStyles();
+  const [connId, setConnId] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Adopt the active connection from the summary when we didn't start one here.
+  useEffect(() => {
+    if (!connId && summary?.activeConnection?.id) setConnId(summary.activeConnection.id);
+  }, [summary?.activeConnection?.id, connId]);
+
+  const conn = useQuery({
+    queryKey: ['tdisc', 'conn', base, connId],
+    enabled: !!connId,
+    queryFn: () => api<Connection>(`${base}/connections/${connId}`),
+    refetchInterval: (q) => (q.state.data?.status === 'pending' ? 3000 : false),
+  });
+
+  const start = useMutation({
+    mutationFn: () => api<Connection>(`${base}/connections`, { method: 'POST', body: JSON.stringify({}) }),
+    onSuccess: (c) => {
+      setErr(null);
+      setConnId(c.id);
+      onChanged();
+    },
+    onError: (e) => setErr(e instanceof ApiError ? e.message : 'Could not start the connection'),
+  });
+
+  const c = conn.data;
+  const run = useMutation({
+    mutationFn: () =>
+      api<TenantDiscoveryRun>(`${base}/runs`, {
+        method: 'POST',
+        body: JSON.stringify({ connectionId: c!.id }),
+      }),
+    onSuccess: () => {
+      setErr(null);
+      onChanged();
+    },
+    onError: (e) => setErr(e instanceof ApiError ? e.message : 'Could not start discovery'),
+  });
+
+  const running = summary?.lastRun && ['queued', 'running'].includes(summary.lastRun.status);
+
+  return (
+    <Card className={s.card}>
+      <Text weight="semibold">Customer tenant connection</Text>
+      <Text size={200} className={s.muted}>
+        Sign in with a <b>Teams Administrator</b> account for this customer. The sign-in is live and
+        point-in-time: nothing is stored, and the session ends when it expires.
+      </Text>
+
+      {!c || c.status === 'expired' || c.status === 'closed' ? (
+        <div className={s.row}>
+          <Button
+            appearance="primary"
+            icon={<PlugConnectedRegular />}
+            disabled={!canRun || start.isPending}
+            onClick={() => start.mutate()}
+          >
+            Connect to customer tenant
+          </Button>
+          {c && (
+            <Text size={200} className={s.muted}>
+              Previous session {c.status}
+              {c.upn ? ` (${c.upn})` : ''}.
+            </Text>
+          )}
+        </div>
+      ) : c.status === 'pending' ? (
+        <div style={{ display: 'grid', gap: 8 }}>
+          {c.user_code ? (
+            <>
+              <Text size={200}>
+                Open{' '}
+                <Link href={c.verification_uri ?? 'https://microsoft.com/devicelogin'} target="_blank" rel="noreferrer">
+                  {c.verification_uri ?? 'https://microsoft.com/devicelogin'}
+                </Link>{' '}
+                and enter this code:
+              </Text>
+              <div className={s.row}>
+                <span className={s.code}>{c.user_code}</span>
+                <CopyButton text={c.user_code} label="Copy code" />
+                <Spinner size="tiny" label="Waiting for sign-in…" />
+              </div>
+              {c.expires_at && (
+                <Text size={200} className={s.muted}>
+                  Code expires {fmt(c.expires_at)}
+                </Text>
+              )}
+            </>
+          ) : (
+            <Spinner size="tiny" label="Requesting a device code…" />
+          )}
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gap: 8 }}>
+          <div className={s.row}>
+            <Badge appearance="tint" color="success">
+              Connected
+            </Badge>
+            <Text size={200}>
+              as <b>{c.upn ?? 'unknown'}</b>
+              {c.expires_at ? ` · session until ${fmt(c.expires_at)}` : ''}
+            </Text>
+          </div>
+          <div className={s.row}>
+            <Button
+              appearance="primary"
+              icon={<ArrowSyncRegular />}
+              disabled={!canRun || run.isPending || !!running}
+              onClick={() => run.mutate()}
+            >
+              {running ? 'Discovery running…' : 'Run discovery'}
+            </Button>
+            <Button size="small" appearance="subtle" onClick={() => start.mutate()} disabled={!canRun}>
+              Sign in again
+            </Button>
+          </div>
+        </div>
+      )}
+      {err && <LoadError message={err} />}
+    </Card>
+  );
+}
+
+function RunCard({ base, summary }: { base: string; summary: TenantDiscoverySummary | undefined }) {
+  const s = useStyles();
+  const last = summary?.lastRun ?? null;
+  const live = useQuery({
+    queryKey: ['tdisc', 'run', base, last?.id],
+    enabled: !!last && ['queued', 'running'].includes(last.status),
+    queryFn: () => api<TenantDiscoveryRun>(`${base}/runs/${last!.id}`),
+    refetchInterval: (q) =>
+      q.state.data && ['queued', 'running'].includes(q.state.data.status) ? 3000 : false,
+  });
+  const run = live.data ?? last;
+  const done = new Set(run?.progress?.completed ?? []);
+  const pct = run ? (run.status === 'completed' ? 1 : done.size / TENANT_DISCOVERY_STEPS.length) : 0;
+  const total = Object.values(run?.progress?.counts ?? {}).reduce((a, b) => a + (b ?? 0), 0);
+
+  return (
+    <Card className={s.card}>
+      <Text weight="semibold">Latest discovery run</Text>
+      {!run ? (
+        <Text size={200} className={s.muted}>
+          No discovery has been run for this customer yet.
+        </Text>
+      ) : (
+        <>
+          <div className={s.row}>
+            <Badge
+              appearance="tint"
+              color={
+                run.status === 'completed'
+                  ? 'success'
+                  : run.status === 'failed'
+                    ? 'danger'
+                    : 'informative'
+              }
+            >
+              {run.status}
+            </Badge>
+            <Text size={200} className={s.muted}>
+              started {fmt(run.started_at ?? run.created_at)}
+              {run.finished_at ? ` · finished ${fmt(run.finished_at)}` : ''}
+              {total ? ` · ${total.toLocaleString()} objects` : ''}
+            </Text>
+          </div>
+          <ProgressBar value={pct} thickness="large" />
+          <div className={s.steps}>
+            {TENANT_DISCOVERY_STEPS.map((st) => {
+              const isCur = run.progress?.step === st && run.status === 'running';
+              const isDone = done.has(st);
+              const errs = (run.progress?.errors ?? []).filter((e) => e.step === st);
+              return (
+                <div key={st} className={s.step}>
+                  {isDone ? (
+                    <CheckmarkRegular style={{ color: tokens.colorPaletteGreenForeground2 }} />
+                  ) : isCur ? (
+                    <Spinner size="extra-tiny" />
+                  ) : (
+                    <span style={{ width: 16, display: 'inline-block' }} />
+                  )}
+                  <span style={{ color: isDone || isCur ? undefined : tokens.colorNeutralForeground3 }}>
+                    {TENANT_DISCOVERY_STEP_LABELS[st]}
+                  </span>
+                  {errs.length > 0 && (
+                    <Text size={200} style={{ color: tokens.colorPaletteRedForeground1 }} title={errs.map((e) => e.message).join('\n')}>
+                      · {errs.length} error{errs.length === 1 ? '' : 's'}
+                    </Text>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {run.error && <LoadError message={run.error} />}
+        </>
+      )}
+    </Card>
+  );
+}
+
+/* ------------------------------- inventory ------------------------------- */
+
+function Pager({
+  page,
+  pages,
+  total,
+  onPage,
+}: {
+  page: number;
+  pages: number;
+  total: number;
+  onPage: (p: number) => void;
+}) {
+  const s = useStyles();
+  if (pages <= 1) return null;
+  return (
+    <div className={s.pager}>
+      <Text size={200} className={s.muted}>
+        Page {page} of {pages} · {total.toLocaleString()} total
+      </Text>
+      <Button size="small" appearance="subtle" icon={<ChevronLeftRegular />} disabled={page <= 1} onClick={() => onPage(page - 1)} />
+      <Button size="small" appearance="subtle" icon={<ChevronRightRegular />} disabled={page >= pages} onClick={() => onPage(page + 1)} />
+    </div>
+  );
+}
+
+function JsonDialog({ title, data, onClose }: { title: string; data: unknown; onClose: () => void }) {
+  const s = useStyles();
+  const text = JSON.stringify(data, null, 2);
+  return (
+    <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
+      <DialogSurface style={{ maxWidth: 760, width: '92vw' }}>
+        <DialogBody>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogContent>
+            <pre className={s.json}>{text}</pre>
+          </DialogContent>
+          <DialogActions>
+            <CopyButton text={text} label="Copy JSON" />
+            <Button appearance="secondary" onClick={onClose}>
+              Close
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  );
+}
+
+function useDebounced(value: string, ms = 250) {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const h = setTimeout(() => setV(value.trim()), ms);
+    return () => clearTimeout(h);
+  }, [value, ms]);
+  return v;
+}
+
+/** Generic snapshot list for one object type. */
+function ObjectsTable({
+  base,
+  type,
+  title,
+  columns,
+}: {
+  base: string;
+  type: TenantObjectType;
+  title?: string;
+  columns?: { label: string; render: (o: TenantObject) => ReactNode }[];
+}) {
+  const s = useStyles();
+  const [qInput, setQInput] = useState('');
+  const q = useDebounced(qInput);
+  const [page, setPage] = useState(1);
+  const [view, setView] = useState<TenantObject | null>(null);
+  const limit = 50;
+  useEffect(() => setPage(1), [q]);
+
+  const list = useQuery({
+    queryKey: ['tdisc', 'objects', base, type, q, page],
+    queryFn: () =>
+      api<Paginated<TenantObject>>(
+        `${base}/objects?type=${type}&page=${page}&limit=${limit}${q ? `&q=${encodeURIComponent(q)}` : ''}`,
+      ),
+    placeholderData: keepPreviousData,
+  });
+  const items = list.data?.items ?? [];
+  const total = list.data?.total ?? 0;
+  const pages = Math.max(1, Math.ceil(total / limit));
+  const cols = columns ?? [
+    { label: 'Name', render: (o: TenantObject) => o.display_name ?? o.object_key },
+    { label: 'Identity', render: (o: TenantObject) => o.object_key },
+  ];
+
+  return (
+    <Card className={s.card}>
+      <div className={s.toolbar}>
+        <Text weight="semibold">
+          {title ?? TENANT_OBJECT_TYPE_LABELS[type]} <span className={s.muted}>({total.toLocaleString()})</span>
+        </Text>
+        <SearchBox size="small" placeholder="Search…" value={qInput} onChange={(_, d) => setQInput(d.value)} style={{ minWidth: 220 }} />
+      </div>
+      {list.isLoading ? (
+        <Spinner size="tiny" />
+      ) : list.isError ? (
+        <LoadError message={(list.error as Error).message} />
+      ) : items.length === 0 ? (
+        <Text size={200} className={s.muted}>
+          {q ? 'No matches.' : 'Nothing discovered yet.'}
+        </Text>
+      ) : (
+        <>
+          <DataTable size="small" minWidth={Math.max(560, (cols.length + 2) * 150)}>
+            <TableHeader>
+              <TableRow>
+                {cols.map((c) => (
+                  <TableHeaderCell key={c.label}>{c.label}</TableHeaderCell>
+                ))}
+                <TableHeaderCell>Last seen</TableHeaderCell>
+                <TableHeaderCell />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.map((o) => (
+                <TableRow key={o.id}>
+                  {cols.map((c) => (
+                    <TableCell key={c.label}>{c.render(o)}</TableCell>
+                  ))}
+                  <TableCell>{fmt(o.discovered_at)}</TableCell>
+                  <TableCell>
+                    <Button size="small" appearance="subtle" icon={<EyeRegular />} onClick={() => setView(o)}>
+                      View
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </DataTable>
+          <Pager page={page} pages={pages} total={total} onPage={setPage} />
+        </>
+      )}
+      {view && <JsonDialog title={view.display_name ?? view.object_key} data={view.data} onClose={() => setView(null)} />}
+    </Card>
+  );
+}
+
+function PoliciesTable({ base }: { base: string }) {
+  const s = useStyles();
+  const [type, setType] = useState<TenantPolicyType | ''>('');
+  const [qInput, setQInput] = useState('');
+  const q = useDebounced(qInput);
+  const [page, setPage] = useState(1);
+  const [view, setView] = useState<TenantPolicySummary | null>(null);
+  const limit = 50;
+  useEffect(() => setPage(1), [q, type]);
+
+  const list = useQuery({
+    queryKey: ['tdisc', 'policies', base, type, q, page],
+    queryFn: () =>
+      api<Paginated<TenantPolicySummary>>(
+        `${base}/policies?page=${page}&limit=${limit}${type ? `&policyType=${type}` : ''}${q ? `&q=${encodeURIComponent(q)}` : ''}`,
+      ),
+    placeholderData: keepPreviousData,
+  });
+  const items = list.data?.items ?? [];
+  const total = list.data?.total ?? 0;
+  const pages = Math.max(1, Math.ceil(total / limit));
+
+  return (
+    <Card className={s.card}>
+      <div className={s.toolbar}>
+        <Text weight="semibold">
+          Policies <span className={s.muted}>({total.toLocaleString()})</span>
+        </Text>
+        <div className={s.row}>
+          <Dropdown
+            size="small"
+            placeholder="All policy types"
+            selectedOptions={type ? [type] : []}
+            value={type ? TENANT_POLICY_TYPE_LABELS[type] : ''}
+            onOptionSelect={(_, d) => setType((d.optionValue ?? '') as TenantPolicyType | '')}
+            style={{ minWidth: 220 }}
+          >
+            <Option value="" text="All policy types">
+              All policy types
+            </Option>
+            {TENANT_POLICY_TYPES.map((p) => (
+              <Option key={p} value={p} text={TENANT_POLICY_TYPE_LABELS[p]}>
+                {TENANT_POLICY_TYPE_LABELS[p]}
+              </Option>
+            ))}
+          </Dropdown>
+          <SearchBox size="small" placeholder="Search…" value={qInput} onChange={(_, d) => setQInput(d.value)} style={{ minWidth: 200 }} />
+        </div>
+      </div>
+      {list.isLoading ? (
+        <Spinner size="tiny" />
+      ) : list.isError ? (
+        <LoadError message={(list.error as Error).message} />
+      ) : items.length === 0 ? (
+        <Text size={200} className={s.muted}>
+          {q || type ? 'No matches.' : 'Nothing discovered yet.'}
+        </Text>
+      ) : (
+        <>
+          <DataTable size="small" minWidth={720}>
+            <TableHeader>
+              <TableRow>
+                <TableHeaderCell>Type</TableHeaderCell>
+                <TableHeaderCell>Name</TableHeaderCell>
+                <TableHeaderCell>Scope</TableHeaderCell>
+                <TableHeaderCell />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.map((p) => (
+                <TableRow key={p.id}>
+                  <TableCell>{TENANT_POLICY_TYPE_LABELS[p.policy_type] ?? p.policy_type}</TableCell>
+                  <TableCell>{p.name}</TableCell>
+                  <TableCell>
+                    {p.is_global ? (
+                      <Badge appearance="tint" color="brand" size="small">
+                        Global
+                      </Badge>
+                    ) : (
+                      <Badge appearance="outline" size="small">
+                        Per-user
+                      </Badge>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Button size="small" appearance="subtle" icon={<EyeRegular />} onClick={() => setView(p)}>
+                      View
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </DataTable>
+          <Pager page={page} pages={pages} total={total} onPage={setPage} />
+        </>
+      )}
+      {view && (
+        <JsonDialog
+          title={`${TENANT_POLICY_TYPE_LABELS[view.policy_type] ?? view.policy_type}: ${view.name}`}
+          data={view.data}
+          onClose={() => setView(null)}
+        />
+      )}
+    </Card>
+  );
+}
+
+function UsersTable({ base, canImport, onImported }: { base: string; canImport: boolean; onImported: () => void }) {
+  const s = useStyles();
+  const [qInput, setQInput] = useState('');
+  const q = useDebounced(qInput);
+  const [page, setPage] = useState(1);
+  const [view, setView] = useState<TenantUserSummary | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const limit = 50;
+  useEffect(() => setPage(1), [q]);
+
+  const list = useQuery({
+    queryKey: ['tdisc', 'users', base, q, page],
+    queryFn: () =>
+      api<Paginated<TenantUserSummary>>(
+        `${base}/users?page=${page}&limit=${limit}${q ? `&q=${encodeURIComponent(q)}` : ''}`,
+      ),
+    placeholderData: keepPreviousData,
+  });
+  const items = list.data?.items ?? [];
+  const total = list.data?.total ?? 0;
+  const pages = Math.max(1, Math.ceil(total / limit));
+
+  return (
+    <Card className={s.card}>
+      <div className={s.toolbar}>
+        <Text weight="semibold">
+          Users <span className={s.muted}>({total.toLocaleString()})</span>
+        </Text>
+        <div className={s.row}>
+          <SearchBox size="small" placeholder="Search UPN, name, number, department…" value={qInput} onChange={(_, d) => setQInput(d.value)} style={{ minWidth: 280 }} />
+          {canImport && (
+            <Button size="small" appearance="primary" onClick={() => setImportOpen(true)}>
+              Import into Data Collection…
+            </Button>
+          )}
+        </div>
+      </div>
+      {list.isLoading ? (
+        <Spinner size="tiny" />
+      ) : list.isError ? (
+        <LoadError message={(list.error as Error).message} />
+      ) : items.length === 0 ? (
+        <Text size={200} className={s.muted}>
+          {q ? 'No matches.' : 'Nothing discovered yet.'}
+        </Text>
+      ) : (
+        <>
+          <DataTable size="small" minWidth={1100}>
+            <TableHeader>
+              <TableRow>
+                <TableHeaderCell>UPN</TableHeaderCell>
+                <TableHeaderCell>Name</TableHeaderCell>
+                <TableHeaderCell>Type</TableHeaderCell>
+                <TableHeaderCell>Voice</TableHeaderCell>
+                <TableHeaderCell>Number</TableHeaderCell>
+                <TableHeaderCell>Features</TableHeaderCell>
+                <TableHeaderCell>Calling policy</TableHeaderCell>
+                <TableHeaderCell>Department</TableHeaderCell>
+                <TableHeaderCell>Data Collection</TableHeaderCell>
+                <TableHeaderCell />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.map((u) => (
+                <TableRow key={u.id}>
+                  <TableCell title={u.upn}>{u.upn}</TableCell>
+                  <TableCell title={u.display_name ?? ''}>{u.display_name ?? '—'}</TableCell>
+                  <TableCell>{u.account_type ?? '—'}</TableCell>
+                  <TableCell>
+                    {u.enterprise_voice_enabled ? (
+                      <Badge appearance="tint" color="success" size="small">
+                        EV
+                      </Badge>
+                    ) : (
+                      <span className={s.muted}>—</span>
+                    )}
+                  </TableCell>
+                  <TableCell>{u.line_uri ? u.line_uri.replace(/^tel:/, '') : '—'}</TableCell>
+                  <TableCell>
+                    <div className={s.chips}>
+                      {(u.feature_types ?? []).slice(0, 4).map((f) => (
+                        <Badge key={f} appearance="outline" size="small">
+                          {f}
+                        </Badge>
+                      ))}
+                      {(u.feature_types ?? []).length > 4 && (
+                        <span className={s.muted}>+{u.feature_types.length - 4}</span>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell>{u.policies?.TeamsCallingPolicy ?? '—'}</TableCell>
+                  <TableCell>{u.department ?? '—'}</TableCell>
+                  <TableCell>
+                    {u.discovery_user_id ? (
+                      <Badge appearance="tint" color="success" size="small">
+                        Linked
+                      </Badge>
+                    ) : (
+                      <span className={s.muted}>—</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Button size="small" appearance="subtle" icon={<EyeRegular />} onClick={() => setView(u)}>
+                      View
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </DataTable>
+          <Pager page={page} pages={pages} total={total} onPage={setPage} />
+        </>
+      )}
+      {view && <JsonDialog title={view.display_name ?? view.upn} data={view} onClose={() => setView(null)} />}
+      {importOpen && (
+        <ImportDialog
+          base={base}
+          onClose={() => setImportOpen(false)}
+          onDone={() => {
+            setImportOpen(false);
+            onImported();
+          }}
+        />
+      )}
+    </Card>
+  );
+}
+
+function ImportDialog({ base, onClose, onDone }: { base: string; onClose: () => void; onDone: () => void }) {
+  const { activeTenantId } = useAuth();
+  const [siteId, setSiteId] = useState('');
+  const [evOnly, setEvOnly] = useState(true);
+  const [result, setResult] = useState<{ created: number; linked: number } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const sites = useQuery({
+    queryKey: ['tdisc', 'sites', activeTenantId],
+    queryFn: () =>
+      api<{ sites: { id: string; sitecode: string; name: string | null }[] }>(`/t/${activeTenantId}/discovery`),
+  });
+  const preview = useQuery({
+    queryKey: ['tdisc', 'import-preview', base, evOnly],
+    queryFn: () => api<{ wouldCreate: number }>(`${base}/import-users/preview?onlyEnterpriseVoice=${evOnly}`),
+  });
+  const run = useMutation({
+    mutationFn: () =>
+      api<{ created: number; linked: number }>(`${base}/import-users`, {
+        method: 'POST',
+        body: JSON.stringify({ siteId, onlyEnterpriseVoice: evOnly }),
+      }),
+    onSuccess: (r) => setResult(r),
+    onError: (e) => setErr(e instanceof ApiError ? e.message : 'Import failed'),
+  });
+
+  const siteList = sites.data?.sites ?? [];
+  const selected = siteList.find((x) => x.id === siteId);
+
+  return (
+    <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
+      <DialogSurface>
+        <DialogBody>
+          <DialogTitle>Import discovered users into Data Collection</DialogTitle>
+          <DialogContent>
+            {result ? (
+              <MessageBar intent="success">
+                <MessageBarBody>
+                  Created <b>{result.created}</b> Data Collection user{result.created === 1 ? '' : 's'}
+                  {result.linked ? ` and linked ${result.linked} existing` : ''}. Users already captured were skipped.
+                </MessageBarBody>
+              </MessageBar>
+            ) : (
+              <div style={{ display: 'grid', gap: 12 }}>
+                <Text size={200}>
+                  Creates a Data Collection user for every discovered tenant user that is not captured yet
+                  (matched on UPN). Existing users are never overwritten; unlinked matches are linked.
+                </Text>
+                <Field label="Site" required hint="Imported users are placed under this site; move them later if needed.">
+                  <Dropdown
+                    placeholder={sites.isLoading ? 'Loading sites…' : 'Select a site'}
+                    selectedOptions={siteId ? [siteId] : []}
+                    value={selected ? `${selected.sitecode} · ${selected.name ?? ''}` : ''}
+                    onOptionSelect={(_, d) => setSiteId(d.optionValue ?? '')}
+                  >
+                    {siteList.map((x) => (
+                      <Option key={x.id} value={x.id} text={`${x.sitecode} · ${x.name ?? ''}`}>
+                        {x.sitecode} · {x.name ?? ''}
+                      </Option>
+                    ))}
+                  </Dropdown>
+                </Field>
+                <Checkbox
+                  checked={evOnly}
+                  onChange={(_, d) => setEvOnly(!!d.checked)}
+                  label="Only users with Enterprise Voice enabled"
+                />
+                <Text size={200}>
+                  {preview.isLoading ? 'Counting…' : `${(preview.data?.wouldCreate ?? 0).toLocaleString()} user(s) would be created.`}
+                </Text>
+                {err && <LoadError message={err} />}
+              </div>
+            )}
+          </DialogContent>
+          <DialogActions>
+            {result ? (
+              <Button appearance="primary" onClick={onDone}>
+                Done
+              </Button>
+            ) : (
+              <>
+                <Button appearance="secondary" onClick={onClose}>
+                  Cancel
+                </Button>
+                <Button
+                  appearance="primary"
+                  disabled={!siteId || run.isPending || (preview.data?.wouldCreate ?? 0) === 0}
+                  onClick={() => run.mutate()}
+                >
+                  Import
+                </Button>
+              </>
+            )}
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  );
+}
+
+/* --------------------------------- page --------------------------------- */
+
+type TabKey = 'overview' | 'users' | 'resource_accounts' | 'numbers' | 'policies' | 'voice_routing' | 'emergency' | 'voice_apps';
+const TABS: { key: TabKey; label: string }[] = [
+  { key: 'overview', label: 'Overview' },
+  { key: 'users', label: 'Users' },
+  { key: 'resource_accounts', label: 'Resource accounts' },
+  { key: 'numbers', label: 'Phone numbers' },
+  { key: 'policies', label: 'Policies' },
+  { key: 'voice_routing', label: 'Voice routing' },
+  { key: 'emergency', label: 'Emergency' },
+  { key: 'voice_apps', label: 'Voice apps' },
+];
+
+const str = (o: TenantObject, k: string) => {
+  const v = o.data[k];
+  return v == null || v === '' ? '—' : Array.isArray(v) ? v.join(', ') : String(v);
+};
+
+export function Discovery() {
+  const s = useStyles();
+  const qc = useQueryClient();
+  const { activeTenantId: tid, can } = useAuth();
+  const [tab, setTab] = useState<TabKey>('overview');
+  const base = `/t/${tid}/tenant-discovery`;
+
+  const summary = useQuery({
+    queryKey: ['tdisc', 'summary', base],
+    enabled: !!tid,
+    queryFn: () => api<TenantDiscoverySummary>(`${base}/summary`),
+    refetchInterval: (q) => {
+      const st = q.state.data?.lastRun?.status;
+      return st === 'queued' || st === 'running' || q.state.data?.activeConnection?.status === 'pending' ? 3000 : 15000;
+    },
+  });
+  const invalidateAll = () => qc.invalidateQueries({ queryKey: ['tdisc'] });
+
+  if (!tid) return <NoTenant />;
+
+  const sm = summary.data;
+  const counts = sm?.counts ?? {};
+
+  return (
+    <Page
+      title="Discovery"
+      subtitle="A point-in-time inventory of the customer's live Microsoft Teams tenant - users, licences, numbers and every voice policy - for Data Collection, Design & Build and Deployment to reference."
+    >
+      <div className={s.grid}>
+        <ConnectCard base={base} summary={sm} canRun={can('tenantdiscovery:run')} onChanged={invalidateAll} />
+        <RunCard base={base} summary={sm} />
+      </div>
+
+      <TabList selectedValue={tab} onTabSelect={(_, d) => setTab(d.value as TabKey)}>
+        {TABS.map((t) => (
+          <Tab key={t.key} value={t.key}>
+            {t.label}
+          </Tab>
+        ))}
+      </TabList>
+
+      {summary.isError && <LoadError message={(summary.error as Error).message} />}
+
+      {tab === 'overview' && (
+        <>
+          <Card className={s.card}>
+            <Text weight="semibold">Tenant</Text>
+            {sm?.tenant ? (
+              <Text size={200}>
+                <b>{sm.tenant.displayName ?? sm.tenant.id}</b>
+                {sm.tenant.displayName ? ` · ${sm.tenant.id}` : ''}
+                {sm.tenant.domains.length ? ` · ${sm.tenant.domains.slice(0, 5).join(', ')}` : ''}
+              </Text>
+            ) : (
+              <Text size={200} className={s.muted}>
+                Run a discovery to capture the tenant.
+              </Text>
+            )}
+          </Card>
+          <div className={s.stats}>
+            {(Object.keys(TENANT_OBJECT_TYPE_LABELS) as TenantObjectType[])
+              .filter((t) => t !== 'tenant')
+              .map((t) => (
+                <Card key={t} className={s.stat}>
+                  <span className={s.statN}>{(counts[t] ?? 0).toLocaleString()}</span>
+                  <Text size={200} className={s.muted}>
+                    {TENANT_OBJECT_TYPE_LABELS[t]}
+                  </Text>
+                </Card>
+              ))}
+            <Card className={s.stat}>
+              <span className={s.statN}>{(sm?.linkedDiscoveryUsers ?? 0).toLocaleString()}</span>
+              <Text size={200} className={s.muted}>
+                Linked to Data Collection
+              </Text>
+            </Card>
+          </div>
+        </>
+      )}
+
+      {tab === 'users' && <UsersTable base={base} canImport={can('discovery:write')} onImported={invalidateAll} />}
+
+      {tab === 'resource_accounts' && (
+        <ObjectsTable
+          base={base}
+          type="resource_account"
+          columns={[
+            { label: 'Name', render: (o) => o.display_name ?? o.object_key },
+            { label: 'UPN', render: (o) => str(o, 'UserPrincipalName') },
+            { label: 'Application', render: (o) => str(o, 'ApplicationId') },
+            { label: 'Number', render: (o) => str(o, 'PhoneNumber') },
+          ]}
+        />
+      )}
+
+      {tab === 'numbers' && (
+        <ObjectsTable
+          base={base}
+          type="phone_number"
+          columns={[
+            { label: 'Number', render: (o) => o.object_key },
+            { label: 'Type', render: (o) => str(o, 'NumberType') },
+            { label: 'Assigned to', render: (o) => str(o, 'AssignedPstnTargetId') },
+            { label: 'Status', render: (o) => str(o, 'ActivationState') },
+            { label: 'Country', render: (o) => str(o, 'IsoCountryCode') },
+          ]}
+        />
+      )}
+
+      {tab === 'policies' && <PoliciesTable base={base} />}
+
+      {tab === 'voice_routing' && (
+        <>
+          <ObjectsTable base={base} type="pstn_gateway" columns={[{ label: 'FQDN', render: (o) => o.object_key }, { label: 'Enabled', render: (o) => str(o, 'Enabled') }, { label: 'Port', render: (o) => str(o, 'SipSignalingPort') }]} />
+          <ObjectsTable base={base} type="pstn_usage" columns={[{ label: 'Usage', render: (o) => o.object_key }]} />
+          <ObjectsTable base={base} type="voice_route" columns={[{ label: 'Route', render: (o) => o.object_key }, { label: 'Pattern', render: (o) => str(o, 'NumberPattern') }, { label: 'Gateways', render: (o) => str(o, 'OnlinePstnGatewayList') }, { label: 'Usages', render: (o) => str(o, 'OnlinePstnUsages') }]} />
+        </>
+      )}
+
+      {tab === 'emergency' && (
+        <>
+          <ObjectsTable base={base} type="emergency_location" columns={[{ label: 'Location', render: (o) => o.display_name ?? o.object_key }, { label: 'Address', render: (o) => str(o, 'HouseNumber') + ' ' + str(o, 'StreetName') }, { label: 'City', render: (o) => str(o, 'City') }, { label: 'Country', render: (o) => str(o, 'CountryOrRegion') }]} />
+          <ObjectsTable base={base} type="civic_address" columns={[{ label: 'Address', render: (o) => o.display_name ?? o.object_key }, { label: 'City', render: (o) => str(o, 'City') }, { label: 'Validated', render: (o) => str(o, 'ValidationStatus') }]} />
+        </>
+      )}
+
+      {tab === 'voice_apps' && (
+        <>
+          <ObjectsTable base={base} type="auto_attendant" columns={[{ label: 'Name', render: (o) => o.display_name ?? o.object_key }, { label: 'Language', render: (o) => str(o, 'LanguageId') }, { label: 'Time zone', render: (o) => str(o, 'TimeZoneId') }]} />
+          <ObjectsTable base={base} type="call_queue" columns={[{ label: 'Name', render: (o) => o.display_name ?? o.object_key }, { label: 'Routing', render: (o) => str(o, 'RoutingMethod') }, { label: 'Agents', render: (o) => String((o.data.Agents as unknown[] | undefined)?.length ?? '—') }]} />
+          <ObjectsTable base={base} type="schedule" columns={[{ label: 'Name', render: (o) => o.display_name ?? o.object_key }, { label: 'Type', render: (o) => str(o, 'Type') }]} />
+        </>
+      )}
+    </Page>
+  );
+}

@@ -28,6 +28,7 @@ import {
   Mail24Regular,
   History24Regular,
   Lightbulb24Regular,
+  Search24Regular,
 } from '@fluentui/react-icons';
 import type { Permission } from '@tvmf/shared';
 import { useAuth } from '../auth';
@@ -87,6 +88,7 @@ interface NavDef {
 const MAIN: NavDef[] = [
   { to: '/', label: 'Dashboard', icon: <Home24Regular /> },
   { to: '/data-collection', label: 'Data Collection', icon: <ClipboardTaskListLtr24Regular />, permission: 'discovery:read' },
+  { to: '/discovery', label: 'Discovery', icon: <Search24Regular />, permission: 'tenantdiscovery:read' },
   { to: '/build', label: 'Design & Build', icon: <Board24Regular />, permission: 'build:read' },
   { to: '/deployment', label: 'Deployment', icon: <CloudArrowUp24Regular />, permission: 'deployment:read' },
   { to: '/handover', label: 'Service Handover', icon: <DocumentBulletListMultiple24Regular />, permission: 'handover:read' },

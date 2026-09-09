@@ -81,6 +81,16 @@ export interface ColumnDef {
   render?: (r: Row) => ReactNode;
 }
 
+/**
+ * Autofill: when the user leaves `field`, call `run(value)`; any keys it returns
+ * are copied into fields that are still empty, and `note` (if returned) is shown
+ * under the field. Used by Data Collection to prefill from the Discovery snapshot.
+ */
+export interface SuggestConfig {
+  field: string;
+  run: (value: string) => Promise<{ values?: Record<string, string>; note?: string; found: boolean } | null>;
+}
+
 export const useRecordStyles = makeStyles({
   card: { ...shorthands.padding('14px'), display: 'grid', ...shorthands.gap('10px') },
   cardHead: {
@@ -137,6 +147,7 @@ export function RecordDialog({
   error,
   onSave,
   geocode,
+  suggest,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -147,11 +158,36 @@ export function RecordDialog({
   error: string | null;
   onSave: (payload: Record<string, unknown>) => void;
   geocode?: GeocodeConfig;
+  suggest?: SuggestConfig;
 }) {
   const s = useRecordStyles();
   const [values, setValues] = useState<Record<string, string>>({});
   const [geoBusy, setGeoBusy] = useState(false);
   const [geoMsg, setGeoMsg] = useState<string | null>(null);
+  const [suggestMsg, setSuggestMsg] = useState<{ text: string; found: boolean } | null>(null);
+
+  const runSuggest = async (value: string) => {
+    if (!suggest || !value.trim()) return;
+    try {
+      const hit = await suggest.run(value.trim());
+      if (!hit) {
+        setSuggestMsg(null);
+        return;
+      }
+      if (hit.values) {
+        setValues((v) => {
+          const next = { ...v };
+          for (const [k, val] of Object.entries(hit.values!)) {
+            if (!next[k] && val) next[k] = val;
+          }
+          return next;
+        });
+      }
+      setSuggestMsg(hit.note ? { text: hit.note, found: hit.found } : null);
+    } catch {
+      setSuggestMsg(null);
+    }
+  };
 
   const runGeocode = async () => {
     if (!geocode) return;
@@ -204,6 +240,7 @@ export function RecordDialog({
     if (open) {
       setValues(initial(editing));
       setGeoMsg(null);
+      setSuggestMsg(null);
     }
   }, [open, editing, initial]);
 
@@ -265,9 +302,28 @@ export function RecordDialog({
                       placeholder={f.placeholder}
                       value={values[f.key] ?? ''}
                       onChange={(_, d) => setValues((v) => ({ ...v, [f.key]: d.value }))}
+                      onBlur={
+                        suggest && f.key === suggest.field
+                          ? (e) => void runSuggest(e.currentTarget.value)
+                          : undefined
+                      }
                     />
                   )}
                 </Field>
+                {suggest && f.key === suggest.field && suggestMsg && (
+                  <Text
+                    size={200}
+                    style={{
+                      gridColumn: '1 / -1',
+                      marginTop: -6,
+                      color: suggestMsg.found
+                        ? tokens.colorPaletteGreenForeground2
+                        : tokens.colorNeutralForeground3,
+                    }}
+                  >
+                    {suggestMsg.text}
+                  </Text>
+                )}
                 {geocode && f.key === geocode.addressField && (
                   <div style={{ gridColumn: '1 / -1', display: 'grid', gap: 4 }}>
                     <Button
@@ -440,6 +496,7 @@ export function PagedSection({
   extraRowAction,
   emptyText = 'Nothing captured yet.',
   pageSize = 50,
+  suggest,
 }: {
   title: string;
   hint?: string;
@@ -454,6 +511,7 @@ export function PagedSection({
   extraRowAction?: (r: Row) => ReactNode;
   emptyText?: string;
   pageSize?: number;
+  suggest?: SuggestConfig;
 }) {
   const s = useRecordStyles();
   const qc = useQueryClient();
@@ -603,6 +661,7 @@ export function PagedSection({
         saving={save.isPending}
         error={error}
         onSave={(payload) => save.mutate(payload)}
+        suggest={suggest}
       />
     </Card>
   );

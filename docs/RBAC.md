@@ -72,6 +72,7 @@ deployment:read  deployment:connect  deployment:dryrun  deployment:execute
 handover:read  handover:generate
 audit:read:tenant   audit:read:platform
 feature:read  feature:create  feature:manage
+tenantdiscovery:read  tenantdiscovery:run
 ```
 
 ## Matrix (✓ = allowed)
@@ -98,6 +99,7 @@ feature:read  feature:create  feature:manage
 | audit:read:platform | ✓ | | | |
 | feature:read / feature:create | ✓ | ✓ | ✓ | |
 | feature:manage (move / edit / delete cards) | ✓ | | | |
+| tenantdiscovery:read / run (Discovery: connect to the customer's live Teams tenant) | ✓ | | ✓ | |
 
 ## Enforcement
 

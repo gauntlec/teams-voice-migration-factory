@@ -8,5 +8,7 @@ import { GeocodeService } from './geocode.service';
 @Module({
   controllers: [DataCollectionController, TelephonyController],
   providers: [DataCollectionService, TelephonyService, GeocodeService],
+  // Discovery's "import users" respects the same draft/submitted/accepted lock.
+  exports: [DataCollectionService],
 })
 export class DataCollectionModule {}

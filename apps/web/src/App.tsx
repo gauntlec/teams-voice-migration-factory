@@ -19,6 +19,7 @@ import { AdminSites } from './pages/admin/Sites';
 import { AdminEmailLog } from './pages/admin/EmailLog';
 import { AdminAudit } from './pages/admin/Audit';
 import { FeatureRequests } from './pages/FeatureRequests';
+import { Discovery } from './pages/Discovery';
 
 export function App() {
   const { status } = useAuth();
@@ -41,6 +42,14 @@ export function App() {
         <Route path="/data-collection" element={<DataCollection />} />
         <Route path="/data-collection/policies" element={<DataCollectionPolicies />} />
         <Route path="/data-collection/sites/:siteId" element={<SiteWorkspace />} />
+        <Route
+          path="/discovery"
+          element={
+            <RequirePermission permission="tenantdiscovery:read">
+              <Discovery />
+            </RequirePermission>
+          }
+        />
         <Route
           path="/build"
           element={
