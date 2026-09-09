@@ -377,33 +377,51 @@ export function AdminUsers() {
         ) : users.isError ? (
           <LoadError message={(users.error as Error).message} />
         ) : (
-          <Table size="small">
+          <div style={{ overflowX: 'auto', overflowY: 'hidden', paddingBottom: 2 }}>
+          <Table size="small" style={{ minWidth: 'max-content' }}>
             <TableHeader>
               <TableRow>
-                <TableHeaderCell>Name</TableHeaderCell>
-                <TableHeaderCell>Email</TableHeaderCell>
-                <TableHeaderCell>Role</TableHeaderCell>
-                <TableHeaderCell>Customers</TableHeaderCell>
-                <TableHeaderCell>Status</TableHeaderCell>
-                <TableHeaderCell>MFA</TableHeaderCell>
-                <TableHeaderCell>Actions</TableHeaderCell>
+                <TableHeaderCell style={{ whiteSpace: 'nowrap' }}>Name</TableHeaderCell>
+                <TableHeaderCell style={{ whiteSpace: 'nowrap' }}>Email</TableHeaderCell>
+                <TableHeaderCell style={{ whiteSpace: 'nowrap' }}>Role</TableHeaderCell>
+                <TableHeaderCell style={{ whiteSpace: 'nowrap' }}>Customers</TableHeaderCell>
+                <TableHeaderCell style={{ whiteSpace: 'nowrap' }}>Status</TableHeaderCell>
+                <TableHeaderCell style={{ whiteSpace: 'nowrap' }}>MFA</TableHeaderCell>
+                <TableHeaderCell style={{ whiteSpace: 'nowrap', width: '1%' }}>Actions</TableHeaderCell>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {users.data!.map((u) => (
+              {users.data!.map((u) => {
+                const customers =
+                  u.role === 'SUPER_ADMIN'
+                    ? 'all'
+                    : (u.tenants ?? []).map((t) => t.name).join(', ') || '—';
+                return (
                 <TableRow key={u.id}>
-                  <TableCell>{u.display_name}</TableCell>
-                  <TableCell>{u.email}</TableCell>
-                  <TableCell>{u.role}</TableCell>
-                  <TableCell>
-                    {u.role === 'SUPER_ADMIN'
-                      ? 'all'
-                      : (u.tenants ?? []).map((t) => t.name).join(', ') || '—'}
+                  <TableCell style={{ whiteSpace: 'nowrap' }}>{u.display_name}</TableCell>
+                  <TableCell style={{ whiteSpace: 'nowrap' }}>{u.email}</TableCell>
+                  <TableCell style={{ whiteSpace: 'nowrap' }}>{u.role}</TableCell>
+                  <TableCell style={{ whiteSpace: 'nowrap' }}>
+                    <span
+                      title={customers}
+                      style={{
+                        display: 'inline-block',
+                        maxWidth: 260,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        verticalAlign: 'middle',
+                      }}
+                    >
+                      {customers}
+                    </span>
                   </TableCell>
-                  <TableCell>{u.status}</TableCell>
-                  <TableCell>{u.totp_enrolled ? 'enrolled' : '—'}</TableCell>
-                  <TableCell>
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  <TableCell style={{ whiteSpace: 'nowrap' }}>{u.status}</TableCell>
+                  <TableCell style={{ whiteSpace: 'nowrap' }}>
+                    {u.totp_enrolled ? 'enrolled' : '—'}
+                  </TableCell>
+                  <TableCell style={{ whiteSpace: 'nowrap' }}>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'nowrap' }}>
                       {u.role !== 'SUPER_ADMIN' && (
                         <Button
                           size="small"
@@ -444,9 +462,11 @@ export function AdminUsers() {
                     </div>
                   </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
+          </div>
         )}
       </Card>
 

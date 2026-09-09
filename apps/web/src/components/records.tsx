@@ -82,7 +82,25 @@ export interface ColumnDef {
 }
 
 export const useRecordStyles = makeStyles({
-  card: { ...shorthands.padding('16px'), display: 'grid', ...shorthands.gap('12px') },
+  card: { ...shorthands.padding('14px'), display: 'grid', ...shorthands.gap('10px') },
+  tableWrap: {
+    overflowX: 'auto',
+    overflowY: 'hidden',
+    ...shorthands.padding('0', '0', '2px', '0'),
+  },
+  /* keep columns at their natural width so a narrow window scrolls instead of
+     squashing cells until their text overlaps */
+  table: { minWidth: 'max-content' },
+  nowrapCell: { whiteSpace: 'nowrap' },
+  cellText: {
+    display: 'inline-block',
+    maxWidth: '360px',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    verticalAlign: 'middle',
+  },
+  actionsCol: { width: '1%', whiteSpace: 'nowrap' },
   cardHead: {
     display: 'flex',
     justifyContent: 'space-between',
@@ -629,26 +647,36 @@ function RecordTable({
 }) {
   const s = useRecordStyles();
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <Table size="small">
+    <div className={s.tableWrap}>
+      <Table size="small" className={s.table}>
         <TableHeader>
           <TableRow>
             {columns.map((c) => (
-              <TableHeaderCell key={c.key}>{c.label}</TableHeaderCell>
+              <TableHeaderCell key={c.key} className={s.nowrapCell}>
+                {c.label}
+              </TableHeaderCell>
             ))}
-            {!readOnly && <TableHeaderCell />}
+            {!readOnly && <TableHeaderCell className={s.actionsCol} />}
           </TableRow>
         </TableHeader>
         <TableBody>
           {rows.map((r) => (
             <TableRow key={r.id}>
-              {columns.map((c) => (
-                <TableCell key={c.key}>
-                  {c.render ? c.render(r) : ((r[c.key] as string) ?? '—') || '—'}
-                </TableCell>
-              ))}
+              {columns.map((c) => {
+                const content = c.render ? c.render(r) : ((r[c.key] as string) ?? '—') || '—';
+                return (
+                  <TableCell key={c.key} className={s.nowrapCell}>
+                    <span
+                      className={s.cellText}
+                      title={typeof content === 'string' ? content : undefined}
+                    >
+                      {content}
+                    </span>
+                  </TableCell>
+                );
+              })}
               {!readOnly && (
-                <TableCell>
+                <TableCell className={s.actionsCol}>
                   <div className={s.rowActions}>
                     {extraRowAction?.(r)}
                     <Button
