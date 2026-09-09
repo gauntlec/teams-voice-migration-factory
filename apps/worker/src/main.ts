@@ -63,6 +63,30 @@ setInterval(() => {
   }
 }, 60_000).unref();
 
+/**
+ * Sessions live only in this process: after a restart every connection row
+ * that still says pending/active is dead. Mark them expired so the UI asks for
+ * a fresh sign-in instead of showing a ghost "Connected".
+ */
+async function expireOrphanedConnections() {
+  const tenants = await platformDb(db).selectFrom('tenants').select('schema_name').execute();
+  let n = 0;
+  for (const { schema_name } of tenants) {
+    const r = await tenantDb(db, schema_name)
+      .updateTable('connections')
+      .set({ status: 'expired', closed_at: new Date().toISOString() })
+      .where('status', 'in', ['pending', 'active'])
+      .executeTakeFirst()
+      .catch(() => undefined);
+    n += Number(r?.numUpdatedRows ?? 0);
+  }
+  if (n) {
+    // eslint-disable-next-line no-console
+    console.log(`expired ${n} orphaned tenant connection(s) from a previous worker process`);
+  }
+}
+void expireOrphanedConnections();
+
 async function handleConnectionStart(job: Job) {
   const { schema, connectionId, tenantDomain } = job.data as {
     schema: string;

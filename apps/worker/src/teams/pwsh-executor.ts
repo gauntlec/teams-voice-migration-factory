@@ -20,6 +20,7 @@ import {
 export class PwshTeamsExecutor implements TeamsExecutor {
   private child: ChildProcessWithoutNullStreams | null = null;
   private buf = '';
+  private errBuf = '';
   private queue: Promise<unknown> = Promise.resolve();
   private pending: Map<string, { out: string[]; resolve: (v: string) => void; reject: (e: Error) => void }> =
     new Map();
@@ -35,24 +36,42 @@ export class PwshTeamsExecutor implements TeamsExecutor {
 
   private ensureChild(): ChildProcessWithoutNullStreams {
     if (this.child) return this.child;
-    const child = spawn('pwsh', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '-'], {
+    // NB: not `-Command -` / `-File -` - those read stdin until EOF before
+    // running anything. With plain redirected stdin pwsh executes line by line,
+    // which is what a long-lived session needs.
+    const child = spawn('pwsh', ['-NoLogo', '-NoProfile'], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, POWERSHELL_TELEMETRY_OPTOUT: '1', TERM: 'dumb' },
+      env: { ...process.env, POWERSHELL_TELEMETRY_OPTOUT: '1', TERM: 'dumb', NO_COLOR: '1' },
     });
+    // quiet the session: no prompt echo, no progress bars, keep going on errors
+    child.stdin.write(
+      "function prompt { ' ' }; $ProgressPreference = 'SilentlyContinue'; $ErrorActionPreference = 'Continue'; $PSStyle.OutputRendering = 'PlainText'\n",
+    );
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => this.onStdout(chunk));
-    // stderr is deliberately not surfaced (could echo auth details); errors are
-    // captured per command via try/catch inside the script we send.
-    child.stderr.on('data', () => undefined);
-    child.on('exit', (code) => {
-      const err = new Error(`pwsh exited (${code ?? 'signal'})`);
+    // stderr is never logged or surfaced (it could echo auth details). The only
+    // thing we look for on it is the device-code prompt, in case the module
+    // writes that line to the error/warning stream on this host.
+    child.stderr.on('data', (chunk: string) => {
+      this.errBuf += chunk;
+      let nl: number;
+      while ((nl = this.errBuf.indexOf('\n')) >= 0) {
+        const line = this.errBuf.slice(0, nl).replace(/\r$/, '');
+        this.errBuf = this.errBuf.slice(nl + 1);
+        this.matchDevicePrompt(line);
+      }
+    });
+    const fail = (err: Error) => {
       for (const p of this.pending.values()) p.reject(err);
       this.pending.clear();
       this.devicePrompt?.reject(err);
+      this.devicePrompt = null;
       this.signedIn = false;
       this.child = null;
-    });
+    };
+    child.on('error', (e) => fail(new Error(`could not start pwsh: ${e.message}`)));
+    child.on('exit', (code) => fail(new Error(`pwsh exited (${code ?? 'signal'})`)));
     this.child = child;
     return child;
   }
@@ -67,21 +86,23 @@ export class PwshTeamsExecutor implements TeamsExecutor {
     }
   }
 
+  /** The device-code prompt while Connect-MicrosoftTeams is blocking. */
+  private matchDevicePrompt(line: string): boolean {
+    if (!this.devicePrompt) return false;
+    const m = /open the page (\S+) and enter the code ([A-Z0-9-]{6,})/i.exec(line);
+    if (!m) return false;
+    const p = this.devicePrompt;
+    this.devicePrompt = null;
+    p.resolve({
+      userCode: m[2],
+      verificationUri: m[1].replace(/[.,]$/, ''),
+      expiresAt: new Date(Date.now() + 15 * 60_000),
+    });
+    return true;
+  }
+
   private onLine(line: string) {
-    // device code prompt while Connect-MicrosoftTeams is blocking
-    if (this.devicePrompt) {
-      const m = /open the page (\S+) and enter the code ([A-Z0-9-]+)/i.exec(line);
-      if (m) {
-        const p = this.devicePrompt;
-        this.devicePrompt = null;
-        p.resolve({
-          userCode: m[2],
-          verificationUri: m[1].replace(/[.,]$/, ''),
-          expiresAt: new Date(Date.now() + 15 * 60_000),
-        });
-        return;
-      }
-    }
+    if (this.matchDevicePrompt(line)) return;
     const end = /^__END__([0-9a-f-]{36})$/.exec(line);
     if (end) {
       const p = this.pending.get(end[1]);
@@ -122,7 +143,12 @@ export class PwshTeamsExecutor implements TeamsExecutor {
             reject(e);
           },
         });
-        child.stdin.write(`${script}\nWrite-Output '__END__${id}'\n`);
+        // One physical line per command: the script goes over base64 so
+        // multi-line try/catch blocks and quoting never confuse the line reader.
+        const b64 = Buffer.from(script, 'utf16le').toString('base64');
+        child.stdin.write(
+          `iex ([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${b64}'))); Write-Output '__END__${id}'\n`,
+        );
       });
     const p = this.queue.then(run, run);
     this.queue = p.catch(() => undefined);

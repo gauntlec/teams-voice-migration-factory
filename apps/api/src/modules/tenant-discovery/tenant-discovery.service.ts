@@ -175,7 +175,9 @@ export class TenantDiscoveryService {
       s
         .selectFrom('connections')
         .select(['id', 'upn', 'status', 'expires_at'])
-        .where('status', '=', 'active')
+        .where('status', 'in', ['active', 'pending'])
+        // a session past its expiry is dead even if the row was never flipped
+        .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', new Date().toISOString())]))
         .orderBy('started_at', 'desc')
         .executeTakeFirst(),
       s
