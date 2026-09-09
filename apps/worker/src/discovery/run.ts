@@ -205,6 +205,13 @@ async function upsertObject(
 }
 
 const str = (v: unknown): string | null => (v == null || v === '' ? null : String(v));
+/**
+ * `pg` encodes a JS array as a Postgres array literal ("{a,b}"), which a jsonb
+ * column rejects ("invalid input syntax for type json"). Objects are fine, so
+ * only array-valued jsonb fields go through this. The cast keeps Kysely's
+ * column typing while the value on the wire is JSON text.
+ */
+const jsonb = <T>(v: T): T => JSON.stringify(v) as unknown as T;
 const bool = (v: unknown): boolean | null =>
   typeof v === 'boolean' ? v : typeof v === 'string' ? /^true$/i.test(v) : null;
 const iso = (v: unknown): string | null => {
@@ -233,17 +240,17 @@ async function projectUser(s: Scoped, runId: string, objectId: string, r: Rec) {
     account_enabled: bool(r.AccountEnabled),
     enterprise_voice_enabled: bool(r.EnterpriseVoiceEnabled) ?? false,
     line_uri: str(r.LineUri) ?? str(r.LineURI),
-    telephone_numbers: numbers,
+    telephone_numbers: jsonb(numbers),
     feature_types: Array.isArray(r.FeatureTypes) ? (r.FeatureTypes as unknown[]).map(String) : [],
-    assigned_plans: Array.isArray(r.AssignedPlan) ? (r.AssignedPlan as unknown[]) : [],
+    assigned_plans: jsonb(Array.isArray(r.AssignedPlan) ? (r.AssignedPlan as unknown[]) : []),
     usage_location: str(r.UsageLocation),
     department: str(r.Department),
     job_title: str(r.Title) ?? str(r.JobTitle),
     interpreted_user_type: str(r.InterpretedUserType),
     policies,
-    effective_policy_assignments: Array.isArray(r.EffectivePolicyAssignments)
-      ? (r.EffectivePolicyAssignments as unknown[])
-      : [],
+    effective_policy_assignments: jsonb(
+      Array.isArray(r.EffectivePolicyAssignments) ? (r.EffectivePolicyAssignments as unknown[]) : [],
+    ),
     when_changed: iso(r.WhenChanged),
     last_seen_run_id: runId,
     removed_at: null,
