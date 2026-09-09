@@ -19,8 +19,23 @@ const emptyProgress = (): TenantDiscoveryProgress => ({
   completed: [],
   counts: {},
   changed: { added: 0, updated: 0, removed: 0, readded: 0 },
+  note: null,
   errors: [],
 });
+
+/** Human label for an object type, for the live "Storing 3,400 users…" note. */
+const TYPE_NOUN: Partial<Record<TenantObjectType, string>> = {
+  user: 'users',
+  resource_account: 'resource accounts',
+  phone_number: 'phone numbers',
+  policy: 'policies',
+  auto_attendant: 'auto attendants',
+  call_queue: 'call queues',
+  voice_route: 'voice routes',
+  emergency_location: 'emergency locations',
+  civic_address: 'civic addresses',
+};
+const nounFor = (t: TenantObjectType) => TYPE_NOUN[t] ?? `${t.replace(/_/g, ' ')}s`;
 
 /** Stable JSON so two records compare equal regardless of key order. */
 const canon = (v: unknown): string => {
@@ -98,14 +113,16 @@ export async function handleTenantDiscoveryRun(
     const specs = STEP_CMDLETS[step].filter((sp) => wantType(sp.objectType));
     if (!specs.length) continue; // step not in this run's scope
     progress.step = step;
+    progress.note = null;
     await saveProgress(s, runId, progress);
     try {
       for (const spec of specs) {
-        const n = await runSpec(s, exec, runId, spec, ctx, progress);
-        progress.counts[spec.objectType] = (progress.counts[spec.objectType] ?? 0) + n;
+        // runSpec now updates progress.counts[spec.objectType] itself, live
+        await runSpec(s, exec, runId, spec, ctx, progress);
       }
       for (const t of STEP_TYPES[step]) if (wantType(t)) succeededTypes.add(t);
       progress.completed.push(step);
+      progress.note = null;
     } catch (e) {
       const message = (e as Error).message ?? String(e);
       progress.errors.push({ step, message });
@@ -129,6 +146,9 @@ export async function handleTenantDiscoveryRun(
 
   // Tombstone objects that a *successful* step no longer returned.
   if (succeededTypes.size) {
+    progress.step = null;
+    progress.note = 'Reconciling removed objects…';
+    await saveProgress(s, runId, progress);
     const types = Array.from(succeededTypes);
     const sweptAt = new Date().toISOString();
     // Record a 'removed' version for each object about to be tombstoned.
@@ -183,6 +203,7 @@ export async function handleTenantDiscoveryRun(
   }
 
   progress.step = null;
+  progress.note = null;
   const total = Object.values(progress.counts).reduce((a, b) => a + (b ?? 0), 0);
   await s
     .updateTable('tenant_discovery_runs')
@@ -301,7 +322,11 @@ async function runSpec(
   ctx: RunContext,
   progress: TenantDiscoveryProgress,
 ): Promise<number> {
+  const noun = nounFor(spec.objectType);
+
   // Current snapshot for this type, keyed by object_key - one read for the step.
+  progress.note = `Loading existing ${noun}…`;
+  await saveProgress(s, runId, progress);
   const prev = new Map<string, PrevObject>();
   for (const row of await s
     .selectFrom('tenant_objects')
@@ -324,7 +349,9 @@ async function runSpec(
     }
   };
 
+  const base = progress.counts[spec.objectType] ?? 0;
   let stored = 0;
+  let lastSaved = 0;
   const handle = async (records: unknown[]) => {
     for (const raw of records) {
       if (!raw || typeof raw !== 'object') continue;
@@ -360,14 +387,23 @@ async function runSpec(
           await projectPolicy(s, runId, objectId, spec.policyType, r);
         }
         stored += 1;
+        progress.counts[spec.objectType] = base + stored;
       }
       if (versions.length >= 500) await flushVersions();
+      // heartbeat the run row so the UI shows the count climbing on a big step
+      if (stored - lastSaved >= 250) {
+        lastSaved = stored;
+        progress.note = `Storing ${stored.toLocaleString()} ${noun}…`;
+        await saveProgress(s, runId, progress);
+      }
     }
   };
 
   const qopts = { select: spec.select, depth: spec.depth, timeoutMs: spec.timeoutMs };
 
   if (!spec.page) {
+    progress.note = `Fetching ${noun} from the tenant (this can take a few minutes on a large tenant)…`;
+    await saveProgress(s, runId, progress);
     await handle(
       await exec.query(spec.command, spec.resultSize ? { ResultSize: spec.resultSize } : {}, qopts),
     );
@@ -378,6 +414,8 @@ async function runSpec(
   // Paged: keep going until a short page.
   const size = spec.page.size;
   for (let skip = 0; ; skip += size) {
+    progress.note = `Fetching ${noun}${skip ? ` (from ${skip.toLocaleString()})` : ''}…`;
+    await saveProgress(s, runId, progress);
     const params = spec.page.style === 'first-skip' ? { First: size, Skip: skip } : { Top: size, Skip: skip };
     const batch = await exec.query(spec.command, params, qopts);
     await handle(batch);

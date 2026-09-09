@@ -72,10 +72,12 @@ export interface TenantDiscoveryProgress {
   step: import('./domain').TenantDiscoveryStep | null;
   /** steps completed so far, in order */
   completed: import('./domain').TenantDiscoveryStep[];
-  /** objects stored per object type during this run */
+  /** objects stored per object type during this run (updated live within a step) */
   counts: Partial<Record<import('./domain').TenantObjectType, number>>;
   /** how many objects were added / updated / removed / re-added this run */
   changed: TenantDiscoveryChangeCounts;
+  /** free-text detail for the current step, e.g. "Fetching users…" / "Storing 3,400 users…" */
+  note?: string | null;
   /** non-fatal step errors (the run carries on) */
   errors: { step: import('./domain').TenantDiscoveryStep; message: string }[];
 }

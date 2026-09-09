@@ -594,6 +594,13 @@ function RunCard({ base, summary }: { base: string; summary: TenantDiscoverySumm
   const pct = run ? (run.status === 'completed' ? 1 : done.size / Math.max(1, scopeSteps.length)) : 0;
   const total = Object.values(run?.progress?.counts ?? {}).reduce((a, b) => a + (b ?? 0), 0);
   const changed = changeCountsOf(run);
+  const running = !!run && ['queued', 'running'].includes(run.status);
+  const elapsed =
+    running && run?.started_at
+      ? Math.max(0, Math.round((Date.now() - new Date(run.started_at).getTime()) / 1000))
+      : null;
+  const elapsedText =
+    elapsed == null ? '' : elapsed < 90 ? `${elapsed}s` : `${Math.round(elapsed / 60)}m`;
 
   return (
     <Card className={s.card}>
@@ -619,10 +626,16 @@ function RunCard({ base, summary }: { base: string; summary: TenantDiscoverySumm
             </Badge>
             <Text size={200} className={s.muted}>
               started {fmt(run.started_at ?? run.created_at)}
-              {run.finished_at ? ` · finished ${fmt(run.finished_at)}` : ''}
+              {run.finished_at ? ` · finished ${fmt(run.finished_at)}` : elapsedText ? ` · ${elapsedText} elapsed` : ''}
               {total ? ` · ${total.toLocaleString()} objects` : ''}
             </Text>
           </div>
+          {running && run.progress?.note && (
+            <div className={s.row}>
+              <Spinner size="extra-tiny" />
+              <Text size={200}>{run.progress.note}</Text>
+            </div>
+          )}
           {run.scope_types && (
             <div className={s.chips}>
               <Badge appearance="outline" color="informative" size="small">
@@ -665,6 +678,10 @@ function RunCard({ base, summary }: { base: string; summary: TenantDiscoverySumm
               const isCur = run.progress?.step === st && run.status === 'running';
               const isDone = done.has(st);
               const errs = (run.progress?.errors ?? []).filter((e) => e.step === st);
+              const stepCount = TENANT_DISCOVERY_STEP_TYPES[st].reduce(
+                (a, t) => a + (run.progress?.counts?.[t] ?? 0),
+                0,
+              );
               return (
                 <div key={st} className={s.step}>
                   {isDone ? (
@@ -677,6 +694,11 @@ function RunCard({ base, summary }: { base: string; summary: TenantDiscoverySumm
                   <span style={{ color: isDone || isCur ? undefined : tokens.colorNeutralForeground3 }}>
                     {TENANT_DISCOVERY_STEP_LABELS[st]}
                   </span>
+                  {(isDone || isCur) && stepCount > 0 && (
+                    <Text size={200} className={s.muted}>
+                      · {stepCount.toLocaleString()}
+                    </Text>
+                  )}
                   {errs.length > 0 && (
                     <Text size={200} style={{ color: tokens.colorPaletteRedForeground1 }} title={errs.map((e) => e.message).join('\n')}>
                       · {errs.length} error{errs.length === 1 ? '' : 's'}
