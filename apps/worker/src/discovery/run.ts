@@ -52,13 +52,14 @@ export async function handleTenantDiscoveryRun(
 
   const succeededTypes = new Set<TenantObjectType>();
   let signInLost = false;
+  const ctx: RunContext = { assignees: null };
 
   for (const step of TENANT_DISCOVERY_STEPS) {
     progress.step = step;
     await saveProgress(s, runId, progress);
     try {
       for (const spec of STEP_CMDLETS[step]) {
-        const n = await runSpec(s, exec, runId, spec);
+        const n = await runSpec(s, exec, runId, spec, ctx);
         progress.counts[spec.objectType] = (progress.counts[spec.objectType] ?? 0) + n;
       }
       for (const t of STEP_TYPES[step]) succeededTypes.add(t);
@@ -128,14 +129,80 @@ async function saveProgress(s: Scoped, runId: string, progress: TenantDiscoveryP
   await s.updateTable('tenant_discovery_runs').set({ progress }).where('id', '=', runId).execute();
 }
 
+interface Assignee {
+  upn: string | null;
+  displayName: string | null;
+  kind: 'user' | 'resource_account';
+}
+interface RunContext {
+  /** Entra object id -> who holds it; built once, after the users + resource-account steps */
+  assignees: Map<string, Assignee> | null;
+}
+
+/** Who a phone number is assigned to, resolved from what this run has already stored. */
+async function loadAssignees(s: Scoped): Promise<Map<string, Assignee>> {
+  const map = new Map<string, Assignee>();
+  const users = await s
+    .selectFrom('tenant_users')
+    .select(['entra_id', 'upn', 'display_name'])
+    .where('removed_at', 'is', null)
+    .execute();
+  for (const u of users) if (u.entra_id) map.set(u.entra_id, { upn: u.upn, displayName: u.display_name, kind: 'user' });
+  const ras = await s
+    .selectFrom('tenant_objects')
+    .select(['object_key', 'display_name', 'data'])
+    .where('object_type', '=', 'resource_account')
+    .where('removed_at', 'is', null)
+    .execute();
+  for (const ra of ras) {
+    map.set(ra.object_key, {
+      upn: str((ra.data as Rec).UserPrincipalName),
+      displayName: ra.display_name,
+      kind: 'resource_account',
+    });
+  }
+  return map;
+}
+
+/** Keys the module wraps every policy in that carry no settings - hidden from the stored definition. */
+const POLICY_NOISE_KEYS = new Set([
+  'Key',
+  'SchemaId',
+  'DefaultXml',
+  'AuthorityId',
+  'XmlRoot',
+  'Element',
+  'Anchor',
+  'Signature',
+  'ConfigObject',
+  'IsModified',
+  'ScopeClass',
+  'Class',
+  'TypedIdentity',
+]);
+const cleanPolicy = (r: Rec): Rec =>
+  Object.fromEntries(Object.entries(r).filter(([k]) => !POLICY_NOISE_KEYS.has(k)));
+
 /** Fetch one cmdlet (paging when supported) and upsert every record. Returns the count stored. */
-async function runSpec(s: Scoped, exec: TeamsExecutor, runId: string, spec: CmdletSpec): Promise<number> {
+async function runSpec(
+  s: Scoped,
+  exec: TeamsExecutor,
+  runId: string,
+  spec: CmdletSpec,
+  ctx: RunContext,
+): Promise<number> {
   let stored = 0;
   const handle = async (records: unknown[]) => {
     for (const raw of records) {
       if (!raw || typeof raw !== 'object') continue;
       const recs = spec.explode ? spec.explode(raw as Rec) : [raw as Rec];
-      for (const r of recs) {
+      for (let r of recs) {
+        if (spec.objectType === 'phone_number') {
+          ctx.assignees ??= await loadAssignees(s);
+          const target = str(r.AssignedPstnTargetId);
+          const who = target ? ctx.assignees.get(target) : undefined;
+          if (who) r = { ...r, AssignedTo: who };
+        }
         const key = spec.key(r) ?? fallbackKey(r);
         const objectId = await upsertObject(s, runId, spec.objectType, key, spec.name(r), r);
         if (spec.objectType === 'user') await projectUser(s, runId, objectId, r);
@@ -272,7 +339,8 @@ async function projectPolicy(s: Scoped, runId: string, objectId: string, policyT
     identity,
     name,
     is_global: /^global$/i.test(name),
-    data: r,
+    // the settings only - the raw record (with the module's XML wrapper) stays on tenant_objects
+    data: cleanPolicy(r),
     last_seen_run_id: runId,
     removed_at: null,
   };

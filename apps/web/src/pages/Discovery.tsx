@@ -621,21 +621,25 @@ function PoliciesTable({ base }: { base: string }) {
   );
 }
 
+const ACCOUNT_TYPES = ['User', 'ResourceAccount', 'Guest', 'IneligibleUser', 'SfBOnPremUser'] as const;
+
 function UsersTable({ base, canImport, onImported }: { base: string; canImport: boolean; onImported: () => void }) {
   const s = useStyles();
   const [qInput, setQInput] = useState('');
   const q = useDebounced(qInput);
   const [page, setPage] = useState(1);
+  const [evOnly, setEvOnly] = useState(false);
+  const [acctType, setAcctType] = useState('');
   const [view, setView] = useState<TenantUserSummary | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const limit = 50;
-  useEffect(() => setPage(1), [q]);
+  useEffect(() => setPage(1), [q, evOnly, acctType]);
 
   const list = useQuery({
-    queryKey: ['tdisc', 'users', base, q, page],
+    queryKey: ['tdisc', 'users', base, q, page, evOnly, acctType],
     queryFn: () =>
       api<Paginated<TenantUserSummary>>(
-        `${base}/users?page=${page}&limit=${limit}${q ? `&q=${encodeURIComponent(q)}` : ''}`,
+        `${base}/users?page=${page}&limit=${limit}${q ? `&q=${encodeURIComponent(q)}` : ''}${evOnly ? '&ev=true' : ''}${acctType ? `&accountType=${acctType}` : ''}`,
       ),
     placeholderData: keepPreviousData,
   });
@@ -650,7 +654,25 @@ function UsersTable({ base, canImport, onImported }: { base: string; canImport: 
           Users <span className={s.muted}>({total.toLocaleString()})</span>
         </Text>
         <div className={s.row}>
-          <SearchBox size="small" placeholder="Search UPN, name, number, department…" value={qInput} onChange={(_, d) => setQInput(d.value)} style={{ minWidth: 280 }} />
+          <Dropdown
+            size="small"
+            placeholder="All account types"
+            selectedOptions={acctType ? [acctType] : []}
+            value={acctType}
+            onOptionSelect={(_, d) => setAcctType(d.optionValue ?? '')}
+            style={{ minWidth: 170 }}
+          >
+            <Option value="" text="All account types">
+              All account types
+            </Option>
+            {ACCOUNT_TYPES.map((t) => (
+              <Option key={t} value={t} text={t}>
+                {t}
+              </Option>
+            ))}
+          </Dropdown>
+          <Checkbox size="medium" label="Voice-enabled only" checked={evOnly} onChange={(_, d) => setEvOnly(!!d.checked)} />
+          <SearchBox size="small" placeholder="Search UPN, name, number, department…" value={qInput} onChange={(_, d) => setQInput(d.value)} style={{ minWidth: 260 }} />
           {canImport && (
             <Button size="small" appearance="primary" onClick={() => setImportOpen(true)}>
               Import into Data Collection…
@@ -974,7 +996,14 @@ export function Discovery() {
           columns={[
             { label: 'Number', render: (o) => o.object_key },
             { label: 'Type', render: (o) => str(o, 'NumberType') },
-            { label: 'Assigned to', render: (o) => str(o, 'AssignedPstnTargetId') },
+            {
+              label: 'Assigned to',
+              render: (o) => {
+                const who = o.data.AssignedTo as { upn?: string | null; displayName?: string | null; kind?: string } | undefined;
+                if (who) return `${who.displayName ?? who.upn ?? '—'}${who.upn && who.displayName ? ` (${who.upn})` : ''}`;
+                return str(o, 'AssignedPstnTargetId') === '—' ? '—' : `${str(o, 'AssignedPstnTargetId').slice(0, 8)}… (not in this run)`;
+              },
+            },
             { label: 'Status', render: (o) => str(o, 'ActivationState') },
             { label: 'Country', render: (o) => str(o, 'IsoCountryCode') },
           ]}

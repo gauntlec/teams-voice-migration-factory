@@ -65,7 +65,15 @@ can be layered in later behind the same `TeamsExecutor` if a customer consents.
   location, department, title, `policies` (name per policy type),
   `effective_policy_assignments`.
 - `tenant_policies` — hot projection of policy definitions (`policy_type`,
-  `identity`, `name`, `is_global`, `data`).
+  `identity`, `name`, `is_global`, `data`). `data` holds only the settings: the
+  module's XML-wrapper keys (`Key`, `SchemaId`, `DefaultXml`, `AuthorityId`,
+  `XmlRoot`, …) are stripped by the worker (`POLICY_NOISE_KEYS` in
+  `apps/worker/src/discovery/run.ts`); the untouched record stays on `tenant_objects`.
+- Phone numbers: `Get-CsPhoneNumberAssignment` only returns the assignee's Entra
+  object id (`AssignedPstnTargetId`). The worker resolves it against the users and
+  resource accounts stored earlier in the same run and adds
+  `AssignedTo {upn, displayName, kind}` to the stored record, so the Phone numbers
+  tab shows a name rather than a GUID.
 - `discovery_users.tenant_user_id` — the Data Collection user's link to the real one.
 
 Postgres was chosen over Elasticsearch on purpose: a tenant is thousands of users

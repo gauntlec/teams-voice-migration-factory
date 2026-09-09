@@ -391,6 +391,10 @@ export const tenantObjectsQuerySchema = z.object({
   includeRemoved: z
     .preprocess((v) => v === 'true' || v === true, z.boolean())
     .optional(),
+  /** users only: Enterprise-Voice-enabled accounts only */
+  ev: z.preprocess((v) => v === 'true' || v === true, z.boolean()).optional(),
+  /** users only: Get-CsOnlineUser AccountType (User, ResourceAccount, Guest, IneligibleUser, SfBOnPremUser) */
+  accountType: z.string().trim().max(40).optional(),
   page: z.coerce.number().int().min(1).max(100000).default(1),
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });

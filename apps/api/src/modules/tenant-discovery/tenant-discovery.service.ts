@@ -270,6 +270,8 @@ export class TenantDiscoveryService {
       .selectFrom('tenant_users as u')
       .leftJoin('discovery_users as d', 'd.tenant_user_id', 'u.id');
     if (!q.includeRemoved) base = base.where('u.removed_at', 'is', null);
+    if (q.ev) base = base.where('u.enterprise_voice_enabled', '=', true);
+    if (q.accountType) base = base.where('u.account_type', '=', q.accountType);
     if (q.q) {
       const like = `%${q.q}%`;
       base = base.where((eb) =>
@@ -282,8 +284,11 @@ export class TenantDiscoveryService {
       );
     }
     const [{ n }] = await base.select((eb) => eb.fn.count<number>('u.id').as('n')).execute();
+    // real, voice-enabled users first; leavers / ineligible accounts sink to the end
     const items = await base
       .select([...USER_COLS, 'd.id as discovery_user_id'])
+      .orderBy(sql`(u.account_type = 'User')`, 'desc')
+      .orderBy('u.enterprise_voice_enabled', 'desc')
       .orderBy('u.display_name')
       .orderBy('u.upn')
       .limit(q.limit)
