@@ -27,6 +27,8 @@ import {
   TableHeaderCell,
   TableRow,
   Text,
+  makeStyles,
+  shorthands,
 } from '@fluentui/react-components';
 import {
   CheckmarkRegular,
@@ -43,6 +45,21 @@ import { api } from '../../api';
 import { useAuth } from '../../auth';
 import { Page } from '../../components/Page';
 import { LoadError } from '../../components/records';
+
+const useStyles = makeStyles({
+  /* the wrapper scrolls; nowrap cells keep the table at its natural width so
+     columns never collapse into each other on a narrow window */
+  tableScroll: { overflowX: 'auto', overflowY: 'hidden', ...shorthands.padding('0', '0', '2px', '0') },
+  table: { width: '100%' },
+  cell: {
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    maxWidth: '280px',
+  },
+  actionsCell: { whiteSpace: 'nowrap', width: '1%' },
+  actions: { display: 'flex', ...shorthands.gap('4px'), flexWrap: 'nowrap' },
+});
 
 interface UserRow {
   id: string;
@@ -177,6 +194,7 @@ function DeleteUserButton({ user, onDeleted }: { user: UserRow; onDeleted: () =>
 }
 
 export function AdminUsers() {
+  const s = useStyles();
   const qc = useQueryClient();
   const { can, me } = useAuth();
   const [email, setEmail] = useState('');
@@ -380,19 +398,17 @@ export function AdminUsers() {
         ) : users.isError ? (
           <LoadError message={(users.error as Error).message} />
         ) : (
-          <div style={{ overflowX: 'auto', overflowY: 'hidden', paddingBottom: 2 }}>
-          {/* min-width:max-content stops columns collapsing into each other on a
-              narrow window; the wrapper above scrolls instead */}
-          <Table size="small" style={{ minWidth: 'max-content' }}>
+          <div className={s.tableScroll}>
+          <Table size="small" className={s.table}>
             <TableHeader>
               <TableRow>
-                <TableHeaderCell style={{ whiteSpace: 'nowrap' }}>Name</TableHeaderCell>
-                <TableHeaderCell style={{ whiteSpace: 'nowrap' }}>Email</TableHeaderCell>
-                <TableHeaderCell style={{ whiteSpace: 'nowrap' }}>Role</TableHeaderCell>
-                <TableHeaderCell style={{ whiteSpace: 'nowrap' }}>Customers</TableHeaderCell>
-                <TableHeaderCell style={{ whiteSpace: 'nowrap' }}>Status</TableHeaderCell>
-                <TableHeaderCell style={{ whiteSpace: 'nowrap' }}>MFA</TableHeaderCell>
-                <TableHeaderCell style={{ whiteSpace: 'nowrap', width: '1%' }}>Actions</TableHeaderCell>
+                <TableHeaderCell className={s.cell}>Name</TableHeaderCell>
+                <TableHeaderCell className={s.cell}>Email</TableHeaderCell>
+                <TableHeaderCell className={s.cell}>Role</TableHeaderCell>
+                <TableHeaderCell className={s.cell}>Customers</TableHeaderCell>
+                <TableHeaderCell className={s.cell}>Status</TableHeaderCell>
+                <TableHeaderCell className={s.cell}>MFA</TableHeaderCell>
+                <TableHeaderCell className={s.actionsCell}>Actions</TableHeaderCell>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -403,30 +419,20 @@ export function AdminUsers() {
                     : (u.tenants ?? []).map((t) => t.name).join(', ') || '—';
                 return (
                 <TableRow key={u.id}>
-                  <TableCell style={{ whiteSpace: 'nowrap' }}>{u.display_name}</TableCell>
-                  <TableCell style={{ whiteSpace: 'nowrap' }}>{u.email}</TableCell>
-                  <TableCell style={{ whiteSpace: 'nowrap' }}>{u.role}</TableCell>
-                  <TableCell style={{ whiteSpace: 'nowrap' }}>
-                    <span
-                      title={customers}
-                      style={{
-                        display: 'inline-block',
-                        maxWidth: 260,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                        verticalAlign: 'middle',
-                      }}
-                    >
-                      {customers}
-                    </span>
+                  <TableCell className={s.cell} title={u.display_name}>
+                    {u.display_name}
                   </TableCell>
-                  <TableCell style={{ whiteSpace: 'nowrap' }}>{u.status}</TableCell>
-                  <TableCell style={{ whiteSpace: 'nowrap' }}>
-                    {u.totp_enrolled ? 'enrolled' : '—'}
+                  <TableCell className={s.cell} title={u.email}>
+                    {u.email}
                   </TableCell>
-                  <TableCell style={{ whiteSpace: 'nowrap', width: '1%' }}>
-                    <div style={{ display: 'flex', gap: 4, flexWrap: 'nowrap' }}>
+                  <TableCell className={s.cell}>{u.role}</TableCell>
+                  <TableCell className={s.cell} title={customers}>
+                    {customers}
+                  </TableCell>
+                  <TableCell className={s.cell}>{u.status}</TableCell>
+                  <TableCell className={s.cell}>{u.totp_enrolled ? 'enrolled' : '—'}</TableCell>
+                  <TableCell className={s.actionsCell}>
+                    <div className={s.actions}>
                       {u.role !== 'SUPER_ADMIN' && (
                         <Button
                           size="small"
