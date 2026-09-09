@@ -26,6 +26,10 @@ export const LICENSING_MODELS = [
 ] as const;
 export type LicensingModel = (typeof LICENSING_MODELS)[number];
 
+/** Delivery region for a site (per-site overview). */
+export const SITE_REGIONS = ['AMER', 'EMEA', 'APAC'] as const;
+export type SiteRegion = (typeof SITE_REGIONS)[number];
+
 /** discovery_number_ranges.kind */
 export const NUMBER_RANGE_KINDS = ['new', 'port', 'retain'] as const;
 export type NumberRangeKind = (typeof NUMBER_RANGE_KINDS)[number];

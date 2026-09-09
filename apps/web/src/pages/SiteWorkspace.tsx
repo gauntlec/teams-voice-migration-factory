@@ -38,6 +38,7 @@ import {
   NETWORK_TYPES,
   NUMBER_RANGE_KINDS,
   RESOURCE_ACCOUNT_KINDS,
+  SITE_REGIONS,
   type DiscoverySiteOverview,
   type Paginated,
 } from '@tvmf/shared';
@@ -435,7 +436,7 @@ export function SiteWorkspace() {
 
 const OVERVIEW_FIELDS: FieldDef[] = [
   { key: 'migrationId', label: 'Migration ID' },
-  { key: 'region', label: 'Region' },
+  { key: 'region', label: 'Region', type: 'select', options: SITE_REGIONS },
   { key: 'author', label: 'Author' },
   { key: 'licensingModel', label: 'PSTN / licensing model', type: 'select', options: LICENSING_MODELS },
   { key: 'targetGoLive', label: 'Target go-live', placeholder: 'e.g. Q3 2026' },
@@ -559,7 +560,7 @@ function OverviewTab({
                 value={draft[f.key] ?? ''}
                 onOptionSelect={(_, d) => setDraft((v) => ({ ...v, [f.key]: d.optionValue ?? '' }))}
               >
-                {LICENSING_MODELS.map((o) => (
+                {(f.options ?? []).map((o) => (
                   <Option key={o} value={o}>
                     {o}
                   </Option>
