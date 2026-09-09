@@ -378,7 +378,9 @@ export function AdminUsers() {
           <LoadError message={(users.error as Error).message} />
         ) : (
           <div style={{ overflowX: 'auto', overflowY: 'hidden', paddingBottom: 2 }}>
-          <Table size="small" style={{ minWidth: 'max-content' }}>
+          {/* nowrap cells below force this table past the viewport on a narrow
+              window, so the wrapper scrolls instead of columns overlapping */}
+          <Table size="small" style={{ width: '100%' }}>
             <TableHeader>
               <TableRow>
                 <TableHeaderCell style={{ whiteSpace: 'nowrap' }}>Name</TableHeaderCell>
@@ -387,7 +389,7 @@ export function AdminUsers() {
                 <TableHeaderCell style={{ whiteSpace: 'nowrap' }}>Customers</TableHeaderCell>
                 <TableHeaderCell style={{ whiteSpace: 'nowrap' }}>Status</TableHeaderCell>
                 <TableHeaderCell style={{ whiteSpace: 'nowrap' }}>MFA</TableHeaderCell>
-                <TableHeaderCell style={{ whiteSpace: 'nowrap', width: '1%' }}>Actions</TableHeaderCell>
+                <TableHeaderCell style={{ whiteSpace: 'nowrap', width: 260 }}>Actions</TableHeaderCell>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -420,8 +422,8 @@ export function AdminUsers() {
                   <TableCell style={{ whiteSpace: 'nowrap' }}>
                     {u.totp_enrolled ? 'enrolled' : '—'}
                   </TableCell>
-                  <TableCell style={{ whiteSpace: 'nowrap' }}>
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'nowrap' }}>
+                  <TableCell style={{ width: 260, whiteSpace: 'normal' }}>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                       {u.role !== 'SUPER_ADMIN' && (
                         <Button
                           size="small"

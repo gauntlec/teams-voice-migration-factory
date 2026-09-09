@@ -88,13 +88,13 @@ export const useRecordStyles = makeStyles({
     overflowY: 'hidden',
     ...shorthands.padding('0', '0', '2px', '0'),
   },
-  /* keep columns at their natural width so a narrow window scrolls instead of
-     squashing cells until their text overlaps */
-  table: { minWidth: 'max-content' },
+  /* nowrap cells keep the table at its natural width; when that exceeds a
+     narrow viewport the wrapper scrolls instead of columns overlapping */
+  table: { width: '100%' },
   nowrapCell: { whiteSpace: 'nowrap' },
   cellText: {
     display: 'inline-block',
-    maxWidth: '360px',
+    maxWidth: '280px',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
