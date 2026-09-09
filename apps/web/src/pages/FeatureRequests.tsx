@@ -108,7 +108,8 @@ const useStyles = makeStyles({
   },
   meta: { color: tokens.colorNeutralForeground3, fontSize: tokens.fontSizeBase200 },
   empty: { color: tokens.colorNeutralForeground3, fontSize: tokens.fontSizeBase200, ...shorthands.padding('8px') },
-  form: { display: 'grid', ...shorthands.gap('12px'), minWidth: 'min(70vw, 560px)' },
+  formSurface: { maxWidth: '680px', width: '92vw' },
+  form: { display: 'grid', ...shorthands.gap('12px'), width: '100%' },
   formRow: { display: 'grid', gridTemplateColumns: '1fr 1fr', ...shorthands.gap('12px') },
   guide: {
     ...shorthands.padding('10px', '12px'),
@@ -297,7 +298,7 @@ function FeatureForm({
 
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface>
+      <DialogSurface className={s.formSurface}>
         <DialogBody>
           <DialogTitle>{mode === 'create' ? 'New feature request' : 'Edit feature request'}</DialogTitle>
           <DialogContent>
