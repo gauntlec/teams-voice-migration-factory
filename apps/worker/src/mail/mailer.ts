@@ -1,6 +1,6 @@
 import nodemailer, { type Transporter } from 'nodemailer';
 
-const FROM_NAME = process.env.MAIL_FROM_NAME || 'Teams Voice Migration Factory';
+const FROM_NAME = process.env.MAIL_FROM_NAME || 'Voxshift';
 const FROM_ADDR = process.env.MAIL_FROM || 'no-reply@voxshift.io';
 
 /** Mail is only actually sent when an SMTP relay is configured. */

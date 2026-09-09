@@ -129,6 +129,16 @@ export const discoveryGeneralSchema = z
   .strict();
 export type DiscoveryGeneralInput = z.infer<typeof discoveryGeneralSchema>;
 
+/**
+ * Per-site overview (discovery_sites.overview). Same fields as the old
+ * customer-level overview plus the assigned staff (ENGINEER / PROJECT_MANAGER
+ * platform user ids). Only SUPER_ADMIN / PROJECT_MANAGER / ENGINEER may write it.
+ */
+export const discoverySiteOverviewSchema = discoveryGeneralSchema
+  .extend({ assignedUserIds: z.array(z.string().uuid()).max(50).optional() })
+  .strict();
+export type DiscoverySiteOverviewInput = z.infer<typeof discoverySiteOverviewSchema>;
+
 /** A site's unique key. Alnum, dash, dot, underscore. */
 export const sitecodeSchema = z
   .string()

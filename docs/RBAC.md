@@ -44,9 +44,11 @@ A `CUSTOMER` membership can carry `tenant_memberships.site_ids` (a list of
 `discovery_sites.id`). Empty = the whole customer. Non-empty = the user is a
 **site contact**: they see and edit only Data Collection rows tied to those
 sites — number ranges + inventory, users, CAPs, resource accounts, network
-subnets and call-flow notes. Site records themselves are read-only for every
-`CUSTOMER` (add/edit is in the Sites admin page). The overview, outbound calling
-policies and submitting the discovery for review stay with the project manager /
+subnets and call-flow notes. Site records and each site's **Overview**
+(`discovery_sites.overview` — the 7 overview fields + assigned engineers/PMs) are
+**read-only** for every `CUSTOMER`; they are edited by SUPER_ADMIN /
+PROJECT_MANAGER / ENGINEER (`discovery:sites:manage`). Outbound calling policies
+and submitting the discovery for review also stay with the project manager /
 engineer. `TenantGuard` resolves the scope onto `req.tenant.siteScope`; the Data
 Collection services filter every read and check every write against it.
 

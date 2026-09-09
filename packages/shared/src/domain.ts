@@ -58,7 +58,7 @@ export type ResourceAccountKind = (typeof RESOURCE_ACCOUNT_KINDS)[number];
 /** Max numbers a single range may generate into the inventory. */
 export const MAX_RANGE_SIZE = 5000;
 
-/** Shape stored in discovery.general (jsonb). */
+/** Shape stored in discovery.general (jsonb) - legacy customer-level overview. */
 export interface DiscoveryGeneral {
   migrationId?: string;
   region?: string;
@@ -67,6 +67,16 @@ export interface DiscoveryGeneral {
   targetGoLive?: string;
   primaryContactEmail?: string;
   notes?: string;
+}
+
+/**
+ * Shape stored in discovery_sites.overview (jsonb). The overview moved from the
+ * customer to each site; `assignedUserIds` are the ENGINEER / PROJECT_MANAGER
+ * platform users watching this site. Editable only by SUPER_ADMIN /
+ * PROJECT_MANAGER / ENGINEER (`discovery:sites:manage`).
+ */
+export interface DiscoverySiteOverview extends DiscoveryGeneral {
+  assignedUserIds?: string[];
 }
 
 /** Set-CsPhoneNumberAssignment -PhoneNumberType */

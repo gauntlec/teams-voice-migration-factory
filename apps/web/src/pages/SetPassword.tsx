@@ -12,6 +12,7 @@ import {
   tokens,
 } from '@fluentui/react-components';
 import { useAuth } from '../auth';
+import { Wordmark } from '../components/Logo';
 
 const useStyles = makeStyles({
   root: {
@@ -54,6 +55,7 @@ export function SetPassword() {
   return (
     <div className={s.root}>
       <Card className={s.card}>
+        <Wordmark size={22} />
         <Title2>Set your password</Title2>
         <Body1>
           Your account was created with a temporary password. Choose your own password to

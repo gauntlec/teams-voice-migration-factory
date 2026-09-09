@@ -14,6 +14,7 @@ import {
   DialogTrigger,
   Dropdown,
   Field,
+  Input,
   Option,
   SearchBox,
   Spinner,
@@ -26,15 +27,18 @@ import {
   TableHeaderCell,
   TableRow,
   Text,
+  Textarea,
 } from '@fluentui/react-components';
 import { ArrowLeftRegular, DeleteRegular } from '@fluentui/react-icons';
 import {
   CALLER_ID_OPTIONS,
   FLOW_KINDS,
+  LICENSING_MODELS,
   NETWORK_SCOPES,
   NETWORK_TYPES,
   NUMBER_RANGE_KINDS,
   RESOURCE_ACCOUNT_KINDS,
+  type DiscoverySiteOverview,
   type Paginated,
 } from '@tvmf/shared';
 import { api, ApiError } from '../api';
@@ -46,8 +50,15 @@ import {
   PagedSection,
   useRecordStyles,
   type Choice,
+  type FieldDef,
   type Row,
 } from '../components/records';
+
+interface StaffMember {
+  id: string;
+  displayName: string;
+  role: string;
+}
 
 interface SiteSummary {
   site: {
@@ -61,9 +72,12 @@ interface SiteSummary {
   status: 'draft' | 'submitted' | 'accepted';
   callingPolicies: (Row & { name: string })[];
   numberSummary: { total: number; available: number; reserved: number; assigned: number };
+  overview: DiscoverySiteOverview;
+  assignedStaff: StaffMember[];
 }
 
 const TABS = [
+  'overview',
   'ranges',
   'numbers',
   'users',
@@ -74,6 +88,7 @@ const TABS = [
 ] as const;
 type TabKey = (typeof TABS)[number];
 const TAB_LABEL: Record<TabKey, string> = {
+  overview: 'Overview',
   ranges: 'Number ranges',
   numbers: 'Numbers',
   users: 'Users',
@@ -87,7 +102,7 @@ export function SiteWorkspace() {
   const s = useRecordStyles();
   const { siteId = '' } = useParams();
   const { activeTenantId, can } = useAuth();
-  const [tab, setTab] = useState<TabKey>('ranges');
+  const [tab, setTab] = useState<TabKey>('overview');
 
   const tid = activeTenantId;
   const base = `/t/${tid}/discovery`;
@@ -124,9 +139,10 @@ export function SiteWorkspace() {
   if (summary.isLoading) return <Spinner label="Loading site…" />;
   if (summary.isError) return <LoadError message={(summary.error as Error).message} />;
 
-  const { site, status, callingPolicies, numberSummary } = summary.data!;
+  const { site, status, callingPolicies, numberSummary, overview, assignedStaff } = summary.data!;
   const canReview = can('discovery:review');
   const locked = !can('discovery:write') || status === 'accepted' || (status === 'submitted' && !canReview);
+  const canManageOverview = can('discovery:sites:manage');
 
   const policyChoices: Choice[] = callingPolicies.map((p) => ({ value: p.id, label: p.name }));
   const policyName = (id: unknown) => callingPolicies.find((p) => p.id === id)?.name ?? '—';
@@ -173,6 +189,18 @@ export function SiteWorkspace() {
           </Tab>
         ))}
       </TabList>
+
+      {tab === 'overview' && (
+        <OverviewTab
+          base={base}
+          siteId={siteId}
+          overview={overview}
+          assignedStaff={assignedStaff}
+          canEdit={canManageOverview}
+          locked={locked}
+          onSaved={refreshSummary}
+        />
+      )}
 
       {tab === 'ranges' && (
         <PagedSection
@@ -400,6 +428,186 @@ export function SiteWorkspace() {
         />
       )}
     </Page>
+  );
+}
+
+/* -------------------------------- overview ------------------------------- */
+
+const OVERVIEW_FIELDS: FieldDef[] = [
+  { key: 'migrationId', label: 'Migration ID' },
+  { key: 'region', label: 'Region' },
+  { key: 'author', label: 'Author' },
+  { key: 'licensingModel', label: 'PSTN / licensing model', type: 'select', options: LICENSING_MODELS },
+  { key: 'targetGoLive', label: 'Target go-live', placeholder: 'e.g. Q3 2026' },
+  { key: 'primaryContactEmail', label: 'Primary contact email' },
+  { key: 'notes', label: 'Notes', type: 'textarea', full: true },
+];
+
+const sameIds = (a: string[], b: string[]) =>
+  a.length === b.length && [...a].sort().join() === [...b].sort().join();
+
+/**
+ * Per-site overview. Editable only by SUPER_ADMIN / PROJECT_MANAGER / ENGINEER
+ * (`discovery:sites:manage`); everyone else sees it read-only.
+ */
+function OverviewTab({
+  base,
+  siteId,
+  overview,
+  assignedStaff,
+  canEdit,
+  locked,
+  onSaved,
+}: {
+  base: string;
+  siteId: string;
+  overview: DiscoverySiteOverview;
+  assignedStaff: StaffMember[];
+  canEdit: boolean;
+  locked: boolean;
+  onSaved: () => void;
+}) {
+  const s = useRecordStyles();
+  const editable = canEdit && !locked;
+  const initial = () =>
+    Object.fromEntries(
+      OVERVIEW_FIELDS.map((f) => [f.key, (overview as Record<string, string>)?.[f.key] ?? '']),
+    );
+  const [draft, setDraft] = useState<Record<string, string>>(initial);
+  const [staffIds, setStaffIds] = useState<string[]>(overview.assignedUserIds ?? []);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDraft(initial());
+    setStaffIds(overview.assignedUserIds ?? []);
+    setError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overview]);
+
+  const staff = useQuery({
+    queryKey: ['discovery-staff', base],
+    enabled: editable,
+    queryFn: () => api<StaffMember[]>(`${base}/staff`),
+  });
+
+  const nameFor = (id: string) =>
+    staff.data?.find((m) => m.id === id)?.displayName ??
+    assignedStaff.find((m) => m.id === id)?.displayName ??
+    id.slice(0, 6);
+
+  const dirty = useMemo(
+    () =>
+      OVERVIEW_FIELDS.some(
+        (f) => (draft[f.key] ?? '') !== ((overview as Record<string, string>)?.[f.key] ?? ''),
+      ) || !sameIds(staffIds, overview.assignedUserIds ?? []),
+    [draft, staffIds, overview],
+  );
+
+  const save = useMutation({
+    mutationFn: () =>
+      api(`${base}/sites/${siteId}/overview`, {
+        method: 'PATCH',
+        body: JSON.stringify({ ...draft, assignedUserIds: staffIds }),
+      }),
+    onSuccess: () => {
+      setError(null);
+      onSaved();
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Save failed'),
+  });
+
+  return (
+    <Card className={s.card}>
+      <div className={s.cardHead}>
+        <div>
+          <Text weight="semibold">Overview</Text>
+          {!editable && (
+            <Text size={200} className={s.muted} block>
+              {canEdit
+                ? 'Locked — reopen the discovery to edit.'
+                : 'Read-only. The migration team maintains this.'}
+            </Text>
+          )}
+        </div>
+        {editable && (
+          <Button
+            size="small"
+            appearance="primary"
+            disabled={!dirty || save.isPending}
+            onClick={() => save.mutate()}
+          >
+            {save.isPending ? <Spinner size="tiny" /> : 'Save'}
+          </Button>
+        )}
+      </div>
+
+      <div className={s.formGrid}>
+        {OVERVIEW_FIELDS.map((f) => (
+          <Field key={f.key} label={f.label} style={f.full ? { gridColumn: '1 / -1' } : undefined}>
+            {!editable ? (
+              <Text>{draft[f.key] || '—'}</Text>
+            ) : f.type === 'textarea' ? (
+              <Textarea
+                value={draft[f.key] ?? ''}
+                resize="vertical"
+                onChange={(_, d) => setDraft((v) => ({ ...v, [f.key]: d.value }))}
+              />
+            ) : f.type === 'select' ? (
+              <Dropdown
+                placeholder="Select…"
+                selectedOptions={draft[f.key] ? [draft[f.key]!] : []}
+                value={draft[f.key] ?? ''}
+                onOptionSelect={(_, d) => setDraft((v) => ({ ...v, [f.key]: d.optionValue ?? '' }))}
+              >
+                {LICENSING_MODELS.map((o) => (
+                  <Option key={o} value={o}>
+                    {o}
+                  </Option>
+                ))}
+              </Dropdown>
+            ) : (
+              <Input
+                placeholder={f.placeholder}
+                value={draft[f.key] ?? ''}
+                onChange={(_, d) => setDraft((v) => ({ ...v, [f.key]: d.value }))}
+              />
+            )}
+          </Field>
+        ))}
+
+        <Field label="Assigned staff" hint="Engineers / project managers watching this site" style={{ gridColumn: '1 / -1' }}>
+          {!editable ? (
+            <div className={s.chips}>
+              {assignedStaff.length === 0 ? (
+                <Text>—</Text>
+              ) : (
+                assignedStaff.map((m) => (
+                  <Badge key={m.id} appearance="tint" color="informative">
+                    {m.displayName} · {m.role}
+                  </Badge>
+                ))
+              )}
+            </div>
+          ) : (
+            <Dropdown
+              multiselect
+              placeholder="Select staff…"
+              selectedOptions={staffIds}
+              value={staffIds.map(nameFor).join(', ')}
+              onOptionSelect={(_, d) => setStaffIds(d.selectedOptions)}
+            >
+              {(staff.data ?? []).map((m) => (
+                <Option key={m.id} value={m.id} text={m.displayName}>
+                  {m.displayName} · {m.role}
+                </Option>
+              ))}
+            </Dropdown>
+          )}
+        </Field>
+      </div>
+
+      {error && <LoadError message={error} />}
+    </Card>
   );
 }
 

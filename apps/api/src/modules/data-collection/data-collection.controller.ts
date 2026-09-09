@@ -2,15 +2,15 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } f
 import {
   can,
   discoveryFlowSchema,
-  discoveryGeneralSchema,
   discoveryListQuerySchema,
   discoveryNetworkSchema,
+  discoverySiteOverviewSchema,
   discoverySiteSchema,
   type DiscoveryFlowInput,
-  type DiscoveryGeneralInput,
   type DiscoveryListQuery,
   type DiscoveryNetworkInput,
   type DiscoverySiteInput,
+  type DiscoverySiteOverviewInput,
 } from '@tvmf/shared';
 import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
 import type { AuthedUser, TenantContext } from '../../common/request';
@@ -55,14 +55,23 @@ export class DataCollectionController {
     return this.svc.siteSummary(t, siteId);
   }
 
-  @Patch('general')
-  @RequirePermission('discovery:write')
-  updateGeneral(
+  /** Engineers / project managers assignable to a site (for the picker). */
+  @Get('staff')
+  @RequirePermission('discovery:sites:manage')
+  listStaff() {
+    return this.svc.listStaff();
+  }
+
+  /** Write a site's overview + assigned staff. Admin / PM / engineer only. */
+  @Patch('sites/:siteId/overview')
+  @RequirePermission('discovery:sites:manage')
+  updateSiteOverview(
     @TenantCtx() t: TenantContext,
     @CurrentUser() u: AuthedUser,
-    @Body(new ZodBody(discoveryGeneralSchema)) body: DiscoveryGeneralInput,
+    @Param('siteId') siteId: string,
+    @Body(new ZodBody(discoverySiteOverviewSchema)) body: DiscoverySiteOverviewInput,
   ) {
-    return this.svc.updateGeneral(t, u, body, this.review(u));
+    return this.svc.updateSiteOverview(t, u, siteId, body, this.review(u));
   }
 
   @Post('submit')

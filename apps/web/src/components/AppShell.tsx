@@ -30,6 +30,7 @@ import {
 } from '@fluentui/react-icons';
 import type { Permission } from '@tvmf/shared';
 import { useAuth } from '../auth';
+import { Wordmark } from './Logo';
 
 const useStyles = makeStyles({
   root: { display: 'grid', gridTemplateRows: '48px 1fr', height: '100vh', backgroundColor: tokens.colorNeutralBackground2 },
@@ -137,9 +138,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className={s.root}>
       <header className={s.header}>
-        <Text className={s.brand} size={400}>
-          Teams Voice Migration Factory
-        </Text>
+        <Wordmark tone="onDark" size={18} />
         <div className={s.headerRight}>
           {activeTenant?.siteScoped && (
             <Text size={200} style={{ color: tokens.colorNeutralForegroundOnBrand, opacity: 0.85 }}>

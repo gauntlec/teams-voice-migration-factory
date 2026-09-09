@@ -8,6 +8,7 @@ import { SetPassword } from './pages/SetPassword';
 import { EnrolTotp } from './pages/EnrolTotp';
 import { Dashboard } from './pages/Dashboard';
 import { DataCollection } from './pages/DataCollection';
+import { DataCollectionPolicies } from './pages/DataCollectionPolicies';
 import { SiteWorkspace } from './pages/SiteWorkspace';
 import { Build } from './pages/Build';
 import { Deployment } from './pages/Deployment';
@@ -37,6 +38,7 @@ export function App() {
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/data-collection" element={<DataCollection />} />
+        <Route path="/data-collection/policies" element={<DataCollectionPolicies />} />
         <Route path="/data-collection/sites/:siteId" element={<SiteWorkspace />} />
         <Route
           path="/build"

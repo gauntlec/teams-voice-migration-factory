@@ -18,7 +18,7 @@ const schema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((v) => v === 'true'),
-  TOTP_ISSUER: z.string().default('Teams Voice Migration Factory'),
+  TOTP_ISSUER: z.string().default('Voxshift'),
 });
 
 export type AppConfig = z.infer<typeof schema> & { REFRESH_COOKIE: string };

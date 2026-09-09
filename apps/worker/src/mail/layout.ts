@@ -83,7 +83,7 @@ export function renderHtml(input: LayoutInput): string {
     <tr><td align="center">
       <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:${CARD};border:1px solid ${BORDER};border-radius:8px;overflow:hidden;font-family:${FONT};">
         <tr><td style="background:${BRAND};padding:20px 32px;">
-          <span style="color:#ffffff;font-size:16px;font-weight:600;letter-spacing:.2px;">Teams Voice Migration Factory</span>
+          <span style="color:#ffffff;font-size:16px;font-weight:600;letter-spacing:.2px;">Voxshift</span>
         </td></tr>
         <tr><td style="padding:32px;">
           <h1 style="margin:0 0 18px;font-size:20px;font-weight:600;color:${TEXT};">${esc(
@@ -95,7 +95,7 @@ export function renderHtml(input: LayoutInput): string {
           ${outro}
         </td></tr>
         <tr><td style="padding:20px 32px;border-top:1px solid ${BORDER};">
-          <p style="margin:0;font-size:12px;color:${MUTED};line-height:1.5;">Automated message from Teams Voice Migration Factory. Please do not reply to this email.</p>
+          <p style="margin:0;font-size:12px;color:${MUTED};line-height:1.5;">Automated message from Voxshift. Please do not reply to this email.</p>
         </td></tr>
       </table>
     </td></tr>
@@ -105,11 +105,11 @@ export function renderHtml(input: LayoutInput): string {
 }
 
 export function renderText(input: LayoutInput): string {
-  const lines: string[] = ['Teams Voice Migration Factory', '', input.heading, ''];
+  const lines: string[] = ['Voxshift', '', input.heading, ''];
   for (const p of input.intro) lines.push(p, '');
   if (input.callout) lines.push(`${input.callout.label}: ${input.callout.value}`, '');
   if (input.cta) lines.push(`${input.cta.label}: ${input.cta.url}`, '');
   for (const p of input.outro ?? []) lines.push(p, '');
-  lines.push('--', 'Automated message from Teams Voice Migration Factory. Please do not reply.');
+  lines.push('--', 'Automated message from Voxshift. Please do not reply.');
   return lines.join('\n');
 }

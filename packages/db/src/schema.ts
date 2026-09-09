@@ -146,6 +146,8 @@ export interface DiscoverySitesTable {
   /** WGS84 coordinates for the site map; null until placed. */
   latitude: number | null;
   longitude: number | null;
+  /** Per-site overview + assigned staff. Staff-managed (`discovery:sites:manage`). */
+  overview: Json<import('@tvmf/shared').DiscoverySiteOverview>;
   paging: Json;
   created_at: Ts;
 }

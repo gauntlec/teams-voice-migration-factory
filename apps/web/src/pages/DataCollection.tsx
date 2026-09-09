@@ -1,16 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import {
   Badge,
   Button,
   Card,
-  Dropdown,
-  Field,
-  Input,
   MessageBar,
   MessageBarBody,
-  Option,
   Spinner,
   Table,
   TableBody,
@@ -21,134 +17,15 @@ import {
   TabList,
   Tab,
   Text,
-  Textarea,
-  tokens,
 } from '@fluentui/react-components';
 import { ArrowRightRegular, ListRegular, MapRegular } from '@fluentui/react-icons';
-import { LICENSING_MODELS, type DiscoveryGeneral } from '@tvmf/shared';
-import { api, ApiError } from '../api';
+import { api } from '../api';
 import { useAuth } from '../auth';
 import { Page } from '../components/Page';
-import {
-  CrudSection,
-  LoadError,
-  NoTenant,
-  useRecordStyles,
-  type FieldDef,
-  type Row,
-} from '../components/records';
+import { LoadError, NoTenant, useRecordStyles, type Row } from '../components/records';
 import { SitesMap, type MapSite } from '../components/SitesMap';
 
 export { NoTenant, LoadError } from '../components/records';
-
-/* ------------------------------ Overview form ------------------------------ */
-
-const GENERAL_FIELDS: FieldDef[] = [
-  { key: 'migrationId', label: 'Migration ID' },
-  { key: 'region', label: 'Region' },
-  { key: 'author', label: 'Author' },
-  { key: 'licensingModel', label: 'PSTN / licensing model', type: 'select', options: LICENSING_MODELS },
-  { key: 'targetGoLive', label: 'Target go-live', placeholder: 'e.g. Q3 2026' },
-  { key: 'primaryContactEmail', label: 'Primary contact email' },
-  { key: 'notes', label: 'Notes', type: 'textarea', full: true },
-];
-
-function GeneralForm({
-  value,
-  readOnly,
-  tenantId,
-  onChanged,
-}: {
-  value: DiscoveryGeneral;
-  readOnly: boolean;
-  tenantId: string;
-  onChanged: () => void;
-}) {
-  const s = useRecordStyles();
-  const [draft, setDraft] = useState<Record<string, string>>({});
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setDraft(
-      Object.fromEntries(
-        GENERAL_FIELDS.map((f) => [f.key, (value as Record<string, string>)?.[f.key] ?? '']),
-      ),
-    );
-  }, [value]);
-
-  const dirty = useMemo(
-    () =>
-      GENERAL_FIELDS.some(
-        (f) => (draft[f.key] ?? '') !== ((value as Record<string, string>)?.[f.key] ?? ''),
-      ),
-    [draft, value],
-  );
-
-  const save = useMutation({
-    mutationFn: () =>
-      api(`/t/${tenantId}/discovery/general`, { method: 'PATCH', body: JSON.stringify(draft) }),
-    onSuccess: () => {
-      setError(null);
-      onChanged();
-    },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Save failed'),
-  });
-
-  return (
-    <Card className={s.card}>
-      <div className={s.cardHead}>
-        <Text weight="semibold">Overview</Text>
-        {!readOnly && (
-          <Button
-            size="small"
-            appearance="primary"
-            disabled={!dirty || save.isPending}
-            onClick={() => save.mutate()}
-          >
-            {save.isPending ? <Spinner size="tiny" /> : 'Save'}
-          </Button>
-        )}
-      </div>
-      <div className={s.formGrid}>
-        {GENERAL_FIELDS.map((f) => (
-          <Field key={f.key} label={f.label} style={f.full ? { gridColumn: '1 / -1' } : undefined}>
-            {readOnly ? (
-              <Text>{draft[f.key] || '—'}</Text>
-            ) : f.type === 'textarea' ? (
-              <Textarea
-                value={draft[f.key] ?? ''}
-                resize="vertical"
-                onChange={(_, d) => setDraft((v) => ({ ...v, [f.key]: d.value }))}
-              />
-            ) : f.type === 'select' ? (
-              <Dropdown
-                placeholder="Select…"
-                selectedOptions={draft[f.key] ? [draft[f.key]!] : []}
-                value={draft[f.key] ?? ''}
-                onOptionSelect={(_, d) => setDraft((v) => ({ ...v, [f.key]: d.optionValue ?? '' }))}
-              >
-                {LICENSING_MODELS.map((o) => (
-                  <Option key={o} value={o}>
-                    {o}
-                  </Option>
-                ))}
-              </Dropdown>
-            ) : (
-              <Input
-                placeholder={f.placeholder}
-                value={draft[f.key] ?? ''}
-                onChange={(_, d) => setDraft((v) => ({ ...v, [f.key]: d.value }))}
-              />
-            )}
-          </Field>
-        ))}
-      </div>
-      {error && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{error}</Text>}
-    </Card>
-  );
-}
-
-/* -------------------------------- landing -------------------------------- */
 
 interface SiteRollup extends Row {
   sitecode: string;
@@ -170,7 +47,7 @@ interface SiteRollup extends Row {
   };
 }
 interface LandingResponse {
-  discovery: { id: string; status: 'draft' | 'submitted' | 'accepted'; general: DiscoveryGeneral } | null;
+  discovery: { id: string; status: 'draft' | 'submitted' | 'accepted' } | null;
   callingPolicies: (Row & { name: string })[];
   siteScope: string[] | null;
   sites: SiteRollup[];
@@ -215,7 +92,6 @@ export function DataCollection() {
   const canReview = can('discovery:review');
   const canManageSites = can('discovery:sites:manage');
   const locked = !canWrite || status === 'accepted' || (status === 'submitted' && !canReview);
-  const base = `/t/${activeTenantId}/discovery`;
   const open = (id: string) => navigate(`/data-collection/sites/${id}`);
 
   // A site contact tied to exactly one site goes straight into that site.
@@ -228,7 +104,7 @@ export function DataCollection() {
   return (
     <Page
       title="Data Collection"
-      subtitle="The customer's voice estate, one site at a time. Pick a site to capture its numbers, users, CAPs and resource accounts."
+      subtitle="Pick a site to capture its overview, numbers, users, CAPs and resource accounts."
       actions={
         <div style={{ display: 'flex', gap: 8 }}>
           {canWrite && status === 'draft' && !siteScoped && (
@@ -263,59 +139,29 @@ export function DataCollection() {
                 : 'Read-only for your role.'}
           </Text>
         )}
+        {!siteScoped && (
+          <>
+            <Text className={s.muted}>·</Text>
+            <Link to="/data-collection/policies">Outbound calling policies →</Link>
+          </>
+        )}
       </div>
       {action.isError && <LoadError message={(action.error as Error).message} />}
 
       {siteScoped && (
         <MessageBar intent="info">
           <MessageBarBody>
-            You are a site contact for this customer. Only your assigned sites are shown. The
-            overview, calling policies and submitting for review are handled by the migration
-            engineer.
+            You are a site contact for this customer. Only your assigned sites are shown. Each
+            site's overview, the calling policies and submitting for review are handled by the
+            migration team.
           </MessageBarBody>
         </MessageBar>
-      )}
-
-      {!siteScoped && (
-        <GeneralForm
-          value={d.discovery?.general ?? {}}
-          readOnly={locked}
-          tenantId={activeTenantId}
-          onChanged={refetch}
-        />
-      )}
-
-      {!siteScoped && (
-        <CrudSection
-          title="Outbound calling policies"
-          hint="Customer-defined dialling restrictions. Users and CAPs reference one of these."
-          basePath={`${base}/calling-policies`}
-          readOnly={locked}
-          onChanged={refetch}
-          rows={d.callingPolicies}
-          columns={[
-            { key: 'name', label: 'Name' },
-            { key: 'description', label: 'Description' },
-            { key: 'allow_local', label: 'Local', render: (r) => (r.allow_local ? 'Yes' : 'No') },
-            { key: 'allow_national', label: 'National', render: (r) => (r.allow_national ? 'Yes' : 'No') },
-            { key: 'allow_international', label: 'Intl', render: (r) => (r.allow_international ? 'Yes' : 'No') },
-          ]}
-          fields={[
-            { key: 'name', label: 'Name', required: true },
-            { key: 'description', label: 'Description', full: true },
-            { key: 'allow_local', label: 'Allow local dialling', type: 'boolean', default: 'true' },
-            { key: 'allow_national', label: 'Allow national dialling', type: 'boolean' },
-            { key: 'allow_international', label: 'Allow international dialling', type: 'boolean' },
-            { key: 'allow_service', label: 'Allow service numbers', type: 'boolean', default: 'true' },
-            { key: 'allow_premium', label: 'Allow premium-rate dialling', type: 'boolean' },
-          ]}
-        />
       )}
 
       <Card className={s.card}>
         <div className={s.cardHead}>
           <div>
-            <Text weight="semibold">
+            <Text weight="semibold" size={400}>
               Sites <span className={s.muted}>({d.sites.length})</span>
             </Text>
             {canManageSites && (

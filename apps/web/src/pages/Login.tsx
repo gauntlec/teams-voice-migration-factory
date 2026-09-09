@@ -6,13 +6,13 @@ import {
   Field,
   Input,
   Spinner,
-  Title2,
   makeStyles,
   shorthands,
   tokens,
 } from '@fluentui/react-components';
 import { useAuth } from '../auth';
 import { ApiError } from '../api';
+import { Wordmark } from '../components/Logo';
 
 const useStyles = makeStyles({
   root: {
@@ -59,7 +59,7 @@ export function Login() {
   return (
     <div className={s.root}>
       <Card className={s.card}>
-        <Title2 className={s.brand}>Teams Voice Migration Factory</Title2>
+        <Wordmark size={24} />
         <Body1>Sign in to continue.</Body1>
         <form onSubmit={submit} style={{ display: 'grid', gap: 14 }}>
           <Field label="Email" required>

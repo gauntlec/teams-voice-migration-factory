@@ -14,6 +14,7 @@ import {
 } from '@fluentui/react-components';
 import { api } from '../api';
 import { useAuth } from '../auth';
+import { Wordmark } from '../components/Logo';
 
 const useStyles = makeStyles({
   root: { display: 'grid', placeItems: 'center', minHeight: '100vh', backgroundColor: tokens.colorNeutralBackground2 },
@@ -75,6 +76,7 @@ export function EnrolTotp() {
   return (
     <div className={s.root}>
       <Card className={s.card}>
+        <Wordmark size={22} />
         <Title2>Set up two-factor authentication</Title2>
         <Body1>
           Scan this QR code with an authenticator app (Microsoft Authenticator, Google

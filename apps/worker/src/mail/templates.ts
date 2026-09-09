@@ -21,7 +21,7 @@ export function renderEmail(template: string, context: Record<string, unknown>):
 }
 
 function invitation(c: UserInvitationContext): RenderedEmail {
-  const subject = "You've been invited to Teams Voice Migration Factory";
+  const subject = "You've been invited to Voxshift";
   const scope =
     c.tenantNames && c.tenantNames.length
       ? `You have been given access to: ${c.tenantNames.join(', ')}.`
@@ -31,7 +31,7 @@ function invitation(c: UserInvitationContext): RenderedEmail {
     previewText: 'Your account is ready — here is your temporary password.',
     heading: `Welcome, ${c.displayName}`,
     intro: [
-      `${c.inviterEmail} has created an account for you on Teams Voice Migration Factory, the platform used to run your Microsoft Teams voice migration.`,
+      `${c.inviterEmail} has created an account for you on Voxshift, the platform used to run your Microsoft Teams voice migration.`,
       `Your role is ${c.role}. ${scope}`,
       'Sign in with the temporary password below. You will be asked to choose your own password and then set up an authenticator app for two-factor authentication.',
     ],

@@ -5,13 +5,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { sql } from 'kysely';
-import { tenantDb } from '@tvmf/db';
+import { platformDb, tenantDb } from '@tvmf/db';
 import type {
   DiscoveryFlowInput,
-  DiscoveryGeneralInput,
   DiscoveryListQuery,
   DiscoveryNetworkInput,
   DiscoverySiteInput,
+  DiscoverySiteOverview,
+  DiscoverySiteOverviewInput,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
 import type { AuthedUser, TenantContext } from '../../common/request';
@@ -175,7 +176,90 @@ export class DataCollectionService {
       numberSummary[k] = Number(r.n);
       numberSummary.total += Number(r.n);
     }
-    return { site, status: discovery.status, callingPolicies, numberSummary };
+
+    const overview = (site.overview ?? {}) as DiscoverySiteOverview;
+    const assignedStaff = await this.resolveStaff(overview.assignedUserIds ?? []);
+
+    return { site, status: discovery.status, callingPolicies, numberSummary, overview, assignedStaff };
+  }
+
+  /** Resolve platform user ids to `{ id, displayName, role }` for display. */
+  private async resolveStaff(ids: string[]) {
+    if (ids.length === 0) return [];
+    const rows = await platformDb(this.db)
+      .selectFrom('users')
+      .select(['id', 'display_name', 'role'])
+      .where('id', 'in', ids)
+      .execute();
+    return rows.map((r) => ({ id: r.id, displayName: r.display_name, role: r.role }));
+  }
+
+  /** Active ENGINEER / PROJECT_MANAGER users, for the "assigned staff" picker. */
+  async listStaff() {
+    const rows = await platformDb(this.db)
+      .selectFrom('users')
+      .select(['id', 'display_name', 'role'])
+      .where('role', 'in', ['ENGINEER', 'PROJECT_MANAGER'])
+      .where('status', '=', 'active')
+      .orderBy('display_name')
+      .execute();
+    return rows.map((r) => ({ id: r.id, displayName: r.display_name, role: r.role }));
+  }
+
+  /**
+   * Write a site's overview. `discovery:sites:manage` only (SUPER_ADMIN /
+   * PROJECT_MANAGER / ENGINEER) - the controller enforces the permission, so no
+   * CUSTOMER can reach this.
+   */
+  async updateSiteOverview(
+    t: TenantContext,
+    user: AuthedUser,
+    siteId: string,
+    patch: DiscoverySiteOverviewInput,
+    canReview: boolean,
+  ) {
+    await this.assertEditable(t, canReview);
+    const site = await this.scoped(t)
+      .selectFrom('discovery_sites')
+      .select(['id', 'overview'])
+      .where('id', '=', siteId)
+      .executeTakeFirst();
+    if (!site) throw new NotFoundException('site not found');
+
+    if (patch.assignedUserIds && patch.assignedUserIds.length) {
+      const ids = [...new Set(patch.assignedUserIds)];
+      const ok = await platformDb(this.db)
+        .selectFrom('users')
+        .select('id')
+        .where('id', 'in', ids)
+        .where('role', 'in', ['ENGINEER', 'PROJECT_MANAGER'])
+        .where('status', '=', 'active')
+        .execute();
+      const found = new Set(ok.map((r) => r.id));
+      const bad = ids.filter((id) => !found.has(id));
+      if (bad.length) {
+        throw new ConflictException('Assigned staff must be active engineers or project managers.');
+      }
+      patch = { ...patch, assignedUserIds: ids };
+    }
+
+    const next = { ...((site.overview ?? {}) as DiscoverySiteOverview), ...patch };
+    const row = await this.scoped(t)
+      .updateTable('discovery_sites')
+      .set({ overview: next })
+      .where('id', '=', siteId)
+      .returning(['id', 'overview'])
+      .executeTakeFirstOrThrow();
+    await this.audit.tenant(t.schema, 'discovery.site_overview_updated', {
+      actor: actorOf(user),
+      targetType: 'discovery_site',
+      targetId: siteId,
+      detail: { fields: Object.keys(patch) },
+    });
+    return {
+      ...row,
+      assignedStaff: await this.resolveStaff((row.overview as DiscoverySiteOverview).assignedUserIds ?? []),
+    };
   }
 
   private pageOf(q: DiscoveryListQuery) {
@@ -224,23 +308,6 @@ export class DataCollectionService {
       b.select((eb) => eb.fn.countAll<string>().as('n')).executeTakeFirst(),
     ]);
     return { items, total: Number(cnt?.n ?? 0), page, limit };
-  }
-
-  async updateGeneral(t: TenantContext, user: AuthedUser, patch: DiscoveryGeneralInput, canReview: boolean) {
-    assertCustomerWide(t, 'The discovery overview');
-    await this.assertEditable(t, canReview);
-    const current = await this.discoveryRow(t);
-    const next = { ...(current.general ?? {}), ...patch };
-    const row = await this.scoped(t)
-      .updateTable('discovery')
-      .set({ general: next, updated_at: new Date().toISOString() })
-      .returning(['id', 'general', 'status'])
-      .executeTakeFirstOrThrow();
-    await this.audit.tenant(t.schema, 'discovery.general_updated', {
-      actor: actorOf(user),
-      detail: { fields: Object.keys(patch) },
-    });
-    return row;
   }
 
   async submit(t: TenantContext, user: AuthedUser) {
@@ -320,6 +387,7 @@ export class DataCollectionService {
           region: input.region || null,
           latitude: input.latitude ?? null,
           longitude: input.longitude ?? null,
+          overview: {},
           paging: input.paging ?? {},
         })
         .returningAll()
