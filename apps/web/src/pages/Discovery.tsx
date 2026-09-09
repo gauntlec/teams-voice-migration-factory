@@ -1505,7 +1505,12 @@ export function Discovery() {
     queryFn: () => api<TenantDiscoverySummary>(`${base}/summary`),
     refetchInterval: (q) => {
       const st = q.state.data?.lastRun?.status;
-      return st === 'queued' || st === 'running' || q.state.data?.activeConnection?.status === 'pending' ? 3000 : 15000;
+      // While a run is going the RunCard polls GET runs/:id (one cheap query) for
+      // the live progress bar; summary aggregates the whole snapshot, so poll it
+      // gently to avoid piling load on a Postgres that's mid-discovery.
+      if (st === 'queued' || st === 'running') return 12000;
+      if (q.state.data?.activeConnection?.status === 'pending') return 3000;
+      return 20000;
     },
   });
   const invalidateAll = () => qc.invalidateQueries({ queryKey: ['tdisc'] });

@@ -305,40 +305,41 @@ export class TenantDiscoveryService {
 
   async summary(t: TenantContext): Promise<TenantDiscoverySummary> {
     const s = this.s(t);
-    const [tenantObj, lastRun, activeConn, countRows, linked] = await Promise.all([
-      s
-        .selectFrom('tenant_objects')
-        .select(['object_key', 'display_name', 'data'])
-        .where('object_type', '=', 'tenant')
-        .where('removed_at', 'is', null)
-        .orderBy('discovered_at', 'desc')
-        .executeTakeFirst(),
-      s
-        .selectFrom('tenant_discovery_runs')
-        .selectAll()
-        .where('status', 'in', ['completed', 'failed', 'running', 'queued'])
-        .orderBy('created_at', 'desc')
-        .executeTakeFirst(),
-      s
-        .selectFrom('connections')
-        .select(['id', 'upn', 'status', 'expires_at'])
-        .where('status', 'in', ['active', 'pending'])
-        // a session past its expiry is dead even if the row was never flipped
-        .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', new Date().toISOString())]))
-        .orderBy('started_at', 'desc')
-        .executeTakeFirst(),
-      s
-        .selectFrom('tenant_objects')
-        .select(['object_type', (eb) => eb.fn.countAll<number>().as('n')])
-        .where('removed_at', 'is', null)
-        .groupBy('object_type')
-        .execute(),
-      s
-        .selectFrom('discovery_users')
-        .select((eb) => eb.fn.countAll<number>().as('n'))
-        .where('tenant_user_id', 'is not', null)
-        .executeTakeFirst(),
-    ]);
+    // Sequential on purpose: the Discovery page polls this while a run may be
+    // hammering the same Postgres, so it must never hold more than one pooled
+    // connection at a time (a Promise.all here starved the pool on big tenants).
+    const tenantObj = await s
+      .selectFrom('tenant_objects')
+      .select(['object_key', 'display_name', 'data'])
+      .where('object_type', '=', 'tenant')
+      .where('removed_at', 'is', null)
+      .orderBy('discovered_at', 'desc')
+      .executeTakeFirst();
+    const lastRun = await s
+      .selectFrom('tenant_discovery_runs')
+      .selectAll()
+      .where('status', 'in', ['completed', 'failed', 'running', 'queued'])
+      .orderBy('created_at', 'desc')
+      .executeTakeFirst();
+    const activeConn = await s
+      .selectFrom('connections')
+      .select(['id', 'upn', 'status', 'expires_at'])
+      .where('status', 'in', ['active', 'pending'])
+      // a session past its expiry is dead even if the row was never flipped
+      .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', new Date().toISOString())]))
+      .orderBy('started_at', 'desc')
+      .executeTakeFirst();
+    const countRows = await s
+      .selectFrom('tenant_objects')
+      .select(['object_type', (eb) => eb.fn.countAll<number>().as('n')])
+      .where('removed_at', 'is', null)
+      .groupBy('object_type')
+      .execute();
+    const linked = await s
+      .selectFrom('discovery_users')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('tenant_user_id', 'is not', null)
+      .executeTakeFirst();
 
     const counts: Partial<Record<TenantObjectType, number>> = {};
     for (const r of countRows) {

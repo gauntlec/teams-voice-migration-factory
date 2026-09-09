@@ -64,28 +64,43 @@ setInterval(() => {
 }, 60_000).unref();
 
 /**
- * Sessions live only in this process: after a restart every connection row
- * that still says pending/active is dead. Mark them expired so the UI asks for
- * a fresh sign-in instead of showing a ghost "Connected".
+ * Sessions and discovery runs live only in this process: after a restart every
+ * connection row that still says pending/active is dead, and any discovery run
+ * still queued/running can never make progress (nothing resumes it). Mark them
+ * so the UI asks for a fresh sign-in / lets a new run start instead of hanging.
  */
-async function expireOrphanedConnections() {
+async function expireOrphanedWork() {
   const tenants = await platformDb(db).selectFrom('tenants').select('schema_name').execute();
-  let n = 0;
+  let conns = 0;
+  let runs = 0;
   for (const { schema_name } of tenants) {
-    const r = await tenantDb(db, schema_name)
+    const c = await tenantDb(db, schema_name)
       .updateTable('connections')
       .set({ status: 'expired', closed_at: new Date().toISOString() })
       .where('status', 'in', ['pending', 'active'])
       .executeTakeFirst()
       .catch(() => undefined);
-    n += Number(r?.numUpdatedRows ?? 0);
+    conns += Number(c?.numUpdatedRows ?? 0);
+    const r = await tenantDb(db, schema_name)
+      .updateTable('tenant_discovery_runs')
+      .set({
+        status: 'failed',
+        finished_at: new Date().toISOString(),
+        error: 'The worker restarted before this run finished - start a new discovery.',
+      })
+      .where('status', 'in', ['queued', 'running'])
+      .executeTakeFirst()
+      .catch(() => undefined);
+    runs += Number(r?.numUpdatedRows ?? 0);
   }
-  if (n) {
+  if (conns || runs) {
     // eslint-disable-next-line no-console
-    console.log(`expired ${n} orphaned tenant connection(s) from a previous worker process`);
+    console.log(
+      `startup sweep: expired ${conns} orphaned connection(s), failed ${runs} orphaned discovery run(s)`,
+    );
   }
 }
-void expireOrphanedConnections();
+void expireOrphanedWork();
 
 async function handleConnectionStart(job: Job) {
   const { schema, connectionId, tenantDomain } = job.data as {

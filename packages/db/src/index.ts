@@ -13,7 +13,12 @@ export interface DbHandle {
 
 export function createDb(connectionString = process.env.DATABASE_URL): DbHandle {
   if (!connectionString) throw new Error('DATABASE_URL is not set');
-  const pool = new Pool({ connectionString, max: 10 });
+  // `max` is per process (api and worker each get their own pool). Postgres
+  // default max_connections is 100, so 20 each leaves plenty of headroom while
+  // giving the API enough slots that a long discovery run on the worker can't
+  // starve request handling. `PG_POOL_MAX` overrides if ever needed.
+  const max = Math.max(2, Number(process.env.PG_POOL_MAX) || 20);
+  const pool = new Pool({ connectionString, max });
   const db = new Kysely<DB>({ dialect: new PostgresDialect({ pool }) });
   return { db, pool, close: async () => { await db.destroy(); } };
 }

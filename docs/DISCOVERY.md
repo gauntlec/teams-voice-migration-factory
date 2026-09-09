@@ -159,6 +159,14 @@ with the deleted row counts.
   `docker exec <worker> pwsh -c "Get-Module -ListAvailable MicrosoftTeams"`.
 - Nothing about the sign-in is logged except the device code line the engineer is
   meant to see; `docker logs` shows counts per step only.
+- **Large tenants.** A run writes ~one upsert per object, so a tenant with tens of
+  thousands of users/policies is a sustained write load on the shared Postgres.
+  Guards: the worker reads the current snapshot for a type once (not per row) and
+  batches the `tenant_object_versions` inserts; `summary` runs its queries
+  sequentially (never holds >1 pooled connection); the Discovery page polls
+  `summary` every 12 s while a run is going (the live progress bar uses the cheap
+  `GET runs/:id` instead); pool size is `PG_POOL_MAX` (default 20) per process.
+  On a worker restart the startup sweep fails any run left `queued`/`running`.
 
 ### How the worker drives pwsh (hard-won details — keep them)
 

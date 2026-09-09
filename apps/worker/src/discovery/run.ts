@@ -262,7 +262,29 @@ const POLICY_NOISE_KEYS = new Set([
 const cleanPolicy = (r: Rec): Rec =>
   Object.fromEntries(Object.entries(r).filter(([k]) => !POLICY_NOISE_KEYS.has(k)));
 
-/** Fetch one cmdlet (paging when supported) and upsert every record. Returns the count stored. */
+interface PrevObject {
+  data: Rec;
+  display_name: string | null;
+  removed_at: string | null;
+}
+type NewVersion = {
+  object_id: string;
+  run_id: string;
+  object_type: TenantObjectType;
+  object_key: string;
+  display_name: string | null;
+  change_kind: TenantObjectChangeKind;
+  changed_fields: string[];
+  before: Rec | null;
+  after: Rec | null;
+  changed_at: string;
+};
+
+/**
+ * Fetch one cmdlet (paging when supported) and upsert every record. To keep the
+ * query load flat on large tenants we read the whole current snapshot for this
+ * object type once (not once per row) and batch the version-history inserts.
+ */
 async function runSpec(
   s: Scoped,
   exec: TeamsExecutor,
@@ -271,6 +293,29 @@ async function runSpec(
   ctx: RunContext,
   progress: TenantDiscoveryProgress,
 ): Promise<number> {
+  // Current snapshot for this type, keyed by object_key - one read for the step.
+  const prev = new Map<string, PrevObject>();
+  for (const row of await s
+    .selectFrom('tenant_objects')
+    .select(['object_key', 'data', 'display_name', 'removed_at'])
+    .where('object_type', '=', spec.objectType)
+    .execute()) {
+    prev.set(row.object_key, {
+      data: row.data as Rec,
+      display_name: row.display_name,
+      removed_at: row.removed_at,
+    });
+  }
+
+  const versions: NewVersion[] = [];
+  const flushVersions = async () => {
+    if (!versions.length) return;
+    const batch = versions.splice(0, versions.length);
+    for (let i = 0; i < batch.length; i += 500) {
+      await s.insertInto('tenant_object_versions').values(batch.slice(i, i + 500)).execute();
+    }
+  };
+
   let stored = 0;
   const handle = async (records: unknown[]) => {
     for (const raw of records) {
@@ -284,19 +329,37 @@ async function runSpec(
           if (who) r = { ...r, AssignedTo: who };
         }
         const key = spec.key(r) ?? fallbackKey(r);
-        const { id: objectId, change } = await upsertObject(s, runId, spec.objectType, key, spec.name(r), r);
-        if (change) progress.changed[change] += 1;
+        const name = spec.name(r);
+        const p = prev.get(key);
+        const { id: objectId, change } = await upsertObject(s, runId, spec.objectType, key, name, r, p);
+        if (change) {
+          progress.changed[change] += 1;
+          versions.push({
+            object_id: objectId,
+            run_id: runId,
+            object_type: spec.objectType,
+            object_key: key,
+            display_name: name,
+            change_kind: change,
+            changed_fields: change === 'updated' ? diffKeys(p?.data ?? null, r) : [],
+            before: p?.data ?? null,
+            after: r,
+            changed_at: new Date().toISOString(),
+          });
+        }
         if (spec.objectType === 'user') await projectUser(s, runId, objectId, r);
         if (spec.objectType === 'policy' && spec.policyType) {
           await projectPolicy(s, runId, objectId, spec.policyType, r);
         }
         stored += 1;
       }
+      if (versions.length >= 500) await flushVersions();
     }
   };
 
   if (!spec.page) {
     await handle(await exec.query(spec.command, spec.resultSize ? { ResultSize: spec.resultSize } : {}));
+    await flushVersions();
     return stored;
   }
 
@@ -309,6 +372,7 @@ async function runSpec(
     if (batch.length < size) break;
     if (skip > 500_000) break; // safety valve
   }
+  await flushVersions();
   return stored;
 }
 
@@ -320,9 +384,9 @@ function fallbackKey(r: Rec): string {
 }
 
 /**
- * Upsert one object into the current snapshot and, when its `data` (or name)
- * actually changed since the last run, record a `tenant_object_versions` row.
- * Returns the object id and how it changed (null = seen again, unchanged).
+ * Upsert one object into the current snapshot and classify how it changed
+ * against `prev` (the row already loaded for this type, or undefined if new).
+ * The caller records the version row; this only writes `tenant_objects`.
  */
 async function upsertObject(
   s: Scoped,
@@ -331,20 +395,14 @@ async function upsertObject(
   objectKey: string,
   displayName: string | null,
   data: Rec,
+  prev: PrevObject | undefined,
 ): Promise<{ id: string; change: TenantObjectChangeKind | null }> {
-  const existing = await s
-    .selectFrom('tenant_objects')
-    .select(['id', 'data', 'display_name', 'removed_at'])
-    .where('object_type', '=', objectType)
-    .where('object_key', '=', objectKey)
-    .executeTakeFirst();
-
   let change: TenantObjectChangeKind | null = null;
-  if (!existing) change = 'added';
-  else if (existing.removed_at) change = 'readded';
+  if (!prev) change = 'added';
+  else if (prev.removed_at) change = 'readded';
   else if (
-    canon(existing.data) !== canon(data) ||
-    (existing.display_name ?? null) !== (displayName ?? null)
+    canon(prev.data) !== canon(data) ||
+    (prev.display_name ?? null) !== (displayName ?? null)
   ) {
     change = 'updated';
   }
@@ -375,24 +433,6 @@ async function upsertObject(
     .returning('id')
     .executeTakeFirstOrThrow();
 
-  if (change) {
-    const before = (existing?.data as Rec | undefined) ?? null;
-    await s
-      .insertInto('tenant_object_versions')
-      .values({
-        object_id: row.id,
-        run_id: runId,
-        object_type: objectType,
-        object_key: objectKey,
-        display_name: displayName,
-        change_kind: change,
-        changed_fields: change === 'updated' ? diffKeys(before, data) : [],
-        before,
-        after: data,
-        changed_at: now,
-      })
-      .execute();
-  }
   return { id: row.id, change };
 }
 
