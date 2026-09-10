@@ -1,11 +1,13 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import {
   can,
   startConnectionSchema,
+  tenantDiscoverySettingsSchema,
   tenantDiscoveryStartSchema,
   tenantObjectsQuerySchema,
   tenantUserLookupSchema,
   tenantUsersImportSchema,
+  type TenantDiscoverySettingsInput,
   type TenantDiscoveryStartInput,
   type TenantObjectsQuery,
   type TenantUserLookupQuery,
@@ -50,6 +52,25 @@ export class TenantDiscoveryController {
   @RequirePermission('tenantdiscovery:read')
   getConnection(@TenantCtx() t: TenantContext, @Param('id') id: string) {
     return this.svc.getConnection(t, id);
+  }
+
+  /* settings */
+
+  @Get('settings')
+  @RequirePermission('tenantdiscovery:read')
+  getSettings(@TenantCtx() t: TenantContext) {
+    return this.svc.getSettings(t);
+  }
+
+  /** Per-customer default for the Teams-licence user filter. */
+  @Patch('settings')
+  @RequirePermission('tenantdiscovery:run')
+  updateSettings(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(tenantDiscoverySettingsSchema)) body: TenantDiscoverySettingsInput,
+  ) {
+    return this.svc.updateSettings(t, user, body.filterUsers);
   }
 
   /* runs */

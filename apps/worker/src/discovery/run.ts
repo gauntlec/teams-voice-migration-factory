@@ -81,7 +81,7 @@ export async function handleTenantDiscoveryRun(
   db: Kysely<DB>,
   getExecutor: (connectionId: string) => TeamsExecutor | undefined,
 ) {
-  const { schema, runId, connectionId, scopeTypes, includeDisabled, includeUnlicensed } =
+  const { schema, runId, connectionId, scopeTypes, includeDisabled, includeUnlicensed, filterUsers } =
     job.data as {
       schema: string;
       runId: string;
@@ -90,11 +90,13 @@ export async function handleTenantDiscoveryRun(
       scopeTypes?: TenantObjectType[];
       includeDisabled?: boolean;
       includeUnlicensed?: boolean;
+      /** customer default: false = don't filter users to Teams-licensed */
+      filterUsers?: boolean;
     };
   const s = tenantDb(db, schema);
   const exec = getExecutor(connectionId);
   const wantType = (t: TenantObjectType) => !scopeTypes || scopeTypes.includes(t);
-  const filterOpts: DiscoveryFilterOpts = { includeDisabled, includeUnlicensed };
+  const filterOpts: DiscoveryFilterOpts = { includeDisabled, includeUnlicensed, filterUsers };
 
   if (!exec) {
     await s
@@ -339,10 +341,14 @@ async function runSpec(
 ): Promise<number> {
   const noun = nounFor(spec.objectType);
   let skippedUnlicensed = 0;
-  // Filter `User` accounts down to Teams-licensed ones, unless the engineer
-  // opted in to everything. Flipped off by the probe below if `Get-CsOnlineUser`
-  // returns no licence data at all for this tenant.
-  let filterUsers = spec.objectType === 'user' && !filterOpts.includeUnlicensed;
+  // Filter `User` accounts down to Teams-licensed ones, unless the customer
+  // turned the filter off (filterOpts.filterUsers === false) or the engineer
+  // opted in to everything for this run. Also flipped off by the probe below if
+  // `Get-CsOnlineUser` returns no licence data at all for this tenant.
+  let filterUsers =
+    spec.objectType === 'user' &&
+    filterOpts.filterUsers !== false &&
+    !filterOpts.includeUnlicensed;
   let licenceProbed = false;
 
   // Current snapshot for this type, keyed by object_key - one read for the step.

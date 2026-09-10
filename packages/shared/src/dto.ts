@@ -446,11 +446,20 @@ export const tenantDiscoveryStartSchema = z
     scopeTypes: z.array(z.enum(TENANT_OBJECT_TYPES)).min(1).max(TENANT_OBJECT_TYPES.length).optional(),
     /** also sync AccountEnabled = false accounts (default: skip them) */
     includeDisabled: z.boolean().optional(),
-    /** also sync Guest / IneligibleUser and users with no mailbox (default: skip) */
+    /** also sync Guest / IneligibleUser and users not licensed for Teams (default: skip) */
     includeUnlicensed: z.boolean().optional(),
   })
   .strict();
 export type TenantDiscoveryStartInput = z.infer<typeof tenantDiscoveryStartSchema>;
+
+/** Per-customer Discovery settings (`PATCH .../tenant-discovery/settings`). */
+export const tenantDiscoverySettingsSchema = z
+  .object({
+    /** when true (default), runs store only User accounts licensed for Teams */
+    filterUsers: z.boolean(),
+  })
+  .strict();
+export type TenantDiscoverySettingsInput = z.infer<typeof tenantDiscoverySettingsSchema>;
 
 /** Query string for the paginated inventory lists (`GET .../objects`, `.../users`). */
 export const tenantObjectsQuerySchema = z.object({

@@ -611,6 +611,13 @@ function ConnectCard({
 
 function RunCard({ base, summary }: { base: string; summary: TenantDiscoverySummary | undefined }) {
   const s = useStyles();
+  const qc = useQueryClient();
+  const filterUsers = summary?.settings?.filterUsers ?? true;
+  const setFilter = useMutation({
+    mutationFn: (v: boolean) =>
+      api(`${base}/settings`, { method: 'PATCH', body: JSON.stringify({ filterUsers: v }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tdisc', 'summary', base] }),
+  });
   const last = summary?.lastRun ?? null;
   const live = useQuery({
     queryKey: ['tdisc', 'run', base, last?.id],
@@ -767,6 +774,19 @@ function RunCard({ base, summary }: { base: string; summary: TenantDiscoverySumm
           {run.error && <LoadError message={run.error} />}
         </>
       )}
+      <div className={s.row} style={{ marginTop: 8 }}>
+        <Checkbox
+          label="Filter users to Teams-licensed accounts (recommended for large tenants)"
+          checked={filterUsers}
+          disabled={setFilter.isPending}
+          onChange={(_, d) => setFilter.mutate(!!d.checked)}
+        />
+      </div>
+      <Text size={200} className={s.muted}>
+        {filterUsers
+          ? 'Runs store only enabled users licensed for Teams. Turn this off for a small customer to store every enabled user.'
+          : 'Runs store every enabled user for this customer. A run can still be narrowed with “Sync part of the tenant”.'}
+      </Text>
     </Card>
   );
 }

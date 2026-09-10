@@ -181,4 +181,6 @@ export interface TenantDiscoverySummary {
   activeConnection: { id: string; upn: string | null; status: string; expires_at: string | null } | null;
   counts: Partial<Record<import('./domain').TenantObjectType, number>>;
   linkedDiscoveryUsers: number;
+  /** per-customer Discovery settings */
+  settings: { filterUsers: boolean };
 }

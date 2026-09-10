@@ -92,6 +92,34 @@ export class TenantDiscoveryService {
     return this.deployments.listConnections(t);
   }
 
+  /* ============================== settings ============================== */
+
+  /** Per-customer Discovery settings (row seeded by tenant migration 0012). */
+  async getSettings(t: TenantContext): Promise<{ filterUsers: boolean }> {
+    const row = await this.s(t)
+      .selectFrom('tenant_discovery_config')
+      .select('filter_users')
+      .executeTakeFirst();
+    return { filterUsers: row?.filter_users ?? true };
+  }
+
+  async updateSettings(
+    t: TenantContext,
+    user: AuthedUser,
+    filterUsers: boolean,
+  ): Promise<{ filterUsers: boolean }> {
+    await this.s(t)
+      .updateTable('tenant_discovery_config')
+      .set({ filter_users: filterUsers, updated_by: user.id, updated_at: new Date().toISOString() })
+      .execute();
+    await this.audit.tenant(t.schema, 'tenant_discovery.settings_updated', {
+      actor: actorOf(user),
+      targetType: 'tenant_discovery_config',
+      detail: { filterUsers },
+    });
+    return { filterUsers };
+  }
+
   /* ================================ runs ================================ */
 
   /**
@@ -122,6 +150,10 @@ export class TenantDiscoveryService {
       ? TENANT_OBJECT_TYPES.filter((x) => scopeTypes.includes(x))
       : null;
 
+    // Customer default (Discovery settings) unless this run widens it explicitly.
+    const { filterUsers: customerFilterUsers } = await this.getSettings(t);
+    const filterUsers = customerFilterUsers && !filters.includeUnlicensed;
+
     const run = await this.s(t)
       .insertInto('tenant_discovery_runs')
       .values({ connection_id: conn.id, status: 'queued', started_by: user.id, scope_types: scope })
@@ -138,12 +170,14 @@ export class TenantDiscoveryService {
       scopeTypes: scope ?? undefined,
       includeDisabled: filters.includeDisabled || undefined,
       includeUnlicensed: filters.includeUnlicensed || undefined,
+      filterUsers,
     });
 
     const scopeLabel =
       (scope ? scope.join(', ') : 'full') +
       (filters.includeDisabled ? ' +disabled' : '') +
-      (filters.includeUnlicensed ? ' +unlicensed' : '');
+      (filters.includeUnlicensed ? ' +unlicensed' : '') +
+      (filterUsers ? '' : ' +allusers');
     await this.audit.tenant(t.schema, 'tenant_discovery.run_started', {
       actor: actorOf(user),
       targetType: 'tenant_discovery_run',
@@ -346,6 +380,10 @@ export class TenantDiscoveryService {
       .select((eb) => eb.fn.countAll<number>().as('n'))
       .where('tenant_user_id', 'is not', null)
       .executeTakeFirst();
+    const cfg = await s
+      .selectFrom('tenant_discovery_config')
+      .select('filter_users')
+      .executeTakeFirst();
 
     const counts: Partial<Record<TenantObjectType, number>> = {};
     for (const r of countRows) {
@@ -366,6 +404,7 @@ export class TenantDiscoveryService {
       activeConnection: activeConn ?? null,
       counts,
       linkedDiscoveryUsers: Number(linked?.n ?? 0),
+      settings: { filterUsers: cfg?.filter_users ?? true },
     };
   }
 

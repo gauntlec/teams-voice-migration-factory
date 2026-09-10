@@ -186,10 +186,15 @@ with the deleted row counts.
   **probe** on the first slice of real `User` records turns the filter off
   entirely (with a visible `progress.filterDisabledReason`) if `Get-CsOnlineUser`
   returned no licence data for anyone — never filter blind. Resource accounts and
-  SfB-on-prem users are never filtered. The engineer can also tick "Include
-  accounts not licensed for Teams" to disable it. However many `User` accounts
-  were left out is recorded in `progress.skipped.notLicensed` and the run
-  `summary`, and shown on the run card, so a low user count is always explained.
+  SfB-on-prem users are never filtered. However many `User` accounts were left
+  out is recorded in `progress.skipped.notLicensed` and the run `summary`, and
+  shown on the run card, so a low user count is always explained.
+  The filter is on by default **per customer**
+  (`tenant_discovery_config.filter_users`, toggled on the Discovery page /
+  `PATCH .../tenant-discovery/settings`) — turn it off once for a small customer
+  and every run stores all enabled users. A single run can also be widened with
+  the "Include accounts not licensed for Teams" tick. `startRun` resolves the
+  customer default and that per-run toggle into one `filterUsers` flag on the job.
 - **A slow cmdlet no longer kills the run.** The runner only aborts with
   "lost the tenant sign-in" when the pwsh session is genuinely gone
   (`executor.alive` is false, or the error names a dropped connection). A plain

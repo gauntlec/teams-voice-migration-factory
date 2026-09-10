@@ -493,6 +493,14 @@ export interface TenantPoliciesTable {
   removed_at: string | null;
 }
 
+export interface TenantDiscoveryConfigTable {
+  id: Generated<string>;
+  filter_users: ColumnType<boolean, boolean | undefined, boolean>;
+  updated_by: string | null;
+  updated_at: Ts;
+  created_at: Ts;
+}
+
 export interface DeploymentsTable {
   id: Generated<string>;
   connection_id: string | null;
@@ -603,6 +611,7 @@ export interface DB {
   tenant_object_versions: TenantObjectVersionsTable;
   tenant_users: TenantUsersTable;
   tenant_policies: TenantPoliciesTable;
+  tenant_discovery_config: TenantDiscoveryConfigTable;
   deployments: DeploymentsTable;
   deployment_changes: DeploymentChangesTable;
   deployment_scripts: DeploymentScriptsTable;

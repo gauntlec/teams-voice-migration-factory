@@ -54,8 +54,14 @@ export interface CmdletSpec {
 export interface DiscoveryFilterOpts {
   /** also fetch AccountEnabled = false accounts */
   includeDisabled?: boolean;
-  /** also fetch Guest / IneligibleUser and keep accounts with no mailbox */
+  /** also fetch Guest / IneligibleUser and keep accounts not licensed for Teams */
   includeUnlicensed?: boolean;
+  /**
+   * Customer-level default (Discovery settings). `false` = store every enabled
+   * `User` account, don't filter down to Teams-licensed ones. Undefined = filter
+   * (the default).
+   */
+  filterUsers?: boolean;
 }
 
 /**
