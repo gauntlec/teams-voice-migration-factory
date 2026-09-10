@@ -8,6 +8,7 @@ import {
   discoveryResourceAccountSchema,
   discoveryUserSchema,
   numberReserveSchema,
+  relinkUsersSchema,
   resourceAccountNumberSchema,
   type CallingPolicyInput,
   type DiscoveryCapInput,
@@ -15,6 +16,7 @@ import {
   type DiscoveryNumberRangeInput,
   type DiscoveryResourceAccountInput,
   type DiscoveryUserInput,
+  type RelinkUsersInput,
 } from '@tvmf/shared';
 import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
 import type { AuthedUser, TenantContext } from '../../common/request';
@@ -175,6 +177,17 @@ export class TelephonyController {
   @RequirePermission('discovery:write')
   deleteUser(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Param('id') id: string) {
     return this.svc.deleteUser(t, u, id, this.review(u));
+  }
+
+  /** Link every unlinked user for a site to the tenant user with the same UPN. */
+  @Post('users/relink')
+  @RequirePermission('discovery:write')
+  relinkUsers(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() u: AuthedUser,
+    @Body(new ZodBody(relinkUsersSchema)) body: RelinkUsersInput,
+  ) {
+    return this.svc.relinkUsers(t, u, body.site_id, this.review(u));
   }
 
   /* ------------------------------ caps ------------------------------ */

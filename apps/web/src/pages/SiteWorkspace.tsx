@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Badge,
   Button,
@@ -28,7 +28,7 @@ import {
   Text,
   Textarea,
 } from '@fluentui/react-components';
-import { ArrowLeftRegular, DeleteRegular } from '@fluentui/react-icons';
+import { ArrowLeftRegular, DeleteRegular, LinkRegular } from '@fluentui/react-icons';
 import {
   CALLER_ID_OPTIONS,
   FLOW_KINDS,
@@ -102,10 +102,66 @@ const TAB_LABEL: Record<TabKey, string> = {
   flows: 'Call flows',
 };
 
+/**
+ * "Link to tenant" — matches every unlinked Data Collection user for this site
+ * to the tenant user with the same UPN (from the last Discovery run).
+ */
+function RelinkUsersButton({
+  base,
+  siteId,
+  disabled,
+  onDone,
+}: {
+  base: string;
+  siteId: string;
+  disabled: boolean;
+  onDone: () => void;
+}) {
+  const [msg, setMsg] = useState<string | null>(null);
+  const relink = useMutation({
+    mutationFn: () =>
+      api<{ linked: number; unmatched: number }>(`${base}/users/relink`, {
+        method: 'POST',
+        body: JSON.stringify({ site_id: siteId }),
+      }),
+    onSuccess: (r) => {
+      setMsg(
+        `Linked ${r.linked}` +
+          (r.unmatched ? ` · ${r.unmatched} with no match in the last Discovery run` : ''),
+      );
+      onDone();
+      setTimeout(() => setMsg(null), 6000);
+    },
+    onError: (e) => setMsg(e instanceof ApiError ? e.message : 'Link failed'),
+  });
+  return (
+    <>
+      <Button
+        size="small"
+        icon={<LinkRegular />}
+        disabled={disabled || relink.isPending}
+        onClick={() => {
+          setMsg(null);
+          relink.mutate();
+        }}
+        title="Link users to the matching tenant user by UPN"
+      >
+        {relink.isPending ? 'Linking…' : 'Link to tenant'}
+      </Button>
+      {msg && (
+        <Text size={200} style={{ color: '#606060' }}>
+          {msg}
+        </Text>
+      )}
+    </>
+  );
+}
+
 export function SiteWorkspace() {
   const s = useRecordStyles();
   const { siteId = '' } = useParams();
   const { activeTenantId, can } = useAuth();
+  const qc = useQueryClient();
   const [tab, setTab] = useState<TabKey>('overview');
 
   const tid = activeTenantId;
@@ -264,6 +320,17 @@ export function SiteWorkspace() {
           fixed={{ site_id: siteId }}
           readOnly={locked}
           onChanged={refreshSummary}
+          headerActions={
+            <RelinkUsersButton
+              base={base}
+              siteId={siteId}
+              disabled={locked}
+              onDone={() => {
+                qc.invalidateQueries({ queryKey: ['users', tid, siteId] });
+                refreshSummary();
+              }}
+            />
+          }
           columns={[
             { key: 'upn', label: 'UPN' },
             { key: 'display_name', label: 'Name' },

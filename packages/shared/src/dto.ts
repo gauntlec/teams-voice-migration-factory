@@ -313,6 +313,13 @@ export const resourceAccountNumberSchema = z
 /** Manually flip a free number to/from 'reserved' (e.g. held for porting). */
 export const numberReserveSchema = z.object({ reserved: z.boolean() }).strict();
 
+/**
+ * Link every not-yet-linked Data Collection user for a site to the tenant user
+ * with the same UPN (from the last Discovery run). Idempotent.
+ */
+export const relinkUsersSchema = z.object({ site_id: z.string().uuid() }).strict();
+export type RelinkUsersInput = z.infer<typeof relinkUsersSchema>;
+
 /* ------------------- Data Collection list queries ------------------- */
 
 /**

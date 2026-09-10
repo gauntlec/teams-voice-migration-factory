@@ -732,6 +732,52 @@ export class TelephonyService {
     return { ok: true };
   }
 
+  /**
+   * Link every not-yet-linked user for one site to the tenant user with the same
+   * UPN (from the last Discovery run). Idempotent; `unmatched` is how many
+   * unlinked users still have no live tenant user.
+   */
+  async relinkUsers(t: TenantContext, u: AuthedUser, siteId: string, canReview: boolean) {
+    await this.base.assertEditable(t, canReview);
+    assertSiteInScope(t, siteId);
+    const s = this.s(t);
+    const tenantUsersRef = sql.table(`${t.schema}.tenant_users`);
+
+    const res = await s
+      .updateTable('discovery_users')
+      .set({
+        tenant_user_id: sql`(SELECT tu.id FROM ${tenantUsersRef} tu
+                              WHERE lower(tu.upn) = lower(${sql.ref('discovery_users.upn')})
+                                AND tu.removed_at IS NULL LIMIT 1)`,
+        updated_at: new Date().toISOString(),
+      })
+      .where('site_id', '=', siteId)
+      .where('tenant_user_id', 'is', null)
+      .where(
+        sql<boolean>`EXISTS (SELECT 1 FROM ${tenantUsersRef} tu
+                     WHERE lower(tu.upn) = lower(${sql.ref('discovery_users.upn')})
+                       AND tu.removed_at IS NULL)`,
+      )
+      .executeTakeFirst();
+    const linked = Number(res.numUpdatedRows ?? 0);
+
+    const [{ n }] = await s
+      .selectFrom('discovery_users')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('site_id', '=', siteId)
+      .where('tenant_user_id', 'is', null)
+      .execute();
+    const unmatched = Number(n);
+
+    await this.audit.tenant(t.schema, 'discovery.users_relinked', {
+      actor: actorOf(u),
+      targetType: 'discovery_site',
+      targetId: siteId,
+      detail: { linked, unmatched },
+    });
+    return { linked, unmatched };
+  }
+
   /* ============================== caps ============================== */
 
   async addCap(t: TenantContext, u: AuthedUser, i: DiscoveryCapInput, canReview: boolean) {

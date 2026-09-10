@@ -494,6 +494,7 @@ export function PagedSection({
   readOnly,
   onChanged,
   extraRowAction,
+  headerActions,
   emptyText = 'Nothing captured yet.',
   pageSize = 50,
   suggest,
@@ -509,6 +510,8 @@ export function PagedSection({
   readOnly: boolean;
   onChanged?: () => void;
   extraRowAction?: (r: Row) => ReactNode;
+  /** extra buttons in the section toolbar, left of Add (e.g. bulk actions) */
+  headerActions?: ReactNode;
   emptyText?: string;
   pageSize?: number;
   suggest?: SuggestConfig;
@@ -588,6 +591,7 @@ export function PagedSection({
             onChange={(_, d) => setQInput(d.value)}
             style={{ minWidth: 200 }}
           />
+          {headerActions}
           {!readOnly && (
             <Button
               size="small"
