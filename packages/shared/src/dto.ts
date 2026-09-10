@@ -386,6 +386,10 @@ export const tenantDiscoveryStartSchema = z
   .object({
     connectionId: z.string().uuid(),
     scopeTypes: z.array(z.enum(TENANT_OBJECT_TYPES)).min(1).max(TENANT_OBJECT_TYPES.length).optional(),
+    /** also sync AccountEnabled = false accounts (default: skip them) */
+    includeDisabled: z.boolean().optional(),
+    /** also sync Guest / IneligibleUser and users with no mailbox (default: skip) */
+    includeUnlicensed: z.boolean().optional(),
   })
   .strict();
 export type TenantDiscoveryStartInput = z.infer<typeof tenantDiscoveryStartSchema>;

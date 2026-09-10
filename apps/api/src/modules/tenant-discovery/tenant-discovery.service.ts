@@ -104,6 +104,7 @@ export class TenantDiscoveryService {
     user: AuthedUser,
     connectionId: string,
     scopeTypes?: TenantObjectType[],
+    filters: { includeDisabled?: boolean; includeUnlicensed?: boolean } = {},
   ) {
     const conn = await this.deployments.getConnection(t, connectionId);
     if (conn.status !== 'active') {
@@ -135,9 +136,14 @@ export class TenantDiscoveryService {
       connectionId: conn.id,
       operatorUserId: user.id,
       scopeTypes: scope ?? undefined,
+      includeDisabled: filters.includeDisabled || undefined,
+      includeUnlicensed: filters.includeUnlicensed || undefined,
     });
 
-    const scopeLabel = scope ? scope.join(', ') : 'full';
+    const scopeLabel =
+      (scope ? scope.join(', ') : 'full') +
+      (filters.includeDisabled ? ' +disabled' : '') +
+      (filters.includeUnlicensed ? ' +unlicensed' : '');
     await this.audit.tenant(t.schema, 'tenant_discovery.run_started', {
       actor: actorOf(user),
       targetType: 'tenant_discovery_run',

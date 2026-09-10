@@ -44,9 +44,18 @@ export interface CmdletSpec {
    * For cmdlets with no `-Skip` (Get-CsOnlineUser): fetch in disjoint slices,
    * one `-Filter` per bucket, so a huge result comes back in visible chunks
    * instead of one opaque multi-minute call. Buckets must not overlap; the
-   * runner de-dups on `key(r)` defensively.
+   * runner de-dups on `key(r)` defensively. `opts` are the engineer's include
+   * toggles.
    */
-  buckets?: () => { label: string; filter: string }[];
+  buckets?: (opts: DiscoveryFilterOpts) => { label: string; filter: string }[];
+}
+
+/** Engineer toggles that widen the user sync beyond migration candidates. */
+export interface DiscoveryFilterOpts {
+  /** also fetch AccountEnabled = false accounts */
+  includeDisabled?: boolean;
+  /** also fetch Guest / IneligibleUser and keep accounts with no mailbox */
+  includeUnlicensed?: boolean;
 }
 
 /**
@@ -55,17 +64,37 @@ export interface CmdletSpec {
  * users" bucket mops up UPNs that start with something odd). Each call is a
  * small fraction of the tenant, so the fetch phase shows real progress and no
  * single call can time out on a big tenant.
+ *
+ * By default only the Teams-voice migration candidates are fetched: enabled
+ * `User` accounts, resource accounts, SfB-on-prem users. Guests, disabled and
+ * unlicensed accounts (and the invalid "ApplicationEndpoint" type) are left out
+ * unless the engineer opts in. Valid AccountType enum: User, ResourceAccount,
+ * Guest, SfbOnPremUser, Unknown, IneligibleUser.
  */
 const UPN_FIRST = [...'abcdefghijklmnopqrstuvwxyz0123456789'];
-const OTHER_ACCOUNT_TYPES = ['ResourceAccount', 'Guest', 'ApplicationEndpoint', 'SfBOnPremUser', 'Unknown'];
-const userBuckets = (): { label: string; filter: string }[] => {
+const userBuckets = (opts: DiscoveryFilterOpts = {}): { label: string; filter: string }[] => {
+  // `-Filter` is rendered inside a double-quoted PS string, so escape the $ in
+  // $true (`$true) to stop pwsh interpolating it to the word "True".
+  const enabled = opts.includeDisabled ? '' : ' -and AccountEnabled -eq `$true';
   const out = UPN_FIRST.map((c) => ({
     label: `users ${c}*`,
-    filter: `AccountType -eq 'User' -and UserPrincipalName -like '${c}*'`,
+    filter: `AccountType -eq 'User'${enabled} -and UserPrincipalName -like '${c}*'`,
   }));
   const notAny = UPN_FIRST.map((c) => `UserPrincipalName -notlike '${c}*'`).join(' -and ');
-  out.push({ label: 'users (other)', filter: `AccountType -eq 'User' -and ${notAny}` });
-  for (const t of OTHER_ACCOUNT_TYPES) out.push({ label: t, filter: `AccountType -eq '${t}'` });
+  out.push({
+    label: 'users (other)',
+    filter: `AccountType -eq 'User'${enabled} -and ${notAny}`,
+  });
+  // always relevant, regardless of enabled/licence state
+  for (const t of ['ResourceAccount', 'SfbOnPremUser', 'Unknown']) {
+    out.push({ label: t, filter: `AccountType -eq '${t}'` });
+  }
+  // only when the engineer opts in - these are never Teams-voice candidates
+  if (opts.includeUnlicensed) {
+    for (const t of ['Guest', 'IneligibleUser']) {
+      out.push({ label: t, filter: `AccountType -eq '${t}'` });
+    }
+  }
   return out;
 };
 

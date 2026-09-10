@@ -9,7 +9,13 @@ import {
   type TenantObjectType,
 } from '@tvmf/shared';
 import type { TeamsExecutor } from '../teams/executor';
-import { STEP_CMDLETS, STEP_TYPES, policyValue, type CmdletSpec } from './cmdlets';
+import {
+  STEP_CMDLETS,
+  STEP_TYPES,
+  policyValue,
+  type CmdletSpec,
+  type DiscoveryFilterOpts,
+} from './cmdlets';
 
 type Rec = Record<string, unknown>;
 type Scoped = ReturnType<typeof tenantDb>;
@@ -73,16 +79,20 @@ export async function handleTenantDiscoveryRun(
   db: Kysely<DB>,
   getExecutor: (connectionId: string) => TeamsExecutor | undefined,
 ) {
-  const { schema, runId, connectionId, scopeTypes } = job.data as {
-    schema: string;
-    runId: string;
-    connectionId: string;
-    /** object types to discover; undefined = full run (every step) */
-    scopeTypes?: TenantObjectType[];
-  };
+  const { schema, runId, connectionId, scopeTypes, includeDisabled, includeUnlicensed } =
+    job.data as {
+      schema: string;
+      runId: string;
+      connectionId: string;
+      /** object types to discover; undefined = full run (every step) */
+      scopeTypes?: TenantObjectType[];
+      includeDisabled?: boolean;
+      includeUnlicensed?: boolean;
+    };
   const s = tenantDb(db, schema);
   const exec = getExecutor(connectionId);
   const wantType = (t: TenantObjectType) => !scopeTypes || scopeTypes.includes(t);
+  const filterOpts: DiscoveryFilterOpts = { includeDisabled, includeUnlicensed };
 
   if (!exec) {
     await s
@@ -118,7 +128,7 @@ export async function handleTenantDiscoveryRun(
     try {
       for (const spec of specs) {
         // runSpec now updates progress.counts[spec.objectType] itself, live
-        await runSpec(s, exec, runId, spec, ctx, progress);
+        await runSpec(s, exec, runId, spec, ctx, progress, filterOpts);
       }
       for (const t of STEP_TYPES[step]) if (wantType(t)) succeededTypes.add(t);
       progress.completed.push(step);
@@ -321,8 +331,10 @@ async function runSpec(
   spec: CmdletSpec,
   ctx: RunContext,
   progress: TenantDiscoveryProgress,
+  filterOpts: DiscoveryFilterOpts = {},
 ): Promise<number> {
   const noun = nounFor(spec.objectType);
+  let skippedUnlicensed = 0;
 
   // Current snapshot for this type, keyed by object_key - one read for the step.
   progress.note = `Loading existing ${noun}…`;
@@ -370,6 +382,18 @@ async function runSpec(
           if (seen.has(key)) continue;
           seen.add(key);
         }
+        // Skip AccountType 'User' accounts with no mailbox - not migration
+        // candidates (they must be live with email before Teams-voice enablement).
+        // Never applies to ResourceAccount / SfbOnPremUser, or when opted in.
+        if (
+          spec.objectType === 'user' &&
+          !filterOpts.includeUnlicensed &&
+          str(r.AccountType) === 'User' &&
+          !hasMailbox(r)
+        ) {
+          skippedUnlicensed += 1;
+          continue;
+        }
         const name = spec.name(r);
         const p = prev.get(key);
         const { id: objectId, change } = await upsertObject(s, runId, spec.objectType, key, name, r, p);
@@ -413,7 +437,7 @@ async function runSpec(
   // result comes back in visible chunks and no single call can time out. One
   // bad bucket is recorded and skipped - it must not abort the others.
   if (spec.buckets) {
-    const buckets = spec.buckets();
+    const buckets = spec.buckets(filterOpts);
     let fetched = 0;
     for (let i = 0; i < buckets.length; i++) {
       const bk = buckets[i];
@@ -441,6 +465,12 @@ async function runSpec(
       await handle(recs);
     }
     await flushVersions();
+    if (skippedUnlicensed) {
+      progress.note = `Stored ${stored.toLocaleString()} ${noun} · skipped ${skippedUnlicensed.toLocaleString()} with no mailbox`;
+      await saveProgress(s, runId, progress);
+      // eslint-disable-next-line no-console
+      console.log(`[discovery ${runId}] users: skipped ${skippedUnlicensed} unlicensed (no mailbox)`);
+    }
     return stored;
   }
 
@@ -550,6 +580,14 @@ const iso = (v: unknown): string | null => {
   const d = new Date(String(v).replace(/^\/Date\((\d+)\)\/$/, '$1'));
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 };
+
+/** True when the account has an active Exchange Online plan (i.e. a mailbox). */
+function hasMailbox(r: Rec): boolean {
+  const plans = Array.isArray(r.AssignedPlan) ? (r.AssignedPlan as Rec[]) : [];
+  return plans.some(
+    (p) => /EXCHANGE_S_/i.test(String(p?.Capability ?? '')) && String(p?.CapabilityStatus ?? '') === 'Enabled',
+  );
+}
 
 async function projectUser(s: Scoped, runId: string, objectId: string, r: Rec) {
   const upn = str(r.UserPrincipalName);

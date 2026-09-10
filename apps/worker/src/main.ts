@@ -29,8 +29,13 @@ const EXECUTOR_KIND = (process.env.TEAMS_EXECUTOR ?? 'pwsh').toLowerCase();
 const newExecutor = (): TeamsExecutor =>
   EXECUTOR_KIND === 'simulated' ? new SimulatedTeamsExecutor() : new PwshTeamsExecutor();
 
-/** Idle sessions are torn down after this long (tokens die with the pwsh process). */
-const SESSION_TTL_MS = Math.max(5, Number(process.env.TEAMS_SESSION_TTL_MINUTES ?? 60)) * 60_000;
+/**
+ * Idle sessions are torn down after this long (tokens die with the pwsh
+ * process). It's an *idle* timeout - an active run keeps the session alive - and
+ * `connections.expires_at` is pushed forward on activity so the UI shows a live
+ * session, not a fixed countdown.
+ */
+const SESSION_TTL_MS = Math.max(5, Number(process.env.TEAMS_SESSION_TTL_MINUTES ?? 240)) * 60_000;
 
 /** In-memory registry of live executors, keyed by connectionId. Never persisted. */
 const executors = new Map<string, TeamsExecutor>();
@@ -56,9 +61,20 @@ async function expireConnection(schema: string, connectionId: string, reason: st
 setInterval(() => {
   const now = Date.now();
   for (const [id, exec] of executors) {
+    const schema = executorSchema.get(id);
+    if (!schema) continue;
     if (now - exec.lastUsedAt > SESSION_TTL_MS) {
-      const schema = executorSchema.get(id);
-      if (schema) void expireConnection(schema, id, 'idle timeout');
+      void expireConnection(schema, id, 'idle timeout');
+    } else {
+      // session is alive - keep expires_at ahead of the idle window so the UI
+      // (and summary's activeConnection filter) shows a live session
+      void tenantDb(db, schema)
+        .updateTable('connections')
+        .set({ expires_at: new Date(now + SESSION_TTL_MS).toISOString() })
+        .where('id', '=', id)
+        .where('status', '=', 'active')
+        .execute()
+        .catch(() => undefined);
     }
   }
 }, 60_000).unref();

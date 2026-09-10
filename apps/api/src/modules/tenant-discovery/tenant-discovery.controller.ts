@@ -61,7 +61,10 @@ export class TenantDiscoveryController {
     @CurrentUser() user: AuthedUser,
     @Body(new ZodBody(tenantDiscoveryStartSchema)) body: TenantDiscoveryStartInput,
   ) {
-    return this.svc.startRun(t, user, body.connectionId, body.scopeTypes);
+    return this.svc.startRun(t, user, body.connectionId, body.scopeTypes, {
+      includeDisabled: body.includeDisabled,
+      includeUnlicensed: body.includeUnlicensed,
+    });
   }
 
   @Get('runs')

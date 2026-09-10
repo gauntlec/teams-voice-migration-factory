@@ -70,6 +70,7 @@ import {
 import { api, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
+import { JsonTree } from '../components/JsonTree';
 import { Page } from '../components/Page';
 import { LoadError, NoTenant } from '../components/records';
 
@@ -328,11 +329,19 @@ const MULTI_TYPE_STEPS = TENANT_DISCOVERY_STEPS.filter(
 function ScopePicker({
   selected,
   onChange,
+  includeDisabled,
+  includeUnlicensed,
+  onIncludeDisabled,
+  onIncludeUnlicensed,
   onRun,
   disabled,
 }: {
   selected: Set<TenantObjectType>;
   onChange: (next: Set<TenantObjectType>) => void;
+  includeDisabled: boolean;
+  includeUnlicensed: boolean;
+  onIncludeDisabled: (v: boolean) => void;
+  onIncludeUnlicensed: (v: boolean) => void;
   onRun: () => void;
   disabled: boolean;
 }) {
@@ -401,6 +410,24 @@ function ScopePicker({
           </div>
         );
       })}
+      {selected.has('user') && (
+        <div className={s.scopeTypes} style={{ paddingLeft: 28, marginTop: 4 }}>
+          <Checkbox
+            label="Include disabled accounts"
+            checked={includeDisabled}
+            onChange={(_, d) => onIncludeDisabled(!!d.checked)}
+          />
+          <Checkbox
+            label="Include accounts with no mailbox / licence (and guests)"
+            checked={includeUnlicensed}
+            onChange={(_, d) => onIncludeUnlicensed(!!d.checked)}
+          />
+        </div>
+      )}
+      <Text size={200} className={s.muted}>
+        Users are limited to enabled, mailbox-holding accounts plus resource accounts — the Teams-voice
+        migration candidates. Tick the boxes above to widen it.
+      </Text>
       <div className={s.row} style={{ marginTop: 6 }}>
         <Button appearance="primary" icon={<ArrowSyncRegular />} disabled={disabled} onClick={onRun}>
           Sync selected{selected.size ? ` (${selected.size})` : ''}
@@ -429,6 +456,8 @@ function ConnectCard({
   const [err, setErr] = useState<string | null>(null);
   const [scopeOpen, setScopeOpen] = useState(false);
   const [scopeSel, setScopeSel] = useState<Set<TenantObjectType>>(new Set());
+  const [includeDisabled, setIncludeDisabled] = useState(false);
+  const [includeUnlicensed, setIncludeUnlicensed] = useState(false);
 
   // Adopt the active connection from the summary when we didn't start one here.
   useEffect(() => {
@@ -460,6 +489,8 @@ function ConnectCard({
         body: JSON.stringify({
           connectionId: c!.id,
           ...(scopeTypes && scopeTypes.length ? { scopeTypes } : {}),
+          ...(includeDisabled ? { includeDisabled: true } : {}),
+          ...(includeUnlicensed ? { includeUnlicensed: true } : {}),
         }),
       }),
     onSuccess: () => {
@@ -562,6 +593,10 @@ function ConnectCard({
             <ScopePicker
               selected={scopeSel}
               onChange={setScopeSel}
+              includeDisabled={includeDisabled}
+              includeUnlicensed={includeUnlicensed}
+              onIncludeDisabled={setIncludeDisabled}
+              onIncludeUnlicensed={setIncludeUnlicensed}
               onRun={() => run.mutate([...scopeSel])}
               disabled={runDisabled || scopeSel.size === 0}
             />
@@ -849,14 +884,24 @@ function Pager({
 
 function JsonDialog({ title, data, onClose }: { title: string; data: unknown; onClose: () => void }) {
   const s = useStyles();
+  const [view, setView] = useState<'formatted' | 'raw'>('formatted');
   const text = JSON.stringify(data, null, 2);
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: 760, width: '92vw' }}>
+      <DialogSurface style={{ maxWidth: 820, width: '94vw' }}>
         <DialogBody>
           <DialogTitle>{title}</DialogTitle>
           <DialogContent>
-            <pre className={s.json}>{text}</pre>
+            <TabList
+              size="small"
+              selectedValue={view}
+              onTabSelect={(_, d) => setView(d.value as 'formatted' | 'raw')}
+              style={{ marginBottom: 8 }}
+            >
+              <Tab value="formatted">Formatted</Tab>
+              <Tab value="raw">Raw JSON</Tab>
+            </TabList>
+            {view === 'formatted' ? <JsonTree data={data} /> : <pre className={s.json}>{text}</pre>}
           </DialogContent>
           <DialogActions>
             <CopyButton text={text} label="Copy JSON" />
