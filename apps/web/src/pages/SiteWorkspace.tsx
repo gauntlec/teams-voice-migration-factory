@@ -28,7 +28,13 @@ import {
   Text,
   Textarea,
 } from '@fluentui/react-components';
-import { ArrowLeftRegular, DeleteRegular, LinkRegular } from '@fluentui/react-icons';
+import {
+  ArrowLeftRegular,
+  ArrowUploadRegular,
+  DeleteRegular,
+  LinkRegular,
+  WarningRegular,
+} from '@fluentui/react-icons';
 import {
   CALLER_ID_OPTIONS,
   FLOW_KINDS,
@@ -46,6 +52,7 @@ import {
 import { api, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
+import { ImportUsersDialog } from '../components/ImportUsersDialog';
 import { Page } from '../components/Page';
 import { NetworkDiagram, type NetworkRow } from '../components/NetworkDiagram';
 import {
@@ -91,6 +98,10 @@ const TABS = [
   'flows',
 ] as const;
 type TabKey = (typeof TABS)[number];
+
+/** Last 10 significant digits — for loosely matching a requested vs assigned number. */
+const numKey = (v: unknown) => String(v ?? '').replace(/\D/g, '').slice(-10);
+
 const TAB_LABEL: Record<TabKey, string> = {
   overview: 'Overview',
   ranges: 'Number ranges',
@@ -163,6 +174,7 @@ export function SiteWorkspace() {
   const { activeTenantId, can } = useAuth();
   const qc = useQueryClient();
   const [tab, setTab] = useState<TabKey>('overview');
+  const [importOpen, setImportOpen] = useState(false);
 
   const tid = activeTenantId;
   const base = `/t/${tid}/discovery`;
@@ -321,20 +333,58 @@ export function SiteWorkspace() {
           readOnly={locked}
           onChanged={refreshSummary}
           headerActions={
-            <RelinkUsersButton
-              base={base}
-              siteId={siteId}
-              disabled={locked}
-              onDone={() => {
-                qc.invalidateQueries({ queryKey: ['users', tid, siteId] });
-                refreshSummary();
-              }}
-            />
+            <>
+              <RelinkUsersButton
+                base={base}
+                siteId={siteId}
+                disabled={locked}
+                onDone={() => {
+                  qc.invalidateQueries({ queryKey: ['users', tid, siteId] });
+                  refreshSummary();
+                }}
+              />
+              {!locked && (
+                <Button
+                  size="small"
+                  icon={<ArrowUploadRegular />}
+                  onClick={() => setImportOpen(true)}
+                >
+                  Import from Excel…
+                </Button>
+              )}
+            </>
           }
           columns={[
             { key: 'upn', label: 'UPN' },
             { key: 'display_name', label: 'Name' },
-            { key: 'phone_number', label: 'Number' },
+            {
+              key: 'phone_number',
+              label: 'Number',
+              render: (r) => {
+                const linked = (r.phone_number as string | null) ?? null;
+                const requested = (r.requested_number as string | null) ?? null;
+                const mismatch =
+                  requested &&
+                  numKey(requested) !== numKey(linked ?? '') &&
+                  numKey(requested) !== '';
+                return (
+                  <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                    {linked ?? '—'}
+                    {mismatch && (
+                      <Badge
+                        appearance="tint"
+                        color="warning"
+                        size="small"
+                        icon={<WarningRegular />}
+                        title="The number the customer requested isn't the one assigned here — reconcile in Design & Build."
+                      >
+                        Requested {requested}
+                      </Badge>
+                    )}
+                  </span>
+                );
+              },
+            },
             {
               key: 'calling_policy_id',
               label: 'Calling policy',
@@ -379,6 +429,11 @@ export function SiteWorkspace() {
             { key: 'upn', label: 'M365 UPN', required: true, placeholder: 'user@customer.com' },
             { key: 'display_name', label: 'Display name' },
             { key: 'phone_number_id', label: 'Phone number', type: 'ref', choices: numberChoicesFor },
+            {
+              key: 'requested_number',
+              label: 'Requested number',
+              placeholder: '+441234567890',
+            },
             { key: 'calling_policy_id', label: 'Calling policy', type: 'ref', choices: policyChoices },
             { key: 'caller_id', label: 'Caller ID', type: 'select', options: CALLER_ID_OPTIONS },
             { key: 'voicemail_enabled', label: 'Voicemail enabled', type: 'boolean', default: 'true' },
@@ -388,6 +443,20 @@ export function SiteWorkspace() {
             { key: 'access_port_id', label: 'Access port ID' },
             { key: 'comments', label: 'Comments', type: 'textarea', full: true },
           ]}
+        />
+      )}
+
+      {importOpen && (
+        <ImportUsersDialog
+          base={base}
+          siteId={siteId}
+          availableE164={availableChoices.map((c) => c.label)}
+          policyNames={callingPolicies.map((p) => p.name)}
+          onClose={() => setImportOpen(false)}
+          onDone={() => {
+            qc.invalidateQueries({ queryKey: ['users', tid, siteId] });
+            refreshSummary();
+          }}
         />
       )}
 

@@ -10,6 +10,7 @@ import {
   numberReserveSchema,
   relinkUsersSchema,
   resourceAccountNumberSchema,
+  usersImportSchema,
   type CallingPolicyInput,
   type DiscoveryCapInput,
   type DiscoveryListQuery,
@@ -17,6 +18,7 @@ import {
   type DiscoveryResourceAccountInput,
   type DiscoveryUserInput,
   type RelinkUsersInput,
+  type UsersImportInput,
 } from '@tvmf/shared';
 import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
 import type { AuthedUser, TenantContext } from '../../common/request';
@@ -188,6 +190,17 @@ export class TelephonyController {
     @Body(new ZodBody(relinkUsersSchema)) body: RelinkUsersInput,
   ) {
     return this.svc.relinkUsers(t, u, body.site_id, this.review(u));
+  }
+
+  /** Bulk-create users for a site from parsed spreadsheet rows. */
+  @Post('users/import')
+  @RequirePermission('discovery:write')
+  importUsers(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() u: AuthedUser,
+    @Body(new ZodBody(usersImportSchema)) body: UsersImportInput,
+  ) {
+    return this.svc.importUsers(t, u, body.site_id, body.rows, this.review(u));
   }
 
   /* ------------------------------ caps ------------------------------ */

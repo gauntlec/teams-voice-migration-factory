@@ -266,11 +266,62 @@ export const discoveryUserSchema = z
     handset_model: optStr(120),
     access_port_id: optStr(80),
     comments: optStr(2000),
+    /** number the customer asked for; free text, reconciled in Design & Build */
+    requested_number: optStr(40),
     /** assign / move / clear this holder's number in the same call */
     phone_number_id: refId,
   })
   .strict();
 export type DiscoveryUserInput = z.infer<typeof discoveryUserSchema>;
+
+/* ---------- Import from Excel: bulk-create users from a spreadsheet ---------- */
+
+/** Tolerant yes/no/true/1/x -> boolean; anything else -> undefined. */
+const ynLoose = z.preprocess((v) => {
+  if (typeof v === 'boolean') return v;
+  const t = String(v ?? '').trim().toLowerCase();
+  if (['y', 'yes', 'true', '1', 'x', 'enabled', 'on'].includes(t)) return true;
+  if (['n', 'no', 'false', '0', 'disabled', 'off', ''].includes(t)) return false;
+  return undefined;
+}, z.boolean().optional());
+
+const callerIdLoose = z.preprocess(
+  (v) => {
+    const t = String(v ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/[\s-]+/g, '_');
+    return t === '' ? undefined : t;
+  },
+  z.enum(CALLER_ID_OPTIONS).optional(),
+);
+
+/** One parsed spreadsheet row. `calling_policy` is a policy *name* (resolved
+ * server-side); `requested_number` is free text. */
+export const importUserRowSchema = z
+  .object({
+    upn: emailSchema,
+    requested_number: str(40).optional().or(z.literal('')),
+    display_name: optStr(160),
+    calling_policy: optStr(120),
+    caller_id: callerIdLoose,
+    voicemail_enabled: ynLoose,
+    voicemail_language: optStr(80),
+    requires_handset: ynLoose,
+    handset_model: optStr(120),
+    access_port_id: optStr(80),
+    comments: optStr(2000),
+  })
+  .strict();
+export type ImportUserRow = z.infer<typeof importUserRowSchema>;
+
+export const usersImportSchema = z
+  .object({
+    site_id: z.string().uuid(),
+    rows: z.array(importUserRowSchema).min(1).max(2000),
+  })
+  .strict();
+export type UsersImportInput = z.infer<typeof usersImportSchema>;
 
 export const discoveryCapSchema = z
   .object({

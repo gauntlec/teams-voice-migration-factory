@@ -14,6 +14,7 @@ import {
   type DiscoveryNumberRangeInput,
   type DiscoveryResourceAccountInput,
   type DiscoveryUserInput,
+  type ImportUserRow,
   type NumberHolderType,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
@@ -27,6 +28,9 @@ const actorOf = (u: AuthedUser) => ({ id: u.id, email: u.email });
 
 /** '' -> null, otherwise pass through (dropdowns clear to ''). */
 const nz = <T>(v: T | '' | null | undefined): T | null => (v === '' || v == null ? null : v);
+
+/** Last 10 significant digits of a phone string, for loose number matching. */
+const numKey = (v: string | null | undefined): string => String(v ?? '').replace(/\D/g, '').slice(-10);
 
 @Injectable()
 export class TelephonyService {
@@ -653,6 +657,7 @@ export class TelephonyService {
           handset_model: nz(i.handset_model),
           access_port_id: nz(i.access_port_id),
           comments: nz(i.comments),
+          requested_number: nz(i.requested_number),
         })
         .returningAll()
         .executeTakeFirstOrThrow();
@@ -691,6 +696,7 @@ export class TelephonyService {
       'handset_model',
       'access_port_id',
       'comments',
+      'requested_number',
     ] as const) {
       if (k in patch) set[k] = typeof patch[k] === 'boolean' ? patch[k] : nz(patch[k] as string);
     }
@@ -776,6 +782,111 @@ export class TelephonyService {
       detail: { linked, unmatched },
     });
     return { linked, unmatched };
+  }
+
+  /**
+   * Bulk-create users for one site from parsed spreadsheet rows. Per row:
+   * de-dup on UPN (case-insensitive), resolve the calling-policy *name* to an id,
+   * store the requested number verbatim and link a free inventory number for the
+   * site when it matches. Not transactional - a partial import is re-runnable
+   * (existing UPNs are skipped).
+   */
+  async importUsers(
+    t: TenantContext,
+    u: AuthedUser,
+    siteId: string,
+    rows: ImportUserRow[],
+    canReview: boolean,
+  ) {
+    await this.base.assertEditable(t, canReview);
+    assertSiteInScope(t, siteId);
+    const s = this.s(t);
+
+    const site = await s
+      .selectFrom('discovery_sites')
+      .select(['id', 'sitecode'])
+      .where('id', '=', siteId)
+      .executeTakeFirst();
+    if (!site) throw new BadRequestException('Unknown site for this customer.');
+
+    const policies = await s
+      .selectFrom('discovery_calling_policies')
+      .select(['id', 'name'])
+      .execute();
+    const policyByName = new Map(policies.map((p) => [p.name.trim().toLowerCase(), p.id]));
+
+    const freeNums = site.sitecode
+      ? await s
+          .selectFrom('phone_numbers as n')
+          .innerJoin('discovery_number_ranges as r', 'r.id', 'n.range_id')
+          .select(['n.id as id', 'n.e164 as e164'])
+          .where('r.sitecode', '=', site.sitecode)
+          .where('n.status', '=', 'available')
+          .execute()
+      : [];
+    const numById = new Map(freeNums.map((n) => [numKey(n.e164), n.id]));
+
+    const existing = new Set(
+      (await s.selectFrom('discovery_users').select('upn').execute()).map((r) =>
+        r.upn.trim().toLowerCase(),
+      ),
+    );
+
+    let created = 0;
+    let skipped = 0;
+    const errors: { row: number; upn: string; message: string }[] = [];
+
+    for (let idx = 0; idx < rows.length; idx++) {
+      const row = rows[idx];
+      const upn = row.upn.trim().toLowerCase();
+      if (existing.has(upn)) {
+        skipped += 1;
+        continue;
+      }
+      const reqNum = nz(row.requested_number) ?? null;
+      const numId = reqNum ? (numById.get(numKey(reqNum)) ?? null) : null;
+      const policyId = row.calling_policy
+        ? (policyByName.get(row.calling_policy.trim().toLowerCase()) ?? null)
+        : null;
+      try {
+        const tenantUserId = await this.tenantUserIdFor(t, upn);
+        const rec = await s
+          .insertInto('discovery_users')
+          .values({
+            site_id: siteId,
+            upn,
+            display_name: nz(row.display_name),
+            calling_policy_id: policyId,
+            caller_id: row.caller_id ?? null,
+            voicemail_enabled: row.voicemail_enabled ?? true,
+            voicemail_language: nz(row.voicemail_language),
+            requires_handset: row.requires_handset ?? false,
+            handset_model: nz(row.handset_model),
+            access_port_id: nz(row.access_port_id),
+            comments: nz(row.comments),
+            requested_number: reqNum,
+            tenant_user_id: tenantUserId,
+          })
+          .returning('id')
+          .executeTakeFirstOrThrow();
+        if (numId) {
+          await this.setSingleNumber(t, 'user', rec.id, numId);
+          numById.delete(numKey(reqNum!)); // never hand the same number to two rows
+        }
+        existing.add(upn);
+        created += 1;
+      } catch (e) {
+        errors.push({ row: idx + 1, upn, message: (e as Error).message });
+      }
+    }
+
+    await this.audit.tenant(t.schema, 'discovery.users_imported', {
+      actor: actorOf(u),
+      targetType: 'discovery_site',
+      targetId: siteId,
+      detail: { created, skipped, errors: errors.length },
+    });
+    return { created, skipped, errors };
   }
 
   /* ============================== caps ============================== */

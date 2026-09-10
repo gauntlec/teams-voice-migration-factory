@@ -234,6 +234,9 @@ export interface DiscoveryUsersTable {
   handset_model: string | null;
   access_port_id: string | null;
   comments: string | null;
+  /** number the customer asked for (imported from a spreadsheet); free text,
+   * not necessarily in inventory. Reconciled in Design & Build. */
+  requested_number: string | null;
   /** FK -> tenant_users.id: the real tenant user this row was matched to (by lower(upn)). */
   tenant_user_id: string | null;
   created_at: Ts;
