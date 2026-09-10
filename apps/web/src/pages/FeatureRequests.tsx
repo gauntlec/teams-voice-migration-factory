@@ -98,7 +98,29 @@ const useStyles = makeStyles({
     ...shorthands.gap('6px'),
     cursor: 'grab',
   },
+  cardOpen: {
+    display: 'grid',
+    ...shorthands.gap('6px'),
+    cursor: 'pointer',
+    ...shorthands.margin('-4px', '-4px', '0'),
+    ...shorthands.padding('4px'),
+    ...shorthands.borderRadius(tokens.borderRadiusSmall),
+    ':hover': { backgroundColor: tokens.colorNeutralBackground1Hover },
+  },
   cardTitle: { fontWeight: tokens.fontWeightSemibold, fontSize: tokens.fontSizeBase300, lineHeight: '1.3' },
+  noteClamp: {
+    color: tokens.colorNeutralForeground3,
+    fontSize: tokens.fontSizeBase200,
+    display: '-webkit-box',
+    WebkitLineClamp: 3,
+    WebkitBoxOrient: 'vertical',
+    overflow: 'hidden',
+  },
+  detailSurface: { maxWidth: '640px', width: '92vw' },
+  detailBody: { display: 'grid', ...shorthands.gap('12px') },
+  detailField: { display: 'grid', ...shorthands.gap('2px') },
+  detailLabel: { fontSize: tokens.fontSizeBase200, fontWeight: tokens.fontWeightSemibold, color: tokens.colorNeutralForeground3 },
+  detailValue: { fontSize: tokens.fontSizeBase300, whiteSpace: 'pre-wrap', ...shorthands.margin('0') },
   tags: { display: 'flex', ...shorthands.gap('4px'), flexWrap: 'wrap', alignItems: 'center' },
   cardFoot: {
     display: 'flex',
@@ -481,17 +503,115 @@ function FeatureForm({
   );
 }
 
+/* ------------------------------ detail dialog --------------------------- */
+
+function DetailRow({ label, value }: { label: string; value: ReactNode }) {
+  const s = useStyles();
+  if (value === null || value === undefined || value === '') return null;
+  return (
+    <div className={s.detailField}>
+      <span className={s.detailLabel}>{label}</span>
+      <p className={s.detailValue}>{value}</p>
+    </div>
+  );
+}
+
+function DetailDialog({
+  f,
+  canManage,
+  onEdit,
+  onClose,
+}: {
+  f: FeatureRequest;
+  canManage: boolean;
+  onEdit: () => void;
+  onClose: () => void;
+}) {
+  const s = useStyles();
+  const [copied, setCopied] = useState(false);
+  return (
+    <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
+      <DialogSurface className={s.detailSurface}>
+        <DialogBody>
+          <DialogTitle>{f.title}</DialogTitle>
+          <DialogContent>
+            <div className={s.detailBody}>
+              <div className={s.tags}>
+                <Badge appearance="tint" color={PRIORITY_COLOR[f.priority]} size="small">
+                  {FEATURE_PRIORITY_LABELS[f.priority]}
+                </Badge>
+                <Badge appearance="outline" color="informative" size="small">
+                  {f.area}
+                </Badge>
+                <Badge appearance="outline" size="small">
+                  {FEATURE_STATUS_LABELS[f.status]}
+                </Badge>
+              </div>
+              <DetailRow
+                label="Requested by"
+                value={`${f.submitted_by_name ?? 'Unknown'} · ${timeAgo(f.created_at)}`}
+              />
+              <DetailRow
+                label="Affected roles"
+                value={f.affected_roles.length ? f.affected_roles.join(', ') : null}
+              />
+              <DetailRow label="Problem / motivation" value={f.problem} />
+              <DetailRow label="Proposed solution / desired behaviour" value={f.proposal} />
+              <DetailRow label="Current behaviour" value={f.current_behavior} />
+              <DetailRow label="Example scenario" value={f.examples} />
+              <DetailRow label="Acceptance criteria" value={f.acceptance} />
+              <DetailRow label="Constraints / out of scope" value={f.constraints} />
+              <DetailRow label="Decision note" value={f.decision_note} />
+            </div>
+          </DialogContent>
+          <DialogActions>
+            <Button
+              appearance="subtle"
+              icon={copied ? <CheckmarkRegular /> : <CopyRegular />}
+              onClick={async () => {
+                if (await copyText(buildClaudePrompt(f))) {
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1500);
+                }
+              }}
+            >
+              {copied ? 'Copied' : 'Copy prompt'}
+            </Button>
+            {canManage && (
+              <Button
+                appearance="secondary"
+                icon={<EditRegular />}
+                onClick={() => {
+                  onClose();
+                  onEdit();
+                }}
+              >
+                Edit
+              </Button>
+            )}
+            <Button appearance="primary" onClick={onClose}>
+              Close
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  );
+}
+
 /* --------------------------------- card ---------------------------------- */
 
 function RequestCard({
   f,
   canManage,
+  onOpen,
   onEdit,
   onMove,
   onDelete,
 }: {
   f: FeatureRequest;
   canManage: boolean;
+  onOpen: () => void;
   onEdit: () => void;
   onMove: (status: FeatureStatus) => void;
   onDelete: () => void;
@@ -516,16 +636,30 @@ function RequestCard({
         e.dataTransfer.effectAllowed = 'move';
       }}
     >
-      <div className={s.cardTitle}>{f.title}</div>
-      <div className={s.tags}>
-        <Badge appearance="tint" color={PRIORITY_COLOR[f.priority]} size="small">
-          {FEATURE_PRIORITY_LABELS[f.priority]}
-        </Badge>
-        <Badge appearance="outline" color="informative" size="small">
-          {f.area}
-        </Badge>
+      <div
+        className={s.cardOpen}
+        role="button"
+        tabIndex={0}
+        onClick={onOpen}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onOpen();
+          }
+        }}
+        title="View details"
+      >
+        <div className={s.cardTitle}>{f.title}</div>
+        <div className={s.tags}>
+          <Badge appearance="tint" color={PRIORITY_COLOR[f.priority]} size="small">
+            {FEATURE_PRIORITY_LABELS[f.priority]}
+          </Badge>
+          <Badge appearance="outline" color="informative" size="small">
+            {f.area}
+          </Badge>
+        </div>
+        {f.decision_note && <div className={s.noteClamp}>Note: {f.decision_note}</div>}
       </div>
-      {f.decision_note && <Text className={s.meta}>Note: {f.decision_note}</Text>}
       <div className={s.cardFoot}>
         <Text className={s.meta}>
           {f.submitted_by_name ?? 'Unknown'} · {timeAgo(f.created_at)}
@@ -586,6 +720,7 @@ export function FeatureRequests() {
   const [dialog, setDialog] = useState<{ mode: 'create' } | { mode: 'edit'; f: FeatureRequest } | null>(
     null,
   );
+  const [detail, setDetail] = useState<FeatureRequest | null>(null);
   const [overCol, setOverCol] = useState<FeatureStatus | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<FeatureRequest | null>(null);
 
@@ -672,6 +807,7 @@ export function FeatureRequests() {
                         key={f.id}
                         f={f}
                         canManage={canManage}
+                        onOpen={() => setDetail(f)}
                         onEdit={() => setDialog({ mode: 'edit', f })}
                         onMove={(status) => move.mutate({ id: f.id, status })}
                         onDelete={() => setConfirmDelete(f)}
@@ -683,6 +819,15 @@ export function FeatureRequests() {
             );
           })}
         </div>
+      )}
+
+      {detail && (
+        <DetailDialog
+          f={(list.data ?? []).find((x) => x.id === detail.id) ?? detail}
+          canManage={canManage}
+          onEdit={() => setDialog({ mode: 'edit', f: detail })}
+          onClose={() => setDetail(null)}
+        />
       )}
 
       {dialog?.mode === 'create' && (
