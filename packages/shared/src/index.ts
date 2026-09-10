@@ -182,5 +182,5 @@ export interface TenantDiscoverySummary {
   counts: Partial<Record<import('./domain').TenantObjectType, number>>;
   linkedDiscoveryUsers: number;
   /** per-customer Discovery settings */
-  settings: { filterUsers: boolean };
+  settings: { filterUsers: boolean; notifyOnComplete: boolean };
 }

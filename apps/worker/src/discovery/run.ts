@@ -1,14 +1,16 @@
 import type { Job } from 'bullmq';
 import type { Kysely } from 'kysely';
-import { tenantDb, type DB } from '@tvmf/db';
+import { platformDb, tenantDb, type DB } from '@tvmf/db';
 import {
   TENANT_DISCOVERY_STEPS,
   TENANT_POLICY_TYPES,
+  type DiscoveryCompletedContext,
   type TenantDiscoveryProgress,
   type TenantObjectChangeKind,
   type TenantObjectType,
 } from '@tvmf/shared';
 import type { TeamsExecutor } from '../teams/executor';
+import type { MailEnqueuer } from '../mail/enqueue';
 import {
   STEP_CMDLETS,
   STEP_TYPES,
@@ -80,23 +82,38 @@ export async function handleTenantDiscoveryRun(
   job: Job,
   db: Kysely<DB>,
   getExecutor: (connectionId: string) => TeamsExecutor | undefined,
+  enqueueMail?: MailEnqueuer,
 ) {
-  const { schema, runId, connectionId, scopeTypes, includeDisabled, includeUnlicensed, filterUsers } =
-    job.data as {
-      schema: string;
-      runId: string;
-      connectionId: string;
-      /** object types to discover; undefined = full run (every step) */
-      scopeTypes?: TenantObjectType[];
-      includeDisabled?: boolean;
-      includeUnlicensed?: boolean;
-      /** customer default: false = don't filter users to Teams-licensed */
-      filterUsers?: boolean;
-    };
+  const startedAt = Date.now();
+  const {
+    schema,
+    tenantId,
+    runId,
+    connectionId,
+    operatorUserId,
+    scopeTypes,
+    includeDisabled,
+    includeUnlicensed,
+    filterUsers,
+  } = job.data as {
+    schema: string;
+    tenantId?: string;
+    runId: string;
+    connectionId: string;
+    /** platform.users.id of whoever started the run */
+    operatorUserId?: string;
+    /** object types to discover; undefined = full run (every step) */
+    scopeTypes?: TenantObjectType[];
+    includeDisabled?: boolean;
+    includeUnlicensed?: boolean;
+    /** customer default: false = don't filter users to Teams-licensed */
+    filterUsers?: boolean;
+  };
   const s = tenantDb(db, schema);
   const exec = getExecutor(connectionId);
   const wantType = (t: TenantObjectType) => !scopeTypes || scopeTypes.includes(t);
   const filterOpts: DiscoveryFilterOpts = { includeDisabled, includeUnlicensed, filterUsers };
+  const progress = emptyProgress();
 
   if (!exec) {
     await s
@@ -109,10 +126,19 @@ export async function handleTenantDiscoveryRun(
       .where('id', '=', runId)
       .execute();
     await s.updateTable('connections').set({ status: 'expired' }).where('id', '=', connectionId).execute();
+    await notifyRunComplete(db, s, enqueueMail, {
+      tenantId,
+      runId,
+      operatorUserId,
+      outcome: 'failed',
+      errorMessage: 'The tenant connection was no longer available on the worker.',
+      startedAt,
+      progress,
+      scopeTypes,
+    });
     return;
   }
 
-  const progress = emptyProgress();
   await s
     .updateTable('tenant_discovery_runs')
     .set({ status: 'running', started_at: new Date().toISOString(), progress })
@@ -247,6 +273,115 @@ export async function handleTenantDiscoveryRun(
     progress.counts,
     progress.changed,
   );
+
+  await notifyRunComplete(db, s, enqueueMail, {
+    tenantId,
+    runId,
+    operatorUserId,
+    outcome: signInLost
+      ? 'failed'
+      : progress.errors.length
+        ? 'completed_with_errors'
+        : 'completed',
+    errorMessage: signInLost ? 'Lost the tenant sign-in part-way through the run.' : null,
+    startedAt,
+    progress,
+    scopeTypes,
+  });
+}
+
+/**
+ * Email the person who started the run once it reaches a terminal state — unless
+ * the customer has turned it off (`tenant_discovery_config.notify_on_complete`).
+ * Best-effort: a mail failure is logged and never fails the run.
+ */
+async function notifyRunComplete(
+  db: Kysely<DB>,
+  s: Scoped,
+  enqueueMail: MailEnqueuer | undefined,
+  args: {
+    tenantId?: string;
+    runId: string;
+    operatorUserId?: string;
+    outcome: DiscoveryCompletedContext['outcome'];
+    errorMessage?: string | null;
+    startedAt: number;
+    progress: TenantDiscoveryProgress;
+    scopeTypes?: TenantObjectType[];
+  },
+): Promise<void> {
+  if (!enqueueMail || !args.operatorUserId) return;
+  try {
+    const cfg = await s
+      .selectFrom('tenant_discovery_config')
+      .select('notify_on_complete')
+      .executeTakeFirst()
+      .catch(() => undefined);
+    if (cfg && cfg.notify_on_complete === false) return;
+
+    const user = await platformDb(db)
+      .selectFrom('users')
+      .select(['email', 'display_name'])
+      .where('id', '=', args.operatorUserId)
+      .executeTakeFirst();
+    if (!user?.email) return;
+
+    let customerName = 'your customer';
+    if (args.tenantId) {
+      const tn = await platformDb(db)
+        .selectFrom('tenants')
+        .select('name')
+        .where('id', '=', args.tenantId)
+        .executeTakeFirst();
+      if (tn?.name) customerName = tn.name;
+    }
+
+    const p = args.progress;
+    const total = Object.values(p.counts).reduce((a, b) => a + (b ?? 0), 0);
+    const breakdown = (Object.entries(p.counts) as [TenantObjectType, number][])
+      .filter(([, nn]) => (nn ?? 0) > 0)
+      .sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0))
+      .slice(0, 6)
+      .map(([t, nn]) => ({ label: nounFor(t), count: nn }));
+
+    const secs = Math.max(1, Math.round((Date.now() - args.startedAt) / 1000));
+    const durationText =
+      secs < 90 ? `${secs} s` : `${Math.floor(secs / 60)} min ${String(secs % 60).padStart(2, '0')} s`;
+
+    const webOrigin = (process.env.WEB_ORIGIN ?? '').replace(/\/+$/, '');
+
+    const context: DiscoveryCompletedContext = {
+      recipientName: user.display_name ?? user.email,
+      customerName,
+      outcome: args.outcome,
+      scopeLabel: args.scopeTypes?.length
+        ? `Partial: ${args.scopeTypes.map(nounFor).join(', ')}`
+        : 'Full discovery',
+      durationText,
+      totalObjects: total,
+      added: p.changed.added,
+      updated: p.changed.updated,
+      removed: p.changed.removed,
+      readded: p.changed.readded,
+      skippedNotLicensed: p.skipped?.notLicensed ?? 0,
+      errorCount: p.errors.length,
+      filterNote: p.filterDisabledReason ?? null,
+      errorMessage: args.errorMessage ?? null,
+      breakdown,
+      runUrl: webOrigin ? `${webOrigin}/discovery` : '/discovery',
+    };
+
+    await enqueueMail({
+      template: 'discovery_completed',
+      to: { email: user.email, name: user.display_name },
+      createdBy: args.operatorUserId,
+      related: { type: 'tenant_discovery_run', id: args.runId },
+      context,
+    });
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn(`[discovery ${args.runId}] completion email not sent: ${(e as Error).message}`);
+  }
 }
 
 async function saveProgress(s: Scoped, runId: string, progress: TenantDiscoveryProgress) {

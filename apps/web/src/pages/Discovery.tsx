@@ -613,9 +613,10 @@ function RunCard({ base, summary }: { base: string; summary: TenantDiscoverySumm
   const s = useStyles();
   const qc = useQueryClient();
   const filterUsers = summary?.settings?.filterUsers ?? true;
-  const setFilter = useMutation({
-    mutationFn: (v: boolean) =>
-      api(`${base}/settings`, { method: 'PATCH', body: JSON.stringify({ filterUsers: v }) }),
+  const notifyOnComplete = summary?.settings?.notifyOnComplete ?? true;
+  const patchSettings = useMutation({
+    mutationFn: (body: { filterUsers?: boolean; notifyOnComplete?: boolean }) =>
+      api(`${base}/settings`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tdisc', 'summary', base] }),
   });
   const last = summary?.lastRun ?? null;
@@ -778,14 +779,27 @@ function RunCard({ base, summary }: { base: string; summary: TenantDiscoverySumm
         <Checkbox
           label="Filter users to Teams-licensed accounts (recommended for large tenants)"
           checked={filterUsers}
-          disabled={setFilter.isPending}
-          onChange={(_, d) => setFilter.mutate(!!d.checked)}
+          disabled={patchSettings.isPending}
+          onChange={(_, d) => patchSettings.mutate({ filterUsers: !!d.checked })}
         />
       </div>
       <Text size={200} className={s.muted}>
         {filterUsers
           ? 'Runs store only enabled users licensed for Teams. Turn this off for a small customer to store every enabled user.'
           : 'Runs store every enabled user for this customer. A run can still be narrowed with “Sync part of the tenant”.'}
+      </Text>
+      <div className={s.row} style={{ marginTop: 8 }}>
+        <Checkbox
+          label="Email the person who started a run when it finishes"
+          checked={notifyOnComplete}
+          disabled={patchSettings.isPending}
+          onChange={(_, d) => patchSettings.mutate({ notifyOnComplete: !!d.checked })}
+        />
+      </div>
+      <Text size={200} className={s.muted}>
+        {notifyOnComplete
+          ? 'When a discovery run completes or fails, its starter gets an email with the change counts and a link back here.'
+          : 'No completion emails are sent for this customer.'}
       </Text>
     </Card>
   );

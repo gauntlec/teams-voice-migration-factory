@@ -456,9 +456,14 @@ export type TenantDiscoveryStartInput = z.infer<typeof tenantDiscoveryStartSchem
 export const tenantDiscoverySettingsSchema = z
   .object({
     /** when true (default), runs store only User accounts licensed for Teams */
-    filterUsers: z.boolean(),
+    filterUsers: z.boolean().optional(),
+    /** when true (default), email the person who started a run when it finishes */
+    notifyOnComplete: z.boolean().optional(),
   })
-  .strict();
+  .strict()
+  .refine((v) => v.filterUsers !== undefined || v.notifyOnComplete !== undefined, {
+    message: 'provide at least one setting to update',
+  });
 export type TenantDiscoverySettingsInput = z.infer<typeof tenantDiscoverySettingsSchema>;
 
 /** Query string for the paginated inventory lists (`GET .../objects`, `.../users`). */

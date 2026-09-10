@@ -15,18 +15,22 @@ API (MailService.enqueue)
                                  └─ UPDATE email_messages  (status 'sent' | 'failed', attempts, error)
 ```
 
-- **Enqueue side** — `apps/api/src/mail/mail.service.ts`. `enqueue()` writes the
-  row and adds a `send` job (`attempts: 5`, exponential backoff from 15 s).
-  `resend(id)` re-queues an existing row (used by "Resend invite").
+- **Enqueue side** — the API's `apps/api/src/mail/mail.service.ts` `enqueue()`
+  writes the row and adds a `send` job (`attempts: 5`, exponential backoff from
+  15 s); `resend(id)` re-queues an existing row. The **worker** can also enqueue,
+  for emails it originates (the discovery-run completion email): same contract in
+  `apps/worker/src/mail/enqueue.ts` (`makeMailEnqueuer(db, connection)`).
 - **Send side** — `apps/worker/src/mail/`:
   - `mailer.ts` — nodemailer transport from `SMTP_*`; `mailerConfigured` is
     `false` when `SMTP_HOST` is unset.
-  - `layout.ts` — the branded, inline-CSS shell (palette from
-    `apps/web/src/theme.ts`: header `#4657D2`, button `#5B5FC7`, wordmark,
-    "please do not reply" footer). `renderHtml` + `renderText`.
+  - `layout.ts` — the branded, inline-CSS shell. Voxshift brand system: equalizer
+    mark + `vox·shift` wordmark on a `#4657D2` header with a `#5B5FC7` accent
+    strip, primary button `#4657D2`, callout `#EEEFFD` / `#C3C7F6`, Segoe UI /
+    Consolas. `renderHtml` + `renderText`, plus an optional `eyebrow` kicker.
   - `templates.ts` — `renderEmail(template, context)` switch; one function per
-    template.
-  - `apps/worker/src/main.ts` — the `mail` BullMQ `Worker`.
+    template (`user_invitation`, `discovery_completed`).
+  - `apps/worker/src/main.ts` — the `mail` BullMQ `Worker` and the shared
+    `enqueueMail` producer passed into the discovery runner.
 
 ## `platform.email_messages`
 
@@ -117,4 +121,16 @@ also usable as an admin "reset & re-invite".
 2. Add a `case` in `renderEmail` (`apps/worker/src/mail/templates.ts`) that builds
    a `LayoutInput` and returns `renderHtml` / `renderText`.
 3. Call `mailService.enqueue({ template, to, context, related, createdBy })` from
-   the API where the event happens.
+   the API where the event happens, or the worker's `enqueueMail({...})` for an
+   event the worker owns.
+
+## `discovery_completed`
+
+Sent by the worker when a tenant-discovery run reaches a terminal state
+(`completed`, completed-with-errors, or `failed`/lost sign-in), to the person in
+`tenant_discovery_runs.started_by`. Off per customer via
+`tenant_discovery_config.notify_on_complete` (toggle on the Discovery page).
+Carries the outcome, scope, duration, change counts (`added`/`updated`/`removed`/
+`readded`), the per-type breakdown, the skipped-not-licensed count and step-error
+count, and a link to `WEB_ORIGIN/discovery`. Built in
+`notifyRunComplete()` in `apps/worker/src/discovery/run.ts`.

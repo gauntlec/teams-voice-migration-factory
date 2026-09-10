@@ -13,6 +13,7 @@ import { PwshTeamsExecutor } from './teams/pwsh-executor';
 import { handleTenantDiscoveryRun } from './discovery/run';
 import { renderEmail } from './mail/templates';
 import { mailerConfigured, sendMail } from './mail/mailer';
+import { makeMailEnqueuer } from './mail/enqueue';
 
 const QUEUE_NAME = 'deployments';
 const MAIL_QUEUE_NAME = 'mail';
@@ -20,6 +21,8 @@ const connection = new IORedis(process.env.REDIS_URL ?? 'redis://redis:6379', {
   maxRetriesPerRequest: null,
 });
 const { db } = createDb();
+/** Producer for the `mail` queue — used by jobs the worker originates. */
+const enqueueMail = makeMailEnqueuer(db, connection);
 
 /**
  * TEAMS_EXECUTOR=pwsh (default) drives the real MicrosoftTeams module;
@@ -329,7 +332,7 @@ const worker = new Worker(
       case 'deployment.run':
         return handleDeploymentRun(job);
       case 'tenant_discovery.run':
-        return handleTenantDiscoveryRun(job, db, (id) => executors.get(id));
+        return handleTenantDiscoveryRun(job, db, (id) => executors.get(id), enqueueMail);
       default:
         throw new Error(`unknown job: ${job.name}`);
     }

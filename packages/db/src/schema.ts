@@ -496,6 +496,7 @@ export interface TenantPoliciesTable {
 export interface TenantDiscoveryConfigTable {
   id: Generated<string>;
   filter_users: ColumnType<boolean, boolean | undefined, boolean>;
+  notify_on_complete: ColumnType<boolean, boolean | undefined, boolean>;
   updated_by: string | null;
   updated_at: Ts;
   created_at: Ts;

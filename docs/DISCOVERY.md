@@ -200,6 +200,13 @@ with the deleted row counts.
   (`executor.alive` is false, or the error names a dropped connection). A plain
   command timeout while the child is still up is recorded as a step error and the
   run carries on to the next step; re-run just that step with a selective sync.
+- **Completion email.** When a run reaches a terminal state the worker emails the
+  person in `started_by` (`notifyRunComplete()` in `run.ts`) with the outcome,
+  scope, duration, change counts and per-type breakdown, via the standard `mail`
+  queue and the branded layout. On by default per customer
+  (`tenant_discovery_config.notify_on_complete`, toggle on the Discovery page).
+  Best-effort — a mail failure is logged and never fails the run; with `SMTP_HOST`
+  unset the message is logged like any other.
 
 ### How the worker drives pwsh (hard-won details — keep them)
 

@@ -95,29 +95,32 @@ export class TenantDiscoveryService {
   /* ============================== settings ============================== */
 
   /** Per-customer Discovery settings (row seeded by tenant migration 0012). */
-  async getSettings(t: TenantContext): Promise<{ filterUsers: boolean }> {
+  async getSettings(t: TenantContext): Promise<{ filterUsers: boolean; notifyOnComplete: boolean }> {
     const row = await this.s(t)
       .selectFrom('tenant_discovery_config')
-      .select('filter_users')
+      .select(['filter_users', 'notify_on_complete'])
       .executeTakeFirst();
-    return { filterUsers: row?.filter_users ?? true };
+    return {
+      filterUsers: row?.filter_users ?? true,
+      notifyOnComplete: row?.notify_on_complete ?? true,
+    };
   }
 
   async updateSettings(
     t: TenantContext,
     user: AuthedUser,
-    filterUsers: boolean,
-  ): Promise<{ filterUsers: boolean }> {
-    await this.s(t)
-      .updateTable('tenant_discovery_config')
-      .set({ filter_users: filterUsers, updated_by: user.id, updated_at: new Date().toISOString() })
-      .execute();
+    patch: { filterUsers?: boolean; notifyOnComplete?: boolean },
+  ): Promise<{ filterUsers: boolean; notifyOnComplete: boolean }> {
+    const set: Record<string, unknown> = { updated_by: user.id, updated_at: new Date().toISOString() };
+    if (patch.filterUsers !== undefined) set.filter_users = patch.filterUsers;
+    if (patch.notifyOnComplete !== undefined) set.notify_on_complete = patch.notifyOnComplete;
+    await this.s(t).updateTable('tenant_discovery_config').set(set).execute();
     await this.audit.tenant(t.schema, 'tenant_discovery.settings_updated', {
       actor: actorOf(user),
       targetType: 'tenant_discovery_config',
-      detail: { filterUsers },
+      detail: patch,
     });
-    return { filterUsers };
+    return this.getSettings(t);
   }
 
   /* ================================ runs ================================ */
@@ -382,7 +385,7 @@ export class TenantDiscoveryService {
       .executeTakeFirst();
     const cfg = await s
       .selectFrom('tenant_discovery_config')
-      .select('filter_users')
+      .select(['filter_users', 'notify_on_complete'])
       .executeTakeFirst();
 
     const counts: Partial<Record<TenantObjectType, number>> = {};
@@ -404,7 +407,10 @@ export class TenantDiscoveryService {
       activeConnection: activeConn ?? null,
       counts,
       linkedDiscoveryUsers: Number(linked?.n ?? 0),
-      settings: { filterUsers: cfg?.filter_users ?? true },
+      settings: {
+        filterUsers: cfg?.filter_users ?? true,
+        notifyOnComplete: cfg?.notify_on_complete ?? true,
+      },
     };
   }
 
