@@ -25,6 +25,8 @@ const emptyProgress = (): TenantDiscoveryProgress => ({
   completed: [],
   counts: {},
   changed: { added: 0, updated: 0, removed: 0, readded: 0 },
+  skipped: { notLicensed: 0 },
+  filterDisabledReason: null,
   note: null,
   errors: [],
 });
@@ -225,6 +227,8 @@ export async function handleTenantDiscoveryRun(
         total,
         counts: progress.counts,
         changed: progress.changed,
+        skipped: progress.skipped,
+        filterDisabledReason: progress.filterDisabledReason ?? null,
         errors: progress.errors.length,
       },
       error: signInLost ? 'Lost the tenant sign-in part-way through - sign in again and re-run.' : null,
@@ -335,6 +339,11 @@ async function runSpec(
 ): Promise<number> {
   const noun = nounFor(spec.objectType);
   let skippedUnlicensed = 0;
+  // Filter `User` accounts down to Teams-licensed ones, unless the engineer
+  // opted in to everything. Flipped off by the probe below if `Get-CsOnlineUser`
+  // returns no licence data at all for this tenant.
+  let filterUsers = spec.objectType === 'user' && !filterOpts.includeUnlicensed;
+  let licenceProbed = false;
 
   // Current snapshot for this type, keyed by object_key - one read for the step.
   progress.note = `Loading existing ${noun}…`;
@@ -382,15 +391,11 @@ async function runSpec(
           if (seen.has(key)) continue;
           seen.add(key);
         }
-        // Skip AccountType 'User' accounts with no mailbox - not migration
-        // candidates (they must be live with email before Teams-voice enablement).
-        // Never applies to ResourceAccount / SfbOnPremUser, or when opted in.
-        if (
-          spec.objectType === 'user' &&
-          !filterOpts.includeUnlicensed &&
-          str(r.AccountType) === 'User' &&
-          !hasMailbox(r)
-        ) {
+        // Skip AccountType 'User' accounts not licensed for Teams - not
+        // migration candidates. Never applies to ResourceAccount /
+        // SfbOnPremUser, or when the engineer opted in, or when the probe
+        // disabled the filter.
+        if (filterUsers && str(r.AccountType) === 'User' && !isTeamsCandidate(r)) {
           skippedUnlicensed += 1;
           continue;
         }
@@ -462,14 +467,39 @@ async function runSpec(
         continue;
       }
       fetched += recs.length;
+
+      // Probe once: if the first slice that contains real `User` records carries
+      // no licence data for any of them, `Get-CsOnlineUser -Filter` isn't
+      // returning it on this tenant - don't filter blind, store everyone and say so.
+      if (filterUsers && !licenceProbed) {
+        const sample = recs.filter(
+          (x) => x && typeof x === 'object' && str((x as Rec).AccountType) === 'User',
+        ) as Rec[];
+        if (sample.length) {
+          licenceProbed = true;
+          if (!sample.some(hasLicenceData)) {
+            filterUsers = false;
+            progress.filterDisabledReason =
+              'Get-CsOnlineUser returned no licence data for this tenant, so the Teams-licence filter was not applied - every enabled user was stored.';
+            progress.errors.push({ step: progress.step ?? 'users', message: progress.filterDisabledReason });
+            await saveProgress(s, runId, progress);
+            // eslint-disable-next-line no-console
+            console.warn(`[discovery ${runId}] users: no licence data on -Filter path; user filter disabled`);
+          }
+        }
+      }
+
       await handle(recs);
     }
     await flushVersions();
+    if (spec.objectType === 'user') {
+      progress.skipped = { notLicensed: (progress.skipped?.notLicensed ?? 0) + skippedUnlicensed };
+    }
     if (skippedUnlicensed) {
-      progress.note = `Stored ${stored.toLocaleString()} ${noun} · skipped ${skippedUnlicensed.toLocaleString()} with no mailbox`;
+      progress.note = `Stored ${stored.toLocaleString()} ${noun} · skipped ${skippedUnlicensed.toLocaleString()} not licensed for Teams`;
       await saveProgress(s, runId, progress);
       // eslint-disable-next-line no-console
-      console.log(`[discovery ${runId}] users: skipped ${skippedUnlicensed} unlicensed (no mailbox)`);
+      console.log(`[discovery ${runId}] users: skipped ${skippedUnlicensed} not licensed for Teams`);
     }
     return stored;
   }
@@ -581,11 +611,32 @@ const iso = (v: unknown): string | null => {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 };
 
-/** True when the account has an active Exchange Online plan (i.e. a mailbox). */
-function hasMailbox(r: Rec): boolean {
+const LIVE_STATUS = new Set(['Enabled', 'Warning']); // Warning = licence grace period
+
+/** The record carries FeatureTypes / AssignedPlan we can actually judge by. */
+function hasLicenceData(r: Rec): boolean {
+  return (
+    (Array.isArray(r.FeatureTypes) && r.FeatureTypes.length > 0) ||
+    (Array.isArray(r.AssignedPlan) && r.AssignedPlan.length > 0)
+  );
+}
+
+/**
+ * A Teams-voice migration candidate: licensed for Teams. `FeatureTypes`
+ * enumerates a user's Teams/SfB capabilities, so any entry there counts;
+ * otherwise fall back to an active `MCO*` / `TEAMS*` service plan. Fails OPEN -
+ * a record with no licence fields at all is kept, not dropped (the run-level
+ * probe in `runSpec` handles the case where `-Filter` returns no licence data
+ * for anyone). Never applied to ResourceAccount / SfbOnPremUser.
+ */
+function isTeamsCandidate(r: Rec): boolean {
+  if (!hasLicenceData(r)) return true;
+  if (Array.isArray(r.FeatureTypes) && r.FeatureTypes.length > 0) return true;
   const plans = Array.isArray(r.AssignedPlan) ? (r.AssignedPlan as Rec[]) : [];
   return plans.some(
-    (p) => /EXCHANGE_S_/i.test(String(p?.Capability ?? '')) && String(p?.CapabilityStatus ?? '') === 'Enabled',
+    (p) =>
+      /^(MCO|TEAMS)/i.test(String(p?.Capability ?? '')) &&
+      LIVE_STATUS.has(String(p?.CapabilityStatus ?? '')),
   );
 }
 

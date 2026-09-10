@@ -174,9 +174,22 @@ with the deleted row counts.
   `AccountType` (ResourceAccount, Guest, …). Each call is a small fraction of the
   tenant, so the fetch phase shows real progress ("Fetching users: 8,400 so far
   (users m*, 13/42)…") and no single call can time out. Records are also
-  `Select-Object`'d to the ~40 properties `projectUser` stores (depth 4). One bad
-  bucket is recorded in `progress.errors` and skipped, not fatal. Per-cmdlet
-  timeout is `TEAMS_COMMAND_TIMEOUT_MS` (default 15 min).
+  `Select-Object`'d to the ~40 properties `projectUser` stores (depth 6, so the
+  nested `AssignedPlan` licence fields always serialise). One bad bucket is
+  recorded in `progress.errors` and skipped, not fatal. Per-cmdlet timeout is
+  `TEAMS_COMMAND_TIMEOUT_MS` (default 15 min).
+- **The user filter (Teams-licensed candidates only).** By default an
+  `AccountType='User'` record is stored only if it is licensed for Teams —
+  `isTeamsCandidate()` in `run.ts`: any `FeatureTypes` entry, or an active
+  (`Enabled`/`Warning`) `MCO*`/`TEAMS*` service plan in `AssignedPlan`. It
+  **fails open**: a record with no licence fields at all is kept, and a run-level
+  **probe** on the first slice of real `User` records turns the filter off
+  entirely (with a visible `progress.filterDisabledReason`) if `Get-CsOnlineUser`
+  returned no licence data for anyone — never filter blind. Resource accounts and
+  SfB-on-prem users are never filtered. The engineer can also tick "Include
+  accounts not licensed for Teams" to disable it. However many `User` accounts
+  were left out is recorded in `progress.skipped.notLicensed` and the run
+  `summary`, and shown on the run card, so a low user count is always explained.
 - **A slow cmdlet no longer kills the run.** The runner only aborts with
   "lost the tenant sign-in" when the pwsh session is genuinely gone
   (`executor.alive` is false, or the error names a dropped connection). A plain

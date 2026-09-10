@@ -76,6 +76,15 @@ export interface TenantDiscoveryProgress {
   counts: Partial<Record<import('./domain').TenantObjectType, number>>;
   /** how many objects were added / updated / removed / re-added this run */
   changed: TenantDiscoveryChangeCounts;
+  /**
+   * Accounts deliberately left out of the store this run, by reason. Currently
+   * `notLicensed` = `AccountType='User'` accounts with no Teams licence (the
+   * default filter; off when the engineer opts in or licence data was
+   * unavailable). Persisted so a low user count is always explained.
+   */
+  skipped?: { notLicensed: number };
+  /** set when the run could not read licence data and so did not filter users */
+  filterDisabledReason?: string | null;
   /** free-text detail for the current step, e.g. "Fetching users…" / "Storing 3,400 users…" */
   note?: string | null;
   /** non-fatal step errors (the run carries on) */

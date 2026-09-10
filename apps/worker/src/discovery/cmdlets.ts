@@ -175,7 +175,10 @@ export const STEP_CMDLETS: Record<TenantDiscoveryStep, CmdletSpec[]> = {
       name: (r) => s(r.DisplayName),
       resultSize: 100000,
       select: USER_PROPERTIES,
-      depth: 4,
+      // array > user > AssignedPlan > plan > {Capability,CapabilityStatus} is
+      // four levels deep - serialise a couple deeper so the licence fields the
+      // user filter reads are never truncated to a type-name string.
+      depth: 6,
       timeoutMs: 15 * 60_000,
       buckets: userBuckets,
     },

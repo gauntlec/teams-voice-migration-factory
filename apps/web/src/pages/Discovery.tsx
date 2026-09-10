@@ -418,15 +418,16 @@ function ScopePicker({
             onChange={(_, d) => onIncludeDisabled(!!d.checked)}
           />
           <Checkbox
-            label="Include accounts with no mailbox / licence (and guests)"
+            label="Include accounts not licensed for Teams (and guests)"
             checked={includeUnlicensed}
             onChange={(_, d) => onIncludeUnlicensed(!!d.checked)}
           />
         </div>
       )}
       <Text size={200} className={s.muted}>
-        Users are limited to enabled, mailbox-holding accounts plus resource accounts — the Teams-voice
-        migration candidates. Tick the boxes above to widen it.
+        Users are limited to enabled accounts licensed for Teams, plus resource accounts — the
+        Teams-voice migration candidates. Tick the boxes above to widen it. If the tenant returns no
+        licence data the filter is skipped automatically and every enabled user is stored.
       </Text>
       <div className={s.row} style={{ marginTop: 6 }}>
         <Button appearance="primary" icon={<ArrowSyncRegular />} disabled={disabled} onClick={onRun}>
@@ -629,6 +630,14 @@ function RunCard({ base, summary }: { base: string; summary: TenantDiscoverySumm
   const pct = run ? (run.status === 'completed' ? 1 : done.size / Math.max(1, scopeSteps.length)) : 0;
   const total = Object.values(run?.progress?.counts ?? {}).reduce((a, b) => a + (b ?? 0), 0);
   const changed = changeCountsOf(run);
+  const skippedNotLicensed =
+    run?.progress?.skipped?.notLicensed ??
+    (run?.summary?.skipped as { notLicensed?: number } | undefined)?.notLicensed ??
+    0;
+  const filterDisabledReason =
+    run?.progress?.filterDisabledReason ??
+    (run?.summary?.filterDisabledReason as string | null | undefined) ??
+    null;
   const running = !!run && ['queued', 'running'].includes(run.status);
   const elapsed =
     running && run?.started_at
@@ -705,6 +714,18 @@ function RunCard({ base, summary }: { base: string; summary: TenantDiscoverySumm
                   {changed.readded} re-added
                 </Badge>
               )}
+            </div>
+          )}
+          {filterDisabledReason && (
+            <Text size={200} style={{ color: tokens.colorPaletteYellowForeground1 }}>
+              {filterDisabledReason}
+            </Text>
+          )}
+          {skippedNotLicensed > 0 && (
+            <div className={s.chips}>
+              <Badge appearance="tint" color="informative" size="small">
+                {skippedNotLicensed.toLocaleString()} users skipped — not licensed for Teams
+              </Badge>
             </div>
           )}
           <ProgressBar value={pct} thickness="large" />
