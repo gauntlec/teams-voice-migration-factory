@@ -29,16 +29,17 @@ function invitation(c: UserInvitationContext): RenderedEmail {
 
   const layout: LayoutInput = {
     previewText: 'Your account is ready — here is your temporary password.',
-    heading: `Welcome, ${c.displayName}`,
+    eyebrow: 'Account invitation',
+    heading: `Welcome to Voxshift, ${c.displayName}`,
     intro: [
-      `${c.inviterEmail} has created an account for you on Voxshift, the platform used to run your Microsoft Teams voice migration.`,
+      `${c.inviterEmail} has set up an account for you on Voxshift, the platform used to run your Microsoft Teams voice migration.`,
       `Your role is ${c.role}. ${scope}`,
-      'Sign in with the temporary password below. You will be asked to choose your own password and then set up an authenticator app for two-factor authentication.',
+      'Sign in with the temporary password below. You will then be asked to choose your own password and set up an authenticator app for two-factor sign-in.',
     ],
     callout: { label: 'Temporary password', value: c.tempPassword },
-    cta: { label: 'Sign in', url: c.signInUrl },
+    cta: { label: 'Sign in to Voxshift', url: c.signInUrl },
     outro: [
-      'For your security this temporary password can only be used to sign in once. If you were not expecting this invitation, you can ignore this email.',
+      'This temporary password works once, only to sign in. If you were not expecting this invitation, you can ignore this email.',
     ],
   };
 
