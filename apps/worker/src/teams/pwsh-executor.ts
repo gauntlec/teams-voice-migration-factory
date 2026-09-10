@@ -315,20 +315,32 @@ try {
     return this.graphSignIn;
   }
 
-  /** GET a Graph collection, following `@odata.nextLink`. Returns the merged `value` arrays. */
+  /**
+   * GET a Graph collection, following `@odata.nextLink`. Tries `/v1.0` then
+   * `/beta`. On failure the real Graph error body (`ErrorDetails.Message`) is
+   * surfaced, not just "BadRequest".
+   */
   async graphList(path: string): Promise<unknown[]> {
     if (!this.graphSignedIn) throw new Error('Graph not connected');
     const clean = `/${String(path).replace(/^\/+/, '')}`;
     const out = await this.exec(
-      `try {
-  $all = @(); $u = 'https://graph.microsoft.com/v1.0${clean}'
+      `function GraphAll($base) {
+  $all = @(); $u = "$base${clean}"
   while ($u) {
     $resp = Invoke-MgGraphRequest -Method GET -Uri $u -OutputType PSObject -ErrorAction Stop
-    if ($resp.value) { $all += $resp.value } else { $all += $resp }
+    if ($null -ne $resp.value) { $all += $resp.value } elseif ($null -ne $resp) { $all += $resp }
     $u = $resp.'@odata.nextLink'
   }
-  Write-Output ('__JSON__' + (ConvertTo-Json -InputObject $all -Depth 6 -Compress))
-} catch { Write-Output ('__ERR__' + $_.Exception.Message) }`,
+  return ,$all
+}
+try {
+  try { $r = GraphAll 'https://graph.microsoft.com/v1.0' }
+  catch { $r = GraphAll 'https://graph.microsoft.com/beta' }
+  Write-Output ('__JSON__' + (ConvertTo-Json -InputObject $r -Depth 6 -Compress))
+} catch {
+  $m = if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $_.ErrorDetails.Message } else { $_.Exception.Message }
+  Write-Output ('__ERR__' + $m)
+}`,
     );
     for (const line of out.split('\n')) {
       if (line.startsWith('__JSON__')) {

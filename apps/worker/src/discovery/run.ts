@@ -181,6 +181,16 @@ export async function handleTenantDiscoveryRun(
       progress.note = null;
     } catch (e) {
       const message = (e as Error).message ?? String(e);
+      // The device inventory rides on a Graph endpoint Microsoft is retiring; a
+      // failure on a *full* run (where devices weren't explicitly asked for) is a
+      // note, not a counted error, so a normal discovery doesn't show "1 error".
+      if (step === 'devices' && !explicitlyWantedDevices) {
+        progress.note = `Teams device inventory skipped: ${message}`;
+        await saveProgress(s, runId, progress);
+        // eslint-disable-next-line no-console
+        console.warn(`[discovery ${runId}] devices step skipped: ${message}`);
+        continue;
+      }
       progress.errors.push({ step, message });
       // eslint-disable-next-line no-console
       console.warn(`[discovery ${runId}] step ${step} failed: ${message}`);
