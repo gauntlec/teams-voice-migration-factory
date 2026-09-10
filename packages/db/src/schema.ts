@@ -398,12 +398,6 @@ export interface ConnectionsTable {
   started_at: Ts;
   expires_at: string | null;
   closed_at: string | null;
-  /* optional 2nd (Graph) sign-in for the Teams device inventory (0014) */
-  graph_status: ColumnType<'none' | 'pending' | 'active' | 'failed', 'none' | 'pending' | 'active' | 'failed' | undefined, 'none' | 'pending' | 'active' | 'failed'>;
-  graph_user_code: string | null;
-  graph_verification_uri: string | null;
-  graph_upn: string | null;
-  graph_expires_at: string | null;
   /* deliberately NO token columns - see docs/SECURITY.md */
 }
 

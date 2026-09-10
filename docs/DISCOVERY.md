@@ -75,7 +75,6 @@ numbers, …) showing that item's timeline.
 | voice_routing | `Get-CsOnlinePSTNGateway`, `Get-CsOnlinePstnUsage` (one object per usage), `Get-CsOnlineVoiceRoute` | `pstn_gateway`, `pstn_usage`, `voice_route` |
 | emergency | `Get-CsOnlineLisLocation`, `Get-CsOnlineLisCivicAddress` | `emergency_location`, `civic_address` |
 | voice_apps | `Get-CsAutoAttendant`, `Get-CsCallQueue` (paged 100), `Get-CsOnlineSchedule` | `auto_attendant`, `call_queue`, `schedule` |
-| devices | **Microsoft Graph** `GET /v1.0/teamwork/devices` (paged on `@odata.nextLink`) — needs the optional 2nd sign-in | `teams_device` |
 
 The step → cmdlet → key/name mapping is data in
 `apps/worker/src/discovery/cmdlets.ts`; adding an object type is one entry there plus
@@ -91,22 +90,16 @@ definitions** (the settings inside a calling or voice-routing policy). The
 PowerShell module gives everything with the access the engineer already has. Graph
 can be layered in later behind the same `TeamsExecutor` if a customer consents.
 
-**Exception — the Teams device inventory.** Phones, Teams Rooms, panels, displays
-and SIP-Gateway devices have *no* `Get-Cs*` cmdlet; they live only at Graph
-`/teamwork/devices` (`TeamworkDevice.Read.All`). The **`devices` step** is
-therefore Graph-backed: it needs an **optional second device-code sign-in** on
-the connection (`Connect-MgGraph -UseDeviceAuthentication -Scopes
-TeamworkDevice.Read.All` — Microsoft Graph PowerShell's first-party app, token
-still only in the worker process). The engineer adds it with *"Add device
-inventory"* on the connection card; `connections` then carries `graph_status`
-(`none`/`pending`/`active`/`failed`) + `graph_user_code` / `graph_verification_uri`
-/ `graph_upn` / `graph_expires_at`. A full run **silently omits devices** when
-Graph isn't connected (previously-discovered device rows are left untouched); a
-run that *explicitly* scoped `teams_device` records a step error instead. Where
-the tenant hasn't consented Microsoft Graph PowerShell, `connectGraph` fails and
-the card shows *"a Global Admin may need to approve Microsoft Graph PowerShell"*.
-`executor.graphAlive` / `graphList()` / `handleGraphConnect` (`graph.connect`
-job) are the moving parts.
+**No device hardware inventory.** Phones, Teams Rooms, panels and SIP devices
+have no `Get-Cs*` cmdlet, and the Graph `/teamwork/devices` API was **retired by
+Microsoft (Nov/Dec 2025)** with no replacement (a short-lived attempt to use it
+was reverted — commit `93031b6` then reverted). Instead the **Devices tab** shows
+*phone endpoints* derived from the snapshot already collected:
+`TenantDiscoveryService.listEndpoints()` returns Common Area Phone accounts
+(`tenant_users` with an `MCOCAP` service plan) and phone-enabled resource
+accounts, with their number and calling / IP-phone policy. `GET
+.../tenant-discovery/endpoints`. No second sign-in, no extra step, no new
+storage.
 
 ## Storage (tenant schema, migrations 0009 + 0010)
 

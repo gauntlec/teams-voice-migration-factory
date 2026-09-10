@@ -50,17 +50,6 @@ export interface TeamsExecutor {
   awaitSignIn(): Promise<{ upn: string; tenantId: string }>;
   /** Run a read-only Get-Cs* cmdlet and return its records (used by Discovery). */
   query(command: string, params?: Record<string, unknown>, opts?: QueryOpts): Promise<unknown[]>;
-  /**
-   * Optional second device-code sign-in for Microsoft Graph (`TeamworkDevice.Read.All`)
-   * so Discovery can read the Teams device inventory - phones, rooms, panels, SIP.
-   * Runs in the same process; still a first-party app, still no stored tokens.
-   */
-  beginGraphDeviceCode(): Promise<DeviceCodePrompt>;
-  awaitGraphSignIn(): Promise<{ upn: string }>;
-  /** GET a Graph collection, following `@odata.nextLink`; returns the merged `value`. */
-  graphList(path: string): Promise<unknown[]>;
-  /** true once the Graph sign-in is complete and usable. */
-  readonly graphAlive: boolean;
   /** Run one cmdlet. `whatIf` => generate the command text, do not change anything. */
   invoke(call: CmdletInvocation, opts: { whatIf: boolean }): Promise<CmdletResult>;
   /** Tear down the pwsh session and wipe the token from memory. */
@@ -199,78 +188,12 @@ const SIM_DATA: Record<string, unknown[]> = {
   'Get-CsOnlineSchedule': [{ Id: 'sch-0001', Name: 'Business Hours', Type: 'WeeklyRecurrence' }],
 };
 
-/** Fake Microsoft Graph `/teamwork/devices` payload for the simulated executor. */
-const SIM_DEVICES: unknown[] = [
-  {
-    id: 'dev-0001',
-    displayName: 'Reception Phone',
-    deviceType: 'ipPhone',
-    hardwareDetail: { manufacturer: 'Yealink', model: 'MP54', serialNumber: '80SFA1900001', macAddress: '00:15:65:AA:00:01' },
-    activityState: 'idle',
-    healthStatus: 'healthy',
-    currentUser: { displayName: 'Reception CAP', id: 'a1a1a1a1-0000-0000-0000-000000000021' },
-  },
-  {
-    id: 'dev-0002',
-    displayName: 'Overland Park HQ - Room 1',
-    deviceType: 'teamsRoom',
-    hardwareDetail: { manufacturer: 'Logitech', model: 'Rally Bar', serialNumber: '2033LZ0A1234', macAddress: 'E4:AA:EA:00:00:02' },
-    activityState: 'busy',
-    healthStatus: 'healthy',
-    currentUser: { displayName: 'HQ Room 1', id: 'a1a1a1a1-0000-0000-0000-000000000022' },
-  },
-  {
-    id: 'dev-0003',
-    displayName: 'Floor 2 Booking Panel',
-    deviceType: 'teamsPanel',
-    hardwareDetail: { manufacturer: 'Crestron', model: 'TSS-770', serialNumber: 'CRT2200000003', macAddress: '00:10:7F:00:00:03' },
-    activityState: 'idle',
-    healthStatus: 'nonUrgent',
-    currentUser: null,
-  },
-  {
-    id: 'dev-0004',
-    displayName: 'Warehouse SIP Handset',
-    deviceType: 'sip',
-    hardwareDetail: { manufacturer: 'Poly', model: 'VVX 411', serialNumber: '0004F200000004', macAddress: '00:04:F2:00:00:04' },
-    activityState: 'unavailable',
-    healthStatus: 'critical',
-    currentUser: { displayName: 'Warehouse CAP', id: 'a1a1a1a1-0000-0000-0000-000000000024' },
-  },
-];
-
 export class SimulatedTeamsExecutor implements TeamsExecutor {
   private signedIn = false;
-  private graphSignedIn = false;
   lastUsedAt = Date.now();
 
   get alive(): boolean {
     return this.signedIn;
-  }
-
-  get graphAlive(): boolean {
-    return this.graphSignedIn;
-  }
-
-  async beginGraphDeviceCode(): Promise<DeviceCodePrompt> {
-    return {
-      userCode: 'SIMULATED-GRAPH',
-      verificationUri: 'https://microsoft.com/devicelogin',
-      expiresAt: new Date(Date.now() + 15 * 60_000),
-    };
-  }
-
-  async awaitGraphSignIn(): Promise<{ upn: string }> {
-    await new Promise((r) => setTimeout(r, 2000));
-    this.graphSignedIn = true;
-    this.lastUsedAt = Date.now();
-    return { upn: 'engineer@customer.example' };
-  }
-
-  async graphList(path: string): Promise<unknown[]> {
-    if (!this.graphSignedIn) throw new Error('Graph not connected');
-    this.lastUsedAt = Date.now();
-    return /teamwork\/devices/.test(path) ? SIM_DEVICES : [];
   }
 
   async beginDeviceCode(_tenantDomain: string | null = null): Promise<DeviceCodePrompt> {

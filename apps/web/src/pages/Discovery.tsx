@@ -54,9 +54,9 @@ import {
   TENANT_OBJECT_TYPE_STEP,
   TENANT_POLICY_TYPE_LABELS,
   TENANT_POLICY_TYPES,
-  TEAMS_DEVICE_TYPE_LABELS,
   type Paginated,
   type TenantConnectionInfo,
+  type TenantEndpoint,
   type TenantDiscoveryChangeCounts,
   type TenantDiscoveryRun,
   type TenantDiscoveryStep,
@@ -336,11 +336,6 @@ interface Connection {
   upn: string | null;
   expires_at: string | null;
   started_at: string;
-  /** optional 2nd (Graph) sign-in for the Teams device inventory */
-  graph_status: 'none' | 'pending' | 'active' | 'failed';
-  graph_user_code: string | null;
-  graph_verification_uri: string | null;
-  graph_upn: string | null;
 }
 
 /** Steps that carry more than one object type - only these get an expander. */
@@ -361,7 +356,6 @@ function ScopePicker({
   onIncludeUnlicensed,
   onRun,
   disabled,
-  graphActive,
 }: {
   selected: Set<TenantObjectType>;
   onChange: (next: Set<TenantObjectType>) => void;
@@ -371,8 +365,6 @@ function ScopePicker({
   onIncludeUnlicensed: (v: boolean) => void;
   onRun: () => void;
   disabled: boolean;
-  /** the device inventory step needs the optional Graph sign-in */
-  graphActive: boolean;
 }) {
   const s = useStyles();
   const [expanded, setExpanded] = useState<Set<TenantDiscoveryStep>>(new Set());
@@ -419,12 +411,7 @@ function ScopePicker({
                 <span style={{ width: 24, display: 'inline-block' }} />
               )}
               <Checkbox
-                label={
-                  st === 'devices' && !graphActive
-                    ? `${TENANT_DISCOVERY_STEP_LABELS[st]} — add the device inventory sign-in first`
-                    : TENANT_DISCOVERY_STEP_LABELS[st]
-                }
-                disabled={st === 'devices' && !graphActive}
+                label={TENANT_DISCOVERY_STEP_LABELS[st]}
                 checked={state === 'all' ? true : state === 'some' ? 'mixed' : false}
                 onChange={(_, d) => setTypes(TENANT_DISCOVERY_STEP_TYPES[st], !!d.checked)}
               />
@@ -522,10 +509,7 @@ function ConnectCard({
     queryKey: ['tdisc', 'conn', base, focusedId],
     enabled: !!focusedId,
     queryFn: () => api<Connection>(`${base}/connections/${focusedId}`),
-    refetchInterval: (q) => {
-      const d = q.state.data;
-      return d?.status === 'pending' || d?.graph_status === 'pending' ? 3000 : false;
-    },
+    refetchInterval: (q) => (q.state.data?.status === 'pending' ? 3000 : false),
   });
 
   const start = useMutation({
@@ -557,20 +541,6 @@ function ConnectCard({
       onChanged();
     },
     onError: (e) => setErr(e instanceof ApiError ? e.message : 'Could not start discovery'),
-  });
-
-  const graphConnect = useMutation({
-    mutationFn: () =>
-      api<Connection>(`${base}/connections/${focusedId}/graph`, {
-        method: 'POST',
-        body: JSON.stringify({}),
-      }),
-    onSuccess: () => {
-      setErr(null);
-      onChanged();
-    },
-    onError: (e) =>
-      setErr(e instanceof ApiError ? e.message : 'Could not start the device-inventory sign-in'),
   });
 
   const running = summary?.lastRun && ['queued', 'running'].includes(summary.lastRun.status);
@@ -731,61 +701,6 @@ function ConnectCard({
             </Text>
           )}
 
-          {/* Optional 2nd sign-in for the Teams device inventory (Microsoft Graph). */}
-          <div className={s.sessionPanel} style={{ background: 'transparent' }}>
-            {c.graph_status === 'active' ? (
-              <div className={s.row}>
-                <Badge appearance="tint" color="success">
-                  Device inventory
-                </Badge>
-                <Text size={200}>
-                  connected{c.graph_upn ? ` as ${c.graph_upn}` : ''} — phones, rooms, panels and SIP
-                  devices are included in a run
-                </Text>
-              </div>
-            ) : c.graph_status === 'pending' ? (
-              c.graph_user_code ? (
-                <div style={{ display: 'grid', gap: 6 }}>
-                  <Text size={200}>
-                    Second sign-in for device inventory — open{' '}
-                    <Link
-                      href={c.graph_verification_uri ?? 'https://microsoft.com/devicelogin'}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {c.graph_verification_uri ?? 'https://microsoft.com/devicelogin'}
-                    </Link>{' '}
-                    and enter:
-                  </Text>
-                  <div className={s.row}>
-                    <span className={s.code}>{c.graph_user_code}</span>
-                    <CopyButton text={c.graph_user_code} label="Copy code" />
-                    <Spinner size="tiny" label="Waiting…" />
-                  </div>
-                </div>
-              ) : (
-                <Spinner size="tiny" label="Requesting a device code…" />
-              )
-            ) : (
-              <div className={s.row}>
-                <Text size={200} className={s.muted}>
-                  {c.graph_status === 'failed'
-                    ? 'Device-inventory sign-in failed — a Global Admin may need to approve Microsoft Graph PowerShell. '
-                    : 'Teams devices (phones, rooms, SIP) are not included. '}
-                </Text>
-                <Button
-                  size="small"
-                  appearance="subtle"
-                  icon={<PlugConnectedRegular />}
-                  disabled={!canRun || graphConnect.isPending || focusedForeign}
-                  onClick={() => graphConnect.mutate()}
-                >
-                  {c.graph_status === 'failed' ? 'Retry device inventory' : 'Add device inventory'}
-                </Button>
-              </div>
-            )}
-          </div>
-
           {scopeOpen && (
             <ScopePicker
               selected={scopeSel}
@@ -796,7 +711,6 @@ function ConnectCard({
               onIncludeUnlicensed={setIncludeUnlicensed}
               onRun={() => run.mutate([...scopeSel])}
               disabled={runDisabled || scopeSel.size === 0}
-              graphActive={c.graph_status === 'active'}
             />
           )}
         </div>
@@ -1967,55 +1881,74 @@ export function Discovery() {
         </>
       )}
 
-      {tab === 'devices' && (
-        <>
-          {sm && sm.activeConnection && sm.activeConnection.graphStatus !== 'active' && (
-            <MessageBar intent="info">
-              <MessageBarBody>
-                Devices are collected only when a session has the extra <b>device inventory</b> sign-in
-                (Microsoft Graph). Add it from the connection card, then run a discovery.
-              </MessageBarBody>
-            </MessageBar>
-          )}
-          <ObjectsTable
-            base={base}
-            type="teams_device"
-            columns={[
-              { label: 'Name', render: (o) => o.display_name ?? o.object_key },
-              {
-                label: 'Type',
-                render: (o) => {
-                  const dt = str(o, 'deviceType');
-                  return TEAMS_DEVICE_TYPE_LABELS[dt as keyof typeof TEAMS_DEVICE_TYPE_LABELS] ?? dt;
-                },
-              },
-              { label: 'Model', render: (o) => hw(o, ['manufacturer', 'model']) },
-              { label: 'Serial', render: (o) => hw(o, ['serialNumber']) },
-              { label: 'MAC', render: (o) => hw(o, ['macAddress', 'macAddresses']) },
-              {
-                label: 'Assigned to',
-                render: (o) => {
-                  const u = o.data.currentUser as { displayName?: string } | null | undefined;
-                  return u?.displayName ?? '—';
-                },
-              },
-              { label: 'Health', render: (o) => str(o, 'healthStatus') },
-              { label: 'Activity', render: (o) => str(o, 'activityState') },
-            ]}
-          />
-        </>
-      )}
+      {tab === 'devices' && <EndpointsTable base={base} />}
     </Page>
   );
 }
 
-/** Read a value out of a Teams device's nested `hardwareDetail`. */
-function hw(o: TenantObject, keys: string[]): string {
-  const h = o.data.hardwareDetail as Record<string, unknown> | null | undefined;
-  if (!h) return '—';
-  const vals = keys
-    .map((k) => h[k])
-    .filter((v) => v != null && v !== '')
-    .map((v) => (Array.isArray(v) ? v.join(', ') : String(v)));
-  return vals.length ? vals.join(' ') : '—';
+/**
+ * Shared phone endpoints — Common Area Phones and phone-enabled resource
+ * accounts, derived from the users / resource-account snapshot. (Microsoft
+ * retired the Graph device-inventory API, so there is no hardware model /
+ * serial / firmware to show.)
+ */
+function EndpointsTable({ base }: { base: string }) {
+  const s = useStyles();
+  const list = useQuery({
+    queryKey: ['tdisc', 'endpoints', base],
+    queryFn: () => api<{ items: TenantEndpoint[] }>(`${base}/endpoints`),
+  });
+  const items = list.data?.items ?? [];
+
+  return (
+    <div style={{ display: 'grid', gap: 10 }}>
+      <MessageBar intent="info">
+        <MessageBarBody>
+          Common Area Phones and phone-enabled resource accounts found in the tenant. Microsoft
+          retired the Graph device-inventory API, so hardware model / serial / firmware aren’t
+          available here — that detail lives in the Teams admin center.
+        </MessageBarBody>
+      </MessageBar>
+      {list.isLoading ? (
+        <Spinner size="tiny" label="Loading…" />
+      ) : list.isError ? (
+        <LoadError message={(list.error as Error).message} />
+      ) : items.length === 0 ? (
+        <Text size={200} className={s.muted}>
+          No Common Area Phones or phone-enabled resource accounts in the last discovery.
+        </Text>
+      ) : (
+        <DataTable minWidth={720}>
+          <TableHeader>
+            <TableRow>
+              <TableHeaderCell>Type</TableHeaderCell>
+              <TableHeaderCell>Name</TableHeaderCell>
+              <TableHeaderCell>UPN</TableHeaderCell>
+              <TableHeaderCell>Number</TableHeaderCell>
+              <TableHeaderCell>Calling policy</TableHeaderCell>
+              <TableHeaderCell>IP phone policy</TableHeaderCell>
+              <TableHeaderCell>Enabled</TableHeaderCell>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {items.map((e, i) => (
+              <TableRow key={`${e.kind}-${e.upn ?? e.name ?? i}`}>
+                <TableCell>
+                  <Badge appearance="tint" size="small">
+                    {e.kind === 'common_area_phone' ? 'Common area phone' : 'Resource account'}
+                  </Badge>
+                </TableCell>
+                <TableCell>{e.name ?? '—'}</TableCell>
+                <TableCell>{e.upn ?? '—'}</TableCell>
+                <TableCell>{e.number ?? '—'}</TableCell>
+                <TableCell>{e.callingPolicy ?? '—'}</TableCell>
+                <TableCell>{e.ipPhonePolicy ?? '—'}</TableCell>
+                <TableCell>{e.enabled == null ? '—' : e.enabled ? 'Yes' : 'No'}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </DataTable>
+      )}
+    </div>
+  );
 }

@@ -82,15 +82,10 @@
 - Discovery is read-only (`Get-Cs*` only) and stores configuration, never
   credentials. What it stores per customer is listed in `docs/DISCOVERY.md`.
 - `TEAMS_EXECUTOR=simulated` (dev/demo) never talks to Microsoft at all.
-- **Optional Graph sign-in (device inventory).** The `devices` discovery step
-  reads Graph `/teamwork/devices`, which has no PowerShell equivalent. It needs a
-  **second device-code sign-in** on the same connection —
-  `Connect-MgGraph -UseDeviceAuthentication -Scopes TeamworkDevice.Read.All`,
-  Microsoft Graph PowerShell's first-party app. Same guarantees: the token lives
-  only in the worker's pwsh process, `connections` has no token columns (just
-  `graph_status` and the device-code display fields), it dies with the session,
-  and it is read-only. Started only by the connection's owner or a `SUPER_ADMIN`,
-  and audited (`tenant_discovery.graph_connect_started`).
+- **No Graph.** Discovery uses only the MicrosoftTeams PowerShell module over the
+  engineer's one device-code sign-in. (A short-lived second Graph sign-in for the
+  Teams device inventory was added and reverted — the Graph device API was
+  retired by Microsoft with no replacement.)
 - **Session ownership.** A `connections` row is bound to the engineer who
   established it (`started_by`). Only that engineer, or a `SUPER_ADMIN`, may
   *use* it — enforced in `TenantDiscoveryService.startRun` and

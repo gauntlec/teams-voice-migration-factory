@@ -30,9 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 RUN pwsh -NoLogo -NonInteractive -Command \
     "Set-PSRepository -Name PSGallery -InstallationPolicy Trusted; \
      Install-Module -Name MicrosoftTeams -Scope AllUsers -Force -AcceptLicense; \
-     Install-Module -Name Microsoft.Graph.Authentication -Scope AllUsers -Force -AcceptLicense; \
-     Import-Module MicrosoftTeams; Import-Module Microsoft.Graph.Authentication; \
-     (Get-Module MicrosoftTeams).Version.ToString(); (Get-Module Microsoft.Graph.Authentication).Version.ToString()"
+     Import-Module MicrosoftTeams; (Get-Module MicrosoftTeams).Version.ToString()"
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./package.json

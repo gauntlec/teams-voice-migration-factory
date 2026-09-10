@@ -58,15 +58,11 @@ export class TenantDiscoveryController {
     return this.svc.getConnection(t, id, user);
   }
 
-  /** Add the optional Microsoft Graph sign-in to this session (Teams device inventory). */
-  @Post('connections/:id/graph')
-  @RequirePermission('tenantdiscovery:run')
-  connectGraph(
-    @TenantCtx() t: TenantContext,
-    @Param('id') id: string,
-    @CurrentUser() user: AuthedUser,
-  ) {
-    return this.svc.connectGraph(t, id, user);
+  /** Shared phone endpoints (Common Area Phones + phone-enabled resource accounts). */
+  @Get('endpoints')
+  @RequirePermission('tenantdiscovery:read')
+  listEndpoints(@TenantCtx() t: TenantContext) {
+    return this.svc.listEndpoints(t);
   }
 
   /* settings */

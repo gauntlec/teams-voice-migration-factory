@@ -11,6 +11,7 @@ import {
   type Paginated,
   type TenantConnectionInfo,
   type TenantDiscoverySummary,
+  type TenantEndpoint,
   type TenantObjectType,
   type TenantObjectVersion,
   type TenantObjectsQuery,
@@ -101,7 +102,7 @@ export class TenantDiscoveryService {
   async listConnections(t: TenantContext, user: AuthedUser): Promise<TenantConnectionInfo[]> {
     let q = this.s(t)
       .selectFrom('connections')
-      .select(['id', 'status', 'upn', 'tenant_domain', 'started_by', 'started_at', 'expires_at', 'graph_status'])
+      .select(['id', 'status', 'upn', 'tenant_domain', 'started_by', 'started_at', 'expires_at'])
       .orderBy('started_at', 'desc')
       .limit(50);
     if (user.role !== 'SUPER_ADMIN') q = q.where('started_by', '=', user.id);
@@ -118,7 +119,6 @@ export class TenantDiscoveryService {
       started_by: string;
       started_at: string;
       expires_at: string | null;
-      graph_status: TenantConnectionInfo['graphStatus'];
     }[],
     meId: string,
   ): Promise<TenantConnectionInfo[]> {
@@ -142,44 +142,79 @@ export class TenantDiscoveryService {
         expires_at: r.expires_at,
         owner: u ? { id: u.id, name: u.display_name, email: u.email } : null,
         isMine: r.started_by === meId,
-        graphStatus: r.graph_status ?? 'none',
       };
     });
   }
 
   /**
-   * Kick off the optional second (Graph) sign-in on an existing connection so a
-   * run can also collect the Teams device inventory. Owner-or-SUPER_ADMIN only.
+   * Shared phone endpoints derived from the current snapshot: Common Area Phone
+   * accounts (`tenant_users` with a CAP service plan) and phone-enabled resource
+   * accounts. Microsoft retired the Graph device-inventory API, so this is
+   * "which phone endpoints exist" rather than hardware model / serial / firmware.
    */
-  async connectGraph(t: TenantContext, id: string, user: AuthedUser) {
-    const conn = await this.getConnection(t, id, user);
-    if (conn.status !== 'active') {
-      throw new ForbiddenException('Connection is not active - sign in to the customer tenant first');
-    }
-    await this.s(t)
-      .updateTable('connections')
-      .set({
-        graph_status: 'pending',
-        graph_user_code: null,
-        graph_verification_uri: null,
-        graph_upn: null,
-        graph_expires_at: null,
-      })
-      .where('id', '=', id)
+  async listEndpoints(t: TenantContext): Promise<{ items: TenantEndpoint[] }> {
+    const s = this.s(t);
+    const CAP_PLAN = /MCOCAP|COMMON_?AREA/i;
+    const num = (v: unknown): string | null => {
+      const raw = String(v ?? '').replace(/^tel:/i, '').trim();
+      return raw || null;
+    };
+
+    const users = await s
+      .selectFrom('tenant_users')
+      .select(['upn', 'display_name', 'line_uri', 'account_enabled', 'policies', 'assigned_plans', 'telephone_numbers'])
+      .where('removed_at', 'is', null)
       .execute();
-    await this.queue.add('graph.connect', {
-      kind: 'graph.connect',
-      tenantId: t.id,
-      schema: t.schema,
-      connectionId: id,
-      operatorUserId: user.id,
-    });
-    await this.audit.tenant(t.schema, 'tenant_discovery.graph_connect_started', {
-      actor: actorOf(user),
-      targetType: 'connection',
-      targetId: id,
-    });
-    return this.getConnection(t, id, user);
+    const caps = users
+      .filter((u) => {
+        const plans = Array.isArray(u.assigned_plans) ? (u.assigned_plans as Record<string, unknown>[]) : [];
+        return plans.some(
+          (p) =>
+            CAP_PLAN.test(String(p?.Capability ?? '')) &&
+            ['Enabled', 'Warning'].includes(String(p?.CapabilityStatus ?? '')),
+        );
+      })
+      .map((u) => {
+        const nums = Array.isArray(u.telephone_numbers)
+          ? (u.telephone_numbers as { number?: string }[])
+          : [];
+        const pol = (u.policies ?? {}) as Record<string, string | null>;
+        return {
+          kind: 'common_area_phone' as const,
+          name: u.display_name,
+          upn: u.upn,
+          number: num(u.line_uri) ?? num(nums[0]?.number),
+          callingPolicy: pol.TeamsCallingPolicy ?? null,
+          ipPhonePolicy: pol.TeamsIPPhonePolicy ?? null,
+          enabled: u.account_enabled,
+        };
+      });
+
+    const ras = await s
+      .selectFrom('tenant_objects')
+      .select(['display_name', 'data'])
+      .where('object_type', '=', 'resource_account')
+      .where('removed_at', 'is', null)
+      .execute();
+    const raEndpoints = ras
+      .map((r) => {
+        const d = (r.data ?? {}) as Record<string, unknown>;
+        const n = num(d.PhoneNumber);
+        return n
+          ? {
+              kind: 'resource_account' as const,
+              name: r.display_name,
+              upn: (d.UserPrincipalName as string) ?? null,
+              number: n,
+              callingPolicy: null,
+              ipPhonePolicy: null,
+              enabled: null,
+            }
+          : null;
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+
+    return { items: [...caps, ...raEndpoints] };
   }
 
   /* ============================== settings ============================== */
@@ -466,7 +501,7 @@ export class TenantDiscoveryService {
     // own — an engineer must never adopt or run on a colleague's session.
     let activeQ = s
       .selectFrom('connections')
-      .select(['id', 'status', 'upn', 'tenant_domain', 'started_by', 'started_at', 'expires_at', 'graph_status'])
+      .select(['id', 'status', 'upn', 'tenant_domain', 'started_by', 'started_at', 'expires_at'])
       .where('status', 'in', ['active', 'pending'])
       // a session past its expiry is dead even if the row was never flipped
       .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', new Date().toISOString())]))

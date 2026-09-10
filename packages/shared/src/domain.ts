@@ -229,7 +229,6 @@ export const TENANT_DISCOVERY_STEPS = [
   'voice_routing',
   'emergency',
   'voice_apps',
-  'devices',
 ] as const;
 export type TenantDiscoveryStep = (typeof TENANT_DISCOVERY_STEPS)[number];
 
@@ -242,7 +241,6 @@ export const TENANT_DISCOVERY_STEP_LABELS: Record<TenantDiscoveryStep, string> =
   voice_routing: 'Voice routing',
   emergency: 'Emergency locations',
   voice_apps: 'Auto attendants & call queues',
-  devices: 'Teams devices',
 };
 
 /**
@@ -259,7 +257,6 @@ export const TENANT_DISCOVERY_STEP_TYPES: Record<TenantDiscoveryStep, readonly T
   voice_routing: ['pstn_gateway', 'pstn_usage', 'voice_route'],
   emergency: ['emergency_location', 'civic_address'],
   voice_apps: ['auto_attendant', 'call_queue', 'schedule'],
-  devices: ['teams_device'],
 };
 
 /** The step a given object type belongs to (inverse of `TENANT_DISCOVERY_STEP_TYPES`). */
@@ -301,7 +298,6 @@ export const TENANT_OBJECT_TYPES = [
   'auto_attendant',
   'call_queue',
   'schedule',
-  'teams_device',
 ] as const;
 export type TenantObjectType = (typeof TENANT_OBJECT_TYPES)[number];
 
@@ -319,39 +315,6 @@ export const TENANT_OBJECT_TYPE_LABELS: Record<TenantObjectType, string> = {
   auto_attendant: 'Auto attendants',
   call_queue: 'Call queues',
   schedule: 'Schedules',
-  teams_device: 'Teams devices',
-};
-
-/**
- * `teamworkDevice.deviceType` from Microsoft Graph `/teamwork/devices`. Stored
- * verbatim on the `teams_device` object's `data`; the Devices tab filters on it.
- * Unknown values pass through unchanged.
- */
-export const TEAMS_DEVICE_TYPES = [
-  'ipPhone',
-  'lowCostPhone',
-  'teamsRoom',
-  'surfaceHub',
-  'collaborationBar',
-  'teamsDisplay',
-  'touchConsole',
-  'teamsPanel',
-  'sip',
-  'unknown',
-] as const;
-export type TeamsDeviceType = (typeof TEAMS_DEVICE_TYPES)[number];
-
-export const TEAMS_DEVICE_TYPE_LABELS: Record<TeamsDeviceType, string> = {
-  ipPhone: 'IP phone',
-  lowCostPhone: 'Low-cost phone',
-  teamsRoom: 'Teams Room',
-  surfaceHub: 'Surface Hub',
-  collaborationBar: 'Collaboration bar',
-  teamsDisplay: 'Teams display',
-  touchConsole: 'Touch console',
-  teamsPanel: 'Teams panel',
-  sip: 'SIP device',
-  unknown: 'Unknown',
 };
 
 /**

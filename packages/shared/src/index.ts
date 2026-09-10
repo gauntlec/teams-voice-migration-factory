@@ -190,8 +190,23 @@ export interface TenantConnectionInfo {
   owner: { id: string; name: string | null; email: string } | null;
   /** true when the requesting user established this session */
   isMine: boolean;
-  /** the optional second (Graph) sign-in used to read the Teams device inventory */
-  graphStatus: 'none' | 'pending' | 'active' | 'failed';
+}
+
+/**
+ * A shared phone endpoint derived from the users / resource-account snapshot:
+ * a Common Area Phone account, or a phone-enabled resource account. There is no
+ * Graph API for the physical device inventory (Microsoft retired it), so this is
+ * "which phone endpoints exist", not hardware model / serial / firmware.
+ */
+export interface TenantEndpoint {
+  kind: 'common_area_phone' | 'resource_account';
+  name: string | null;
+  upn: string | null;
+  /** E.164, or null when no number is assigned */
+  number: string | null;
+  callingPolicy: string | null;
+  ipPhonePolicy: string | null;
+  enabled: boolean | null;
 }
 
 /** `GET .../tenant-discovery/summary` */
