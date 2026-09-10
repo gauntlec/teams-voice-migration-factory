@@ -82,3 +82,12 @@
 - Discovery is read-only (`Get-Cs*` only) and stores configuration, never
   credentials. What it stores per customer is listed in `docs/DISCOVERY.md`.
 - `TEAMS_EXECUTOR=simulated` (dev/demo) never talks to Microsoft at all.
+- **Session ownership.** A `connections` row is bound to the engineer who
+  established it (`started_by`). Only that engineer, or a `SUPER_ADMIN`, may
+  *use* it — enforced in `TenantDiscoveryService.startRun` and
+  `DeploymentService.createDeployment` (403 otherwise), and in
+  `getConnection` (an engineer cannot read another engineer's row, so cannot
+  see their `user_code`). `summary()` and `listConnections()` show a normal
+  engineer only their own live session; a `SUPER_ADMIN` sees every engineer's
+  and picks which one a sync runs on. A `SUPER_ADMIN` running on another
+  engineer's session is written to both audit logs (`sessionOwnerId`, `ranAs`).

@@ -5,10 +5,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { sql, type Kysely } from 'kysely';
-import { tenantDb, type DB } from '@tvmf/db';
+import { platformDb, tenantDb, type DB } from '@tvmf/db';
 import {
   TENANT_OBJECT_TYPES,
   type Paginated,
+  type TenantConnectionInfo,
   type TenantDiscoverySummary,
   type TenantObjectType,
   type TenantObjectVersion,
@@ -84,12 +85,64 @@ export class TenantDiscoveryService {
     return conn;
   }
 
-  getConnection(t: TenantContext, id: string) {
-    return this.deployments.getConnection(t, id);
+  /** A connection may only be read by the engineer who established it or a SUPER_ADMIN. */
+  async getConnection(t: TenantContext, id: string, user: AuthedUser) {
+    const row = await this.deployments.getConnection(t, id);
+    if (row.started_by !== user.id && user.role !== 'SUPER_ADMIN') {
+      throw new ForbiddenException('This customer-tenant session belongs to another engineer.');
+    }
+    return row;
   }
 
-  listConnections(t: TenantContext) {
-    return this.deployments.listConnections(t);
+  /**
+   * SUPER_ADMIN: every recent session for this customer, with its owner.
+   * Everyone else: only their own.
+   */
+  async listConnections(t: TenantContext, user: AuthedUser): Promise<TenantConnectionInfo[]> {
+    let q = this.s(t)
+      .selectFrom('connections')
+      .select(['id', 'status', 'upn', 'tenant_domain', 'started_by', 'started_at', 'expires_at'])
+      .orderBy('started_at', 'desc')
+      .limit(50);
+    if (user.role !== 'SUPER_ADMIN') q = q.where('started_by', '=', user.id);
+    return this.attachOwners(await q.execute(), user.id);
+  }
+
+  /** Resolve `started_by` ids to the Voxshift user (name/email) from the platform schema. */
+  private async attachOwners(
+    rows: {
+      id: string;
+      status: TenantConnectionInfo['status'];
+      upn: string | null;
+      tenant_domain: string | null;
+      started_by: string;
+      started_at: string;
+      expires_at: string | null;
+    }[],
+    meId: string,
+  ): Promise<TenantConnectionInfo[]> {
+    const ids = [...new Set(rows.map((r) => r.started_by))];
+    const users = ids.length
+      ? await platformDb(this.db as Kysely<DB>)
+          .selectFrom('users')
+          .select(['id', 'display_name', 'email'])
+          .where('id', 'in', ids)
+          .execute()
+      : [];
+    const byId = new Map(users.map((u) => [u.id, u]));
+    return rows.map((r) => {
+      const u = byId.get(r.started_by);
+      return {
+        id: r.id,
+        status: r.status,
+        upn: r.upn,
+        tenant_domain: r.tenant_domain,
+        started_at: r.started_at,
+        expires_at: r.expires_at,
+        owner: u ? { id: u.id, name: u.display_name, email: u.email } : null,
+        isMine: r.started_by === meId,
+      };
+    });
   }
 
   /* ============================== settings ============================== */
@@ -138,6 +191,12 @@ export class TenantDiscoveryService {
     filters: { includeDisabled?: boolean; includeUnlicensed?: boolean } = {},
   ) {
     const conn = await this.deployments.getConnection(t, connectionId);
+    const foreign = conn.started_by !== user.id;
+    if (foreign && user.role !== 'SUPER_ADMIN') {
+      throw new ForbiddenException(
+        'This customer-tenant session belongs to another engineer. Start your own connection, or ask a Super Admin to run the sync.',
+      );
+    }
     if (conn.status !== 'active') {
       throw new ForbiddenException('Connection is not active - sign in to the customer tenant first');
     }
@@ -181,18 +240,19 @@ export class TenantDiscoveryService {
       (filters.includeDisabled ? ' +disabled' : '') +
       (filters.includeUnlicensed ? ' +unlicensed' : '') +
       (filterUsers ? '' : ' +allusers');
+    const sessionOwner = foreign ? { ranAs: conn.upn, sessionOwnerId: conn.started_by } : {};
     await this.audit.tenant(t.schema, 'tenant_discovery.run_started', {
       actor: actorOf(user),
       targetType: 'tenant_discovery_run',
       targetId: run.id,
-      detail: { connectionId: conn.id, upn: conn.upn, scope: scopeLabel },
+      detail: { connectionId: conn.id, upn: conn.upn, scope: scopeLabel, ...sessionOwner },
     });
     await this.audit.platform('tenant_discovery.run_started', {
       actor: actorOf(user),
       tenantId: t.id,
       targetType: 'tenant_discovery_run',
       targetId: run.id,
-      detail: { scope: scopeLabel },
+      detail: { scope: scopeLabel, ...sessionOwner },
     });
     return run;
   }
@@ -346,8 +406,9 @@ export class TenantDiscoveryService {
 
   /* =============================== summary =============================== */
 
-  async summary(t: TenantContext): Promise<TenantDiscoverySummary> {
+  async summary(t: TenantContext, user: AuthedUser): Promise<TenantDiscoverySummary> {
     const s = this.s(t);
+    const isAdmin = user.role === 'SUPER_ADMIN';
     // Sequential on purpose: the Discovery page polls this while a run may be
     // hammering the same Postgres, so it must never hold more than one pooled
     // connection at a time (a Promise.all here starved the pool on big tenants).
@@ -364,14 +425,18 @@ export class TenantDiscoveryService {
       .where('status', 'in', ['completed', 'failed', 'running', 'queued'])
       .orderBy('created_at', 'desc')
       .executeTakeFirst();
-    const activeConn = await s
+    // Live sessions. A SUPER_ADMIN sees every engineer's; anyone else only their
+    // own — an engineer must never adopt or run on a colleague's session.
+    let activeQ = s
       .selectFrom('connections')
-      .select(['id', 'upn', 'status', 'expires_at'])
+      .select(['id', 'status', 'upn', 'tenant_domain', 'started_by', 'started_at', 'expires_at'])
       .where('status', 'in', ['active', 'pending'])
       // a session past its expiry is dead even if the row was never flipped
       .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', new Date().toISOString())]))
-      .orderBy('started_at', 'desc')
-      .executeTakeFirst();
+      .orderBy('started_at', 'desc');
+    if (!isAdmin) activeQ = activeQ.where('started_by', '=', user.id);
+    const activeConnections = await this.attachOwners(await activeQ.execute(), user.id);
+    const myConn = activeConnections.find((c) => c.isMine) ?? null;
     const countRows = await s
       .selectFrom('tenant_objects')
       .select(['object_type', (eb) => eb.fn.countAll<number>().as('n')])
@@ -404,7 +469,9 @@ export class TenantDiscoveryService {
           }
         : null,
       lastRun: lastRun ?? null,
-      activeConnection: activeConn ?? null,
+      activeConnection: myConn,
+      activeConnections,
+      canManageConnections: isAdmin,
       counts,
       linkedDiscoveryUsers: Number(linked?.n ?? 0),
       settings: {

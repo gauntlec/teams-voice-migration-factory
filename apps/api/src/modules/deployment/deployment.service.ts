@@ -80,6 +80,11 @@ export class DeploymentService {
       throw new ForbiddenException('Missing permission: deployment:execute');
     }
     const conn = await this.getConnection(t, input.connectionId);
+    if (conn.started_by !== user.id && user.role !== 'SUPER_ADMIN') {
+      throw new ForbiddenException(
+        'This customer-tenant session belongs to another engineer. Start your own connection, or ask a Super Admin.',
+      );
+    }
     if (conn.status !== 'active') {
       throw new ForbiddenException('Connection is not active - sign in to the customer tenant first');
     }

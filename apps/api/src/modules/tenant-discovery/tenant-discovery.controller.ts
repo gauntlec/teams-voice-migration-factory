@@ -44,14 +44,18 @@ export class TenantDiscoveryController {
 
   @Get('connections')
   @RequirePermission('tenantdiscovery:read')
-  listConnections(@TenantCtx() t: TenantContext) {
-    return this.svc.listConnections(t);
+  listConnections(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser) {
+    return this.svc.listConnections(t, user);
   }
 
   @Get('connections/:id')
   @RequirePermission('tenantdiscovery:read')
-  getConnection(@TenantCtx() t: TenantContext, @Param('id') id: string) {
-    return this.svc.getConnection(t, id);
+  getConnection(
+    @TenantCtx() t: TenantContext,
+    @Param('id') id: string,
+    @CurrentUser() user: AuthedUser,
+  ) {
+    return this.svc.getConnection(t, id, user);
   }
 
   /* settings */
@@ -127,8 +131,8 @@ export class TenantDiscoveryController {
 
   @Get('summary')
   @RequirePermission('tenantdiscovery:read')
-  summary(@TenantCtx() t: TenantContext) {
-    return this.svc.summary(t);
+  summary(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser) {
+    return this.svc.summary(t, user);
   }
 
   @Get('objects')

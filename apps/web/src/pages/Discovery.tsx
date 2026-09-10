@@ -55,6 +55,7 @@ import {
   TENANT_POLICY_TYPE_LABELS,
   TENANT_POLICY_TYPES,
   type Paginated,
+  type TenantConnectionInfo,
   type TenantDiscoveryChangeCounts,
   type TenantDiscoveryRun,
   type TenantDiscoveryStep,
@@ -116,6 +117,25 @@ const useStyles = makeStyles({
     ...shorthands.border('1px', 'solid', tokens.colorNeutralStroke2),
     ...shorthands.borderRadius(tokens.borderRadiusMedium),
     backgroundColor: tokens.colorNeutralBackground2,
+  },
+  sessionPanel: {
+    display: 'grid',
+    ...shorthands.gap('4px'),
+    ...shorthands.padding('6px'),
+    ...shorthands.border('1px', 'solid', tokens.colorNeutralStroke2),
+    ...shorthands.borderRadius(tokens.borderRadiusMedium),
+    backgroundColor: tokens.colorNeutralBackground2,
+  },
+  sessionRow: {
+    display: 'flex',
+    alignItems: 'center',
+    ...shorthands.gap('8px'),
+    ...shorthands.padding('7px', '9px'),
+    ...shorthands.borderRadius(tokens.borderRadiusMedium),
+    ...shorthands.borderLeft('3px', 'solid', 'transparent'),
+    cursor: 'pointer',
+    flexWrap: 'wrap',
+    fontSize: tokens.fontSizeBase200,
   },
   scopeStep: { display: 'flex', alignItems: 'center', ...shorthands.gap('2px') },
   scopeTypes: { display: 'flex', flexWrap: 'wrap', ...shorthands.gap('2px', '14px'), paddingLeft: '28px' },
@@ -453,22 +473,41 @@ function ConnectCard({
   onChanged: () => void;
 }) {
   const s = useStyles();
+  const canManage = !!summary?.canManageConnections;
+  const sessions = summary?.activeConnections ?? [];
+  const myActiveId = summary?.activeConnection?.id ?? null;
+
   const [connId, setConnId] = useState<string | null>(null);
+  const [pickedId, setPickedId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [scopeOpen, setScopeOpen] = useState(false);
   const [scopeSel, setScopeSel] = useState<Set<TenantObjectType>>(new Set());
   const [includeDisabled, setIncludeDisabled] = useState(false);
   const [includeUnlicensed, setIncludeUnlicensed] = useState(false);
 
-  // Adopt the active connection from the summary when we didn't start one here.
+  // An engineer only ever works with their own session (the API scopes it too).
   useEffect(() => {
-    if (!connId && summary?.activeConnection?.id) setConnId(summary.activeConnection.id);
-  }, [summary?.activeConnection?.id, connId]);
+    if (canManage) return;
+    if (!connId && myActiveId) setConnId(myActiveId);
+  }, [canManage, myActiveId, connId]);
+
+  // A Super Admin chooses which engineer's session a sync runs on — default to
+  // their own, otherwise the first still-active one.
+  useEffect(() => {
+    if (!canManage) return;
+    if (pickedId && sessions.some((x) => x.id === pickedId)) return;
+    setPickedId(myActiveId ?? sessions.find((x) => x.status === 'active')?.id ?? null);
+  }, [canManage, pickedId, sessions, myActiveId]);
+
+  const focusedId = canManage ? pickedId : connId ?? myActiveId;
+  const focusedMeta: TenantConnectionInfo | null =
+    sessions.find((x) => x.id === focusedId) ?? null;
+  const focusedForeign = !!focusedMeta && !focusedMeta.isMine;
 
   const conn = useQuery({
-    queryKey: ['tdisc', 'conn', base, connId],
-    enabled: !!connId,
-    queryFn: () => api<Connection>(`${base}/connections/${connId}`),
+    queryKey: ['tdisc', 'conn', base, focusedId],
+    enabled: !!focusedId,
+    queryFn: () => api<Connection>(`${base}/connections/${focusedId}`),
     refetchInterval: (q) => (q.state.data?.status === 'pending' ? 3000 : false),
   });
 
@@ -477,6 +516,7 @@ function ConnectCard({
     onSuccess: (c) => {
       setErr(null);
       setConnId(c.id);
+      setPickedId(c.id);
       onChanged();
     },
     onError: (e) => setErr(e instanceof ApiError ? e.message : 'Could not start the connection'),
@@ -488,7 +528,7 @@ function ConnectCard({
       api<TenantDiscoveryRun>(`${base}/runs`, {
         method: 'POST',
         body: JSON.stringify({
-          connectionId: c!.id,
+          connectionId: focusedId,
           ...(scopeTypes && scopeTypes.length ? { scopeTypes } : {}),
           ...(includeDisabled ? { includeDisabled: true } : {}),
           ...(includeUnlicensed ? { includeUnlicensed: true } : {}),
@@ -503,15 +543,66 @@ function ConnectCard({
   });
 
   const running = summary?.lastRun && ['queued', 'running'].includes(summary.lastRun.status);
-  const runDisabled = !canRun || run.isPending || !!running;
+  const runDisabled = !canRun || run.isPending || !!running || c?.status !== 'active';
 
   return (
     <Card className={s.card}>
       <Text weight="semibold">Customer tenant connection</Text>
       <Text size={200} className={s.muted}>
         Sign in with a <b>Teams Administrator</b> account for this customer. The sign-in is live and
-        point-in-time: nothing is stored, and the session ends when it expires.
+        point-in-time: nothing is stored, and the session ends when it expires. A session can only be
+        used by the engineer who started it, or by a Super Admin.
       </Text>
+
+      {canManage && sessions.length > 0 && (
+        <div style={{ display: 'grid', gap: 4 }}>
+          <Text size={200} className={s.muted}>
+            Active sessions — pick the one a sync runs on.
+          </Text>
+          <div className={s.sessionPanel}>
+            {sessions.map((sess) => {
+              const sel = sess.id === focusedId;
+              return (
+                <div
+                  key={sess.id}
+                  className={s.sessionRow}
+                  style={{
+                    background: sel ? tokens.colorNeutralBackground3 : undefined,
+                    borderLeftColor: sel ? tokens.colorBrandStroke1 : 'transparent',
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setPickedId(sess.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setPickedId(sess.id);
+                    }
+                  }}
+                >
+                  <Badge
+                    appearance="tint"
+                    size="small"
+                    color={sess.status === 'active' ? 'success' : 'informative'}
+                  >
+                    {sess.status}
+                  </Badge>
+                  <b>{sess.owner?.name ?? sess.owner?.email ?? 'Unknown engineer'}</b>
+                  {sess.isMine && (
+                    <Badge appearance="outline" size="small">
+                      You
+                    </Badge>
+                  )}
+                  <span className={s.muted}>
+                    {sess.upn ? `as ${sess.upn} · ` : ''}since {fmt(sess.started_at)}
+                    {sess.expires_at ? ` · expires ${fmt(sess.expires_at)}` : ''}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {!c || c.status === 'expired' || c.status === 'closed' ? (
         <div className={s.row}>
@@ -532,7 +623,15 @@ function ConnectCard({
         </div>
       ) : c.status === 'pending' ? (
         <div style={{ display: 'grid', gap: 8 }}>
-          {c.user_code ? (
+          {focusedForeign ? (
+            <div className={s.row}>
+              <Spinner size="tiny" />
+              <Text size={200}>
+                {focusedMeta?.owner?.name ?? focusedMeta?.owner?.email ?? 'Another engineer'} is signing
+                in to the customer tenant…
+              </Text>
+            </div>
+          ) : c.user_code ? (
             <>
               <Text size={200}>
                 Open{' '}
@@ -564,6 +663,9 @@ function ConnectCard({
             </Badge>
             <Text size={200}>
               as <b>{c.upn ?? 'unknown'}</b>
+              {focusedForeign && focusedMeta?.owner
+                ? ` · ${focusedMeta.owner.name ?? focusedMeta.owner.email}'s session`
+                : ''}
               {c.expires_at ? ` · session until ${fmt(c.expires_at)}` : ''}
             </Text>
           </div>
@@ -587,9 +689,16 @@ function ConnectCard({
               Sync part of the tenant
             </Button>
             <Button size="small" appearance="subtle" onClick={() => start.mutate()} disabled={!canRun}>
-              Sign in again
+              {canManage && focusedForeign ? 'Connect my own session' : 'Sign in again'}
             </Button>
           </div>
+          {focusedForeign && (
+            <Text size={200} className={s.muted}>
+              You are a Super Admin — running a sync here uses{' '}
+              <b>{focusedMeta?.owner?.name ?? focusedMeta?.owner?.email ?? 'another engineer'}</b>’s
+              session. This is recorded in the audit log.
+            </Text>
+          )}
           {scopeOpen && (
             <ScopePicker
               selected={scopeSel}

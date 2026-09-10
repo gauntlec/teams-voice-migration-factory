@@ -174,11 +174,34 @@ export interface TenantPolicySummary {
   removed_at: string | null;
 }
 
+/**
+ * A live customer-tenant sign-in, with the engineer who established it. A
+ * connection may only be used by its owner or a SUPER_ADMIN — see docs/SECURITY.md.
+ */
+export interface TenantConnectionInfo {
+  id: string;
+  status: 'pending' | 'active' | 'expired' | 'closed';
+  /** the customer-tenant admin account the engineer signed in as */
+  upn: string | null;
+  tenant_domain: string | null;
+  started_at: string;
+  expires_at: string | null;
+  /** the Voxshift user who signed in (null if the account was since removed) */
+  owner: { id: string; name: string | null; email: string } | null;
+  /** true when the requesting user established this session */
+  isMine: boolean;
+}
+
 /** `GET .../tenant-discovery/summary` */
 export interface TenantDiscoverySummary {
   tenant: { id: string | null; displayName: string | null; domains: string[] } | null;
   lastRun: TenantDiscoveryRun | null;
-  activeConnection: { id: string; upn: string | null; status: string; expires_at: string | null } | null;
+  /** the requesting user's own active session (or null) */
+  activeConnection: TenantConnectionInfo | null;
+  /** every active session for this customer for a SUPER_ADMIN; just the caller's own otherwise */
+  activeConnections: TenantConnectionInfo[];
+  /** true when the caller may run a sync on any engineer's session (SUPER_ADMIN) */
+  canManageConnections: boolean;
   counts: Partial<Record<import('./domain').TenantObjectType, number>>;
   linkedDiscoveryUsers: number;
   /** per-customer Discovery settings */

@@ -28,6 +28,17 @@ Voxshift so Data Collection, Design & Build and Deployment can reference reality
 5. Sessions expire after `TEAMS_SESSION_TTL_MINUTES` idle (default 60) or when the
    worker restarts — tokens only ever live inside the pwsh process.
 
+### Who may use a session
+
+A `connections` row belongs to the engineer who signed it in (`started_by`).
+Only that engineer, or a `SUPER_ADMIN`, can run a sync on it — any other
+engineer gets a 403 and must start their own connection. The Discovery page
+reflects this: a normal engineer only ever sees their own live session; a
+`SUPER_ADMIN` sees an **Active sessions** list of every connected engineer
+(name, signed-in-as UPN, age) and picks which session a run uses. A
+`SUPER_ADMIN` running on someone else's session is recorded in the audit log
+(`sessionOwnerId`, `ranAs`). See `docs/SECURITY.md`.
+
 ### Selective sync
 
 A run can cover **part** of the tenant. The *Sync part of the tenant* control on
