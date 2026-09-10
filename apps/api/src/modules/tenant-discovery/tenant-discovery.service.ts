@@ -101,7 +101,7 @@ export class TenantDiscoveryService {
   async listConnections(t: TenantContext, user: AuthedUser): Promise<TenantConnectionInfo[]> {
     let q = this.s(t)
       .selectFrom('connections')
-      .select(['id', 'status', 'upn', 'tenant_domain', 'started_by', 'started_at', 'expires_at'])
+      .select(['id', 'status', 'upn', 'tenant_domain', 'started_by', 'started_at', 'expires_at', 'graph_status'])
       .orderBy('started_at', 'desc')
       .limit(50);
     if (user.role !== 'SUPER_ADMIN') q = q.where('started_by', '=', user.id);
@@ -118,6 +118,7 @@ export class TenantDiscoveryService {
       started_by: string;
       started_at: string;
       expires_at: string | null;
+      graph_status: TenantConnectionInfo['graphStatus'];
     }[],
     meId: string,
   ): Promise<TenantConnectionInfo[]> {
@@ -141,8 +142,44 @@ export class TenantDiscoveryService {
         expires_at: r.expires_at,
         owner: u ? { id: u.id, name: u.display_name, email: u.email } : null,
         isMine: r.started_by === meId,
+        graphStatus: r.graph_status ?? 'none',
       };
     });
+  }
+
+  /**
+   * Kick off the optional second (Graph) sign-in on an existing connection so a
+   * run can also collect the Teams device inventory. Owner-or-SUPER_ADMIN only.
+   */
+  async connectGraph(t: TenantContext, id: string, user: AuthedUser) {
+    const conn = await this.getConnection(t, id, user);
+    if (conn.status !== 'active') {
+      throw new ForbiddenException('Connection is not active - sign in to the customer tenant first');
+    }
+    await this.s(t)
+      .updateTable('connections')
+      .set({
+        graph_status: 'pending',
+        graph_user_code: null,
+        graph_verification_uri: null,
+        graph_upn: null,
+        graph_expires_at: null,
+      })
+      .where('id', '=', id)
+      .execute();
+    await this.queue.add('graph.connect', {
+      kind: 'graph.connect',
+      tenantId: t.id,
+      schema: t.schema,
+      connectionId: id,
+      operatorUserId: user.id,
+    });
+    await this.audit.tenant(t.schema, 'tenant_discovery.graph_connect_started', {
+      actor: actorOf(user),
+      targetType: 'connection',
+      targetId: id,
+    });
+    return this.getConnection(t, id, user);
   }
 
   /* ============================== settings ============================== */
@@ -429,7 +466,7 @@ export class TenantDiscoveryService {
     // own — an engineer must never adopt or run on a colleague's session.
     let activeQ = s
       .selectFrom('connections')
-      .select(['id', 'status', 'upn', 'tenant_domain', 'started_by', 'started_at', 'expires_at'])
+      .select(['id', 'status', 'upn', 'tenant_domain', 'started_by', 'started_at', 'expires_at', 'graph_status'])
       .where('status', 'in', ['active', 'pending'])
       // a session past its expiry is dead even if the row was never flipped
       .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', new Date().toISOString())]))

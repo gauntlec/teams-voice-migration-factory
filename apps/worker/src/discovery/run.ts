@@ -149,9 +149,25 @@ export async function handleTenantDiscoveryRun(
   let signInLost = false;
   const ctx: RunContext = { assignees: null };
 
+  const explicitlyWantedDevices = scopeTypes?.includes('teams_device') ?? false;
+
   for (const step of TENANT_DISCOVERY_STEPS) {
     const specs = STEP_CMDLETS[step].filter((sp) => wantType(sp.objectType));
     if (!specs.length) continue; // step not in this run's scope
+    // The device inventory needs the optional Graph sign-in. Without it, a full
+    // run just omits devices (previously-discovered ones are left untouched); an
+    // engineer who explicitly scoped devices is told.
+    if (step === 'devices' && !exec.graphAlive) {
+      if (explicitlyWantedDevices) {
+        progress.errors.push({
+          step,
+          message:
+            'Device inventory not collected - add the device-inventory (Microsoft Graph) sign-in to this session and re-run.',
+        });
+        await saveProgress(s, runId, progress);
+      }
+      continue;
+    }
     progress.step = step;
     progress.note = null;
     await saveProgress(s, runId, progress);
@@ -578,6 +594,20 @@ async function runSpec(
   };
 
   const qopts = { select: spec.select, depth: spec.depth, timeoutMs: spec.timeoutMs };
+
+  // Graph-backed step (the Teams device inventory): one GET, paged by the
+  // executor on @odata.nextLink.
+  if (spec.graphPath) {
+    progress.note = `Fetching ${noun} from Microsoft Graph…`;
+    await saveProgress(s, runId, progress);
+    const records = await exec.graphList(spec.graphPath);
+    expected = base + records.length;
+    progress.note = `Fetched ${records.length.toLocaleString()} ${noun}, storing…`;
+    await saveProgress(s, runId, progress);
+    await handle(records);
+    await flushVersions();
+    return stored;
+  }
 
   // Bucketed fetch (Get-CsOnlineUser): one -Filter per disjoint slice, so a huge
   // result comes back in visible chunks and no single call can time out. One

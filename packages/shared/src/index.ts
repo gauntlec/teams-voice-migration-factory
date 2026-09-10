@@ -190,6 +190,8 @@ export interface TenantConnectionInfo {
   owner: { id: string; name: string | null; email: string } | null;
   /** true when the requesting user established this session */
   isMine: boolean;
+  /** the optional second (Graph) sign-in used to read the Teams device inventory */
+  graphStatus: 'none' | 'pending' | 'active' | 'failed';
 }
 
 /** `GET .../tenant-discovery/summary` */

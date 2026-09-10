@@ -163,6 +163,56 @@ async function handleConnectionStart(job: Job) {
   }
 }
 
+/**
+ * Optional second sign-in on an existing connection: `Connect-MgGraph` for
+ * `TeamworkDevice.Read.All`, so Discovery can read the Teams device inventory.
+ * Runs in the same executor/process as the Teams session; no tokens stored.
+ */
+async function handleGraphConnect(job: Job) {
+  const { schema, connectionId } = job.data as { schema: string; connectionId: string };
+  const scoped = tenantDb(db, schema);
+  const exec = executors.get(connectionId);
+  if (!exec) {
+    await scoped
+      .updateTable('connections')
+      .set({ graph_status: 'failed' })
+      .where('id', '=', connectionId)
+      .execute()
+      .catch(() => undefined);
+    throw new Error('the tenant connection is no longer available on the worker - sign in again');
+  }
+  try {
+    const prompt = await exec.beginGraphDeviceCode();
+    await scoped
+      .updateTable('connections')
+      .set({
+        graph_status: 'pending',
+        graph_user_code: prompt.userCode,
+        graph_verification_uri: prompt.verificationUri,
+        graph_expires_at: prompt.expiresAt.toISOString(),
+      })
+      .where('id', '=', connectionId)
+      .execute();
+
+    const signIn = await exec.awaitGraphSignIn();
+    await scoped
+      .updateTable('connections')
+      .set({ graph_status: 'active', graph_upn: signIn.upn, graph_user_code: null })
+      .where('id', '=', connectionId)
+      .execute();
+    // eslint-disable-next-line no-console
+    console.log(`[connection ${connectionId}] graph active as ${signIn.upn}`);
+  } catch (err) {
+    await scoped
+      .updateTable('connections')
+      .set({ graph_status: 'failed', graph_user_code: null })
+      .where('id', '=', connectionId)
+      .execute()
+      .catch(() => undefined);
+    throw err;
+  }
+}
+
 async function handleDeploymentRun(job: Job) {
   const { schema, deploymentId, connectionId, mode, scope, operatorUserId } = job.data as {
     schema: string;
@@ -329,6 +379,8 @@ const worker = new Worker(
     switch (job.name) {
       case 'connection.start':
         return handleConnectionStart(job);
+      case 'graph.connect':
+        return handleGraphConnect(job);
       case 'deployment.run':
         return handleDeploymentRun(job);
       case 'tenant_discovery.run':

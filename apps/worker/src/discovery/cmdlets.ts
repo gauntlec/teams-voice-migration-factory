@@ -17,6 +17,12 @@ type Rec = Record<string, unknown>;
 export interface CmdletSpec {
   /** PowerShell command, without any `| ConvertTo-Json` (the executor appends it). */
   command: string;
+  /**
+   * Graph-backed step: instead of running `command`, GET this collection path
+   * via `exec.graphList()` (needs the optional Graph sign-in). `command` is then
+   * just a human label.
+   */
+  graphPath?: string;
   objectType: TenantObjectType;
   /** stable key for upserts (falls back to a hash of the record when empty) */
   key: (r: Rec) => string | null;
@@ -276,6 +282,21 @@ export const STEP_CMDLETS: Record<TenantDiscoveryStep, CmdletSpec[]> = {
       objectType: 'schedule',
       key: (r) => s(r.Id) ?? s(r.Identity),
       name: (r) => s(r.Name),
+    },
+  ],
+  devices: [
+    {
+      // Graph, not PowerShell: the Teams device inventory (phones, rooms,
+      // panels, displays, SIP). Runs only when the engineer added the optional
+      // Graph sign-in (see run.ts / pwsh-executor.beginGraphDeviceCode).
+      command: 'GET /teamwork/devices',
+      graphPath: '/teamwork/devices',
+      objectType: 'teams_device',
+      key: (r) => s(r.id),
+      name: (r) =>
+        s(r.displayName) ??
+        s((r.hardwareDetail as Rec | undefined)?.serialNumber) ??
+        s(r.deviceType),
     },
   ],
 };
