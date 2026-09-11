@@ -314,6 +314,15 @@ interface BuildIdentityRowBase {
   did: string | null;
   ext: string | null;
   e164: string | null;
+  /**
+   * FK -> phone_numbers.id (ON DELETE SET NULL). A plain reference to which
+   * inventory row `e164` came from - NOT the same as phone_numbers.holder_id
+   * (the exclusive claim), which for an imported number stays with
+   * discovery_users/discovery_caps. Null e164 with a set phone_number_id
+   * shouldn't happen; the reverse (e164 set, this null) means it was
+   * imported before this column existed and not yet backfilled.
+   */
+  phone_number_id: string | null;
   number_type: string | null;
   revoke_ev: ColumnType<boolean, boolean | undefined, boolean>;
   hold_uri: string | null;
@@ -365,6 +374,8 @@ export interface BuildResourceAccountsTable {
   kind: 'auto_attendant' | 'call_queue';
   location_id: string | null;
   phone_number: string | null;
+  /** FK -> phone_numbers.id (ON DELETE SET NULL) - same plain reference as build_users/build_caps. */
+  phone_number_id: string | null;
   number_type: string | null;
   voice_routing_policy: string | null;
   /** set once New-CsOnlineApplicationInstance has run - gates the number/policy assignment phase */

@@ -157,7 +157,8 @@ export class BuildService {
       map: (d) => ({
         upn: d.upn,
         did: d.requested_number,
-        e164: numbers.get(d.id) ?? null,
+        e164: numbers.get(d.id)?.e164 ?? null,
+        phone_number_id: numbers.get(d.id)?.id ?? null,
         migration_wave: null,
         // Starting point only - voicemail_policy (the actual Teams policy
         // name) is still the engineer's call; this is just what the
@@ -216,7 +217,8 @@ export class BuildService {
         upn: d.upn ?? '',
         display_name: d.display_name,
         phone_model: d.device_model,
-        e164: numbers.get(d.id) ?? null,
+        e164: numbers.get(d.id)?.e164 ?? null,
+        phone_number_id: numbers.get(d.id)?.id ?? null,
       }),
       skip: (d) => !d.upn, // a CAP row with no UPN yet can't be provisioned in Teams; leave it in Data Collection
     });
@@ -243,8 +245,9 @@ export class BuildService {
       .offset((q.page - 1) * q.limit)
       .execute();
     const validated = await this.validation.validateRows(t, rows as { id: string; upn: string; e164: string | null; policies: Record<string, string | null> | null }[]);
-    const phoneIds = await this.phoneNumberIdsFor(t, holderTypeOf(table), rows.map((r) => r.id));
-    const items = rows.map((r) => ({ ...r, validation: validated.get(r.id) ?? null, phone_number_id: phoneIds.get(r.id) ?? null }));
+    // phone_number_id is a native column now (see 0017_build_phone_number_id) -
+    // no separate holder lookup needed to know "what number is this row's".
+    const items = rows.map((r) => ({ ...r, validation: validated.get(r.id) ?? null }));
     return { items, total: Number(n), page: q.page, limit: q.limit } satisfies Paginated<unknown>;
   }
 
@@ -252,8 +255,7 @@ export class BuildService {
     const row = await this.s(t).selectFrom(table).selectAll().where('id', '=', id).executeTakeFirst();
     if (!row) throw new NotFoundException('row not found');
     const validated = await this.validation.validateRows(t, [row]);
-    const phoneIds = await this.phoneNumberIdsFor(t, holderTypeOf(table), [id]);
-    return { ...row, validation: validated.get(id) ?? null, phone_number_id: phoneIds.get(id) ?? null };
+    return { ...row, validation: validated.get(id) ?? null };
   }
 
   async deleteIdentity(t: TenantContext, u: AuthedUser, table: 'build_users' | 'build_caps', id: string) {
@@ -309,7 +311,7 @@ export class BuildService {
       const number = await this.setSingleNumber(t, holderTypeOf(table), row.id, phone_number_id);
       row = await this.s(t)
         .updateTable(table)
-        .set({ e164: number?.e164 ?? null } as never)
+        .set({ e164: number?.e164 ?? null, phone_number_id: number?.id ?? null } as never)
         .where('id', '=', row.id)
         .returningAll()
         .executeTakeFirstOrThrow();
@@ -333,23 +335,7 @@ export class BuildService {
     const { phone_number_id, ...rest } = body;
     const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
     if (phone_number_id !== undefined) {
-      // The Edit dialog always sends this field, `null` when the picker was
-      // never touched - not just when the engineer explicitly cleared it. A
-      // row can have an e164 with no phone_numbers claim behind it at all
-      // (Populate imports a *copy* of Data Collection's number, see
-      // populateUsers) - only touch e164 here for a real pick, or a real
-      // release of a claim this row actually holds; otherwise an imported
-      // number would get silently wiped on every unrelated save.
-      const hasClaim = await this.s(t)
-        .selectFrom('phone_numbers')
-        .select('id')
-        .where('holder_type', '=', holderType)
-        .where('holder_id', '=', id)
-        .executeTakeFirst();
-      if (phone_number_id || hasClaim) {
-        const number = await this.setSingleNumber(t, holderType, id, phone_number_id);
-        patch.e164 = number?.e164 ?? null;
-      }
+      Object.assign(patch, await this.applyNumberChange(t, table, holderType, id, phone_number_id));
     }
     const row = await this.s(t)
       .updateTable(table)
@@ -473,16 +459,15 @@ export class BuildService {
       .limit(q.limit)
       .offset((q.page - 1) * q.limit)
       .execute();
-    const phoneIds = await this.phoneNumberIdsFor(t, 'resource_account', rows.map((r) => r.id));
-    const items = rows.map((r) => ({ ...r, phone_number_id: phoneIds.get(r.id) ?? null }));
+    // phone_number_id is a native column now (see 0017_build_phone_number_id).
+    const items = rows;
     return { items, total: Number(n), page: q.page, limit: q.limit } satisfies Paginated<unknown>;
   }
 
   async getResourceAccount(t: TenantContext, id: string) {
     const row = await this.s(t).selectFrom('build_resource_accounts').selectAll().where('id', '=', id).executeTakeFirst();
     if (!row) throw new NotFoundException('row not found');
-    const phoneIds = await this.phoneNumberIdsFor(t, 'resource_account', [id]);
-    return { ...row, phone_number_id: phoneIds.get(id) ?? null };
+    return row;
   }
 
   async deleteResourceAccount(t: TenantContext, u: AuthedUser, id: string) {
@@ -517,7 +502,7 @@ export class BuildService {
       const number = await this.setSingleNumber(t, 'resource_account', row.id, body.phone_number_id);
       row = await this.s(t)
         .updateTable('build_resource_accounts')
-        .set({ phone_number: number?.e164 ?? null })
+        .set({ phone_number: number?.e164 ?? null, phone_number_id: number?.id ?? null })
         .where('id', '=', row.id)
         .returningAll()
         .executeTakeFirstOrThrow();
@@ -534,18 +519,7 @@ export class BuildService {
     const { phone_number_id, created, ...rest } = body;
     const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
     if (phone_number_id !== undefined) {
-      // Same guard as updateIdentity: only act when there's a real pick or a
-      // real existing claim to release.
-      const hasClaim = await this.s(t)
-        .selectFrom('phone_numbers')
-        .select('id')
-        .where('holder_type', '=', 'resource_account')
-        .where('holder_id', '=', id)
-        .executeTakeFirst();
-      if (phone_number_id || hasClaim) {
-        const number = await this.setSingleNumber(t, 'resource_account', id, phone_number_id);
-        patch.phone_number = number?.e164 ?? null;
-      }
+      Object.assign(patch, await this.applyNumberChange(t, 'build_resource_accounts', 'resource_account', id, phone_number_id));
     }
     if (created !== undefined) {
       const row = await this.getResourceAccount(t, id);
@@ -612,20 +586,6 @@ export class BuildService {
    * `phone_numbers` row, atomically, so two Build rows can never claim the same
    * DID. */
 
-  /** Batched lookup of each holder's current phone_numbers.id, for the "current selection" in a picker. */
-  private async phoneNumberIdsFor(t: TenantContext, holderType: NumberHolderType, holderIds: string[]) {
-    const out = new Map<string, string>();
-    if (holderIds.length === 0) return out;
-    const rows = await this.s(t)
-      .selectFrom('phone_numbers')
-      .select(['id', 'holder_id'])
-      .where('holder_type', '=', holderType)
-      .where('holder_id', 'in', holderIds)
-      .execute();
-    for (const r of rows) if (r.holder_id) out.set(r.holder_id, r.id);
-    return out;
-  }
-
   private async claimNumber(t: TenantContext, numberId: string, holderType: NumberHolderType, holderId: string) {
     const res = await this.s(t)
       .updateTable('phone_numbers')
@@ -644,20 +604,22 @@ export class BuildService {
   /**
    * The number a discovery_users/discovery_caps row currently has claimed in
    * the shared `phone_numbers` inventory (via Data Collection's own picker) -
-   * read-only. Populate from Discovery copies this as a build row's starting
-   * `e164`; Data Collection's claim is never touched, so its own Number
-   * column keeps showing it too. Batched: one query for the whole site.
+   * read-only. Populate from Discovery copies both the id and the e164 onto
+   * the new build row (phone_number_id, e164) as a real reference, not just
+   * text - see 0017_build_phone_number_id.sql. Data Collection's own claim
+   * (phone_numbers.holder_id) is never touched, so its Number column keeps
+   * showing it too. Batched: one query for the whole site.
    */
   private async currentNumbersFor(t: TenantContext, holderType: NumberHolderType, holderIds: string[]) {
-    const out = new Map<string, string>();
+    const out = new Map<string, { id: string; e164: string }>();
     if (holderIds.length === 0) return out;
     const rows = await this.s(t)
       .selectFrom('phone_numbers')
-      .select(['e164', 'holder_id'])
+      .select(['id', 'e164', 'holder_id'])
       .where('holder_type', '=', holderType)
       .where('holder_id', 'in', holderIds)
       .execute();
-    for (const r of rows) if (r.holder_id) out.set(r.holder_id, r.e164);
+    for (const r of rows) if (r.holder_id) out.set(r.holder_id, { id: r.id, e164: r.e164 });
     return out;
   }
 
@@ -684,6 +646,40 @@ export class BuildService {
     if (!numberId) return null;
     await this.claimNumber(t, numberId, holderType, holderId);
     return this.s(t).selectFrom('phone_numbers').selectAll().where('id', '=', numberId).executeTakeFirstOrThrow();
+  }
+
+  /**
+   * Applies a phone_number_id change to a build_users/build_caps/
+   * build_resource_accounts row, returning the patch fields to merge in (or
+   * `{}` if unchanged). Distinguishes using the row's OWN current
+   * phone_number_id column - a plain reference, not phone_numbers.holder_id,
+   * which for an imported number stays with discovery_users/discovery_caps
+   * (see 0017_build_phone_number_id.sql):
+   *  - same id sent back (including both null) -> unchanged, no-op
+   *  - a genuinely different id -> atomically claim it (setSingleNumber
+   *    releases any *real* claim this holder already had first), set both
+   *    the number text column and phone_number_id to match
+   *  - explicitly cleared (was set, now null) -> release any real claim this
+   *    row holds (a no-op if it only ever had an imported reference and
+   *    never a real claim) and clear both columns
+   */
+  private async applyNumberChange(
+    t: TenantContext,
+    table: 'build_users' | 'build_caps' | 'build_resource_accounts',
+    holderType: NumberHolderType,
+    id: string,
+    targetPhoneNumberId: string | null,
+  ): Promise<Record<string, unknown>> {
+    const numberColumn = table === 'build_resource_accounts' ? 'phone_number' : 'e164';
+    const current = await this.s(t).selectFrom(table).select('phone_number_id').where('id', '=', id).executeTakeFirst();
+    const currentId = current?.phone_number_id ?? null;
+    if (currentId === targetPhoneNumberId) return {};
+    if (targetPhoneNumberId) {
+      const claimed = await this.setSingleNumber(t, holderType, id, targetPhoneNumberId);
+      return { [numberColumn]: claimed?.e164 ?? null, phone_number_id: claimed?.id ?? null };
+    }
+    await this.releaseHolder(t, holderType, id); // no-op if this row never held a real claim
+    return { [numberColumn]: null, phone_number_id: null };
   }
 
   /* ============================== validate ============================== */
