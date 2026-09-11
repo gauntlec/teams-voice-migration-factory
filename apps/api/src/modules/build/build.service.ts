@@ -395,10 +395,22 @@ export class BuildService {
     ids: string[],
     body: Record<string, unknown>,
   ): Promise<{ updated: number }> {
-    const { policy_ids, ...rest } = body;
+    const { policy_ids, voicemail, ...rest } = body;
     const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
+    // Bulk patches are genuinely partial by design - BulkEditDialog starts
+    // every field blank (there's no single row to seed "unchanged" from
+    // like RecordDialog does for single-row edit), so only the keys the
+    // engineer actually touched are present here. A plain `.set()` on a
+    // jsonb column replaces it wholesale - for one key out of 13 policies,
+    // or one of voicemail's two keys, that would silently wipe every other
+    // key already set on the row. Merge into the existing jsonb instead.
     if (policy_ids !== undefined) {
-      Object.assign(patch, await this.resolvePolicyIds(t, policy_ids as Partial<Record<string, string | null>>));
+      const resolved = await this.resolvePolicyIds(t, policy_ids as Partial<Record<string, string | null>>);
+      patch.policy_ids = sql`${sql.ref('policy_ids')} || ${JSON.stringify(resolved.policy_ids)}::jsonb`;
+      patch.policies = sql`${sql.ref('policies')} || ${JSON.stringify(resolved.policies)}::jsonb`;
+    }
+    if (voicemail !== undefined) {
+      patch.voicemail = sql`${sql.ref('voicemail')} || ${JSON.stringify(voicemail)}::jsonb`;
     }
     const result = await this.s(t)
       .updateTable(table)
