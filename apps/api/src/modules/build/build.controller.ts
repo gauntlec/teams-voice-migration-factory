@@ -8,6 +8,7 @@ import {
   buildPopulateSchema,
   buildResourceAccountCreateSchema,
   buildResourceAccountPatchSchema,
+  buildValidateSchema,
   type BuildCapCreateInput,
   type BuildCapPatchInput,
   type BuildIdentityCreateInput,
@@ -16,6 +17,7 @@ import {
   type BuildPopulateInput,
   type BuildResourceAccountCreateInput,
   type BuildResourceAccountPatchInput,
+  type BuildValidateInput,
 } from '@tvmf/shared';
 import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
 import type { AuthedUser, TenantContext } from '../../common/request';
@@ -188,9 +190,9 @@ export class BuildController {
   validateSite(
     @TenantCtx() t: TenantContext,
     @CurrentUser() user: AuthedUser,
-    @Body(new ZodBody(buildPopulateSchema)) body: BuildPopulateInput,
+    @Body(new ZodBody(buildValidateSchema)) body: BuildValidateInput,
   ) {
-    return this.svc.validateSite(t, user, body.site_id);
+    return this.svc.validateSite(t, user, body.site_id, body.live ?? true);
   }
 
   /**

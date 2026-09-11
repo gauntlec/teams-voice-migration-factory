@@ -576,6 +576,14 @@ export type BuildCapPatchInput = z.infer<typeof buildCapPatchSchema>;
 export const buildPopulateSchema = z.object({ site_id: z.string().uuid() }).strict();
 export type BuildPopulateInput = z.infer<typeof buildPopulateSchema>;
 
+/**
+ * `live: false` on the automatic re-check after a targeted live check
+ * completes - recomputes validation from the now-fresher data without
+ * triggering another live check (see BuildService.validateSite).
+ */
+export const buildValidateSchema = buildPopulateSchema.extend({ live: z.boolean().optional() }).strict();
+export type BuildValidateInput = z.infer<typeof buildValidateSchema>;
+
 const buildResourceAccountWritable = {
   location_id: optStr(80),
   number_type: numberType,

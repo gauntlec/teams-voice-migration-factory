@@ -329,6 +329,56 @@ export class TenantDiscoveryService {
     return run;
   }
 
+  /**
+   * A narrow, users-only sync for exactly the given UPNs - not a full
+   * environment sweep. Used by Design & Build's "Validate against tenant"
+   * for rows that have no stored tenant_users match (either nothing has
+   * synced yet, or a real sync ran but missed that specific person).
+   * Fails silently (returns null, never throws): this is a bonus check on
+   * top of an already-useful DB-only validation result, not something the
+   * caller should have to handle as an error.
+   */
+  async startTargetedUserRun(t: TenantContext, user: AuthedUser, upns: string[]) {
+    const conns = await this.deployments.listConnections(t);
+    const conn = conns.find((c) => c.status === 'active' && (c.started_by === user.id || user.role === 'SUPER_ADMIN'));
+    if (!conn) return null; // no eligible live session - caller falls back to the DB-only result
+
+    const running = await this.s(t)
+      .selectFrom('tenant_discovery_runs')
+      .select('id')
+      .where('status', 'in', ['queued', 'running'])
+      .executeTakeFirst();
+    if (running) return null; // a real sync (or another targeted check) is already in flight
+
+    // Bounds worst-case job runtime - one pwsh session, so identities are
+    // checked serially (~1-3s each).
+    const capped = upns.slice(0, 50);
+    const run = await this.s(t)
+      .insertInto('tenant_discovery_runs')
+      .values({ connection_id: conn.id, status: 'queued', started_by: user.id, scope_types: ['user'] })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    await this.queue.add('tenant_discovery.run', {
+      kind: 'tenant_discovery.run',
+      tenantId: t.id,
+      schema: t.schema,
+      runId: run.id,
+      connectionId: conn.id,
+      operatorUserId: user.id,
+      scopeTypes: ['user'],
+      targetedUpns: capped,
+    });
+
+    await this.audit.tenant(t.schema, 'tenant_discovery.targeted_user_check_started', {
+      actor: actorOf(user),
+      targetType: 'tenant_discovery_run',
+      targetId: run.id,
+      detail: { upns: capped, count: capped.length },
+    });
+    return run;
+  }
+
   listRuns(t: TenantContext) {
     return this.s(t)
       .selectFrom('tenant_discovery_runs')

@@ -255,6 +255,20 @@ export interface BuildRowValidation {
   untracked: import('./domain').PolicyKey[];
 }
 
+/** Result of POST build/validate - see BuildService.validateSite. */
+export interface BuildValidateResult {
+  rows: number;
+  issues: number;
+  /**
+   * Set when some validated rows had no stored tenant_users match and a
+   * live connection was available - a background tenant_discovery_runs job
+   * (scope_types: ['user']) is checking just those UPNs. Poll
+   * GET tenant-discovery/runs/:id and re-validate (live: false) once it
+   * completes. Null when nothing needed a live check, or none was possible.
+   */
+  liveCheck: { runId: string } | null;
+}
+
 /** Per-site rollup shown on the Design & Build landing page. */
 export interface BuildSiteRollup {
   id: string;

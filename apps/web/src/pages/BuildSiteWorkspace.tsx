@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import {
@@ -177,16 +177,43 @@ export function BuildSiteWorkspace() {
     },
   });
   const [validateMsg, setValidateMsg] = useState<string | null>(null);
+  // Set when validate() found rows with no stored tenant match and a live
+  // connection could check them - polled until the targeted check
+  // (tenant_discovery_runs, scope_types: ['user']) finishes, then we
+  // re-validate once (live: false) to pick up whatever it found.
+  const [liveRunId, setLiveRunId] = useState<string | null>(null);
   const validate = useMutation({
-    mutationFn: () => api<{ rows: number; issues: number }>(`${base}/validate`, { method: 'POST', body: JSON.stringify({ site_id: siteId }) }),
+    mutationFn: (opts?: { live?: boolean }) =>
+      api<{ rows: number; issues: number; liveCheck: { runId: string } | null }>(`${base}/validate`, {
+        method: 'POST',
+        body: JSON.stringify({ site_id: siteId, live: opts?.live }),
+      }),
     onSuccess: (r) => {
-      setValidateMsg(`Checked ${r.rows} row(s) — ${r.issues} issue(s).`);
       qc.invalidateQueries({ queryKey: ['users', tid, siteId] });
       qc.invalidateQueries({ queryKey: ['caps', tid, siteId] });
       qc.invalidateQueries({ queryKey: ['build-summary', tid] });
+      if (r.liveCheck) {
+        setLiveRunId(r.liveCheck.runId);
+        setValidateMsg(`Checked ${r.rows} row(s) — ${r.issues} issue(s). Checking unmatched users live against the tenant…`);
+      } else {
+        setValidateMsg(`Checked ${r.rows} row(s) — ${r.issues} issue(s).`);
+      }
     },
     onError: (e) => setValidateMsg(e instanceof ApiError ? e.message : 'Validation failed'),
   });
+  const liveRun = useQuery({
+    queryKey: ['discovery-run', tid, liveRunId],
+    enabled: !!liveRunId,
+    refetchInterval: 3000,
+    queryFn: () => api<{ status: string }>(`/t/${tid}/tenant-discovery/runs/${liveRunId}`),
+  });
+  useEffect(() => {
+    if (liveRunId && liveRun.data && ['completed', 'failed'].includes(liveRun.data.status)) {
+      setLiveRunId(null);
+      validate.mutate({ live: false });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveRunId, liveRun.data]);
 
   const [resetOpen, setResetOpen] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
@@ -243,7 +270,7 @@ export function BuildSiteWorkspace() {
           Resource accounts: <b>{site.counts.resourceAccounts}</b>
         </Text>
         {canWrite && (
-          <Button size="small" disabled={validate.isPending} onClick={() => validate.mutate()}>
+          <Button size="small" disabled={validate.isPending} onClick={() => validate.mutate({})}>
             {validate.isPending ? 'Validating…' : 'Validate against tenant'}
           </Button>
         )}

@@ -8,5 +8,8 @@ import { TenantDiscoveryService } from './tenant-discovery.service';
   imports: [DeploymentModule, DataCollectionModule],
   controllers: [TenantDiscoveryController],
   providers: [TenantDiscoveryService],
+  // Design & Build's "Validate against tenant" triggers a targeted live
+  // user check through this service - see BuildService.validateSite.
+  exports: [TenantDiscoveryService],
 })
 export class TenantDiscoveryModule {}

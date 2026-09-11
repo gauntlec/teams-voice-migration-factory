@@ -95,6 +95,7 @@ export async function handleTenantDiscoveryRun(
     includeDisabled,
     includeUnlicensed,
     filterUsers,
+    targetedUpns,
   } = job.data as {
     schema: string;
     tenantId?: string;
@@ -108,6 +109,13 @@ export async function handleTenantDiscoveryRun(
     includeUnlicensed?: boolean;
     /** customer default: false = don't filter users to Teams-licensed */
     filterUsers?: boolean;
+    /**
+     * Set only by BuildService.validateSite (via TenantDiscoveryService.
+     * startTargetedUserRun) - a users-only check for exactly these UPNs,
+     * not a full sweep. Never set by the Discovery UI's own "start a run"
+     * flow.
+     */
+    targetedUpns?: string[];
   };
   const s = tenantDb(db, schema);
   const exec = getExecutor(connectionId);
@@ -144,6 +152,25 @@ export async function handleTenantDiscoveryRun(
     .set({ status: 'running', started_at: new Date().toISOString(), progress })
     .where('id', '=', runId)
     .execute();
+
+  // A targeted check never runs the full step loop below - critically, it
+  // must never reach the "tombstone every object this run's successful step
+  // didn't see" reconciliation further down, which assumes a *complete*
+  // sweep of the type. Running that here would wrongly mark every other
+  // user in the tenant as removed.
+  if (targetedUpns?.length) {
+    await runTargetedUserSync(s, exec, runId, targetedUpns, progress);
+    progress.step = null;
+    await s
+      .updateTable('tenant_discovery_runs')
+      .set({ status: 'completed', finished_at: new Date().toISOString(), progress })
+      .where('id', '=', runId)
+      .execute();
+    // No completion email - this is an implementation detail of one
+    // Validate click, not a Discovery event the customer's
+    // notify_on_complete setting should fire for.
+    return;
+  }
 
   const succeededTypes = new Set<TenantObjectType>();
   let signInLost = false;
@@ -821,6 +848,66 @@ async function projectUser(s: Scoped, runId: string, objectId: string, r: Rec) {
     .values(values)
     .onConflict((oc) => oc.column('object_id').doUpdateSet(values))
     .execute();
+}
+
+/**
+ * `Get-CsOnlineUser -Identity <upn>`, one call per UPN - not the bucketed
+ * full-tenant sweep `STEP_CMDLETS.users[0].buckets` uses. Same command/
+ * select/depth so results land through the identical upsertObject +
+ * projectUser path a full sync uses; a genuinely nonexistent UPN just comes
+ * back empty, correctly leaving no tenant_users row (existsInTenant stays
+ * false - that's the right answer, not a bug to retry). One bad identity is
+ * recorded and skipped, same as the bucket loop, unless the session itself
+ * is gone.
+ */
+async function runTargetedUserSync(
+  s: Scoped,
+  exec: TeamsExecutor,
+  runId: string,
+  upns: string[],
+  progress: TenantDiscoveryProgress,
+) {
+  const spec = STEP_CMDLETS.users[0];
+  progress.step = 'users';
+  progress.counts.user = progress.counts.user ?? 0;
+  for (let i = 0; i < upns.length; i++) {
+    const upn = upns[i];
+    progress.note = `Checking ${upn} (${i + 1}/${upns.length})…`;
+    await saveProgress(s, runId, progress);
+    let recs: unknown[];
+    try {
+      recs = await exec.query(spec.command, { Identity: upn }, { select: spec.select, depth: spec.depth });
+    } catch (e) {
+      const message = (e as Error).message ?? String(e);
+      if (!exec.alive || /pwsh exited|could not start pwsh|executor disposed|not connected|session is disconnected/i.test(message)) {
+        throw e; // session really gone
+      }
+      progress.errors.push({ step: 'users', message: `${upn}: ${message}` });
+      continue;
+    }
+    const r = recs.find((x) => x && typeof x === 'object') as Rec | undefined;
+    if (!r) continue; // not found - leave tenant_users unset, existsInTenant correctly stays false
+    const key = spec.key(r) ?? upn;
+    const name = spec.name(r);
+    const prevRow = await s
+      .selectFrom('tenant_objects')
+      .select(['id', 'data', 'display_name', 'removed_at'])
+      .where('object_type', '=', 'user')
+      .where('object_key', '=', key)
+      .executeTakeFirst();
+    const { id: objectId } = await upsertObject(
+      s,
+      runId,
+      'user',
+      key,
+      name,
+      r,
+      prevRow ? { data: prevRow.data as Rec, display_name: prevRow.display_name, removed_at: prevRow.removed_at } : undefined,
+    );
+    await projectUser(s, runId, objectId, r);
+    progress.counts.user += 1;
+  }
+  progress.note = null;
 }
 
 async function projectPolicy(s: Scoped, runId: string, objectId: string, policyType: string, r: Rec) {

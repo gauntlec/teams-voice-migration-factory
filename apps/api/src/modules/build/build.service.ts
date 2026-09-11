@@ -13,6 +13,7 @@ import {
   type BuildResourceAccountPatchInput,
   type BuildRowValidation,
   type BuildSiteRollup,
+  type BuildValidateResult,
   type NumberHolderType,
   type Paginated,
   type PolicyKey,
@@ -20,6 +21,7 @@ import {
 import { AuditService } from '../../common/audit.service';
 import type { AuthedUser, TenantContext } from '../../common/request';
 import { InjectDb, type Db } from '../../db/db.module';
+import { TenantDiscoveryService } from '../tenant-discovery/tenant-discovery.service';
 import { BuildValidationService } from './build-validation.service';
 
 type Scoped = ReturnType<typeof tenantDb>;
@@ -31,6 +33,7 @@ export class BuildService {
     @InjectDb() private readonly db: Db,
     private readonly audit: AuditService,
     private readonly validation: BuildValidationService,
+    private readonly discovery: TenantDiscoveryService,
   ) {}
   private s(t: TenantContext): Scoped {
     return tenantDb(this.db, t.schema);
@@ -748,8 +751,15 @@ export class BuildService {
 
   /* ============================== validate ============================== */
 
-  /** Snapshot the live-vs-target diff into the `validation` column for every user/cap row on a site. */
-  async validateSite(t: TenantContext, u: AuthedUser, siteId: string) {
+  /**
+   * Snapshot the live-vs-target diff into the `validation` column for every
+   * user/cap row on a site. Rows whose UPN has no stored tenant_users match
+   * (nothing has synced yet, or a real sync ran but missed that specific
+   * person) get a targeted live check - not a full environment re-sync -
+   * when a usable tenant connection exists and this isn't itself the
+   * post-live-check recheck (`live: false`, see BuildSiteWorkspace.tsx).
+   */
+  async validateSite(t: TenantContext, u: AuthedUser, siteId: string, live = true): Promise<BuildValidateResult> {
     const s = this.s(t);
     const [users, caps] = await Promise.all([
       s.selectFrom('build_users').select(['id', 'upn', 'e164', 'policies', 'policy_ids']).where('site_id', '=', siteId).execute(),
@@ -758,10 +768,12 @@ export class BuildService {
     const rows = [...users.map((r) => ({ ...r, table: 'build_users' as const })), ...caps.map((r) => ({ ...r, table: 'build_caps' as const }))];
     const validated = await this.validation.validateRows(t, rows);
     let issues = 0;
+    const unmatchedUpns: string[] = [];
     for (const row of rows) {
       const v = validated.get(row.id);
       if (!v) continue;
       if (hasIssue(v)) issues += 1;
+      if (!v.existsInTenant) unmatchedUpns.push(row.upn);
       await s
         .updateTable(row.table)
         .set({ validation: v as never })
@@ -774,7 +786,13 @@ export class BuildService {
       targetId: siteId,
       detail: { rows: rows.length, issues },
     });
-    return { rows: rows.length, issues };
+
+    let liveCheck: BuildValidateResult['liveCheck'] = null;
+    if (live && unmatchedUpns.length) {
+      const run = await this.discovery.startTargetedUserRun(t, u, unmatchedUpns);
+      if (run) liveCheck = { runId: run.id };
+    }
+    return { rows: rows.length, issues, liveCheck };
   }
 
   /* ============================== reset ============================== */
