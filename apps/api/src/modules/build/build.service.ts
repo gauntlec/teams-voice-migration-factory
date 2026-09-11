@@ -348,7 +348,12 @@ export class BuildService {
         // idx_build_users_site_upn / idx_build_caps_site_upn are expression
         // indexes (site_id, lower(upn)) - .columns() only handles plain
         // columns, .expression() is the Kysely API for expression indexes.
-        .onConflict((oc) => oc.expression(sql`(site_id, lower(upn))`).doNothing())
+        // NB: Kysely wraps the expression in its own parens when compiling
+        // ("on conflict (" + expr + ")"), so passing an already-parenthesized
+        // sql fragment double-wraps it into a single row-constructor
+        // ("((a, b))"), which Postgres rejects as a conflict target - no
+        // surrounding parens here.
+        .onConflict((oc) => oc.expression(sql`site_id, lower(upn)`).doNothing())
         .executeTakeFirst();
       if (Number(res.numInsertedOrUpdatedRows ?? 0) > 0) created += 1;
       else skipped += 1; // UPN already present under a different (unlinked) row

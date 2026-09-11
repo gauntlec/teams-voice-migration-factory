@@ -106,16 +106,27 @@ export function BuildSiteWorkspace() {
   };
 
   // Every target policy is a live-tenant-name picker, not free text - sourced
-  // from what Discovery actually found. One fetch of every tracked policy,
-  // bucketed by type client-side (cheaper than 12 separate requests).
+  // from what Discovery actually found. Fetched in pages (the endpoint caps
+  // `limit` at 200) and bucketed by type client-side - cheaper than 12
+  // separate per-type requests, and correct for tenants with 200+ policies.
   const allPoliciesQ = useQuery({
     queryKey: ['build-all-policies', tid],
     enabled: !!tid,
-    queryFn: () => api<Paginated<TenantPolicySummary>>(`/t/${tid}/tenant-discovery/policies?limit=2000`),
+    queryFn: async () => {
+      const items: TenantPolicySummary[] = [];
+      for (let page = 1; page <= 50; page++) {
+        const res = await api<Paginated<TenantPolicySummary>>(
+          `/t/${tid}/tenant-discovery/policies?limit=200&page=${page}`,
+        );
+        items.push(...res.items);
+        if (items.length >= res.total || res.items.length === 0) break;
+      }
+      return items;
+    },
   });
   const policyChoicesByKey = useMemo(() => {
     const byType = new Map<string, Choice[]>();
-    for (const p of allPoliciesQ.data?.items ?? []) {
+    for (const p of allPoliciesQ.data ?? []) {
       if (!byType.has(p.policy_type)) byType.set(p.policy_type, []);
       byType.get(p.policy_type)!.push({ value: p.name, label: p.is_global ? `${p.name} (global)` : p.name });
     }
