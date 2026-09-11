@@ -300,8 +300,16 @@ export interface AttachmentsTable {
   created_at: Ts;
 }
 
-export interface BuildUsersTable {
+/**
+ * Fields shared by build_users and build_caps - a "Teams identity" row (user or
+ * common area phone) targeting the same set of number/policy/calling cmdlets.
+ * Each concrete table adds its own discovery_*_id link (they seed from
+ * different discovery_* tables) plus any type-specific columns.
+ */
+interface BuildIdentityRowBase {
   id: Generated<string>;
+  /** FK -> discovery_sites.id (ON DELETE CASCADE). Build rows are always site-scoped. */
+  site_id: string;
   upn: string;
   did: string | null;
   ext: string | null;
@@ -318,7 +326,7 @@ export interface BuildUsersTable {
   delegates: Json;
   pickup_group: Json;
   comments: string | null;
-  /** results of validating this row against the live tenant */
+  /** results of validating this row against the live tenant (snapshot from the last "Validate" action) */
   validation: Json;
   /** requested/completed dates + applied flags */
   status: Json;
@@ -328,7 +336,14 @@ export interface BuildUsersTable {
   updated_at: Ts;
 }
 
-export interface BuildCapsTable extends BuildUsersTable {
+export interface BuildUsersTable extends BuildIdentityRowBase {
+  /** FK -> discovery_users.id (ON DELETE SET NULL): the row this was seeded from, for idempotent re-populate. */
+  discovery_user_id: string | null;
+}
+
+export interface BuildCapsTable extends BuildIdentityRowBase {
+  /** FK -> discovery_caps.id (ON DELETE SET NULL): the row this was seeded from, for idempotent re-populate. */
+  discovery_cap_id: string | null;
   function: string | null;
   display_name: string | null;
   phone_model: string | null;
@@ -341,13 +356,22 @@ export interface BuildCapsTable extends BuildUsersTable {
 
 export interface BuildResourceAccountsTable {
   id: Generated<string>;
+  /** FK -> discovery_sites.id (ON DELETE CASCADE). Build rows are always site-scoped. */
+  site_id: string;
+  /** FK -> discovery_resource_accounts.id (ON DELETE SET NULL): the row this was seeded from. */
+  discovery_resource_account_id: string | null;
   upn: string;
   display_name: string | null;
   kind: 'auto_attendant' | 'call_queue';
   location_id: string | null;
   phone_number: string | null;
   number_type: string | null;
+  voice_routing_policy: string | null;
+  /** set once New-CsOnlineApplicationInstance has run - gates the number/policy assignment phase */
   application_id: string | null;
+  /** requested/completed dates, same shape as build_users.status */
+  status: Json;
+  errors: string | null;
   created_at: Ts;
   updated_at: Ts;
 }

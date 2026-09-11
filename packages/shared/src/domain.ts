@@ -71,6 +71,16 @@ export type CallerIdOption = (typeof CALLER_ID_OPTIONS)[number];
 export const RESOURCE_ACCOUNT_KINDS = ['auto_attendant', 'call_queue'] as const;
 export type ResourceAccountKind = (typeof RESOURCE_ACCOUNT_KINDS)[number];
 
+/**
+ * Microsoft's well-known, tenant-independent ApplicationId values for
+ * New-CsOnlineApplicationInstance - not a secret, documented by Microsoft for
+ * every tenant. Confirmed against the real Teams-Migration-Build.ps1 script.
+ */
+export const RESOURCE_ACCOUNT_APPLICATION_IDS: Record<ResourceAccountKind, string> = {
+  auto_attendant: 'ce933385-9390-45d1-9512-c8d228074e07',
+  call_queue: '11cd3e2e-fccb-42ad-ad00-878b93575e07',
+};
+
 /** Max numbers a single range may generate into the inventory. */
 export const MAX_RANGE_SIZE = 5000;
 
@@ -121,6 +131,29 @@ export const POLICY_KINDS = [
   { key: 'ip_phone_policy', label: 'IP Phone Policy', cmdlet: 'Grant-CsTeamsIPPhonePolicy' },
 ] as const;
 export type PolicyKey = (typeof POLICY_KINDS)[number]['key'];
+
+/**
+ * Maps a build-side PolicyKey to the TenantPolicyType Discovery projects onto
+ * `tenant_users.policies` (see run.ts `projectUser`, keyed by TENANT_POLICY_TYPES),
+ * so Design & Build can compare a target policy against the tenant's live state.
+ * `dial_out_policy` has no entry: Discovery doesn't currently collect Dial Out
+ * Policy assignments (no `TenantPolicyType` for it), so it can't be validated
+ * live yet - a known, documented gap rather than a guess.
+ */
+export const POLICY_KIND_TO_TENANT_TYPE: Partial<Record<PolicyKey, TenantPolicyType>> = {
+  voice_routing_policy: 'OnlineVoiceRoutingPolicy',
+  shared_calling_policy: 'TeamsSharedCallingRoutingPolicy',
+  dial_plan: 'TenantDialPlan',
+  calling_policy: 'TeamsCallingPolicy',
+  call_hold_policy: 'TeamsCallHoldPolicy',
+  call_park_policy: 'TeamsCallParkPolicy',
+  caller_id_policy: 'CallingLineIdentity',
+  voice_app_policy: 'TeamsVoiceApplicationsPolicy',
+  voicemail_policy: 'OnlineVoicemailPolicy',
+  emergency_calling_policy: 'TeamsEmergencyCallingPolicy',
+  emergency_call_routing_policy: 'TeamsEmergencyCallRoutingPolicy',
+  ip_phone_policy: 'TeamsIPPhonePolicy',
+};
 
 export const CALL_FORWARDING_TYPES = ['Off', 'Immediate', 'Simultaneous'] as const;
 export const CALL_FORWARD_TARGET_TYPES = ['Voicemail', 'SingleTarget', 'Delegates', 'MyDelegates'] as const;

@@ -110,15 +110,36 @@ export const useRecordStyles = makeStyles({
   toolbar: { display: 'flex', alignItems: 'center', ...shorthands.gap('8px'), flexWrap: 'wrap' },
 });
 
-/** Turn a form's string values into a JSON payload using the field types. */
+/**
+ * Turn a form's string values into a JSON payload using the field types. A
+ * `key` of the form `"parent.child"` (one level only) writes into a nested
+ * object on `parent` instead of a flat top-level key - e.g. Design & Build's
+ * per-policy pickers (`policies.voice_routing_policy`, ...) collapse into one
+ * `policies: {...}` object, matching the `build_users.policies` jsonb column.
+ */
 export function buildPayload(fields: FieldDef[], values: Record<string, string>) {
   const payload: Record<string, unknown> = {};
   for (const f of fields) {
     const v = values[f.key] ?? '';
-    if (f.type === 'number') payload[f.key] = v === '' ? null : Number(v);
-    else if (f.type === 'boolean') payload[f.key] = v === 'true';
-    else if (f.type === 'ref') payload[f.key] = v || null;
-    else payload[f.key] = v;
+    const parsed =
+      f.type === 'number'
+        ? v === ''
+          ? null
+          : Number(v)
+        : f.type === 'boolean'
+          ? v === 'true'
+          : f.type === 'ref'
+            ? v || null
+            : v;
+    const dot = f.key.indexOf('.');
+    if (dot === -1) {
+      payload[f.key] = parsed;
+    } else {
+      const parent = f.key.slice(0, dot);
+      const child = f.key.slice(dot + 1);
+      if (parsed == null || parsed === '') continue; // omit unset nested values, don't null out the whole object
+      payload[parent] = { ...((payload[parent] as Record<string, unknown>) ?? {}), [child]: parsed };
+    }
   }
   return payload;
 }
@@ -227,7 +248,12 @@ export function RecordDialog({
       Object.fromEntries(
         fields.map((f) => {
           if (!r) return [f.key, f.default ?? (f.type === 'boolean' ? 'false' : '')];
-          const v = r[f.key];
+          // "parent.child" reads the nested value (see buildPayload) so an
+          // existing jsonb sub-field like `policies.calling_policy` prefills
+          // correctly instead of always showing blank on Edit.
+          const dot = f.key.indexOf('.');
+          const v =
+            dot === -1 ? r[f.key] : (r[f.key.slice(0, dot)] as Record<string, unknown> | null | undefined)?.[f.key.slice(dot + 1)];
           if (f.type === 'boolean')
             return [f.key, v === true ? 'true' : v === false ? 'false' : (f.default ?? 'false')];
           return [f.key, v == null ? '' : String(v)];

@@ -55,12 +55,16 @@ Deferred from the template (later pass): Analogue/SIP/paging devices, the
 Features & Settings feature-discovery questionnaire, detailed E911 tables.
 
 ### Design & Build
-Mirrors the build sheet. Column short-codes kept as-is for traceability.
+Mirrors the build sheet, organised **per site** (same shape as Data Collection -
+a rollup page links into a per-site workspace; see `docs/DEPLOYMENT.md`). Every
+row carries a required `site_id` FK -> `discovery_sites.id` and a `discovery_*_id`
+link to the row it was bulk-seeded from ("Populate from Discovery"), so
+re-populating is idempotent.
 | Table | Maps to sheet | Selected columns |
 |-------|---------------|------------------|
-| `build_users` | USERS | upn, did, ext, e164, number_type (`DirectRouting`/`CallingPlan`/`OperatorConnect`/`SharedCalling`), revoke_ev, hold_uri, action (update single policy), voice_routing_policy, dial_out_policy, shared_calling_policy, dial_plan, calling_policy, call_hold_policy, call_park_policy, caller_id_policy, voice_app_policy, voicemail_policy, voicemail_enabled, vm_language, vm_answering_rule, vm_greeting_default, vm_greeting_ooo, emergency_calling_policy, emergency_call_routing_policy, ip_phone_policy, deskphone_required, migration_wave, call_forwarding_type, cf_target_type, cf_target, unanswered_timeout, unanswered_target_type, unanswered_target, delegates (jsonb), pickup_group (jsonb), comments, + `validation` jsonb (live-tenant check results), + `status` jsonb (requested/completed dates, applied flags), + `errors` text |
-| `build_caps` | CAPS | as USERS plus function, display_name, phone_model, device_config_profile, mac_address, serial_number, phone_location, lan_jack |
-| `build_resource_accounts` | derived | upn, display_name, kind (`auto_attendant`/`call_queue`), location_id, phone_number, number_type, application_id |
+| `build_users` | USERS | **site_id**, discovery_user_id, upn (unique per site), did, ext, e164, number_type (`DirectRouting`/`CallingPlan`/`OperatorConnect`/`SharedCalling`), revoke_ev, hold_uri, action, migration_wave, `policies` jsonb (keyed by `PolicyKey` from `@tvmf/shared` - voice_routing_policy/dial_out_policy/shared_calling_policy/dial_plan/calling_policy/call_hold_policy/call_park_policy/caller_id_policy/voice_app_policy/voicemail_policy/emergency_calling_policy/emergency_call_routing_policy/ip_phone_policy), voicemail/call_forwarding/delegates/pickup_group jsonb (schema'd, not yet surfaced in the UI or deployed - next increment), comments, `validation` jsonb (last "Validate" snapshot - live-tenant check results, computed live on every read via `BuildValidationService`), `status` jsonb, `errors` text |
+| `build_caps` | CAPS | as `build_users` (its own discovery_cap_id) plus function, display_name, phone_model, device_config_profile, mac_address, serial_number, phone_location, lan_jack |
+| `build_resource_accounts` | derived | **site_id**, discovery_resource_account_id, upn, display_name, kind (`auto_attendant`/`call_queue`), location_id, phone_number, number_type, voice_routing_policy, `application_id` (set once `New-CsOnlineApplicationInstance` has run and the account is licensed - gates the number/policy phase, see `docs/DEPLOYMENT.md`), status jsonb, errors |
 | `build_auto_attendants` | AUTO ATTENDANTS | name, resource_accounts (jsonb), language, timezone, dial_by_name scope/exclusions, default_call_flow (jsonb), menu_options (jsonb), after_hours (jsonb), holidays (jsonb), voice_app_admins (jsonb) |
 | `build_call_queues` | CALL QUEUES | name, resource_accounts (jsonb), routing_method, presence_based, agent_alert_time, agents (jsonb), overflow (jsonb), timeout (jsonb), music_on_hold, greeting (jsonb) |
 | `build_m365_groups` | M365 GROUPS | name, email, description, used_for_voicemail, owners (jsonb), members (jsonb), group_id |
@@ -71,7 +75,7 @@ Mirrors the build sheet. Column short-codes kept as-is for traceability.
 | Table | Notes |
 |-------|-------|
 | `connections` | id, started_by, method (`device_code`), status (`pending`/`active`/`expired`/`closed`), user_code, verification_uri, tenant_domain, upn, scopes, started_at, expires_at, closed_at — **no tokens**. (Migration 0014 added `graph_*` columns for a Graph device-inventory sign-in; 0015 drops them — the Graph device API was retired.) |
-| `deployments` | id, connection_id, mode (`dry_run`/`execute`), scope jsonb (which sheets/waves/rows), status, created_by, started_at, finished_at, summary jsonb (counts: applied/skipped/failed) |
+| `deployments` | id, connection_id, mode (`dry_run`/`execute`), scope jsonb (`{siteId, sheets, waves?, rowIds?}` - every run acts on one site's Build rows at a time), status, created_by, started_at, finished_at, summary jsonb (counts: applied/skipped/failed/whatif) |
 | `deployment_changes` | id, deployment_id, seq, at, operator_user_id, correlation_id, object_type (`user`/`cap`/`resource_account`/`aa`/`cq`/`group`), object_id, cmdlet, parameters jsonb (redacted), before jsonb, after jsonb, result (`applied`/`skipped`/`failed`/`whatif`), message — **append-only** |
 | `deployment_scripts` | id, deployment_id, filename, kind (`ps1`/`txt`), content — the "What-If" output |
 

@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { Worker, type Job } from 'bullmq';
 import IORedis from 'ioredis';
 import { createDb, platformDb, tenantDb } from '@tvmf/db';
-import { planUserRow } from './planner';
+import { planIdentityRow, planResourceAccountRow } from './planner';
 import {
   renderCommand,
   SimulatedTeamsExecutor,
@@ -169,7 +169,7 @@ async function handleDeploymentRun(job: Job) {
     deploymentId: string;
     connectionId: string;
     mode: 'dry_run' | 'execute';
-    scope: { sheets: string[]; rowIds?: string[] };
+    scope: { siteId: string; sheets: string[]; rowIds?: string[] };
     operatorUserId: string;
   };
   const scoped = tenantDb(db, schema);
@@ -187,46 +187,90 @@ async function handleDeploymentRun(job: Job) {
   let seq = 0;
   const whatIf = mode === 'dry_run';
 
-  if (scope.sheets.includes('users')) {
-    let q = scoped.selectFrom('build_users').selectAll().where('hidden', '=', false);
-    if (scope.rowIds?.length) q = q.where('id', 'in', scope.rowIds);
-    const rows = await q.execute();
+  /** Records one cmdlet's outcome as a deployment_changes row. */
+  const record = async (call: CmdletInvocation, res: Awaited<ReturnType<typeof exec.invoke>>) => {
+    counts[res.result] += 1;
+    if (res.result === 'whatif') scriptLines.push(renderCommand(call));
+    await scoped
+      .insertInto('deployment_changes')
+      .values({
+        deployment_id: deploymentId,
+        seq: ++seq,
+        operator_user_id: operatorUserId,
+        correlation_id: `${deploymentId}:${seq}`,
+        object_type: call.objectType,
+        object_id: call.objectId ?? null,
+        cmdlet: call.cmdlet,
+        parameters: call.parameters as object,
+        before: res.before as object,
+        after: res.after as object,
+        result: res.result,
+        message: res.message ?? null,
+      })
+      .execute();
+  };
 
-    for (const row of rows) {
-      const calls: CmdletInvocation[] = planUserRow({
-        id: row.id,
-        upn: row.upn,
-        e164: row.e164,
-        number_type: row.number_type,
-        revoke_ev: row.revoke_ev,
-        policies: (row.policies as Record<string, string | null>) ?? {},
-      });
-      for (const call of calls) {
-        const res = await exec.invoke(call, { whatIf });
-        counts[res.result] += 1;
-        if (whatIf) scriptLines.push(renderCommand(call));
-        await scoped
-          .insertInto('deployment_changes')
-          .values({
-            deployment_id: deploymentId,
-            seq: ++seq,
-            operator_user_id: operatorUserId,
-            correlation_id: `${deploymentId}:${seq}`,
-            object_type: call.objectType,
-            object_id: call.objectId ?? null,
-            cmdlet: call.cmdlet,
-            parameters: call.parameters as object,
-            before: res.before as object,
-            after: res.after as object,
-            result: res.result,
-            message: res.message ?? null,
-          })
-          .execute();
+  /**
+   * A `deferred` call (e.g. New-CsOnlineApplicationInstance) always needs a
+   * manual licensing step a Teams Administrator can't do - it must never run
+   * live, in either mode. Render it to the exported script and record it as
+   * 'whatif' regardless of `mode`.
+   */
+  const runCall = async (call: CmdletInvocation) => {
+    if (call.deferred) {
+      await record(call, { result: 'whatif', before: {}, after: {}, message: 'Deferred - needs manual licensing before rerunning.' });
+      return;
+    }
+    await record(call, await exec.invoke(call, { whatIf }));
+  };
+
+  if (scope.sheets.includes('users') || scope.sheets.includes('caps')) {
+    for (const [sheet, table, objectType] of [
+      ['users', 'build_users', 'user'],
+      ['caps', 'build_caps', 'cap'],
+    ] as const) {
+      if (!scope.sheets.includes(sheet)) continue;
+      let q = scoped.selectFrom(table).selectAll().where('site_id', '=', scope.siteId).where('hidden', '=', false);
+      if (scope.rowIds?.length) q = q.where('id', 'in', scope.rowIds);
+      const rows = await q.execute();
+      for (const row of rows) {
+        const calls = planIdentityRow(
+          {
+            id: row.id,
+            upn: row.upn,
+            e164: row.e164,
+            number_type: row.number_type,
+            revoke_ev: row.revoke_ev,
+            policies: (row.policies as Record<string, string | null>) ?? {},
+          },
+          objectType,
+        );
+        for (const call of calls) await runCall(call);
       }
     }
   }
 
-  if (whatIf && scriptLines.length) {
+  if (scope.sheets.includes('resource_accounts')) {
+    let q = scoped.selectFrom('build_resource_accounts').selectAll().where('site_id', '=', scope.siteId);
+    if (scope.rowIds?.length) q = q.where('id', 'in', scope.rowIds);
+    const rows = await q.execute();
+    for (const row of rows) {
+      const calls = planResourceAccountRow({
+        id: row.id,
+        upn: row.upn,
+        display_name: row.display_name,
+        kind: row.kind,
+        location_id: row.location_id,
+        phone_number: row.phone_number,
+        number_type: row.number_type,
+        voice_routing_policy: row.voice_routing_policy,
+        application_id: row.application_id,
+      });
+      for (const call of calls) await runCall(call);
+    }
+  }
+
+  if (scriptLines.length) {
     await scoped
       .insertInto('deployment_scripts')
       .values({

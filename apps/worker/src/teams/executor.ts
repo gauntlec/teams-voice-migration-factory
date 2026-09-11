@@ -24,6 +24,14 @@ export interface CmdletInvocation {
   parameters: Record<string, unknown>;
   objectType: string;
   objectId?: string;
+  /**
+   * True for a cmdlet that must never run live - e.g. New-CsOnlineApplicationInstance,
+   * which always needs a manual licensing step (a role a Teams Administrator
+   * doesn't have) before anything downstream can succeed. A deferred call is
+   * always rendered to the exported script and recorded as 'whatif', in both
+   * dry_run and execute mode - see handleDeploymentRun in main.ts.
+   */
+  deferred?: boolean;
 }
 
 export interface CmdletResult {

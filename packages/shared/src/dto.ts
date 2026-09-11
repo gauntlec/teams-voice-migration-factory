@@ -11,6 +11,7 @@ import {
   NETWORK_TYPES,
   NUMBER_RANGE_KINDS,
   NUMBER_STATUSES,
+  NUMBER_TYPES,
   RESOURCE_ACCOUNT_KINDS,
   TENANT_OBJECT_TYPES,
   TENANT_POLICY_TYPES,
@@ -98,7 +99,11 @@ export const createDeploymentSchema = z.object({
   mode: z.enum(['dry_run', 'execute']),
   scope: z
     .object({
-      sheets: z.array(z.enum(['users', 'caps', 'auto_attendants', 'call_queues', 'm365_groups'])).min(1),
+      /** Every deployment run acts on one site's Build rows at a time. */
+      siteId: z.string().uuid(),
+      sheets: z
+        .array(z.enum(['users', 'caps', 'resource_accounts', 'auto_attendants', 'call_queues', 'm365_groups']))
+        .min(1),
       waves: z.array(z.string()).optional(),
       rowIds: z.array(z.string().uuid()).optional(),
     })
@@ -501,3 +506,108 @@ export const tenantUsersImportSchema = z
   })
   .strict();
 export type TenantUsersImportInput = z.infer<typeof tenantUsersImportSchema>;
+
+/* ------------------------- Design & Build DTOs ------------------------- */
+/* Every build_* row is reached through a site workspace (see docs/DATA-MODEL.md). */
+
+const policyMap = z.record(z.string(), z.string().nullable()).optional();
+const jsonObj = z.record(z.unknown()).optional();
+const jsonArr = z.array(z.unknown()).optional();
+
+/**
+ * Fields writable on a build_users/build_caps row beyond the natural key
+ * (site_id/upn). Shared between create and patch - the Add dialog and the Edit
+ * dialog show the same field set (see RecordDialog), so both must accept it.
+ */
+const buildIdentityWritable = {
+  did: optStr(40),
+  ext: optStr(20),
+  number_type: z.enum(NUMBER_TYPES).optional(),
+  revoke_ev: z.boolean().optional(),
+  hold_uri: optStr(120),
+  action: optStr(80),
+  migration_wave: optStr(80),
+  policies: policyMap,
+  voicemail: jsonObj,
+  call_forwarding: jsonObj,
+  delegates: jsonArr,
+  pickup_group: jsonObj,
+  comments: optStr(2000),
+  hidden: z.boolean().optional(),
+  /** assign / move / clear this row's number in the same call - null clears it */
+  phone_number_id: refId,
+};
+
+export const buildIdentityCreateSchema = z
+  .object({ site_id: z.string().uuid(), upn: emailSchema, ...buildIdentityWritable })
+  .strict();
+export type BuildIdentityCreateInput = z.infer<typeof buildIdentityCreateSchema>;
+
+export const buildIdentityPatchSchema = z.object({ upn: emailSchema.optional(), ...buildIdentityWritable }).strict();
+export type BuildIdentityPatchInput = z.infer<typeof buildIdentityPatchSchema>;
+
+const buildCapWritable = {
+  function: optStr(80),
+  display_name: optStr(160),
+  phone_model: optStr(120),
+  device_config_profile: optStr(160),
+  mac_address: optStr(40),
+  serial_number: optStr(80),
+  phone_location: optStr(160),
+  lan_jack: optStr(80),
+};
+
+export const buildCapCreateSchema = buildIdentityCreateSchema.extend(buildCapWritable);
+export type BuildCapCreateInput = z.infer<typeof buildCapCreateSchema>;
+
+export const buildCapPatchSchema = buildIdentityPatchSchema.extend(buildCapWritable);
+export type BuildCapPatchInput = z.infer<typeof buildCapPatchSchema>;
+
+/** Bulk-seed build_users/build_caps from that site's discovery_users/discovery_caps. Idempotent. */
+export const buildPopulateSchema = z.object({ site_id: z.string().uuid() }).strict();
+export type BuildPopulateInput = z.infer<typeof buildPopulateSchema>;
+
+const buildResourceAccountWritable = {
+  location_id: optStr(80),
+  number_type: z.enum(NUMBER_TYPES).optional(),
+  voice_routing_policy: optStr(160),
+  /** assign / move / clear this account's number in the same call - null clears it */
+  phone_number_id: refId,
+  /**
+   * Confirms New-CsOnlineApplicationInstance has been run and the account
+   * licensed (a manual step - see docs/DEPLOYMENT.md) so the number/policy
+   * phase can proceed. The engineer flips this after running the generated
+   * script; there's no live way to detect it automatically.
+   */
+  created: z.boolean().optional(),
+};
+
+export const buildResourceAccountCreateSchema = z
+  .object({
+    site_id: z.string().uuid(),
+    display_name: str(160).min(1),
+    kind: z.enum(RESOURCE_ACCOUNT_KINDS),
+    upn: emailSchema.optional(),
+    ...buildResourceAccountWritable,
+  })
+  .strict();
+export type BuildResourceAccountCreateInput = z.infer<typeof buildResourceAccountCreateSchema>;
+
+export const buildResourceAccountPatchSchema = z
+  .object({
+    upn: emailSchema.optional(),
+    display_name: optStr(160),
+    kind: z.enum(RESOURCE_ACCOUNT_KINDS).optional(),
+    ...buildResourceAccountWritable,
+  })
+  .strict();
+export type BuildResourceAccountPatchInput = z.infer<typeof buildResourceAccountPatchSchema>;
+
+export const buildListQuerySchema = z.object({
+  siteId: z.string().uuid(),
+  q: z.string().trim().max(160).optional(),
+  hidden: z.coerce.boolean().optional(),
+  page: z.coerce.number().int().min(1).max(100000).default(1),
+  limit: z.coerce.number().int().min(1).max(500).default(200),
+});
+export type BuildListQuery = z.infer<typeof buildListQuerySchema>;

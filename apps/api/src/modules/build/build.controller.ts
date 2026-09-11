@@ -1,111 +1,195 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
-import { tenantDb } from '@tvmf/db';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  buildCapCreateSchema,
+  buildCapPatchSchema,
+  buildIdentityCreateSchema,
+  buildIdentityPatchSchema,
+  buildListQuerySchema,
+  buildPopulateSchema,
+  buildResourceAccountCreateSchema,
+  buildResourceAccountPatchSchema,
+  type BuildCapCreateInput,
+  type BuildCapPatchInput,
+  type BuildIdentityCreateInput,
+  type BuildIdentityPatchInput,
+  type BuildListQuery,
+  type BuildPopulateInput,
+  type BuildResourceAccountCreateInput,
+  type BuildResourceAccountPatchInput,
+} from '@tvmf/shared';
 import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
-import { AuditService } from '../../common/audit.service';
 import type { AuthedUser, TenantContext } from '../../common/request';
-import { InjectDb, type Db } from '../../db/db.module';
+import { ZodBody } from '../../common/zod.pipe';
 import { RequirePermission } from '../../rbac/require-permission.decorator';
 import { TenantGuard } from '../../rbac/tenant.guard';
+import { BuildService } from './build.service';
 
 /**
- * Design & Build view — replaces the ATTC build workbook. Scaffold covers the
- * USERS grid; CAPS / AAs / CQs / M365 groups follow the same shape.
+ * Design & Build - target configuration for Users, Common Area Phones and
+ * Resource Accounts, organised per site (same shape as Data Collection).
+ * Replaces the ATTC build workbook: [VRP]/[DOP]/... target columns are the
+ * write side here, `G-*` live-comparison columns are the computed
+ * `validation` field (see BuildValidationService), `S-*` status columns are
+ * `status`/`errors` + the deployment_changes audit trail.
  */
 @Controller('t/:tenantId/build')
 @UseGuards(TenantGuard)
 export class BuildController {
-  constructor(
-    @InjectDb() private readonly db: Db,
-    private readonly audit: AuditService,
-  ) {}
+  constructor(private readonly svc: BuildService) {}
 
   @Get('summary')
   @RequirePermission('build:read')
-  async summary(@TenantCtx() t: TenantContext) {
-    const s = tenantDb(this.db, t.schema);
-    const count = async (table: 'build_users' | 'build_caps' | 'build_auto_attendants' | 'build_call_queues' | 'build_m365_groups') =>
-      Number((await s.selectFrom(table).select((eb) => eb.fn.countAll<string>().as('n')).executeTakeFirstOrThrow()).n);
-    return {
-      users: await count('build_users'),
-      caps: await count('build_caps'),
-      autoAttendants: await count('build_auto_attendants'),
-      callQueues: await count('build_call_queues'),
-      m365Groups: await count('build_m365_groups'),
-    };
+  siteRollup(@TenantCtx() t: TenantContext) {
+    return this.svc.siteRollup(t);
   }
+
+  /* users */
 
   @Get('users')
   @RequirePermission('build:read')
-  listUsers(@TenantCtx() t: TenantContext, @Query('limit') limit = '200') {
-    return tenantDb(this.db, t.schema)
-      .selectFrom('build_users')
-      .selectAll()
-      .orderBy('upn')
-      .limit(Math.min(Number(limit) || 200, 1000))
-      .execute();
+  listUsers(@TenantCtx() t: TenantContext, @Query(new ZodBody(buildListQuerySchema)) q: BuildListQuery) {
+    return this.svc.listUsers(t, q);
   }
-
+  @Get('users/:id')
+  @RequirePermission('build:read')
+  getUser(@TenantCtx() t: TenantContext, @Param('id') id: string) {
+    return this.svc.getUser(t, id);
+  }
   @Post('users')
   @RequirePermission('build:write')
-  async createUser(
+  createUser(
     @TenantCtx() t: TenantContext,
     @CurrentUser() user: AuthedUser,
-    @Body() body: { upn: string; did?: string; number_type?: string; migration_wave?: string },
+    @Body(new ZodBody(buildIdentityCreateSchema)) body: BuildIdentityCreateInput,
   ) {
-    const row = await tenantDb(this.db, t.schema)
-      .insertInto('build_users')
-      .values({
-        upn: body.upn,
-        did: body.did ?? null,
-        number_type: body.number_type ?? null,
-        migration_wave: body.migration_wave ?? null,
-        policies: {},
-        voicemail: {},
-        call_forwarding: {},
-        delegates: [],
-        pickup_group: {},
-        validation: {},
-        status: {},
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    await this.audit.tenant(t.schema, 'build.user_created', {
-      actor: { id: user.id, email: user.email },
-      targetType: 'build_user',
-      targetId: row.id,
-    });
-    return row;
+    return this.svc.createUser(t, user, body);
   }
-
   @Patch('users/:id')
   @RequirePermission('build:write')
-  async updateUser(
+  updateUser(
     @TenantCtx() t: TenantContext,
     @CurrentUser() user: AuthedUser,
     @Param('id') id: string,
-    @Body() body: Record<string, unknown>,
+    @Body(new ZodBody(buildIdentityPatchSchema)) body: BuildIdentityPatchInput,
   ) {
-    const allowed: Record<string, unknown> = {};
-    for (const k of [
-      'did', 'ext', 'e164', 'number_type', 'revoke_ev', 'hold_uri', 'action',
-      'migration_wave', 'policies', 'voicemail', 'call_forwarding', 'delegates',
-      'pickup_group', 'comments', 'hidden',
-    ]) {
-      if (k in body) allowed[k] = body[k];
-    }
-    allowed.updated_at = new Date().toISOString();
-    const row = await tenantDb(this.db, t.schema)
-      .updateTable('build_users')
-      .set(allowed)
-      .where('id', '=', id)
-      .returningAll()
-      .executeTakeFirst();
-    await this.audit.tenant(t.schema, 'build.user_updated', {
-      actor: { id: user.id, email: user.email },
-      targetType: 'build_user',
-      targetId: id,
-      detail: { fields: Object.keys(allowed) },
-    });
-    return row;
+    return this.svc.updateUser(t, user, id, body);
+  }
+  @Delete('users/:id')
+  @RequirePermission('build:write')
+  deleteUser(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string) {
+    return this.svc.deleteUser(t, user, id);
+  }
+  @Post('users/populate')
+  @RequirePermission('build:write')
+  populateUsers(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(buildPopulateSchema)) body: BuildPopulateInput,
+  ) {
+    return this.svc.populateUsers(t, user, body.site_id);
+  }
+
+  /* common area phones */
+
+  @Get('caps')
+  @RequirePermission('build:read')
+  listCaps(@TenantCtx() t: TenantContext, @Query(new ZodBody(buildListQuerySchema)) q: BuildListQuery) {
+    return this.svc.listCaps(t, q);
+  }
+  @Get('caps/:id')
+  @RequirePermission('build:read')
+  getCap(@TenantCtx() t: TenantContext, @Param('id') id: string) {
+    return this.svc.getCap(t, id);
+  }
+  @Post('caps')
+  @RequirePermission('build:write')
+  createCap(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(buildCapCreateSchema)) body: BuildCapCreateInput,
+  ) {
+    return this.svc.createCap(t, user, body);
+  }
+  @Patch('caps/:id')
+  @RequirePermission('build:write')
+  updateCap(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Param('id') id: string,
+    @Body(new ZodBody(buildCapPatchSchema)) body: BuildCapPatchInput,
+  ) {
+    return this.svc.updateCap(t, user, id, body);
+  }
+  @Delete('caps/:id')
+  @RequirePermission('build:write')
+  deleteCap(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string) {
+    return this.svc.deleteCap(t, user, id);
+  }
+  @Post('caps/populate')
+  @RequirePermission('build:write')
+  populateCaps(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(buildPopulateSchema)) body: BuildPopulateInput,
+  ) {
+    return this.svc.populateCaps(t, user, body.site_id);
+  }
+
+  /* resource accounts */
+
+  @Get('resource-accounts')
+  @RequirePermission('build:read')
+  listResourceAccounts(@TenantCtx() t: TenantContext, @Query(new ZodBody(buildListQuerySchema)) q: BuildListQuery) {
+    return this.svc.listResourceAccounts(t, q);
+  }
+  @Get('resource-accounts/:id')
+  @RequirePermission('build:read')
+  getResourceAccount(@TenantCtx() t: TenantContext, @Param('id') id: string) {
+    return this.svc.getResourceAccount(t, id);
+  }
+  @Post('resource-accounts')
+  @RequirePermission('build:write')
+  createResourceAccount(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(buildResourceAccountCreateSchema)) body: BuildResourceAccountCreateInput,
+  ) {
+    return this.svc.createResourceAccount(t, user, body);
+  }
+  @Patch('resource-accounts/:id')
+  @RequirePermission('build:write')
+  updateResourceAccount(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Param('id') id: string,
+    @Body(new ZodBody(buildResourceAccountPatchSchema)) body: BuildResourceAccountPatchInput,
+  ) {
+    return this.svc.updateResourceAccount(t, user, id, body);
+  }
+  @Delete('resource-accounts/:id')
+  @RequirePermission('build:write')
+  deleteResourceAccount(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string) {
+    return this.svc.deleteResourceAccount(t, user, id);
+  }
+  @Post('resource-accounts/populate')
+  @RequirePermission('build:write')
+  populateResourceAccounts(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(buildPopulateSchema)) body: BuildPopulateInput,
+  ) {
+    return this.svc.populateResourceAccounts(t, user, body.site_id);
+  }
+
+  /* validate */
+
+  @Post('validate')
+  @RequirePermission('build:write')
+  validateSite(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(buildPopulateSchema)) body: BuildPopulateInput,
+  ) {
+    return this.svc.validateSite(t, user, body.site_id);
   }
 }

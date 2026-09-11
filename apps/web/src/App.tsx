@@ -11,6 +11,7 @@ import { DataCollection } from './pages/DataCollection';
 import { DataCollectionPolicies } from './pages/DataCollectionPolicies';
 import { SiteWorkspace } from './pages/SiteWorkspace';
 import { Build } from './pages/Build';
+import { BuildSiteWorkspace } from './pages/BuildSiteWorkspace';
 import { Deployment } from './pages/Deployment';
 import { Handover } from './pages/Handover';
 import { AdminUsers } from './pages/admin/Users';
@@ -55,6 +56,14 @@ export function App() {
           element={
             <RequirePermission permission="build:read">
               <Build />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="/build/sites/:siteId"
+          element={
+            <RequirePermission permission="build:read">
+              <BuildSiteWorkspace />
             </RequirePermission>
           }
         />

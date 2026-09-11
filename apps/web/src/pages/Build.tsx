@@ -1,9 +1,9 @@
-import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import {
+  Badge,
   Button,
   Card,
-  Input,
   Spinner,
   TableBody,
   TableCell,
@@ -11,134 +11,104 @@ import {
   TableHeaderCell,
   TableRow,
   Text,
-  makeStyles,
-  shorthands,
 } from '@fluentui/react-components';
+import { ArrowRightRegular } from '@fluentui/react-icons';
+import type { BuildSiteRollup } from '@tvmf/shared';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
 import { Page } from '../components/Page';
-import { LoadError, NoTenant } from './DataCollection';
+import { LoadError, NoTenant, useRecordStyles } from '../components/records';
 
-const useStyles = makeStyles({
-  stats: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px,1fr))', ...shorthands.gap('12px') },
-  stat: { ...shorthands.padding('14px') },
-  addRow: { display: 'flex', ...shorthands.gap('8px'), alignItems: 'end', flexWrap: 'wrap' },
-});
-
-interface Summary {
-  users: number;
-  caps: number;
-  autoAttendants: number;
-  callQueues: number;
-  m365Groups: number;
-}
-interface BuildUser {
-  id: string;
-  upn: string;
-  e164: string | null;
-  number_type: string | null;
-  migration_wave: string | null;
-}
+const DEPLOY_COLOR: Record<string, 'informative' | 'warning' | 'success' | 'danger'> = {
+  queued: 'informative',
+  running: 'informative',
+  completed: 'success',
+  failed: 'danger',
+  cancelled: 'warning',
+};
 
 export function Build() {
-  const s = useStyles();
-  const { activeTenantId, can } = useAuth();
-  const qc = useQueryClient();
-  const [upn, setUpn] = useState('');
-  const [did, setDid] = useState('');
+  const s = useRecordStyles();
+  const navigate = useNavigate();
+  const { activeTenantId } = useAuth();
 
-  const summary = useQuery({
+  const q = useQuery({
     queryKey: ['build-summary', activeTenantId],
     enabled: !!activeTenantId,
-    queryFn: () => api<Summary>(`/t/${activeTenantId}/build/summary`),
-  });
-  const users = useQuery({
-    queryKey: ['build-users', activeTenantId],
-    enabled: !!activeTenantId,
-    queryFn: () => api<BuildUser[]>(`/t/${activeTenantId}/build/users`),
-  });
-  const addUser = useMutation({
-    mutationFn: () =>
-      api(`/t/${activeTenantId}/build/users`, { method: 'POST', body: JSON.stringify({ upn, did }) }),
-    onSuccess: () => {
-      setUpn('');
-      setDid('');
-      qc.invalidateQueries({ queryKey: ['build-users', activeTenantId] });
-      qc.invalidateQueries({ queryKey: ['build-summary', activeTenantId] });
-    },
+    queryFn: () => api<BuildSiteRollup[]>(`/t/${activeTenantId}/build/summary`),
   });
 
   if (!activeTenantId) return <NoTenant />;
-  if (summary.isError) return <LoadError message={(summary.error as Error).message} />;
+  if (q.isLoading) return <Spinner label="Loading Design & Build…" />;
+  if (q.isError) return <LoadError message={(q.error as Error).message} />;
 
-  const st = summary.data;
+  const sites = q.data ?? [];
+  const open = (id: string) => navigate(`/build/sites/${id}`);
+
   return (
     <Page
       title="Design & Build"
-      subtitle="Map users and phones to Teams voice policies and numbers. Replaces the build workbook."
+      subtitle="Pick a site to design its users, common area phones and resource accounts — target policies, numbers and voicemail, validated live against the tenant. Replaces the build workbook."
     >
-      <div className={s.stats}>
-        {(
-          [
-            ['Users', st?.users],
-            ['Common area phones', st?.caps],
-            ['Auto attendants', st?.autoAttendants],
-            ['Call queues', st?.callQueues],
-            ['M365 groups', st?.m365Groups],
-          ] as const
-        ).map(([label, n]) => (
-          <Card key={label} className={s.stat}>
-            <Text size={500} weight="semibold">
-              {summary.isLoading ? '—' : (n ?? 0)}
-            </Text>
-            <Text size={200}>{label}</Text>
-          </Card>
-        ))}
-      </div>
+      <Card className={s.card}>
+        <div className={s.cardHead}>
+          <Text weight="semibold" size={400}>
+            Sites <span className={s.muted}>({sites.length})</span>
+          </Text>
+        </div>
 
-      {can('build:write') && (
-        <Card>
-          <Text weight="semibold">Add a user row</Text>
-          <div className={s.addRow}>
-            <div style={{ display: 'grid', gap: 4 }}>
-              <Text size={200}>User principal name</Text>
-              <Input value={upn} onChange={(_, d) => setUpn(d.value)} placeholder="user@customer.com" />
-            </div>
-            <div style={{ display: 'grid', gap: 4 }}>
-              <Text size={200}>DID</Text>
-              <Input value={did} onChange={(_, d) => setDid(d.value)} placeholder="+1913…" />
-            </div>
-            <Button appearance="primary" disabled={!upn || addUser.isPending} onClick={() => addUser.mutate()}>
-              Add
-            </Button>
-          </div>
-        </Card>
-      )}
-
-      <Card>
-        <Text weight="semibold">User rows</Text>
-        {users.isLoading ? (
-          <Spinner size="tiny" />
-        ) : (users.data?.length ?? 0) === 0 ? (
-          <Text size={200}>No user rows yet.</Text>
+        {sites.length === 0 ? (
+          <Text size={200} className={s.muted}>
+            No sites yet — add one in Data Collection first.
+          </Text>
         ) : (
-          <DataTable size="small" minWidth={620}>
+          <DataTable size="small" minWidth={860}>
             <TableHeader>
               <TableRow>
-                <TableHeaderCell>UPN</TableHeaderCell>
-                <TableHeaderCell>Number</TableHeaderCell>
-                <TableHeaderCell>Type</TableHeaderCell>
-                <TableHeaderCell>Wave</TableHeaderCell>
+                <TableHeaderCell>Sitecode</TableHeaderCell>
+                <TableHeaderCell>Name</TableHeaderCell>
+                <TableHeaderCell>Users</TableHeaderCell>
+                <TableHeaderCell>CAPs</TableHeaderCell>
+                <TableHeaderCell>Res. accts</TableHeaderCell>
+                <TableHeaderCell>Validation</TableHeaderCell>
+                <TableHeaderCell>Last deployment</TableHeaderCell>
+                <TableHeaderCell />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {users.data!.map((u) => (
-                <TableRow key={u.id}>
-                  <TableCell>{u.upn}</TableCell>
-                  <TableCell>{u.e164 ?? u.number_type ? u.e164 ?? '—' : '—'}</TableCell>
-                  <TableCell>{u.number_type ?? '—'}</TableCell>
-                  <TableCell>{u.migration_wave ?? '—'}</TableCell>
+              {sites.map((r) => (
+                <TableRow key={r.id}>
+                  <TableCell>{r.sitecode}</TableCell>
+                  <TableCell>{r.name || '—'}</TableCell>
+                  <TableCell>{r.counts.users}</TableCell>
+                  <TableCell>{r.counts.caps}</TableCell>
+                  <TableCell>{r.counts.resourceAccounts}</TableCell>
+                  <TableCell>
+                    {r.validationIssues > 0 ? (
+                      <Badge appearance="tint" color="warning">
+                        {r.validationIssues} issue{r.validationIssues === 1 ? '' : 's'}
+                      </Badge>
+                    ) : (
+                      <Badge appearance="tint" color="success">
+                        clean
+                      </Badge>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {r.lastDeployment ? (
+                      <Badge appearance="tint" color={DEPLOY_COLOR[r.lastDeployment.status] ?? 'informative'}>
+                        {r.lastDeployment.mode === 'dry_run' ? 'dry run' : 'deployed'} · {r.lastDeployment.status}
+                      </Badge>
+                    ) : (
+                      '—'
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Button size="small" appearance="subtle" icon={<ArrowRightRegular />} onClick={() => open(r.id)}>
+                      Open
+                    </Button>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>

@@ -224,3 +224,37 @@ export interface TenantDiscoverySummary {
   /** per-customer Discovery settings */
   settings: { filterUsers: boolean; notifyOnComplete: boolean };
 }
+
+/* ------------------------------ Design & Build ----------------------------- */
+
+/**
+ * Live-vs-target comparison for one build_users/build_caps row, computed by
+ * joining against Discovery's tenant_users/tenant_policies - the replacement
+ * for the build workbook's manually-refreshed `G-*` columns.
+ */
+export interface BuildRowValidation {
+  /** false if the UPN isn't found in the tenant at all (Discovery hasn't seen it, or it doesn't exist) */
+  existsInTenant: boolean;
+  /** live state from tenant_users; null when existsInTenant is false or Discovery has never run */
+  enterpriseVoiceEnabled: boolean | null;
+  liveLineUri: string | null;
+  /** true when the row's target e164 is already held by a different phone_numbers row */
+  numberConflict: boolean;
+  /** each target policy whose live effective assignment differs (or is unset) */
+  policyMismatches: { key: import('./domain').PolicyKey; label: string; target: string; live: string | null }[];
+  /** target policy names that don't exist anywhere in tenant_policies for their type - likely a typo */
+  unknownPolicies: { key: import('./domain').PolicyKey; label: string; value: string }[];
+  /** target policy keys Discovery doesn't currently track live (see POLICY_KIND_TO_TENANT_TYPE) */
+  untracked: import('./domain').PolicyKey[];
+}
+
+/** Per-site rollup shown on the Design & Build landing page. */
+export interface BuildSiteRollup {
+  id: string;
+  sitecode: string;
+  name: string | null;
+  counts: { users: number; caps: number; resourceAccounts: number };
+  /** rows whose computed BuildRowValidation has any issue (missing/mismatch/unknown/conflict) */
+  validationIssues: number;
+  lastDeployment: { id: string; mode: 'dry_run' | 'execute'; status: string; createdAt: string } | null;
+}
