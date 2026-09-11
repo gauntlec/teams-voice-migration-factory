@@ -57,8 +57,16 @@ function ValidationBadge({ v }: { v: BuildRowValidation | null }) {
     );
   }
   const issues = v.unknownPolicies.length + v.policyMismatches.length + (v.numberConflict ? 1 : 0);
+  // Renames aren't a real issue - deployment always resolves the live name
+  // via policy_ids regardless - but still worth surfacing so the stale
+  // display text next to it isn't mistaken for what will actually deploy.
   if (issues === 0) {
-    return (
+    const renameTitle = v.renamedPolicies.map((p) => `${p.label}: policy was renamed to "${p.liveName}" - refresh to sync`).join('\n');
+    return v.renamedPolicies.length ? (
+      <Badge appearance="tint" color="informative" title={renameTitle}>
+        {v.renamedPolicies.length} renamed
+      </Badge>
+    ) : (
       <Badge appearance="tint" color="success" icon={<CheckmarkCircleRegular />}>
         matches
       </Badge>
@@ -68,6 +76,7 @@ function ValidationBadge({ v }: { v: BuildRowValidation | null }) {
     v.numberConflict ? 'This number is also assigned to another user, CAP or resource account in this tenant' : null,
     ...v.unknownPolicies.map((p) => `${p.label}: "${p.value}" doesn't exist in the tenant`),
     ...v.policyMismatches.map((p) => `${p.label}: live is ${p.live ?? '(none)'}, target is ${p.target}`),
+    ...v.renamedPolicies.map((p) => `${p.label}: policy was renamed to "${p.liveName}" - refresh to sync`),
   ]
     .filter(Boolean)
     .join('\n');
@@ -147,7 +156,7 @@ export function BuildSiteWorkspace() {
     const byType = new Map<string, Choice[]>();
     for (const p of allPoliciesQ.data ?? []) {
       if (!byType.has(p.policy_type)) byType.set(p.policy_type, []);
-      byType.get(p.policy_type)!.push({ value: p.name, label: p.is_global ? `${p.name} (global)` : p.name });
+      byType.get(p.policy_type)!.push({ value: p.id, label: p.is_global ? `${p.name} (global)` : p.name });
     }
     const out: Record<string, Choice[]> = {};
     for (const k of POLICY_KINDS) {
@@ -205,7 +214,7 @@ export function BuildSiteWorkspace() {
   if (!site) return <LoadError message="Site not found." />;
 
   const policyFields: FieldDef[] = POLICY_KINDS.map((k) => ({
-    key: `policies.${k.key}`,
+    key: `policy_ids.${k.key}`,
     label: k.label,
     type: 'ref',
     choices: policyChoicesByKey[k.key] ?? [],
@@ -414,7 +423,12 @@ export function BuildSiteWorkspace() {
             { key: 'phone_number_id', label: 'Phone number', type: 'ref', choices: numberChoicesFor },
             { key: 'number_type', label: 'Number type', type: 'select', options: NUMBER_TYPES },
             { key: 'location_id', label: 'Emergency location ID (for shared calling)' },
-            { key: 'voice_routing_policy', label: 'Voice routing policy' },
+            {
+              key: 'voice_routing_policy_id',
+              label: 'Voice routing policy',
+              type: 'ref',
+              choices: policyChoicesByKey.voice_routing_policy ?? [],
+            },
             {
               key: 'created',
               label: 'Created & licensed (run the generated script first, then check this)',

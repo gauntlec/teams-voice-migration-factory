@@ -12,6 +12,7 @@ interface IdentityRow {
   upn: string;
   e164: string | null;
   policies: Record<string, string | null> | null;
+  policy_ids: Record<string, string | null> | null;
 }
 
 /**
@@ -70,6 +71,18 @@ export class BuildValidationService {
       for (const f of found) knownPolicyNames.add(`${policyType}::${f.name}`);
     }
 
+    // Rows with a policy_ids link (see BuildService.resolvePolicyIds) get
+    // checked against the linked tenant_policies row directly instead of by
+    // name - a rename doesn't break the link, it just makes the stored
+    // policies.<key> text stale (surfaced separately as "renamed" below).
+    const linkedIds = [
+      ...new Set(rows.flatMap((r) => POLICY_KINDS.map((k) => r.policy_ids?.[k.key]).filter((v): v is string => !!v))),
+    ];
+    const linkedPolicies = linkedIds.length
+      ? await s.selectFrom('tenant_policies').select(['id', 'name', 'policy_type', 'removed_at']).where('id', 'in', linkedIds).execute()
+      : [];
+    const byLinkedId = new Map(linkedPolicies.map((p) => [p.id, p]));
+
     // Design & Build imports a *copy* of the number Data Collection already
     // assigned (see BuildService.populateUsers/populateCaps) - it doesn't
     // take over the claim, so the phone_numbers inventory can no longer tell
@@ -96,6 +109,7 @@ export class BuildValidationService {
       const live = byUpn.get(row.upn.toLowerCase());
       const policyMismatches: BuildRowValidation['policyMismatches'] = [];
       const unknownPolicies: BuildRowValidation['unknownPolicies'] = [];
+      const renamedPolicies: BuildRowValidation['renamedPolicies'] = [];
       const untracked: PolicyKey[] = [];
       for (const kind of POLICY_KINDS) {
         const value = row.policies?.[kind.key];
@@ -105,12 +119,28 @@ export class BuildValidationService {
           untracked.push(kind.key);
           continue;
         }
-        if (!knownPolicyNames.has(`${tenantType}::${value}`)) {
+        const linkedId = row.policy_ids?.[kind.key];
+        const linked = linkedId ? byLinkedId.get(linkedId) : undefined;
+        // effectiveTarget is what a deployment would actually grant right
+        // now - the live name behind the link when one resolves, otherwise
+        // the stored text. Used for the mismatch-vs-live-assignment check
+        // below so a rename doesn't produce a false mismatch either.
+        let effectiveTarget = value;
+        if (linkedId) {
+          if (!linked || linked.removed_at || linked.policy_type !== tenantType) {
+            unknownPolicies.push({ key: kind.key, label: kind.label, value });
+          } else {
+            effectiveTarget = linked.name;
+            if (linked.name !== value) {
+              renamedPolicies.push({ key: kind.key, label: kind.label, storedName: value, liveName: linked.name });
+            }
+          }
+        } else if (!knownPolicyNames.has(`${tenantType}::${value}`)) {
           unknownPolicies.push({ key: kind.key, label: kind.label, value });
         }
         const liveValue = (live?.policies as Record<string, string | null> | null)?.[tenantType] ?? null;
-        if (liveValue !== value) {
-          policyMismatches.push({ key: kind.key, label: kind.label, target: value, live: liveValue });
+        if (liveValue !== effectiveTarget) {
+          policyMismatches.push({ key: kind.key, label: kind.label, target: effectiveTarget, live: liveValue });
         }
       }
       out.set(row.id, {
@@ -120,6 +150,7 @@ export class BuildValidationService {
         numberConflict: !!row.e164 && (dupeCounts.get(row.e164) ?? 0) > 1,
         policyMismatches,
         unknownPolicies,
+        renamedPolicies,
         untracked,
       });
     }

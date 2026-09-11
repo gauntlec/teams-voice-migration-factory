@@ -328,8 +328,18 @@ interface BuildIdentityRowBase {
   hold_uri: string | null;
   action: string | null;
   migration_wave: string | null;
-  /** policy assignments keyed by PolicyKey from @tvmf/shared */
+  /** policy assignments keyed by PolicyKey from @tvmf/shared - the name to deploy */
   policies: Json<Record<string, string | null>>;
+  /**
+   * FK -> tenant_policies.id per PolicyKey (ON DELETE SET NULL isn't
+   * enforceable per-jsonb-key by Postgres, so this is app-enforced - see
+   * BuildService.resolvePolicyIds). A plain reference to which discovered
+   * policy `policies.<key>` came from, kept in sync by the API on every
+   * write and re-resolved to the live name again at deploy time, so a
+   * rename in the tenant doesn't silently deploy a stale name. See
+   * 0018_build_policy_ids.sql.
+   */
+  policy_ids: Json<Record<string, string | null>>;
   voicemail: Json;
   call_forwarding: Json;
   delegates: Json;
@@ -378,6 +388,8 @@ export interface BuildResourceAccountsTable {
   phone_number_id: string | null;
   number_type: string | null;
   voice_routing_policy: string | null;
+  /** FK -> tenant_policies.id - same plain-reference pattern as build_users/build_caps.policy_ids. */
+  voice_routing_policy_id: string | null;
   /** set once New-CsOnlineApplicationInstance has run - gates the number/policy assignment phase */
   application_id: string | null;
   /** requested/completed dates, same shape as build_users.status */

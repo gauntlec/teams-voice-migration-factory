@@ -511,6 +511,8 @@ export type TenantUsersImportInput = z.infer<typeof tenantUsersImportSchema>;
 /* Every build_* row is reached through a site workspace (see docs/DATA-MODEL.md). */
 
 const policyMap = z.record(z.string(), z.string().nullable()).optional();
+/** Picker submits a tenant_policies.id per PolicyKey - see BuildService.resolvePolicyIds. */
+const policyIdMap = z.record(z.string(), z.string().uuid().nullable()).optional();
 const jsonObj = z.record(z.unknown()).optional();
 const jsonArr = z.array(z.unknown()).optional();
 /** RecordDialog's `type: 'select'` sends '' for an untouched/cleared dropdown - treat as null, not a validation error. */
@@ -530,6 +532,7 @@ const buildIdentityWritable = {
   action: optStr(80),
   migration_wave: optStr(80),
   policies: policyMap,
+  policy_ids: policyIdMap,
   voicemail: jsonObj,
   call_forwarding: jsonObj,
   delegates: jsonArr,
@@ -573,6 +576,8 @@ const buildResourceAccountWritable = {
   location_id: optStr(80),
   number_type: numberType,
   voice_routing_policy: optStr(160),
+  /** picker submits a tenant_policies.id - see BuildService.resolvePolicyIds */
+  voice_routing_policy_id: refId,
   /** assign / move / clear this account's number in the same call - null clears it */
   phone_number_id: refId,
   /**

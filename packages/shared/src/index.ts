@@ -244,6 +244,13 @@ export interface BuildRowValidation {
   policyMismatches: { key: import('./domain').PolicyKey; label: string; target: string; live: string | null }[];
   /** target policy names that don't exist anywhere in tenant_policies for their type - likely a typo */
   unknownPolicies: { key: import('./domain').PolicyKey; label: string; value: string }[];
+  /**
+   * Rows with a policy_ids link whose target tenant_policies row still
+   * exists but was renamed since - the stored `policies.<key>` name is
+   * stale display text, not a broken assignment (deployment always
+   * resolves the live name via the id - see worker main.ts).
+   */
+  renamedPolicies: { key: import('./domain').PolicyKey; label: string; storedName: string; liveName: string }[];
   /** target policy keys Discovery doesn't currently track live (see POLICY_KIND_TO_TENANT_TYPE) */
   untracked: import('./domain').PolicyKey[];
 }

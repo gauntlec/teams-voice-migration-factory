@@ -163,6 +163,30 @@ async function handleConnectionStart(job: Job) {
   }
 }
 
+/**
+ * Batch-resolves tenant_policies ids (build_users/build_caps.policy_ids,
+ * build_resource_accounts.voice_routing_policy_id) to their *current* live
+ * name, so a deployment always grants whatever the tenant calls that policy
+ * right now - not a stale copy from whenever the engineer last saved the
+ * row in Design & Build (see BuildService.resolvePolicyIds, which is what
+ * keeps `policies.<key>` roughly in sync, but only as of the last write).
+ * A removed/unresolvable id is simply absent from the returned map; callers
+ * fall back to the row's stored name.
+ */
+async function resolveLivePolicyNames(scoped: ReturnType<typeof tenantDb>, ids: (string | null | undefined)[]) {
+  const wanted = [...new Set(ids.filter((id): id is string => !!id))];
+  const out = new Map<string, string>();
+  if (wanted.length === 0) return out;
+  const rows = await scoped
+    .selectFrom('tenant_policies')
+    .select(['id', 'name'])
+    .where('id', 'in', wanted)
+    .where('removed_at', 'is', null)
+    .execute();
+  for (const r of rows) out.set(r.id, r.name);
+  return out;
+}
+
 async function handleDeploymentRun(job: Job) {
   const { schema, deploymentId, connectionId, mode, scope, operatorUserId } = job.data as {
     schema: string;
@@ -233,7 +257,23 @@ async function handleDeploymentRun(job: Job) {
       let q = scoped.selectFrom(table).selectAll().where('site_id', '=', scope.siteId).where('hidden', '=', false);
       if (scope.rowIds?.length) q = q.where('id', 'in', scope.rowIds);
       const rows = await q.execute();
+      const liveNames = await resolveLivePolicyNames(
+        scoped,
+        rows.flatMap((row) => Object.values((row.policy_ids as Record<string, string | null>) ?? {})),
+      );
       for (const row of rows) {
+        const policyIds = (row.policy_ids as Record<string, string | null>) ?? {};
+        const storedPolicies = (row.policies as Record<string, string | null>) ?? {};
+        // A row with a policy_ids link always deploys whatever that policy
+        // is called *right now* in the tenant, not whatever name was live
+        // when the engineer last saved - a rename since then shouldn't ship
+        // stale. Rows with no link (legacy, or the untracked
+        // dial_out_policy) fall back to the stored name unchanged.
+        const policies: Record<string, string | null> = {};
+        for (const key of Object.keys(storedPolicies)) {
+          const linkedId = policyIds[key];
+          policies[key] = (linkedId && liveNames.get(linkedId)) || storedPolicies[key];
+        }
         const calls = planIdentityRow(
           {
             id: row.id,
@@ -241,7 +281,7 @@ async function handleDeploymentRun(job: Job) {
             e164: row.e164,
             number_type: row.number_type,
             revoke_ev: row.revoke_ev,
-            policies: (row.policies as Record<string, string | null>) ?? {},
+            policies,
             voicemail: (row.voicemail as { enabled?: boolean | null; language?: string | null }) ?? null,
           },
           objectType,
@@ -255,7 +295,9 @@ async function handleDeploymentRun(job: Job) {
     let q = scoped.selectFrom('build_resource_accounts').selectAll().where('site_id', '=', scope.siteId);
     if (scope.rowIds?.length) q = q.where('id', 'in', scope.rowIds);
     const rows = await q.execute();
+    const liveNames = await resolveLivePolicyNames(scoped, rows.map((r) => r.voice_routing_policy_id));
     for (const row of rows) {
+      const linkedId = row.voice_routing_policy_id;
       const calls = planResourceAccountRow({
         id: row.id,
         upn: row.upn,
@@ -264,7 +306,7 @@ async function handleDeploymentRun(job: Job) {
         location_id: row.location_id,
         phone_number: row.phone_number,
         number_type: row.number_type,
-        voice_routing_policy: row.voice_routing_policy,
+        voice_routing_policy: (linkedId && liveNames.get(linkedId)) || row.voice_routing_policy,
         application_id: row.application_id,
       });
       for (const call of calls) await runCall(call);

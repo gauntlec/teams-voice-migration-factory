@@ -2,6 +2,7 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { sql, type Kysely } from 'kysely';
 import { tenantDb, type DB } from '@tvmf/db';
 import {
+  POLICY_KIND_TO_TENANT_TYPE,
   RESOURCE_ACCOUNT_APPLICATION_IDS,
   type BuildCapCreateInput,
   type BuildCapPatchInput,
@@ -14,6 +15,7 @@ import {
   type BuildSiteRollup,
   type NumberHolderType,
   type Paginated,
+  type PolicyKey,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
 import type { AuthedUser, TenantContext } from '../../common/request';
@@ -43,8 +45,8 @@ export class BuildService {
     const siteIds = sites.map((si) => si.id);
 
     const [users, caps, ras, deployments] = await Promise.all([
-      s.selectFrom('build_users').select(['id', 'site_id', 'upn', 'e164', 'policies']).where('site_id', 'in', siteIds).execute(),
-      s.selectFrom('build_caps').select(['id', 'site_id', 'upn', 'e164', 'policies']).where('site_id', 'in', siteIds).execute(),
+      s.selectFrom('build_users').select(['id', 'site_id', 'upn', 'e164', 'policies', 'policy_ids']).where('site_id', 'in', siteIds).execute(),
+      s.selectFrom('build_caps').select(['id', 'site_id', 'upn', 'e164', 'policies', 'policy_ids']).where('site_id', 'in', siteIds).execute(),
       s.selectFrom('build_resource_accounts').select(['id', 'site_id']).where('site_id', 'in', siteIds).execute(),
       s
         .selectFrom('deployments')
@@ -244,7 +246,10 @@ export class BuildService {
       .limit(q.limit)
       .offset((q.page - 1) * q.limit)
       .execute();
-    const validated = await this.validation.validateRows(t, rows as { id: string; upn: string; e164: string | null; policies: Record<string, string | null> | null }[]);
+    const validated = await this.validation.validateRows(
+      t,
+      rows as { id: string; upn: string; e164: string | null; policies: Record<string, string | null> | null; policy_ids: Record<string, string | null> | null }[],
+    );
     // phone_number_id is a native column now (see 0017_build_phone_number_id) -
     // no separate holder lookup needed to know "what number is this row's".
     const items = rows.map((r) => ({ ...r, validation: validated.get(r.id) ?? null }));
@@ -278,7 +283,8 @@ export class BuildService {
     body: BuildIdentityCreateInput,
     extra: Record<string, unknown> = {},
   ) {
-    const { phone_number_id, ...rest } = body;
+    const { phone_number_id, policy_ids, ...rest } = body;
+    const resolved = policy_ids ? await this.resolvePolicyIds(t, policy_ids) : null;
     let row = await this.s(t)
       .insertInto(table)
       .values({
@@ -293,7 +299,8 @@ export class BuildService {
         migration_wave: rest.migration_wave ?? null,
         comments: rest.comments ?? null,
         hidden: rest.hidden ?? false,
-        policies: rest.policies ?? {},
+        policies: resolved?.policies ?? rest.policies ?? {},
+        policy_ids: resolved?.policy_ids ?? {},
         voicemail: rest.voicemail ?? {},
         call_forwarding: rest.call_forwarding ?? {},
         delegates: rest.delegates ?? [],
@@ -332,10 +339,13 @@ export class BuildService {
     id: string,
     body: BuildIdentityPatchInput & Record<string, unknown>,
   ) {
-    const { phone_number_id, ...rest } = body;
+    const { phone_number_id, policy_ids, ...rest } = body;
     const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
     if (phone_number_id !== undefined) {
       Object.assign(patch, await this.applyNumberChange(t, table, holderType, id, phone_number_id));
+    }
+    if (policy_ids !== undefined) {
+      Object.assign(patch, await this.resolvePolicyIds(t, policy_ids));
     }
     const row = await this.s(t)
       .updateTable(table)
@@ -483,6 +493,9 @@ export class BuildService {
   }
 
   async createResourceAccount(t: TenantContext, u: AuthedUser, body: BuildResourceAccountCreateInput) {
+    const resolved = body.voice_routing_policy_id
+      ? await this.resolvePolicyIds(t, { voice_routing_policy: body.voice_routing_policy_id })
+      : null;
     let row = await this.s(t)
       .insertInto('build_resource_accounts')
       .values({
@@ -492,7 +505,8 @@ export class BuildService {
         upn: body.upn ?? '',
         location_id: body.location_id ?? null,
         number_type: body.number_type ?? null,
-        voice_routing_policy: body.voice_routing_policy ?? null,
+        voice_routing_policy: resolved?.policies.voice_routing_policy ?? body.voice_routing_policy ?? null,
+        voice_routing_policy_id: resolved?.policy_ids.voice_routing_policy ?? null,
         application_id: body.created ? RESOURCE_ACCOUNT_APPLICATION_IDS[body.kind] : null,
         status: {},
       })
@@ -516,10 +530,15 @@ export class BuildService {
   }
 
   async updateResourceAccount(t: TenantContext, u: AuthedUser, id: string, body: BuildResourceAccountPatchInput) {
-    const { phone_number_id, created, ...rest } = body;
+    const { phone_number_id, created, voice_routing_policy_id, ...rest } = body;
     const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
     if (phone_number_id !== undefined) {
       Object.assign(patch, await this.applyNumberChange(t, 'build_resource_accounts', 'resource_account', id, phone_number_id));
+    }
+    if (voice_routing_policy_id !== undefined) {
+      const resolved = await this.resolvePolicyIds(t, { voice_routing_policy: voice_routing_policy_id });
+      patch.voice_routing_policy = resolved.policies.voice_routing_policy ?? null;
+      patch.voice_routing_policy_id = resolved.policy_ids.voice_routing_policy ?? null;
     }
     if (created !== undefined) {
       const row = await this.getResourceAccount(t, id);
@@ -682,14 +701,59 @@ export class BuildService {
     return { [numberColumn]: null, phone_number_id: null };
   }
 
+  /**
+   * Resolves a policy_ids patch (one tenant_policies.id per PolicyKey, from
+   * the live picker in BuildSiteWorkspace) into the two column values to
+   * write together: the durable id (policy_ids), and the policy's current
+   * live name (policies) - what Grant-Cs*Policy and the grid display
+   * actually need. A submitted id must resolve to a live (not removed_at)
+   * tenant_policies row whose type matches POLICY_KIND_TO_TENANT_TYPE for
+   * that key - defends against a stale or mismatched id. A key explicitly
+   * null clears that assignment. Full-object-replace semantics, same as
+   * `policies` already had - RecordDialog always resubmits the complete
+   * field set on save, so there's no partial-merge to do here.
+   */
+  private async resolvePolicyIds(
+    t: TenantContext,
+    ids: Partial<Record<string, string | null>>,
+  ): Promise<{ policy_ids: Record<string, string | null>; policies: Record<string, string | null> }> {
+    const wantedIds = [...new Set(Object.values(ids).filter((v): v is string => !!v))];
+    const rows = wantedIds.length
+      ? await this.s(t)
+          .selectFrom('tenant_policies')
+          .select(['id', 'name', 'policy_type'])
+          .where('id', 'in', wantedIds)
+          .where('removed_at', 'is', null)
+          .execute()
+      : [];
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const policy_ids: Record<string, string | null> = {};
+    const policies: Record<string, string | null> = {};
+    for (const [key, value] of Object.entries(ids)) {
+      if (!value) {
+        policy_ids[key] = null;
+        policies[key] = null;
+        continue;
+      }
+      const found = byId.get(value);
+      const expectedType = POLICY_KIND_TO_TENANT_TYPE[key as PolicyKey];
+      if (!found || (expectedType && found.policy_type !== expectedType)) {
+        throw new ConflictException('That policy no longer exists in the tenant - refresh and pick again.');
+      }
+      policy_ids[key] = value;
+      policies[key] = found.name;
+    }
+    return { policy_ids, policies };
+  }
+
   /* ============================== validate ============================== */
 
   /** Snapshot the live-vs-target diff into the `validation` column for every user/cap row on a site. */
   async validateSite(t: TenantContext, u: AuthedUser, siteId: string) {
     const s = this.s(t);
     const [users, caps] = await Promise.all([
-      s.selectFrom('build_users').select(['id', 'upn', 'e164', 'policies']).where('site_id', '=', siteId).execute(),
-      s.selectFrom('build_caps').select(['id', 'upn', 'e164', 'policies']).where('site_id', '=', siteId).execute(),
+      s.selectFrom('build_users').select(['id', 'upn', 'e164', 'policies', 'policy_ids']).where('site_id', '=', siteId).execute(),
+      s.selectFrom('build_caps').select(['id', 'upn', 'e164', 'policies', 'policy_ids']).where('site_id', '=', siteId).execute(),
     ]);
     const rows = [...users.map((r) => ({ ...r, table: 'build_users' as const })), ...caps.map((r) => ({ ...r, table: 'build_caps' as const }))];
     const validated = await this.validation.validateRows(t, rows);
