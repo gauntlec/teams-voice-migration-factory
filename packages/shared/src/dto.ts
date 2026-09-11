@@ -116,6 +116,15 @@ export const createDeploymentSchema = z.object({
 export type CreateDeploymentInput = z.infer<typeof createDeploymentSchema>;
 
 /**
+ * Express's default query parser turns `?sheets=a,b,c` into the single
+ * string "a,b,c", not an array - only repeated keys (`?sheets=a&sheets=b`)
+ * parse as an array. Query-string array params need to accept either shape;
+ * `arraySchema` is the fully-built target schema (with its own .min()/etc).
+ */
+const queryArray = <T extends z.ZodTypeAny>(arraySchema: T) =>
+  z.preprocess((v) => (typeof v === 'string' ? v.split(',') : v), arraySchema);
+
+/**
  * Read-only "what would this deploy right now" preview - no connection, no
  * worker/queue involvement. Deliberately excludes auto_attendants/call_queues/
  * m365_groups: no worker code path handles those sheets yet (see planIdentityRow/
@@ -124,11 +133,12 @@ export type CreateDeploymentInput = z.infer<typeof createDeploymentSchema>;
  */
 export const deploymentPreviewQuerySchema = z.object({
   siteId: z.string().uuid(),
-  sheets: z
-    .array(z.enum(['users', 'caps', 'resource_accounts']))
-    .min(1)
-    .default(['users', 'caps', 'resource_accounts']),
-  rowIds: z.array(z.string().uuid()).optional(),
+  sheets: queryArray(z.array(z.enum(['users', 'caps', 'resource_accounts'])).min(1)).default([
+    'users',
+    'caps',
+    'resource_accounts',
+  ]),
+  rowIds: queryArray(z.array(z.string().uuid())).optional(),
 });
 export type DeploymentPreviewQuery = z.infer<typeof deploymentPreviewQuerySchema>;
 
