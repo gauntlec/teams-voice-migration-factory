@@ -1,4 +1,26 @@
-import { POLICY_KINDS, RESOURCE_ACCOUNT_APPLICATION_IDS } from './domain';
+import { POLICY_KIND_TO_TENANT_TYPE, POLICY_KINDS, RESOURCE_ACCOUNT_APPLICATION_IDS } from './domain';
+
+/**
+ * What Discovery's live-tenant snapshot (tenant_users) knows about a UPN -
+ * the same data BuildValidationService compares against for Design & Build's
+ * amber "pending change" badge (apps/api/src/modules/build/
+ * build-validation.service.ts), reused here so a deployment only issues a
+ * cmdlet when it would actually change something. `undefined` means no live
+ * row was found for this UPN (e.g. a brand-new user not yet in the tenant) -
+ * callers fall back to always emitting, since there's nothing to diff
+ * against.
+ */
+export interface LiveIdentityState {
+  enterpriseVoiceEnabled: boolean;
+  lineUri: string | null;
+  /** keyed by TenantPolicyType (e.g. 'OnlineVoiceRoutingPolicy') - the raw tenant_users.policies shape. */
+  policies: Record<string, string | null>;
+}
+
+/** Last 10 significant digits, for loose number matching (same rule Data Collection and Design & Build use). */
+function numKey(v: string | null | undefined): string {
+  return String(v ?? '').replace(/\D/g, '').slice(-10);
+}
 
 export interface CmdletInvocation {
   cmdlet: string;
@@ -44,21 +66,31 @@ export interface BuildIdentityRow {
  * Users and CAPs plan identically - only the object type tag differs, matching
  * `deployment_changes.object_type` ('user' | 'cap').
  */
-export function planIdentityRow(row: BuildIdentityRow, objectType: 'user' | 'cap'): CmdletInvocation[] {
+export function planIdentityRow(
+  row: BuildIdentityRow,
+  objectType: 'user' | 'cap',
+  live?: LiveIdentityState,
+): CmdletInvocation[] {
   const calls: CmdletInvocation[] = [];
   const identity = row.upn;
 
   if (row.revoke_ev) {
-    calls.push({
-      cmdlet: 'Remove-CsPhoneNumberAssignment',
-      parameters: { Identity: identity, RemoveAll: true },
-      objectType,
-      objectId: row.id,
-    });
+    // Skip if live already shows EV off - nothing left to revoke.
+    if (!live || live.enterpriseVoiceEnabled) {
+      calls.push({
+        cmdlet: 'Remove-CsPhoneNumberAssignment',
+        parameters: { Identity: identity, RemoveAll: true },
+        objectType,
+        objectId: row.id,
+      });
+    }
     return calls;
   }
 
-  if (row.e164 && row.number_type) {
+  // Skip if live already has this number - can only compare the number
+  // itself (normalized), not the assignment type (DirectRouting/CallingPlan/
+  // etc): Discovery doesn't track live number type per-assignment.
+  if (row.e164 && row.number_type && (!live || numKey(live.lineUri) !== numKey(row.e164))) {
     calls.push({
       cmdlet: 'Set-CsPhoneNumberAssignment',
       parameters: {
@@ -74,6 +106,11 @@ export function planIdentityRow(row: BuildIdentityRow, objectType: 'user' | 'cap
   for (const kind of POLICY_KINDS) {
     const value = row.policies?.[kind.key];
     if (!value) continue;
+    // dial_out_policy has no TenantPolicyType - Discovery never syncs it
+    // live, so it can't be diffed and always re-grants when set (see
+    // POLICY_KIND_TO_TENANT_TYPE in domain.ts).
+    const tenantType = POLICY_KIND_TO_TENANT_TYPE[kind.key];
+    if (tenantType && live && live.policies[tenantType] === value) continue;
     calls.push({
       cmdlet: kind.cmdlet,
       parameters: { Identity: identity, PolicyName: value },
@@ -87,7 +124,9 @@ export function planIdentityRow(row: BuildIdentityRow, objectType: 'user' | 'cap
   // voicemail_policy in POLICY_KINDS above, which governs a different set of
   // tenant-defined behaviours. `row.voicemail.enabled` undefined/null means
   // "not designed yet" and is left alone; explicitly true/false is a real
-  // target either way.
+  // target either way. Can't be diffed against live like the fields above -
+  // Discovery doesn't sync voicemail settings at all - so this always
+  // re-issues the cmdlet whenever a target is set.
   if (row.voicemail?.enabled != null) {
     calls.push({
       cmdlet: 'Set-CsOnlineVoicemailUserSettings',
@@ -125,7 +164,7 @@ export interface BuildResourceAccountRow {
  * mode). Only once the row has an `application_id` from a completed phase 1
  * does phase 2 (number + voice routing policy, live-capable) run.
  */
-export function planResourceAccountRow(row: BuildResourceAccountRow): CmdletInvocation[] {
+export function planResourceAccountRow(row: BuildResourceAccountRow, live?: LiveIdentityState): CmdletInvocation[] {
   if (!row.application_id) {
     return [
       {
@@ -143,7 +182,10 @@ export function planResourceAccountRow(row: BuildResourceAccountRow): CmdletInvo
   }
 
   const calls: CmdletInvocation[] = [];
-  if (row.phone_number && row.number_type) {
+  // Same diffing as planIdentityRow - a resource account is a normal
+  // Entra/Teams identity under its own UPN, so it appears in tenant_users
+  // (Discovery's live snapshot) just like a regular user or CAP.
+  if (row.phone_number && row.number_type && (!live || numKey(live.lineUri) !== numKey(row.phone_number))) {
     calls.push({
       cmdlet: 'Set-CsPhoneNumberAssignment',
       parameters: {
@@ -156,7 +198,7 @@ export function planResourceAccountRow(row: BuildResourceAccountRow): CmdletInvo
       objectId: row.id,
     });
   }
-  if (row.voice_routing_policy) {
+  if (row.voice_routing_policy && (!live || live.policies['OnlineVoiceRoutingPolicy'] !== row.voice_routing_policy)) {
     calls.push({
       cmdlet: 'Grant-CsOnlineVoiceRoutingPolicy',
       parameters: { Identity: row.upn, PolicyName: row.voice_routing_policy },

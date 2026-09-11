@@ -1,8 +1,15 @@
 import 'dotenv/config';
 import { Worker, type Job } from 'bullmq';
 import IORedis from 'ioredis';
+import { sql } from 'kysely';
 import { createDb, platformDb, tenantDb } from '@tvmf/db';
-import { planIdentityRow, planResourceAccountRow, renderCommand, type CmdletInvocation } from '@tvmf/shared';
+import {
+  planIdentityRow,
+  planResourceAccountRow,
+  renderCommand,
+  type CmdletInvocation,
+  type LiveIdentityState,
+} from '@tvmf/shared';
 import { SimulatedTeamsExecutor, type TeamsExecutor } from './teams/executor';
 import { PwshTeamsExecutor } from './teams/pwsh-executor';
 import { handleTenantDiscoveryRun } from './discovery/run';
@@ -182,6 +189,35 @@ async function resolveLivePolicyNames(scoped: ReturnType<typeof tenantDb>, ids: 
   return out;
 }
 
+/**
+ * Batch-fetches what Discovery's live-tenant snapshot (tenant_users) knows
+ * about a set of UPNs, keyed by lowercased UPN, so a deployment only issues
+ * a cmdlet when it would actually change something - see the identical
+ * apps/api/src/modules/deployment/deployment.service.ts helper this mirrors
+ * (kept a separate copy - api and worker don't share a DB-access layer
+ * beyond @tvmf/db's Kysely types), which the preview endpoint uses so an
+ * engineer reviewing "planned changes" sees exactly what a real run would do.
+ */
+async function resolveLiveIdentityState(scoped: ReturnType<typeof tenantDb>, upns: string[]) {
+  const wanted = [...new Set(upns.map((u) => u.toLowerCase()))];
+  const out = new Map<string, LiveIdentityState>();
+  if (wanted.length === 0) return out;
+  const rows = await scoped
+    .selectFrom('tenant_users')
+    .select(['upn', 'enterprise_voice_enabled', 'line_uri', 'policies'])
+    .where('removed_at', 'is', null)
+    .where(sql`lower(upn)`, 'in', wanted)
+    .execute();
+  for (const r of rows) {
+    out.set(r.upn.toLowerCase(), {
+      enterpriseVoiceEnabled: r.enterprise_voice_enabled,
+      lineUri: r.line_uri,
+      policies: (r.policies as Record<string, string | null>) ?? {},
+    });
+  }
+  return out;
+}
+
 async function handleDeploymentRun(job: Job) {
   const { schema, deploymentId, connectionId, mode, scope, operatorUserId, tenantId } = job.data as {
     schema: string;
@@ -267,10 +303,13 @@ async function handleDeploymentRun(job: Job) {
       let q = scoped.selectFrom(table).selectAll().where('site_id', '=', scope.siteId).where('hidden', '=', false);
       if (scope.rowIds?.length) q = q.where('id', 'in', scope.rowIds);
       const rows = await q.execute();
-      const liveNames = await resolveLivePolicyNames(
-        scoped,
-        rows.flatMap((row) => Object.values((row.policy_ids as Record<string, string | null>) ?? {})),
-      );
+      const [liveNames, liveState] = await Promise.all([
+        resolveLivePolicyNames(
+          scoped,
+          rows.flatMap((row) => Object.values((row.policy_ids as Record<string, string | null>) ?? {})),
+        ),
+        resolveLiveIdentityState(scoped, rows.map((row) => row.upn)),
+      ]);
       for (const row of rows) {
         const policyIds = (row.policy_ids as Record<string, string | null>) ?? {};
         const storedPolicies = (row.policies as Record<string, string | null>) ?? {};
@@ -295,6 +334,7 @@ async function handleDeploymentRun(job: Job) {
             voicemail: (row.voicemail as { enabled?: boolean | null; language?: string | null }) ?? null,
           },
           objectType,
+          liveState.get(row.upn.toLowerCase()),
         );
         for (const call of calls) await runCall(call);
       }
@@ -305,20 +345,26 @@ async function handleDeploymentRun(job: Job) {
     let q = scoped.selectFrom('build_resource_accounts').selectAll().where('site_id', '=', scope.siteId);
     if (scope.rowIds?.length) q = q.where('id', 'in', scope.rowIds);
     const rows = await q.execute();
-    const liveNames = await resolveLivePolicyNames(scoped, rows.map((r) => r.voice_routing_policy_id));
+    const [liveNames, liveState] = await Promise.all([
+      resolveLivePolicyNames(scoped, rows.map((r) => r.voice_routing_policy_id)),
+      resolveLiveIdentityState(scoped, rows.map((row) => row.upn)),
+    ]);
     for (const row of rows) {
       const linkedId = row.voice_routing_policy_id;
-      const calls = planResourceAccountRow({
-        id: row.id,
-        upn: row.upn,
-        display_name: row.display_name,
-        kind: row.kind,
-        location_id: row.location_id,
-        phone_number: row.phone_number,
-        number_type: row.number_type,
-        voice_routing_policy: (linkedId && liveNames.get(linkedId)) || row.voice_routing_policy,
-        application_id: row.application_id,
-      });
+      const calls = planResourceAccountRow(
+        {
+          id: row.id,
+          upn: row.upn,
+          display_name: row.display_name,
+          kind: row.kind,
+          location_id: row.location_id,
+          phone_number: row.phone_number,
+          number_type: row.number_type,
+          voice_routing_policy: (linkedId && liveNames.get(linkedId)) || row.voice_routing_policy,
+          application_id: row.application_id,
+        },
+        liveState.get(row.upn.toLowerCase()),
+      );
       for (const call of calls) await runCall(call);
     }
   }

@@ -11,6 +11,7 @@ import {
   type DeploymentSiteRollup,
   type FileRow,
   type GenerateDeploymentDocumentInput,
+  type LiveIdentityState,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
 import type { AuthedUser, TenantContext } from '../../common/request';
@@ -41,6 +42,38 @@ async function resolveLivePolicyNames(scoped: Scoped, ids: (string | null | unde
     .where('removed_at', 'is', null)
     .execute();
   for (const r of rows) out.set(r.id, r.name);
+  return out;
+}
+
+/**
+ * Batch-fetches what Discovery's live-tenant snapshot (tenant_users) knows
+ * about a set of UPNs, keyed by lowercased UPN - the same data
+ * BuildValidationService compares against for Design & Build's amber
+ * "pending change" badge (apps/api/src/modules/build/build-validation.service.ts),
+ * reused here so a deployment only issues a cmdlet when it would actually
+ * change something live. Resource accounts appear in tenant_users too (a
+ * normal Entra/Teams identity under its own UPN), so this covers all three
+ * sheets. Duplicated from apps/worker/src/main.ts's equivalent rather than
+ * shared - api and worker don't share a DB-access layer beyond @tvmf/db's
+ * Kysely types.
+ */
+async function resolveLiveIdentityState(scoped: Scoped, upns: string[]) {
+  const wanted = [...new Set(upns.map((u) => u.toLowerCase()))];
+  const out = new Map<string, LiveIdentityState>();
+  if (wanted.length === 0) return out;
+  const rows = await scoped
+    .selectFrom('tenant_users')
+    .select(['upn', 'enterprise_voice_enabled', 'line_uri', 'policies'])
+    .where('removed_at', 'is', null)
+    .where(sql`lower(upn)`, 'in', wanted)
+    .execute();
+  for (const r of rows) {
+    out.set(r.upn.toLowerCase(), {
+      enterpriseVoiceEnabled: r.enterprise_voice_enabled,
+      lineUri: r.line_uri,
+      policies: (r.policies as Record<string, string | null>) ?? {},
+    });
+  }
   return out;
 }
 
@@ -120,10 +153,13 @@ export class DeploymentService {
         let q = s.selectFrom(table).selectAll().where('site_id', '=', query.siteId).where('hidden', '=', false);
         if (query.rowIds?.length) q = q.where('id', 'in', query.rowIds);
         const rows = await q.execute();
-        const liveNames = await resolveLivePolicyNames(
-          s,
-          rows.flatMap((row) => Object.values((row.policy_ids as Record<string, string | null>) ?? {})),
-        );
+        const [liveNames, liveState] = await Promise.all([
+          resolveLivePolicyNames(
+            s,
+            rows.flatMap((row) => Object.values((row.policy_ids as Record<string, string | null>) ?? {})),
+          ),
+          resolveLiveIdentityState(s, rows.map((row) => row.upn)),
+        ]);
         for (const row of rows) {
           const policyIds = (row.policy_ids as Record<string, string | null>) ?? {};
           const storedPolicies = (row.policies as Record<string, string | null>) ?? {};
@@ -143,6 +179,7 @@ export class DeploymentService {
               voicemail: (row.voicemail as { enabled?: boolean | null; language?: string | null }) ?? null,
             },
             objectType,
+            liveState.get(row.upn.toLowerCase()),
           );
           if (calls.length === 0) continue;
           out.push({ rowId: row.id, objectType, upn: row.upn, calls, renderedCommands: calls.map(renderCommand) });
@@ -154,20 +191,26 @@ export class DeploymentService {
       let q = s.selectFrom('build_resource_accounts').selectAll().where('site_id', '=', query.siteId);
       if (query.rowIds?.length) q = q.where('id', 'in', query.rowIds);
       const rows = await q.execute();
-      const liveNames = await resolveLivePolicyNames(s, rows.map((r) => r.voice_routing_policy_id));
+      const [liveNames, liveState] = await Promise.all([
+        resolveLivePolicyNames(s, rows.map((r) => r.voice_routing_policy_id)),
+        resolveLiveIdentityState(s, rows.map((row) => row.upn)),
+      ]);
       for (const row of rows) {
         const linkedId = row.voice_routing_policy_id;
-        const calls = planResourceAccountRow({
-          id: row.id,
-          upn: row.upn,
-          display_name: row.display_name,
-          kind: row.kind,
-          location_id: row.location_id,
-          phone_number: row.phone_number,
-          number_type: row.number_type,
-          voice_routing_policy: (linkedId && liveNames.get(linkedId)) || row.voice_routing_policy,
-          application_id: row.application_id,
-        });
+        const calls = planResourceAccountRow(
+          {
+            id: row.id,
+            upn: row.upn,
+            display_name: row.display_name,
+            kind: row.kind,
+            location_id: row.location_id,
+            phone_number: row.phone_number,
+            number_type: row.number_type,
+            voice_routing_policy: (linkedId && liveNames.get(linkedId)) || row.voice_routing_policy,
+            application_id: row.application_id,
+          },
+          liveState.get(row.upn.toLowerCase()),
+        );
         if (calls.length === 0) continue;
         out.push({
           rowId: row.id,
