@@ -59,10 +59,17 @@ Mirrors the build sheet, organised **per site** (same shape as Data Collection -
 a rollup page links into a per-site workspace; see `docs/DEPLOYMENT.md`). Every
 row carries a required `site_id` FK -> `discovery_sites.id` and a `discovery_*_id`
 link to the row it was bulk-seeded from ("Populate from Discovery"), so
-re-populating is idempotent.
+re-populating is idempotent. `POST .../build/reset {site_id}` wipes every
+build_users/build_caps/build_resource_accounts row for a site (releasing any
+phone_numbers they held) so it can be Populated from Discovery again from
+scratch - Data Collection and the customer tenant are untouched.
 | Table | Maps to sheet | Selected columns |
 |-------|---------------|------------------|
-| `build_users` | USERS | **site_id**, discovery_user_id, upn (unique per site), did, ext, e164, number_type (`DirectRouting`/`CallingPlan`/`OperatorConnect`/`SharedCalling`), revoke_ev, hold_uri, action, migration_wave, `policies` jsonb (keyed by `PolicyKey` from `@tvmf/shared` - voice_routing_policy/dial_out_policy/shared_calling_policy/dial_plan/calling_policy/call_hold_policy/call_park_policy/caller_id_policy/voice_app_policy/voicemail_policy/emergency_calling_policy/emergency_call_routing_policy/ip_phone_policy), voicemail/call_forwarding/delegates/pickup_group jsonb (schema'd, not yet surfaced in the UI or deployed - next increment), comments, `validation` jsonb (last "Validate" snapshot - live-tenant check results, computed live on every read via `BuildValidationService`), `status` jsonb, `errors` text |
+| `build_users` | USERS | **site_id**, discovery_user_id, upn (unique per site), did, ext, e164, number_type (`DirectRouting`/`CallingPlan`/`OperatorConnect`/`SharedCalling`), revoke_ev, hold_uri, action, migration_wave, `policies` jsonb (keyed by `PolicyKey` from `@tvmf/shared` - voice_routing_policy/dial_out_policy/shared_calling_policy/dial_plan/calling_policy/call_hold_policy/call_park_policy/caller_id_policy/voice_app_policy/voicemail_policy/emergency_calling_policy/emergency_call_routing_policy/ip_phone_policy), voicemail/call_forwarding/delegates/pickup_group jsonb (schema'd, not yet surfaced in the UI or deployed - next increment), comments, `validation` jsonb (last "Validate" snapshot - live-tenant check results, computed live on every read via `BuildValidationService`), `status` jsonb, `errors` text. `GET .../build/users` also joins in
+`discovery_users.requested_number` (read-only - the number the customer asked
+for in Data Collection, via `discovery_user_id`) so the Users tab can flag a
+mismatch against the assigned `e164`, same nudge Data Collection's own Users
+tab shows |
 | `build_caps` | CAPS | as `build_users` (its own discovery_cap_id) plus function, display_name, phone_model, device_config_profile, mac_address, serial_number, phone_location, lan_jack |
 | `build_resource_accounts` | derived | **site_id**, discovery_resource_account_id, upn, display_name, kind (`auto_attendant`/`call_queue`), location_id, phone_number, number_type, voice_routing_policy, `application_id` (set once `New-CsOnlineApplicationInstance` has run and the account is licensed - gates the number/policy phase, see `docs/DEPLOYMENT.md`), status jsonb, errors |
 | `build_auto_attendants` | AUTO ATTENDANTS | name, resource_accounts (jsonb), language, timezone, dial_by_name scope/exclusions, default_call_flow (jsonb), menu_options (jsonb), after_hours (jsonb), holidays (jsonb), voice_app_admins (jsonb) |
