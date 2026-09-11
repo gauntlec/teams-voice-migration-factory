@@ -513,6 +513,8 @@ export type TenantUsersImportInput = z.infer<typeof tenantUsersImportSchema>;
 const policyMap = z.record(z.string(), z.string().nullable()).optional();
 const jsonObj = z.record(z.unknown()).optional();
 const jsonArr = z.array(z.unknown()).optional();
+/** RecordDialog's `type: 'select'` sends '' for an untouched/cleared dropdown - treat as null, not a validation error. */
+const numberType = blankToNull(z.enum(NUMBER_TYPES));
 
 /**
  * Fields writable on a build_users/build_caps row beyond the natural key
@@ -522,7 +524,7 @@ const jsonArr = z.array(z.unknown()).optional();
 const buildIdentityWritable = {
   did: optStr(40),
   ext: optStr(20),
-  number_type: z.enum(NUMBER_TYPES).optional(),
+  number_type: numberType,
   revoke_ev: z.boolean().optional(),
   hold_uri: optStr(120),
   action: optStr(80),
@@ -569,7 +571,7 @@ export type BuildPopulateInput = z.infer<typeof buildPopulateSchema>;
 
 const buildResourceAccountWritable = {
   location_id: optStr(80),
-  number_type: z.enum(NUMBER_TYPES).optional(),
+  number_type: numberType,
   voice_routing_policy: optStr(160),
   /** assign / move / clear this account's number in the same call - null clears it */
   phone_number_id: refId,
@@ -597,7 +599,7 @@ export const buildResourceAccountPatchSchema = z
   .object({
     upn: emailSchema.optional(),
     display_name: optStr(160),
-    kind: z.enum(RESOURCE_ACCOUNT_KINDS).optional(),
+    kind: blankToNull(z.enum(RESOURCE_ACCOUNT_KINDS)),
     ...buildResourceAccountWritable,
   })
   .strict();
