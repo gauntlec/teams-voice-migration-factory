@@ -144,6 +144,7 @@ export class BuildService {
         did: d.requested_number,
         migration_wave: null,
       }),
+      carryNumber: true,
     });
   }
 
@@ -177,6 +178,7 @@ export class BuildService {
         phone_model: d.device_model,
       }),
       skip: (d) => !d.upn, // a CAP row with no UPN yet can't be provisioned in Teams; leave it in Data Collection
+      carryNumber: true,
     });
   }
 
@@ -333,6 +335,17 @@ export class BuildService {
       siteId: string;
       map: (d: Src) => Record<string, unknown>;
       skip?: (d: Src) => boolean;
+      /**
+       * Carry forward whatever number the discovery_users/discovery_caps row
+       * already holds in the shared `phone_numbers` inventory (assigned via
+       * the same picker Data Collection uses - not the free-text
+       * requested_number). The claim transfers to the new build row rather
+       * than being re-claimed, since the number the customer already has
+       * confirmed is legitimately "theirs" the whole way through the
+       * pipeline; it just means it no longer shows as this user's number
+       * back in Data Collection once Design & Build has taken it over.
+       */
+      carryNumber?: boolean;
     },
   ) {
     const s = this.s(t);
@@ -384,9 +397,17 @@ export class BuildService {
         // ("((a, b))"), which Postgres rejects as a conflict target - no
         // surrounding parens here.
         .onConflict((oc) => oc.expression(sql`site_id, lower(upn)`).doNothing())
+        .returning('id')
         .executeTakeFirst();
-      if (Number(res.numInsertedOrUpdatedRows ?? 0) > 0) created += 1;
-      else skipped += 1; // UPN already present under a different (unlinked) row
+      if (res?.id) {
+        created += 1;
+        if (opts.carryNumber) {
+          const carried = await this.transferNumber(t, holderTypeOf(opts.table), d.id, res.id);
+          if (carried) await s.updateTable(opts.table).set({ e164: carried.e164 } as never).where('id', '=', res.id).execute();
+        }
+      } else {
+        skipped += 1; // UPN already present under a different (unlinked) row
+      }
     }
     await this.audit.tenant(t.schema, `build.${opts.objectType}s_populated`, {
       actor: actorOf(u),
@@ -569,6 +590,24 @@ export class BuildService {
       if (!n) throw new NotFoundException('phone number not found');
       throw new ConflictException(n.status === 'reserved' ? 'That number is reserved.' : 'That number is already assigned.');
     }
+  }
+
+  /**
+   * Moves a phone_numbers row's holder from `fromId` to `toId` (same
+   * holder_type: 'user' means both a discovery_users.id and a build_users.id
+   * are valid holders of the same shared inventory - see Populate from
+   * Discovery). Not a claim: doesn't check availability, since the number is
+   * already legitimately held by `fromId`. No-op (returns null) if `fromId`
+   * doesn't currently hold a number.
+   */
+  private async transferNumber(t: TenantContext, holderType: NumberHolderType, fromId: string, toId: string) {
+    return this.s(t)
+      .updateTable('phone_numbers')
+      .set({ holder_id: toId })
+      .where('holder_type', '=', holderType)
+      .where('holder_id', '=', fromId)
+      .returningAll()
+      .executeTakeFirst();
   }
 
   private async releaseHolder(t: TenantContext, holderType: NumberHolderType, holderId: string) {
