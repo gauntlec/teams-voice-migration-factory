@@ -88,10 +88,40 @@ export class BuildService {
   /* ============================== users ============================== */
 
   async listUsers(t: TenantContext, q: BuildListQuery) {
-    return this.listIdentity(t, 'build_users', q);
+    const page = await this.listIdentity(t, 'build_users', q);
+    const requested = await this.requestedNumbersFor(t, page.items.map((r) => r.discovery_user_id));
+    page.items = page.items.map((r) => ({
+      ...r,
+      requested_number: (r.discovery_user_id && requested.get(r.discovery_user_id)) ?? null,
+    }));
+    return page;
   }
   async getUser(t: TenantContext, id: string) {
-    return this.getIdentity(t, 'build_users', id);
+    const row = await this.getIdentity(t, 'build_users', id);
+    const requested = await this.requestedNumbersFor(t, [row.discovery_user_id]);
+    return {
+      ...row,
+      requested_number: (row.discovery_user_id && requested.get(row.discovery_user_id)) ?? null,
+    };
+  }
+
+  /**
+   * The number the customer asked for in Data Collection (discovery_users.requested_number),
+   * read-only here for reconciliation - the same free-text field, the same
+   * "doesn't match what's assigned" nudge Data Collection itself shows
+   * (SiteWorkspace.tsx), not auto-assigned. Batched: one query per call.
+   */
+  private async requestedNumbersFor(t: TenantContext, discoveryUserIds: (string | null)[]) {
+    const ids = [...new Set(discoveryUserIds.filter((id): id is string => !!id))];
+    const out = new Map<string, string | null>();
+    if (ids.length === 0) return out;
+    const rows = await this.s(t)
+      .selectFrom('discovery_users')
+      .select(['id', 'requested_number'])
+      .where('id', 'in', ids)
+      .execute();
+    for (const r of rows) out.set(r.id, r.requested_number);
+    return out;
   }
   async createUser(t: TenantContext, u: AuthedUser, body: BuildIdentityCreateInput) {
     return this.createIdentity(t, u, 'build_users', 'user', body);
@@ -595,6 +625,56 @@ export class BuildService {
       detail: { rows: rows.length, issues },
     });
     return { rows: rows.length, issues };
+  }
+
+  /* ============================== reset ============================== */
+
+  /**
+   * Wipe every build_users/build_caps/build_resource_accounts row for a site
+   * so Populate from Discovery can start fresh. Releases any phone_numbers
+   * those rows held back to 'available' first - this never touches the
+   * customer tenant itself, only Voxshift's own draft configuration, and
+   * discovery_users/discovery_caps in Data Collection (the source data) are
+   * untouched, so re-populating recovers everything.
+   */
+  async resetSite(t: TenantContext, u: AuthedUser, siteId: string) {
+    const s = this.s(t);
+    const [users, caps, ras] = await Promise.all([
+      s.selectFrom('build_users').select('id').where('site_id', '=', siteId).execute(),
+      s.selectFrom('build_caps').select('id').where('site_id', '=', siteId).execute(),
+      s.selectFrom('build_resource_accounts').select('id').where('site_id', '=', siteId).execute(),
+    ]);
+    const releaseAll = async (holderType: NumberHolderType, ids: string[]) => {
+      if (ids.length === 0) return;
+      await s
+        .updateTable('phone_numbers')
+        .set({ holder_type: null, holder_id: null, status: 'available' })
+        .where('holder_type', '=', holderType)
+        .where(
+          'holder_id',
+          'in',
+          ids as never,
+        )
+        .execute();
+    };
+    await Promise.all([
+      releaseAll('user', users.map((r) => r.id)),
+      releaseAll('cap', caps.map((r) => r.id)),
+      releaseAll('resource_account', ras.map((r) => r.id)),
+    ]);
+    await Promise.all([
+      s.deleteFrom('build_users').where('site_id', '=', siteId).execute(),
+      s.deleteFrom('build_caps').where('site_id', '=', siteId).execute(),
+      s.deleteFrom('build_resource_accounts').where('site_id', '=', siteId).execute(),
+    ]);
+    const counts = { users: users.length, caps: caps.length, resourceAccounts: ras.length };
+    await this.audit.tenant(t.schema, 'build.site_reset', {
+      actor: actorOf(u),
+      targetType: 'discovery_site',
+      targetId: siteId,
+      detail: counts,
+    });
+    return counts;
   }
 }
 

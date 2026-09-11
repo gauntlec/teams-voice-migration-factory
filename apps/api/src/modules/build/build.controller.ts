@@ -192,4 +192,19 @@ export class BuildController {
   ) {
     return this.svc.validateSite(t, user, body.site_id);
   }
+
+  /**
+   * Wipe every Users/CAPs/Resource accounts row for a site so it can be
+   * Populated from Discovery again from scratch. Doesn't touch Data
+   * Collection or the customer tenant - only this site's build_* rows.
+   */
+  @Post('reset')
+  @RequirePermission('build:write')
+  resetSite(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(buildPopulateSchema)) body: BuildPopulateInput,
+  ) {
+    return this.svc.resetSite(t, user, body.site_id);
+  }
 }

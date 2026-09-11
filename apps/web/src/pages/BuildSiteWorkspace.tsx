@@ -5,10 +5,18 @@ import {
   Badge,
   Button,
   Card,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
+  DialogTrigger,
   Spinner,
   Tab,
   TabList,
   Text,
+  tokens,
 } from '@fluentui/react-components';
 import { ArrowLeftRegular, CheckmarkCircleRegular, WarningRegular } from '@fluentui/react-icons';
 import {
@@ -33,6 +41,9 @@ import {
   type FieldDef,
   type Row,
 } from '../components/records';
+
+/** Last 10 significant digits, for loose number matching (same rule Data Collection uses). */
+const numKey = (v: string | null | undefined): string => String(v ?? '').replace(/\D/g, '').slice(-10);
 
 /** Small live-vs-target badge - the replacement for the workbook's `G-*` columns. */
 function ValidationBadge({ v }: { v: BuildRowValidation | null }) {
@@ -102,7 +113,14 @@ export function BuildSiteWorkspace() {
       row && row.phone_number_id
         ? [{ value: String(row.phone_number_id), label: `${row.e164 ?? row.phone_number} (current)` }]
         : [];
-    return [...cur, ...availableChoices];
+    // Users only: flag the choice that matches what the customer asked for
+    // in Data Collection (discovery_users.requested_number), so it's easy to
+    // spot and pick - never auto-selected.
+    const requested = row?.requested_number ? String(row.requested_number) : null;
+    const rest = availableChoices.map((c) =>
+      requested && numKey(c.label) === numKey(requested) ? { ...c, label: `${c.label} (requested)` } : c,
+    );
+    return [...cur, ...rest];
   };
 
   // Every target policy is a live-tenant-name picker, not free text - sourced
@@ -160,6 +178,24 @@ export function BuildSiteWorkspace() {
     onError: (e) => setValidateMsg(e instanceof ApiError ? e.message : 'Validation failed'),
   });
 
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
+  const reset = useMutation({
+    mutationFn: () =>
+      api<{ users: number; caps: number; resourceAccounts: number }>(`${base}/reset`, {
+        method: 'POST',
+        body: JSON.stringify({ site_id: siteId }),
+      }),
+    onSuccess: () => {
+      setResetOpen(false);
+      qc.invalidateQueries({ queryKey: ['users', tid, siteId] });
+      qc.invalidateQueries({ queryKey: ['caps', tid, siteId] });
+      qc.invalidateQueries({ queryKey: ['resource-accounts', tid, siteId] });
+      qc.invalidateQueries({ queryKey: ['build-summary', tid] });
+    },
+    onError: (e) => setResetError(e instanceof ApiError ? e.message : 'Reset failed'),
+  });
+
   if (!tid) return <NoTenant />;
   if (rollup.isLoading) return <Spinner label="Loading site…" />;
   if (rollup.isError) return <LoadError message={(rollup.error as Error).message} />;
@@ -206,7 +242,52 @@ export function BuildSiteWorkspace() {
             {validateMsg}
           </Text>
         )}
+        {canWrite && (site.counts.users + site.counts.caps + site.counts.resourceAccounts) > 0 && (
+          <Button
+            size="small"
+            appearance="subtle"
+            onClick={() => {
+              setResetError(null);
+              setResetOpen(true);
+            }}
+          >
+            Reset site…
+          </Button>
+        )}
       </div>
+
+      <Dialog open={resetOpen} onOpenChange={(_, d) => setResetOpen(d.open)}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>Reset {site.name || site.sitecode}?</DialogTitle>
+            <DialogContent>
+              <Text block>
+                This deletes all {site.counts.users} user{site.counts.users === 1 ? '' : 's'},{' '}
+                {site.counts.caps} common area phone{site.counts.caps === 1 ? '' : 's'} and{' '}
+                {site.counts.resourceAccounts} resource account{site.counts.resourceAccounts === 1 ? '' : 's'}{' '}
+                designed for this site, and releases any numbers they hold back to the inventory.
+                Data Collection is not affected - you can Populate from Discovery again afterwards.
+              </Text>
+              <Text block weight="semibold" style={{ marginTop: 8 }}>
+                This cannot be undone.
+              </Text>
+              {resetError && (
+                <Text block style={{ marginTop: 8, color: tokens.colorPaletteRedForeground1 }}>
+                  {resetError}
+                </Text>
+              )}
+            </DialogContent>
+            <DialogActions>
+              <DialogTrigger disableButtonEnhancement>
+                <Button appearance="secondary">Cancel</Button>
+              </DialogTrigger>
+              <Button appearance="primary" disabled={reset.isPending} onClick={() => reset.mutate()}>
+                {reset.isPending ? 'Resetting…' : 'Reset site'}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
 
       <TabList selectedValue={tab} onTabSelect={(_, d) => setTab(d.value as typeof tab)}>
         <Tab value="users">Users</Tab>
@@ -234,6 +315,28 @@ export function BuildSiteWorkspace() {
             { key: 'upn', label: 'UPN' },
             { key: 'e164', label: 'Number' },
             { key: 'number_type', label: 'Type' },
+            {
+              key: 'requested_number',
+              label: 'Requested',
+              render: (r) => {
+                const requested = (r.requested_number as string | null) ?? null;
+                if (!requested) return '—';
+                const mismatch = numKey(requested) !== numKey((r.e164 as string | null) ?? '');
+                return mismatch ? (
+                  <Badge
+                    appearance="tint"
+                    color="warning"
+                    size="small"
+                    icon={<WarningRegular />}
+                    title="What the customer asked for in Data Collection doesn't match the number assigned here - pick it from the phone number field to reconcile."
+                  >
+                    {requested}
+                  </Badge>
+                ) : (
+                  requested
+                );
+              },
+            },
             {
               key: 'voice_routing_policy',
               label: 'Voice routing policy',
