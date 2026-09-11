@@ -235,6 +235,7 @@ export const FEATURE_PRIORITY_LABELS: Record<FeaturePriority, string> = {
 /** Which part of the product a request is about — used as a filter/label. */
 export const FEATURE_AREAS = [
   'Data Collection',
+  'Discovery',
   'Design & Build',
   'Deployment',
   'Service Handover',

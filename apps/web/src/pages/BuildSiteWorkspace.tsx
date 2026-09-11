@@ -38,6 +38,7 @@ import {
   PagedSection,
   useRecordStyles,
   type Choice,
+  type ColumnDef,
   type FieldDef,
   type Row,
 } from '../components/records';
@@ -363,11 +364,7 @@ export function BuildSiteWorkspace() {
               label: 'Data Collection',
               render: (r) => <RequestedCell r={r} />,
             },
-            {
-              key: 'voice_routing_policy',
-              label: 'Voice routing policy',
-              render: (r) => ((r.policies as Record<string, string>)?.voice_routing_policy ?? '—'),
-            },
+            ...policyColumns(),
             {
               key: 'voicemail_target',
               label: 'Voicemail',
@@ -413,6 +410,7 @@ export function BuildSiteWorkspace() {
                 return callerId ? <Text size={200}>Caller ID: {CALLER_ID_LABEL[callerId] ?? callerId}</Text> : '—';
               },
             },
+            ...policyColumns(),
             { key: 'validation', label: 'Validation', render: (r) => <ValidationBadge v={r.validation as BuildRowValidation | null} /> },
           ]}
           fields={[
@@ -494,6 +492,15 @@ export function BuildSiteWorkspace() {
       )}
     </Page>
   );
+}
+
+/** One grid column per POLICY_KINDS entry, reading the same `policies` jsonb the edit dialog writes to. */
+function policyColumns(): ColumnDef[] {
+  return POLICY_KINDS.map((k) => ({
+    key: `policies.${k.key}`,
+    label: k.label,
+    render: (r: Row) => (r.policies as Record<string, string>)?.[k.key] ?? '—',
+  }));
 }
 
 function identityFields(policyFields: FieldDef[], numberChoicesFor: (row: Row | null) => Choice[]): FieldDef[] {
