@@ -24,6 +24,8 @@ export interface TenantContext {
    * Set by TenantGuard; enforced by the Data Collection services.
    */
   siteScope: string[] | null;
+  /** true -> no write cmdlet may ever reach this customer's live Microsoft Teams tenant - see docs/SECURITY.md. */
+  teamsReadOnly: boolean;
 }
 
 export interface AppRequest extends Request {

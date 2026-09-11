@@ -28,6 +28,12 @@ Every cmdlet - dry-run or executed - gets one `deployment_changes` row
 (append-only, `docs/SECURITY.md`), so the change history is identical either
 way; only whether it actually reached the tenant differs.
 
+A customer flagged **Teams read-only** (`platform.tenants.teams_read_only`,
+`docs/SECURITY.md` "Per-customer read-only safeguard") overrides `execute`
+the same way the resource-account `deferred` gate below overrides both
+modes: every cmdlet is forced to `whatif` before it reaches the executor,
+regardless of what mode was requested or who requested it.
+
 ## Users & Common Area Phones
 
 Planned by `apps/worker/src/planner.ts` `planIdentityRow` (users and CAPs plan

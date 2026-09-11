@@ -4,6 +4,7 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   Dialog,
   DialogActions,
   DialogBody,
@@ -35,6 +36,7 @@ interface Tenant {
   slug: string;
   primary_domain: string | null;
   status: string;
+  teams_read_only: boolean;
   created_at: string;
 }
 interface Member {
@@ -58,13 +60,18 @@ interface PlatformUser {
 
 export function AdminTenants() {
   const qc = useQueryClient();
-  const { refreshMe, setActiveTenant } = useAuth();
+  const { refreshMe, setActiveTenant, can } = useAuth();
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [domain, setDomain] = useState('');
   const [err, setErr] = useState<string | null>(null);
 
   const list = useQuery({ queryKey: ['tenants'], queryFn: () => api<Tenant[]>('/tenants') });
+  const setReadOnly = useMutation({
+    mutationFn: ({ id, teamsReadOnly }: { id: string; teamsReadOnly: boolean }) =>
+      api(`/tenants/${id}`, { method: 'PATCH', body: JSON.stringify({ teamsReadOnly }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tenants'] }),
+  });
   const create = useMutation({
     mutationFn: () =>
       api<Tenant>('/tenants', {
@@ -121,13 +128,14 @@ export function AdminTenants() {
         ) : list.isError ? (
           <LoadError message={(list.error as Error).message} />
         ) : (
-          <DataTable size="small" minWidth={640}>
+          <DataTable size="small" minWidth={780}>
             <TableHeader>
               <TableRow>
                 <TableHeaderCell>Name</TableHeaderCell>
                 <TableHeaderCell>Slug</TableHeaderCell>
                 <TableHeaderCell>Domain</TableHeaderCell>
                 <TableHeaderCell>Status</TableHeaderCell>
+                <TableHeaderCell>Teams read-only</TableHeaderCell>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -137,11 +145,32 @@ export function AdminTenants() {
                   <TableCell>{t.slug}</TableCell>
                   <TableCell>{t.primary_domain ?? '—'}</TableCell>
                   <TableCell>{t.status}</TableCell>
+                  <TableCell>
+                    {can('tenant:update') ? (
+                      <Checkbox
+                        checked={t.teams_read_only}
+                        disabled={setReadOnly.isPending}
+                        label={t.teams_read_only ? 'On' : 'Off'}
+                        onChange={(_, d) => setReadOnly.mutate({ id: t.id, teamsReadOnly: !!d.checked })}
+                      />
+                    ) : t.teams_read_only ? (
+                      <Badge appearance="tint" color="warning">
+                        Read-only
+                      </Badge>
+                    ) : (
+                      '—'
+                    )}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </DataTable>
         )}
+        <Text size={200} style={{ color: '#616161' }}>
+          When Teams read-only is on, the platform can never send a write cmdlet to that customer's
+          live Microsoft Teams tenant - every deployment run is forced to dry-run, no matter what
+          mode is requested. Discovery and validation (read-only) are unaffected.
+        </Text>
       </Card>
 
       {list.data && list.data.length > 0 && <CustomerMembers tenants={list.data} />}

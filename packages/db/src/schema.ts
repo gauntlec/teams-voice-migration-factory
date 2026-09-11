@@ -13,6 +13,8 @@ export interface TenantsTable {
   schema_name: string;
   primary_domain: string | null;
   status: ColumnType<'active' | 'archived', 'active' | 'archived' | undefined, 'active' | 'archived'>;
+  /** When true, the platform must never send a write cmdlet to this customer's live Microsoft Teams tenant - see 0006_tenant_teams_read_only.sql. */
+  teams_read_only: ColumnType<boolean, boolean | undefined, boolean>;
   created_by: string | null;
   created_at: Ts;
 }

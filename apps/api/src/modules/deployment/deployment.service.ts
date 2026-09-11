@@ -79,6 +79,14 @@ export class DeploymentService {
     if (input.mode === 'execute' && !can('deployment:execute')) {
       throw new ForbiddenException('Missing permission: deployment:execute');
     }
+    // A tenant property, not a role property - even a Super Admin with
+    // deployment:execute must be blocked here. Re-checked independently in
+    // the worker right before the cmdlet actually goes out - see docs/SECURITY.md.
+    if (input.mode === 'execute' && t.teamsReadOnly) {
+      throw new ForbiddenException(
+        'This customer tenant is set to read-only - live changes are disabled. Run a dry run, or ask a Super Admin to turn off read-only mode first.',
+      );
+    }
     const conn = await this.getConnection(t, input.connectionId);
     if (conn.started_by !== user.id && user.role !== 'SUPER_ADMIN') {
       throw new ForbiddenException(

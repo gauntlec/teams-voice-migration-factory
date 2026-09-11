@@ -26,6 +26,10 @@ const useStyles = makeStyles({
   mono: { fontFamily: 'ui-monospace, monospace' },
 });
 
+interface TenantRow {
+  id: string;
+  teams_read_only: boolean;
+}
 interface Connection {
   id: string;
   status: string;
@@ -55,6 +59,9 @@ export function Deployment() {
   const { activeTenantId, can } = useAuth();
   const qc = useQueryClient();
   const [selected, setSelected] = useState<string | null>(null);
+
+  const tenants = useQuery({ queryKey: ['tenants'], queryFn: () => api<TenantRow[]>('/tenants') });
+  const teamsReadOnly = tenants.data?.find((t) => t.id === activeTenantId)?.teams_read_only ?? false;
 
   const connections = useQuery({
     queryKey: ['connections', activeTenantId],
@@ -160,7 +167,14 @@ export function Deployment() {
 
       <Card>
         <div className={s.row} style={{ justifyContent: 'space-between' }}>
-          <Text weight="semibold">Deployments</Text>
+          <div className={s.row}>
+            <Text weight="semibold">Deployments</Text>
+            {teamsReadOnly && (
+              <Badge appearance="tint" color="warning" title="Live changes are disabled for this customer - every run is forced to dry-run.">
+                Read-only tenant
+              </Badge>
+            )}
+          </div>
           <div className={s.row}>
             <Button
               disabled={!activeConn || run.isPending || !can('deployment:dryrun')}
@@ -170,7 +184,8 @@ export function Deployment() {
             </Button>
             <Button
               appearance="primary"
-              disabled={!activeConn || run.isPending || !can('deployment:execute')}
+              disabled={!activeConn || run.isPending || !can('deployment:execute') || teamsReadOnly}
+              title={teamsReadOnly ? 'This customer tenant is read-only - live changes are disabled.' : undefined}
               onClick={() => run.mutate('execute')}
             >
               Execute

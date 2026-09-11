@@ -95,3 +95,18 @@
   engineer only their own live session; a `SUPER_ADMIN` sees every engineer's
   and picks which one a sync runs on. A `SUPER_ADMIN` running on another
   engineer's session is written to both audit logs (`sessionOwnerId`, `ranAs`).
+- **Per-customer read-only safeguard.** `platform.tenants.teams_read_only`
+  (SUPER_ADMIN-only, `tenant:update`, toggled from the admin Customers page)
+  guarantees no write cmdlet (`Set-Cs*`/`Grant-Cs*`/`New-Cs*`/`Remove-Cs*`)
+  ever reaches that customer's live Microsoft Teams tenant, regardless of
+  deployment mode or the operator's `deployment:execute` permission. This is
+  a tenant property, not a role property: a `SUPER_ADMIN` requesting
+  `execute` on a read-only tenant is refused the same as anyone else.
+  Enforced twice: `DeploymentService.createDeployment` refuses to even queue
+  an `execute` deployment (fast 403); and independently, `handleDeploymentRun`
+  re-reads the flag from `platform.tenants` fresh at run time (never trusts
+  the queued job payload) and forces every cmdlet to `whatif` before it
+  reaches `exec.invoke()` - the single call site in the codebase capable of
+  writing to a customer tenant. Discovery and live-vs-target validation are
+  unaffected; they only ever call the separate read-only `exec.query()`
+  method, which this flag does not touch.

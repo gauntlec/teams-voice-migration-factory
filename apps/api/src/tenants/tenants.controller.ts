@@ -3,7 +3,9 @@ import {
   addMembershipSchema,
   createTenantSchema,
   updateMembershipSchema,
+  updateTenantSchema,
   type CreateTenantInput,
+  type UpdateTenantInput,
 } from '@tvmf/shared';
 import { CurrentUser } from '../auth/auth.decorators';
 import type { AuthedUser } from '../common/request';
@@ -32,6 +34,16 @@ export class TenantsController {
     @CurrentUser() user: AuthedUser,
   ) {
     return this.tenants.create(body, { id: user.id, email: user.email });
+  }
+
+  @Patch(':tenantId')
+  @RequirePermission('tenant:update')
+  update(
+    @Param('tenantId') tenantId: string,
+    @Body(new ZodBody(updateTenantSchema)) body: UpdateTenantInput,
+    @CurrentUser() user: AuthedUser,
+  ) {
+    return this.tenants.setTeamsReadOnly(tenantId, body.teamsReadOnly, this.actor(user));
   }
 
   @Get(':tenantId/sites')

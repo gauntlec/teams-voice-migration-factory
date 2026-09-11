@@ -75,6 +75,10 @@ export const createTenantSchema = z.object({
 });
 export type CreateTenantInput = z.infer<typeof createTenantSchema>;
 
+/** Toggles the per-customer safeguard that blocks all writes to the customer's live Microsoft Teams tenant - see docs/SECURITY.md. */
+export const updateTenantSchema = z.object({ teamsReadOnly: z.boolean() }).strict();
+export type UpdateTenantInput = z.infer<typeof updateTenantSchema>;
+
 export const addMembershipSchema = z.object({
   userId: z.string().uuid(),
   /** Limit a CUSTOMER member to these site ids; omit / empty = whole customer. */

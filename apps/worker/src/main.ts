@@ -188,17 +188,28 @@ async function resolveLivePolicyNames(scoped: ReturnType<typeof tenantDb>, ids: 
 }
 
 async function handleDeploymentRun(job: Job) {
-  const { schema, deploymentId, connectionId, mode, scope, operatorUserId } = job.data as {
+  const { schema, deploymentId, connectionId, mode, scope, operatorUserId, tenantId } = job.data as {
     schema: string;
     deploymentId: string;
     connectionId: string;
     mode: 'dry_run' | 'execute';
     scope: { siteId: string; sheets: string[]; rowIds?: string[] };
     operatorUserId: string;
+    tenantId: string;
   };
   const scoped = tenantDb(db, schema);
   const exec = executors.get(connectionId) ?? new SimulatedTeamsExecutor();
   if (!executors.has(connectionId)) await exec.awaitSignIn(); // scaffold fallback
+
+  // Re-checked fresh here rather than trusted from the queued job payload,
+  // so toggling this off/on always takes effect on the next cmdlet, even
+  // for a run already in flight. See docs/SECURITY.md.
+  const tenantRow = await platformDb(db)
+    .selectFrom('tenants')
+    .select('teams_read_only')
+    .where('id', '=', tenantId)
+    .executeTakeFirst();
+  const teamsReadOnly = tenantRow?.teams_read_only ?? false;
 
   await scoped
     .updateTable('deployments')
@@ -243,6 +254,10 @@ async function handleDeploymentRun(job: Job) {
   const runCall = async (call: CmdletInvocation) => {
     if (call.deferred) {
       await record(call, { result: 'whatif', before: {}, after: {}, message: 'Deferred - needs manual licensing before rerunning.' });
+      return;
+    }
+    if (teamsReadOnly) {
+      await record(call, { result: 'whatif', before: {}, after: {}, message: 'Tenant is read-only - cmdlet not sent to Microsoft Teams.' });
       return;
     }
     await record(call, await exec.invoke(call, { whatIf }));

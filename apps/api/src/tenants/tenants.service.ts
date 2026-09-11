@@ -24,7 +24,7 @@ export class TenantsService {
   async list(user: { id: string; role: Role }) {
     const q = platformDb(this.db)
       .selectFrom('tenants')
-      .select(['id', 'slug', 'name', 'primary_domain', 'status', 'created_at'])
+      .select(['id', 'slug', 'name', 'primary_domain', 'status', 'teams_read_only', 'created_at'])
       .orderBy('name');
     if (user.role === 'SUPER_ADMIN') return q.execute();
     return q
@@ -71,6 +71,29 @@ export class TenantsService {
       targetId: id,
       tenantId: id,
       detail: { slug: input.slug, schema },
+    });
+    return tenant;
+  }
+
+  /**
+   * Toggles the per-customer safeguard that blocks every write cmdlet to
+   * this customer's live Microsoft Teams tenant - see docs/SECURITY.md.
+   * SUPER_ADMIN only (tenant:update, packages/shared/src/rbac.ts).
+   */
+  async setTeamsReadOnly(tenantId: string, teamsReadOnly: boolean, actor: AuditActor) {
+    await this.getTenantOrThrow(tenantId);
+    const tenant = await platformDb(this.db)
+      .updateTable('tenants')
+      .set({ teams_read_only: teamsReadOnly })
+      .where('id', '=', tenantId)
+      .returning(['id', 'slug', 'name', 'primary_domain', 'status', 'teams_read_only', 'created_at'])
+      .executeTakeFirstOrThrow();
+    await this.audit.platform('tenant.teams_read_only_changed', {
+      actor,
+      targetType: 'tenant',
+      targetId: tenantId,
+      tenantId,
+      detail: { teamsReadOnly },
     });
     return tenant;
   }
