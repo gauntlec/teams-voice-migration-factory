@@ -331,7 +331,7 @@ export class BuildService {
         skipped += 1;
         continue;
       }
-      await s
+      const res = await s
         .insertInto(opts.table)
         .values({
           site_id: opts.siteId,
@@ -345,9 +345,13 @@ export class BuildService {
           status: {},
           ...mapped,
         } as never)
-        .onConflict((oc) => oc.columns(['site_id', sql`lower(upn)`] as never).doNothing())
+        // idx_build_users_site_upn / idx_build_caps_site_upn are expression
+        // indexes (site_id, lower(upn)) - .columns() only handles plain
+        // columns, .expression() is the Kysely API for expression indexes.
+        .onConflict((oc) => oc.expression(sql`(site_id, lower(upn))`).doNothing())
         .executeTakeFirst();
-      created += 1;
+      if (Number(res.numInsertedOrUpdatedRows ?? 0) > 0) created += 1;
+      else skipped += 1; // UPN already present under a different (unlinked) row
     }
     await this.audit.tenant(t.schema, `build.${opts.objectType}s_populated`, {
       actor: actorOf(u),
