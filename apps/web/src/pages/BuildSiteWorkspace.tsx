@@ -46,49 +46,6 @@ import {
 /** Last 10 significant digits, for loose number matching (same rule Data Collection uses). */
 const numKey = (v: string | null | undefined): string => String(v ?? '').replace(/\D/g, '').slice(-10);
 
-const CALLER_ID_LABEL: Record<string, string> = { user: "user's own number", anonymous: 'anonymous', main_number: 'main number' };
-
-/**
- * What the customer told us in Data Collection for this user (read-only -
- * see BuildService.discoveryUserContextFor). The number gets imported into
- * the row automatically (a mismatch here means it was changed after
- * Populate); caller ID and voicemail don't have a direct target field to
- * auto-fill (there's no customer-value -> Teams-policy-name mapping), so
- * they're just shown for the engineer to act on manually.
- */
-function RequestedCell({ r }: { r: Row }) {
-  const requestedNumber = (r.requested_number as string | null) ?? null;
-  const callerId = (r.requested_caller_id as string | null) ?? null;
-  const voicemailOn = r.requested_voicemail_enabled as boolean | null;
-  const voicemailLang = (r.requested_voicemail_language as string | null) ?? null;
-  if (!requestedNumber && !callerId && voicemailOn == null) return '—';
-
-  const notes = [
-    callerId ? `Caller ID: ${CALLER_ID_LABEL[callerId] ?? callerId}` : null,
-    voicemailOn == null ? null : voicemailOn ? `Voicemail on${voicemailLang ? ` (${voicemailLang})` : ''}` : 'Voicemail off',
-  ].filter(Boolean);
-  const title = notes.length ? notes.join(' · ') : undefined;
-
-  if (!requestedNumber) return <Text size={200}>{notes.length ? notes.join(' · ') : '—'}</Text>;
-  const mismatch = numKey(requestedNumber) !== numKey((r.e164 as string | null) ?? '');
-  return mismatch ? (
-    <Badge
-      appearance="tint"
-      color="warning"
-      size="small"
-      icon={<WarningRegular />}
-      title={[
-        "Doesn't match the number assigned here - pick it from the phone number field to reconcile.",
-        ...notes,
-      ].join('\n')}
-    >
-      {requestedNumber}
-    </Badge>
-  ) : (
-    <span title={title}>{requestedNumber}</span>
-  );
-}
-
 /** Small live-vs-target badge - the replacement for the workbook's `G-*` columns. */
 function ValidationBadge({ v }: { v: BuildRowValidation | null }) {
   if (!v) return <>—</>;
@@ -359,11 +316,6 @@ export function BuildSiteWorkspace() {
             { key: 'upn', label: 'UPN' },
             { key: 'e164', label: 'Number' },
             { key: 'number_type', label: 'Type' },
-            {
-              key: 'requested_number',
-              label: 'Data Collection',
-              render: (r) => <RequestedCell r={r} />,
-            },
             ...policyColumns(),
             {
               key: 'voicemail_target',
@@ -402,14 +354,6 @@ export function BuildSiteWorkspace() {
             { key: 'display_name', label: 'Name' },
             { key: 'e164', label: 'Number' },
             { key: 'phone_model', label: 'Model' },
-            {
-              key: 'requested_caller_id',
-              label: 'Data Collection',
-              render: (r) => {
-                const callerId = (r.requested_caller_id as string | null) ?? null;
-                return callerId ? <Text size={200}>Caller ID: {CALLER_ID_LABEL[callerId] ?? callerId}</Text> : '—';
-              },
-            },
             ...policyColumns(),
             { key: 'validation', label: 'Validation', render: (r) => <ValidationBadge v={r.validation as BuildRowValidation | null} /> },
           ]}
@@ -513,8 +457,7 @@ function identityFields(policyFields: FieldDef[], numberChoicesFor: (row: Row | 
     { key: 'migration_wave', label: 'Migration wave' },
     // The actual Set-CsOnlineVoicemailUserSettings target - separate from
     // voicemail_policy below (a policy grant, a different setting). Populate
-    // prefills this from Data Collection; it deploys from here, not from the
-    // read-only "Data Collection" column.
+    // prefills this from Data Collection; it deploys from here.
     { key: 'voicemail.enabled', label: 'Voicemail enabled', type: 'boolean' },
     { key: 'voicemail.language', label: 'Voicemail language', placeholder: 'English' },
     ...policyFields,
