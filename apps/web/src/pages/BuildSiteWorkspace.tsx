@@ -484,7 +484,26 @@ function policyColumns(): ColumnDef[] {
   return POLICY_KINDS.map((k) => ({
     key: `policies.${k.key}`,
     label: k.label,
-    render: (r: Row) => (r.policies as Record<string, string>)?.[k.key] ?? '—',
+    render: (r: Row) => {
+      const target = (r.policies as Record<string, string>)?.[k.key];
+      if (!target) return '—';
+      // Blank targets get backfilled from live on Validate (BuildService.backfillPolicyTargets)
+      // as a starting point; once the target diverges from live - by that
+      // backfill matching nothing, or the engineer picking something else -
+      // policyMismatches flags it, so it's obvious which accounts have a
+      // real pending change before deploying.
+      const v = r.validation as BuildRowValidation | null;
+      const mismatch = v?.policyMismatches.find((p) => p.key === k.key);
+      if (!mismatch) return target;
+      return (
+        <span
+          title={`Live: ${mismatch.live ?? '(none)'} → will change to "${target}" on deploy`}
+          style={{ color: tokens.colorPaletteMarigoldForeground1, fontWeight: tokens.fontWeightSemibold }}
+        >
+          {target}
+        </span>
+      );
+    },
   }));
 }
 

@@ -3,6 +3,7 @@ import { sql, type Kysely } from 'kysely';
 import { tenantDb, type DB } from '@tvmf/db';
 import {
   POLICY_KIND_TO_TENANT_TYPE,
+  POLICY_KINDS,
   RESOURCE_ACCOUNT_APPLICATION_IDS,
   type BuildCapCreateInput,
   type BuildCapPatchInput,
@@ -749,6 +750,85 @@ export class BuildService {
     return { policy_ids, policies };
   }
 
+  /**
+   * For any row whose target policy is still blank, fills it from the
+   * tenant's current live assignment (tenant_users.policies, kept fresh by
+   * Discovery or the targeted live check) - a starting point for design,
+   * not a standing sync. Never touches a key that already has a target -
+   * that's a real design decision, even if it now differs from live (see
+   * BuildRowValidation.policyMismatches, which is how that divergence gets
+   * surfaced instead - see BuildSiteWorkspace.tsx). Resolves each live name
+   * to a real tenant_policies.id where possible, the same "link to actual
+   * objects" principle as resolvePolicyIds above - a name that doesn't
+   * resolve (tenant renamed it since, or a very unlikely race) still
+   * backfills the display name without a policy_ids link, same graceful
+   * degradation used elsewhere.
+   */
+  private async backfillPolicyTargets(
+    t: TenantContext,
+    rows: { id: string; upn: string; policies: Record<string, string | null> | null; policy_ids: Record<string, string | null> | null }[],
+  ): Promise<Map<string, { policies: Record<string, string | null>; policy_ids: Record<string, string | null> }>> {
+    const out = new Map<string, { policies: Record<string, string | null>; policy_ids: Record<string, string | null> }>();
+    const upns = [...new Set(rows.map((r) => r.upn.toLowerCase()))];
+    if (!upns.length) return out;
+    const live = await this.s(t)
+      .selectFrom('tenant_users')
+      .select(['upn', 'policies'])
+      .where(sql`lower(upn)`, 'in', upns)
+      .where('removed_at', 'is', null)
+      .execute();
+    const liveByUpn = new Map(live.map((r) => [r.upn.toLowerCase(), r.policies as Record<string, string | null> | null]));
+
+    // What each row actually needs, and every distinct (type, name) that needs resolving to an id.
+    const needed = new Map<string, Record<string, string>>(); // rowId -> { key: liveName }
+    const byType = new Map<string, Set<string>>();
+    for (const row of rows) {
+      const liveP = liveByUpn.get(row.upn.toLowerCase());
+      if (!liveP) continue;
+      const targets = row.policies ?? {};
+      const rowNeeds: Record<string, string> = {};
+      for (const kind of POLICY_KINDS) {
+        if (targets[kind.key]) continue; // already has a target - never overwrite
+        const tenantType = POLICY_KIND_TO_TENANT_TYPE[kind.key];
+        if (!tenantType) continue; // e.g. dial_out_policy - no live source to backfill from
+        const liveName = liveP[tenantType];
+        if (!liveName) continue;
+        rowNeeds[kind.key] = liveName;
+        if (!byType.has(tenantType)) byType.set(tenantType, new Set());
+        byType.get(tenantType)!.add(liveName);
+      }
+      if (Object.keys(rowNeeds).length) needed.set(row.id, rowNeeds);
+    }
+    if (!needed.size) return out;
+
+    const idByTypeName = new Map<string, string>(); // "type::name" -> id
+    for (const [policyType, names] of byType) {
+      const found = await this.s(t)
+        .selectFrom('tenant_policies')
+        .select(['id', 'name'])
+        .where('policy_type', '=', policyType)
+        .where('removed_at', 'is', null)
+        .where('name', 'in', [...names])
+        .execute();
+      for (const f of found) idByTypeName.set(`${policyType}::${f.name}`, f.id);
+    }
+
+    for (const row of rows) {
+      const rowNeeds = needed.get(row.id);
+      if (!rowNeeds) continue;
+      const policies = { ...(row.policies ?? {}) };
+      const policy_ids = { ...(row.policy_ids ?? {}) };
+      for (const [key, liveName] of Object.entries(rowNeeds)) {
+        policies[key] = liveName;
+        const tenantType = POLICY_KIND_TO_TENANT_TYPE[key as PolicyKey]!;
+        const id = idByTypeName.get(`${tenantType}::${liveName}`);
+        if (id) policy_ids[key] = id;
+      }
+      out.set(row.id, { policies, policy_ids });
+    }
+    return out;
+  }
+
   /* ============================== validate ============================== */
 
   /**
@@ -767,6 +847,7 @@ export class BuildService {
     ]);
     const rows = [...users.map((r) => ({ ...r, table: 'build_users' as const })), ...caps.map((r) => ({ ...r, table: 'build_caps' as const }))];
     const validated = await this.validation.validateRows(t, rows);
+    const backfills = await this.backfillPolicyTargets(t, rows);
     let issues = 0;
     const unmatchedUpns: string[] = [];
     for (const row of rows) {
@@ -774,9 +855,12 @@ export class BuildService {
       if (!v) continue;
       if (hasIssue(v)) issues += 1;
       if (!v.existsInTenant) unmatchedUpns.push(row.upn);
+      const patch: Record<string, unknown> = { validation: v };
+      const bf = backfills.get(row.id);
+      if (bf) Object.assign(patch, bf);
       await s
         .updateTable(row.table)
-        .set({ validation: v as never })
+        .set(patch as never)
         .where('id', '=', row.id)
         .execute();
     }
