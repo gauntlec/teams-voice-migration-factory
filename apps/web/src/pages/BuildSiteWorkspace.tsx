@@ -368,6 +368,15 @@ export function BuildSiteWorkspace() {
               label: 'Voice routing policy',
               render: (r) => ((r.policies as Record<string, string>)?.voice_routing_policy ?? '—'),
             },
+            {
+              key: 'voicemail_target',
+              label: 'Voicemail',
+              render: (r) => {
+                const vm = r.voicemail as { enabled?: boolean | null; language?: string | null } | null;
+                if (vm?.enabled == null) return '—';
+                return vm.enabled ? `On${vm.language ? ` (${vm.language})` : ''}` : 'Off';
+              },
+            },
             { key: 'migration_wave', label: 'Wave' },
             { key: 'validation', label: 'Validation', render: (r) => <ValidationBadge v={r.validation as BuildRowValidation | null} /> },
           ]}
@@ -495,6 +504,12 @@ function identityFields(policyFields: FieldDef[], numberChoicesFor: (row: Row | 
     { key: 'number_type', label: 'Number type', type: 'select', options: NUMBER_TYPES },
     { key: 'revoke_ev', label: 'Revoke Enterprise Voice', type: 'boolean' },
     { key: 'migration_wave', label: 'Migration wave' },
+    // The actual Set-CsOnlineVoicemailUserSettings target - separate from
+    // voicemail_policy below (a policy grant, a different setting). Populate
+    // prefills this from Data Collection; it deploys from here, not from the
+    // read-only "Data Collection" column.
+    { key: 'voicemail.enabled', label: 'Voicemail enabled', type: 'boolean' },
+    { key: 'voicemail.language', label: 'Voicemail language', placeholder: 'English' },
     ...policyFields,
     { key: 'comments', label: 'Comments', type: 'textarea', full: true },
   ];

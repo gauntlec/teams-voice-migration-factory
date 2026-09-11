@@ -8,6 +8,7 @@ interface BuildIdentityRow {
   number_type: string | null;
   revoke_ev: boolean;
   policies: Record<string, string | null> | null;
+  voicemail: { enabled?: boolean | null; language?: string | null } | null;
 }
 
 /**
@@ -50,6 +51,25 @@ export function planIdentityRow(row: BuildIdentityRow, objectType: 'user' | 'cap
     calls.push({
       cmdlet: kind.cmdlet,
       parameters: { Identity: identity, PolicyName: value },
+      objectType,
+      objectId: row.id,
+    });
+  }
+
+  // Voicemail on/off + language are settings we set directly in Teams
+  // (Set-CsOnlineVoicemailUserSettings), not a policy grant - separate from
+  // voicemail_policy in POLICY_KINDS above, which governs a different set of
+  // tenant-defined behaviours. `row.voicemail.enabled` undefined/null means
+  // "not designed yet" and is left alone; explicitly true/false is a real
+  // target either way.
+  if (row.voicemail?.enabled != null) {
+    calls.push({
+      cmdlet: 'Set-CsOnlineVoicemailUserSettings',
+      parameters: {
+        Identity: identity,
+        VoicemailEnabled: row.voicemail.enabled,
+        ...(row.voicemail.enabled && row.voicemail.language ? { PromptLanguage: row.voicemail.language } : {}),
+      },
       objectType,
       objectId: row.id,
     });

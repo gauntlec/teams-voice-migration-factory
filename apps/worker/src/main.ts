@@ -242,6 +242,7 @@ async function handleDeploymentRun(job: Job) {
             number_type: row.number_type,
             revoke_ev: row.revoke_ev,
             policies: (row.policies as Record<string, string | null>) ?? {},
+            voicemail: (row.voicemail as { enabled?: boolean | null; language?: string | null }) ?? null,
           },
           objectType,
         );

@@ -39,15 +39,30 @@ identically - only the `object_type` tag differs):
 3. Then one `Grant-Cs*Policy` per target policy set in `POLICY_KINDS`
    (`packages/shared/src/domain.ts`) - voice routing, dial out, shared
    calling, dial plan, calling, call hold, call park, caller ID, voice app,
-   voicemail, emergency calling, emergency call routing, IP phone.
+   voicemail, emergency calling, emergency call routing, IP phone. Note
+   `voicemail_policy` here is a *policy grant* (tenant-defined behaviour,
+   e.g. max message length) - a different thing from item 4 below.
+4. If `voicemail.enabled` is set on the row (not null/undefined - "not
+   designed yet" is left alone) -> `Set-CsOnlineVoicemailUserSettings
+   -VoicemailEnabled` (+ `-PromptLanguage` when enabling with a language
+   set). This is the actual per-user voicemail on/off + language setting -
+   what Data Collection's `voicemail_enabled`/`voicemail_language` capture
+   and Populate copies onto the row as the real deploy target, not just a
+   reference.
 
-Voicemail settings, call forwarding, delegates and pickup groups are captured
-in Design & Build (`build_users.voicemail`/`call_forwarding`/`delegates`/
-`pickup_group` jsonb, matching the workbook's VM/CF/DEL/CPG columns) but are
-**not yet planned into cmdlets** - a deliberate scope cut for this delivery,
-matching the approved plan. The reference cmdlets are known
-(`Set-CsOnlineVoicemailUserSettings`, `Set-CsUserCallingSettings`,
-`New-CsUserCallingDelegate`) and this is the natural next increment.
+Call forwarding, delegates and pickup groups are captured in Design & Build
+(`build_users.call_forwarding`/`delegates`/`pickup_group` jsonb, matching the
+workbook's CF/DEL/CPG columns) but are **not yet planned into cmdlets** - a
+deliberate scope cut for this delivery. The reference cmdlets are known
+(`Set-CsUserCallingSettings`, `New-CsUserCallingDelegate`) and this is the
+natural next increment.
+
+Caller ID works differently: Data Collection's `caller_id` field ('user' /
+'anonymous' / 'main_number') is a customer preference, not a Teams policy
+name, so there's no direct value -> cmdlet mapping - it's shown read-only in
+Design & Build's "Data Collection" column so the engineer can pick or create
+the matching `caller_id_policy` (a `POLICY_KINDS` entry, deployed via
+`Grant-CsCallingLineIdentity` same as the others in step 3).
 
 ## Resource accounts - a genuine two-phase gate
 
