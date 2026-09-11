@@ -89,38 +89,44 @@ export class BuildService {
 
   async listUsers(t: TenantContext, q: BuildListQuery) {
     const page = await this.listIdentity(t, 'build_users', q);
-    const requested = await this.requestedNumbersFor(t, page.items.map((r) => r.discovery_user_id));
-    page.items = page.items.map((r) => ({
-      ...r,
-      requested_number: (r.discovery_user_id && requested.get(r.discovery_user_id)) ?? null,
-    }));
+    const ctx = await this.discoveryUserContextFor(t, page.items.map((r) => r.discovery_user_id));
+    page.items = page.items.map((r) => ({ ...r, ...emptyUserContext(), ...(r.discovery_user_id && ctx.get(r.discovery_user_id)) }));
     return page;
   }
   async getUser(t: TenantContext, id: string) {
     const row = await this.getIdentity(t, 'build_users', id);
-    const requested = await this.requestedNumbersFor(t, [row.discovery_user_id]);
-    return {
-      ...row,
-      requested_number: (row.discovery_user_id && requested.get(row.discovery_user_id)) ?? null,
-    };
+    const ctx = await this.discoveryUserContextFor(t, [row.discovery_user_id]);
+    return { ...row, ...emptyUserContext(), ...(row.discovery_user_id && ctx.get(row.discovery_user_id)) };
   }
 
   /**
-   * The number the customer asked for in Data Collection (discovery_users.requested_number),
-   * read-only here for reconciliation - the same free-text field, the same
-   * "doesn't match what's assigned" nudge Data Collection itself shows
-   * (SiteWorkspace.tsx), not auto-assigned. Batched: one query per call.
+   * Read-only reference from the linked discovery_users row - what the
+   * customer told us in Data Collection, kept visible in Design & Build for
+   * comparison, never overwritten there. `requested_number` is the free-text
+   * ask (separate from the actual number import, see populateUsers);
+   * `caller_id`/`voicemail_enabled`/`voicemail_language` are shown so the
+   * engineer can see the requirement next to whichever target field
+   * (policies.caller_id_policy, voicemail) they end up setting - there's no
+   * direct customer-value -> Teams-policy-name mapping to auto-fill from
+   * caller_id, so it's shown, not written.
    */
-  private async requestedNumbersFor(t: TenantContext, discoveryUserIds: (string | null)[]) {
+  private async discoveryUserContextFor(t: TenantContext, discoveryUserIds: (string | null)[]) {
     const ids = [...new Set(discoveryUserIds.filter((id): id is string => !!id))];
-    const out = new Map<string, string | null>();
+    const out = new Map<string, ReturnType<typeof emptyUserContext>>();
     if (ids.length === 0) return out;
     const rows = await this.s(t)
       .selectFrom('discovery_users')
-      .select(['id', 'requested_number'])
+      .select(['id', 'requested_number', 'caller_id', 'voicemail_enabled', 'voicemail_language'])
       .where('id', 'in', ids)
       .execute();
-    for (const r of rows) out.set(r.id, r.requested_number);
+    for (const r of rows) {
+      out.set(r.id, {
+        requested_number: r.requested_number,
+        requested_caller_id: r.caller_id,
+        requested_voicemail_enabled: r.voicemail_enabled,
+        requested_voicemail_language: r.voicemail_language,
+      });
+    }
     return out;
   }
   async createUser(t: TenantContext, u: AuthedUser, body: BuildIdentityCreateInput) {
@@ -133,6 +139,15 @@ export class BuildService {
     return this.deleteIdentity(t, u, 'build_users', id);
   }
   async populateUsers(t: TenantContext, u: AuthedUser, siteId: string) {
+    const s = this.s(t);
+    // Data Collection's Users tab assigns a real phone_numbers claim (the
+    // picker, not the free-text requested_number). Design & Build imports a
+    // *copy* of that number as this row's starting target - Data Collection
+    // keeps its own claim untouched; it's the input record, not something
+    // Populate should consume. See BuildValidationService for the
+    // duplicate-number check this now depends on instead of a shared claim.
+    const discUsers = await s.selectFrom('discovery_users').select('id').where('site_id', '=', siteId).execute();
+    const numbers = await this.currentNumbersFor(t, 'user', discUsers.map((r) => r.id));
     return this.populateIdentity(t, u, {
       table: 'build_users',
       sourceTable: 'discovery_users',
@@ -142,19 +157,41 @@ export class BuildService {
       map: (d) => ({
         upn: d.upn,
         did: d.requested_number,
+        e164: numbers.get(d.id) ?? null,
         migration_wave: null,
+        // Starting point only - voicemail_policy (the actual Teams policy
+        // name) is still the engineer's call; this is just what the
+        // customer told us in Data Collection.
+        voicemail: { enabled: d.voicemail_enabled ?? null, language: d.voicemail_language ?? null },
       }),
-      carryNumber: true,
     });
   }
 
   /* =============================== caps =============================== */
 
   async listCaps(t: TenantContext, q: BuildListQuery) {
-    return this.listIdentity(t, 'build_caps', q);
+    const page = await this.listIdentity(t, 'build_caps', q);
+    const ctx = await this.discoveryCapContextFor(t, page.items.map((r) => r.discovery_cap_id));
+    page.items = page.items.map((r) => ({
+      ...r,
+      requested_caller_id: (r.discovery_cap_id && ctx.get(r.discovery_cap_id)) ?? null,
+    }));
+    return page;
   }
   async getCap(t: TenantContext, id: string) {
-    return this.getIdentity(t, 'build_caps', id);
+    const row = await this.getIdentity(t, 'build_caps', id);
+    const ctx = await this.discoveryCapContextFor(t, [row.discovery_cap_id]);
+    return { ...row, requested_caller_id: (row.discovery_cap_id && ctx.get(row.discovery_cap_id)) ?? null };
+  }
+
+  /** Same idea as discoveryUserContextFor - discovery_caps has no voicemail, just caller_id. */
+  private async discoveryCapContextFor(t: TenantContext, discoveryCapIds: (string | null)[]) {
+    const ids = [...new Set(discoveryCapIds.filter((id): id is string => !!id))];
+    const out = new Map<string, string | null>();
+    if (ids.length === 0) return out;
+    const rows = await this.s(t).selectFrom('discovery_caps').select(['id', 'caller_id']).where('id', 'in', ids).execute();
+    for (const r of rows) out.set(r.id, r.caller_id);
+    return out;
   }
   async createCap(t: TenantContext, u: AuthedUser, body: BuildCapCreateInput) {
     return this.createIdentity(t, u, 'build_caps', 'cap', body, { display_name: body.display_name ?? null });
@@ -166,6 +203,9 @@ export class BuildService {
     return this.deleteIdentity(t, u, 'build_caps', id);
   }
   async populateCaps(t: TenantContext, u: AuthedUser, siteId: string) {
+    const s = this.s(t);
+    const discCaps = await s.selectFrom('discovery_caps').select('id').where('site_id', '=', siteId).execute();
+    const numbers = await this.currentNumbersFor(t, 'cap', discCaps.map((r) => r.id));
     return this.populateIdentity(t, u, {
       table: 'build_caps',
       sourceTable: 'discovery_caps',
@@ -176,9 +216,9 @@ export class BuildService {
         upn: d.upn ?? '',
         display_name: d.display_name,
         phone_model: d.device_model,
+        e164: numbers.get(d.id) ?? null,
       }),
       skip: (d) => !d.upn, // a CAP row with no UPN yet can't be provisioned in Teams; leave it in Data Collection
-      carryNumber: true,
     });
   }
 
@@ -323,6 +363,8 @@ export class BuildService {
       display_name?: string | null;
       requested_number?: string | null;
       device_model?: string | null;
+      voicemail_enabled?: boolean | null;
+      voicemail_language?: string | null;
     },
   >(
     t: TenantContext,
@@ -335,17 +377,6 @@ export class BuildService {
       siteId: string;
       map: (d: Src) => Record<string, unknown>;
       skip?: (d: Src) => boolean;
-      /**
-       * Carry forward whatever number the discovery_users/discovery_caps row
-       * already holds in the shared `phone_numbers` inventory (assigned via
-       * the same picker Data Collection uses - not the free-text
-       * requested_number). The claim transfers to the new build row rather
-       * than being re-claimed, since the number the customer already has
-       * confirmed is legitimately "theirs" the whole way through the
-       * pipeline; it just means it no longer shows as this user's number
-       * back in Data Collection once Design & Build has taken it over.
-       */
-      carryNumber?: boolean;
     },
   ) {
     const s = this.s(t);
@@ -399,15 +430,8 @@ export class BuildService {
         .onConflict((oc) => oc.expression(sql`site_id, lower(upn)`).doNothing())
         .returning('id')
         .executeTakeFirst();
-      if (res?.id) {
-        created += 1;
-        if (opts.carryNumber) {
-          const carried = await this.transferNumber(t, holderTypeOf(opts.table), d.id, res.id);
-          if (carried) await s.updateTable(opts.table).set({ e164: carried.e164 } as never).where('id', '=', res.id).execute();
-        }
-      } else {
-        skipped += 1; // UPN already present under a different (unlinked) row
-      }
+      if (res?.id) created += 1;
+      else skipped += 1; // UPN already present under a different (unlinked) row
     }
     await this.audit.tenant(t.schema, `build.${opts.objectType}s_populated`, {
       actor: actorOf(u),
@@ -593,21 +617,23 @@ export class BuildService {
   }
 
   /**
-   * Moves a phone_numbers row's holder from `fromId` to `toId` (same
-   * holder_type: 'user' means both a discovery_users.id and a build_users.id
-   * are valid holders of the same shared inventory - see Populate from
-   * Discovery). Not a claim: doesn't check availability, since the number is
-   * already legitimately held by `fromId`. No-op (returns null) if `fromId`
-   * doesn't currently hold a number.
+   * The number a discovery_users/discovery_caps row currently has claimed in
+   * the shared `phone_numbers` inventory (via Data Collection's own picker) -
+   * read-only. Populate from Discovery copies this as a build row's starting
+   * `e164`; Data Collection's claim is never touched, so its own Number
+   * column keeps showing it too. Batched: one query for the whole site.
    */
-  private async transferNumber(t: TenantContext, holderType: NumberHolderType, fromId: string, toId: string) {
-    return this.s(t)
-      .updateTable('phone_numbers')
-      .set({ holder_id: toId })
+  private async currentNumbersFor(t: TenantContext, holderType: NumberHolderType, holderIds: string[]) {
+    const out = new Map<string, string>();
+    if (holderIds.length === 0) return out;
+    const rows = await this.s(t)
+      .selectFrom('phone_numbers')
+      .select(['e164', 'holder_id'])
       .where('holder_type', '=', holderType)
-      .where('holder_id', '=', fromId)
-      .returningAll()
-      .executeTakeFirst();
+      .where('holder_id', 'in', holderIds)
+      .execute();
+    for (const r of rows) if (r.holder_id) out.set(r.holder_id, r.e164);
+    return out;
   }
 
   private async releaseHolder(t: TenantContext, holderType: NumberHolderType, holderId: string) {
@@ -715,6 +741,16 @@ export class BuildService {
     });
     return counts;
   }
+}
+
+/** Default shape for a build_users row with no (or an unlinked) discovery_users row. */
+function emptyUserContext() {
+  return {
+    requested_number: null as string | null,
+    requested_caller_id: null as string | null,
+    requested_voicemail_enabled: null as boolean | null,
+    requested_voicemail_language: null as string | null,
+  };
 }
 
 function holderTypeOf(table: 'build_users' | 'build_caps'): NumberHolderType {

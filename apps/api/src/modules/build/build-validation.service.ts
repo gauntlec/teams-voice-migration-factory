@@ -18,8 +18,8 @@ interface IdentityRow {
  * Live-vs-target validation for build_users/build_caps rows - the replacement
  * for the build workbook's manually-refreshed `G-*` columns. Everything it
  * compares against is already collected by Discovery (tenant_users,
- * tenant_policies) or tracked in the phone_numbers inventory; this never talks
- * to the customer tenant itself.
+ * tenant_policies) or is other build_* rows in the same tenant (duplicate
+ * number detection); this never talks to the customer tenant itself.
  */
 @Injectable()
 export class BuildValidationService {
@@ -70,11 +70,27 @@ export class BuildValidationService {
       for (const f of found) knownPolicyNames.add(`${policyType}::${f.name}`);
     }
 
+    // Design & Build imports a *copy* of the number Data Collection already
+    // assigned (see BuildService.populateUsers/populateCaps) - it doesn't
+    // take over the claim, so the phone_numbers inventory can no longer tell
+    // us "does another build row have this too". Count occurrences directly
+    // across every build_users/build_caps/build_resource_accounts row in the
+    // tenant instead (not just this batch, and not just this site - a
+    // duplicate assignment across two sites is just as real a problem at
+    // deployment time).
     const e164s = [...new Set(rows.map((r) => r.e164).filter((v): v is string => !!v))];
-    const numbers = e164s.length
-      ? await s.selectFrom('phone_numbers').select(['e164', 'holder_id']).where('e164', 'in', e164s).execute()
-      : [];
-    const holderByE164 = new Map(numbers.map((n) => [n.e164, n.holder_id]));
+    const dupeCounts = new Map<string, number>();
+    if (e164s.length) {
+      const [uRows, cRows, raRows] = await Promise.all([
+        s.selectFrom('build_users').select('e164').where('e164', 'in', e164s).execute(),
+        s.selectFrom('build_caps').select('e164').where('e164', 'in', e164s).execute(),
+        s.selectFrom('build_resource_accounts').select('phone_number as e164').where('phone_number', 'in', e164s).execute(),
+      ]);
+      for (const r of [...uRows, ...cRows, ...raRows]) {
+        if (!r.e164) continue;
+        dupeCounts.set(r.e164, (dupeCounts.get(r.e164) ?? 0) + 1);
+      }
+    }
 
     for (const row of rows) {
       const live = byUpn.get(row.upn.toLowerCase());
@@ -97,12 +113,11 @@ export class BuildValidationService {
           policyMismatches.push({ key: kind.key, label: kind.label, target: value, live: liveValue });
         }
       }
-      const holderId = row.e164 ? holderByE164.get(row.e164) : undefined;
       out.set(row.id, {
         existsInTenant: !!live,
         enterpriseVoiceEnabled: live?.enterprise_voice_enabled ?? null,
         liveLineUri: live?.line_uri ?? null,
-        numberConflict: !!row.e164 && holderId != null && holderId !== row.id,
+        numberConflict: !!row.e164 && (dupeCounts.get(row.e164) ?? 0) > 1,
         policyMismatches,
         unknownPolicies,
         untracked,

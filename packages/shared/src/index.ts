@@ -238,7 +238,7 @@ export interface BuildRowValidation {
   /** live state from tenant_users; null when existsInTenant is false or Discovery has never run */
   enterpriseVoiceEnabled: boolean | null;
   liveLineUri: string | null;
-  /** true when the row's target e164 is already held by a different phone_numbers row */
+  /** true when the row's target e164 is also the target on another build_users/build_caps/build_resource_accounts row in the tenant */
   numberConflict: boolean;
   /** each target policy whose live effective assignment differs (or is unset) */
   policyMismatches: { key: import('./domain').PolicyKey; label: string; target: string; live: string | null }[];
