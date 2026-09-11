@@ -69,3 +69,38 @@ export async function api<T = unknown>(path: string, init: RequestInit = {}): Pr
   }
   return body as T;
 }
+
+/**
+ * Download a binary response (a file's `.../download` route) and save it
+ * with the browser's normal download UI. A plain `<a href>` can't do this -
+ * every API route needs the bearer token in an Authorization header
+ * (auth.getToken(), see raw() above), which a browser-navigated link never
+ * sends - so this fetches like api() does but as a Blob, then triggers the
+ * save via a synthetic anchor with a client-side object URL.
+ */
+export async function apiDownload(path: string, filename: string): Promise<void> {
+  let res = await raw(`/api${path}`, {});
+  if (res.status === 401 && accessToken) {
+    const refreshed = await tryRefresh();
+    if (refreshed) res = await raw(`/api${path}`, {});
+  }
+  if (!res.ok) {
+    let msg = `${res.status} ${res.statusText}`;
+    try {
+      const body = JSON.parse(await res.text());
+      msg = body?.message || body?.error || msg;
+    } catch {
+      /* not JSON - keep the status text */
+    }
+    throw new ApiError(res.status, Array.isArray(msg) ? msg.join(', ') : String(msg));
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}

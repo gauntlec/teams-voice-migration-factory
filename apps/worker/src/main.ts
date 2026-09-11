@@ -2,13 +2,8 @@ import 'dotenv/config';
 import { Worker, type Job } from 'bullmq';
 import IORedis from 'ioredis';
 import { createDb, platformDb, tenantDb } from '@tvmf/db';
-import { planIdentityRow, planResourceAccountRow } from './planner';
-import {
-  renderCommand,
-  SimulatedTeamsExecutor,
-  type CmdletInvocation,
-  type TeamsExecutor,
-} from './teams/executor';
+import { planIdentityRow, planResourceAccountRow, renderCommand, type CmdletInvocation } from '@tvmf/shared';
+import { SimulatedTeamsExecutor, type TeamsExecutor } from './teams/executor';
 import { PwshTeamsExecutor } from './teams/pwsh-executor';
 import { handleTenantDiscoveryRun } from './discovery/run';
 import { renderEmail } from './mail/templates';

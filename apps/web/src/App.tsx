@@ -12,7 +12,9 @@ import { DataCollectionPolicies } from './pages/DataCollectionPolicies';
 import { SiteWorkspace } from './pages/SiteWorkspace';
 import { Build } from './pages/Build';
 import { BuildSiteWorkspace } from './pages/BuildSiteWorkspace';
-import { Deployment } from './pages/Deployment';
+import { DeploymentSites } from './pages/DeploymentSites';
+import { DeploymentSiteWorkspace } from './pages/DeploymentSiteWorkspace';
+import { Files } from './pages/Files';
 import { Handover } from './pages/Handover';
 import { AdminUsers } from './pages/admin/Users';
 import { AdminTenants } from './pages/admin/Tenants';
@@ -71,11 +73,27 @@ export function App() {
           path="/deployment"
           element={
             <RequirePermission permission="deployment:read">
-              <Deployment />
+              <DeploymentSites />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="/deployment/sites/:siteId"
+          element={
+            <RequirePermission permission="deployment:read">
+              <DeploymentSiteWorkspace />
             </RequirePermission>
           }
         />
         <Route path="/handover" element={<Handover />} />
+        <Route
+          path="/files"
+          element={
+            <RequirePermission permission="files:read">
+              <Files />
+            </RequirePermission>
+          }
+        />
         <Route
           path="/admin/users"
           element={

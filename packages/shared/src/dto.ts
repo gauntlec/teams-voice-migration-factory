@@ -115,6 +115,29 @@ export const createDeploymentSchema = z.object({
 });
 export type CreateDeploymentInput = z.infer<typeof createDeploymentSchema>;
 
+/**
+ * Read-only "what would this deploy right now" preview - no connection, no
+ * worker/queue involvement. Deliberately excludes auto_attendants/call_queues/
+ * m365_groups: no worker code path handles those sheets yet (see planIdentityRow/
+ * planResourceAccountRow and handleDeploymentRun), so previewing them would be
+ * misleading.
+ */
+export const deploymentPreviewQuerySchema = z.object({
+  siteId: z.string().uuid(),
+  sheets: z
+    .array(z.enum(['users', 'caps', 'resource_accounts']))
+    .min(1)
+    .default(['users', 'caps', 'resource_accounts']),
+  rowIds: z.array(z.string().uuid()).optional(),
+});
+export type DeploymentPreviewQuery = z.infer<typeof deploymentPreviewQuerySchema>;
+
+/** rowIds omitted = generate for the whole site. */
+export const generateDeploymentDocumentSchema = z.object({
+  rowIds: z.array(z.string().uuid()).optional(),
+});
+export type GenerateDeploymentDocumentInput = z.infer<typeof generateDeploymentDocumentSchema>;
+
 /* ------------------------- Data Collection DTOs ------------------------- */
 
 const str = (max = 400) => z.string().trim().max(max);
@@ -647,3 +670,13 @@ export const buildListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(200),
 });
 export type BuildListQuery = z.infer<typeof buildListQuerySchema>;
+
+/* ------------------------------ Files DTOs ------------------------------ */
+
+export const filesQuerySchema = z.object({
+  siteId: z.string().uuid().optional(),
+  category: z.enum(['deployment_change_document']).optional(),
+  sourceType: z.string().max(60).optional(),
+  sourceId: z.string().uuid().optional(),
+});
+export type FilesQuery = z.infer<typeof filesQuerySchema>;

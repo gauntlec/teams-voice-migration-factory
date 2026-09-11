@@ -16,6 +16,7 @@ import { DataCollectionModule } from './modules/data-collection/data-collection.
 import { BuildModule } from './modules/build/build.module';
 import { DeploymentModule } from './modules/deployment/deployment.module';
 import { HandoverModule } from './modules/handover/handover.module';
+import { FilesModule } from './modules/files/files.module';
 import { TenantDiscoveryModule } from './modules/tenant-discovery/tenant-discovery.module';
 import { AuditReadModule } from './modules/audit/audit-read.module';
 import { HealthController } from './health/health.controller';
@@ -36,6 +37,7 @@ import { HealthController } from './health/health.controller';
     BuildModule,
     DeploymentModule,
     HandoverModule,
+    FilesModule,
     TenantDiscoveryModule,
     AuditReadModule,
   ],

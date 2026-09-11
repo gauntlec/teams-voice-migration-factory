@@ -32,6 +32,7 @@ export const PERMISSIONS = [
   'deployment:execute',
   'handover:read',
   'handover:generate',
+  'files:read', // browse generated/stored files for a tenant - all 4 roles
   'audit:read:tenant',
   'audit:read:platform',
   'feature:read', // view the feature-request board
@@ -65,6 +66,7 @@ export const PERMISSION_MATRIX: Record<Role, ReadonlySet<Permission>> = {
     // engineer/admin-only and are hidden from the PM's left nav.
     'handover:read',
     'handover:generate',
+    'files:read',
     'audit:read:tenant',
     'feature:read',
     'feature:create',
@@ -86,6 +88,7 @@ export const PERMISSION_MATRIX: Record<Role, ReadonlySet<Permission>> = {
     'deployment:execute',
     'handover:read',
     'handover:generate',
+    'files:read',
     'audit:read:tenant',
     'feature:read',
     'feature:create',
@@ -101,6 +104,7 @@ export const PERMISSION_MATRIX: Record<Role, ReadonlySet<Permission>> = {
     // NB: no build:* or deployment:* - those areas are engineer/admin-only and
     // are hidden from the customer's left nav.
     'handover:read',
+    'files:read',
     'audit:read:tenant',
   ]),
 };

@@ -45,6 +45,8 @@ services:
       NODE_ENV: production
     # Apply platform + tenant migrations, upsert the bootstrap admin, then start.
     command: ["sh", "-c", "node packages/db/dist/migrate.js && node packages/db/dist/seed.js && node apps/api/dist/main.js"]
+    volumes:
+      - filesdata:/data/files
     ports:
       - "4000:4000"
     depends_on:
@@ -88,3 +90,4 @@ services:
 volumes:
   pgdata:
   redisdata:
+  filesdata:

@@ -1,5 +1,14 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
-import { can, createDeploymentSchema, startConnectionSchema, type CreateDeploymentInput } from '@tvmf/shared';
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  can,
+  createDeploymentSchema,
+  deploymentPreviewQuerySchema,
+  generateDeploymentDocumentSchema,
+  startConnectionSchema,
+  type CreateDeploymentInput,
+  type DeploymentPreviewQuery,
+  type GenerateDeploymentDocumentInput,
+} from '@tvmf/shared';
 import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
 import type { AuthedUser, TenantContext } from '../../common/request';
 import { ZodBody } from '../../common/zod.pipe';
@@ -16,6 +25,29 @@ import { DeploymentService } from './deployment.service';
 @UseGuards(TenantGuard)
 export class DeploymentController {
   constructor(private readonly svc: DeploymentService) {}
+
+  @Get('summary')
+  @RequirePermission('deployment:read')
+  summary(@TenantCtx() t: TenantContext) {
+    return this.svc.siteRollup(t);
+  }
+
+  @Get('preview')
+  @RequirePermission('deployment:dryrun')
+  preview(@TenantCtx() t: TenantContext, @Query(new ZodBody(deploymentPreviewQuerySchema)) query: DeploymentPreviewQuery) {
+    return this.svc.previewChanges(t, query);
+  }
+
+  @Post('sites/:siteId/generate-document')
+  @RequirePermission('deployment:dryrun')
+  generateDocument(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Param('siteId') siteId: string,
+    @Body(new ZodBody(generateDeploymentDocumentSchema)) body: GenerateDeploymentDocumentInput,
+  ) {
+    return this.svc.generateChangeDocument(t, user, siteId, body);
+  }
 
   @Post('connections')
   @RequirePermission('deployment:connect')

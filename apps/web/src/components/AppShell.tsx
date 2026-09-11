@@ -19,6 +19,7 @@ import {
 import {
   ClipboardTaskListLtr24Regular,
   DocumentBulletListMultiple24Regular,
+  DocumentFolder24Regular,
   Board24Regular,
   CloudArrowUp24Regular,
   Home24Regular,
@@ -92,6 +93,7 @@ const MAIN: NavDef[] = [
   { to: '/build', label: 'Design & Build', icon: <Board24Regular />, permission: 'build:read' },
   { to: '/deployment', label: 'Deployment', icon: <CloudArrowUp24Regular />, permission: 'deployment:read' },
   { to: '/handover', label: 'Service Handover', icon: <DocumentBulletListMultiple24Regular />, permission: 'handover:read' },
+  { to: '/files', label: 'Files', icon: <DocumentFolder24Regular />, permission: 'files:read' },
 ];
 
 const ADMIN: NavDef[] = [

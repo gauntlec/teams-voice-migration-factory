@@ -2,6 +2,9 @@ export * from './rbac';
 export * from './domain';
 export * from './dto';
 export * from './email';
+export * from './deployment';
+
+import type { CmdletInvocation } from './deployment';
 
 /** Header the web app sends to select the active tenant for `/t/:tenantId/*`. */
 export const TENANT_HEADER = 'x-tenant-id';
@@ -278,4 +281,43 @@ export interface BuildSiteRollup {
   /** rows whose computed BuildRowValidation has any issue (missing/mismatch/unknown/conflict) */
   validationIssues: number;
   lastDeployment: { id: string; mode: 'dry_run' | 'execute'; status: string; createdAt: string } | null;
+}
+
+/** Per-site rollup shown on the Deployment landing page. */
+export interface DeploymentSiteRollup {
+  id: string;
+  sitecode: string;
+  name: string | null;
+  counts: { users: number; caps: number; resourceAccounts: number };
+  lastDeployment: { id: string; mode: 'dry_run' | 'execute'; status: string; createdAt: string } | null;
+}
+
+/**
+ * One row of a read-only deployment preview - what planIdentityRow/
+ * planResourceAccountRow would produce for this row right now, with no
+ * connection and no worker/queue involvement. `calls` is the raw cmdlet
+ * data; `renderedCommands` is the same calls pre-rendered to PowerShell text
+ * via renderCommand(), for display and for the change-recording document.
+ */
+export interface DeploymentPreviewRow {
+  rowId: string;
+  objectType: 'user' | 'cap' | 'resource_account';
+  upn: string;
+  calls: CmdletInvocation[];
+  renderedCommands: string[];
+}
+
+/** A row from the general-purpose per-tenant file store (see FilesTable). */
+export interface FileRow {
+  id: string;
+  category: 'deployment_change_document';
+  sourceType: string;
+  sourceId: string;
+  siteId: string | null;
+  filename: string;
+  contentType: string;
+  byteSize: number;
+  uploadedBy: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
 }

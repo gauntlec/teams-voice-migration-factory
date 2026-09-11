@@ -19,6 +19,11 @@ const schema = z.object({
     .default('false')
     .transform((v) => v === 'true'),
   TOTP_ISSUER: z.string().default('Voxshift'),
+  // Local-disk root for generated/stored per-tenant files (Deployment change
+  // documents today; Data Collection/Discovery/Design & Build/Service
+  // Handover are future producers). Mounted as a Docker volume in
+  // production - see docker-compose.yml / deploy/dockge/compose.yaml.
+  FILES_DIR: z.string().default('/data/files'),
 });
 
 export type AppConfig = z.infer<typeof schema> & { REFRESH_COOKIE: string };

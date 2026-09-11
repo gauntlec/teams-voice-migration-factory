@@ -610,6 +610,29 @@ export interface HandoverSectionsTable {
   content: Json;
 }
 
+/**
+ * General-purpose per-tenant file storage - bytes live on local disk under
+ * FILES_DIR, this row is just the index. First consumer: Deployment
+ * change-recording .docx files (category deployment_change_document);
+ * category is a closed CHECK list in the migration, so future producers
+ * (Data Collection, Discovery, Design & Build, Service Handover) each add
+ * their own value(s) via a follow-up migration when they integrate.
+ */
+export interface FilesTable {
+  id: Generated<string>;
+  category: 'deployment_change_document';
+  source_type: string;
+  source_id: string;
+  site_id: string | null;
+  filename: string;
+  content_type: string;
+  byte_size: number;
+  storage_path: string;
+  uploaded_by: string | null;
+  metadata: Json;
+  created_at: Ts;
+}
+
 export interface TenantAuditLogTable {
   id: Generated<string>;
   at: Ts;
@@ -667,6 +690,7 @@ export interface DB {
   deployment_scripts: DeploymentScriptsTable;
   handover_packs: HandoverPacksTable;
   handover_sections: HandoverSectionsTable;
+  files: FilesTable;
   audit_log: TenantAuditLogTable;
 }
 

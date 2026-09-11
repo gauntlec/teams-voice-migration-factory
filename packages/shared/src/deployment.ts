@@ -1,7 +1,33 @@
-import { POLICY_KINDS, RESOURCE_ACCOUNT_APPLICATION_IDS } from '@tvmf/shared';
-import type { CmdletInvocation } from './teams/executor';
+import { POLICY_KINDS, RESOURCE_ACCOUNT_APPLICATION_IDS } from './domain';
 
-interface BuildIdentityRow {
+export interface CmdletInvocation {
+  cmdlet: string;
+  parameters: Record<string, unknown>;
+  objectType: string;
+  objectId?: string;
+  /**
+   * True for a cmdlet that must never run live - e.g. New-CsOnlineApplicationInstance,
+   * which always needs a manual licensing step (a role a Teams Administrator
+   * doesn't have) before anything downstream can succeed. A deferred call is
+   * always rendered to the exported script and recorded as 'whatif', in both
+   * dry_run and execute mode - see handleDeploymentRun in apps/worker/src/main.ts.
+   */
+  deferred?: boolean;
+}
+
+/** Render a cmdlet + params as the PowerShell one-liner (What-If output, and the executor). */
+export function renderCommand(call: CmdletInvocation): string {
+  const parts = [call.cmdlet];
+  for (const [k, v] of Object.entries(call.parameters)) {
+    if (v === undefined || v === null || v === '') continue;
+    if (typeof v === 'boolean') parts.push(`-${k} $${v}`);
+    else if (typeof v === 'number') parts.push(`-${k} ${v}`);
+    else parts.push(`-${k} ${JSON.stringify(String(v))}`);
+  }
+  return parts.join(' ');
+}
+
+export interface BuildIdentityRow {
   id: string;
   upn: string;
   e164: string | null;
@@ -78,7 +104,7 @@ export function planIdentityRow(row: BuildIdentityRow, objectType: 'user' | 'cap
   return calls;
 }
 
-interface BuildResourceAccountRow {
+export interface BuildResourceAccountRow {
   id: string;
   upn: string;
   display_name: string | null;

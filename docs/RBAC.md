@@ -70,6 +70,7 @@ discovery:read  discovery:write  discovery:review  discovery:sites:manage
 build:read     build:write
 deployment:read  deployment:connect  deployment:dryrun  deployment:execute
 handover:read  handover:generate
+files:read
 audit:read:tenant   audit:read:platform
 feature:read  feature:create  feature:manage
 tenantdiscovery:read  tenantdiscovery:run
@@ -95,6 +96,7 @@ tenantdiscovery:read  tenantdiscovery:run
 | deployment:connect / dryrun / execute | ✓ | | ✓ | |
 | handover:read | ✓ | ✓ | ✓ | ✓ |
 | handover:generate | ✓ | ✓ | ✓ | |
+| files:read (browse generated/stored files) | ✓ | ✓ | ✓ | ✓ |
 | audit:read:tenant | ✓ | ✓ | ✓ | ✓ |
 | audit:read:platform | ✓ | | | |
 | feature:read / feature:create | ✓ | ✓ | ✓ | |

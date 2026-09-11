@@ -13,25 +13,15 @@
  * or persisted. See docs/SECURITY.md.
  */
 
+import { type CmdletInvocation, renderCommand } from '@tvmf/shared';
+
+export type { CmdletInvocation };
+export { renderCommand };
+
 export interface DeviceCodePrompt {
   userCode: string;
   verificationUri: string;
   expiresAt: Date;
-}
-
-export interface CmdletInvocation {
-  cmdlet: string;
-  parameters: Record<string, unknown>;
-  objectType: string;
-  objectId?: string;
-  /**
-   * True for a cmdlet that must never run live - e.g. New-CsOnlineApplicationInstance,
-   * which always needs a manual licensing step (a role a Teams Administrator
-   * doesn't have) before anything downstream can succeed. A deferred call is
-   * always rendered to the exported script and recorded as 'whatif', in both
-   * dry_run and execute mode - see handleDeploymentRun in main.ts.
-   */
-  deferred?: boolean;
 }
 
 export interface CmdletResult {
@@ -253,16 +243,4 @@ export class SimulatedTeamsExecutor implements TeamsExecutor {
   async dispose(): Promise<void> {
     this.signedIn = false;
   }
-}
-
-/** Render a cmdlet + params as the PowerShell one-liner (What-If output, and the executor). */
-export function renderCommand(call: CmdletInvocation): string {
-  const parts = [call.cmdlet];
-  for (const [k, v] of Object.entries(call.parameters)) {
-    if (v === undefined || v === null || v === '') continue;
-    if (typeof v === 'boolean') parts.push(`-${k} $${v}`);
-    else if (typeof v === 'number') parts.push(`-${k} ${v}`);
-    else parts.push(`-${k} ${JSON.stringify(String(v))}`);
-  }
-  return parts.join(' ');
 }
