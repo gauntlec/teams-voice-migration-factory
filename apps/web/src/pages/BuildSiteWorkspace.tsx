@@ -12,10 +12,15 @@ import {
   DialogSurface,
   DialogTitle,
   DialogTrigger,
+  Dropdown,
+  Field,
+  Input,
+  Option,
   Spinner,
   Tab,
   TabList,
   Text,
+  Textarea,
   tokens,
 } from '@fluentui/react-components';
 import { ArrowLeftRegular, CheckmarkCircleRegular, WarningRegular } from '@fluentui/react-icons';
@@ -36,6 +41,7 @@ import {
   LoadError,
   NoTenant,
   PagedSection,
+  buildBulkPayload,
   useRecordStyles,
   type Choice,
   type ColumnDef,
@@ -233,6 +239,27 @@ export function BuildSiteWorkspace() {
     onError: (e) => setResetError(e instanceof ApiError ? e.message : 'Reset failed'),
   });
 
+  // Bulk edit: select many rows (checkboxes, records.tsx), set a handful of
+  // fields once in one dialog, apply to every selected row in a single
+  // PATCH .../bulk request - see BuildService.bulkUpdateIdentity.
+  const [usersSelected, setUsersSelected] = useState<Set<string>>(new Set());
+  const [capsSelected, setCapsSelected] = useState<Set<string>>(new Set());
+  const [bulkOpen, setBulkOpen] = useState<'users' | 'caps' | null>(null);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const bulkSave = useMutation({
+    mutationFn: ({ kind, ids, patch }: { kind: 'users' | 'caps'; ids: string[]; patch: Record<string, unknown> }) =>
+      api<{ updated: number }>(`${base}/${kind}/bulk`, { method: 'PATCH', body: JSON.stringify({ ids, patch }) }),
+    onSuccess: (_, vars) => {
+      setBulkOpen(null);
+      setBulkError(null);
+      if (vars.kind === 'users') setUsersSelected(new Set());
+      else setCapsSelected(new Set());
+      qc.invalidateQueries({ queryKey: [vars.kind, tid, siteId] });
+      qc.invalidateQueries({ queryKey: ['build-summary', tid] });
+    },
+    onError: (e) => setBulkError(e instanceof ApiError ? e.message : 'Bulk update failed'),
+  });
+
   if (!tid) return <NoTenant />;
   if (rollup.isLoading) return <Spinner label="Loading site…" />;
   if (rollup.isError) return <LoadError message={(rollup.error as Error).message} />;
@@ -326,6 +353,21 @@ export function BuildSiteWorkspace() {
         </DialogSurface>
       </Dialog>
 
+      <BulkEditDialog
+        open={bulkOpen !== null}
+        onOpenChange={(o) => !o && setBulkOpen(null)}
+        kindLabel={bulkOpen === 'caps' ? 'common area phones' : 'users'}
+        fields={bulkIdentityFields(policyFields)}
+        count={bulkOpen === 'caps' ? capsSelected.size : usersSelected.size}
+        saving={bulkSave.isPending}
+        error={bulkError}
+        onSave={(patch) => {
+          if (!bulkOpen) return;
+          const ids = [...(bulkOpen === 'caps' ? capsSelected : usersSelected)];
+          bulkSave.mutate({ kind: bulkOpen, ids, patch });
+        }}
+      />
+
       <TabList selectedValue={tab} onTabSelect={(_, d) => setTab(d.value as typeof tab)}>
         <Tab value="users">Users</Tab>
         <Tab value="caps">Common area phones</Tab>
@@ -341,17 +383,25 @@ export function BuildSiteWorkspace() {
           params={{ siteId }}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
+          pageSize={500}
+          selectable={canWrite}
+          selected={usersSelected}
+          onSelectedChange={setUsersSelected}
           headerActions={
             canWrite && (
-              <Button size="small" disabled={populate.isPending} onClick={() => populate.mutate('users')}>
-                Populate from Discovery
-              </Button>
+              <>
+                <Button size="small" disabled={populate.isPending} onClick={() => populate.mutate('users')}>
+                  Populate from Discovery
+                </Button>
+                <Button size="small" disabled={usersSelected.size === 0} onClick={() => setBulkOpen('users')}>
+                  Bulk edit ({usersSelected.size} selected)
+                </Button>
+              </>
             )
           }
           columns={[
             { key: 'upn', label: 'UPN' },
             { key: 'e164', label: 'Number' },
-            { key: 'number_type', label: 'Type' },
             ...policyColumns(),
             {
               key: 'voicemail_target',
@@ -378,11 +428,20 @@ export function BuildSiteWorkspace() {
           params={{ siteId }}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
+          pageSize={500}
+          selectable={canWrite}
+          selected={capsSelected}
+          onSelectedChange={setCapsSelected}
           headerActions={
             canWrite && (
-              <Button size="small" disabled={populate.isPending} onClick={() => populate.mutate('caps')}>
-                Populate from Discovery
-              </Button>
+              <>
+                <Button size="small" disabled={populate.isPending} onClick={() => populate.mutate('caps')}>
+                  Populate from Discovery
+                </Button>
+                <Button size="small" disabled={capsSelected.size === 0} onClick={() => setBulkOpen('caps')}>
+                  Bulk edit ({capsSelected.size} selected)
+                </Button>
+              </>
             )
           }
           columns={[
@@ -523,4 +582,154 @@ function identityFields(policyFields: FieldDef[], numberChoicesFor: (row: Row | 
     ...policyFields,
     { key: 'comments', label: 'Comments', type: 'textarea', full: true },
   ];
+}
+
+/**
+ * The fields bulk edit exposes - identityFields() (shared by Users and
+ * CAPs) minus upn/phone_number_id/did. Those three are per-row-unique
+ * identifiers - bulk-applying the same UPN, phone number, or raw DID text
+ * to many rows would be destructive, not a real bulk operation (see
+ * buildBulkPatchSchema, packages/shared/src/dto.ts). numberChoicesFor isn't
+ * needed since phone_number_id is excluded.
+ */
+function bulkIdentityFields(policyFields: FieldDef[]): FieldDef[] {
+  return identityFields(policyFields, () => []).filter((f) => !['upn', 'phone_number_id', 'did'].includes(f.key));
+}
+
+const UNCHANGED = '__unchanged__';
+
+/**
+ * Select many rows, set a handful of fields once, apply to all of them in
+ * one request - the bulk-edit flow (BuildSiteWorkspace, "Bulk edit (N
+ * selected)"). Deliberately not a mode of the shared RecordDialog
+ * (records.tsx): that component's blast radius is every page in the app,
+ * and the semantics genuinely differ - RecordDialog seeds from one real row
+ * and a blank field means "clear it"; here there's no single row to seed
+ * from, and a field left alone must mean "don't touch any selected row",
+ * the opposite convention (see buildBulkPayload). A boolean field can't
+ * reuse a plain two-state Switch for the same reason - it needs a real
+ * third "leave unchanged" state, not a default of off.
+ */
+function BulkEditDialog({
+  open,
+  onOpenChange,
+  kindLabel,
+  fields,
+  count,
+  saving,
+  error,
+  onSave,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  kindLabel: string;
+  fields: FieldDef[];
+  count: number;
+  saving: boolean;
+  error: string | null;
+  onSave: (payload: Record<string, unknown>) => void;
+}) {
+  const [values, setValues] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (open) setValues({});
+  }, [open]);
+
+  const set = (key: string, v: string) => setValues((prev) => ({ ...prev, [key]: v === UNCHANGED ? '' : v }));
+  const touched = Object.values(values).some((v) => v !== '');
+
+  return (
+    <Dialog open={open} onOpenChange={(_, d) => onOpenChange(d.open)}>
+      <DialogSurface>
+        <DialogBody>
+          <DialogTitle>
+            Bulk edit {kindLabel} ({count} selected)
+          </DialogTitle>
+          <DialogContent>
+            <Text size={200} block style={{ marginBottom: 12 }}>
+              Only the fields you set below will change. Leave a field on “— leave unchanged —” (or blank) to skip
+              it - every other selected row's value for that field stays exactly as it is.
+            </Text>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              {fields.map((f) => {
+                const value = values[f.key] ?? '';
+                const wide = f.full ? { gridColumn: '1 / -1' } : undefined;
+                if (f.type === 'boolean') {
+                  return (
+                    <Field key={f.key} label={f.label} style={wide}>
+                      <Dropdown
+                        value={value === 'true' ? 'On' : value === 'false' ? 'Off' : '— leave unchanged —'}
+                        selectedOptions={[value || UNCHANGED]}
+                        onOptionSelect={(_, d) => set(f.key, d.optionValue ?? UNCHANGED)}
+                      >
+                        <Option value={UNCHANGED}>— leave unchanged —</Option>
+                        <Option value="true">On</Option>
+                        <Option value="false">Off</Option>
+                      </Dropdown>
+                    </Field>
+                  );
+                }
+                if (f.type === 'select' || f.type === 'ref') {
+                  const choices: Choice[] =
+                    f.type === 'select'
+                      ? (f.options ?? []).map((o) => ({ value: o, label: o }))
+                      : typeof f.choices === 'function'
+                        ? f.choices(null)
+                        : (f.choices ?? []);
+                  return (
+                    <Field key={f.key} label={f.label} style={wide}>
+                      <Dropdown
+                        value={choices.find((c) => c.value === value)?.label ?? '— leave unchanged —'}
+                        selectedOptions={[value || UNCHANGED]}
+                        onOptionSelect={(_, d) => set(f.key, d.optionValue ?? UNCHANGED)}
+                      >
+                        <Option value={UNCHANGED}>— leave unchanged —</Option>
+                        {choices.map((c) => (
+                          <Option key={c.value} value={c.value} text={c.label}>
+                            {c.label}
+                          </Option>
+                        ))}
+                      </Dropdown>
+                    </Field>
+                  );
+                }
+                if (f.type === 'textarea') {
+                  return (
+                    <Field key={f.key} label={f.label} style={wide}>
+                      <Textarea
+                        value={value}
+                        placeholder="Leave blank to skip"
+                        onChange={(_, d) => set(f.key, d.value)}
+                      />
+                    </Field>
+                  );
+                }
+                return (
+                  <Field key={f.key} label={f.label} style={wide}>
+                    <Input value={value} placeholder="Leave blank to skip" onChange={(_, d) => set(f.key, d.value)} />
+                  </Field>
+                );
+              })}
+            </div>
+            {error && (
+              <Text block style={{ color: tokens.colorPaletteRedForeground1, marginTop: 8 }}>
+                {error}
+              </Text>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <DialogTrigger disableButtonEnhancement>
+              <Button appearance="secondary">Cancel</Button>
+            </DialogTrigger>
+            <Button
+              appearance="primary"
+              disabled={saving || !touched || count === 0}
+              onClick={() => onSave(buildBulkPayload(fields, values))}
+            >
+              {saving ? 'Applying…' : `Apply to ${count} row${count === 1 ? '' : 's'}`}
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  );
 }

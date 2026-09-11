@@ -1,5 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import {
+  buildBulkPatchSchema,
   buildCapCreateSchema,
   buildCapPatchSchema,
   buildIdentityCreateSchema,
@@ -9,6 +10,7 @@ import {
   buildResourceAccountCreateSchema,
   buildResourceAccountPatchSchema,
   buildValidateSchema,
+  type BuildBulkPatchInput,
   type BuildCapCreateInput,
   type BuildCapPatchInput,
   type BuildIdentityCreateInput,
@@ -66,6 +68,15 @@ export class BuildController {
   ) {
     return this.svc.createUser(t, user, body);
   }
+  @Patch('users/bulk')
+  @RequirePermission('build:write')
+  bulkUpdateUsers(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(buildBulkPatchSchema)) body: BuildBulkPatchInput,
+  ) {
+    return this.svc.bulkUpdateUsers(t, user, body);
+  }
   @Patch('users/:id')
   @RequirePermission('build:write')
   updateUser(
@@ -111,6 +122,15 @@ export class BuildController {
     @Body(new ZodBody(buildCapCreateSchema)) body: BuildCapCreateInput,
   ) {
     return this.svc.createCap(t, user, body);
+  }
+  @Patch('caps/bulk')
+  @RequirePermission('build:write')
+  bulkUpdateCaps(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(buildBulkPatchSchema)) body: BuildBulkPatchInput,
+  ) {
+    return this.svc.bulkUpdateCaps(t, user, body);
   }
   @Patch('caps/:id')
   @RequirePermission('build:write')

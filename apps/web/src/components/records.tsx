@@ -3,6 +3,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import {
   Button,
   Card,
+  Checkbox,
   Dialog,
   DialogActions,
   DialogBody,
@@ -138,6 +139,36 @@ export function buildPayload(fields: FieldDef[], values: Record<string, string>)
       const parent = f.key.slice(0, dot);
       const child = f.key.slice(dot + 1);
       if (parsed == null || parsed === '') continue; // omit unset nested values, don't null out the whole object
+      payload[parent] = { ...((payload[parent] as Record<string, unknown>) ?? {}), [child]: parsed };
+    }
+  }
+  return payload;
+}
+
+/**
+ * Bulk-edit variant of buildPayload: every field starts blank (there's no
+ * single row to seed from), and unlike single-row edit, a blank field must
+ * never mean "clear it" - it means "leave every selected row's value alone".
+ * So `v === ''` skips the field entirely, top-level included (buildPayload
+ * only does that for nested keys - a top-level blank is a real "set to
+ * null" for single-row edit, which would wipe every selected row's value
+ * here). Bulk mode only ever sets values, never clears them - the same
+ * `''` sentinel a plain Input/Combobox would produce if genuinely left
+ * alone, so callers must give boolean fields a real "unchanged" option
+ * (not default them to false) rather than reusing a two-state Switch.
+ */
+export function buildBulkPayload(fields: FieldDef[], values: Record<string, string>) {
+  const payload: Record<string, unknown> = {};
+  for (const f of fields) {
+    const v = values[f.key] ?? '';
+    if (v === '') continue;
+    const parsed = f.type === 'number' ? Number(v) : f.type === 'boolean' ? v === 'true' : v;
+    const dot = f.key.indexOf('.');
+    if (dot === -1) {
+      payload[f.key] = parsed;
+    } else {
+      const parent = f.key.slice(0, dot);
+      const child = f.key.slice(dot + 1);
       payload[parent] = { ...((payload[parent] as Record<string, unknown>) ?? {}), [child]: parsed };
     }
   }
@@ -524,6 +555,9 @@ export function PagedSection({
   emptyText = 'Nothing captured yet.',
   pageSize = 50,
   suggest,
+  selectable,
+  selected,
+  onSelectedChange,
 }: {
   title: string;
   hint?: string;
@@ -541,6 +575,10 @@ export function PagedSection({
   emptyText?: string;
   pageSize?: number;
   suggest?: SuggestConfig;
+  /** Opt-in row-selection checkboxes (e.g. for a bulk-edit flow) - omit all three to leave the table exactly as before. */
+  selectable?: boolean;
+  selected?: Set<string>;
+  onSelectedChange?: (next: Set<string>) => void;
 }) {
   const s = useRecordStyles();
   const qc = useQueryClient();
@@ -657,6 +695,9 @@ export function PagedSection({
               setOpen(true);
             }}
             onDelete={(id) => remove.mutate(id)}
+            selectable={selectable}
+            selected={selected}
+            onSelectedChange={onSelectedChange}
           />
           {pages > 1 && (
             <div className={s.pager}>
@@ -707,6 +748,9 @@ function RecordTable({
   extraRowAction,
   onEdit,
   onDelete,
+  selectable,
+  selected,
+  onSelectedChange,
 }: {
   rows: Row[];
   columns: ColumnDef[];
@@ -715,13 +759,41 @@ function RecordTable({
   extraRowAction?: (r: Row) => ReactNode;
   onEdit: (r: Row) => void;
   onDelete: (id: string) => void;
+  selectable?: boolean;
+  selected?: Set<string>;
+  onSelectedChange?: (next: Set<string>) => void;
 }) {
   const s = useRecordStyles();
-  const minWidth = Math.max(560, columns.length * 132 + (readOnly ? 0 : 96));
+  const minWidth = Math.max(560, columns.length * 132 + (readOnly ? 0 : 96) + (selectable ? 40 : 0));
+  const allOnPageSelected = selectable && rows.length > 0 && rows.every((r) => selected?.has(r.id));
+  const someOnPageSelected = selectable && rows.some((r) => selected?.has(r.id));
+  const toggleAll = () => {
+    if (!onSelectedChange) return;
+    const next = new Set(selected);
+    if (allOnPageSelected) for (const r of rows) next.delete(r.id);
+    else for (const r of rows) next.add(r.id);
+    onSelectedChange(next);
+  };
+  const toggleOne = (id: string) => {
+    if (!onSelectedChange) return;
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    onSelectedChange(next);
+  };
   return (
     <DataTable size="small" minWidth={minWidth}>
       <TableHeader>
         <TableRow>
+          {selectable && (
+            <TableHeaderCell>
+              <Checkbox
+                checked={allOnPageSelected ? true : someOnPageSelected ? 'mixed' : false}
+                onChange={toggleAll}
+                aria-label="Select all rows on this page"
+              />
+            </TableHeaderCell>
+          )}
           {columns.map((c) => (
             <TableHeaderCell key={c.key}>{c.label}</TableHeaderCell>
           ))}
@@ -731,6 +803,15 @@ function RecordTable({
       <TableBody>
           {rows.map((r) => (
             <TableRow key={r.id}>
+              {selectable && (
+                <TableCell>
+                  <Checkbox
+                    checked={selected?.has(r.id) ?? false}
+                    onChange={() => toggleOne(r.id)}
+                    aria-label={`Select row ${r.id}`}
+                  />
+                </TableCell>
+              )}
               {columns.map((c) => {
                 const content = c.render ? c.render(r) : ((r[c.key] as string) ?? '—') || '—';
                 return (

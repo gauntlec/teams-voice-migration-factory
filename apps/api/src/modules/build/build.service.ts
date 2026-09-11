@@ -5,6 +5,7 @@ import {
   POLICY_KIND_TO_TENANT_TYPE,
   POLICY_KINDS,
   RESOURCE_ACCOUNT_APPLICATION_IDS,
+  type BuildBulkPatchInput,
   type BuildCapCreateInput,
   type BuildCapPatchInput,
   type BuildIdentityCreateInput,
@@ -141,6 +142,9 @@ export class BuildService {
   async updateUser(t: TenantContext, u: AuthedUser, id: string, body: BuildIdentityPatchInput) {
     return this.updateIdentity(t, u, 'build_users', 'user', id, body);
   }
+  async bulkUpdateUsers(t: TenantContext, u: AuthedUser, body: BuildBulkPatchInput) {
+    return this.bulkUpdateIdentity(t, u, 'build_users', 'user', body.ids, body.patch);
+  }
   async deleteUser(t: TenantContext, u: AuthedUser, id: string) {
     return this.deleteIdentity(t, u, 'build_users', id);
   }
@@ -205,6 +209,9 @@ export class BuildService {
   }
   async updateCap(t: TenantContext, u: AuthedUser, id: string, body: BuildCapPatchInput) {
     return this.updateIdentity(t, u, 'build_caps', 'cap', id, body);
+  }
+  async bulkUpdateCaps(t: TenantContext, u: AuthedUser, body: BuildBulkPatchInput) {
+    return this.bulkUpdateIdentity(t, u, 'build_caps', 'cap', body.ids, body.patch);
   }
   async deleteCap(t: TenantContext, u: AuthedUser, id: string) {
     return this.deleteIdentity(t, u, 'build_caps', id);
@@ -368,6 +375,43 @@ export class BuildService {
       detail: { fields: Object.keys(patch) },
     });
     return row;
+  }
+
+  /**
+   * Applies the same patch to many rows at once - the "select rows, set
+   * values once" bulk-edit flow (BulkEditDialog, BuildSiteWorkspace.tsx).
+   * Unlike updateIdentity, there's no phone_number_id here (buildBulkPatchSchema
+   * excludes it - see packages/shared/src/dto.ts for why) so there's no
+   * per-row number-inventory side effect to loop over; policy_ids resolves
+   * once (it's the same target for every row) and the whole batch is a
+   * single UPDATE ... WHERE id IN (...), not N queries. One summary audit
+   * row, not one per affected row - matches populateIdentity's precedent.
+   */
+  private async bulkUpdateIdentity(
+    t: TenantContext,
+    u: AuthedUser,
+    table: 'build_users' | 'build_caps',
+    holderType: NumberHolderType,
+    ids: string[],
+    body: Record<string, unknown>,
+  ): Promise<{ updated: number }> {
+    const { policy_ids, ...rest } = body;
+    const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
+    if (policy_ids !== undefined) {
+      Object.assign(patch, await this.resolvePolicyIds(t, policy_ids as Partial<Record<string, string | null>>));
+    }
+    const result = await this.s(t)
+      .updateTable(table)
+      .set(patch as never)
+      .where('id', 'in', ids)
+      .executeTakeFirst();
+    const updated = Number(result?.numUpdatedRows ?? 0);
+    await this.audit.tenant(t.schema, `build.${holderType}s_bulk_updated`, {
+      actor: actorOf(u),
+      targetType: `build_${holderType}`,
+      detail: { ids, count: updated, fields: Object.keys(patch) },
+    });
+    return { updated };
   }
 
   private async populateIdentity<

@@ -555,6 +555,23 @@ export type BuildIdentityCreateInput = z.infer<typeof buildIdentityCreateSchema>
 export const buildIdentityPatchSchema = z.object({ upn: emailSchema.optional(), ...buildIdentityWritable }).strict();
 export type BuildIdentityPatchInput = z.infer<typeof buildIdentityPatchSchema>;
 
+/**
+ * Bulk-edit for build_users/build_caps: the same patch applied to many rows
+ * at once. `upn`, `did` and `phone_number_id` are deliberately excluded -
+ * they're per-row-unique identifiers, so applying the same value to
+ * hundreds of rows would be destructive (duplicate UPNs, the same DID text,
+ * or the same specific phone number claimed by every selected row) rather
+ * than a real bulk operation.
+ */
+const { did: _bulkDid, phone_number_id: _bulkPhoneNumberId, ...buildBulkIdentityWritable } = buildIdentityWritable;
+export const buildBulkPatchSchema = z
+  .object({
+    ids: z.array(z.string().uuid()).min(1).max(500),
+    patch: z.object(buildBulkIdentityWritable).strict(),
+  })
+  .strict();
+export type BuildBulkPatchInput = z.infer<typeof buildBulkPatchSchema>;
+
 const buildCapWritable = {
   function: optStr(80),
   display_name: optStr(160),
