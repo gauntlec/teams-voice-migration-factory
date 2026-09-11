@@ -333,8 +333,23 @@ export class BuildService {
     const { phone_number_id, ...rest } = body;
     const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
     if (phone_number_id !== undefined) {
-      const number = await this.setSingleNumber(t, holderType, id, phone_number_id);
-      patch.e164 = number?.e164 ?? null;
+      // The Edit dialog always sends this field, `null` when the picker was
+      // never touched - not just when the engineer explicitly cleared it. A
+      // row can have an e164 with no phone_numbers claim behind it at all
+      // (Populate imports a *copy* of Data Collection's number, see
+      // populateUsers) - only touch e164 here for a real pick, or a real
+      // release of a claim this row actually holds; otherwise an imported
+      // number would get silently wiped on every unrelated save.
+      const hasClaim = await this.s(t)
+        .selectFrom('phone_numbers')
+        .select('id')
+        .where('holder_type', '=', holderType)
+        .where('holder_id', '=', id)
+        .executeTakeFirst();
+      if (phone_number_id || hasClaim) {
+        const number = await this.setSingleNumber(t, holderType, id, phone_number_id);
+        patch.e164 = number?.e164 ?? null;
+      }
     }
     const row = await this.s(t)
       .updateTable(table)
@@ -519,8 +534,18 @@ export class BuildService {
     const { phone_number_id, created, ...rest } = body;
     const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
     if (phone_number_id !== undefined) {
-      const number = await this.setSingleNumber(t, 'resource_account', id, phone_number_id);
-      patch.phone_number = number?.e164 ?? null;
+      // Same guard as updateIdentity: only act when there's a real pick or a
+      // real existing claim to release.
+      const hasClaim = await this.s(t)
+        .selectFrom('phone_numbers')
+        .select('id')
+        .where('holder_type', '=', 'resource_account')
+        .where('holder_id', '=', id)
+        .executeTakeFirst();
+      if (phone_number_id || hasClaim) {
+        const number = await this.setSingleNumber(t, 'resource_account', id, phone_number_id);
+        patch.phone_number = number?.e164 ?? null;
+      }
     }
     if (created !== undefined) {
       const row = await this.getResourceAccount(t, id);
