@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -15,7 +16,7 @@ import {
   makeStyles,
   shorthands,
 } from '@fluentui/react-components';
-import { ArrowRightRegular } from '@fluentui/react-icons';
+import { ArrowRightRegular, ChevronLeftRegular, ChevronRightRegular } from '@fluentui/react-icons';
 import type { DeploymentSiteRollup } from '@tvmf/shared';
 import { api } from '../api';
 import { useAuth } from '../auth';
@@ -26,7 +27,10 @@ import { LoadError, NoTenant, useRecordStyles } from '../components/records';
 const useStyles = makeStyles({
   row: { display: 'flex', ...shorthands.gap('8px'), flexWrap: 'wrap', alignItems: 'center' },
   mono: { fontFamily: 'ui-monospace, monospace' },
+  pager: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', ...shorthands.gap('8px') },
 });
+
+const CONNECTIONS_PAGE_SIZE = 5;
 
 const DEPLOY_COLOR: Record<string, 'informative' | 'warning' | 'success' | 'danger'> = {
   queued: 'informative',
@@ -78,6 +82,18 @@ export function DeploymentSites() {
   });
   const activeConn = connections.data?.find((c) => c.status === 'active');
 
+  // Connections already come back newest-first, capped at 50 server-side
+  // (DeploymentService.listConnections) - this just limits the table to 5
+  // rows at a time instead of dumping the whole history on screen.
+  const [connPage, setConnPage] = useState(1);
+  const connTotal = connections.data?.length ?? 0;
+  const connPages = Math.max(1, Math.ceil(connTotal / CONNECTIONS_PAGE_SIZE));
+  const connPageClamped = Math.min(connPage, connPages);
+  const pagedConnections = (connections.data ?? []).slice(
+    (connPageClamped - 1) * CONNECTIONS_PAGE_SIZE,
+    connPageClamped * CONNECTIONS_PAGE_SIZE,
+  );
+
   if (!activeTenantId) return <NoTenant />;
   if (q.isLoading) return <Spinner label="Loading Deployment…" />;
   if (q.isError) return <LoadError message={(q.error as Error).message} />;
@@ -126,7 +142,7 @@ export function DeploymentSites() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {connections.data.map((c) => (
+                  {pagedConnections.map((c) => (
                     <TableRow key={c.id}>
                       <TableCell>{new Date(c.started_at).toLocaleString()}</TableCell>
                       <TableCell>
@@ -153,6 +169,27 @@ export function DeploymentSites() {
                   ))}
                 </TableBody>
               </DataTable>
+            )}
+            {connPages > 1 && (
+              <div className={cs.pager}>
+                <Text size={200} className={s.muted}>
+                  Page {connPageClamped} of {connPages} · {connTotal} total
+                </Text>
+                <Button
+                  size="small"
+                  appearance="subtle"
+                  icon={<ChevronLeftRegular />}
+                  disabled={connPageClamped <= 1}
+                  onClick={() => setConnPage((p) => Math.max(1, p - 1))}
+                />
+                <Button
+                  size="small"
+                  appearance="subtle"
+                  icon={<ChevronRightRegular />}
+                  disabled={connPageClamped >= connPages}
+                  onClick={() => setConnPage((p) => Math.min(connPages, p + 1))}
+                />
+              </div>
             )}
             {!activeConn && (
               <Text size={200} className={s.muted}>
