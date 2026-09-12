@@ -45,6 +45,7 @@ import {
   NUMBER_RANGE_KINDS,
   RESOURCE_ACCOUNT_KINDS,
   SITE_REGIONS,
+  VOICEMAIL_PROMPT_LANGUAGES,
   type DiscoverySiteOverview,
   type Paginated,
   type TenantUserSummary,
@@ -437,7 +438,13 @@ export function SiteWorkspace() {
             { key: 'calling_policy_id', label: 'Calling policy', type: 'ref', choices: policyChoices },
             { key: 'caller_id', label: 'Caller ID', type: 'select', options: CALLER_ID_OPTIONS },
             { key: 'voicemail_enabled', label: 'Voicemail enabled', type: 'boolean', default: 'true' },
-            { key: 'voicemail_language', label: 'Voicemail language', placeholder: 'English' },
+            {
+              key: 'voicemail_language',
+              label: 'Voicemail language',
+              type: 'ref',
+              // Culture codes only - Teams rejects a plain name like "English".
+              choices: VOICEMAIL_PROMPT_LANGUAGES.map((l) => ({ value: l.code, label: `${l.label} (${l.code})` })),
+            },
             { key: 'requires_handset', label: 'Requires a physical handset', type: 'boolean' },
             { key: 'handset_model', label: 'Handset model' },
             { key: 'access_port_id', label: 'Access port ID' },

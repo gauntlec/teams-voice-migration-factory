@@ -106,9 +106,8 @@ export function planIdentityRow(
   for (const kind of POLICY_KINDS) {
     const value = row.policies?.[kind.key];
     if (!value) continue;
-    // dial_out_policy has no TenantPolicyType - Discovery never syncs it
-    // live, so it can't be diffed and always re-grants when set (see
-    // POLICY_KIND_TO_TENANT_TYPE in domain.ts).
+    // Every kind maps to a live TenantPolicyType (POLICY_KIND_TO_TENANT_TYPE);
+    // the guard is just defensive for any future kind added without one.
     const tenantType = POLICY_KIND_TO_TENANT_TYPE[kind.key];
     if (tenantType && live && live.policies[tenantType] === value) continue;
     calls.push({
@@ -125,8 +124,9 @@ export function planIdentityRow(
   // tenant-defined behaviours. `row.voicemail.enabled` undefined/null means
   // "not designed yet" and is left alone; explicitly true/false is a real
   // target either way. Can't be diffed against live like the fields above -
-  // Discovery doesn't sync voicemail settings at all - so this always
-  // re-issues the cmdlet whenever a target is set.
+  // Discovery doesn't sync voicemail settings yet (Get-CsOnlineVoicemailUserSettings
+  // is per-user, so it's a targeted-run job, not a full-sweep one) - so this
+  // always re-issues the cmdlet whenever a target is set.
   if (row.voicemail?.enabled != null) {
     calls.push({
       cmdlet: 'Set-CsOnlineVoicemailUserSettings',

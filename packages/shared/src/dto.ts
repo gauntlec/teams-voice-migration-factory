@@ -15,6 +15,8 @@ import {
   RESOURCE_ACCOUNT_KINDS,
   TENANT_OBJECT_TYPES,
   TENANT_POLICY_TYPES,
+  VOICEMAIL_PROMPT_LANGUAGE_CODES,
+  normalizeVoicemailLanguage,
 } from './domain';
 
 export const emailSchema = z.string().email().max(320).transform((s) => s.toLowerCase().trim());
@@ -294,6 +296,21 @@ const blankToNull = <T extends z.ZodTypeAny>(inner: T) =>
 const callerId = blankToNull(z.enum(CALLER_ID_OPTIONS));
 /** '' from a cleared dropdown is treated as null. */
 const refId = blankToNull(z.string().uuid());
+/**
+ * Voicemail language, stored as the culture code Teams' PromptLanguage wants.
+ * Accepts a code in any case or a common English name (see
+ * normalizeVoicemailLanguage) so Excel imports and old free-text values still
+ * land; anything unrecognised is rejected rather than stored undeployable.
+ */
+const voicemailLanguage = z.preprocess(
+  (v) => (v == null || v === '' ? null : (normalizeVoicemailLanguage(v) ?? v)),
+  z
+    .enum(VOICEMAIL_PROMPT_LANGUAGE_CODES, {
+      errorMap: () => ({ message: 'Voicemail language must be one Teams supports, e.g. en-US or "English (United Kingdom)"' }),
+    })
+    .nullable()
+    .optional(),
+);
 
 export const discoveryUserSchema = z
   .object({
@@ -303,7 +320,7 @@ export const discoveryUserSchema = z
     calling_policy_id: refId,
     caller_id: callerId,
     voicemail_enabled: yn.optional(),
-    voicemail_language: optStr(80),
+    voicemail_language: voicemailLanguage,
     requires_handset: yn.optional(),
     handset_model: optStr(120),
     access_port_id: optStr(80),
@@ -348,7 +365,7 @@ export const importUserRowSchema = z
     calling_policy: optStr(120),
     caller_id: callerIdLoose,
     voicemail_enabled: ynLoose,
-    voicemail_language: optStr(80),
+    voicemail_language: voicemailLanguage,
     requires_handset: ynLoose,
     handset_model: optStr(120),
     access_port_id: optStr(80),
@@ -570,7 +587,10 @@ const buildIdentityWritable = {
   migration_wave: optStr(80),
   policies: policyMap,
   policy_ids: policyIdMap,
-  voicemail: jsonObj,
+  // The Set-CsOnlineVoicemailUserSettings target - language is validated as
+  // a Teams culture code here, so it's never stored in a form deployment
+  // would then be rejected on.
+  voicemail: z.object({ enabled: z.boolean().nullable().optional(), language: voicemailLanguage }).optional(),
   call_forwarding: jsonObj,
   delegates: jsonArr,
   pickup_group: jsonObj,

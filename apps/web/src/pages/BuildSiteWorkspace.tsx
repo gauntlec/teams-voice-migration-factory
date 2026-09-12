@@ -29,6 +29,7 @@ import {
   POLICY_KIND_TO_TENANT_TYPE,
   POLICY_KINDS,
   RESOURCE_ACCOUNT_KINDS,
+  VOICEMAIL_PROMPT_LANGUAGES,
   type BuildRowValidation,
   type BuildSiteRollup,
   type Paginated,
@@ -51,6 +52,11 @@ import {
 
 /** Last 10 significant digits, for loose number matching (same rule Data Collection uses). */
 const numKey = (v: string | null | undefined): string => String(v ?? '').replace(/\D/g, '').slice(-10);
+
+const VOICEMAIL_LANGUAGE_CHOICES: Choice[] = VOICEMAIL_PROMPT_LANGUAGES.map((l) => ({
+  value: l.code,
+  label: `${l.label} (${l.code})`,
+}));
 
 /** Small live-vs-target badge - the replacement for the workbook's `G-*` columns. */
 function ValidationBadge({ v }: { v: BuildRowValidation | null }) {
@@ -578,7 +584,8 @@ function identityFields(policyFields: FieldDef[], numberChoicesFor: (row: Row | 
     // voicemail_policy below (a policy grant, a different setting). Populate
     // prefills this from Data Collection; it deploys from here.
     { key: 'voicemail.enabled', label: 'Voicemail enabled', type: 'boolean' },
-    { key: 'voicemail.language', label: 'Voicemail language', placeholder: 'English' },
+    // Culture codes only - Teams rejects a plain name like "English" (see VOICEMAIL_PROMPT_LANGUAGES).
+    { key: 'voicemail.language', label: 'Voicemail language', type: 'ref', choices: VOICEMAIL_LANGUAGE_CHOICES },
     ...policyFields,
     { key: 'comments', label: 'Comments', type: 'textarea', full: true },
   ];

@@ -136,12 +136,14 @@ export type PolicyKey = (typeof POLICY_KINDS)[number]['key'];
  * Maps a build-side PolicyKey to the TenantPolicyType Discovery projects onto
  * `tenant_users.policies` (see run.ts `projectUser`, keyed by TENANT_POLICY_TYPES),
  * so Design & Build can compare a target policy against the tenant's live state.
- * `dial_out_policy` has no entry: Discovery doesn't currently collect Dial Out
- * Policy assignments (no `TenantPolicyType` for it), so it can't be validated
- * live yet - a known, documented gap rather than a guess.
+ * Every kind is covered. Dial Out is the naming oddity: the grant cmdlet is
+ * `Grant-CsDialoutPolicy` (POLICY_KINDS) but the module exposes the
+ * assignment as the `OnlineDialOutPolicy` user property and lists the tenant's
+ * policies via `Get-CsOnlineDialOutPolicy` - hence that TenantPolicyType.
  */
 export const POLICY_KIND_TO_TENANT_TYPE: Partial<Record<PolicyKey, TenantPolicyType>> = {
   voice_routing_policy: 'OnlineVoiceRoutingPolicy',
+  dial_out_policy: 'OnlineDialOutPolicy',
   shared_calling_policy: 'TeamsSharedCallingRoutingPolicy',
   dial_plan: 'TenantDialPlan',
   calling_policy: 'TeamsCallingPolicy',
@@ -154,6 +156,122 @@ export const POLICY_KIND_TO_TENANT_TYPE: Partial<Record<PolicyKey, TenantPolicyT
   emergency_call_routing_policy: 'TeamsEmergencyCallRoutingPolicy',
   ip_phone_policy: 'TeamsIPPhonePolicy',
 };
+
+/**
+ * Voicemail prompt languages Teams accepts for
+ * `Set-CsOnlineVoicemailUserSettings -PromptLanguage` - culture codes, not
+ * names ("English" is rejected). This is the picker list everywhere a
+ * voicemail language is entered (Data Collection, Excel import, Design &
+ * Build), so what's stored is always deployable as-is.
+ */
+export const VOICEMAIL_PROMPT_LANGUAGES = [
+  { code: 'en-US', label: 'English (United States)' },
+  { code: 'en-GB', label: 'English (United Kingdom)' },
+  { code: 'en-AU', label: 'English (Australia)' },
+  { code: 'en-CA', label: 'English (Canada)' },
+  { code: 'en-IN', label: 'English (India)' },
+  { code: 'fr-FR', label: 'French (France)' },
+  { code: 'fr-CA', label: 'French (Canada)' },
+  { code: 'de-DE', label: 'German' },
+  { code: 'es-ES', label: 'Spanish (Spain)' },
+  { code: 'es-MX', label: 'Spanish (Mexico)' },
+  { code: 'it-IT', label: 'Italian' },
+  { code: 'pt-BR', label: 'Portuguese (Brazil)' },
+  { code: 'pt-PT', label: 'Portuguese (Portugal)' },
+  { code: 'nl-NL', label: 'Dutch (Netherlands)' },
+  { code: 'nl-BE', label: 'Dutch (Belgium)' },
+  { code: 'sv-SE', label: 'Swedish' },
+  { code: 'da-DK', label: 'Danish' },
+  { code: 'nb-NO', label: 'Norwegian' },
+  { code: 'fi-FI', label: 'Finnish' },
+  { code: 'pl-PL', label: 'Polish' },
+  { code: 'cs-CZ', label: 'Czech' },
+  { code: 'sk-SK', label: 'Slovak' },
+  { code: 'hu-HU', label: 'Hungarian' },
+  { code: 'ro-RO', label: 'Romanian' },
+  { code: 'el-GR', label: 'Greek' },
+  { code: 'tr-TR', label: 'Turkish' },
+  { code: 'ru-RU', label: 'Russian' },
+  { code: 'he-IL', label: 'Hebrew' },
+  { code: 'ar-EG', label: 'Arabic' },
+  { code: 'hi-IN', label: 'Hindi' },
+  { code: 'th-TH', label: 'Thai' },
+  { code: 'vi-VN', label: 'Vietnamese' },
+  { code: 'id-ID', label: 'Indonesian' },
+  { code: 'ja-JP', label: 'Japanese' },
+  { code: 'ko-KR', label: 'Korean' },
+  { code: 'zh-CN', label: 'Chinese (Simplified)' },
+  { code: 'zh-TW', label: 'Chinese (Traditional)' },
+  { code: 'zh-HK', label: 'Chinese (Hong Kong)' },
+] as const;
+export type VoicemailPromptLanguage = (typeof VOICEMAIL_PROMPT_LANGUAGES)[number]['code'];
+export const VOICEMAIL_PROMPT_LANGUAGE_CODES = VOICEMAIL_PROMPT_LANGUAGES.map((l) => l.code) as [
+  VoicemailPromptLanguage,
+  ...VoicemailPromptLanguage[],
+];
+
+/**
+ * Plain-English names people actually type for a voicemail language, mapped
+ * to the culture code Teams wants. Keep in step with the SQL map in
+ * packages/db/migrations/tenant/0020_voicemail_language_codes.sql, which
+ * converted the values that existed before the picker.
+ */
+const VOICEMAIL_LANGUAGE_ALIASES: Record<string, VoicemailPromptLanguage> = {
+  english: 'en-US',
+  'english (us)': 'en-US',
+  'english (united states)': 'en-US',
+  'us english': 'en-US',
+  'american english': 'en-US',
+  'english (uk)': 'en-GB',
+  'english (united kingdom)': 'en-GB',
+  'uk english': 'en-GB',
+  'british english': 'en-GB',
+  'english (australia)': 'en-AU',
+  'english (canada)': 'en-CA',
+  'english (india)': 'en-IN',
+  french: 'fr-FR',
+  'french (france)': 'fr-FR',
+  'french (canada)': 'fr-CA',
+  german: 'de-DE',
+  spanish: 'es-ES',
+  'spanish (spain)': 'es-ES',
+  'spanish (mexico)': 'es-MX',
+  italian: 'it-IT',
+  portuguese: 'pt-PT',
+  'portuguese (brazil)': 'pt-BR',
+  'portuguese (portugal)': 'pt-PT',
+  dutch: 'nl-NL',
+  swedish: 'sv-SE',
+  danish: 'da-DK',
+  norwegian: 'nb-NO',
+  finnish: 'fi-FI',
+  polish: 'pl-PL',
+  czech: 'cs-CZ',
+  turkish: 'tr-TR',
+  russian: 'ru-RU',
+  japanese: 'ja-JP',
+  korean: 'ko-KR',
+  chinese: 'zh-CN',
+  'chinese (simplified)': 'zh-CN',
+  'chinese (traditional)': 'zh-TW',
+};
+
+/**
+ * Accepts a culture code in any case/separator ("en-us", "EN_GB") or a common
+ * English name ("English (United Kingdom)") and returns the canonical code,
+ * or null when it isn't a language Teams voicemail supports.
+ */
+export function normalizeVoicemailLanguage(v: unknown): VoicemailPromptLanguage | null {
+  if (v == null) return null;
+  const t = String(v).trim();
+  if (!t) return null;
+  const asCode = t.replace('_', '-');
+  if (/^[a-z]{2}-[a-z]{2}$/i.test(asCode)) {
+    const code = `${asCode.slice(0, 2).toLowerCase()}-${asCode.slice(3, 5).toUpperCase()}`;
+    return (VOICEMAIL_PROMPT_LANGUAGE_CODES as readonly string[]).includes(code) ? (code as VoicemailPromptLanguage) : null;
+  }
+  return VOICEMAIL_LANGUAGE_ALIASES[t.toLowerCase()] ?? null;
+}
 
 export const CALL_FORWARDING_TYPES = ['Off', 'Immediate', 'Simultaneous'] as const;
 export const CALL_FORWARD_TARGET_TYPES = ['Voicemail', 'SingleTarget', 'Delegates', 'MyDelegates'] as const;
@@ -369,6 +487,7 @@ export const TENANT_POLICY_TYPES = [
   'TeamsIPPhonePolicy',
   'TeamsSharedCallingRoutingPolicy',
   'TeamsVoiceApplicationsPolicy',
+  'OnlineDialOutPolicy',
   'TeamsMeetingPolicy',
   'TeamsMessagingPolicy',
   'TeamsAppSetupPolicy',
@@ -388,6 +507,7 @@ export const TENANT_POLICY_TYPE_LABELS: Record<TenantPolicyType, string> = {
   TeamsIPPhonePolicy: 'IP phone policy',
   TeamsSharedCallingRoutingPolicy: 'Shared calling routing policy',
   TeamsVoiceApplicationsPolicy: 'Voice applications policy',
+  OnlineDialOutPolicy: 'Dial out policy',
   TeamsMeetingPolicy: 'Meeting policy',
   TeamsMessagingPolicy: 'Messaging policy',
   TeamsAppSetupPolicy: 'App setup policy',

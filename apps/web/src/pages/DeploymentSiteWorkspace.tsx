@@ -247,8 +247,8 @@ export function DeploymentSiteWorkspace() {
             </div>
           </div>
           <Text size={200} className={s.muted}>
-            Only rows with something to change are shown — a row disappears once it matches the tenant. Voicemail and
-            Dial Out Policy can't be checked against live Teams data yet, so those always re-run when a target is set.
+            Only rows with something to change are shown — a row disappears once it matches the tenant. Voicemail
+            settings can't be checked against live Teams data yet, so that command always re-runs when a target is set.
             What-If mode runs every check but sends nothing to Microsoft Teams — cmdlets are rendered to a script
             instead. Select rows below to act on just those; with nothing selected, buttons act on the whole site.
           </Text>

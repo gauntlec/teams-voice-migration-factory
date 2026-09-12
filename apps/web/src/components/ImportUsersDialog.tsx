@@ -21,6 +21,7 @@ import {
   tokens,
 } from '@fluentui/react-components';
 import { ArrowDownloadRegular, ArrowUploadRegular } from '@fluentui/react-icons';
+import { normalizeVoicemailLanguage } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { DataTable } from './DataTable';
 
@@ -173,6 +174,16 @@ export function ImportUsersDialog({
           if (status !== 'error') status = 'warn';
           notes.push(`calling policy “${row.calling_policy}” unknown — imported without one`);
         }
+        if (row.voicemail_language) {
+          // Stored as the culture code Teams wants; a name like "English (United Kingdom)" is fine, "Klingon" is not.
+          const code = normalizeVoicemailLanguage(row.voicemail_language);
+          if (code) row.voicemail_language = code;
+          else {
+            if (status !== 'error') status = 'warn';
+            notes.push(`voicemail language “${row.voicemail_language}” not recognised — imported without one`);
+            delete row.voicemail_language;
+          }
+        }
         out.push({ n: r + 1, row, status, notes });
       }
       if (!out.length) throw new Error('No data rows below the header.');
@@ -197,7 +208,7 @@ export function ImportUsersDialog({
       ['Calling policy', 'No', 'Name of an existing calling policy for this customer. Unknown names are ignored.'],
       ['Caller ID', 'No', 'user | anonymous | main number'],
       ['Voicemail enabled', 'No', 'yes / no (defaults to yes)'],
-      ['Voicemail language', 'No', ''],
+      ['Voicemail language', 'No', 'A Teams culture code (en-US, en-GB, fr-FR…) or a plain name like "English (United Kingdom)". Unknown values are dropped.'],
       ['Requires handset', 'No', 'yes / no'],
       ['Handset model', 'No', ''],
       ['Access port ID', 'No', ''],
