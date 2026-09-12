@@ -5,7 +5,13 @@
  * `apps/worker/src/mail/templates.ts`.
  */
 
-export const EMAIL_TEMPLATES = ['user_invitation', 'discovery_completed'] as const;
+export const EMAIL_TEMPLATES = [
+  'user_invitation',
+  'discovery_completed',
+  'port_documents_requested',
+  'port_documents_reminder',
+  'port_documents_completed',
+] as const;
 export type EmailTemplate = (typeof EMAIL_TEMPLATES)[number];
 
 export const EMAIL_STATUSES = ['queued', 'sent', 'failed', 'skipped'] as const;
@@ -54,6 +60,43 @@ export interface DiscoveryCompletedContext {
   /** biggest object types this run stored, for a quick breakdown */
   breakdown: { label: string; count: number }[];
   /** absolute URL of the Discovery page */
+  runUrl: string;
+}
+
+/**
+ * Context shared by the three number-port document emails (requested,
+ * reminder, completed) - one row per outstanding/required document.
+ */
+export interface PortDocumentItemSummary {
+  label: string;
+  note?: string | null;
+  status: 'pending' | 'uploaded' | 'rejected' | 'waived';
+  rejectReason?: string | null;
+}
+
+interface PortDocumentsBaseContext {
+  customerName: string;
+  siteName: string;
+  sitecode: string;
+  rangeLabel: string;
+  items: PortDocumentItemSummary[];
+  /** absolute URL of the customer-facing Number Porting page */
+  portalUrl: string;
+}
+
+/** Context for `port_documents_requested` - sent to the customer when PM/Engineer submits the checklist. */
+export type PortDocumentsRequestedContext = PortDocumentsBaseContext;
+
+/** Context for `port_documents_reminder` - periodic nudge while items are still outstanding. */
+export type PortDocumentsReminderContext = PortDocumentsBaseContext;
+
+/** Context for `port_documents_completed` - sent to whoever submitted the request, once every item clears. */
+export interface PortDocumentsCompletedContext {
+  recipientName: string;
+  customerName: string;
+  siteName: string;
+  sitecode: string;
+  rangeLabel: string;
   runUrl: string;
 }
 

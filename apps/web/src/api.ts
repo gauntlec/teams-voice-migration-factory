@@ -36,7 +36,11 @@ async function raw(path: string, init: RequestInit): Promise<Response> {
   const headers = new Headers(init.headers);
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
   if (activeTenantId) headers.set(TENANT_HEADER, activeTenantId);
-  if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  // FormData sets its own multipart boundary in the Content-Type header the
+  // browser generates - stamping application/json here would break it.
+  if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
   return fetch(path.startsWith('/') ? path : `/${path}`, { ...init, headers, credentials: 'include' });
 }
 
@@ -68,6 +72,13 @@ export async function api<T = unknown>(path: string, init: RequestInit = {}): Pr
     throw new ApiError(res.status, Array.isArray(msg) ? msg.join(', ') : String(msg), body);
   }
   return body as T;
+}
+
+/** Upload a single file as multipart/form-data (field name "file"), e.g. a number-port document. */
+export async function apiUpload<T = unknown>(path: string, file: File): Promise<T> {
+  const form = new FormData();
+  form.append('file', file);
+  return api<T>(path, { method: 'POST', body: form });
 }
 
 /**

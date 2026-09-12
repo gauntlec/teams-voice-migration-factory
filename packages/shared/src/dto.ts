@@ -184,7 +184,11 @@ export type DiscoveryGeneralInput = z.infer<typeof discoveryGeneralSchema>;
  * platform user ids). Only SUPER_ADMIN / PROJECT_MANAGER / ENGINEER may write it.
  */
 export const discoverySiteOverviewSchema = discoveryGeneralSchema
-  .extend({ assignedUserIds: z.array(z.string().uuid()).max(50).optional() })
+  .extend({
+    assignedUserIds: z.array(z.string().uuid()).max(50).optional(),
+    /** Days between number-port document reminder emails for this site (default 7). */
+    portDocReminderDays: z.coerce.number().int().min(1).max(90).optional(),
+  })
   .strict();
 export type DiscoverySiteOverviewInput = z.infer<typeof discoverySiteOverviewSchema>;
 
@@ -239,6 +243,68 @@ export const discoveryNumberRangeSchema = z
   })
   .strict();
 export type DiscoveryNumberRangeInput = z.infer<typeof discoveryNumberRangeSchema>;
+
+/* --------------------- Number-port document collection --------------------- */
+// "LOA Data Collection and Tracking" - a number-port request's document
+// checklist. See docs on the three-tier model: port_document_types (global
+// catalog) -> site_port_document_types (per-site enabled subset) ->
+// number_port_request_items (per-request checklist, picked from the site's
+// enabled subset).
+
+/** Global catalog entry - admin/PM/Engineer only (discovery:sites:manage). */
+export const portDocumentTypeSchema = z
+  .object({
+    key: str(60).regex(/^[a-z][a-z0-9_]*$/, 'lowercase letters, digits and underscores only'),
+    label: str(160),
+    ordinal: z.coerce.number().int().min(0).max(1000).optional(),
+    active: z.boolean().optional(),
+  })
+  .strict();
+export type PortDocumentTypeInput = z.infer<typeof portDocumentTypeSchema>;
+
+/** Toggle one catalog entry on/off for a site. */
+export const sitePortDocumentTypeSchema = z
+  .object({
+    document_type_id: z.string().uuid(),
+    enabled: z.boolean(),
+  })
+  .strict();
+export type SitePortDocumentTypeInput = z.infer<typeof sitePortDocumentTypeSchema>;
+
+/**
+ * PM/Engineer builds a request's checklist by replacing its whole item set in
+ * one call - picked from the site's enabled catalog subset, each optionally
+ * carrying a note (e.g. "authorized signer: Jane Doe" for the ID item).
+ */
+export const numberPortRequestItemsSchema = z
+  .object({
+    items: z
+      .array(
+        z.object({
+          document_type_id: z.string().uuid(),
+          note: optStr(500),
+        }),
+      )
+      .max(50),
+  })
+  .strict();
+export type NumberPortRequestItemsInput = z.infer<typeof numberPortRequestItemsSchema>;
+
+/** PM/Engineer marks one uploaded item as no good and asks the customer to redo it. */
+export const numberPortItemRejectSchema = z
+  .object({
+    reason: str(500),
+  })
+  .strict();
+export type NumberPortItemRejectInput = z.infer<typeof numberPortItemRejectSchema>;
+
+/** PM/Engineer marks one item as not needed after all, without the customer uploading anything. */
+export const numberPortItemWaiveSchema = z
+  .object({
+    waived: z.boolean(),
+  })
+  .strict();
+export type NumberPortItemWaiveInput = z.infer<typeof numberPortItemWaiveSchema>;
 
 export const discoveryNetworkSchema = z
   .object({
@@ -705,7 +771,7 @@ export type BuildListQuery = z.infer<typeof buildListQuerySchema>;
 
 export const filesQuerySchema = z.object({
   siteId: z.string().uuid().optional(),
-  category: z.enum(['deployment_change_document']).optional(),
+  category: z.enum(['deployment_change_document', 'number_port_document']).optional(),
   sourceType: z.string().max(60).optional(),
   sourceId: z.string().uuid().optional(),
 });

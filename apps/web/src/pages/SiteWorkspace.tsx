@@ -278,13 +278,18 @@ export function SiteWorkspace() {
       {tab === 'ranges' && (
         <PagedSection
           title="Number ranges"
-          hint="Creating a range generates its individual numbers into this site's inventory."
+          hint="Creating a range generates its individual numbers into this site's inventory. Use Number porting to track LOA/CSR documents for a port."
           endpoint={`${base}/number-ranges`}
           queryKey={['ranges', tid, siteId]}
           params={{ siteId }}
           fixed={{ sitecode: site.sitecode }}
           readOnly={locked}
           onChanged={refreshSummary}
+          headerActions={
+            <Link to={`/data-collection/sites/${siteId}/number-porting`}>
+              <Button size="small">Number porting</Button>
+            </Link>
+          }
           columns={[
             { key: 'range_start', label: 'From' },
             { key: 'range_end', label: 'To' },
@@ -302,9 +307,9 @@ export function SiteWorkspace() {
             },
             { key: 'carrier', label: 'Carrier' },
             {
-              key: 'loa',
-              label: 'LOA',
-              render: (r) => `${r.loa_sent ? 'sent' : '—'} / ${r.loa_completed ? 'done' : '—'}`,
+              key: 'port_status',
+              label: 'Port status',
+              render: (r) => (r.port_status ? String(r.port_status).replace(/_/g, ' ') : '—'),
             },
           ]}
           fields={[
@@ -312,8 +317,6 @@ export function SiteWorkspace() {
             { key: 'range_end', label: 'Range end', required: true, placeholder: '19133743257' },
             { key: 'kind', label: 'Kind', type: 'select', options: NUMBER_RANGE_KINDS, required: true },
             { key: 'carrier', label: 'Carrier' },
-            { key: 'loa_sent', label: 'LOA sent to customer', type: 'boolean' },
-            { key: 'loa_completed', label: 'LOA completed', type: 'boolean' },
             { key: 'comments', label: 'Comments', type: 'textarea', full: true },
           ]}
         />
@@ -624,6 +627,12 @@ const OVERVIEW_FIELDS: FieldDef[] = [
   { key: 'licensingModel', label: 'PSTN / licensing model', type: 'select', options: LICENSING_MODELS },
   { key: 'targetGoLive', label: 'Target go-live', placeholder: 'e.g. Q3 2026' },
   { key: 'primaryContactEmail', label: 'Primary contact email' },
+  {
+    key: 'portDocReminderDays',
+    label: 'Port document reminder (days)',
+    type: 'number',
+    placeholder: '7',
+  },
   { key: 'notes', label: 'Notes', type: 'textarea', full: true },
 ];
 
@@ -688,11 +697,15 @@ function OverviewTab({
   );
 
   const save = useMutation({
-    mutationFn: () =>
-      api(`${base}/sites/${siteId}/overview`, {
-        method: 'PATCH',
-        body: JSON.stringify({ ...draft, assignedUserIds: staffIds }),
-      }),
+    mutationFn: () => {
+      const body: Record<string, unknown> = { ...draft, assignedUserIds: staffIds };
+      // Numeric overview fields (e.g. portDocReminderDays) are optional server-side,
+      // but an empty string would coerce to 0 and fail its min() check - omit instead.
+      for (const f of OVERVIEW_FIELDS) {
+        if (f.type === 'number' && body[f.key] === '') delete body[f.key];
+      }
+      return api(`${base}/sites/${siteId}/overview`, { method: 'PATCH', body: JSON.stringify(body) });
+    },
     onSuccess: () => {
       setError(null);
       onSaved();

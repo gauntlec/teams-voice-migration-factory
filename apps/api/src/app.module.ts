@@ -13,6 +13,7 @@ import { FeatureRequestsModule } from './feature-requests/feature-requests.modul
 import { UsersModule } from './users/users.module';
 import { TenantsModule } from './tenants/tenants.module';
 import { DataCollectionModule } from './modules/data-collection/data-collection.module';
+import { NumberPortModule } from './modules/number-port/number-port.module';
 import { BuildModule } from './modules/build/build.module';
 import { DeploymentModule } from './modules/deployment/deployment.module';
 import { HandoverModule } from './modules/handover/handover.module';
@@ -34,6 +35,7 @@ import { HealthController } from './health/health.controller';
     UsersModule,
     TenantsModule,
     DataCollectionModule,
+    NumberPortModule,
     BuildModule,
     DeploymentModule,
     HandoverModule,

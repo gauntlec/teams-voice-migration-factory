@@ -3,6 +3,7 @@ import { Worker, type Job } from 'bullmq';
 import IORedis from 'ioredis';
 import { sql } from 'kysely';
 import { createDb, platformDb, tenantDb } from '@tvmf/db';
+import type { DiscoverySiteOverview, PortDocumentItemSummary } from '@tvmf/shared';
 import {
   planIdentityRow,
   planResourceAccountRow,
@@ -122,6 +123,106 @@ async function expireOrphanedWork() {
   }
 }
 void expireOrphanedWork();
+
+/**
+ * Who gets a number-port document email: every active CUSTOMER user scoped
+ * to this site (or whole-customer, via an empty `site_ids`), falling back to
+ * the site overview's `primaryContactEmail` if no CUSTOMER account exists
+ * yet. Duplicated from the API's equivalent in
+ * apps/api/src/modules/number-port/number-port.service.ts rather than
+ * shared - api and worker don't share a DB-access layer beyond @tvmf/db's
+ * Kysely types.
+ */
+async function resolvePortRecipients(
+  tenantId: string,
+  siteId: string,
+  overview: DiscoverySiteOverview,
+): Promise<{ email: string; name?: string | null }[]> {
+  const rows = await platformDb(db)
+    .selectFrom('users as u')
+    .innerJoin('tenant_memberships as m', 'm.user_id', 'u.id')
+    .select(['u.email', 'u.display_name'])
+    .where('m.tenant_id', '=', tenantId)
+    .where('u.role', '=', 'CUSTOMER')
+    .where('u.status', '=', 'active')
+    .where(sql<boolean>`(m.site_ids = '{}' or ${siteId}::uuid = any(m.site_ids))`)
+    .execute();
+  if (rows.length) return rows.map((r) => ({ email: r.email, name: r.display_name }));
+  return overview.primaryContactEmail ? [{ email: overview.primaryContactEmail }] : [];
+}
+
+/**
+ * Periodic nudge for number-port document requests still `awaiting_documents`
+ * once each site's configured interval (`overview.portDocReminderDays`,
+ * default 7 days) has passed since the last reminder (or since submission,
+ * if none has gone out yet). Runs hourly - reminder intervals are measured
+ * in days, so this is far more often than needed, but cheap and idempotent.
+ */
+async function sweepPortDocumentReminders() {
+  const webOrigin = (process.env.WEB_ORIGIN ?? '').replace(/\/+$/, '');
+  const tenants = await platformDb(db).selectFrom('tenants').select(['id', 'schema_name', 'name']).execute();
+  let sent = 0;
+  for (const tenant of tenants) {
+    const scoped = tenantDb(db, tenant.schema_name);
+    const due = await scoped
+      .selectFrom('number_port_requests as req')
+      .innerJoin('discovery_number_ranges as r', 'r.id', 'req.range_id')
+      .innerJoin('discovery_sites as s', 's.sitecode', 'r.sitecode')
+      .select(['req.id', 'req.submitted_at', 'req.reminder_sent_at', 'r.range_start', 'r.range_end', 's.id as site_id', 's.name as site_name', 's.sitecode', 's.overview'])
+      .where('req.status', '=', 'awaiting_documents')
+      .execute();
+    for (const row of due) {
+      const overview = (row.overview ?? {}) as DiscoverySiteOverview;
+      const intervalDays = Math.max(1, overview.portDocReminderDays ?? 7);
+      const last = row.reminder_sent_at ?? row.submitted_at;
+      if (!last || Date.now() - new Date(last).getTime() < intervalDays * 86_400_000) continue;
+
+      const items = await scoped
+        .selectFrom('number_port_request_items as i')
+        .innerJoin('port_document_types as dt', 'dt.id', 'i.document_type_id')
+        .select(['dt.label', 'i.note', 'i.status', 'i.reject_reason'])
+        .where('i.request_id', '=', row.id)
+        .execute();
+      const itemSummaries: PortDocumentItemSummary[] = items.map((i) => ({
+        label: i.label,
+        note: i.note,
+        status: i.status,
+        rejectReason: i.reject_reason,
+      }));
+      const recipients = await resolvePortRecipients(tenant.id, row.site_id, overview);
+      if (!recipients.length) continue; // nothing we can do until a customer contact exists
+
+      for (const to of recipients) {
+        await enqueueMail({
+          template: 'port_documents_reminder',
+          to: { email: to.email, name: to.name },
+          context: {
+            customerName: tenant.name,
+            siteName: row.site_name ?? row.sitecode,
+            sitecode: row.sitecode,
+            rangeLabel: `${row.range_start} - ${row.range_end}`,
+            items: itemSummaries,
+            portalUrl: webOrigin
+              ? `${webOrigin}/data-collection/sites/${row.site_id}/number-porting`
+              : `/data-collection/sites/${row.site_id}/number-porting`,
+          },
+        });
+      }
+      await scoped
+        .updateTable('number_port_requests')
+        .set({ reminder_sent_at: new Date().toISOString() })
+        .where('id', '=', row.id)
+        .execute();
+      sent += recipients.length;
+    }
+  }
+  if (sent) {
+    // eslint-disable-next-line no-console
+    console.log(`port-document reminder sweep: sent ${sent} email(s)`);
+  }
+}
+setInterval(() => void sweepPortDocumentReminders(), 60 * 60_000).unref();
+void sweepPortDocumentReminders();
 
 async function handleConnectionStart(job: Job) {
   const { schema, connectionId, tenantDomain } = job.data as {

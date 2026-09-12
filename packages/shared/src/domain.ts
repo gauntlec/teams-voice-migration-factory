@@ -103,6 +103,8 @@ export interface DiscoveryGeneral {
  */
 export interface DiscoverySiteOverview extends DiscoveryGeneral {
   assignedUserIds?: string[];
+  /** Days between number-port document reminder emails for this site (default 7). See number_port_requests. */
+  portDocReminderDays?: number;
 }
 
 /** Set-CsPhoneNumberAssignment -PhoneNumberType */

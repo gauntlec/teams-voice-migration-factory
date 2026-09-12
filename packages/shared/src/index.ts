@@ -310,7 +310,7 @@ export interface DeploymentPreviewRow {
 /** A row from the general-purpose per-tenant file store (see FilesTable). */
 export interface FileRow {
   id: string;
-  category: 'deployment_change_document';
+  category: 'deployment_change_document' | 'number_port_document';
   sourceType: string;
   sourceId: string;
   siteId: string | null;

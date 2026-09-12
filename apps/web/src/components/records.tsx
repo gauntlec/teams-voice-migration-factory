@@ -74,6 +74,8 @@ export interface FieldDef {
   placeholder?: string;
   default?: string;
   full?: boolean;
+  /** Grey out (and stop editing) this field when the current form values make it inapplicable. */
+  disabledWhen?: (values: Record<string, string>) => boolean;
 }
 
 export interface ColumnDef {
@@ -313,7 +315,9 @@ export function RecordDialog({
           </DialogTitle>
           <DialogContent>
             <div className={s.dialogForm}>
-              {fields.map((f) => (
+              {fields.map((f) => {
+                const disabled = f.disabledWhen?.(values) ?? false;
+                return (
                 <Fragment key={f.key}>
                 <Field
                   label={f.label}
@@ -323,6 +327,7 @@ export function RecordDialog({
                   {f.type === 'boolean' ? (
                     <Switch
                       checked={values[f.key] === 'true'}
+                      disabled={disabled}
                       onChange={(_, d) =>
                         setValues((v) => ({ ...v, [f.key]: d.checked ? 'true' : 'false' }))
                       }
@@ -331,11 +336,13 @@ export function RecordDialog({
                     <Textarea
                       value={values[f.key] ?? ''}
                       resize="vertical"
+                      disabled={disabled}
                       onChange={(_, d) => setValues((v) => ({ ...v, [f.key]: d.value }))}
                     />
                   ) : f.type === 'select' || f.type === 'ref' ? (
                     <Dropdown
                       placeholder="Select…"
+                      disabled={disabled}
                       selectedOptions={values[f.key] ? [values[f.key]!] : []}
                       value={
                         f.type === 'ref'
@@ -358,6 +365,7 @@ export function RecordDialog({
                       type={f.type === 'number' ? 'number' : 'text'}
                       placeholder={f.placeholder}
                       value={values[f.key] ?? ''}
+                      disabled={disabled}
                       onChange={(_, d) => setValues((v) => ({ ...v, [f.key]: d.value }))}
                       onBlur={
                         suggest && f.key === suggest.field
@@ -399,7 +407,8 @@ export function RecordDialog({
                   </div>
                 )}
                 </Fragment>
-              ))}
+                );
+              })}
               {error && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{error}</Text>}
             </div>
           </DialogContent>
@@ -409,7 +418,7 @@ export function RecordDialog({
             </DialogTrigger>
             <Button
               appearance="primary"
-              disabled={saving || fields.some((f) => f.required && !values[f.key])}
+              disabled={saving || fields.some((f) => f.required && !f.disabledWhen?.(values) && !values[f.key])}
               onClick={() => onSave(buildPayload(fields, values))}
             >
               Save

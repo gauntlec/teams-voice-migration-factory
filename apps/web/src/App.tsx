@@ -10,6 +10,7 @@ import { Dashboard } from './pages/Dashboard';
 import { DataCollection } from './pages/DataCollection';
 import { DataCollectionPolicies } from './pages/DataCollectionPolicies';
 import { SiteWorkspace } from './pages/SiteWorkspace';
+import { NumberPorting } from './pages/NumberPorting';
 import { Build } from './pages/Build';
 import { BuildSiteWorkspace } from './pages/BuildSiteWorkspace';
 import { DeploymentSites } from './pages/DeploymentSites';
@@ -45,6 +46,7 @@ export function App() {
         <Route path="/data-collection" element={<DataCollection />} />
         <Route path="/data-collection/policies" element={<DataCollectionPolicies />} />
         <Route path="/data-collection/sites/:siteId" element={<SiteWorkspace />} />
+        <Route path="/data-collection/sites/:siteId/number-porting" element={<NumberPorting />} />
         <Route
           path="/discovery"
           element={

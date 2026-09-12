@@ -189,6 +189,7 @@ export interface DiscoveryNumberRangesTable {
   range_end: string;
   kind: 'new' | 'port' | 'retain';
   carrier: string | null;
+  /** Mirrors the owning number_port_requests row's status, if any - lets the Number Ranges grid show port progress with no join. */
   port_status: string | null;
   /** FK -> discovery_sites.sitecode (ON UPDATE CASCADE, ON DELETE SET NULL). */
   sitecode: string | null;
@@ -196,6 +197,52 @@ export interface DiscoveryNumberRangesTable {
   loa_completed: ColumnType<boolean, boolean | undefined, boolean>;
   comments: string | null;
   created_at: Ts;
+}
+
+/** Global catalog of document types a number-port request can ask for (LOA, CSR, ...) - editable by PM/Engineer, not hardcoded. */
+export interface PortDocumentTypesTable {
+  id: Generated<string>;
+  key: string;
+  label: string;
+  ordinal: number;
+  active: ColumnType<boolean, boolean | undefined, boolean>;
+  created_at: Ts;
+}
+
+/** Which of the global catalog applies to one site - a country/site-specific subset. */
+export interface SitePortDocumentTypesTable {
+  site_id: string;
+  document_type_id: string;
+  enabled: ColumnType<boolean, boolean | undefined, boolean>;
+}
+
+export interface NumberPortRequestsTable {
+  id: Generated<string>;
+  range_id: string;
+  status: ColumnType<
+    'draft' | 'submitted' | 'awaiting_documents' | 'complete',
+    'draft' | 'submitted' | 'awaiting_documents' | 'complete' | undefined,
+    'draft' | 'submitted' | 'awaiting_documents' | 'complete'
+  >;
+  submitted_by: string | null;
+  submitted_at: string | null;
+  reminder_sent_at: string | null;
+  created_at: Ts;
+}
+
+export interface NumberPortRequestItemsTable {
+  id: Generated<string>;
+  request_id: string;
+  document_type_id: string;
+  note: string | null;
+  status: ColumnType<
+    'pending' | 'uploaded' | 'rejected' | 'waived',
+    'pending' | 'uploaded' | 'rejected' | 'waived' | undefined,
+    'pending' | 'uploaded' | 'rejected' | 'waived'
+  >;
+  reject_reason: string | null;
+  file_id: string | null;
+  updated_at: Ts;
 }
 
 export interface DiscoveryCallingPoliciesTable {
@@ -620,7 +667,7 @@ export interface HandoverSectionsTable {
  */
 export interface FilesTable {
   id: Generated<string>;
-  category: 'deployment_change_document';
+  category: 'deployment_change_document' | 'number_port_document';
   source_type: string;
   source_id: string;
   site_id: string | null;
@@ -664,6 +711,10 @@ export interface DB {
   discovery: DiscoveryTable;
   discovery_sites: DiscoverySitesTable;
   discovery_number_ranges: DiscoveryNumberRangesTable;
+  port_document_types: PortDocumentTypesTable;
+  site_port_document_types: SitePortDocumentTypesTable;
+  number_port_requests: NumberPortRequestsTable;
+  number_port_request_items: NumberPortRequestItemsTable;
   discovery_network: DiscoveryNetworkTable;
   discovery_flows: DiscoveryFlowsTable;
   discovery_calling_policies: DiscoveryCallingPoliciesTable;
