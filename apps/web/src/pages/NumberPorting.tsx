@@ -158,7 +158,7 @@ export function NumberPorting() {
       }
     >
       {canAdmin && <DocumentCatalogCard base={base} />}
-      {canAdmin && <SiteEnablementCard base={base} siteId={siteId} />}
+      {canAdmin && <SiteEnablementCard base={base} tid={tid} siteId={siteId} />}
 
       {portableRanges.length === 0 ? (
         <Card className={s.card}>
@@ -305,12 +305,15 @@ function DocumentCatalogCard({ base }: { base: string }) {
 
 /* ------------------------- admin: site enablement ------------------------ */
 
-function SiteEnablementCard({ base, siteId }: { base: string; siteId: string }) {
+function SiteEnablementCard({ base, tid, siteId }: { base: string; tid: string; siteId: string }) {
   const s = useRecordStyles();
   const qc = useQueryClient();
+  // Same key as NumberPorting's own siteDocTypes query, so a toggle here also
+  // refreshes the per-range checklists below (they read the same cache entry).
+  const queryKey = ['port-site-doctypes', tid, siteId];
 
   const list = useQuery({
-    queryKey: ['port-site-doctypes', base, siteId],
+    queryKey,
     queryFn: () => api<SiteDocumentType[]>(`${base}/sites/${siteId}/document-types`),
   });
 
@@ -320,7 +323,7 @@ function SiteEnablementCard({ base, siteId }: { base: string; siteId: string }) 
         method: 'PATCH',
         body: JSON.stringify({ document_type_id: row.id, enabled: !row.enabled }),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['port-site-doctypes', base, siteId] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey }),
   });
 
   return (
