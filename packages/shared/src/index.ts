@@ -3,6 +3,7 @@ export * from './domain';
 export * from './dto';
 export * from './email';
 export * from './deployment';
+export * from './color';
 
 import type { CmdletInvocation } from './deployment';
 
@@ -17,6 +18,18 @@ export interface Paginated<T> {
   limit: number;
 }
 
+/**
+ * White-label branding for one customer - null anywhere this appears means
+ * "use default Voxshift branding" (web theme, Logo component, emails).
+ * `logo.path` is a storage-relative path, not a URL - fetch the image via
+ * `GET /api/public/tenants/:tenantId/logo?v=<version>` (unauthenticated by
+ * design, so it loads in a plain `<img>` from an email client too).
+ */
+export interface TenantBranding {
+  accentColor: string;
+  logo: { path: string; contentType: string; version: number } | null;
+}
+
 /** One customer the signed-in user can act in. */
 export interface MeTenant {
   id: string;
@@ -26,6 +39,7 @@ export interface MeTenant {
   siteScoped: boolean;
   /** the site ids this membership is limited to; empty when not site-scoped. */
   siteIds: string[];
+  branding: TenantBranding | null;
 }
 
 /** Shape of the authenticated principal returned by `GET /auth/me`. */

@@ -1,14 +1,22 @@
+import type { ColorRamp } from '@tvmf/shared';
+
 /**
  * Branded shell for every outgoing email. Table-based, all CSS inline, no web
- * fonts or external images — safe from Outlook down to mobile webmail.
+ * fonts or external images (beyond an optional customer logo) — safe from
+ * Outlook down to mobile webmail.
  *
- * Brand system (Voxshift brand guidelines / `apps/web/src/theme.ts`):
+ * Default brand system (Voxshift brand guidelines / `apps/web/src/theme.ts`):
  *   brand 80  #4657D2  primary — header bar, primary button, eyebrow, links
  *   brand 90  #5B5FC7  accent — the "shift", header strip, footer wordmark
  *   brand 140 #C3C7F6  hairline rules, the lifted equalizer bar
  *   brand 160 #EEEFFD  callout / MessageBar fill
  *   ink       #242424  body text          muted #616161
  * Typeface: Segoe UI stack (Fluent). Monospace: Consolas.
+ *
+ * White-label: pass `branding` to recolor the header/callout and swap the
+ * header mark for a customer's own logo image (layout/typography never
+ * change, only these tokens). Leave it undefined for platform-level mail
+ * (invitations, feature/bug status) - always renders default Voxshift.
  */
 
 export interface LayoutInput {
@@ -26,16 +34,17 @@ export interface LayoutInput {
   outro?: string[];
 }
 
-const BRAND = '#4657D2';
-const ACCENT = '#5B5FC7';
-const RULE = '#C3C7F6';
+export interface EmailBranding {
+  /** absolute URL - `GET /api/public/tenants/:id/logo?v=<version>`, unauthenticated by design so it loads in any email client. Null when a customer has set an accent color but not uploaded a logo yet - the header still recolors, it just keeps the default mark. */
+  logoUrl: string | null;
+  ramp: ColorRamp;
+}
+
 const TEXT = '#242424';
 const MUTED = '#616161';
 const PAGE_BG = '#f4f4f8';
 const CARD = '#ffffff';
 const BORDER = '#e3e3ec';
-const CALLOUT_BG = '#eeeffd';
-const CALLOUT_BORDER = '#c3c7f6';
 const FONT =
   "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 const MONO = "Consolas, 'Cascadia Code', ui-monospace, SFMono-Regular, Menlo, monospace";
@@ -53,7 +62,7 @@ function paragraph(s: string): string {
 }
 
 /** The Voxshift equalizer mark, drawn as a 4-cell table so it survives Outlook. */
-function mark(): string {
+function mark(rule: string): string {
   const bar = (h: number, lift: number, color: string) =>
     `<td valign="bottom" style="padding:0 3px 0 0;">` +
     `<div style="width:5px;height:${h}px;background:${color};border-radius:2px;font-size:0;line-height:0;margin-bottom:${lift}px;">&nbsp;</div>` +
@@ -63,21 +72,27 @@ function mark(): string {
     bar(10, 0, '#ffffff') +
     bar(15, 0, '#ffffff') +
     bar(20, 0, '#ffffff') +
-    bar(14, 7, RULE) +
+    bar(14, 7, rule) +
     `</tr></table>`
   );
 }
 
-function wordmark(onDark: boolean): string {
+function wordmark(onDark: boolean, accent: string): string {
   const vox = onDark ? '#ffffff' : TEXT;
-  const shift = onDark ? 'rgba(255,255,255,0.82)' : ACCENT;
+  const shift = onDark ? 'rgba(255,255,255,0.82)' : accent;
   return (
     `<span style="font-size:18px;font-weight:600;letter-spacing:-0.01em;color:${vox};vertical-align:middle;">vox` +
     `<span style="font-weight:400;color:${shift};">shift</span></span>`
   );
 }
 
-export function renderHtml(input: LayoutInput): string {
+export function renderHtml(input: LayoutInput, branding?: EmailBranding): string {
+  const BRAND = branding?.ramp[80] ?? '#4657D2';
+  const ACCENT = branding?.ramp[90] ?? '#5B5FC7';
+  const RULE = branding?.ramp[140] ?? '#C3C7F6';
+  const CALLOUT_BG = branding?.ramp[160] ?? '#EEEFFD';
+  const CALLOUT_BORDER = branding?.ramp[140] ?? '#C3C7F6';
+
   const intro = input.intro.map(paragraph).join('');
   const outro = (input.outro ?? []).map(paragraph).join('');
 
@@ -113,6 +128,21 @@ export function renderHtml(input: LayoutInput): string {
        )}</span></p>`
     : '';
 
+  // Logo uploaded: show only the customer's own logo, no "voxshift" text
+  // beside it. No logo yet (accent color only, or fully unbranded): the
+  // usual equalizer mark + wordmark pair - already recolored to the tenant's
+  // accent via BRAND/ACCENT/RULE above whenever branding is present at all.
+  const headerMark = branding?.logoUrl
+    ? `<img src="${esc(branding.logoUrl)}" height="28" style="display:block;" alt="">`
+    : `${mark(RULE)}${wordmark(true, ACCENT)}`;
+
+  // Footer always keeps the real Voxshift wordmark - "Powered by" only once
+  // a customer's own logo is actually shown in the header, so it isn't
+  // redundant with an email that has no logo image yet.
+  const footerMark = branding?.logoUrl
+    ? `<span style="font-size:11px;color:${MUTED};">Powered by&nbsp;</span>${wordmark(false, '#5B5FC7')}`
+    : wordmark(false, ACCENT);
+
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -129,7 +159,7 @@ export function renderHtml(input: LayoutInput): string {
     <tr><td align="center">
       <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:${CARD};border:1px solid ${BORDER};border-radius:10px;overflow:hidden;font-family:${FONT};">
         <tr><td style="background:${BRAND};padding:22px 32px;border-bottom:3px solid ${ACCENT};">
-          ${mark()}${wordmark(true)}
+          ${headerMark}
         </td></tr>
         <tr><td style="padding:32px;">
           ${eyebrow}
@@ -142,7 +172,7 @@ export function renderHtml(input: LayoutInput): string {
           ${outro}
         </td></tr>
         <tr><td style="padding:20px 32px 24px;border-top:1px solid ${BORDER};background:#fbfbfd;">
-          <div style="margin:0 0 6px;">${wordmark(false)}</div>
+          <div style="margin:0 0 6px;">${footerMark}</div>
           <p style="margin:0;font-size:12px;color:${MUTED};line-height:1.5;">Automated message from Voxshift, the Microsoft Teams voice migration platform. Please do not reply to this email.</p>
         </td></tr>
       </table>

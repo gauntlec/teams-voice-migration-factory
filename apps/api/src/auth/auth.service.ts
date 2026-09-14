@@ -287,23 +287,23 @@ export class AuthService {
     if (user.role === 'SUPER_ADMIN') {
       const rows = await platformDb(this.db)
         .selectFrom('tenants')
-        .select(['id', 'slug', 'name'])
+        .select(['id', 'slug', 'name', 'branding'])
         .where('status', '=', 'active')
         .orderBy('name')
         .execute();
-      tenants = rows.map((r) => ({ ...r, siteScoped: false, siteIds: [] }));
+      tenants = rows.map((r) => ({ ...r, siteScoped: false, siteIds: [], branding: r.branding ?? null }));
     } else {
       const rows = await platformDb(this.db)
         .selectFrom('tenant_memberships as m')
         .innerJoin('tenants as t', 't.id', 'm.tenant_id')
-        .select(['t.id as id', 't.slug as slug', 't.name as name', 'm.site_ids as siteIds'])
+        .select(['t.id as id', 't.slug as slug', 't.name as name', 'm.site_ids as siteIds', 't.branding as branding'])
         .where('m.user_id', '=', userId)
         .where('t.status', '=', 'active')
         .orderBy('t.name')
         .execute();
       tenants = rows.map((r) => {
         const siteIds = Array.isArray(r.siteIds) ? r.siteIds : [];
-        return { id: r.id, slug: r.slug, name: r.name, siteScoped: siteIds.length > 0, siteIds };
+        return { id: r.id, slug: r.slug, name: r.name, siteScoped: siteIds.length > 0, siteIds, branding: r.branding ?? null };
       });
     }
 

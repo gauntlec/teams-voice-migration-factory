@@ -27,6 +27,8 @@ export interface EnqueueMailInput {
   context: object;
   related?: { type: string; id: string };
   createdBy?: string | null;
+  /** Which customer this email is for - drives branding at render time. Omit for cross-tenant/platform-level mail. */
+  tenantId?: string | null;
 }
 
 export type MailEnqueuer = (input: EnqueueMailInput) => Promise<void>;
@@ -45,6 +47,7 @@ export function makeMailEnqueuer(db: Kysely<DB>, connection: IORedis): MailEnque
         status: 'queued',
         related_type: input.related?.type ?? null,
         related_id: input.related?.id ?? null,
+        tenant_id: input.tenantId ?? null,
         created_by: input.createdBy ?? null,
       })
       .returning('id')

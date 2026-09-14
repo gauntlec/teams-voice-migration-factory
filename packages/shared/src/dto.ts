@@ -20,6 +20,7 @@ import {
   VOICEMAIL_PROMPT_LANGUAGE_CODES,
   normalizeVoicemailLanguage,
 } from './domain';
+import { HEX_COLOR_RE } from './color';
 
 export const emailSchema = z.string().email().max(320).transform((s) => s.toLowerCase().trim());
 
@@ -96,6 +97,12 @@ export type CreateTenantInput = z.infer<typeof createTenantSchema>;
 /** Toggles the per-customer safeguard that blocks all writes to the customer's live Microsoft Teams tenant - see docs/SECURITY.md. */
 export const updateTenantSchema = z.object({ teamsReadOnly: z.boolean() }).strict();
 export type UpdateTenantInput = z.infer<typeof updateTenantSchema>;
+
+/** Logo upload is a separate multipart route - this is just the color half of branding. */
+export const updateTenantBrandingSchema = z
+  .object({ accentColor: z.string().regex(HEX_COLOR_RE, 'must be a #rrggbb hex color') })
+  .strict();
+export type UpdateTenantBrandingInput = z.infer<typeof updateTenantBrandingSchema>;
 
 export const addMembershipSchema = z.object({
   userId: z.string().uuid(),

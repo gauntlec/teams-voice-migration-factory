@@ -1,4 +1,5 @@
 import { createLightTheme, createDarkTheme, type BrandVariants, type Theme } from '@fluentui/react-components';
+import { buildColorRamp } from '@tvmf/shared';
 
 /**
  * Brand ramp approximating the Microsoft Teams Admin Center purple so the tool
@@ -25,3 +26,8 @@ const brand: BrandVariants = {
 
 export const lightTheme: Theme = { ...createLightTheme(brand) };
 export const darkTheme: Theme = { ...createDarkTheme(brand) };
+
+/** White-label theme for one customer - same ramp-generation Fluent expects, built from their one picked accent color. */
+export function buildTenantTheme(accentHex: string): Theme {
+  return { ...createLightTheme(buildColorRamp(accentHex) as BrandVariants) };
+}

@@ -310,6 +310,7 @@ export class NumberPortService {
         context,
         related: { type: 'number_port_request', id: requestId },
         createdBy: u.id,
+        tenantId: t.id,
       });
     }
 
@@ -359,6 +360,7 @@ export class NumberPortService {
         runUrl: this.portalUrl(req.site_id),
       },
       related: { type: 'number_port_request', id: req.request_id },
+      tenantId: t.id,
     });
   }
 

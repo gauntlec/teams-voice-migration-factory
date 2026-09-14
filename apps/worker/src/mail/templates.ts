@@ -11,7 +11,7 @@ import {
   type PortDocumentsRequestedContext,
   type UserInvitationContext,
 } from '@tvmf/shared';
-import { renderHtml, renderText, type LayoutInput } from './layout';
+import { renderHtml, renderText, type EmailBranding, type LayoutInput } from './layout';
 
 export interface RenderedEmail {
   subject: string;
@@ -22,19 +22,22 @@ export interface RenderedEmail {
 /**
  * Turn a stored `template` + `context` into a ready-to-send email. Add a new
  * kind by adding a `case` here and a name in `packages/shared/src/email.ts`.
+ * `branding` only applies to the customer-facing, tenant-scoped templates -
+ * invitations (zero-or-many tenants) and feature/bug status emails
+ * (platform-level) always render default Voxshift branding.
  */
-export function renderEmail(template: string, context: Record<string, unknown>): RenderedEmail {
+export function renderEmail(template: string, context: Record<string, unknown>, branding?: EmailBranding): RenderedEmail {
   switch (template as EmailTemplate) {
     case 'user_invitation':
       return invitation(context as unknown as UserInvitationContext);
     case 'discovery_completed':
-      return discoveryCompleted(context as unknown as DiscoveryCompletedContext);
+      return discoveryCompleted(context as unknown as DiscoveryCompletedContext, branding);
     case 'port_documents_requested':
-      return portDocumentsRequested(context as unknown as PortDocumentsRequestedContext);
+      return portDocumentsRequested(context as unknown as PortDocumentsRequestedContext, branding);
     case 'port_documents_reminder':
-      return portDocumentsReminder(context as unknown as PortDocumentsReminderContext);
+      return portDocumentsReminder(context as unknown as PortDocumentsReminderContext, branding);
     case 'port_documents_completed':
-      return portDocumentsCompleted(context as unknown as PortDocumentsCompletedContext);
+      return portDocumentsCompleted(context as unknown as PortDocumentsCompletedContext, branding);
     case 'feature_request_status_changed':
       return featureRequestStatusChanged(context as unknown as FeatureRequestStatusChangedContext);
     case 'bug_report_status_changed':
@@ -70,7 +73,7 @@ function invitation(c: UserInvitationContext): RenderedEmail {
   return { subject, html: renderHtml(layout), text: renderText(layout) };
 }
 
-function discoveryCompleted(c: DiscoveryCompletedContext): RenderedEmail {
+function discoveryCompleted(c: DiscoveryCompletedContext, branding?: EmailBranding): RenderedEmail {
   const failed = c.outcome === 'failed';
   const withErrors = c.outcome === 'completed_with_errors';
 
@@ -132,7 +135,7 @@ function discoveryCompleted(c: DiscoveryCompletedContext): RenderedEmail {
     ],
   };
 
-  return { subject, html: renderHtml(layout), text: renderText(layout) };
+  return { subject, html: renderHtml(layout, branding), text: renderText(layout) };
 }
 
 const STATUS_LABEL: Record<PortDocumentItemSummary['status'], string> = {
@@ -154,7 +157,7 @@ function itemLines(items: PortDocumentItemSummary[]): string[] {
     });
 }
 
-function portDocumentsRequested(c: PortDocumentsRequestedContext): RenderedEmail {
+function portDocumentsRequested(c: PortDocumentsRequestedContext, branding?: EmailBranding): RenderedEmail {
   const outstanding = c.items.filter((i) => i.status !== 'uploaded' && i.status !== 'waived').length;
   const subject = `Documents needed to port your numbers — ${c.siteName}`;
   const layout: LayoutInput = {
@@ -168,10 +171,10 @@ function portDocumentsRequested(c: PortDocumentsRequestedContext): RenderedEmail
     cta: { label: 'Upload documents', url: c.portalUrl },
     outro: ['Use the link above to upload each document. We will let you know if anything needs to be redone.'],
   };
-  return { subject, html: renderHtml(layout), text: renderText(layout) };
+  return { subject, html: renderHtml(layout, branding), text: renderText(layout) };
 }
 
-function portDocumentsReminder(c: PortDocumentsReminderContext): RenderedEmail {
+function portDocumentsReminder(c: PortDocumentsReminderContext, branding?: EmailBranding): RenderedEmail {
   const outstanding = c.items.filter((i) => i.status !== 'uploaded' && i.status !== 'waived').length;
   const subject = `Reminder: documents still needed — ${c.siteName}`;
   const layout: LayoutInput = {
@@ -185,10 +188,10 @@ function portDocumentsReminder(c: PortDocumentsReminderContext): RenderedEmail {
     cta: { label: 'Upload documents', url: c.portalUrl },
     outro: ['If you have already sent these another way, let your project contact know and we will update this request.'],
   };
-  return { subject, html: renderHtml(layout), text: renderText(layout) };
+  return { subject, html: renderHtml(layout, branding), text: renderText(layout) };
 }
 
-function portDocumentsCompleted(c: PortDocumentsCompletedContext): RenderedEmail {
+function portDocumentsCompleted(c: PortDocumentsCompletedContext, branding?: EmailBranding): RenderedEmail {
   const subject = `All documents received — ${c.siteName}`;
   const layout: LayoutInput = {
     previewText: `Every requested document for ${c.rangeLabel} has been provided.`,
@@ -200,7 +203,7 @@ function portDocumentsCompleted(c: PortDocumentsCompletedContext): RenderedEmail
     cta: { label: 'Review request', url: c.runUrl },
     outro: ['You are receiving this because you submitted this document request.'],
   };
-  return { subject, html: renderHtml(layout), text: renderText(layout) };
+  return { subject, html: renderHtml(layout, branding), text: renderText(layout) };
 }
 
 function featureRequestStatusChanged(c: FeatureRequestStatusChangedContext): RenderedEmail {

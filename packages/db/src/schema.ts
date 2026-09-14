@@ -15,6 +15,8 @@ export interface TenantsTable {
   status: ColumnType<'active' | 'archived', 'active' | 'archived' | undefined, 'active' | 'archived'>;
   /** When true, the platform must never send a write cmdlet to this customer's live Microsoft Teams tenant - see 0006_tenant_teams_read_only.sql. */
   teams_read_only: ColumnType<boolean, boolean | undefined, boolean>;
+  /** null = default Voxshift branding everywhere (web theme, Logo, emails) - see 0008_tenant_branding.sql. */
+  branding: Json<import('@tvmf/shared').TenantBranding> | null;
   created_by: string | null;
   created_at: Ts;
 }
@@ -52,6 +54,8 @@ export interface EmailMessagesTable {
   attempts: ColumnType<number, number | undefined, number>;
   related_type: string | null;
   related_id: string | null;
+  /** Which customer this email is for, when it's tenant-scoped - drives branding at render time. Null for cross-tenant/platform-level mail (invitations, feature/bug status). */
+  tenant_id: string | null;
   created_by: string | null;
   created_at: Ts;
   sent_at: string | null;

@@ -7,11 +7,19 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { platformDb, provisionTenant, tenantDb, tenantSchemaName } from '@tvmf/db';
-import type { CreateTenantInput, Role } from '@tvmf/shared';
+import type { CreateTenantInput, Role, TenantBranding, UpdateTenantBrandingInput } from '@tvmf/shared';
 import { AuditService, type AuditActor } from '../common/audit.service';
+import { FILE_STORAGE_BACKEND, type FileStorageBackend } from '../modules/files/file-storage.interface';
 import { InjectDb, type Db } from '../db/db.module';
 import { PG_POOL } from '../db/db.module';
 import type { Pool } from 'pg';
+
+/** Allowlisted upload types for a customer logo - deliberately excludes SVG (script/markup XSS surface). */
+const LOGO_CONTENT_TYPES: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+};
 
 @Injectable()
 export class TenantsService {
@@ -19,12 +27,13 @@ export class TenantsService {
     @InjectDb() private readonly db: Db,
     @Inject(PG_POOL) private readonly pool: Pool,
     private readonly audit: AuditService,
+    @Inject(FILE_STORAGE_BACKEND) private readonly storage: FileStorageBackend,
   ) {}
 
   async list(user: { id: string; role: Role }) {
     const q = platformDb(this.db)
       .selectFrom('tenants')
-      .select(['id', 'slug', 'name', 'primary_domain', 'status', 'teams_read_only', 'created_at'])
+      .select(['id', 'slug', 'name', 'primary_domain', 'status', 'teams_read_only', 'branding', 'created_at'])
       .orderBy('name');
     if (user.role === 'SUPER_ADMIN') return q.execute();
     return q
@@ -96,6 +105,86 @@ export class TenantsService {
       detail: { teamsReadOnly },
     });
     return tenant;
+  }
+
+  /**
+   * White-label branding - logo + accent color, editable at any time by
+   * whoever can create a customer (tenant:update, same population as
+   * tenant:create). null anywhere this is read means "use default Voxshift
+   * branding" - see TenantBranding in packages/shared/src/index.ts.
+   */
+  async updateBranding(tenantId: string, input: UpdateTenantBrandingInput, actor: AuditActor) {
+    const t = await this.getTenantOrThrow(tenantId);
+    const branding: TenantBranding = { logo: t.branding?.logo ?? null, accentColor: input.accentColor };
+    const tenant = await platformDb(this.db)
+      .updateTable('tenants')
+      .set({ branding })
+      .where('id', '=', tenantId)
+      .returning(['id', 'slug', 'name', 'primary_domain', 'status', 'teams_read_only', 'branding', 'created_at'])
+      .executeTakeFirstOrThrow();
+    await this.audit.platform('tenant.branding_updated', {
+      actor,
+      targetType: 'tenant',
+      targetId: tenantId,
+      tenantId,
+      detail: { accentColor: input.accentColor },
+    });
+    return tenant;
+  }
+
+  async uploadLogo(tenantId: string, file: { buffer: Buffer; mimetype: string } | undefined, actor: AuditActor) {
+    if (!file) throw new BadRequestException('No file uploaded');
+    const ext = LOGO_CONTENT_TYPES[file.mimetype];
+    if (!ext) throw new BadRequestException('Logo must be a PNG, JPEG or WebP image');
+
+    const t = await this.getTenantOrThrow(tenantId);
+    const version = (t.branding?.logo?.version ?? 0) + 1;
+    const path = `branding/${tenantId}/logo-${version}.${ext}`;
+    await this.storage.write(path, file.buffer);
+    if (t.branding?.logo) await this.storage.delete(t.branding.logo.path); // old bytes now unreachable - clean up
+
+    const branding: TenantBranding = {
+      // Default Voxshift brand color when a logo is uploaded before any
+      // color has ever been chosen - keeps `branding` always ramp-buildable.
+      accentColor: t.branding?.accentColor ?? '#4657D2',
+      logo: { path, contentType: file.mimetype, version },
+    };
+    const tenant = await platformDb(this.db)
+      .updateTable('tenants')
+      .set({ branding })
+      .where('id', '=', tenantId)
+      .returning(['id', 'slug', 'name', 'primary_domain', 'status', 'teams_read_only', 'branding', 'created_at'])
+      .executeTakeFirstOrThrow();
+    await this.audit.platform('tenant.branding_logo_uploaded', {
+      actor,
+      targetType: 'tenant',
+      targetId: tenantId,
+      tenantId,
+      detail: { version },
+    });
+    return tenant;
+  }
+
+  async removeLogo(tenantId: string, actor: AuditActor) {
+    const t = await this.getTenantOrThrow(tenantId);
+    if (t.branding?.logo) await this.storage.delete(t.branding.logo.path);
+    const branding: TenantBranding | null = t.branding ? { ...t.branding, logo: null } : null;
+    const tenant = await platformDb(this.db)
+      .updateTable('tenants')
+      .set({ branding })
+      .where('id', '=', tenantId)
+      .returning(['id', 'slug', 'name', 'primary_domain', 'status', 'teams_read_only', 'branding', 'created_at'])
+      .executeTakeFirstOrThrow();
+    await this.audit.platform('tenant.branding_logo_removed', { actor, targetType: 'tenant', targetId: tenantId, tenantId });
+    return tenant;
+  }
+
+  /** Backs the unauthenticated `GET /public/tenants/:id/logo` route - logo bytes are not sensitive. */
+  async readLogoBytes(tenantId: string): Promise<{ data: Buffer; contentType: string }> {
+    const t = await this.getTenantOrThrow(tenantId);
+    if (!t.branding?.logo) throw new NotFoundException('no logo set for this tenant');
+    const data = await this.storage.read(t.branding.logo.path);
+    return { data, contentType: t.branding.logo.contentType };
   }
 
   /** Sites in a customer, for the admin scope pickers. Admin & engineer only. */
@@ -261,7 +350,7 @@ export class TenantsService {
   private async getTenantOrThrow(tenantId: string) {
     const t = await platformDb(this.db)
       .selectFrom('tenants')
-      .select(['id', 'status', 'schema_name'])
+      .select(['id', 'status', 'schema_name', 'branding'])
       .where('id', '=', tenantId)
       .executeTakeFirst();
     if (!t) throw new NotFoundException('tenant not found');

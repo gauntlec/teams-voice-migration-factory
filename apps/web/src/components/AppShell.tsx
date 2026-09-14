@@ -127,6 +127,8 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const activeTenant = tenants.find((t) => t.id === activeTenantId) ?? tenants[0];
   const adminItems = ADMIN.filter((i) => !i.permission || can(i.permission));
+  const logo = activeTenant?.branding?.logo;
+  const logoUrl = logo ? `/api/public/tenants/${activeTenant.id}/logo?v=${logo.version}` : null;
 
   const renderNav = (items: NavDef[]) =>
     items
@@ -146,7 +148,17 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className={s.root}>
       <header className={s.header}>
-        <Wordmark tone="onDark" size={18} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Wordmark tone="onDark" size={18} logoUrl={logoUrl} />
+          {logoUrl && (
+            <>
+              <Text size={100} style={{ color: tokens.colorNeutralForegroundOnBrand, opacity: 0.7 }}>
+                Powered by
+              </Text>
+              <Wordmark tone="onDark" size={11} />
+            </>
+          )}
+        </div>
         <div className={s.headerRight}>
           {activeTenant?.siteScoped && (
             <Text size={200} style={{ color: tokens.colorNeutralForegroundOnBrand, opacity: 0.85 }}>

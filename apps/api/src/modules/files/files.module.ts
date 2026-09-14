@@ -7,6 +7,6 @@ import { LocalDiskStorageBackend } from './local-disk-storage.backend';
 @Module({
   controllers: [FilesController],
   providers: [FilesService, { provide: FILE_STORAGE_BACKEND, useClass: LocalDiskStorageBackend }],
-  exports: [FilesService],
+  exports: [FilesService, FILE_STORAGE_BACKEND],
 })
 export class FilesModule {}

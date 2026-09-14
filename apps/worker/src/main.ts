@@ -3,7 +3,7 @@ import { Worker, type Job } from 'bullmq';
 import IORedis from 'ioredis';
 import { sql } from 'kysely';
 import { createDb, platformDb, tenantDb } from '@tvmf/db';
-import type { DiscoverySiteOverview, PortDocumentItemSummary } from '@tvmf/shared';
+import { buildColorRamp, type DiscoverySiteOverview, type PortDocumentItemSummary, type TenantBranding } from '@tvmf/shared';
 import {
   planIdentityRow,
   planResourceAccountRow,
@@ -15,6 +15,7 @@ import { SimulatedTeamsExecutor, type TeamsExecutor } from './teams/executor';
 import { PwshTeamsExecutor } from './teams/pwsh-executor';
 import { handleTenantDiscoveryRun } from './discovery/run';
 import { renderEmail } from './mail/templates';
+import type { EmailBranding } from './mail/layout';
 import { mailerConfigured, sendMail } from './mail/mailer';
 import { makeMailEnqueuer } from './mail/enqueue';
 
@@ -206,6 +207,7 @@ async function sweepPortDocumentReminders() {
               ? `${webOrigin}/data-collection/sites/${row.site_id}/number-porting`
               : `/data-collection/sites/${row.site_id}/number-porting`,
           },
+          tenantId: tenant.id,
         });
       }
       await scoped
@@ -497,6 +499,28 @@ async function handleDeploymentRun(job: Job) {
 }
 
 /**
+ * Look up a tenant's branding (if any) and turn it into what the email
+ * layout needs - a derived color ramp, plus an absolute logo URL when one's
+ * been uploaded (unauthenticated by design, so it loads in any email
+ * client). Returns undefined for platform-level mail (no tenant_id) or a
+ * tenant with no branding set at all, so renderEmail falls back to default
+ * Voxshift branding.
+ */
+async function loadEmailBranding(tenantId: string | null): Promise<EmailBranding | undefined> {
+  if (!tenantId) return undefined;
+  const t = await platformDb(db).selectFrom('tenants').select('branding').where('id', '=', tenantId).executeTakeFirst();
+  const branding = t?.branding as TenantBranding | null | undefined;
+  if (!branding) return undefined;
+  const webOrigin = (process.env.WEB_ORIGIN ?? '').replace(/\/+$/, '');
+  return {
+    logoUrl: branding.logo
+      ? `${webOrigin}/api/public/tenants/${tenantId}/logo?v=${branding.logo.version}`
+      : null,
+    ramp: buildColorRamp(branding.accentColor),
+  };
+}
+
+/**
  * Deliver one queued email. Renders from `platform.email_messages.template` +
  * `context`, sends via SMTP, and writes the outcome back to the row. Throwing
  * lets BullMQ retry with backoff; the `failed` handler marks the row once the
@@ -506,7 +530,7 @@ async function handleMail(job: Job) {
   const { id } = job.data as { id: string };
   const row = await platformDb(db)
     .selectFrom('email_messages')
-    .select(['id', 'to_email', 'to_name', 'template', 'context', 'status'])
+    .select(['id', 'to_email', 'to_name', 'template', 'context', 'status', 'tenant_id'])
     .where('id', '=', id)
     .executeTakeFirst();
   if (!row) {
@@ -516,7 +540,8 @@ async function handleMail(job: Job) {
   }
   if (row.status === 'sent') return;
 
-  const rendered = renderEmail(row.template, (row.context ?? {}) as Record<string, unknown>);
+  const branding = await loadEmailBranding(row.tenant_id);
+  const rendered = renderEmail(row.template, (row.context ?? {}) as Record<string, unknown>, branding);
 
   if (!mailerConfigured) {
     // eslint-disable-next-line no-console

@@ -404,6 +404,7 @@ async function notifyRunComplete(
       createdBy: args.operatorUserId,
       related: { type: 'tenant_discovery_run', id: args.runId },
       context,
+      tenantId: args.tenantId,
     });
   } catch (e) {
     // eslint-disable-next-line no-console

@@ -24,11 +24,15 @@ import {
   TableRow,
   Text,
 } from '@fluentui/react-components';
-import { api } from '../../api';
+import type { TenantBranding } from '@tvmf/shared';
+import { api, apiUpload } from '../../api';
 import { useAuth } from '../../auth';
 import { DataTable } from '../../components/DataTable';
 import { Page } from '../../components/Page';
+import { Wordmark } from '../../components/Logo';
 import { LoadError } from '../DataCollection';
+
+const DEFAULT_ACCENT = '#4657D2';
 
 interface Tenant {
   id: string;
@@ -37,6 +41,7 @@ interface Tenant {
   primary_domain: string | null;
   status: string;
   teams_read_only: boolean;
+  branding: TenantBranding | null;
   created_at: string;
 }
 interface Member {
@@ -64,7 +69,10 @@ export function AdminTenants() {
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [domain, setDomain] = useState('');
+  const [accentColor, setAccentColor] = useState(DEFAULT_ACCENT);
+  const [logoFile, setLogoFile] = useState<File | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [brandingFor, setBrandingFor] = useState<Tenant | null>(null);
 
   const list = useQuery({ queryKey: ['tenants'], queryFn: () => api<Tenant[]>('/tenants') });
   const setReadOnly = useMutation({
@@ -73,15 +81,23 @@ export function AdminTenants() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tenants'] }),
   });
   const create = useMutation({
-    mutationFn: () =>
-      api<Tenant>('/tenants', {
+    mutationFn: async () => {
+      const created = await api<Tenant>('/tenants', {
         method: 'POST',
         body: JSON.stringify({ name, slug, primaryDomain: domain || undefined }),
-      }),
+      });
+      if (accentColor !== DEFAULT_ACCENT) {
+        await api(`/tenants/${created.id}/branding`, { method: 'PATCH', body: JSON.stringify({ accentColor }) });
+      }
+      if (logoFile) await apiUpload(`/tenants/${created.id}/branding/logo`, logoFile);
+      return created;
+    },
     onSuccess: async (created) => {
       setName('');
       setSlug('');
       setDomain('');
+      setAccentColor(DEFAULT_ACCENT);
+      setLogoFile(null);
       setErr(null);
       qc.invalidateQueries({ queryKey: ['tenants'] });
       // Pull the new customer into the header switcher and select it.
@@ -111,6 +127,17 @@ export function AdminTenants() {
           <Field label="Primary domain (optional)">
             <Input value={domain} onChange={(_, d) => setDomain(d.value)} placeholder="contoso.com" />
           </Field>
+          <Field label="Accent color">
+            <input
+              type="color"
+              value={accentColor}
+              onChange={(e) => setAccentColor(e.target.value)}
+              style={{ width: 40, height: 32, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
+            />
+          </Field>
+          <Field label="Logo (optional)">
+            <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => setLogoFile(e.target.files?.[0] ?? null)} />
+          </Field>
           <Button
             appearance="primary"
             disabled={!name || slug.length < 2 || create.isPending}
@@ -135,6 +162,7 @@ export function AdminTenants() {
                 <TableHeaderCell>Slug</TableHeaderCell>
                 <TableHeaderCell>Domain</TableHeaderCell>
                 <TableHeaderCell>Status</TableHeaderCell>
+                <TableHeaderCell>Branding</TableHeaderCell>
                 <TableHeaderCell>Teams read-only</TableHeaderCell>
               </TableRow>
             </TableHeader>
@@ -145,6 +173,28 @@ export function AdminTenants() {
                   <TableCell>{t.slug}</TableCell>
                   <TableCell>{t.primary_domain ?? '—'}</TableCell>
                   <TableCell>{t.status}</TableCell>
+                  <TableCell>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {t.branding?.logo && (
+                        <img
+                          src={`/api/public/tenants/${t.id}/logo?v=${t.branding.logo.version}`}
+                          alt=""
+                          style={{ height: 20, width: 'auto', display: 'block' }}
+                        />
+                      )}
+                      {can('tenant:update') ? (
+                        <Button size="small" appearance="subtle" onClick={() => setBrandingFor(t)}>
+                          Edit branding
+                        </Button>
+                      ) : (
+                        t.branding && (
+                          <Text size={200} style={{ color: '#616161' }}>
+                            Branded
+                          </Text>
+                        )
+                      )}
+                    </div>
+                  </TableCell>
                   <TableCell>
                     {can('tenant:update') ? (
                       <Checkbox
@@ -173,8 +223,101 @@ export function AdminTenants() {
         </Text>
       </Card>
 
+      {brandingFor && (
+        <BrandingDialog
+          tenant={brandingFor}
+          onClose={() => setBrandingFor(null)}
+          onSaved={async () => {
+            setBrandingFor(null);
+            qc.invalidateQueries({ queryKey: ['tenants'] });
+            await refreshMe(); // so AppShell picks up the change immediately if this is the active tenant
+          }}
+        />
+      )}
+
       {list.data && list.data.length > 0 && <CustomerMembers tenants={list.data} />}
     </Page>
+  );
+}
+
+/* ------------------------------- branding ------------------------------- */
+
+function BrandingDialog({
+  tenant,
+  onClose,
+  onSaved,
+}: {
+  tenant: Tenant;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [accentColor, setAccentColor] = useState(tenant.branding?.accentColor ?? DEFAULT_ACCENT);
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const save = useMutation({
+    mutationFn: async () => {
+      await api(`/tenants/${tenant.id}/branding`, { method: 'PATCH', body: JSON.stringify({ accentColor }) });
+      if (logoFile) await apiUpload(`/tenants/${tenant.id}/branding/logo`, logoFile);
+    },
+    onSuccess: onSaved,
+    onError: (e) => setErr(e instanceof Error ? e.message : 'Failed'),
+  });
+
+  const previewUrl = logoFile
+    ? URL.createObjectURL(logoFile)
+    : tenant.branding?.logo
+      ? `/api/public/tenants/${tenant.id}/logo?v=${tenant.branding.logo.version}`
+      : null;
+
+  return (
+    <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
+      <DialogSurface>
+        <DialogBody>
+          <DialogTitle>Branding — {tenant.name}</DialogTitle>
+          <DialogContent>
+            <div style={{ display: 'grid', gap: 12, minWidth: 380 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                {previewUrl ? (
+                  <img src={previewUrl} alt="" style={{ height: 40, width: 'auto' }} />
+                ) : (
+                  <Wordmark size={18} />
+                )}
+                <Text size={200} style={{ color: '#616161' }}>
+                  {previewUrl ? 'Current logo' : 'No logo set - default Voxshift mark shown everywhere'}
+                </Text>
+              </div>
+              <Field label="Replace logo">
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={(e) => setLogoFile(e.target.files?.[0] ?? null)}
+                />
+              </Field>
+              <Field label="Accent color">
+                <input
+                  type="color"
+                  value={accentColor}
+                  onChange={(e) => setAccentColor(e.target.value)}
+                  style={{ width: 40, height: 32, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
+                />
+              </Field>
+              {err && <Text style={{ color: '#b10e1c' }}>{err}</Text>}
+            </div>
+          </DialogContent>
+          <DialogActions>
+            <DialogTrigger disableButtonEnhancement>
+              <Button appearance="secondary" onClick={onClose}>
+                Cancel
+              </Button>
+            </DialogTrigger>
+            <Button appearance="primary" disabled={save.isPending} onClick={() => save.mutate()}>
+              Save
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
   );
 }
 

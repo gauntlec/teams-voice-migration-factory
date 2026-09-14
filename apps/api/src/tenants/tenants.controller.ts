@@ -1,10 +1,13 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   addMembershipSchema,
   createTenantSchema,
   updateMembershipSchema,
+  updateTenantBrandingSchema,
   updateTenantSchema,
   type CreateTenantInput,
+  type UpdateTenantBrandingInput,
   type UpdateTenantInput,
 } from '@tvmf/shared';
 import { CurrentUser } from '../auth/auth.decorators';
@@ -44,6 +47,33 @@ export class TenantsController {
     @CurrentUser() user: AuthedUser,
   ) {
     return this.tenants.setTeamsReadOnly(tenantId, body.teamsReadOnly, this.actor(user));
+  }
+
+  @Patch(':tenantId/branding')
+  @RequirePermission('tenant:update')
+  updateBranding(
+    @Param('tenantId') tenantId: string,
+    @Body(new ZodBody(updateTenantBrandingSchema)) body: UpdateTenantBrandingInput,
+    @CurrentUser() user: AuthedUser,
+  ) {
+    return this.tenants.updateBranding(tenantId, body, this.actor(user));
+  }
+
+  @Post(':tenantId/branding/logo')
+  @RequirePermission('tenant:update')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 2 * 1024 * 1024 } }))
+  uploadLogo(
+    @Param('tenantId') tenantId: string,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() user: AuthedUser,
+  ) {
+    return this.tenants.uploadLogo(tenantId, file, this.actor(user));
+  }
+
+  @Delete(':tenantId/branding/logo')
+  @RequirePermission('tenant:update')
+  removeLogo(@Param('tenantId') tenantId: string, @CurrentUser() user: AuthedUser) {
+    return this.tenants.removeLogo(tenantId, this.actor(user));
   }
 
   @Get(':tenantId/sites')
