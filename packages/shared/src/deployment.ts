@@ -74,6 +74,20 @@ export interface BuildIdentityRow {
 }
 
 /**
+ * Flags a build_users/build_caps row whose phone number won't actually get
+ * assigned: planIdentityRow's Set-CsPhoneNumberAssignment guard (below)
+ * requires `number_type` too, and a row can easily have `e164` set with
+ * `number_type` still null (e.g. populated from Discovery on a site with no
+ * PSTN/licensing model chosen yet) - that command, and the Enterprise Voice
+ * enablement it carries, then just silently never appears in the plan.
+ */
+export function identityRowWarnings(row: Pick<BuildIdentityRow, 'e164' | 'number_type'>): string[] {
+  return row.e164 && !row.number_type
+    ? ['Phone number set but no Number type - Set-CsPhoneNumberAssignment (and Enterprise Voice) will be skipped until Number type is set.']
+    : [];
+}
+
+/**
  * Turn a build_users/build_caps row into the ordered list of cmdlets the
  * deployment engine would run. Mirrors the order in the real
  * Teams-Migration-Build .ps1: number assignment first, then policy grants.
@@ -167,6 +181,13 @@ export interface BuildResourceAccountRow {
   number_type: string | null;
   voice_routing_policy: string | null;
   application_id: string | null;
+}
+
+/** Same gap as identityRowWarnings, for build_resource_accounts. */
+export function resourceAccountRowWarnings(row: Pick<BuildResourceAccountRow, 'phone_number' | 'number_type'>): string[] {
+  return row.phone_number && !row.number_type
+    ? ['Phone number set but no Number type - Set-CsPhoneNumberAssignment (and Enterprise Voice) will be skipped until Number type is set.']
+    : [];
 }
 
 /**

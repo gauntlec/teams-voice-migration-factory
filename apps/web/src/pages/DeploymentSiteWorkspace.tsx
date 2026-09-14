@@ -19,7 +19,7 @@ import {
   makeStyles,
   shorthands,
 } from '@fluentui/react-components';
-import { ArrowLeftRegular } from '@fluentui/react-icons';
+import { ArrowLeftRegular, WarningRegular } from '@fluentui/react-icons';
 import type { DeploymentPreviewRow, DeploymentSiteRollup, FileRow } from '@tvmf/shared';
 import { api, apiDownload, ApiError } from '../api';
 import { useAuth } from '../auth';
@@ -298,7 +298,18 @@ export function DeploymentSiteWorkspace() {
                     <TableCell>{r.upn}</TableCell>
                     <TableCell>{OBJECT_TYPE_LABEL[r.objectType]}</TableCell>
                     <TableCell>
-                      <pre className={cs.commands}>{r.renderedCommands.join('\n')}</pre>
+                      {r.renderedCommands.length > 0 && <pre className={cs.commands}>{r.renderedCommands.join('\n')}</pre>}
+                      {r.warnings.map((w) => (
+                        <Badge
+                          key={w}
+                          appearance="tint"
+                          color="warning"
+                          icon={<WarningRegular />}
+                          style={{ display: 'block', whiteSpace: 'normal', textAlign: 'left', marginTop: 4 }}
+                        >
+                          {w}
+                        </Badge>
+                      ))}
                     </TableCell>
                   </TableRow>
                 ))}

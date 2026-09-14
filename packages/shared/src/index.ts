@@ -262,6 +262,14 @@ export interface BuildRowValidation {
   liveLineUri: string | null;
   /** true when the row's target e164 is also the target on another build_users/build_caps/build_resource_accounts row in the tenant */
   numberConflict: boolean;
+  /**
+   * true when the row has a phone number but no `number_type` -
+   * Set-CsPhoneNumberAssignment (and therefore Enterprise Voice) needs both
+   * and silently skips the row without it. See identityRowWarnings in
+   * packages/shared/src/deployment.ts, which is what actually surfaces this
+   * on the deployment preview - this flag mirrors it for the Build grid.
+   */
+  numberTypeMissing: boolean;
   /** each target policy whose live effective assignment differs (or is unset) */
   policyMismatches: { key: import('./domain').PolicyKey; label: string; target: string; live: string | null }[];
   /** target policy names that don't exist anywhere in tenant_policies for their type - likely a typo */
@@ -324,6 +332,14 @@ export interface DeploymentPreviewRow {
   upn: string;
   calls: CmdletInvocation[];
   renderedCommands: string[];
+  /**
+   * Data problems that make this row's plan incomplete without producing an
+   * error - e.g. a phone number with no assignment type, so
+   * Set-CsPhoneNumberAssignment (and Enterprise Voice) silently never fires.
+   * A row can have warnings with an empty `calls` (nothing else to change),
+   * so it must never be dropped from the preview just because calls is empty.
+   */
+  warnings: string[];
 }
 
 /** A row from the general-purpose per-tenant file store (see FilesTable). */

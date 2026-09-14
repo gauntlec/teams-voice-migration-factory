@@ -11,6 +11,7 @@ interface IdentityRow {
   id: string;
   upn: string;
   e164: string | null;
+  number_type: string | null;
   policies: Record<string, string | null> | null;
   policy_ids: Record<string, string | null> | null;
 }
@@ -148,6 +149,7 @@ export class BuildValidationService {
         enterpriseVoiceEnabled: live?.enterprise_voice_enabled ?? null,
         liveLineUri: live?.line_uri ?? null,
         numberConflict: !!row.e164 && (dupeCounts.get(row.e164) ?? 0) > 1,
+        numberTypeMissing: !!row.e164 && !row.number_type,
         policyMismatches,
         unknownPolicies,
         renamedPolicies,

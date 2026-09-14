@@ -20,7 +20,9 @@ import {
   type BuildTemplatePatchInput,
   type BuildValidateResult,
   type CallingPolicySiteMapSetInput,
+  type DiscoverySiteOverview,
   type NumberHolderType,
+  type NumberType,
   type Paginated,
   type PolicyKey,
 } from '@tvmf/shared';
@@ -55,8 +57,8 @@ export class BuildService {
     const siteIds = sites.map((si) => si.id);
 
     const [users, caps, ras, deployments] = await Promise.all([
-      s.selectFrom('build_users').select(['id', 'site_id', 'upn', 'e164', 'policies', 'policy_ids']).where('site_id', 'in', siteIds).execute(),
-      s.selectFrom('build_caps').select(['id', 'site_id', 'upn', 'e164', 'policies', 'policy_ids']).where('site_id', 'in', siteIds).execute(),
+      s.selectFrom('build_users').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids']).where('site_id', 'in', siteIds).execute(),
+      s.selectFrom('build_caps').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids']).where('site_id', 'in', siteIds).execute(),
       s.selectFrom('build_resource_accounts').select(['id', 'site_id']).where('site_id', 'in', siteIds).execute(),
       s
         .selectFrom('deployments')
@@ -166,6 +168,7 @@ export class BuildService {
     const numbers = await this.currentNumbersFor(t, 'user', discUsers.map((r) => r.id));
     const template = await this.defaultTemplateFor(t, siteId, 'user');
     const callingPolicyMap = await this.callingPolicyMapFor(t, siteId);
+    const defaultNumberType = await this.siteNumberTypeDefault(t, siteId);
     return this.populateIdentity(t, u, {
       table: 'build_users',
       sourceTable: 'discovery_users',
@@ -187,11 +190,19 @@ export class BuildService {
           policy_ids.voice_routing_policy = mappedCalling.id;
           policies.voice_routing_policy = mappedCalling.name;
         }
+        const claimedNumber = numbers.get(d.id);
         return {
           upn: d.upn,
           did: d.requested_number,
-          e164: numbers.get(d.id)?.e164 ?? null,
-          phone_number_id: numbers.get(d.id)?.id ?? null,
+          e164: claimedNumber?.e164 ?? null,
+          phone_number_id: claimedNumber?.id ?? null,
+          // Best-effort default so Populate doesn't leave every new row
+          // silently missing Set-CsPhoneNumberAssignment - see
+          // siteNumberTypeDefault. Only fills in when the site's PSTN/
+          // licensing model resolves unambiguously; otherwise left null and
+          // flagged by BuildValidationService/the deployment preview instead
+          // of guessed.
+          number_type: claimedNumber?.e164 ? defaultNumberType : null,
           migration_wave: null,
           policy_ids,
           policies,
@@ -251,6 +262,7 @@ export class BuildService {
     const numbers = await this.currentNumbersFor(t, 'cap', discCaps.map((r) => r.id));
     const template = await this.defaultTemplateFor(t, siteId, 'cap');
     const callingPolicyMap = await this.callingPolicyMapFor(t, siteId);
+    const defaultNumberType = await this.siteNumberTypeDefault(t, siteId);
     return this.populateIdentity(t, u, {
       table: 'build_caps',
       sourceTable: 'discovery_caps',
@@ -265,12 +277,15 @@ export class BuildService {
           policy_ids.voice_routing_policy = mappedCalling.id;
           policies.voice_routing_policy = mappedCalling.name;
         }
+        const claimedNumber = numbers.get(d.id);
         const mapped: Record<string, unknown> = {
           upn: d.upn ?? '',
           display_name: d.display_name,
           phone_model: d.device_model,
-          e164: numbers.get(d.id)?.e164 ?? null,
-          phone_number_id: numbers.get(d.id)?.id ?? null,
+          e164: claimedNumber?.e164 ?? null,
+          phone_number_id: claimedNumber?.id ?? null,
+          // See populateUsers - same best-effort default, same reason.
+          number_type: claimedNumber?.e164 ? defaultNumberType : null,
           policy_ids,
           policies,
         };
@@ -307,7 +322,14 @@ export class BuildService {
       .execute();
     const validated = await this.validation.validateRows(
       t,
-      rows as { id: string; upn: string; e164: string | null; policies: Record<string, string | null> | null; policy_ids: Record<string, string | null> | null }[],
+      rows as {
+        id: string;
+        upn: string;
+        e164: string | null;
+        number_type: string | null;
+        policies: Record<string, string | null> | null;
+        policy_ids: Record<string, string | null> | null;
+      }[],
     );
     // phone_number_id is a native column now (see 0017_build_phone_number_id) -
     // no separate holder lookup needed to know "what number is this row's".
@@ -344,6 +366,11 @@ export class BuildService {
   ) {
     const { phone_number_id, policy_ids, ...rest } = body;
     const resolved = policy_ids ? await this.resolvePolicyIds(t, policy_ids) : null;
+    // A number is being assigned right here and the caller didn't say what
+    // type it is - fill in the site's default rather than let this row start
+    // life silently missing Set-CsPhoneNumberAssignment (see siteNumberTypeDefault).
+    const number_type =
+      rest.number_type ?? (phone_number_id ? await this.siteNumberTypeDefault(t, rest.site_id) : null);
     let row = await this.s(t)
       .insertInto(table)
       .values({
@@ -351,7 +378,7 @@ export class BuildService {
         upn: rest.upn,
         did: rest.did ?? null,
         ext: rest.ext ?? null,
-        number_type: rest.number_type ?? null,
+        number_type,
         revoke_ev: rest.revoke_ev ?? false,
         hold_uri: rest.hold_uri ?? null,
         action: rest.action ?? null,
@@ -401,7 +428,7 @@ export class BuildService {
     const { phone_number_id, policy_ids, ...rest } = body;
     const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
     if (phone_number_id !== undefined) {
-      Object.assign(patch, await this.applyNumberChange(t, table, holderType, id, phone_number_id));
+      Object.assign(patch, await this.applyNumberChange(t, table, holderType, id, phone_number_id, 'number_type' in rest));
     }
     if (policy_ids !== undefined) {
       Object.assign(patch, await this.resolvePolicyIds(t, policy_ids));
@@ -602,6 +629,10 @@ export class BuildService {
     const resolved = body.voice_routing_policy_id
       ? await this.resolvePolicyIds(t, { voice_routing_policy: body.voice_routing_policy_id })
       : null;
+    // Same reasoning as createIdentity - default number_type when a number is
+    // being assigned right here and the caller didn't say what type it is.
+    const number_type =
+      body.number_type ?? (body.phone_number_id ? await this.siteNumberTypeDefault(t, body.site_id) : null);
     let row = await this.s(t)
       .insertInto('build_resource_accounts')
       .values({
@@ -610,7 +641,7 @@ export class BuildService {
         kind: body.kind,
         upn: body.upn ?? '',
         location_id: body.location_id ?? null,
-        number_type: body.number_type ?? null,
+        number_type,
         voice_routing_policy: resolved?.policies.voice_routing_policy ?? body.voice_routing_policy ?? null,
         voice_routing_policy_id: resolved?.policy_ids.voice_routing_policy ?? null,
         application_id: body.created ? RESOURCE_ACCOUNT_APPLICATION_IDS[body.kind] : null,
@@ -639,7 +670,10 @@ export class BuildService {
     const { phone_number_id, created, voice_routing_policy_id, ...rest } = body;
     const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
     if (phone_number_id !== undefined) {
-      Object.assign(patch, await this.applyNumberChange(t, 'build_resource_accounts', 'resource_account', id, phone_number_id));
+      Object.assign(
+        patch,
+        await this.applyNumberChange(t, 'build_resource_accounts', 'resource_account', id, phone_number_id, 'number_type' in rest),
+      );
     }
     if (voice_routing_policy_id !== undefined) {
       const resolved = await this.resolvePolicyIds(t, { voice_routing_policy: voice_routing_policy_id });
@@ -748,6 +782,25 @@ export class BuildService {
     return out;
   }
 
+  /**
+   * Best-effort default for a row's `number_type` (Set-CsPhoneNumberAssignment
+   * -PhoneNumberType), derived from the site's "PSTN / licensing model"
+   * overview field. Only three of its four values resolve unambiguously to a
+   * NumberType - 'Mixed' (and an unset model) can't be guessed and come back
+   * null, leaving number_type for the engineer to set by hand on that row (the
+   * deployment preview flags it rather than silently skipping the command -
+   * see identityRowWarnings/resourceAccountRowWarnings in
+   * packages/shared/src/deployment.ts). Never overwrites an explicit choice -
+   * callers only use this to fill in a blank.
+   */
+  private async siteNumberTypeDefault(t: TenantContext, siteId: string): Promise<NumberType | null> {
+    const site = await this.s(t).selectFrom('discovery_sites').select('overview').where('id', '=', siteId).executeTakeFirst();
+    const licensingModel = (site?.overview as DiscoverySiteOverview | undefined)?.licensingModel;
+    return licensingModel === 'DirectRouting' || licensingModel === 'CallingPlan' || licensingModel === 'OperatorConnect'
+      ? licensingModel
+      : null;
+  }
+
   private async releaseHolder(t: TenantContext, holderType: NumberHolderType, holderId: string) {
     await this.s(t)
       .updateTable('phone_numbers')
@@ -794,14 +847,30 @@ export class BuildService {
     holderType: NumberHolderType,
     id: string,
     targetPhoneNumberId: string | null,
+    /** true when the caller's own patch already set number_type explicitly - skip the site-default fill-in then. */
+    explicitNumberType = false,
   ): Promise<Record<string, unknown>> {
     const numberColumn = table === 'build_resource_accounts' ? 'phone_number' : 'e164';
-    const current = await this.s(t).selectFrom(table).select('phone_number_id').where('id', '=', id).executeTakeFirst();
+    const current = await this.s(t)
+      .selectFrom(table)
+      .select(['phone_number_id', 'number_type', 'site_id'])
+      .where('id', '=', id)
+      .executeTakeFirst();
     const currentId = current?.phone_number_id ?? null;
     if (currentId === targetPhoneNumberId) return {};
     if (targetPhoneNumberId) {
       const claimed = await this.setSingleNumber(t, holderType, id, targetPhoneNumberId);
-      return { [numberColumn]: claimed?.e164 ?? null, phone_number_id: claimed?.id ?? null };
+      const patch: Record<string, unknown> = { [numberColumn]: claimed?.e164 ?? null, phone_number_id: claimed?.id ?? null };
+      // A number is newly being assigned here and this row has no number_type
+      // yet - fill in the site's default rather than leave
+      // Set-CsPhoneNumberAssignment silently unable to fire (see
+      // siteNumberTypeDefault). Never overwrites an explicit choice, either
+      // this row's existing one or one the same patch is also setting.
+      if (!explicitNumberType && !current?.number_type && current?.site_id) {
+        const derived = await this.siteNumberTypeDefault(t, current.site_id);
+        if (derived) patch.number_type = derived;
+      }
+      return patch;
     }
     await this.releaseHolder(t, holderType, id); // no-op if this row never held a real claim
     return { [numberColumn]: null, phone_number_id: null };
@@ -944,8 +1013,8 @@ export class BuildService {
   async validateSite(t: TenantContext, u: AuthedUser, siteId: string, live = true): Promise<BuildValidateResult> {
     const s = this.s(t);
     const [users, caps] = await Promise.all([
-      s.selectFrom('build_users').select(['id', 'upn', 'e164', 'policies', 'policy_ids']).where('site_id', '=', siteId).execute(),
-      s.selectFrom('build_caps').select(['id', 'upn', 'e164', 'policies', 'policy_ids']).where('site_id', '=', siteId).execute(),
+      s.selectFrom('build_users').select(['id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids']).where('site_id', '=', siteId).execute(),
+      s.selectFrom('build_caps').select(['id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids']).where('site_id', '=', siteId).execute(),
     ]);
     const rows = [...users.map((r) => ({ ...r, table: 'build_users' as const })), ...caps.map((r) => ({ ...r, table: 'build_caps' as const }))];
     const validated = await this.validation.validateRows(t, rows);
@@ -1315,7 +1384,13 @@ function holderTypeOf(table: 'build_users' | 'build_caps'): NumberHolderType {
 }
 
 function hasIssue(v: BuildRowValidation): boolean {
-  return !v.existsInTenant || v.numberConflict || v.policyMismatches.length > 0 || v.unknownPolicies.length > 0;
+  return (
+    !v.existsInTenant ||
+    v.numberConflict ||
+    v.numberTypeMissing ||
+    v.policyMismatches.length > 0 ||
+    v.unknownPolicies.length > 0
+  );
 }
 
 /** Postgres unique_violation (23505) - the (site_id, lower(upn)) index tripped. */

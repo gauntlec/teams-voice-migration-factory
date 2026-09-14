@@ -70,7 +70,8 @@ function ValidationBadge({ v }: { v: BuildRowValidation | null }) {
       </Badge>
     );
   }
-  const issues = v.unknownPolicies.length + v.policyMismatches.length + (v.numberConflict ? 1 : 0);
+  const issues =
+    v.unknownPolicies.length + v.policyMismatches.length + (v.numberConflict ? 1 : 0) + (v.numberTypeMissing ? 1 : 0);
   // Renames aren't a real issue - deployment always resolves the live name
   // via policy_ids regardless - but still worth surfacing so the stale
   // display text next to it isn't mistaken for what will actually deploy.
@@ -88,6 +89,7 @@ function ValidationBadge({ v }: { v: BuildRowValidation | null }) {
   }
   const title = [
     v.numberConflict ? 'This number is also assigned to another user, CAP or resource account in this tenant' : null,
+    v.numberTypeMissing ? 'Phone number set but no Number type - the number won\'t actually be assigned (and Enterprise Voice won\'t be enabled) on deployment' : null,
     ...v.unknownPolicies.map((p) => `${p.label}: "${p.value}" doesn't exist in the tenant`),
     ...v.policyMismatches.map((p) => `${p.label}: live is ${p.live ?? '(none)'}, target is ${p.target}`),
     ...v.renamedPolicies.map((p) => `${p.label}: policy was renamed to "${p.liveName}" - refresh to sync`),

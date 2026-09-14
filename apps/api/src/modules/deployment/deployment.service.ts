@@ -2,9 +2,11 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { sql } from 'kysely';
 import { tenantDb } from '@tvmf/db';
 import {
+  identityRowWarnings,
   planIdentityRow,
   planResourceAccountRow,
   renderCommand,
+  resourceAccountRowWarnings,
   type CreateDeploymentInput,
   type DeploymentPreviewQuery,
   type DeploymentPreviewRow,
@@ -186,8 +188,9 @@ export class DeploymentService {
             objectType,
             liveState.get(row.upn.toLowerCase()),
           );
-          if (calls.length === 0) continue;
-          out.push({ rowId: row.id, objectType, upn: row.upn, calls, renderedCommands: calls.map(renderCommand) });
+          const warnings = identityRowWarnings({ e164: row.e164, number_type: row.number_type });
+          if (calls.length === 0 && warnings.length === 0) continue;
+          out.push({ rowId: row.id, objectType, upn: row.upn, calls, renderedCommands: calls.map(renderCommand), warnings });
         }
       }
     }
@@ -216,13 +219,15 @@ export class DeploymentService {
           },
           liveState.get(row.upn.toLowerCase()),
         );
-        if (calls.length === 0) continue;
+        const warnings = resourceAccountRowWarnings({ phone_number: row.phone_number, number_type: row.number_type });
+        if (calls.length === 0 && warnings.length === 0) continue;
         out.push({
           rowId: row.id,
           objectType: 'resource_account',
           upn: row.upn,
           calls,
           renderedCommands: calls.map(renderCommand),
+          warnings,
         });
       }
     }
