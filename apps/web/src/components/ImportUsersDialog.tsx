@@ -120,6 +120,8 @@ export function ImportUsersDialog({
   const [parsed, setParsed] = useState<Parsed[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [result, setResult] = useState<{ created: number; skipped: number; errors: { row: number; message: string }[] } | null>(null);
+  const [templateBusy, setTemplateBusy] = useState(false);
+  const [templateDone, setTemplateDone] = useState(false);
 
   const freeNumKeys = useMemo(() => new Set(availableE164.map(numKey)), [availableE164]);
   const policySet = useMemo(() => new Set(policyNames.map((p) => p.trim().toLowerCase())), [policyNames]);
@@ -197,28 +199,38 @@ export function ImportUsersDialog({
   }
 
   async function downloadTemplate() {
-    const XLSX = await loadXlsx();
-    const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_COLUMNS, TEMPLATE_EXAMPLE]);
-    ws['!cols'] = TEMPLATE_COLUMNS.map(() => ({ wch: 22 }));
-    const notes = XLSX.utils.aoa_to_sheet([
-      ['Column', 'Required', 'Notes'],
-      ['UPN', 'Yes', 'The user’s Microsoft 365 sign-in address.'],
-      ['Phone number', 'Yes', 'The number the customer wants. E.164 (+441234567890) is best. If it isn’t already in this site’s number ranges it’s still imported and flagged for Design & Build.'],
-      ['Display name', 'No', ''],
-      ['Calling policy', 'No', 'Name of an existing calling policy for this customer. Unknown names are ignored.'],
-      ['Caller ID', 'No', 'user | anonymous | main number'],
-      ['Voicemail enabled', 'No', 'yes / no (defaults to yes)'],
-      ['Voicemail language', 'No', 'A Teams culture code (en-US, en-GB, fr-FR…) or a plain name like "English (United Kingdom)". Unknown values are dropped.'],
-      ['Requires handset', 'No', 'yes / no'],
-      ['Handset model', 'No', ''],
-      ['Access port ID', 'No', ''],
-      ['Comments', 'No', ''],
-    ]);
-    notes['!cols'] = [{ wch: 18 }, { wch: 10 }, { wch: 80 }];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Users');
-    XLSX.utils.book_append_sheet(wb, notes, 'How to fill this in');
-    XLSX.writeFile(wb, 'voxshift-users-template.xlsx');
+    setErr(null);
+    setTemplateBusy(true);
+    try {
+      const XLSX = await loadXlsx();
+      const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_COLUMNS, TEMPLATE_EXAMPLE]);
+      ws['!cols'] = TEMPLATE_COLUMNS.map(() => ({ wch: 22 }));
+      const notes = XLSX.utils.aoa_to_sheet([
+        ['Column', 'Required', 'Notes'],
+        ['UPN', 'Yes', 'The user’s Microsoft 365 sign-in address.'],
+        ['Phone number', 'Yes', 'The number the customer wants. E.164 (+441234567890) is best. If it isn’t already in this site’s number ranges it’s still imported and flagged for Design & Build.'],
+        ['Display name', 'No', ''],
+        ['Calling policy', 'No', 'Name of an existing calling policy for this customer. Unknown names are ignored.'],
+        ['Caller ID', 'No', 'user | anonymous | main number'],
+        ['Voicemail enabled', 'No', 'yes / no (defaults to yes)'],
+        ['Voicemail language', 'No', 'A Teams culture code (en-US, en-GB, fr-FR…) or a plain name like "English (United Kingdom)". Unknown values are dropped.'],
+        ['Requires handset', 'No', 'yes / no'],
+        ['Handset model', 'No', ''],
+        ['Access port ID', 'No', ''],
+        ['Comments', 'No', ''],
+      ]);
+      notes['!cols'] = [{ wch: 18 }, { wch: 10 }, { wch: 80 }];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Users');
+      XLSX.utils.book_append_sheet(wb, notes, 'How to fill this in');
+      XLSX.writeFile(wb, 'voxshift-users-template.xlsx');
+      setTemplateDone(true);
+      setTimeout(() => setTemplateDone(false), 2000);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not build the template file.');
+    } finally {
+      setTemplateBusy(false);
+    }
   }
 
   const importMut = useMutation({
@@ -248,8 +260,13 @@ export function ImportUsersDialog({
           <DialogContent>
             <div className={s.body}>
               <div className={s.summary}>
-                <Button size="small" icon={<ArrowDownloadRegular />} onClick={downloadTemplate}>
-                  Download template
+                <Button
+                  size="small"
+                  icon={templateBusy ? <Spinner size="tiny" /> : <ArrowDownloadRegular />}
+                  disabled={templateBusy}
+                  onClick={downloadTemplate}
+                >
+                  {templateDone ? 'Downloaded' : 'Download template'}
                 </Button>
                 <Text className={s.muted}>
                   .xlsx or .csv · first row is the header · UPN and Phone number required.
