@@ -19,13 +19,14 @@ export interface Paginated<T> {
 }
 
 /**
- * White-label branding for one customer - null anywhere this appears means
- * "use default Voxshift branding" (web theme, Logo component, emails).
- * `logo.path` is a storage-relative path, not a URL - fetch the image via
- * `GET /api/public/tenants/:tenantId/logo?v=<version>` (unauthenticated by
- * design, so it loads in a plain `<img>` from an email client too).
+ * White-label branding for one customer or MSP - null anywhere this appears
+ * means "use default Voxshift branding" (web theme, Logo component,
+ * emails). `logo.path` is a storage-relative path, not a URL - fetch the
+ * image via `GET /api/public/tenants/:id/logo?v=<version>` (tenants) or
+ * `GET /api/public/msps/:id/logo?v=<version>` (MSPs), both unauthenticated
+ * by design so they load in a plain `<img>` from an email client too.
  */
-export interface TenantBranding {
+export interface Branding {
   accentColor: string;
   /**
    * `width`/`height` are the source image's natural pixel dimensions,
@@ -47,7 +48,23 @@ export interface MeTenant {
   siteScoped: boolean;
   /** the site ids this membership is limited to; empty when not site-scoped. */
   siteIds: string[];
-  branding: TenantBranding | null;
+  branding: Branding | null;
+}
+
+/**
+ * A Managed Service Provider - an organization (Voxshift itself, or a
+ * partner) whose ENGINEER/PROJECT_MANAGER staff see this branding in the app
+ * chrome instead of whichever customer tenant they're currently looking at.
+ * Resolved by matching the signed-in user's email domain against `domains`,
+ * falling back to a per-user explicit override - see `Me.mspBranding` and
+ * `auth.service.ts`'s `resolveMspBranding`.
+ */
+export interface Msp {
+  id: string;
+  name: string;
+  slug: string;
+  domains: string[];
+  branding: Branding | null;
 }
 
 /** Shape of the authenticated principal returned by `GET /auth/me`. */
@@ -57,6 +74,15 @@ export interface Me {
   displayName: string;
   role: import('./rbac').Role;
   totpEnrolled: boolean;
+  /**
+   * ENGINEER/PROJECT_MANAGER only - the id of the MSP that resolved (by
+   * domain match or explicit override), or null for CUSTOMER, SUPER_ADMIN,
+   * or when no MSP resolves. Needed alongside `mspBranding` to build the
+   * `/api/public/msps/:id/logo` URL.
+   */
+  mspId: string | null;
+  /** ENGINEER/PROJECT_MANAGER only - null for CUSTOMER and SUPER_ADMIN, or when no MSP resolves. */
+  mspBranding: Branding | null;
   tenants: MeTenant[];
 }
 

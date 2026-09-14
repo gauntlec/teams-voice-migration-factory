@@ -4,8 +4,9 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import * as argon2 from 'argon2';
+import { sql } from 'kysely';
 import { platformDb } from '@tvmf/db';
-import type { Me } from '@tvmf/shared';
+import type { Branding, Me } from '@tvmf/shared';
 import { AuditService } from '../common/audit.service';
 import { decryptSecret, encryptSecret } from '../common/crypto';
 import { InjectDb, type Db } from '../db/db.module';
@@ -279,9 +280,14 @@ export class AuthService {
   async me(userId: string): Promise<Me> {
     const user = await platformDb(this.db)
       .selectFrom('users')
-      .select(['id', 'email', 'display_name', 'role', 'totp_enrolled'])
+      .select(['id', 'email', 'display_name', 'role', 'totp_enrolled', 'msp_id'])
       .where('id', '=', userId)
       .executeTakeFirstOrThrow();
+
+    const resolvedMsp =
+      user.role === 'ENGINEER' || user.role === 'PROJECT_MANAGER'
+        ? await this.resolveMspBranding(user.email, user.msp_id)
+        : null;
 
     let tenants: Me['tenants'];
     if (user.role === 'SUPER_ADMIN') {
@@ -314,7 +320,41 @@ export class AuthService {
       role: user.role,
       totpEnrolled: user.totp_enrolled,
       tenants,
+      mspId: resolvedMsp?.id ?? null,
+      mspBranding: resolvedMsp?.branding ?? null,
     };
+  }
+
+  /**
+   * Which MSP staff (ENGINEER/PROJECT_MANAGER) belong to, for branding in
+   * the app chrome regardless of which customer tenant they're currently
+   * looking at. Domain match is the primary mechanism (an org's engineers
+   * all share a corporate email domain); the explicit per-user override is
+   * only a fallback for personal/shared domains a domain match can't
+   * resolve - see the MSP branding plan.
+   */
+  private async resolveMspBranding(
+    email: string,
+    mspIdOverride: string | null,
+  ): Promise<{ id: string; branding: Branding | null } | null> {
+    const domain = email.split('@')[1]?.toLowerCase();
+    if (domain) {
+      const byDomain = await platformDb(this.db)
+        .selectFrom('msps')
+        .select(['id', 'branding'])
+        .where(sql<boolean>`${domain} = any(domains)`)
+        .executeTakeFirst();
+      if (byDomain) return { id: byDomain.id, branding: byDomain.branding ?? null };
+    }
+    if (mspIdOverride) {
+      const byOverride = await platformDb(this.db)
+        .selectFrom('msps')
+        .select(['id', 'branding'])
+        .where('id', '=', mspIdOverride)
+        .executeTakeFirst();
+      if (byOverride) return { id: byOverride.id, branding: byOverride.branding ?? null };
+    }
+    return null;
   }
 
   private async issueLogin(userId: string, role: string, email: string, meta: Meta) {

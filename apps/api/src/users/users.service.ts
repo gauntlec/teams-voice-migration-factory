@@ -31,7 +31,7 @@ export class UsersService {
   async list(actor: { id: string; role: Role }) {
     let q = platformDb(this.db)
       .selectFrom('users')
-      .select(['id', 'email', 'display_name', 'role', 'status', 'totp_enrolled', 'created_at'])
+      .select(['id', 'email', 'display_name', 'role', 'status', 'totp_enrolled', 'msp_id', 'created_at'])
       .orderBy('created_at', 'desc');
     if (actor.role !== 'SUPER_ADMIN') {
       // Non-admins only see users who belong to a customer they are assigned to.
@@ -162,6 +162,7 @@ export class UsersService {
         display_name: input.displayName,
         role: input.role,
         must_change_password: true,
+        msp_id: input.role === 'ENGINEER' || input.role === 'PROJECT_MANAGER' ? (input.mspId ?? null) : null,
       })
       .returning(['id', 'email', 'display_name', 'role', 'status'])
       .executeTakeFirstOrThrow();
@@ -370,6 +371,28 @@ export class UsersService {
       detail: { email: user.email, role: user.role },
     });
     return { ok: true };
+  }
+
+  /**
+   * The explicit per-user MSP-branding fallback (used only when the user's
+   * email domain doesn't match any MSP's domain list - see
+   * auth.service.ts's resolveMspBranding). SUPER_ADMIN only.
+   */
+  async setMspOverride(id: string, mspId: string | null, actor: AuditActor) {
+    const updated = await platformDb(this.db)
+      .updateTable('users')
+      .set({ msp_id: mspId, updated_at: new Date().toISOString() })
+      .where('id', '=', id)
+      .returning(['id', 'msp_id'])
+      .executeTakeFirst();
+    if (!updated) throw new NotFoundException('user not found');
+    await this.audit.platform('user.msp_override_changed', {
+      actor,
+      targetType: 'user',
+      targetId: id,
+      detail: { mspId },
+    });
+    return updated;
   }
 
   async resetMfa(id: string, actor: AuditActor) {

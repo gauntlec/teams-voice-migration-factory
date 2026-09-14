@@ -1,5 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Post } from '@nestjs/common';
-import { createUserSchema, type CreateUserInput } from '@tvmf/shared';
+import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import { createUserSchema, updateUserMspSchema, type CreateUserInput, type UpdateUserMspInput } from '@tvmf/shared';
 import { CurrentUser } from '../auth/auth.decorators';
 import type { AuthedUser } from '../common/request';
 import { ZodBody } from '../common/zod.pipe';
@@ -33,6 +33,16 @@ export class UsersController {
     @CurrentUser() user: AuthedUser,
   ) {
     return this.users.create(body, this.actor(user));
+  }
+
+  @Patch(':id/msp')
+  @RequirePermission('user:update')
+  setMspOverride(
+    @Param('id') id: string,
+    @Body(new ZodBody(updateUserMspSchema)) body: UpdateUserMspInput,
+    @CurrentUser() user: AuthedUser,
+  ) {
+    return this.users.setMspOverride(id, body.mspId, this.actor(user));
   }
 
   @Post(':id/resend-invitation')

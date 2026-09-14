@@ -100,6 +100,7 @@ const MAIN: NavDef[] = [
 const ADMIN: NavDef[] = [
   { to: '/admin/users', label: 'Users', icon: <People24Regular />, permission: 'user:read' },
   { to: '/admin/tenants', label: 'Customers', icon: <BuildingMultiple24Regular />, permission: 'tenant:create' },
+  { to: '/admin/msps', label: 'MSPs', icon: <BuildingMultiple24Regular />, permission: 'msp:read' },
   { to: '/admin/sites', label: 'Sites', icon: <Location24Regular />, permission: 'discovery:sites:manage' },
   { to: '/admin/email', label: 'Email log', icon: <Mail24Regular />, permission: 'audit:read:platform' },
   { to: '/admin/audit', label: 'Platform Audit', icon: <History24Regular />, permission: 'audit:read:platform' },
@@ -127,8 +128,17 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const activeTenant = tenants.find((t) => t.id === activeTenantId) ?? tenants[0];
   const adminItems = ADMIN.filter((i) => !i.permission || can(i.permission));
-  const logo = activeTenant?.branding?.logo;
-  const logoUrl = logo ? `/api/public/tenants/${activeTenant.id}/logo?v=${logo.version}` : null;
+  // Staff (ENGINEER/PROJECT_MANAGER) see their own MSP's branding, not the
+  // customer tenant's - see BrandTheme.tsx. Switching the customer dropdown
+  // below must not change this.
+  const logoUrl =
+    me.role === 'CUSTOMER'
+      ? activeTenant?.branding?.logo
+        ? `/api/public/tenants/${activeTenant.id}/logo?v=${activeTenant.branding.logo.version}`
+        : null
+      : me.mspBranding?.logo
+        ? `/api/public/msps/${me.mspId}/logo?v=${me.mspBranding.logo.version}`
+        : null;
 
   const renderNav = (items: NavDef[]) =>
     items

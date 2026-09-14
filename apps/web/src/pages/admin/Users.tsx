@@ -57,9 +57,14 @@ interface UserRow {
   role: string;
   status: string;
   totp_enrolled: boolean;
+  msp_id: string | null;
   tenants?: { id: string; name: string }[];
 }
 interface TenantRow {
+  id: string;
+  name: string;
+}
+interface MspRow {
   id: string;
   name: string;
 }
@@ -182,6 +187,44 @@ function DeleteUserButton({ user, onDeleted }: { user: UserRow; onDeleted: () =>
   );
 }
 
+/** The per-user MSP-branding fallback override - see auth.service.ts's resolveMspBranding. */
+function MspCell({ user, msps, canEdit }: { user: UserRow; msps: MspRow[]; canEdit: boolean }) {
+  const qc = useQueryClient();
+  const [value, setValue] = useState(user.msp_id ?? '');
+
+  const save = useMutation({
+    mutationFn: (mspId: string) =>
+      api(`/users/${user.id}/msp`, { method: 'PATCH', body: JSON.stringify({ mspId: mspId || null }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  });
+
+  if (!canEdit) {
+    return <Text size={200}>{msps.find((m) => m.id === user.msp_id)?.name ?? '—'}</Text>;
+  }
+
+  return (
+    <Dropdown
+      size="small"
+      placeholder="None"
+      selectedOptions={value ? [value] : []}
+      value={msps.find((m) => m.id === value)?.name ?? ''}
+      onOptionSelect={(_, d) => {
+        const next = d.optionValue ?? '';
+        setValue(next);
+        save.mutate(next);
+      }}
+      style={{ minWidth: 160 }}
+    >
+      <Option value="">None</Option>
+      {msps.map((m) => (
+        <Option key={m.id} value={m.id}>
+          {m.name}
+        </Option>
+      ))}
+    </Dropdown>
+  );
+}
+
 export function AdminUsers() {
   const s = useStyles();
   const qc = useQueryClient();
@@ -192,6 +235,7 @@ export function AdminUsers() {
   const [tenantIds, setTenantIds] = useState<string[]>([]);
   const [siteScope, setSiteScope] = useState<'all' | 'sites'>('all');
   const [siteIds, setSiteIds] = useState<string[]>([]);
+  const [mspId, setMspId] = useState<string>('');
   const [err, setErr] = useState<string | null>(null);
   const [manage, setManage] = useState<UserRow | null>(null);
   const [invited, setInvited] = useState<{
@@ -202,6 +246,12 @@ export function AdminUsers() {
 
   const users = useQuery({ queryKey: ['users'], queryFn: () => api<UserRow[]>('/users') });
   const tenants = useQuery({ queryKey: ['tenants'], queryFn: () => api<TenantRow[]>('/tenants') });
+  const msps = useQuery({
+    queryKey: ['msps'],
+    queryFn: () => api<MspRow[]>('/msps'),
+    enabled: can('msp:read'),
+  });
+  const isStaffRole = role === 'ENGINEER' || role === 'PROJECT_MANAGER';
 
   const scopeTenantId = role === 'CUSTOMER' && tenantIds.length === 1 ? tenantIds[0] : null;
   const sites = useSites(scopeTenantId ?? '');
@@ -212,6 +262,7 @@ export function AdminUsers() {
     setTenantIds([]);
     setSiteScope('all');
     setSiteIds([]);
+    setMspId('');
     setErr(null);
   };
 
@@ -226,6 +277,7 @@ export function AdminUsers() {
           tenantIds: role === 'SUPER_ADMIN' ? undefined : tenantIds,
           siteIds:
             role === 'CUSTOMER' && scopeTenantId && siteScope === 'sites' ? siteIds : undefined,
+          mspId: isStaffRole && mspId ? mspId : undefined,
         }),
       }),
     onSuccess: (data) => {
@@ -325,6 +377,24 @@ export function AdminUsers() {
               </Dropdown>
             </Field>
           )}
+          {isStaffRole && can('msp:read') && (
+            <Field label="MSP override" hint="Fallback only - used when their email domain doesn't match any MSP">
+              <Dropdown
+                placeholder="None (domain match / default)"
+                selectedOptions={mspId ? [mspId] : []}
+                value={msps.data?.find((m) => m.id === mspId)?.name ?? ''}
+                onOptionSelect={(_, d) => setMspId(d.optionValue ?? '')}
+                style={{ minWidth: 200 }}
+              >
+                <Option value="">None</Option>
+                {(msps.data ?? []).map((m) => (
+                  <Option key={m.id} value={m.id}>
+                    {m.name}
+                  </Option>
+                ))}
+              </Dropdown>
+            </Field>
+          )}
           {scopeTenantId && (
             <Field label="Site access" hint="Limit a site contact to specific sites">
               <Dropdown
@@ -394,6 +464,7 @@ export function AdminUsers() {
                 <TableHeaderCell>Email</TableHeaderCell>
                 <TableHeaderCell>Role</TableHeaderCell>
                 <TableHeaderCell>Customers</TableHeaderCell>
+                {can('msp:read') && <TableHeaderCell>MSP</TableHeaderCell>}
                 <TableHeaderCell>Status</TableHeaderCell>
                 <TableHeaderCell>MFA</TableHeaderCell>
                 <TableHeaderCell>Actions</TableHeaderCell>
@@ -411,6 +482,15 @@ export function AdminUsers() {
                   <TableCell title={u.email}>{u.email}</TableCell>
                   <TableCell>{u.role}</TableCell>
                   <TableCell title={customers}>{customers}</TableCell>
+                  {can('msp:read') && (
+                    <TableCell>
+                      {u.role === 'ENGINEER' || u.role === 'PROJECT_MANAGER' ? (
+                        <MspCell user={u} msps={msps.data ?? []} canEdit={can('user:update')} />
+                      ) : (
+                        '—'
+                      )}
+                    </TableCell>
+                  )}
                   <TableCell>{u.status}</TableCell>
                   <TableCell>{u.totp_enrolled ? 'enrolled' : '—'}</TableCell>
                   <TableCell>

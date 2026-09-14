@@ -3,7 +3,7 @@ import { Worker, type Job } from 'bullmq';
 import IORedis from 'ioredis';
 import { sql } from 'kysely';
 import { createDb, platformDb, tenantDb } from '@tvmf/db';
-import { buildColorRamp, type DiscoverySiteOverview, type PortDocumentItemSummary, type TenantBranding } from '@tvmf/shared';
+import { buildColorRamp, type Branding, type DiscoverySiteOverview, type PortDocumentItemSummary } from '@tvmf/shared';
 import {
   planIdentityRow,
   planResourceAccountRow,
@@ -509,7 +509,7 @@ async function handleDeploymentRun(job: Job) {
 async function loadEmailBranding(tenantId: string | null): Promise<EmailBranding | undefined> {
   if (!tenantId) return undefined;
   const t = await platformDb(db).selectFrom('tenants').select('branding').where('id', '=', tenantId).executeTakeFirst();
-  const branding = t?.branding as TenantBranding | null | undefined;
+  const branding = t?.branding as Branding | null | undefined;
   if (!branding) return undefined;
   const webOrigin = (process.env.WEB_ORIGIN ?? '').replace(/\/+$/, '');
   return {

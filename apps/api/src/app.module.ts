@@ -13,6 +13,7 @@ import { FeatureRequestsModule } from './feature-requests/feature-requests.modul
 import { BugReportsModule } from './bug-reports/bug-reports.module';
 import { UsersModule } from './users/users.module';
 import { TenantsModule } from './tenants/tenants.module';
+import { MspsModule } from './msps/msps.module';
 import { DataCollectionModule } from './modules/data-collection/data-collection.module';
 import { NumberPortModule } from './modules/number-port/number-port.module';
 import { BuildModule } from './modules/build/build.module';
@@ -36,6 +37,7 @@ import { HealthController } from './health/health.controller';
     BugReportsModule,
     UsersModule,
     TenantsModule,
+    MspsModule,
     DataCollectionModule,
     NumberPortModule,
     BuildModule,

@@ -19,6 +19,7 @@ import { Files } from './pages/Files';
 import { Handover } from './pages/Handover';
 import { AdminUsers } from './pages/admin/Users';
 import { AdminTenants } from './pages/admin/Tenants';
+import { AdminMsps } from './pages/admin/Msps';
 import { AdminSites } from './pages/admin/Sites';
 import { AdminEmailLog } from './pages/admin/EmailLog';
 import { AdminAudit } from './pages/admin/Audit';
@@ -110,6 +111,14 @@ export function App() {
           element={
             <RequirePermission permission="tenant:create">
               <AdminTenants />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="/admin/msps"
+          element={
+            <RequirePermission permission="msp:read">
+              <AdminMsps />
             </RequirePermission>
           }
         />

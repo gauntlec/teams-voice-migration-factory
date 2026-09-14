@@ -16,7 +16,7 @@ export interface TenantsTable {
   /** When true, the platform must never send a write cmdlet to this customer's live Microsoft Teams tenant - see 0006_tenant_teams_read_only.sql. */
   teams_read_only: ColumnType<boolean, boolean | undefined, boolean>;
   /** null = default Voxshift branding everywhere (web theme, Logo, emails) - see 0008_tenant_branding.sql. */
-  branding: Json<import('@tvmf/shared').TenantBranding> | null;
+  branding: Json<import('@tvmf/shared').Branding> | null;
   created_by: string | null;
   created_at: Ts;
 }
@@ -34,8 +34,26 @@ export interface UsersTable {
   password_changed_at: string | null;
   failed_logins: ColumnType<number, number | undefined, number>;
   locked_until: string | null;
+  /** Explicit MSP-branding override for ENGINEER/PROJECT_MANAGER, used only when no domain matches - see 0009_msps.sql. */
+  msp_id: string | null;
   created_at: Ts;
   updated_at: Ts;
+}
+
+/**
+ * A Managed Service Provider - see 0009_msps.sql. `domains` drives
+ * automatic branding resolution for ENGINEER/PROJECT_MANAGER users whose
+ * account email matches one of them (packages/shared's Msp type mirrors
+ * this shape for API responses).
+ */
+export interface MspsTable {
+  id: Generated<string>;
+  name: string;
+  slug: string;
+  domains: ColumnType<string[], string[] | undefined, string[]>;
+  branding: Json<import('@tvmf/shared').Branding> | null;
+  created_by: string | null;
+  created_at: Ts;
 }
 
 export interface EmailMessagesTable {
@@ -759,6 +777,7 @@ export interface DB {
   // platform
   tenants: TenantsTable;
   users: UsersTable;
+  msps: MspsTable;
   tenant_memberships: TenantMembershipsTable;
   totp_secrets: TotpSecretsTable;
   auth_sessions: AuthSessionsTable;

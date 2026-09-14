@@ -14,6 +14,9 @@ export const PERMISSIONS = [
   'tenant:archive',
   'tenant:delete',
   'tenant:member:manage',
+  'msp:create', // manage Managed Service Providers (branding for staff) - SUPER_ADMIN only
+  'msp:read',
+  'msp:update',
   'user:create',
   'user:read',
   'user:update',

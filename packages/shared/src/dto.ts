@@ -73,8 +73,18 @@ export const createUserSchema = z.object({
    * (a "site contact"). Omit / empty = access to the whole customer.
    */
   siteIds: z.array(z.string().uuid()).max(500).optional(),
+  /**
+   * ENGINEER/PROJECT_MANAGER only - explicit MSP-branding override, used
+   * only as a fallback when the user's own email domain doesn't match any
+   * MSP's domain list. See Me.mspBranding / auth.service.ts's resolveMspBranding.
+   */
+  mspId: z.string().uuid().nullable().optional(),
 });
 export type CreateUserInput = z.infer<typeof createUserSchema>;
+
+/** The only field an existing user's MSP override can be changed through - see PATCH /users/:id/msp. */
+export const updateUserMspSchema = z.object({ mspId: z.string().uuid().nullable() }).strict();
+export type UpdateUserMspInput = z.infer<typeof updateUserMspSchema>;
 
 export const inviteUserSchema = z.object({
   email: emailSchema,
@@ -103,6 +113,39 @@ export const updateTenantBrandingSchema = z
   .object({ accentColor: z.string().regex(HEX_COLOR_RE, 'must be a #rrggbb hex color') })
   .strict();
 export type UpdateTenantBrandingInput = z.infer<typeof updateTenantBrandingSchema>;
+
+/** A single email domain, lowercased/trimmed - server-side dedupe happens in MspsService. */
+const mspDomainSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(253)
+  .transform((s) => s.toLowerCase().replace(/^@/, ''));
+
+export const createMspSchema = z.object({
+  name: z.string().min(2).max(120),
+  slug: z
+    .string()
+    .min(2)
+    .max(40)
+    .regex(/^[a-z0-9][a-z0-9-]*[a-z0-9]$/, 'lowercase letters, numbers and hyphens'),
+  domains: z.array(mspDomainSchema).max(50).optional(),
+});
+export type CreateMspInput = z.infer<typeof createMspSchema>;
+
+export const updateMspSchema = z
+  .object({
+    name: z.string().min(2).max(120).optional(),
+    domains: z.array(mspDomainSchema).max(50).optional(),
+  })
+  .strict();
+export type UpdateMspInput = z.infer<typeof updateMspSchema>;
+
+/** Same shape as updateTenantBrandingSchema - logo upload is a separate multipart route. */
+export const updateMspBrandingSchema = z
+  .object({ accentColor: z.string().regex(HEX_COLOR_RE, 'must be a #rrggbb hex color') })
+  .strict();
+export type UpdateMspBrandingInput = z.infer<typeof updateMspBrandingSchema>;
 
 export const addMembershipSchema = z.object({
   userId: z.string().uuid(),

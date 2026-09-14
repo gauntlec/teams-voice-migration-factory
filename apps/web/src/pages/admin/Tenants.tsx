@@ -24,7 +24,7 @@ import {
   TableRow,
   Text,
 } from '@fluentui/react-components';
-import type { TenantBranding } from '@tvmf/shared';
+import type { Branding } from '@tvmf/shared';
 import { api, apiUpload } from '../../api';
 import { useAuth } from '../../auth';
 import { DataTable } from '../../components/DataTable';
@@ -41,7 +41,7 @@ interface Tenant {
   primary_domain: string | null;
   status: string;
   teams_read_only: boolean;
-  branding: TenantBranding | null;
+  branding: Branding | null;
   created_at: string;
 }
 interface Member {
