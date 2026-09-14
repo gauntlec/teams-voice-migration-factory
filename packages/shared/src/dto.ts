@@ -843,6 +843,57 @@ export const buildResourceAccountPatchSchema = z
   .strict();
 export type BuildResourceAccountPatchInput = z.infer<typeof buildResourceAccountPatchSchema>;
 
+/**
+ * Per site: which real tenant_policies row a Data Collection generic
+ * calling-policy catalog entry ("International", "Standard", …) resolves to
+ * for THIS site - see BuildService.assertCallingPoliciesMapped, which blocks
+ * Populate until every catalog entry actually in use has one of these.
+ */
+export const callingPolicySiteMapSetSchema = z
+  .object({
+    site_id: z.string().uuid(),
+    discovery_calling_policy_id: z.string().uuid(),
+    tenant_policy_id: z.string().uuid(),
+  })
+  .strict();
+export type CallingPolicySiteMapSetInput = z.infer<typeof callingPolicySiteMapSetSchema>;
+
+/**
+ * A named, reusable preset of policy targets + voicemail defaults for Users
+ * or CAPs on one site ("Standard User Template") - the one marked
+ * `is_default` seeds every new row Populate creates for that site+kind;
+ * any template can also be applied on demand to already-populated rows.
+ */
+export const buildTemplateCreateSchema = z
+  .object({
+    site_id: z.string().uuid(),
+    kind: z.enum(['user', 'cap']),
+    name: str(160).min(1),
+    policy_ids: policyIdMap,
+    voicemail_enabled: z.boolean().nullable().optional(),
+    voicemail_language: voicemailLanguage,
+    is_default: z.boolean().optional(),
+  })
+  .strict();
+export type BuildTemplateCreateInput = z.infer<typeof buildTemplateCreateSchema>;
+
+export const buildTemplatePatchSchema = buildTemplateCreateSchema.partial().strict();
+export type BuildTemplatePatchInput = z.infer<typeof buildTemplatePatchSchema>;
+
+/** Apply one template's policy_ids/voicemail to a set of already-populated rows. */
+export const buildTemplateApplySchema = z
+  .object({
+    ids: z.array(z.string().uuid()).min(1).max(500),
+  })
+  .strict();
+export type BuildTemplateApplyInput = z.infer<typeof buildTemplateApplySchema>;
+
+export const buildTemplateListQuerySchema = z.object({ siteId: z.string().uuid(), kind: z.enum(['user', 'cap']).optional() }).strict();
+export type BuildTemplateListQuery = z.infer<typeof buildTemplateListQuerySchema>;
+
+export const callingPolicyMapListQuerySchema = z.object({ siteId: z.string().uuid() }).strict();
+export type CallingPolicyMapListQuery = z.infer<typeof callingPolicyMapListQuerySchema>;
+
 export const buildListQuerySchema = z.object({
   siteId: z.string().uuid(),
   q: z.string().trim().max(160).optional(),

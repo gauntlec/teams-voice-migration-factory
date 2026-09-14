@@ -9,7 +9,13 @@ import {
   buildPopulateSchema,
   buildResourceAccountCreateSchema,
   buildResourceAccountPatchSchema,
+  buildTemplateApplySchema,
+  buildTemplateCreateSchema,
+  buildTemplateListQuerySchema,
+  buildTemplatePatchSchema,
   buildValidateSchema,
+  callingPolicyMapListQuerySchema,
+  callingPolicySiteMapSetSchema,
   type BuildBulkPatchInput,
   type BuildCapCreateInput,
   type BuildCapPatchInput,
@@ -19,7 +25,13 @@ import {
   type BuildPopulateInput,
   type BuildResourceAccountCreateInput,
   type BuildResourceAccountPatchInput,
+  type BuildTemplateApplyInput,
+  type BuildTemplateCreateInput,
+  type BuildTemplateListQuery,
+  type BuildTemplatePatchInput,
   type BuildValidateInput,
+  type CallingPolicyMapListQuery,
+  type CallingPolicySiteMapSetInput,
 } from '@tvmf/shared';
 import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
 import type { AuthedUser, TenantContext } from '../../common/request';
@@ -228,5 +240,75 @@ export class BuildController {
     @Body(new ZodBody(buildPopulateSchema)) body: BuildPopulateInput,
   ) {
     return this.svc.resetSite(t, user, body.site_id);
+  }
+
+  /* calling-policy site map */
+
+  @Get('calling-policy-map')
+  @RequirePermission('build:write')
+  listCallingPolicyMap(
+    @TenantCtx() t: TenantContext,
+    @Query(new ZodBody(callingPolicyMapListQuerySchema)) q: CallingPolicyMapListQuery,
+  ) {
+    return this.svc.listCallingPolicyMap(t, q.siteId);
+  }
+  @Post('calling-policy-map')
+  @RequirePermission('build:write')
+  setCallingPolicyMap(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(callingPolicySiteMapSetSchema)) body: CallingPolicySiteMapSetInput,
+  ) {
+    return this.svc.setCallingPolicyMap(t, user, body);
+  }
+  @Delete('calling-policy-map/:id')
+  @RequirePermission('build:write')
+  deleteCallingPolicyMap(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string) {
+    return this.svc.deleteCallingPolicyMap(t, user, id);
+  }
+
+  /* templates */
+
+  @Get('templates')
+  @RequirePermission('build:write')
+  listTemplates(
+    @TenantCtx() t: TenantContext,
+    @Query(new ZodBody(buildTemplateListQuerySchema)) q: BuildTemplateListQuery,
+  ) {
+    return this.svc.listTemplates(t, q.siteId, q.kind);
+  }
+  @Post('templates')
+  @RequirePermission('build:write')
+  createTemplate(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(buildTemplateCreateSchema)) body: BuildTemplateCreateInput,
+  ) {
+    return this.svc.createTemplate(t, user, body);
+  }
+  @Patch('templates/:id')
+  @RequirePermission('build:write')
+  updateTemplate(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Param('id') id: string,
+    @Body(new ZodBody(buildTemplatePatchSchema)) body: BuildTemplatePatchInput,
+  ) {
+    return this.svc.updateTemplate(t, user, id, body);
+  }
+  @Delete('templates/:id')
+  @RequirePermission('build:write')
+  deleteTemplate(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string) {
+    return this.svc.deleteTemplate(t, user, id);
+  }
+  @Post('templates/:id/apply')
+  @RequirePermission('build:write')
+  applyTemplate(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Param('id') id: string,
+    @Body(new ZodBody(buildTemplateApplySchema)) body: BuildTemplateApplyInput,
+  ) {
+    return this.svc.applyTemplate(t, user, id, body.ids);
   }
 }

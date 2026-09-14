@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { sql, type Kysely } from 'kysely';
 import { tenantDb, type DB } from '@tvmf/db';
 import {
@@ -15,7 +15,11 @@ import {
   type BuildResourceAccountPatchInput,
   type BuildRowValidation,
   type BuildSiteRollup,
+  type BuildTemplateApplyInput,
+  type BuildTemplateCreateInput,
+  type BuildTemplatePatchInput,
   type BuildValidateResult,
+  type CallingPolicySiteMapSetInput,
   type NumberHolderType,
   type Paginated,
   type PolicyKey,
@@ -151,6 +155,7 @@ export class BuildService {
   }
   async populateUsers(t: TenantContext, u: AuthedUser, siteId: string) {
     const s = this.s(t);
+    await this.assertCallingPoliciesMapped(t, siteId, 'discovery_users', 'build_users', 'discovery_user_id');
     // Data Collection's Users tab assigns a real phone_numbers claim (the
     // picker, not the free-text requested_number). Design & Build imports a
     // *copy* of that number as this row's starting target - Data Collection
@@ -159,23 +164,42 @@ export class BuildService {
     // duplicate-number check this now depends on instead of a shared claim.
     const discUsers = await s.selectFrom('discovery_users').select('id').where('site_id', '=', siteId).execute();
     const numbers = await this.currentNumbersFor(t, 'user', discUsers.map((r) => r.id));
+    const template = await this.defaultTemplateFor(t, siteId, 'user');
+    const callingPolicyMap = await this.callingPolicyMapFor(t, siteId);
     return this.populateIdentity(t, u, {
       table: 'build_users',
       sourceTable: 'discovery_users',
       linkColumn: 'discovery_user_id',
       objectType: 'user',
       siteId,
-      map: (d) => ({
-        upn: d.upn,
-        did: d.requested_number,
-        e164: numbers.get(d.id)?.e164 ?? null,
-        phone_number_id: numbers.get(d.id)?.id ?? null,
-        migration_wave: null,
-        // Starting point only - voicemail_policy (the actual Teams policy
-        // name) is still the engineer's call; this is just what the
-        // customer told us in Data Collection.
-        voicemail: { enabled: d.voicemail_enabled ?? null, language: d.voicemail_language ?? null },
-      }),
+      map: (d) => {
+        // Every new row starts from the site's default Users template (if
+        // any); a user with a Data Collection calling policy set gets that
+        // specific mapped real policy instead of the template's default -
+        // see assertCallingPoliciesMapped for why one is always known here.
+        const policy_ids: Record<string, string | null> = { ...(template?.policy_ids ?? {}) };
+        const policies: Record<string, string | null> = { ...(template?.policies ?? {}) };
+        const mappedCalling = d.calling_policy_id ? callingPolicyMap.get(d.calling_policy_id) : undefined;
+        if (mappedCalling) {
+          policy_ids.calling_policy = mappedCalling.id;
+          policies.calling_policy = mappedCalling.name;
+        }
+        return {
+          upn: d.upn,
+          did: d.requested_number,
+          e164: numbers.get(d.id)?.e164 ?? null,
+          phone_number_id: numbers.get(d.id)?.id ?? null,
+          migration_wave: null,
+          policy_ids,
+          policies,
+          // Discovery's per-user voicemail choice wins when the customer set
+          // one; the template's is only a fallback for whichever half is blank.
+          voicemail: {
+            enabled: d.voicemail_enabled ?? template?.voicemail_enabled ?? null,
+            language: d.voicemail_language ?? template?.voicemail_language ?? null,
+          },
+        };
+      },
     });
   }
 
@@ -219,21 +243,41 @@ export class BuildService {
   }
   async populateCaps(t: TenantContext, u: AuthedUser, siteId: string) {
     const s = this.s(t);
+    await this.assertCallingPoliciesMapped(t, siteId, 'discovery_caps', 'build_caps', 'discovery_cap_id');
     const discCaps = await s.selectFrom('discovery_caps').select('id').where('site_id', '=', siteId).execute();
     const numbers = await this.currentNumbersFor(t, 'cap', discCaps.map((r) => r.id));
+    const template = await this.defaultTemplateFor(t, siteId, 'cap');
+    const callingPolicyMap = await this.callingPolicyMapFor(t, siteId);
     return this.populateIdentity(t, u, {
       table: 'build_caps',
       sourceTable: 'discovery_caps',
       linkColumn: 'discovery_cap_id',
       objectType: 'cap',
       siteId,
-      map: (d) => ({
-        upn: d.upn ?? '',
-        display_name: d.display_name,
-        phone_model: d.device_model,
-        e164: numbers.get(d.id)?.e164 ?? null,
-        phone_number_id: numbers.get(d.id)?.id ?? null,
-      }),
+      map: (d) => {
+        const policy_ids: Record<string, string | null> = { ...(template?.policy_ids ?? {}) };
+        const policies: Record<string, string | null> = { ...(template?.policies ?? {}) };
+        const mappedCalling = d.calling_policy_id ? callingPolicyMap.get(d.calling_policy_id) : undefined;
+        if (mappedCalling) {
+          policy_ids.calling_policy = mappedCalling.id;
+          policies.calling_policy = mappedCalling.name;
+        }
+        const mapped: Record<string, unknown> = {
+          upn: d.upn ?? '',
+          display_name: d.display_name,
+          phone_model: d.device_model,
+          e164: numbers.get(d.id)?.e164 ?? null,
+          phone_number_id: numbers.get(d.id)?.id ?? null,
+          policy_ids,
+          policies,
+        };
+        // discovery_caps has no per-CAP voicemail choice - the template's is
+        // the only source, and only if the template actually sets one.
+        if (template && (template.voicemail_enabled !== null || template.voicemail_language !== null)) {
+          mapped.voicemail = { enabled: template.voicemail_enabled, language: template.voicemail_language };
+        }
+        return mapped;
+      },
       skip: (d) => !d.upn, // a CAP row with no UPN yet can't be provisioned in Teams; leave it in Data Collection
     });
   }
@@ -434,6 +478,7 @@ export class BuildService {
       device_model?: string | null;
       voicemail_enabled?: boolean | null;
       voicemail_language?: string | null;
+      calling_policy_id?: string | null;
     },
   >(
     t: TenantContext,
@@ -981,6 +1026,268 @@ export class BuildService {
       detail: counts,
     });
     return counts;
+  }
+
+  /* =================== calling-policy site map =================== */
+
+  /** discovery_users/discovery_caps rows on this site not yet linked to a build row. */
+  private async unlinkedSourceIds(
+    t: TenantContext,
+    siteId: string,
+    sourceTable: 'discovery_users' | 'discovery_caps',
+    buildTable: 'build_users' | 'build_caps',
+    linkColumn: 'discovery_user_id' | 'discovery_cap_id',
+  ): Promise<string[]> {
+    const s = this.s(t);
+    const [source, existing] = await Promise.all([
+      s.selectFrom(sourceTable).select('id').where('site_id', '=', siteId).execute(),
+      s.selectFrom(buildTable).select(['id', linkColumn]).where('site_id', '=', siteId).execute(),
+    ]);
+    const linked = new Set(existing.map((e) => (e as Record<string, unknown>)[linkColumn]).filter(Boolean));
+    return source.map((r) => r.id).filter((id) => !linked.has(id));
+  }
+
+  /** discovery_calling_policies.id -> the real tenant policy this site maps it to, live ones only. */
+  private async callingPolicyMapFor(t: TenantContext, siteId: string) {
+    const rows = await this.s(t)
+      .selectFrom('calling_policy_site_map as m')
+      .innerJoin('tenant_policies as tp', 'tp.id', 'm.tenant_policy_id')
+      .select(['m.discovery_calling_policy_id as discovery_calling_policy_id', 'm.tenant_policy_id as tenant_policy_id', 'tp.name as tenant_policy_name'])
+      .where('m.site_id', '=', siteId)
+      .where('tp.removed_at', 'is', null)
+      .execute();
+    return new Map(rows.map((r) => [r.discovery_calling_policy_id, { id: r.tenant_policy_id, name: r.tenant_policy_name }]));
+  }
+
+  /**
+   * Blocks Populate for one source (Users or CAPs) until every generic
+   * calling-policy catalog entry actually referenced by an unlinked row on
+   * this site has a real-tenant-policy mapping - "this mapping needs to be
+   * done before data can be imported into the site."
+   */
+  private async assertCallingPoliciesMapped(
+    t: TenantContext,
+    siteId: string,
+    sourceTable: 'discovery_users' | 'discovery_caps',
+    buildTable: 'build_users' | 'build_caps',
+    linkColumn: 'discovery_user_id' | 'discovery_cap_id',
+  ) {
+    const unlinkedIds = await this.unlinkedSourceIds(t, siteId, sourceTable, buildTable, linkColumn);
+    if (!unlinkedIds.length) return;
+    const used = await this.s(t)
+      .selectFrom(sourceTable)
+      .select('calling_policy_id')
+      .where('id', 'in', unlinkedIds)
+      .where('calling_policy_id', 'is not', null)
+      .execute();
+    const usedIds = [...new Set(used.map((r) => r.calling_policy_id).filter((id): id is string => !!id))];
+    if (!usedIds.length) return;
+    const map = await this.callingPolicyMapFor(t, siteId);
+    const missingIds = usedIds.filter((id) => !map.has(id));
+    if (!missingIds.length) return;
+    const names = await this.s(t)
+      .selectFrom('discovery_calling_policies')
+      .select(['id', 'name'])
+      .where('id', 'in', missingIds)
+      .execute();
+    throw new BadRequestException(
+      `${names.length} calling polic${names.length === 1 ? 'y isn\'t' : 'ies aren\'t'} mapped to a real tenant policy yet - map ${names.length === 1 ? 'it' : 'them'} in Calling policy map before populating: ${names.map((n) => n.name).join(', ')}.`,
+    );
+  }
+
+  async listCallingPolicyMap(t: TenantContext, siteId: string) {
+    const s = this.s(t);
+    const [catalog, map, usedUserIds, usedCapIds] = await Promise.all([
+      s.selectFrom('discovery_calling_policies').select(['id', 'name']).orderBy('name').execute(),
+      this.callingPolicyMapFor(t, siteId),
+      this.unlinkedSourceIds(t, siteId, 'discovery_users', 'build_users', 'discovery_user_id'),
+      this.unlinkedSourceIds(t, siteId, 'discovery_caps', 'build_caps', 'discovery_cap_id'),
+    ]);
+    const usedPolicyIds = new Set<string>();
+    for (const [srcTable, ids] of [
+      ['discovery_users', usedUserIds],
+      ['discovery_caps', usedCapIds],
+    ] as const) {
+      if (!ids.length) continue;
+      const rows = await s
+        .selectFrom(srcTable)
+        .select('calling_policy_id')
+        .where('id', 'in', ids)
+        .where('calling_policy_id', 'is not', null)
+        .execute();
+      for (const r of rows) if (r.calling_policy_id) usedPolicyIds.add(r.calling_policy_id);
+    }
+    return catalog.map((c) => ({
+      discoveryCallingPolicyId: c.id,
+      name: c.name,
+      inUse: usedPolicyIds.has(c.id),
+      tenantPolicyId: map.get(c.id)?.id ?? null,
+      tenantPolicyName: map.get(c.id)?.name ?? null,
+    }));
+  }
+
+  async setCallingPolicyMap(t: TenantContext, u: AuthedUser, body: CallingPolicySiteMapSetInput) {
+    const s = this.s(t);
+    const policy = await s
+      .selectFrom('discovery_calling_policies')
+      .select('id')
+      .where('id', '=', body.discovery_calling_policy_id)
+      .executeTakeFirst();
+    if (!policy) throw new NotFoundException('Calling policy not found');
+    const target = await s
+      .selectFrom('tenant_policies')
+      .select(['id', 'policy_type'])
+      .where('id', '=', body.tenant_policy_id)
+      .where('removed_at', 'is', null)
+      .executeTakeFirst();
+    if (!target || target.policy_type !== POLICY_KIND_TO_TENANT_TYPE.calling_policy) {
+      throw new ConflictException('That policy no longer exists in the tenant - refresh and pick again.');
+    }
+    const row = await s
+      .insertInto('calling_policy_site_map')
+      .values({
+        site_id: body.site_id,
+        discovery_calling_policy_id: body.discovery_calling_policy_id,
+        tenant_policy_id: body.tenant_policy_id,
+      })
+      .onConflict((oc) =>
+        oc
+          .columns(['site_id', 'discovery_calling_policy_id'])
+          .doUpdateSet({ tenant_policy_id: body.tenant_policy_id, updated_at: new Date().toISOString() }),
+      )
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    await this.audit.tenant(t.schema, 'build.calling_policy_mapped', {
+      actor: actorOf(u),
+      targetType: 'calling_policy_site_map',
+      targetId: row.id,
+      detail: { siteId: body.site_id, discoveryCallingPolicyId: body.discovery_calling_policy_id, tenantPolicyId: body.tenant_policy_id },
+    });
+    return row;
+  }
+
+  async deleteCallingPolicyMap(t: TenantContext, u: AuthedUser, id: string) {
+    const row = await this.s(t).deleteFrom('calling_policy_site_map').where('id', '=', id).returningAll().executeTakeFirst();
+    if (!row) throw new NotFoundException('Mapping not found');
+    await this.audit.tenant(t.schema, 'build.calling_policy_unmapped', {
+      actor: actorOf(u),
+      targetType: 'calling_policy_site_map',
+      targetId: id,
+    });
+    return { ok: true };
+  }
+
+  /* ============================== templates ============================== */
+
+  private async defaultTemplateFor(t: TenantContext, siteId: string, kind: 'user' | 'cap') {
+    return this.s(t)
+      .selectFrom('build_templates')
+      .selectAll()
+      .where('site_id', '=', siteId)
+      .where('kind', '=', kind)
+      .where('is_default', '=', true)
+      .executeTakeFirst();
+  }
+
+  async listTemplates(t: TenantContext, siteId: string, kind?: 'user' | 'cap') {
+    let q = this.s(t).selectFrom('build_templates').selectAll().where('site_id', '=', siteId);
+    if (kind) q = q.where('kind', '=', kind);
+    return q.orderBy('name').execute();
+  }
+
+  async createTemplate(t: TenantContext, u: AuthedUser, body: BuildTemplateCreateInput) {
+    const resolved = body.policy_ids ? await this.resolvePolicyIds(t, body.policy_ids) : { policy_ids: {}, policies: {} };
+    if (body.is_default) {
+      await this.s(t)
+        .updateTable('build_templates')
+        .set({ is_default: false })
+        .where('site_id', '=', body.site_id)
+        .where('kind', '=', body.kind)
+        .execute();
+    }
+    const row = await this.s(t)
+      .insertInto('build_templates')
+      .values({
+        site_id: body.site_id,
+        kind: body.kind,
+        name: body.name,
+        policy_ids: resolved.policy_ids,
+        policies: resolved.policies,
+        voicemail_enabled: body.voicemail_enabled ?? null,
+        voicemail_language: body.voicemail_language ?? null,
+        is_default: body.is_default ?? false,
+      } as never)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    await this.audit.tenant(t.schema, 'build.template_created', {
+      actor: actorOf(u),
+      targetType: 'build_template',
+      targetId: row.id,
+      detail: { name: row.name, kind: row.kind },
+    });
+    return row;
+  }
+
+  async updateTemplate(t: TenantContext, u: AuthedUser, id: string, body: BuildTemplatePatchInput) {
+    const existing = await this.s(t).selectFrom('build_templates').select(['id', 'site_id', 'kind']).where('id', '=', id).executeTakeFirst();
+    if (!existing) throw new NotFoundException('Template not found');
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (body.name !== undefined) patch.name = body.name;
+    if (body.voicemail_enabled !== undefined) patch.voicemail_enabled = body.voicemail_enabled;
+    if (body.voicemail_language !== undefined) patch.voicemail_language = body.voicemail_language;
+    if (body.policy_ids !== undefined) {
+      const resolved = await this.resolvePolicyIds(t, body.policy_ids);
+      patch.policy_ids = sql`${sql.ref('policy_ids')} || ${JSON.stringify(resolved.policy_ids)}::jsonb`;
+      patch.policies = sql`${sql.ref('policies')} || ${JSON.stringify(resolved.policies)}::jsonb`;
+    }
+    if (body.is_default === true) {
+      await this.s(t)
+        .updateTable('build_templates')
+        .set({ is_default: false })
+        .where('site_id', '=', existing.site_id)
+        .where('kind', '=', existing.kind)
+        .execute();
+      patch.is_default = true;
+    } else if (body.is_default === false) {
+      patch.is_default = false;
+    }
+    const row = await this.s(t).updateTable('build_templates').set(patch as never).where('id', '=', id).returningAll().executeTakeFirstOrThrow();
+    await this.audit.tenant(t.schema, 'build.template_updated', { actor: actorOf(u), targetType: 'build_template', targetId: id });
+    return row;
+  }
+
+  async deleteTemplate(t: TenantContext, u: AuthedUser, id: string) {
+    const row = await this.s(t).deleteFrom('build_templates').where('id', '=', id).returningAll().executeTakeFirst();
+    if (!row) throw new NotFoundException('Template not found');
+    await this.audit.tenant(t.schema, 'build.template_deleted', {
+      actor: actorOf(u),
+      targetType: 'build_template',
+      targetId: id,
+      detail: { name: row.name },
+    });
+    return { ok: true };
+  }
+
+  /** Apply one template's policy_ids/voicemail to a set of already-populated
+   * rows - reuses the same bulk-patch mechanism as the bulk-edit action, so
+   * only the keys the template actually sets change on each selected row. */
+  async applyTemplate(t: TenantContext, u: AuthedUser, id: string, ids: string[]) {
+    const template = await this.s(t).selectFrom('build_templates').selectAll().where('id', '=', id).executeTakeFirst();
+    if (!template) throw new NotFoundException('Template not found');
+    const table = template.kind === 'user' ? 'build_users' : 'build_caps';
+    const patch: Record<string, unknown> = { policy_ids: template.policy_ids, policies: template.policies };
+    if (template.voicemail_enabled !== null || template.voicemail_language !== null) {
+      patch.voicemail = { enabled: template.voicemail_enabled, language: template.voicemail_language };
+    }
+    const { updated, appliedPatch } = await applyBulkPatch(this.s(t), table, ids, patch, ['policy_ids', 'policies']);
+    await auditBulkPatch(this.audit, t.schema, `build.${holderTypeOf(table)}s_template_applied`, {
+      actor: actorOf(u),
+      targetType: `build_${holderTypeOf(table)}`,
+      ids,
+      updated,
+      patch: appliedPatch,
+    });
+    return { updated };
   }
 }
 

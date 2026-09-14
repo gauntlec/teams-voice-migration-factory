@@ -5,6 +5,7 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   Dialog,
   DialogActions,
   DialogBody,
@@ -23,7 +24,7 @@ import {
   Textarea,
   tokens,
 } from '@fluentui/react-components';
-import { ArrowLeftRegular, CheckmarkCircleRegular, WarningRegular } from '@fluentui/react-icons';
+import { ArrowLeftRegular, CheckmarkCircleRegular, DeleteRegular, WarningRegular } from '@fluentui/react-icons';
 import {
   NUMBER_TYPES,
   POLICY_KIND_TO_TENANT_TYPE,
@@ -33,6 +34,7 @@ import {
   type BuildRowValidation,
   type BuildSiteRollup,
   type Paginated,
+  type PolicyKey,
   type TenantPolicySummary,
 } from '@tvmf/shared';
 import { api, ApiError } from '../api';
@@ -178,15 +180,21 @@ export function BuildSiteWorkspace() {
     return out;
   }, [allPoliciesQ.data]);
 
+  const [populateError, setPopulateError] = useState<string | null>(null);
   const populate = useMutation({
     mutationFn: (kind: 'users' | 'caps' | 'resource-accounts') =>
       api(`${base}/${kind}/populate`, { method: 'POST', body: JSON.stringify({ site_id: siteId }) }),
     onSuccess: () => {
+      setPopulateError(null);
       qc.invalidateQueries({ queryKey: ['users', tid, siteId] });
       qc.invalidateQueries({ queryKey: ['caps', tid, siteId] });
       qc.invalidateQueries({ queryKey: ['resource-accounts', tid, siteId] });
       qc.invalidateQueries({ queryKey: ['build-summary', tid] });
     },
+    // Most commonly assertCallingPoliciesMapped - some calling policies used
+    // on this site aren't mapped to a real tenant policy yet (see the
+    // Calling policy map panel below).
+    onError: (e) => setPopulateError(e instanceof ApiError ? e.message : 'Populate failed'),
   });
   const [validateMsg, setValidateMsg] = useState<string | null>(null);
   // Set when validate() found rows with no stored tenant match and a live
@@ -266,6 +274,10 @@ export function BuildSiteWorkspace() {
     onError: (e) => setBulkError(e instanceof ApiError ? e.message : 'Bulk update failed'),
   });
 
+  // Calling policy map + templates - see CallingPolicyMapDialog/TemplatesDialog below.
+  const [mapOpen, setMapOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState<'user' | 'cap' | null>(null);
+
   if (!tid) return <NoTenant />;
   if (rollup.isLoading) return <Spinner label="Loading site…" />;
   if (rollup.isError) return <LoadError message={(rollup.error as Error).message} />;
@@ -307,6 +319,11 @@ export function BuildSiteWorkspace() {
             {validate.isPending ? 'Validating…' : 'Validate against tenant'}
           </Button>
         )}
+        {canWrite && (
+          <Button size="small" appearance="subtle" onClick={() => setMapOpen(true)}>
+            Calling policy map
+          </Button>
+        )}
         {validateMsg && (
           <Text size={200} className={s.muted}>
             {validateMsg}
@@ -325,6 +342,11 @@ export function BuildSiteWorkspace() {
           </Button>
         )}
       </div>
+      {populateError && (
+        <Text block style={{ color: tokens.colorPaletteRedForeground1 }}>
+          {populateError}
+        </Text>
+      )}
 
       <Dialog open={resetOpen} onOpenChange={(_, d) => setResetOpen(d.open)}>
         <DialogSurface>
@@ -374,6 +396,30 @@ export function BuildSiteWorkspace() {
         }}
       />
 
+      <CallingPolicyMapDialog
+        open={mapOpen}
+        onOpenChange={setMapOpen}
+        base={base}
+        siteId={siteId}
+        callingPolicyChoices={policyChoicesByKey.calling_policy ?? []}
+      />
+      {templatesOpen && (
+        <TemplatesDialog
+          open
+          onOpenChange={(o) => !o && setTemplatesOpen(null)}
+          base={base}
+          siteId={siteId}
+          kind={templatesOpen}
+          kindLabel={templatesOpen === 'cap' ? 'common area phone' : 'user'}
+          policyChoicesByKey={policyChoicesByKey}
+          selectedIds={templatesOpen === 'cap' ? capsSelected : usersSelected}
+          onApplied={() => {
+            qc.invalidateQueries({ queryKey: [templatesOpen === 'cap' ? 'caps' : 'users', tid, siteId] });
+            qc.invalidateQueries({ queryKey: ['build-summary', tid] });
+          }}
+        />
+      )}
+
       <TabList selectedValue={tab} onTabSelect={(_, d) => setTab(d.value as typeof tab)}>
         <Tab value="users">Users</Tab>
         <Tab value="caps">Common area phones</Tab>
@@ -401,6 +447,9 @@ export function BuildSiteWorkspace() {
                 </Button>
                 <Button size="small" disabled={usersSelected.size === 0} onClick={() => setBulkOpen('users')}>
                   Bulk edit ({usersSelected.size} selected)
+                </Button>
+                <Button size="small" appearance="subtle" onClick={() => setTemplatesOpen('user')}>
+                  Templates
                 </Button>
               </>
             )
@@ -446,6 +495,9 @@ export function BuildSiteWorkspace() {
                 </Button>
                 <Button size="small" disabled={capsSelected.size === 0} onClick={() => setBulkOpen('caps')}>
                   Bulk edit ({capsSelected.size} selected)
+                </Button>
+                <Button size="small" appearance="subtle" onClick={() => setTemplatesOpen('cap')}>
+                  Templates
                 </Button>
               </>
             )
@@ -601,5 +653,371 @@ function identityFields(policyFields: FieldDef[], numberChoicesFor: (row: Row | 
  */
 function bulkIdentityFields(policyFields: FieldDef[]): FieldDef[] {
   return identityFields(policyFields, () => []).filter((f) => !['upn', 'phone_number_id', 'did'].includes(f.key));
+}
+
+interface CallingPolicyMapRow {
+  discoveryCallingPolicyId: string;
+  name: string;
+  inUse: boolean;
+  tenantPolicyId: string | null;
+  tenantPolicyName: string | null;
+}
+
+/**
+ * Which real tenant calling policy each Data Collection generic calling
+ * policy ("International", "Standard", …) means for THIS site - see
+ * BuildService.assertCallingPoliciesMapped, which blocks Populate until
+ * every policy actually in use here has a row.
+ */
+function CallingPolicyMapDialog({
+  open,
+  onOpenChange,
+  base,
+  siteId,
+  callingPolicyChoices,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  base: string;
+  siteId: string;
+  callingPolicyChoices: Choice[];
+}) {
+  const qc = useQueryClient();
+  const rowsQ = useQuery({
+    queryKey: ['calling-policy-map', base, siteId],
+    enabled: open,
+    queryFn: () => api<CallingPolicyMapRow[]>(`${base}/calling-policy-map?siteId=${siteId}`),
+  });
+  const setMut = useMutation({
+    mutationFn: (body: { discovery_calling_policy_id: string; tenant_policy_id: string }) =>
+      api(`${base}/calling-policy-map`, { method: 'POST', body: JSON.stringify({ site_id: siteId, ...body }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['calling-policy-map', base, siteId] }),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={(_, d) => onOpenChange(d.open)}>
+      <DialogSurface>
+        <DialogBody>
+          <DialogTitle>Calling policy map</DialogTitle>
+          <DialogContent>
+            <Text size={200} block style={{ marginBottom: 12 }}>
+              Which real tenant calling policy each Data Collection calling policy means for this site - e.g.
+              "International" here might be a different real policy on a US site than on a Belgium one. A policy
+              marked "in use, unmapped" must be mapped before Populate from Discovery can run.
+            </Text>
+            {rowsQ.isLoading ? (
+              <Spinner size="tiny" label="Loading…" />
+            ) : (rowsQ.data ?? []).length === 0 ? (
+              <Text size={200}>No calling policies defined in Data Collection yet.</Text>
+            ) : (
+              <div style={{ display: 'grid', gap: 8 }}>
+                {(rowsQ.data ?? []).map((r) => (
+                  <div key={r.discoveryCallingPolicyId} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Text style={{ width: 160 }}>{r.name}</Text>
+                    {r.inUse && !r.tenantPolicyId && (
+                      <Badge appearance="tint" color="danger" size="small">
+                        in use, unmapped
+                      </Badge>
+                    )}
+                    <Dropdown
+                      style={{ minWidth: 260, flex: 1 }}
+                      placeholder="Select the real tenant policy…"
+                      value={callingPolicyChoices.find((c) => c.value === r.tenantPolicyId)?.label ?? ''}
+                      selectedOptions={r.tenantPolicyId ? [r.tenantPolicyId] : []}
+                      onOptionSelect={(_, d) => {
+                        if (d.optionValue) {
+                          setMut.mutate({ discovery_calling_policy_id: r.discoveryCallingPolicyId, tenant_policy_id: d.optionValue });
+                        }
+                      }}
+                    >
+                      {callingPolicyChoices.map((c) => (
+                        <Option key={c.value} value={c.value} text={c.label}>
+                          {c.label}
+                        </Option>
+                      ))}
+                    </Dropdown>
+                  </div>
+                ))}
+              </div>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <DialogTrigger disableButtonEnhancement>
+              <Button appearance="secondary">Close</Button>
+            </DialogTrigger>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  );
+}
+
+interface BuildTemplateRow {
+  id: string;
+  site_id: string;
+  kind: 'user' | 'cap';
+  name: string;
+  policy_ids: Record<string, string | null>;
+  policies: Record<string, string | null>;
+  voicemail_enabled: boolean | null;
+  voicemail_language: string | null;
+  is_default: boolean;
+}
+
+/** The subset of PolicyKeys a Build Template covers - matches the "Standard
+ * User Template" example (voice routing, dial plan, calling policy,
+ * emergency calling + routing) - not the full 13-key set per-row edit
+ * exposes, to keep a template focused on what's actually meant to default. */
+const TEMPLATE_POLICY_KEYS: PolicyKey[] = [
+  'voice_routing_policy',
+  'dial_plan',
+  'calling_policy',
+  'emergency_calling_policy',
+  'emergency_call_routing_policy',
+];
+const VM_UNSET = '__unset__';
+
+/**
+ * A named, reusable preset of policy targets + voicemail defaults for Users
+ * or CAPs on one site ("Standard User Template"). The one marked Default
+ * seeds every new row Populate creates for that site+kind; any template can
+ * also be applied on demand to the rows currently selected in the table.
+ */
+function TemplatesDialog({
+  open,
+  onOpenChange,
+  base,
+  siteId,
+  kind,
+  kindLabel,
+  policyChoicesByKey,
+  selectedIds,
+  onApplied,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  base: string;
+  siteId: string;
+  kind: 'user' | 'cap';
+  kindLabel: string;
+  policyChoicesByKey: Record<string, Choice[]>;
+  selectedIds: Set<string>;
+  onApplied: () => void;
+}) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState<BuildTemplateRow | 'new' | null>(null);
+  const [form, setForm] = useState<{
+    name: string;
+    policy_ids: Record<string, string>;
+    voicemail_enabled: string;
+    voicemail_language: string;
+    is_default: boolean;
+  }>({ name: '', policy_ids: {}, voicemail_enabled: '', voicemail_language: '', is_default: false });
+  const [error, setError] = useState<string | null>(null);
+  const [applyError, setApplyError] = useState<string | null>(null);
+  const [applyingId, setApplyingId] = useState<string | null>(null);
+
+  const rowsQ = useQuery({
+    queryKey: ['build-templates', base, siteId, kind],
+    enabled: open,
+    queryFn: () => api<BuildTemplateRow[]>(`${base}/templates?siteId=${siteId}&kind=${kind}`),
+  });
+
+  const startNew = () => {
+    setForm({ name: '', policy_ids: {}, voicemail_enabled: '', voicemail_language: '', is_default: (rowsQ.data ?? []).length === 0 });
+    setError(null);
+    setEditing('new');
+  };
+  const startEdit = (tpl: BuildTemplateRow) => {
+    const ids: Record<string, string> = {};
+    for (const k of TEMPLATE_POLICY_KEYS) if (tpl.policy_ids[k]) ids[k] = tpl.policy_ids[k]!;
+    setForm({
+      name: tpl.name,
+      policy_ids: ids,
+      voicemail_enabled: tpl.voicemail_enabled === null ? '' : String(tpl.voicemail_enabled),
+      voicemail_language: tpl.voicemail_language ?? '',
+      is_default: tpl.is_default,
+    });
+    setError(null);
+    setEditing(tpl);
+  };
+
+  const save = useMutation({
+    mutationFn: () => {
+      const body = {
+        site_id: siteId,
+        kind,
+        name: form.name,
+        policy_ids: Object.fromEntries(TEMPLATE_POLICY_KEYS.map((k) => [k, form.policy_ids[k] || null])),
+        voicemail_enabled: form.voicemail_enabled === '' ? null : form.voicemail_enabled === 'true',
+        voicemail_language: form.voicemail_language || null,
+        is_default: form.is_default,
+      };
+      return editing === 'new'
+        ? api(`${base}/templates`, { method: 'POST', body: JSON.stringify(body) })
+        : api(`${base}/templates/${(editing as BuildTemplateRow).id}`, { method: 'PATCH', body: JSON.stringify(body) });
+    },
+    onSuccess: () => {
+      setEditing(null);
+      qc.invalidateQueries({ queryKey: ['build-templates', base, siteId, kind] });
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Save failed'),
+  });
+
+  const del = useMutation({
+    mutationFn: (id: string) => api(`${base}/templates/${id}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['build-templates', base, siteId, kind] }),
+  });
+
+  const apply = useMutation({
+    mutationFn: (id: string) =>
+      api<{ updated: number }>(`${base}/templates/${id}/apply`, { method: 'POST', body: JSON.stringify({ ids: [...selectedIds] }) }),
+    onSuccess: () => {
+      setApplyError(null);
+      setApplyingId(null);
+      onApplied();
+    },
+    onError: (e) => {
+      setApplyError(e instanceof ApiError ? e.message : 'Apply failed');
+      setApplyingId(null);
+    },
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={(_, d) => onOpenChange(d.open)}>
+      <DialogSurface style={{ maxWidth: 760 }}>
+        <DialogBody>
+          <DialogTitle>{kindLabel} templates</DialogTitle>
+          <DialogContent>
+            <Text size={200} block style={{ marginBottom: 12 }}>
+              A named preset applied automatically to new rows Populate creates for this site (the one marked
+              Default), or on demand to the rows selected in the table below.
+            </Text>
+            {rowsQ.isLoading ? (
+              <Spinner size="tiny" label="Loading…" />
+            ) : (
+              <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
+                {(rowsQ.data ?? []).map((tpl) => (
+                  <div key={tpl.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Text weight={tpl.is_default ? 'semibold' : 'regular'} style={{ flex: 1 }}>
+                      {tpl.name}
+                      {tpl.is_default && (
+                        <Badge appearance="tint" color="brand" size="small" style={{ marginLeft: 6 }}>
+                          Default
+                        </Badge>
+                      )}
+                    </Text>
+                    <Button
+                      size="small"
+                      disabled={selectedIds.size === 0 || apply.isPending}
+                      onClick={() => {
+                        setApplyingId(tpl.id);
+                        apply.mutate(tpl.id);
+                      }}
+                    >
+                      {apply.isPending && applyingId === tpl.id ? 'Applying…' : `Apply to ${selectedIds.size} selected`}
+                    </Button>
+                    <Button size="small" appearance="subtle" onClick={() => startEdit(tpl)}>
+                      Edit
+                    </Button>
+                    <Button size="small" appearance="subtle" icon={<DeleteRegular />} onClick={() => del.mutate(tpl.id)} />
+                  </div>
+                ))}
+                {(rowsQ.data ?? []).length === 0 && <Text size={200}>No templates yet.</Text>}
+              </div>
+            )}
+            {applyError && (
+              <Text block style={{ color: tokens.colorPaletteRedForeground1, marginBottom: 8 }}>
+                {applyError}
+              </Text>
+            )}
+
+            {editing ? (
+              <div style={{ borderTop: `1px solid ${tokens.colorNeutralStroke2}`, paddingTop: 12, display: 'grid', gap: 12 }}>
+                <Field label="Name">
+                  <Input value={form.name} placeholder="Standard User Template" onChange={(_, d) => setForm((p) => ({ ...p, name: d.value }))} />
+                </Field>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  {TEMPLATE_POLICY_KEYS.map((k) => {
+                    const label = POLICY_KINDS.find((p) => p.key === k)?.label ?? k;
+                    const choices = policyChoicesByKey[k] ?? [];
+                    const value = form.policy_ids[k] ?? '';
+                    return (
+                      <Field key={k} label={label}>
+                        <Dropdown
+                          value={choices.find((c) => c.value === value)?.label ?? '— none —'}
+                          selectedOptions={[value || '']}
+                          onOptionSelect={(_, d) => setForm((p) => ({ ...p, policy_ids: { ...p.policy_ids, [k]: d.optionValue ?? '' } }))}
+                        >
+                          <Option value="">— none —</Option>
+                          {choices.map((c) => (
+                            <Option key={c.value} value={c.value} text={c.label}>
+                              {c.label}
+                            </Option>
+                          ))}
+                        </Dropdown>
+                      </Field>
+                    );
+                  })}
+                  <Field label="Voicemail enabled">
+                    <Dropdown
+                      value={form.voicemail_enabled === 'true' ? 'On' : form.voicemail_enabled === 'false' ? 'Off' : '— unset —'}
+                      selectedOptions={[form.voicemail_enabled || VM_UNSET]}
+                      onOptionSelect={(_, d) => setForm((p) => ({ ...p, voicemail_enabled: d.optionValue === VM_UNSET ? '' : d.optionValue ?? '' }))}
+                    >
+                      <Option value={VM_UNSET}>— unset —</Option>
+                      <Option value="true">On</Option>
+                      <Option value="false">Off</Option>
+                    </Dropdown>
+                  </Field>
+                  <Field label="Voicemail default language">
+                    <Dropdown
+                      value={VOICEMAIL_PROMPT_LANGUAGES.find((l) => l.code === form.voicemail_language)?.label ?? '— unset —'}
+                      selectedOptions={[form.voicemail_language || VM_UNSET]}
+                      onOptionSelect={(_, d) => setForm((p) => ({ ...p, voicemail_language: d.optionValue === VM_UNSET ? '' : d.optionValue ?? '' }))}
+                    >
+                      <Option value={VM_UNSET}>— unset —</Option>
+                      {VOICEMAIL_PROMPT_LANGUAGES.map((l) => (
+                        <Option key={l.code} value={l.code} text={l.label}>
+                          {l.label}
+                        </Option>
+                      ))}
+                    </Dropdown>
+                  </Field>
+                </div>
+                <Checkbox
+                  label="Default - auto-applied when Populate creates a new row"
+                  checked={form.is_default}
+                  onChange={(_, d) => setForm((p) => ({ ...p, is_default: !!d.checked }))}
+                />
+                {error && (
+                  <Text block style={{ color: tokens.colorPaletteRedForeground1 }}>
+                    {error}
+                  </Text>
+                )}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <Button appearance="primary" disabled={!form.name.trim() || save.isPending} onClick={() => save.mutate()}>
+                    {save.isPending ? 'Saving…' : 'Save'}
+                  </Button>
+                  <Button appearance="secondary" onClick={() => setEditing(null)}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button size="small" onClick={startNew}>
+                Add template
+              </Button>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <DialogTrigger disableButtonEnhancement>
+              <Button appearance="secondary">Close</Button>
+            </DialogTrigger>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  );
 }
 

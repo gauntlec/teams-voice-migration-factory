@@ -449,6 +449,34 @@ export interface BuildCapsTable extends BuildIdentityRowBase {
   lan_jack: string | null;
 }
 
+/** Per site: which real tenant_policies row a Data Collection generic
+ * calling-policy catalog entry resolves to for THIS site. See
+ * 0023_build_templates_and_calling_policy_map.sql. */
+export interface CallingPolicySiteMapTable {
+  id: Generated<string>;
+  site_id: string;
+  discovery_calling_policy_id: string;
+  tenant_policy_id: string;
+  created_at: Ts;
+  updated_at: Ts;
+}
+
+/** A named, reusable preset of policy targets + voicemail defaults for
+ * Users or CAPs on one site - see 0023_build_templates_and_calling_policy_map.sql. */
+export interface BuildTemplatesTable {
+  id: Generated<string>;
+  site_id: string;
+  kind: 'user' | 'cap';
+  name: string;
+  policy_ids: Json<Record<string, string | null>>;
+  policies: Json<Record<string, string | null>>;
+  voicemail_enabled: boolean | null;
+  voicemail_language: string | null;
+  is_default: ColumnType<boolean, boolean | undefined, boolean>;
+  created_at: Ts;
+  updated_at: Ts;
+}
+
 export interface BuildResourceAccountsTable {
   id: Generated<string>;
   /** FK -> discovery_sites.id (ON DELETE CASCADE). Build rows are always site-scoped. */
@@ -753,6 +781,8 @@ export interface DB {
   attachments: AttachmentsTable;
   build_users: BuildUsersTable;
   build_caps: BuildCapsTable;
+  build_templates: BuildTemplatesTable;
+  calling_policy_site_map: CallingPolicySiteMapTable;
   build_resource_accounts: BuildResourceAccountsTable;
   build_auto_attendants: BuildAutoAttendantsTable;
   build_call_queues: BuildCallQueuesTable;
