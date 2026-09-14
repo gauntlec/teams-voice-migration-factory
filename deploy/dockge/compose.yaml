@@ -47,8 +47,11 @@ services:
     command: ["sh", "-c", "node packages/db/dist/migrate.js && node packages/db/dist/seed.js && node apps/api/dist/main.js"]
     volumes:
       - filesdata:/data/files
-    ports:
-      - "4000:4000"
+    # Not published on the host: web's nginx reaches this over the compose
+    # network by service name (apps/web/nginx.conf), so nothing legitimate
+    # needs the host port - and leaving it open lets anyone who can reach it
+    # bypass OpenResty + web's nginx entirely, forge X-Forwarded-For, and have
+    # main.ts's `trust proxy` setting believe it (see docs/SECURITY.md).
     depends_on:
       postgres:
         condition: service_healthy
@@ -79,9 +82,14 @@ services:
     depends_on:
       - api
 
+  # Off by default (Dockge "Update" never starts a profiled service). Bring it
+  # up only when you actually need it: `docker compose --profile debug up -d
+  # adminer` on the host, then take it back down when done - it has no auth
+  # of its own and can read/write the whole database to anyone who reaches it.
   adminer:
     image: adminer:4
     restart: unless-stopped
+    profiles: ["debug"]
     ports:
       - "8080:8080"
     depends_on:

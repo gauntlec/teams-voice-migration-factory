@@ -11,10 +11,16 @@ async function bootstrap() {
   const cfg = loadConfig();
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: false });
 
-  // Behind the reverse proxy (OpenResty) + the web container's nginx, so the
-  // client address and scheme arrive in X-Forwarded-* headers. Trust them so
-  // req.ip in the audit log is the real caller, not a docker gateway.
-  app.set('trust proxy', true);
+  // Exactly two reverse-proxy hops sit in front of this process in every
+  // deployment: the outer OpenResty (terminates public TLS) and the web
+  // container's nginx (proxies /api/ -> api:4000, apps/web/nginx.conf). Each
+  // appends to X-Forwarded-For, so the real client is the header's 3rd entry
+  // from the right. `true` (trust every hop, unbounded) lets anyone who can
+  // reach this container directly - bypassing both proxies, e.g. a
+  // mis-published compose port - hand it an arbitrary X-Forwarded-For and
+  // spoof req.ip, poisoning the audit log and any IP-based lockout. A fixed
+  // hop count of 2 trusts exactly those two proxies and no further.
+  app.set('trust proxy', 2);
 
   app.use(helmet());
   app.use(cookieParser());

@@ -296,7 +296,10 @@ export class DeploymentService {
         method: 'device_code',
         status: 'pending',
         tenant_domain: tenantDomain ?? null,
-        scopes: process.env.MS_GRAPH_SCOPES ?? null,
+        // No Graph sign-in happens here (device-code auth goes straight into
+        // the MicrosoftTeams PowerShell module - see docs/SECURITY.md), so
+        // there's no meaningful scope list to record.
+        scopes: null,
       })
       .returningAll()
       .executeTakeFirstOrThrow();

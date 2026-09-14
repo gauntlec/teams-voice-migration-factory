@@ -34,7 +34,13 @@
   held in memory by the SPA; rotating refresh token in an `HttpOnly`, `Secure`,
   `SameSite=Lax` cookie, one row per session in `auth_sessions` so it can be
   revoked. Refresh rotates the token and detects reuse (revoke the family).
-- Lockout: 10 failed password attempts in 15 min locks the account for 15 min.
+- Lockout: 10 failed attempts in 15 min locks the account for 15 min. Password
+  and TOTP failures share one counter - a bad TOTP counts the same as a bad
+  password, so a stolen/reused password alone cannot be used to grind MFA
+  (`AuthService.login`/`confirmTotpEnrol`, `apps/api/src/auth/auth.service.ts`).
+  A limited "enrol" token (issued on first login before TOTP is set up, 10 min
+  TTL) cannot re-arm an already-confirmed account even if it leaks -
+  `AuthController.totpStart` refuses it once `totp_enrolled` is true.
 
 ## Secrets & crypto
 
@@ -49,6 +55,28 @@
   only custom request header accepted.
 - In production terminate TLS at a reverse proxy in front of `web`; set
   `COOKIE_SECURE=true`.
+- `trust proxy` is a fixed hop count (2: OpenResty, then web's nginx -
+  `apps/api/src/main.ts`), not `true` (trust everything). The `api` container
+  has no published host port in `deploy/dockge/compose.yaml` - it's reached
+  only through that proxy chain, so `req.ip` can't be spoofed via a direct
+  connection forging `X-Forwarded-For`, and audit-log IPs / login lockout stay
+  trustworthy.
+- Adminer (`deploy/dockge/compose.yaml`) is a full unauthenticated DB browser
+  and does not start by default (`profiles: ["debug"]`) - bring it up
+  deliberately from the host when needed, take it back down after.
+
+## PowerShell cmdlet construction
+
+- Every cmdlet invocation is built by `renderCommand` (`packages/shared/src/
+  deployment.ts`) and run inside a live `pwsh` session that can call
+  `Set-Cs*`/`Remove-Cs*` against a customer's real tenant
+  (`apps/worker/src/teams/pwsh-executor.ts`). String parameters are rendered
+  as PowerShell single-quoted literals with the embedded-quote doubled
+  (`psQuote`) - **not** `JSON.stringify`, which escapes `"` the JS way
+  (`\"`) and does not close cleanly inside a PS string (PS backslash isn't an
+  escape character), letting a value containing `"` break out of the literal
+  and run as live PowerShell. Any new call site that interpolates a value into
+  a `pwsh` script must go through `psQuote`, never string-template it directly.
 
 ## Audit
 

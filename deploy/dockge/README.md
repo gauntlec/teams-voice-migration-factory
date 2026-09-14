@@ -48,13 +48,21 @@ git push origin main         # ~5 min: GitHub Action builds + pushes images
 | URL | What |
 |-----|------|
 | `http://<host>:5173` | The app. Sign in as `BOOTSTRAP_ADMIN_EMAIL`, enrol TOTP. |
-| `http://<host>:4000/health` | API health JSON (`epoch` should track real time — TOTP needs it within ~60 s). |
-| `http://<host>:8080` | Adminer. System *PostgreSQL*, server `postgres`, user/db `tvmf`. |
+| `http://<host>:5173/health` | API health JSON, proxied (`epoch` should track real time — TOTP needs it within ~60 s). |
+| `http://<host>:8080` | Adminer (off by default - see below). System *PostgreSQL*, server `postgres`, user/db `tvmf`. |
 
 ## Notes
 
-- Ports published: `5173` (web), `4000` (api), `8080` (adminer). Postgres and
-  Redis are internal to the stack network only.
+- Ports published: `5173` (web) only, by default. The `api` container is
+  reached solely through web's nginx (`apps/web/nginx.conf` proxies `/api/`
+  and `/health` to it over the compose network) - it has no published host
+  port, so nothing on the LAN can bypass that proxy chain and spoof
+  `X-Forwarded-For` (see `docs/SECURITY.md`). Postgres and Redis are internal
+  to the stack network only.
+- Adminer is a full unauthenticated DB browser and is **off by default**
+  (`profiles: ["debug"]` in `compose.yaml` - Dockge's "Update" never starts a
+  profiled service). Bring it up only when you need it, from the host:
+  `docker compose --profile debug up -d adminer`, then take it back down.
 - Images are `linux/amd64`. If the Dockge host is arm64, add `linux/arm64` to
   the `platforms:` line in the workflow.
 - `COOKIE_SECURE=false` — LAN HTTP only. Put TLS in front and set it `true`
