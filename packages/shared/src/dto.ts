@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { ROLES } from './rbac';
 import {
+  BUG_SEVERITIES,
+  BUG_STATUSES,
   CALLER_ID_OPTIONS,
   FEATURE_AREAS,
   FEATURE_PRIORITIES,
@@ -557,6 +559,44 @@ export const featureRequestUpdateSchema = z
   .strict()
   .refine((v) => Object.keys(v).length > 0, { message: 'Nothing to update' });
 export type FeatureRequestUpdateInput = z.infer<typeof featureRequestUpdateSchema>;
+
+/* ---------------------------- Bug reports ---------------------------- */
+// Reuses FEATURE_AREAS for `area` - "which part of the platform" is the same
+// question for a bug as for a feature request, no need for a second list.
+
+const bugText = (min: number, max = 6000) => z.string().trim().min(min).max(max);
+
+export const bugReportCreateSchema = z
+  .object({
+    title: z.string().trim().min(6, 'Give a short, specific title').max(160),
+    area: z.enum(FEATURE_AREAS),
+    severity: z.enum(BUG_SEVERITIES).default('medium'),
+    steps_to_reproduce: bugText(10),
+    expected_behavior: bugText(5),
+    actual_behavior: bugText(5),
+    affected_customer: optStr(160),
+    environment: optStr(500),
+  })
+  .strict();
+export type BugReportCreateInput = z.infer<typeof bugReportCreateSchema>;
+
+/** Board edits: any field, plus the workflow `status` and a `resolution_note`. */
+export const bugReportUpdateSchema = z
+  .object({
+    title: z.string().trim().min(6).max(160).optional(),
+    area: z.enum(FEATURE_AREAS).optional(),
+    severity: z.enum(BUG_SEVERITIES).optional(),
+    status: z.enum(BUG_STATUSES).optional(),
+    steps_to_reproduce: bugText(10).optional(),
+    expected_behavior: bugText(5).optional(),
+    actual_behavior: bugText(5).optional(),
+    affected_customer: optStr(160),
+    environment: optStr(500),
+    resolution_note: optStr(2000),
+  })
+  .strict()
+  .refine((v) => Object.keys(v).length > 0, { message: 'Nothing to update' });
+export type BugReportUpdateInput = z.infer<typeof bugReportUpdateSchema>;
 
 /* ------------------ Discovery (live customer-tenant inventory) ------------------ */
 

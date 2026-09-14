@@ -10,6 +10,7 @@ import { PermissionsGuard } from './rbac/permissions.guard';
 import { AuthModule } from './auth/auth.module';
 import { MailModule } from './mail/mail.module';
 import { FeatureRequestsModule } from './feature-requests/feature-requests.module';
+import { BugReportsModule } from './bug-reports/bug-reports.module';
 import { UsersModule } from './users/users.module';
 import { TenantsModule } from './tenants/tenants.module';
 import { DataCollectionModule } from './modules/data-collection/data-collection.module';
@@ -32,6 +33,7 @@ import { HealthController } from './health/health.controller';
     AuthModule,
     MailModule,
     FeatureRequestsModule,
+    BugReportsModule,
     UsersModule,
     TenantsModule,
     DataCollectionModule,

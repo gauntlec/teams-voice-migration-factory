@@ -367,6 +367,46 @@ export const FEATURE_AREAS = [
 ] as const;
 export type FeatureArea = (typeof FEATURE_AREAS)[number];
 
+/* ------------------------- Bug reports ------------------------- */
+
+/**
+ * Workflow for a bug report, in board order. `confirmed` means a
+ * PM/Engineer reproduced it; `fixed` means the code change landed but
+ * hasn't shipped yet; `deployed` is the terminal "done" state.
+ * `wont_fix`/`duplicate` are terminal "no further action" states (with a
+ * `resolution_note`).
+ */
+export const BUG_STATUSES = [
+  'new',
+  'confirmed',
+  'in_progress',
+  'fixed',
+  'deployed',
+  'wont_fix',
+  'duplicate',
+] as const;
+export type BugStatus = (typeof BUG_STATUSES)[number];
+
+export const BUG_STATUS_LABELS: Record<BugStatus, string> = {
+  new: 'New',
+  confirmed: 'Confirmed',
+  in_progress: 'In progress',
+  fixed: 'Fixed',
+  deployed: 'Deployed',
+  wont_fix: "Won't fix",
+  duplicate: 'Duplicate',
+};
+
+export const BUG_SEVERITIES = ['low', 'medium', 'high', 'critical'] as const;
+export type BugSeverity = (typeof BUG_SEVERITIES)[number];
+
+export const BUG_SEVERITY_LABELS: Record<BugSeverity, string> = {
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  critical: 'Critical',
+};
+
 /* ------------------ Discovery (live customer-tenant inventory) ------------------ */
 
 /**

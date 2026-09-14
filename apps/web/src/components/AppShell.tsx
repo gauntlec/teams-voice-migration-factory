@@ -29,6 +29,7 @@ import {
   Mail24Regular,
   History24Regular,
   Lightbulb24Regular,
+  Bug24Regular,
   Search24Regular,
 } from '@fluentui/react-icons';
 import type { Permission } from '@tvmf/shared';
@@ -103,6 +104,7 @@ const ADMIN: NavDef[] = [
   { to: '/admin/email', label: 'Email log', icon: <Mail24Regular />, permission: 'audit:read:platform' },
   { to: '/admin/audit', label: 'Platform Audit', icon: <History24Regular />, permission: 'audit:read:platform' },
   { to: '/feature-requests', label: 'Feature requests', icon: <Lightbulb24Regular />, permission: 'feature:read' },
+  { to: '/bug-reports', label: 'Bug reports', icon: <Bug24Regular />, permission: 'bug:read' },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {

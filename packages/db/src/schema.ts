@@ -86,6 +86,33 @@ export interface FeatureRequestsTable {
   status_changed_by: string | null;
 }
 
+export interface BugReportsTable {
+  id: Generated<string>;
+  title: string;
+  area: string;
+  status: ColumnType<
+    import('@tvmf/shared').BugStatus,
+    import('@tvmf/shared').BugStatus | undefined,
+    import('@tvmf/shared').BugStatus
+  >;
+  severity: ColumnType<
+    import('@tvmf/shared').BugSeverity,
+    import('@tvmf/shared').BugSeverity | undefined,
+    import('@tvmf/shared').BugSeverity
+  >;
+  steps_to_reproduce: string;
+  expected_behavior: string;
+  actual_behavior: string;
+  affected_customer: string | null;
+  environment: string | null;
+  resolution_note: string | null;
+  reported_by: string | null;
+  created_at: Ts;
+  updated_at: ColumnType<string, string | undefined, string>;
+  status_changed_at: ColumnType<string, string | undefined, string>;
+  status_changed_by: string | null;
+}
+
 export interface TenantMembershipsTable {
   user_id: string;
   tenant_id: string;
@@ -706,6 +733,7 @@ export interface DB {
   invitations: InvitationsTable;
   email_messages: EmailMessagesTable;
   feature_requests: FeatureRequestsTable;
+  bug_reports: BugReportsTable;
   platform_audit_log: PlatformAuditLogTable;
   // tenant
   discovery: DiscoveryTable;

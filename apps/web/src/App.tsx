@@ -23,6 +23,7 @@ import { AdminSites } from './pages/admin/Sites';
 import { AdminEmailLog } from './pages/admin/EmailLog';
 import { AdminAudit } from './pages/admin/Audit';
 import { FeatureRequests } from './pages/FeatureRequests';
+import { BugReports } from './pages/BugReports';
 import { Discovery } from './pages/Discovery';
 
 export function App() {
@@ -141,6 +142,14 @@ export function App() {
           element={
             <RequirePermission permission="feature:read">
               <FeatureRequests />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="/bug-reports"
+          element={
+            <RequirePermission permission="bug:read">
+              <BugReports />
             </RequirePermission>
           }
         />

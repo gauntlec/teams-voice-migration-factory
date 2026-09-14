@@ -60,6 +60,25 @@ export interface FeatureRequest {
   status_changed_at: string;
 }
 
+export interface BugReport {
+  id: string;
+  title: string;
+  area: import('./domain').FeatureArea;
+  status: import('./domain').BugStatus;
+  severity: import('./domain').BugSeverity;
+  steps_to_reproduce: string;
+  expected_behavior: string;
+  actual_behavior: string;
+  affected_customer: string | null;
+  environment: string | null;
+  resolution_note: string | null;
+  reported_by: string | null;
+  reported_by_name: string | null;
+  created_at: string;
+  updated_at: string;
+  status_changed_at: string;
+}
+
 /* ------------------ Discovery (live customer-tenant inventory) ------------------ */
 
 /** Tally of how many objects changed in a run, by change kind. */
