@@ -1,8 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { platformDb } from '@tvmf/db';
 import type { BugReportCreateInput, BugReportUpdateInput } from '@tvmf/shared';
+import { APP_CONFIG, type AppConfig } from '../common/config';
 import { AuditService, type AuditActor } from '../common/audit.service';
 import { InjectDb, type Db } from '../db/db.module';
+import { MailService } from '../mail/mail.service';
 
 /** Optional free-text columns — a cleared form field ('') is stored as NULL. */
 const TEXT_COLS = ['affected_customer', 'environment', 'resolution_note'] as const;
@@ -13,7 +15,13 @@ export class BugReportsService {
   constructor(
     @InjectDb() private readonly db: Db,
     private readonly audit: AuditService,
+    private readonly mail: MailService,
+    @Inject(APP_CONFIG) private readonly cfg: AppConfig,
   ) {}
+
+  private boardUrl(): string {
+    return `${this.cfg.WEB_ORIGIN.replace(/\/+$/, '')}/bug-reports`;
+  }
 
   /** Every report, newest first, with the reporter's display name for the card. */
   list() {
@@ -71,7 +79,7 @@ export class BugReportsService {
   async update(id: string, input: BugReportUpdateInput, actor: AuditActor) {
     const existing = await platformDb(this.db)
       .selectFrom('bug_reports')
-      .select(['id', 'status'])
+      .select(['id', 'status', 'reported_by'])
       .where('id', '=', id)
       .executeTakeFirst();
     if (!existing) throw new NotFoundException('Bug report not found');
@@ -102,6 +110,32 @@ export class BugReportsService {
         ? { from: existing.status, to: input.status }
         : { fields: Object.keys(input) },
     });
+
+    // Notify the reporter on a real status move (the "action taken" moment) -
+    // not on every edit, and not when they moved their own card.
+    if (statusChanged && existing.reported_by && existing.reported_by !== actor.id) {
+      const reporter = await platformDb(this.db)
+        .selectFrom('users')
+        .select(['email', 'display_name'])
+        .where('id', '=', existing.reported_by)
+        .executeTakeFirst();
+      if (reporter) {
+        await this.mail.enqueue({
+          template: 'bug_report_status_changed',
+          to: { email: reporter.email, name: reporter.display_name },
+          context: {
+            title: row.title,
+            area: row.area,
+            fromStatus: existing.status,
+            toStatus: row.status,
+            resolutionNote: row.resolution_note,
+            runUrl: this.boardUrl(),
+          },
+          related: { type: 'bug_report', id },
+          createdBy: actor.id ?? null,
+        });
+      }
+    }
     return row;
   }
 

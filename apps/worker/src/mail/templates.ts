@@ -1,11 +1,15 @@
-import type {
-  DiscoveryCompletedContext,
-  EmailTemplate,
-  PortDocumentItemSummary,
-  PortDocumentsCompletedContext,
-  PortDocumentsReminderContext,
-  PortDocumentsRequestedContext,
-  UserInvitationContext,
+import {
+  BUG_STATUS_LABELS,
+  FEATURE_STATUS_LABELS,
+  type BugReportStatusChangedContext,
+  type DiscoveryCompletedContext,
+  type EmailTemplate,
+  type FeatureRequestStatusChangedContext,
+  type PortDocumentItemSummary,
+  type PortDocumentsCompletedContext,
+  type PortDocumentsReminderContext,
+  type PortDocumentsRequestedContext,
+  type UserInvitationContext,
 } from '@tvmf/shared';
 import { renderHtml, renderText, type LayoutInput } from './layout';
 
@@ -31,6 +35,10 @@ export function renderEmail(template: string, context: Record<string, unknown>):
       return portDocumentsReminder(context as unknown as PortDocumentsReminderContext);
     case 'port_documents_completed':
       return portDocumentsCompleted(context as unknown as PortDocumentsCompletedContext);
+    case 'feature_request_status_changed':
+      return featureRequestStatusChanged(context as unknown as FeatureRequestStatusChangedContext);
+    case 'bug_report_status_changed':
+      return bugReportStatusChanged(context as unknown as BugReportStatusChangedContext);
     default:
       throw new Error(`unknown email template: ${template}`);
   }
@@ -191,6 +199,44 @@ function portDocumentsCompleted(c: PortDocumentsCompletedContext): RenderedEmail
     ],
     cta: { label: 'Review request', url: c.runUrl },
     outro: ['You are receiving this because you submitted this document request.'],
+  };
+  return { subject, html: renderHtml(layout), text: renderText(layout) };
+}
+
+function featureRequestStatusChanged(c: FeatureRequestStatusChangedContext): RenderedEmail {
+  const fromLabel = FEATURE_STATUS_LABELS[c.fromStatus];
+  const toLabel = FEATURE_STATUS_LABELS[c.toStatus];
+  const shipped = c.toStatus === 'deployed';
+  const subject = `${toLabel} — ${c.title}`;
+  const layout: LayoutInput = {
+    previewText: `Your feature request "${c.title}" is now ${toLabel}.`,
+    eyebrow: 'Feature request',
+    heading: shipped ? `Shipped — ${c.title}` : `${toLabel} — ${c.title}`,
+    intro: [
+      `Your feature request "${c.title}" (${c.area}) moved from ${fromLabel} to ${toLabel}.`,
+      ...(c.decisionNote ? [c.decisionNote] : []),
+    ],
+    cta: { label: 'View feature request', url: c.runUrl },
+    outro: ['You are receiving this because you submitted this feature request.'],
+  };
+  return { subject, html: renderHtml(layout), text: renderText(layout) };
+}
+
+function bugReportStatusChanged(c: BugReportStatusChangedContext): RenderedEmail {
+  const fromLabel = BUG_STATUS_LABELS[c.fromStatus];
+  const toLabel = BUG_STATUS_LABELS[c.toStatus];
+  const shipped = c.toStatus === 'deployed';
+  const subject = `${toLabel} — ${c.title}`;
+  const layout: LayoutInput = {
+    previewText: `Your bug report "${c.title}" is now ${toLabel}.`,
+    eyebrow: 'Bug report',
+    heading: shipped ? `Fix shipped — ${c.title}` : `${toLabel} — ${c.title}`,
+    intro: [
+      `Your bug report "${c.title}" (${c.area}) moved from ${fromLabel} to ${toLabel}.`,
+      ...(c.resolutionNote ? [c.resolutionNote] : []),
+    ],
+    cta: { label: 'View bug report', url: c.runUrl },
+    outro: ['You are receiving this because you reported this bug.'],
   };
   return { subject, html: renderHtml(layout), text: renderText(layout) };
 }

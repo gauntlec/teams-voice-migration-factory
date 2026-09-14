@@ -1,8 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { platformDb } from '@tvmf/db';
 import type { FeatureRequestCreateInput, FeatureRequestUpdateInput } from '@tvmf/shared';
+import { APP_CONFIG, type AppConfig } from '../common/config';
 import { AuditService, type AuditActor } from '../common/audit.service';
 import { InjectDb, type Db } from '../db/db.module';
+import { MailService } from '../mail/mail.service';
 
 /** Optional free-text columns — a cleared form field ('') is stored as NULL. */
 const TEXT_COLS = ['current_behavior', 'examples', 'acceptance', 'constraints', 'decision_note'] as const;
@@ -13,7 +15,13 @@ export class FeatureRequestsService {
   constructor(
     @InjectDb() private readonly db: Db,
     private readonly audit: AuditService,
+    private readonly mail: MailService,
+    @Inject(APP_CONFIG) private readonly cfg: AppConfig,
   ) {}
+
+  private boardUrl(): string {
+    return `${this.cfg.WEB_ORIGIN.replace(/\/+$/, '')}/feature-requests`;
+  }
 
   /** Every request, newest first, with the submitter's display name for the card. */
   list() {
@@ -75,7 +83,7 @@ export class FeatureRequestsService {
   async update(id: string, input: FeatureRequestUpdateInput, actor: AuditActor) {
     const existing = await platformDb(this.db)
       .selectFrom('feature_requests')
-      .select(['id', 'status'])
+      .select(['id', 'status', 'submitted_by'])
       .where('id', '=', id)
       .executeTakeFirst();
     if (!existing) throw new NotFoundException('Feature request not found');
@@ -106,6 +114,32 @@ export class FeatureRequestsService {
         ? { from: existing.status, to: input.status }
         : { fields: Object.keys(input) },
     });
+
+    // Notify the submitter on a real status move (the "action taken" moment) -
+    // not on every edit, and not when they moved their own card.
+    if (statusChanged && existing.submitted_by && existing.submitted_by !== actor.id) {
+      const submitter = await platformDb(this.db)
+        .selectFrom('users')
+        .select(['email', 'display_name'])
+        .where('id', '=', existing.submitted_by)
+        .executeTakeFirst();
+      if (submitter) {
+        await this.mail.enqueue({
+          template: 'feature_request_status_changed',
+          to: { email: submitter.email, name: submitter.display_name },
+          context: {
+            title: row.title,
+            area: row.area,
+            fromStatus: existing.status,
+            toStatus: row.status,
+            decisionNote: row.decision_note,
+            runUrl: this.boardUrl(),
+          },
+          related: { type: 'feature_request', id },
+          createdBy: actor.id ?? null,
+        });
+      }
+    }
     return row;
   }
 

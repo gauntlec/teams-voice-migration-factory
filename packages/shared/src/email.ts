@@ -11,6 +11,8 @@ export const EMAIL_TEMPLATES = [
   'port_documents_requested',
   'port_documents_reminder',
   'port_documents_completed',
+  'feature_request_status_changed',
+  'bug_report_status_changed',
 ] as const;
 export type EmailTemplate = (typeof EMAIL_TEMPLATES)[number];
 
@@ -97,6 +99,32 @@ export interface PortDocumentsCompletedContext {
   siteName: string;
   sitecode: string;
   rangeLabel: string;
+  runUrl: string;
+}
+
+/**
+ * Sent to whoever submitted a feature request / logged a bug report, each
+ * time a SUPER_ADMIN moves its status - the "action taken" moment. Fired
+ * once per status change, not on every edit (see FeatureRequestsService /
+ * BugReportsService `update()` for the trigger condition).
+ */
+export interface FeatureRequestStatusChangedContext {
+  title: string;
+  area: string;
+  fromStatus: import('./domain').FeatureStatus;
+  toStatus: import('./domain').FeatureStatus;
+  decisionNote?: string | null;
+  /** absolute URL of the Feature Requests board */
+  runUrl: string;
+}
+
+export interface BugReportStatusChangedContext {
+  title: string;
+  area: string;
+  fromStatus: import('./domain').BugStatus;
+  toStatus: import('./domain').BugStatus;
+  resolutionNote?: string | null;
+  /** absolute URL of the Bug Reports board */
   runUrl: string;
 }
 
