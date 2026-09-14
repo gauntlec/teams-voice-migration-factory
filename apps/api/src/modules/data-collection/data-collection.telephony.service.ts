@@ -789,7 +789,12 @@ export class TelephonyService {
   /**
    * Link every not-yet-linked user for one site to the tenant user with the same
    * UPN (from the last Discovery run). Idempotent; `unmatched` is how many
-   * unlinked users still have no live tenant user.
+   * unlinked users still have no live tenant user. Also pulls the matched
+   * tenant user's display name in - Discovery is the true source of what the
+   * customer's directory actually calls this person, so a newly-established
+   * link should overwrite whatever name Data Collection had (typed by hand,
+   * or from an Excel import). COALESCE keeps the existing name only for the
+   * edge case where the live tenant user has none recorded.
    */
   async relinkUsers(t: TenantContext, u: AuthedUser, siteId: string, canReview: boolean) {
     await this.base.assertEditable(t, canReview);
@@ -803,6 +808,12 @@ export class TelephonyService {
         tenant_user_id: sql`(SELECT tu.id FROM ${tenantUsersRef} tu
                               WHERE lower(tu.upn) = lower(${sql.ref('discovery_users.upn')})
                                 AND tu.removed_at IS NULL LIMIT 1)`,
+        display_name: sql`COALESCE(
+                              (SELECT tu.display_name FROM ${tenantUsersRef} tu
+                               WHERE lower(tu.upn) = lower(${sql.ref('discovery_users.upn')})
+                                 AND tu.removed_at IS NULL LIMIT 1),
+                              ${sql.ref('discovery_users.display_name')}
+                            )`,
         updated_at: new Date().toISOString(),
       })
       .where('site_id', '=', siteId)
