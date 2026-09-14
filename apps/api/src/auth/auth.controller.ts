@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Inject,
   Post,
@@ -98,6 +99,16 @@ export class AuthController {
   @AllowEnrol()
   @Post('totp/start')
   async totpStart(@CurrentUser() user: AuthedUser) {
+    // A limited "enrol" token is only meant to cover first-time enrolment; if
+    // the account is already confirmed by the time this runs, the token is
+    // either stale (a second call in the same first-enrol flow, harmless) or
+    // it leaked and the real account has since completed enrolment properly
+    // elsewhere - either way, refuse to let it mint a fresh secret and wipe
+    // out the confirmed one. A fully-authenticated (non-enrolOnly) session
+    // re-enrolling on purpose - e.g. a lost device - is unaffected.
+    if (user.enrolOnly && user.totpEnrolled) {
+      throw new ForbiddenException('MFA is already enrolled for this account. Sign in fully to re-enrol.');
+    }
     return this.auth.beginTotpEnrol(user.id, user.email);
   }
 

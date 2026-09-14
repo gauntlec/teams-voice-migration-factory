@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { psQuote } from '@tvmf/shared';
 import {
   renderCommand,
   type CmdletInvocation,
@@ -188,7 +189,10 @@ export class PwshTeamsExecutor implements TeamsExecutor {
 
   async beginDeviceCode(tenantDomain: string | null): Promise<DeviceCodePrompt> {
     this.ensureChild();
-    const tenantArg = tenantDomain ? ` -TenantId '${tenantDomain.replace(/'/g, '')}'` : '';
+    // tenantDomain is already validated as `[a-z0-9.-]+` at the API boundary
+    // (packages/shared/src/dto.ts startConnectionSchema), but escape properly
+    // rather than strip - see psQuote in packages/shared/src/deployment.ts.
+    const tenantArg = tenantDomain ? ` -TenantId ${psQuote(tenantDomain)}` : '';
     const prompt = new Promise<DeviceCodePrompt>((resolve, reject) => {
       this.devicePrompt = { resolve, reject };
     });

@@ -37,6 +37,20 @@ export interface CmdletInvocation {
   deferred?: boolean;
 }
 
+/**
+ * PowerShell single-quoted string literal. Single quotes are the only safe
+ * choice here: PS double-quoted strings interpolate `$variables` and treat
+ * backslash as a plain character (not an escape), so `JSON.stringify` output
+ * (which escapes `"` as `\"`) does NOT close cleanly inside one - a value
+ * containing a `"` breaks out of the literal and the remainder is parsed as
+ * live PowerShell. A single-quoted literal has exactly one escape rule -
+ * double an embedded `'` - and no other metacharacter has special meaning
+ * inside it, so this is immune to both injection and variable expansion.
+ */
+export function psQuote(v: string): string {
+  return `'${v.replace(/'/g, "''")}'`;
+}
+
 /** Render a cmdlet + params as the PowerShell one-liner (What-If output, and the executor). */
 export function renderCommand(call: CmdletInvocation): string {
   const parts = [call.cmdlet];
@@ -44,7 +58,7 @@ export function renderCommand(call: CmdletInvocation): string {
     if (v === undefined || v === null || v === '') continue;
     if (typeof v === 'boolean') parts.push(`-${k} $${v}`);
     else if (typeof v === 'number') parts.push(`-${k} ${v}`);
-    else parts.push(`-${k} ${JSON.stringify(String(v))}`);
+    else parts.push(`-${k} ${psQuote(String(v))}`);
   }
   return parts.join(' ');
 }

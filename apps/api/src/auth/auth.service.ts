@@ -57,29 +57,17 @@ export class AuthService {
 
     const ok = await argon2.verify(user.password_hash, password).catch(() => false);
     if (!ok) {
-      const failed = user.failed_logins + 1;
-      await platformDb(this.db)
-        .updateTable('users')
-        .set({
-          failed_logins: failed,
-          locked_until:
-            failed >= MAX_FAILED
-              ? new Date(Date.now() + LOCK_MINUTES * 60_000).toISOString()
-              : null,
-          updated_at: new Date().toISOString(),
-        })
-        .where('id', '=', user.id)
-        .execute();
+      await this.recordFailedAttempt(user.id, user.failed_logins);
       return fail('bad-password');
     }
 
-    if (user.failed_logins > 0) {
-      await platformDb(this.db)
-        .updateTable('users')
-        .set({ failed_logins: 0, locked_until: null, updated_at: new Date().toISOString() })
-        .where('id', '=', user.id)
-        .execute();
-    }
+    // NB: failed_logins is deliberately NOT reset here. A correct password is
+    // only half of a login when TOTP is enrolled - resetting the counter now
+    // would let a stolen password grind the TOTP code with a fresh 10-attempt
+    // budget on every single request. The counter is shared across both
+    // factors and only cleared once the attempt fully succeeds (below, and in
+    // the must-change-password / enrol-required branches, which don't gate on
+    // a second secret so there's nothing left to brute-force there).
 
     // Invited users sign in with a one-time password and must choose a new one
     // before anything else (including MFA enrolment).
@@ -90,6 +78,7 @@ export class AuthService {
         email: user.email,
         typ: 'pwreset',
       });
+      await this.clearFailedAttempts(user.id, user.failed_logins);
       await this.audit.platform('auth.login.pwreset_required', {
         actor: { id: user.id, email: user.email, ip: meta.ip },
       });
@@ -103,6 +92,7 @@ export class AuthService {
         email: user.email,
         typ: 'enrol',
       });
+      await this.clearFailedAttempts(user.id, user.failed_logins);
       await this.audit.platform('auth.login.enrol_required', {
         actor: { id: user.id, email: user.email, ip: meta.ip },
       });
@@ -116,6 +106,9 @@ export class AuthService {
       .where('user_id', '=', user.id)
       .executeTakeFirst();
     if (!secretRow || !this.totp.verify(totpCode, decryptSecret(secretRow.secret_enc))) {
+      // Counts toward the same lockout as a bad password - otherwise a
+      // stolen/reused password gives an attacker unlimited TOTP guesses.
+      await this.recordFailedAttempt(user.id, user.failed_logins);
       // Password already verified, so a distinct message here leaks nothing and
       // lets the UI keep showing the code field.
       await this.audit.platform('auth.login.failed', {
@@ -125,7 +118,33 @@ export class AuthService {
       throw new UnauthorizedException('MFA code incorrect or expired');
     }
 
+    await this.clearFailedAttempts(user.id, user.failed_logins);
     return this.issueLogin(user.id, user.role, user.email, meta);
+  }
+
+  /** Increments the shared login-failure counter and locks the account once it hits MAX_FAILED. */
+  private async recordFailedAttempt(userId: string, currentFailed: number): Promise<void> {
+    const failed = currentFailed + 1;
+    await platformDb(this.db)
+      .updateTable('users')
+      .set({
+        failed_logins: failed,
+        locked_until:
+          failed >= MAX_FAILED ? new Date(Date.now() + LOCK_MINUTES * 60_000).toISOString() : null,
+        updated_at: new Date().toISOString(),
+      })
+      .where('id', '=', userId)
+      .execute();
+  }
+
+  /** Clears the login-failure counter once an attempt fully succeeds (or reaches a step with nothing left to guess). */
+  private async clearFailedAttempts(userId: string, currentFailed: number): Promise<void> {
+    if (currentFailed === 0) return;
+    await platformDb(this.db)
+      .updateTable('users')
+      .set({ failed_logins: 0, locked_until: null, updated_at: new Date().toISOString() })
+      .where('id', '=', userId)
+      .execute();
   }
 
   /**
@@ -195,14 +214,28 @@ export class AuthService {
   }
 
   async confirmTotpEnrol(userId: string, role: string, email: string, code: string, meta: Meta) {
+    // Same lockout counter as login() - this can grant a full session on a
+    // correct guess, so it needs the same guess-limiting a bad TOTP at login
+    // gets, or an attacker who can't overwrite an already-confirmed secret
+    // (see AuthController#totpStart) could just grind codes here instead.
+    const user = await platformDb(this.db)
+      .selectFrom('users')
+      .select(['failed_logins', 'locked_until'])
+      .where('id', '=', userId)
+      .executeTakeFirstOrThrow();
+    if (user.locked_until && new Date(user.locked_until).getTime() > Date.now()) {
+      throw new UnauthorizedException('Account temporarily locked - try again later');
+    }
     const row = await platformDb(this.db)
       .selectFrom('totp_secrets')
       .select('secret_enc')
       .where('user_id', '=', userId)
       .executeTakeFirst();
     if (!row || !this.totp.verify(code, decryptSecret(row.secret_enc))) {
+      await this.recordFailedAttempt(userId, user.failed_logins);
       throw new UnauthorizedException('Incorrect code');
     }
+    await this.clearFailedAttempts(userId, user.failed_logins);
     await platformDb(this.db)
       .updateTable('totp_secrets')
       .set({ confirmed_at: new Date().toISOString() })
