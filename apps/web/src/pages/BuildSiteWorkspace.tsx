@@ -848,7 +848,13 @@ function TemplatesDialog({
         site_id: siteId,
         kind,
         name: form.name,
-        policy_ids: Object.fromEntries(TEMPLATE_POLICY_KEYS.map((k) => [k, form.policy_ids[k] || null])),
+        // Only the keys actually set in the form - same "only sets, never
+        // clears" convention as bulk edit (buildBulkPayload): a null entry
+        // here would jsonb-merge as "clear this key" on Apply to already-
+        // populated rows, wiping a field the template was never meant to
+        // touch. To clear a field the template previously set, delete and
+        // recreate the template rather than blanking it back to "— none —".
+        policy_ids: Object.fromEntries(TEMPLATE_POLICY_KEYS.filter((k) => form.policy_ids[k]).map((k) => [k, form.policy_ids[k]])),
         voicemail_enabled: form.voicemail_enabled === '' ? null : form.voicemail_enabled === 'true',
         voicemail_language: form.voicemail_language || null,
         is_default: form.is_default,
