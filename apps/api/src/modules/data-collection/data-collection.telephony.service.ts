@@ -788,13 +788,14 @@ export class TelephonyService {
 
   /**
    * Link every not-yet-linked user for one site to the tenant user with the same
-   * UPN (from the last Discovery run). Idempotent; `unmatched` is how many
-   * unlinked users still have no live tenant user. Also pulls the matched
-   * tenant user's display name in - Discovery is the true source of what the
-   * customer's directory actually calls this person, so a newly-established
-   * link should overwrite whatever name Data Collection had (typed by hand,
-   * or from an Excel import). COALESCE keeps the existing name only for the
-   * edge case where the live tenant user has none recorded.
+   * UPN (from the last Discovery run), and refresh the display name for users
+   * already linked. `unmatched` is how many unlinked users still have no live
+   * tenant user. Discovery is the true source of what the customer's directory
+   * actually calls this person, so every click of "Link to tenant" - not just
+   * the initial link - overwrites whatever name Data Collection had (typed by
+   * hand, or from an Excel import) with the live tenant user's name. COALESCE
+   * keeps the existing name only for the edge case where the live tenant user
+   * has none recorded.
    */
   async relinkUsers(t: TenantContext, u: AuthedUser, siteId: string, canReview: boolean) {
     await this.base.assertEditable(t, canReview);
@@ -825,6 +826,23 @@ export class TelephonyService {
       )
       .executeTakeFirst();
     const linked = Number(res.numUpdatedRows ?? 0);
+
+    // Already-linked users: re-sync the name from their linked tenant user
+    // (not a UPN re-match - the link itself doesn't change here).
+    await s
+      .updateTable('discovery_users')
+      .set({
+        display_name: sql`COALESCE(
+                              (SELECT tu.display_name FROM ${tenantUsersRef} tu
+                               WHERE tu.id = ${sql.ref('discovery_users.tenant_user_id')}
+                                 AND tu.removed_at IS NULL),
+                              ${sql.ref('discovery_users.display_name')}
+                            )`,
+        updated_at: new Date().toISOString(),
+      })
+      .where('site_id', '=', siteId)
+      .where('tenant_user_id', 'is not', null)
+      .executeTakeFirst();
 
     const [{ n }] = await s
       .selectFrom('discovery_users')
