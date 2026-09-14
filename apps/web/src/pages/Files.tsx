@@ -23,6 +23,7 @@ import { LoadError, NoTenant, useRecordStyles } from '../components/records';
 
 const CATEGORY_LABEL: Record<string, string> = {
   deployment_change_document: 'Deployment change document',
+  number_port_document: 'Number port document',
 };
 
 interface Site {
@@ -55,6 +56,13 @@ export function Files() {
   });
 
   if (!tid) return <NoTenant />;
+
+  const siteLabel = (id: string | null) => {
+    if (!id) return '—';
+    const site = sites.data?.find((x) => x.id === id);
+    if (!site) return '—';
+    return site.name ? `${site.sitecode} — ${site.name}` : site.sitecode;
+  };
 
   const download = async (f: FileRow) => {
     setDownloadError(null);
@@ -98,10 +106,11 @@ export function Files() {
             No files yet.
           </Text>
         ) : (
-          <DataTable size="small" minWidth={860}>
+          <DataTable size="small" minWidth={1000}>
             <TableHeader>
               <TableRow>
                 <TableHeaderCell>Filename</TableHeaderCell>
+                <TableHeaderCell>Site</TableHeaderCell>
                 <TableHeaderCell>Category</TableHeaderCell>
                 <TableHeaderCell>Size</TableHeaderCell>
                 <TableHeaderCell>Created</TableHeaderCell>
@@ -112,6 +121,7 @@ export function Files() {
               {(files.data ?? []).map((f) => (
                 <TableRow key={f.id}>
                   <TableCell>{f.filename}</TableCell>
+                  <TableCell>{siteLabel(f.siteId)}</TableCell>
                   <TableCell>
                     <Badge appearance="tint" color="informative">
                       {CATEGORY_LABEL[f.category] ?? f.category}
