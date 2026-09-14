@@ -79,9 +79,13 @@ export interface DiscoveryFilterOpts {
  */
 const UPN_FIRST = [...'abcdefghijklmnopqrstuvwxyz0123456789'];
 const userBuckets = (opts: DiscoveryFilterOpts = {}): { label: string; filter: string }[] => {
-  // `-Filter` is rendered inside a double-quoted PS string, so escape the $ in
-  // $true (`$true) to stop pwsh interpolating it to the word "True".
-  const enabled = opts.includeDisabled ? '' : ' -and AccountEnabled -eq `$true';
+  // This filter string is sent through renderCommand -> psQuote (deployment.ts),
+  // which always wraps it in single quotes - PowerShell never interpolates
+  // inside single-quoted strings, so `$true` needs no backtick escape. A
+  // stray backtick here used to pass through literally into the -Filter
+  // argument value and break every bucket's OPATH syntax on the remote side
+  // (Get-CsOnlineUser -Filter "...AccountEnabled -eq `$true..." -> BadArgument).
+  const enabled = opts.includeDisabled ? '' : ' -and AccountEnabled -eq $true';
   const out = UPN_FIRST.map((c) => ({
     label: `users ${c}*`,
     filter: `AccountType -eq 'User'${enabled} -and UserPrincipalName -like '${c}*'`,
