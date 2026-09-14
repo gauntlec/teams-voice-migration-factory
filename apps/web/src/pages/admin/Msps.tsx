@@ -20,6 +20,7 @@ import {
   TableRow,
   Text,
 } from '@fluentui/react-components';
+import { DeleteRegular } from '@fluentui/react-icons';
 import type { Branding } from '@tvmf/shared';
 import { api, apiUpload } from '../../api';
 import { useAuth } from '../../auth';
@@ -140,6 +141,7 @@ export function AdminMsps() {
                 <TableHeaderCell>Slug</TableHeaderCell>
                 <TableHeaderCell>Domains</TableHeaderCell>
                 <TableHeaderCell>Branding</TableHeaderCell>
+                <TableHeaderCell />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -179,6 +181,9 @@ export function AdminMsps() {
                       )}
                     </div>
                   </TableCell>
+                  <TableCell>
+                    {can('msp:delete') && <DeleteMspButton msp={m} onDeleted={() => qc.invalidateQueries({ queryKey: ['msps'] })} />}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -208,6 +213,64 @@ export function AdminMsps() {
         />
       )}
     </Page>
+  );
+}
+
+/* -------------------------------- delete --------------------------------- */
+
+function DeleteMspButton({ msp, onDeleted }: { msp: Msp; onDeleted: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const del = useMutation({
+    mutationFn: () => api(`/msps/${msp.id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      setOpen(false);
+      onDeleted();
+    },
+    onError: (e) => setErr(e instanceof Error ? e.message : 'Failed'),
+  });
+
+  return (
+    <>
+      <Button
+        size="small"
+        appearance="subtle"
+        icon={<DeleteRegular />}
+        style={{ color: '#b10e1c' }}
+        title="Delete MSP"
+        aria-label="Delete MSP"
+        onClick={() => {
+          setErr(null);
+          setOpen(true);
+        }}
+      />
+      <Dialog open={open} onOpenChange={(_, d) => setOpen(d.open)}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>Delete {msp.name}?</DialogTitle>
+            <DialogContent>
+              This permanently removes the MSP and its branding. Any user whose MSP override
+              pointed here falls back to domain match / default branding. This cannot be undone.
+              {err && <Text style={{ color: '#b10e1c', display: 'block', marginTop: 8 }}>{err}</Text>}
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                appearance="primary"
+                style={{ backgroundColor: '#b10e1c' }}
+                disabled={del.isPending}
+                onClick={() => del.mutate()}
+              >
+                Delete MSP
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+    </>
   );
 }
 

@@ -149,6 +149,20 @@ export class MspsService {
     return { data, contentType: m.branding.logo.contentType };
   }
 
+  /**
+   * SUPER_ADMIN only. Any user whose `msp_id` override pointed at this MSP
+   * falls back to `null` automatically (users.msp_id is ON DELETE SET NULL -
+   * see 0009_msps.sql) - they simply stop resolving via the override and
+   * fall through to domain match / default branding on their next `me()`.
+   */
+  async delete(mspId: string, actor: AuditActor) {
+    const m = await this.getMspOrThrow(mspId);
+    if (m.branding?.logo) await this.storage.delete(m.branding.logo.path);
+    await platformDb(this.db).deleteFrom('msps').where('id', '=', mspId).execute();
+    await this.audit.platform('msp.deleted', { actor, targetType: 'msp', targetId: mspId });
+    return { ok: true };
+  }
+
   private async getMspOrThrow(mspId: string) {
     const m = await platformDb(this.db)
       .selectFrom('msps')

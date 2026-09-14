@@ -73,4 +73,10 @@ export class MspsController {
   removeLogo(@Param('mspId') mspId: string, @CurrentUser() user: AuthedUser) {
     return this.msps.removeLogo(mspId, this.actor(user));
   }
+
+  @Delete(':mspId')
+  @RequirePermission('msp:delete')
+  delete(@Param('mspId') mspId: string, @CurrentUser() user: AuthedUser) {
+    return this.msps.delete(mspId, this.actor(user));
+  }
 }
