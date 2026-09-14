@@ -401,7 +401,7 @@ export function BuildSiteWorkspace() {
         onOpenChange={setMapOpen}
         base={base}
         siteId={siteId}
-        callingPolicyChoices={policyChoicesByKey.calling_policy ?? []}
+        callingPolicyChoices={policyChoicesByKey.voice_routing_policy ?? []}
       />
       {templatesOpen && (
         <TemplatesDialog
@@ -664,8 +664,11 @@ interface CallingPolicyMapRow {
 }
 
 /**
- * Which real tenant calling policy each Data Collection generic calling
- * policy ("International", "Standard", …) means for THIS site - see
+ * Which real tenant Voice Routing Policy each Data Collection generic
+ * calling policy ("International", "Standard", …) means for THIS site -
+ * OnlineVoiceRoutingPolicy is the Teams concept that actually governs
+ * local/national/international dialing permission (not TeamsCallingPolicy,
+ * which is call features like forwarding/park/busy-on-busy). See
  * BuildService.assertCallingPoliciesMapped, which blocks Populate until
  * every policy actually in use here has a row.
  */
@@ -701,9 +704,10 @@ function CallingPolicyMapDialog({
           <DialogTitle>Calling policy map</DialogTitle>
           <DialogContent>
             <Text size={200} block style={{ marginBottom: 12 }}>
-              Which real tenant calling policy each Data Collection calling policy means for this site - e.g.
-              "International" here might be a different real policy on a US site than on a Belgium one. A policy
-              marked "in use, unmapped" must be mapped before Populate from Discovery can run.
+              Which real tenant Voice Routing Policy each Data Collection calling policy means for this site -
+              that's the Teams policy that actually governs local/national/international dialing, not the Teams
+              Calling Policy. "International" here might be a different real policy on a US site than on a Belgium
+              one. A policy marked "in use, unmapped" must be mapped before Populate from Discovery can run.
             </Text>
             {rowsQ.isLoading ? (
               <Spinner size="tiny" label="Loading…" />

@@ -175,14 +175,17 @@ export class BuildService {
       map: (d) => {
         // Every new row starts from the site's default Users template (if
         // any); a user with a Data Collection calling policy set gets that
-        // specific mapped real policy instead of the template's default -
-        // see assertCallingPoliciesMapped for why one is always known here.
+        // specific mapped real Voice Routing Policy instead of the
+        // template's default - the Teams concept that actually governs
+        // local/national/international dialing permission is
+        // OnlineVoiceRoutingPolicy, not TeamsCallingPolicy. See
+        // assertCallingPoliciesMapped for why one is always known here.
         const policy_ids: Record<string, string | null> = { ...(template?.policy_ids ?? {}) };
         const policies: Record<string, string | null> = { ...(template?.policies ?? {}) };
         const mappedCalling = d.calling_policy_id ? callingPolicyMap.get(d.calling_policy_id) : undefined;
         if (mappedCalling) {
-          policy_ids.calling_policy = mappedCalling.id;
-          policies.calling_policy = mappedCalling.name;
+          policy_ids.voice_routing_policy = mappedCalling.id;
+          policies.voice_routing_policy = mappedCalling.name;
         }
         return {
           upn: d.upn,
@@ -259,8 +262,8 @@ export class BuildService {
         const policies: Record<string, string | null> = { ...(template?.policies ?? {}) };
         const mappedCalling = d.calling_policy_id ? callingPolicyMap.get(d.calling_policy_id) : undefined;
         if (mappedCalling) {
-          policy_ids.calling_policy = mappedCalling.id;
-          policies.calling_policy = mappedCalling.name;
+          policy_ids.voice_routing_policy = mappedCalling.id;
+          policies.voice_routing_policy = mappedCalling.name;
         }
         const mapped: Record<string, unknown> = {
           upn: d.upn ?? '',
@@ -1126,6 +1129,12 @@ export class BuildService {
     }));
   }
 
+  /**
+   * The generic calling-policy catalog maps to the site's real Voice Routing
+   * Policy (OnlineVoiceRoutingPolicy) - that's the Teams concept that
+   * actually governs local/national/international dialing permission, not
+   * TeamsCallingPolicy (call features like forwarding/park/busy-on-busy).
+   */
   async setCallingPolicyMap(t: TenantContext, u: AuthedUser, body: CallingPolicySiteMapSetInput) {
     const s = this.s(t);
     const policy = await s
@@ -1140,7 +1149,7 @@ export class BuildService {
       .where('id', '=', body.tenant_policy_id)
       .where('removed_at', 'is', null)
       .executeTakeFirst();
-    if (!target || target.policy_type !== POLICY_KIND_TO_TENANT_TYPE.calling_policy) {
+    if (!target || target.policy_type !== POLICY_KIND_TO_TENANT_TYPE.voice_routing_policy) {
       throw new ConflictException('That policy no longer exists in the tenant - refresh and pick again.');
     }
     const row = await s
