@@ -58,6 +58,7 @@ export function AdminMsps() {
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [brandingFor, setBrandingFor] = useState<Msp | null>(null);
+  const [editFor, setEditFor] = useState<Msp | null>(null);
 
   const list = useQuery({ queryKey: ['msps'], queryFn: () => api<Msp[]>('/msps') });
   const create = useMutation({
@@ -146,7 +147,16 @@ export function AdminMsps() {
                 <TableRow key={m.id}>
                   <TableCell>{m.name}</TableCell>
                   <TableCell>{m.slug}</TableCell>
-                  <TableCell>{m.domains.length ? m.domains.join(', ') : '—'}</TableCell>
+                  <TableCell>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span>{m.domains.length ? m.domains.join(', ') : '—'}</span>
+                      {can('msp:update') && (
+                        <Button size="small" appearance="subtle" onClick={() => setEditFor(m)}>
+                          Edit
+                        </Button>
+                      )}
+                    </div>
+                  </TableCell>
                   <TableCell>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       {m.branding?.logo && (
@@ -186,7 +196,67 @@ export function AdminMsps() {
           }}
         />
       )}
+
+      {editFor && (
+        <EditMspDialog
+          msp={editFor}
+          onClose={() => setEditFor(null)}
+          onSaved={() => {
+            setEditFor(null);
+            qc.invalidateQueries({ queryKey: ['msps'] });
+          }}
+        />
+      )}
     </Page>
+  );
+}
+
+/* --------------------------------- edit ---------------------------------- */
+
+function EditMspDialog({ msp, onClose, onSaved }: { msp: Msp; onClose: () => void; onSaved: () => void }) {
+  const [name, setName] = useState(msp.name);
+  const [domainsRaw, setDomainsRaw] = useState(msp.domains.join(', '));
+  const [err, setErr] = useState<string | null>(null);
+
+  const save = useMutation({
+    mutationFn: () =>
+      api(`/msps/${msp.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name, domains: splitDomains(domainsRaw) }),
+      }),
+    onSuccess: onSaved,
+    onError: (e) => setErr(e instanceof Error ? e.message : 'Failed'),
+  });
+
+  return (
+    <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
+      <DialogSurface>
+        <DialogBody>
+          <DialogTitle>Edit — {msp.name}</DialogTitle>
+          <DialogContent>
+            <div style={{ display: 'grid', gap: 12, minWidth: 380 }}>
+              <Field label="Name">
+                <Input value={name} onChange={(_, d) => setName(d.value)} />
+              </Field>
+              <Field label="Domains" hint="comma or newline separated, e.g. contoso.com, intl.contoso.com">
+                <Input value={domainsRaw} onChange={(_, d) => setDomainsRaw(d.value)} />
+              </Field>
+              {err && <Text style={{ color: '#b10e1c' }}>{err}</Text>}
+            </div>
+          </DialogContent>
+          <DialogActions>
+            <DialogTrigger disableButtonEnhancement>
+              <Button appearance="secondary" onClick={onClose}>
+                Cancel
+              </Button>
+            </DialogTrigger>
+            <Button appearance="primary" disabled={!name || save.isPending} onClick={() => save.mutate()}>
+              Save
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
   );
 }
 
