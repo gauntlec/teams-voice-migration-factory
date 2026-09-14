@@ -253,22 +253,26 @@ function BrandingDialog({
 }) {
   const [accentColor, setAccentColor] = useState(tenant.branding?.accentColor ?? DEFAULT_ACCENT);
   const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [logoRemoved, setLogoRemoved] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const save = useMutation({
     mutationFn: async () => {
       await api(`/tenants/${tenant.id}/branding`, { method: 'PATCH', body: JSON.stringify({ accentColor }) });
       if (logoFile) await apiUpload(`/tenants/${tenant.id}/branding/logo`, logoFile);
+      else if (logoRemoved) await api(`/tenants/${tenant.id}/branding/logo`, { method: 'DELETE' });
     },
     onSuccess: onSaved,
     onError: (e) => setErr(e instanceof Error ? e.message : 'Failed'),
   });
 
-  const previewUrl = logoFile
-    ? URL.createObjectURL(logoFile)
-    : tenant.branding?.logo
-      ? `/api/public/tenants/${tenant.id}/logo?v=${tenant.branding.logo.version}`
-      : null;
+  const previewUrl = logoRemoved
+    ? null
+    : logoFile
+      ? URL.createObjectURL(logoFile)
+      : tenant.branding?.logo
+        ? `/api/public/tenants/${tenant.id}/logo?v=${tenant.branding.logo.version}`
+        : null;
 
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
@@ -288,11 +292,28 @@ function BrandingDialog({
                 </Text>
               </div>
               <Field label="Replace logo">
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp"
-                  onChange={(e) => setLogoFile(e.target.files?.[0] ?? null)}
-                />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    onChange={(e) => {
+                      setLogoFile(e.target.files?.[0] ?? null);
+                      setLogoRemoved(false);
+                    }}
+                  />
+                  {previewUrl && (
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      onClick={() => {
+                        setLogoFile(null);
+                        setLogoRemoved(true);
+                      }}
+                    >
+                      Remove logo
+                    </Button>
+                  )}
+                </div>
               </Field>
               <Field label="Accent color">
                 <input
