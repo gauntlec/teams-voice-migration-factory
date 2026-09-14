@@ -107,13 +107,15 @@ export interface DiscoverySiteOverview extends DiscoveryGeneral {
   portDocReminderDays?: number;
 }
 
-/** Set-CsPhoneNumberAssignment -PhoneNumberType */
-export const NUMBER_TYPES = [
-  'DirectRouting',
-  'CallingPlan',
-  'OperatorConnect',
-  'SharedCalling',
-] as const;
+/**
+ * Set-CsPhoneNumberAssignment -PhoneNumberType. Only these three are valid
+ * values for that parameter (Microsoft Learn) - Shared Calling users don't
+ * get a phone number assigned at all (they get EnterpriseVoiceEnabled set
+ * directly instead, plus the shared_calling_policy grant - see
+ * planIdentityRow in deployment.ts), so 'SharedCalling' was never a real
+ * PhoneNumberType and has been removed.
+ */
+export const NUMBER_TYPES = ['DirectRouting', 'CallingPlan', 'OperatorConnect'] as const;
 export type NumberType = (typeof NUMBER_TYPES)[number];
 
 /** Grant-Cs*Policy families the build sheet assigns per user / CAP. */

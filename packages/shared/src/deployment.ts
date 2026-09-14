@@ -81,7 +81,18 @@ export interface BuildIdentityRow {
  * PSTN/licensing model chosen yet) - that command, and the Enterprise Voice
  * enablement it carries, then just silently never appears in the plan.
  */
-export function identityRowWarnings(row: Pick<BuildIdentityRow, 'e164' | 'number_type'>): string[] {
+export function identityRowWarnings(row: Pick<BuildIdentityRow, 'e164' | 'number_type' | 'policies'>): string[] {
+  if (row.policies?.shared_calling_policy && row.e164) {
+    // Per Microsoft's Shared Calling setup guide, a Shared Calling user
+    // shouldn't be assigned a phone number at all - planIdentityRow enables
+    // Enterprise Voice directly for these rows and never emits
+    // Set-CsPhoneNumberAssignment with a number, so this row's number is
+    // just being silently ignored rather than deployed wrong - flag it so
+    // it's not mistaken for a working assignment.
+    return [
+      "Shared Calling policy is set but this row also has a phone number - Shared Calling users shouldn't have one assigned. The number on this row will be ignored by deployment.",
+    ];
+  }
   return row.e164 && !row.number_type
     ? ['Phone number set but no Number type - Set-CsPhoneNumberAssignment (and Enterprise Voice) will be skipped until Number type is set.']
     : [];
@@ -115,10 +126,24 @@ export function planIdentityRow(
     return calls;
   }
 
-  // Skip if live already has this number - can only compare the number
-  // itself (normalized), not the assignment type (DirectRouting/CallingPlan/
-  // etc): Discovery doesn't track live number type per-assignment.
-  if (row.e164 && row.number_type && (!live || numKey(live.lineUri) !== numKey(row.e164))) {
+  if (row.policies?.shared_calling_policy) {
+    // Shared Calling users don't get a phone number - Set-CsPhoneNumberAssignment's
+    // separate "Attribute" parameter set enables Enterprise Voice on its own
+    // (see docs/DEPLOYMENT.md and Microsoft's Shared Calling setup guide).
+    // The Grant-CsTeamsSharedCallingRoutingPolicy call below (from POLICY_KINDS)
+    // is what actually gives them calling via the resource account.
+    if (!live || !live.enterpriseVoiceEnabled) {
+      calls.push({
+        cmdlet: 'Set-CsPhoneNumberAssignment',
+        parameters: { Identity: identity, EnterpriseVoiceEnabled: true },
+        objectType,
+        objectId: row.id,
+      });
+    }
+  } else if (row.e164 && row.number_type && (!live || numKey(live.lineUri) !== numKey(row.e164))) {
+    // Skip if live already has this number - can only compare the number
+    // itself (normalized), not the assignment type (DirectRouting/CallingPlan/
+    // etc): Discovery doesn't track live number type per-assignment.
     calls.push({
       cmdlet: 'Set-CsPhoneNumberAssignment',
       parameters: {

@@ -188,7 +188,7 @@ export class DeploymentService {
             objectType,
             liveState.get(row.upn.toLowerCase()),
           );
-          const warnings = identityRowWarnings({ e164: row.e164, number_type: row.number_type });
+          const warnings = identityRowWarnings({ e164: row.e164, number_type: row.number_type, policies });
           if (calls.length === 0 && warnings.length === 0) continue;
           out.push({ rowId: row.id, objectType, upn: row.upn, calls, renderedCommands: calls.map(renderCommand), warnings });
         }
