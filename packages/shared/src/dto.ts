@@ -172,6 +172,22 @@ const str = (max = 400) => z.string().trim().max(max);
 const optStr = (max = 400) => str(max).optional().or(z.literal(''));
 
 /**
+ * Shared shape for every "bulk edit N selected rows" action (Design &
+ * Build's Users/CAPs, Data Collection's Users/CAPs, …): a bounded list of
+ * row ids plus a strict partial patch over just the fields that entity
+ * allows to bulk-set. One definition of the id-list bound, so raising or
+ * lowering how many rows a bulk edit can touch at once changes for every
+ * module together.
+ */
+const bulkPatchSchema = <T extends z.ZodRawShape>(fields: T) =>
+  z
+    .object({
+      ids: z.array(z.string().uuid()).min(1).max(500),
+      patch: z.object(fields).strict(),
+    })
+    .strict();
+
+/**
  * Optional link to a `discovery_sites.id`. A cleared dropdown sends '' -> null.
  * The API requires this to be set (and in scope) for site-scoped "site contact"
  * users; for whole-customer users it may be left blank.
@@ -479,6 +495,26 @@ export const discoveryCapSchema = z
   .strict();
 export type DiscoveryCapInput = z.infer<typeof discoveryCapSchema>;
 
+/**
+ * Bulk-edit for discovery_users/discovery_caps - the same patch applied to
+ * many rows at once, the Data Collection counterpart to
+ * buildBulkPatchSchema above (both built on the shared bulkPatchSchema).
+ * `site_id`, `upn`/`display_name` and `phone_number_id` are excluded for the
+ * same reason as Design & Build's: they're per-row-unique identifiers, so
+ * bulk-setting the same value on every selected row would be destructive
+ * (moving everyone to one site, giving them all the same name, or claiming
+ * the same phone number for each of them) rather than a real bulk edit.
+ * Users additionally excludes `requested_number` - a customer's requested
+ * number is specific to that one person.
+ */
+const { site_id: _bulkUserSiteId, upn: _bulkUserUpn, display_name: _bulkUserName, requested_number: _bulkUserReqNum, phone_number_id: _bulkUserPhoneId, ...discoveryUserBulkWritable } = discoveryUserSchema.shape;
+export const discoveryUserBulkPatchSchema = bulkPatchSchema(discoveryUserBulkWritable);
+export type DiscoveryUserBulkPatchInput = z.infer<typeof discoveryUserBulkPatchSchema>;
+
+const { site_id: _bulkCapSiteId, upn: _bulkCapUpn, display_name: _bulkCapName, phone_number_id: _bulkCapPhoneId, ...discoveryCapBulkWritable } = discoveryCapSchema.shape;
+export const discoveryCapBulkPatchSchema = bulkPatchSchema(discoveryCapBulkWritable);
+export type DiscoveryCapBulkPatchInput = z.infer<typeof discoveryCapBulkPatchSchema>;
+
 export const discoveryResourceAccountSchema = z
   .object({
     site_id: siteIdRef,
@@ -737,12 +773,7 @@ export type BuildIdentityPatchInput = z.infer<typeof buildIdentityPatchSchema>;
  * than a real bulk operation.
  */
 const { did: _bulkDid, phone_number_id: _bulkPhoneNumberId, ...buildBulkIdentityWritable } = buildIdentityWritable;
-export const buildBulkPatchSchema = z
-  .object({
-    ids: z.array(z.string().uuid()).min(1).max(500),
-    patch: z.object(buildBulkIdentityWritable).strict(),
-  })
-  .strict();
+export const buildBulkPatchSchema = bulkPatchSchema(buildBulkIdentityWritable);
 export type BuildBulkPatchInput = z.infer<typeof buildBulkPatchSchema>;
 
 const buildCapWritable = {

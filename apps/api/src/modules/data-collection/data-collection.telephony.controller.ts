@@ -2,20 +2,24 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } f
 import {
   callingPolicySchema,
   can,
+  discoveryCapBulkPatchSchema,
   discoveryCapSchema,
   discoveryListQuerySchema,
   discoveryNumberRangeSchema,
   discoveryResourceAccountSchema,
+  discoveryUserBulkPatchSchema,
   discoveryUserSchema,
   numberReserveSchema,
   relinkUsersSchema,
   resourceAccountNumberSchema,
   usersImportSchema,
   type CallingPolicyInput,
+  type DiscoveryCapBulkPatchInput,
   type DiscoveryCapInput,
   type DiscoveryListQuery,
   type DiscoveryNumberRangeInput,
   type DiscoveryResourceAccountInput,
+  type DiscoveryUserBulkPatchInput,
   type DiscoveryUserInput,
   type RelinkUsersInput,
   type UsersImportInput,
@@ -172,6 +176,17 @@ export class TelephonyController {
     return this.svc.addUser(t, u, body, this.review(u));
   }
 
+  /** Select many users, set a handful of fields once, apply to all of them. */
+  @Patch('users/bulk')
+  @RequirePermission('discovery:write')
+  bulkUpdateUsers(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() u: AuthedUser,
+    @Body(new ZodBody(discoveryUserBulkPatchSchema)) body: DiscoveryUserBulkPatchInput,
+  ) {
+    return this.svc.bulkUpdateUsers(t, u, body, this.review(u));
+  }
+
   @Patch('users/:id')
   @RequirePermission('discovery:write')
   updateUser(
@@ -221,6 +236,17 @@ export class TelephonyController {
     @Body(new ZodBody(discoveryCapSchema)) body: DiscoveryCapInput,
   ) {
     return this.svc.addCap(t, u, body, this.review(u));
+  }
+
+  /** Select many CAPs, set a handful of fields once, apply to all of them. */
+  @Patch('caps/bulk')
+  @RequirePermission('discovery:write')
+  bulkUpdateCaps(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() u: AuthedUser,
+    @Body(new ZodBody(discoveryCapBulkPatchSchema)) body: DiscoveryCapBulkPatchInput,
+  ) {
+    return this.svc.bulkUpdateCaps(t, u, body, this.review(u));
   }
 
   @Patch('caps/:id')

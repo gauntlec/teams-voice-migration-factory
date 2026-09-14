@@ -9,15 +9,18 @@ import { tenantDb, type DB } from '@tvmf/db';
 import {
   MAX_RANGE_SIZE,
   type CallingPolicyInput,
+  type DiscoveryCapBulkPatchInput,
   type DiscoveryCapInput,
   type DiscoveryListQuery,
   type DiscoveryNumberRangeInput,
   type DiscoveryResourceAccountInput,
+  type DiscoveryUserBulkPatchInput,
   type DiscoveryUserInput,
   type ImportUserRow,
   type NumberHolderType,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
+import { applyBulkPatch, auditBulkPatch } from '../../common/bulk-patch';
 import type { AuthedUser, TenantContext } from '../../common/request';
 import { InjectDb, type Db } from '../../db/db.module';
 import { DataCollectionService } from './data-collection.service';
@@ -102,6 +105,23 @@ export class TelephonyService {
       .executeTakeFirst();
     if (!row) throw new NotFoundException(notFound);
     assertSiteInScope(t, row.site_id);
+  }
+
+  /**
+   * Bulk variant of assertHolderInScope - one query for every selected id,
+   * rather than the row-at-a-time version. Needed here (and not for Design &
+   * Build's bulk edit) because a CUSTOMER "site contact" can hold
+   * discovery:write scoped to specific sites, so a bulk request has to be
+   * checked defensively even though the UI only ever selects rows already
+   * filtered to one site.
+   */
+  private async assertHolderIdsInScope(t: TenantContext, table: 'discovery_users' | 'discovery_caps', ids: string[]) {
+    const rows = await this.s(t).selectFrom(table).select(['id', 'site_id']).where('id', 'in', ids).execute();
+    const found = new Set(rows.map((r) => r.id));
+    const missing = ids.filter((id) => !found.has(id));
+    if (missing.length) throw new NotFoundException(`${missing.length} row(s) not found`);
+    if (!t.siteScope) return;
+    for (const row of rows) assertSiteInScope(t, row.site_id);
   }
 
   /* ===================== paginated list reads ===================== */
@@ -736,6 +756,22 @@ export class TelephonyService {
     return row;
   }
 
+  /** Select many users, set a handful of fields once, apply to all of them -
+   * see applyBulkPatch (shared with Design & Build's identical action). */
+  async bulkUpdateUsers(t: TenantContext, u: AuthedUser, body: DiscoveryUserBulkPatchInput, canReview: boolean) {
+    await this.base.assertEditable(t, canReview);
+    await this.assertHolderIdsInScope(t, 'discovery_users', body.ids);
+    const { updated, appliedPatch } = await applyBulkPatch(this.s(t), 'discovery_users', body.ids, body.patch);
+    await auditBulkPatch(this.audit, t.schema, 'discovery.users_bulk_updated', {
+      actor: actorOf(u),
+      targetType: 'discovery_user',
+      ids: body.ids,
+      updated,
+      patch: appliedPatch,
+    });
+    return { updated };
+  }
+
   async deleteUser(t: TenantContext, u: AuthedUser, id: string, canReview: boolean) {
     await this.base.assertEditable(t, canReview);
     await this.assertHolderInScope(t, 'discovery_users', id, 'user not found');
@@ -973,6 +1009,22 @@ export class TelephonyService {
       targetId: id,
     });
     return row;
+  }
+
+  /** Select many CAPs, set a handful of fields once, apply to all of them -
+   * see applyBulkPatch (shared with Design & Build's identical action). */
+  async bulkUpdateCaps(t: TenantContext, u: AuthedUser, body: DiscoveryCapBulkPatchInput, canReview: boolean) {
+    await this.base.assertEditable(t, canReview);
+    await this.assertHolderIdsInScope(t, 'discovery_caps', body.ids);
+    const { updated, appliedPatch } = await applyBulkPatch(this.s(t), 'discovery_caps', body.ids, body.patch);
+    await auditBulkPatch(this.audit, t.schema, 'discovery.caps_bulk_updated', {
+      actor: actorOf(u),
+      targetType: 'discovery_cap',
+      ids: body.ids,
+      updated,
+      patch: appliedPatch,
+    });
+    return { updated };
   }
 
   async deleteCap(t: TenantContext, u: AuthedUser, id: string, canReview: boolean) {

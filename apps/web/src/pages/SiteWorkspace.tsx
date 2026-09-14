@@ -57,6 +57,7 @@ import { ImportUsersDialog } from '../components/ImportUsersDialog';
 import { Page } from '../components/Page';
 import { NetworkDiagram, type NetworkRow } from '../components/NetworkDiagram';
 import {
+  BulkEditDialog,
   LoadError,
   NoTenant,
   PagedSection,
@@ -218,6 +219,28 @@ export function SiteWorkspace() {
     return [...cur, ...availableChoices];
   };
 
+  // Bulk edit: select many rows (checkboxes, records.tsx), set a handful of
+  // fields once in one dialog, apply to every selected row in a single
+  // PATCH .../bulk request - see TelephonyService.bulkUpdateUsers/Caps,
+  // shared with Design & Build's identical flow via applyBulkPatch.
+  const [usersSelected, setUsersSelected] = useState<Set<string>>(new Set());
+  const [capsSelected, setCapsSelected] = useState<Set<string>>(new Set());
+  const [bulkOpen, setBulkOpen] = useState<'users' | 'caps' | null>(null);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const bulkSave = useMutation({
+    mutationFn: ({ kind, ids, patch }: { kind: 'users' | 'caps'; ids: string[]; patch: Record<string, unknown> }) =>
+      api<{ updated: number }>(`${base}/${kind}/bulk`, { method: 'PATCH', body: JSON.stringify({ ids, patch }) }),
+    onSuccess: (_, vars) => {
+      setBulkOpen(null);
+      setBulkError(null);
+      if (vars.kind === 'users') setUsersSelected(new Set());
+      else setCapsSelected(new Set());
+      qc.invalidateQueries({ queryKey: [vars.kind, tid, siteId] });
+      refreshSummary();
+    },
+    onError: (e) => setBulkError(e instanceof ApiError ? e.message : 'Bulk update failed'),
+  });
+
   if (!tid) return <NoTenant />;
   if (summary.isLoading) return <Spinner label="Loading site…" />;
   if (summary.isError) return <LoadError message={(summary.error as Error).message} />;
@@ -232,6 +255,33 @@ export function SiteWorkspace() {
   const yesNo = (v: unknown) => (v ? 'Yes' : 'No');
 
   const refreshSummary = () => summary.refetch();
+
+  // Fields bulk edit exposes - the Users/CAPs fields above minus upn,
+  // display_name, phone_number_id and requested_number, which are per-row-
+  // unique identifiers (see discoveryUserBulkPatchSchema/
+  // discoveryCapBulkPatchSchema, packages/shared/src/dto.ts).
+  const userBulkFields: FieldDef[] = [
+    { key: 'calling_policy_id', label: 'Calling policy', type: 'ref', choices: policyChoices },
+    { key: 'caller_id', label: 'Caller ID', type: 'select', options: CALLER_ID_OPTIONS },
+    { key: 'voicemail_enabled', label: 'Voicemail enabled', type: 'boolean' },
+    {
+      key: 'voicemail_language',
+      label: 'Voicemail language',
+      type: 'ref',
+      choices: VOICEMAIL_PROMPT_LANGUAGES.map((l) => ({ value: l.code, label: `${l.label} (${l.code})` })),
+    },
+    { key: 'requires_handset', label: 'Requires a physical handset', type: 'boolean' },
+    { key: 'handset_model', label: 'Handset model' },
+    { key: 'access_port_id', label: 'Access port ID' },
+    { key: 'comments', label: 'Comments', type: 'textarea', full: true },
+  ];
+  const capBulkFields: FieldDef[] = [
+    { key: 'device_model', label: 'Device model' },
+    { key: 'calling_policy_id', label: 'Calling policy', type: 'ref', choices: policyChoices },
+    { key: 'caller_id', label: 'Caller ID', type: 'select', options: CALLER_ID_OPTIONS },
+    { key: 'access_port_id', label: 'Access port ID' },
+    { key: 'comments', label: 'Comments', type: 'textarea', full: true },
+  ];
 
   return (
     <Page
@@ -264,6 +314,21 @@ export function SiteWorkspace() {
           </Badge>
         )}
       </div>
+
+      <BulkEditDialog
+        open={bulkOpen !== null}
+        onOpenChange={(o) => !o && setBulkOpen(null)}
+        kindLabel={bulkOpen === 'caps' ? 'common area phones' : 'users'}
+        fields={bulkOpen === 'caps' ? capBulkFields : userBulkFields}
+        count={bulkOpen === 'caps' ? capsSelected.size : usersSelected.size}
+        saving={bulkSave.isPending}
+        error={bulkError}
+        onSave={(patch) => {
+          if (!bulkOpen) return;
+          const ids = [...(bulkOpen === 'caps' ? capsSelected : usersSelected)];
+          bulkSave.mutate({ kind: bulkOpen, ids, patch });
+        }}
+      />
 
       <TabList selectedValue={tab} onTabSelect={(_, d) => setTab(d.value as TabKey)}>
         {TABS.map((t) => (
@@ -346,6 +411,9 @@ export function SiteWorkspace() {
           fixed={{ site_id: siteId }}
           readOnly={locked}
           onChanged={refreshSummary}
+          selectable={!locked}
+          selected={usersSelected}
+          onSelectedChange={setUsersSelected}
           headerActions={
             <>
               <RelinkUsersButton
@@ -364,6 +432,11 @@ export function SiteWorkspace() {
                   onClick={() => setImportOpen(true)}
                 >
                   Import from Excel…
+                </Button>
+              )}
+              {!locked && (
+                <Button size="small" disabled={usersSelected.size === 0} onClick={() => setBulkOpen('users')}>
+                  Bulk edit ({usersSelected.size} selected)
                 </Button>
               )}
             </>
@@ -492,6 +565,16 @@ export function SiteWorkspace() {
           fixed={{ site_id: siteId }}
           readOnly={locked}
           onChanged={refreshSummary}
+          selectable={!locked}
+          selected={capsSelected}
+          onSelectedChange={setCapsSelected}
+          headerActions={
+            !locked && (
+              <Button size="small" disabled={capsSelected.size === 0} onClick={() => setBulkOpen('caps')}>
+                Bulk edit ({capsSelected.size} selected)
+              </Button>
+            )
+          }
           columns={[
             { key: 'display_name', label: 'Display name' },
             { key: 'phone_number', label: 'Number' },

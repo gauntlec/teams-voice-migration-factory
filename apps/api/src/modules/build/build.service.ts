@@ -21,6 +21,7 @@ import {
   type PolicyKey,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
+import { applyBulkPatch, auditBulkPatch } from '../../common/bulk-patch';
 import type { AuthedUser, TenantContext } from '../../common/request';
 import { InjectDb, type Db } from '../../db/db.module';
 import { TenantDiscoveryService } from '../tenant-discovery/tenant-discovery.service';
@@ -395,33 +396,30 @@ export class BuildService {
     ids: string[],
     body: Record<string, unknown>,
   ): Promise<{ updated: number }> {
-    const { policy_ids, voicemail, ...rest } = body;
-    const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
+    const { policy_ids, ...rest } = body;
+    const patch: Record<string, unknown> = { ...rest };
     // Bulk patches are genuinely partial by design - BulkEditDialog starts
     // every field blank (there's no single row to seed "unchanged" from
     // like RecordDialog does for single-row edit), so only the keys the
-    // engineer actually touched are present here. A plain `.set()` on a
-    // jsonb column replaces it wholesale - for one key out of 13 policies,
-    // or one of voicemail's two keys, that would silently wipe every other
-    // key already set on the row. Merge into the existing jsonb instead.
+    // engineer actually touched are present here. policy_ids resolves once
+    // (it's the same target for every row) before the shared jsonb-merge
+    // patch applies it - see applyBulkPatch's jsonbMergeKeys.
     if (policy_ids !== undefined) {
       const resolved = await this.resolvePolicyIds(t, policy_ids as Partial<Record<string, string | null>>);
-      patch.policy_ids = sql`${sql.ref('policy_ids')} || ${JSON.stringify(resolved.policy_ids)}::jsonb`;
-      patch.policies = sql`${sql.ref('policies')} || ${JSON.stringify(resolved.policies)}::jsonb`;
+      patch.policy_ids = resolved.policy_ids;
+      patch.policies = resolved.policies;
     }
-    if (voicemail !== undefined) {
-      patch.voicemail = sql`${sql.ref('voicemail')} || ${JSON.stringify(voicemail)}::jsonb`;
-    }
-    const result = await this.s(t)
-      .updateTable(table)
-      .set(patch as never)
-      .where('id', 'in', ids)
-      .executeTakeFirst();
-    const updated = Number(result?.numUpdatedRows ?? 0);
-    await this.audit.tenant(t.schema, `build.${holderType}s_bulk_updated`, {
+    const { updated, appliedPatch } = await applyBulkPatch(this.s(t), table, ids, patch, [
+      'policy_ids',
+      'policies',
+      'voicemail',
+    ]);
+    await auditBulkPatch(this.audit, t.schema, `build.${holderType}s_bulk_updated`, {
       actor: actorOf(u),
       targetType: `build_${holderType}`,
-      detail: { ids, count: updated, fields: Object.keys(patch) },
+      ids,
+      updated,
+      patch: appliedPatch,
     });
     return { updated };
   }
