@@ -849,6 +849,7 @@ interface PhoneNumber {
   holder_type: string | null;
   holder_name: string | null;
   range_start: string | null;
+  range_end: string | null;
 }
 
 function NumberInventory({
@@ -960,7 +961,13 @@ function NumberInventory({
                 {items.map((n) => (
                   <TableRow key={n.id}>
                     <TableCell style={{ fontFamily: 'ui-monospace, monospace' }}>{n.e164}</TableCell>
-                    <TableCell>{n.range_start ?? '—'}</TableCell>
+                    <TableCell>
+                      {n.range_start
+                        ? n.range_end && n.range_end !== n.range_start
+                          ? `${n.range_start} – ${n.range_end}`
+                          : n.range_start
+                        : '—'}
+                    </TableCell>
                     <TableCell>
                       <Badge
                         appearance="tint"

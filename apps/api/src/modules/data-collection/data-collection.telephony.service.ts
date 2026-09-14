@@ -315,6 +315,7 @@ export class TelephonyService {
           'n.holder_id as holder_id',
           'n.range_id as range_id',
           'r.range_start as range_start',
+          'r.range_end as range_end',
           'r.sitecode as sitecode',
         ])
         .orderBy('n.e164')
