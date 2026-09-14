@@ -516,6 +516,9 @@ async function loadEmailBranding(tenantId: string | null): Promise<EmailBranding
     logoUrl: branding.logo
       ? `${webOrigin}/api/public/tenants/${tenantId}/logo?v=${branding.logo.version}`
       : null,
+    // Older logos uploaded before dimension-capture was added won't have
+    // these - renderHtml falls back to a square aspect ratio in that case.
+    logoSize: branding.logo?.width && branding.logo.height ? { width: branding.logo.width, height: branding.logo.height } : undefined,
     ramp: buildColorRamp(branding.accentColor),
   };
 }

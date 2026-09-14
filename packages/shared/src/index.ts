@@ -27,7 +27,15 @@ export interface Paginated<T> {
  */
 export interface TenantBranding {
   accentColor: string;
-  logo: { path: string; contentType: string; version: number } | null;
+  /**
+   * `width`/`height` are the source image's natural pixel dimensions,
+   * captured at upload time. Email HTML (unlike the web app's CSS-based
+   * `height + width:auto`) needs an explicit pixel `width` alongside
+   * `height` for reliable cross-client sizing - Outlook's rendering engine
+   * in particular does not reliably proportionally scale an oversized
+   * source image when only one dimension is given.
+   */
+  logo: { path: string; contentType: string; version: number; width: number; height: number } | null;
 }
 
 /** One customer the signed-in user can act in. */

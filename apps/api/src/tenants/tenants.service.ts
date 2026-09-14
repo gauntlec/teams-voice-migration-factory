@@ -27,6 +27,39 @@ const LOGO_CONTENT_TYPES: Record<string, string> = {
   'image/jpeg': 'jpg',
 };
 
+/**
+ * Minimal, dependency-free width/height reader for PNG/JPEG - just enough
+ * to size a logo correctly in email HTML. Unlike the web app (CSS
+ * `height` + `width:auto` always scales proportionally in a real browser),
+ * Outlook's rendering engine needs an explicit pixel `width` alongside
+ * `height`, and does not reliably scale down an oversized source image
+ * when only one dimension is given - see layout.ts.
+ */
+function readImageDimensions(buf: Buffer, contentType: string): { width: number; height: number } {
+  if (contentType === 'image/png') {
+    if (buf.length >= 24 && buf.toString('ascii', 12, 16) === 'IHDR') {
+      return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+    }
+  } else if (contentType === 'image/jpeg') {
+    // Scan JPEG markers for a Start-Of-Frame segment (0xC0-0xCF except the
+    // non-frame markers 0xC4/0xC8/0xCC), which carries width/height.
+    const SOF_MARKERS = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
+    let offset = 2; // skip the SOI marker (0xFFD8)
+    while (offset + 9 < buf.length) {
+      if (buf[offset] !== 0xff) {
+        offset++;
+        continue;
+      }
+      const marker = buf[offset + 1];
+      if (SOF_MARKERS.has(marker)) {
+        return { height: buf.readUInt16BE(offset + 5), width: buf.readUInt16BE(offset + 7) };
+      }
+      offset += 2 + buf.readUInt16BE(offset + 2);
+    }
+  }
+  throw new BadRequestException('Could not read image dimensions - the file may be corrupt.');
+}
+
 @Injectable()
 export class TenantsService {
   constructor(
@@ -141,7 +174,8 @@ export class TenantsService {
   async uploadLogo(tenantId: string, file: { buffer: Buffer; mimetype: string } | undefined, actor: AuditActor) {
     if (!file) throw new BadRequestException('No file uploaded');
     const ext = LOGO_CONTENT_TYPES[file.mimetype];
-    if (!ext) throw new BadRequestException('Logo must be a PNG, JPEG or WebP image');
+    if (!ext) throw new BadRequestException('Logo must be a PNG or JPEG image');
+    const { width, height } = readImageDimensions(file.buffer, file.mimetype);
 
     const t = await this.getTenantOrThrow(tenantId);
     const version = (t.branding?.logo?.version ?? 0) + 1;
@@ -153,7 +187,7 @@ export class TenantsService {
       // Default Voxshift brand color when a logo is uploaded before any
       // color has ever been chosen - keeps `branding` always ramp-buildable.
       accentColor: t.branding?.accentColor ?? '#4657D2',
-      logo: { path, contentType: file.mimetype, version },
+      logo: { path, contentType: file.mimetype, version, width, height },
     };
     const tenant = await platformDb(this.db)
       .updateTable('tenants')

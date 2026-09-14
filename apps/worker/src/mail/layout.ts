@@ -37,8 +37,21 @@ export interface LayoutInput {
 export interface EmailBranding {
   /** absolute URL - `GET /api/public/tenants/:id/logo?v=<version>`, unauthenticated by design so it loads in any email client. Null when a customer has set an accent color but not uploaded a logo yet - the header still recolors, it just keeps the default mark. */
   logoUrl: string | null;
+  /**
+   * Source pixel dimensions of the logo, when known - undefined for older
+   * logos uploaded before this was captured. Used to emit an explicit
+   * `width` attribute alongside the fixed `height` below; Outlook's
+   * rendering engine does not reliably scale an oversized source image down
+   * to a CSS/attribute height when only one dimension is given, so without
+   * this a large logo can render at or near its native size (or not at
+   * all) instead of the intended header size.
+   */
+  logoSize?: { width: number; height: number };
   ramp: ColorRamp;
 }
+
+/** Fixed on-screen height for the header/footer logo mark. */
+const LOGO_DISPLAY_HEIGHT = 28;
 
 const TEXT = '#242424';
 const MUTED = '#616161';
@@ -133,7 +146,14 @@ export function renderHtml(input: LayoutInput, branding?: EmailBranding): string
   // usual equalizer mark + wordmark pair - already recolored to the tenant's
   // accent via BRAND/ACCENT/RULE above whenever branding is present at all.
   const headerMark = branding?.logoUrl
-    ? `<img src="${esc(branding.logoUrl)}" height="28" style="display:block;" alt="">`
+    ? (() => {
+        // Explicit width+height (not just one dimension via CSS) is what
+        // makes Outlook scale this reliably - see EmailBranding.logoSize.
+        const width = branding.logoSize
+          ? Math.max(1, Math.round((LOGO_DISPLAY_HEIGHT * branding.logoSize.width) / branding.logoSize.height))
+          : LOGO_DISPLAY_HEIGHT;
+        return `<img src="${esc(branding.logoUrl)}" width="${width}" height="${LOGO_DISPLAY_HEIGHT}" style="display:block;width:${width}px;height:${LOGO_DISPLAY_HEIGHT}px;" alt="">`;
+      })()
     : `${mark(RULE)}${wordmark(true, ACCENT)}`;
 
   // Footer always keeps the real Voxshift wordmark - "Powered by" only once
