@@ -14,11 +14,17 @@ import { InjectDb, type Db } from '../db/db.module';
 import { PG_POOL } from '../db/db.module';
 import type { Pool } from 'pg';
 
-/** Allowlisted upload types for a customer logo - deliberately excludes SVG (script/markup XSS surface). */
+/**
+ * Allowlisted upload types for a customer logo. Deliberately excludes SVG
+ * (script/markup XSS surface) and WebP - classic Outlook desktop (the
+ * "Word engine" renderer, still the most common client for this platform's
+ * enterprise IT/telecom audience) has no WebP decoder at all, so a WebP logo
+ * silently fails to render there while working everywhere else, including
+ * in the web app itself and in a quick manual check.
+ */
 const LOGO_CONTENT_TYPES: Record<string, string> = {
   'image/png': 'png',
   'image/jpeg': 'jpg',
-  'image/webp': 'webp',
 };
 
 @Injectable()

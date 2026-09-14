@@ -135,8 +135,8 @@ export function AdminTenants() {
               style={{ width: 40, height: 32, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
             />
           </Field>
-          <Field label="Logo (optional)">
-            <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => setLogoFile(e.target.files?.[0] ?? null)} />
+          <Field label="Logo (optional)" hint="PNG or JPEG - WebP isn't supported by classic Outlook desktop">
+            <input type="file" accept="image/png,image/jpeg" onChange={(e) => setLogoFile(e.target.files?.[0] ?? null)} />
           </Field>
           <Button
             appearance="primary"
@@ -291,11 +291,11 @@ function BrandingDialog({
                   {previewUrl ? 'Current logo' : 'No logo set - default Voxshift mark shown everywhere'}
                 </Text>
               </div>
-              <Field label="Replace logo">
+              <Field label="Replace logo" hint="PNG or JPEG - WebP isn't supported by classic Outlook desktop">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <input
                     type="file"
-                    accept="image/png,image/jpeg,image/webp"
+                    accept="image/png,image/jpeg"
                     onChange={(e) => {
                       setLogoFile(e.target.files?.[0] ?? null);
                       setLogoRemoved(false);
