@@ -83,6 +83,14 @@ export class TelephonyController {
     return this.svc.listNumbers(t, q);
   }
 
+  /** e164 -> sitecode for every number in the tenant, so an import preview can
+   * tell "belongs to a different site" apart from "not in inventory anywhere". */
+  @Get('numbers/site-map')
+  @RequirePermission('discovery:read')
+  listNumberSiteMap(@TenantCtx() t: TenantContext) {
+    return this.svc.listNumberSiteMap(t);
+  }
+
   /* ----------------------- calling policies ----------------------- */
 
   @Post('calling-policies')

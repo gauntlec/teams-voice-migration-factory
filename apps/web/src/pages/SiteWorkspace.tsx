@@ -200,6 +200,16 @@ export function SiteWorkspace() {
     () => (avail.data?.items ?? []).map((n) => ({ value: n.id, label: n.e164 })),
     [avail.data],
   );
+
+  // Every number's owning site, tenant-wide - so the import preview can tell
+  // "this belongs to a different site" apart from "not in inventory anywhere".
+  // Only fetched once the import dialog is actually open.
+  const numberSiteMap = useQuery({
+    queryKey: ['number-site-map', tid],
+    enabled: !!tid && importOpen,
+    queryFn: () => api<{ e164: string; sitecode: string }[]>(`${base}/numbers/site-map`),
+  });
+
   const numberChoicesFor = (row: Row | null): Choice[] => {
     const cur =
       row && row.phone_number_id
@@ -460,7 +470,9 @@ export function SiteWorkspace() {
         <ImportUsersDialog
           base={base}
           siteId={siteId}
+          siteCode={site.sitecode}
           availableE164={availableChoices.map((c) => c.label)}
+          numberSiteMap={numberSiteMap.data ?? []}
           policyNames={callingPolicies.map((p) => p.name)}
           onClose={() => setImportOpen(false)}
           onDone={() => {

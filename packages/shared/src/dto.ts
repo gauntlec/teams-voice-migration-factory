@@ -23,6 +23,20 @@ import {
 
 export const emailSchema = z.string().email().max(320).transform((s) => s.toLowerCase().trim());
 
+/**
+ * A Teams UPN. Zod's built-in .email() rejects non-ASCII local parts (e.g.
+ * "Taïs.DeWinter@..."), which real-world M365 UPNs derived from a person's
+ * name legitimately contain. Deliberately as tolerant as the browser-side
+ * import preview's own check, so the server never disagrees with what the
+ * user was shown as "Ready".
+ */
+export const upnSchema = z
+  .string()
+  .trim()
+  .max(320)
+  .regex(/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Invalid UPN')
+  .transform((s) => s.toLowerCase());
+
 /** NIST-ish: length over complexity. */
 export const passwordSchema = z
   .string()
@@ -383,7 +397,7 @@ const voicemailLanguage = z.preprocess(
 export const discoveryUserSchema = z
   .object({
     site_id: siteIdRef,
-    upn: emailSchema,
+    upn: upnSchema,
     display_name: optStr(160),
     calling_policy_id: refId,
     caller_id: callerId,
@@ -427,7 +441,7 @@ const callerIdLoose = z.preprocess(
  * server-side); `requested_number` is free text. */
 export const importUserRowSchema = z
   .object({
-    upn: emailSchema,
+    upn: upnSchema,
     requested_number: str(40).optional().or(z.literal('')),
     display_name: optStr(160),
     calling_policy: optStr(120),
@@ -707,11 +721,11 @@ const buildIdentityWritable = {
 };
 
 export const buildIdentityCreateSchema = z
-  .object({ site_id: z.string().uuid(), upn: emailSchema, ...buildIdentityWritable })
+  .object({ site_id: z.string().uuid(), upn: upnSchema, ...buildIdentityWritable })
   .strict();
 export type BuildIdentityCreateInput = z.infer<typeof buildIdentityCreateSchema>;
 
-export const buildIdentityPatchSchema = z.object({ upn: emailSchema.optional(), ...buildIdentityWritable }).strict();
+export const buildIdentityPatchSchema = z.object({ upn: upnSchema.optional(), ...buildIdentityWritable }).strict();
 export type BuildIdentityPatchInput = z.infer<typeof buildIdentityPatchSchema>;
 
 /**
@@ -782,7 +796,7 @@ export const buildResourceAccountCreateSchema = z
     site_id: z.string().uuid(),
     display_name: str(160).min(1),
     kind: z.enum(RESOURCE_ACCOUNT_KINDS),
-    upn: emailSchema.optional(),
+    upn: upnSchema.optional(),
     ...buildResourceAccountWritable,
   })
   .strict();
@@ -790,7 +804,7 @@ export type BuildResourceAccountCreateInput = z.infer<typeof buildResourceAccoun
 
 export const buildResourceAccountPatchSchema = z
   .object({
-    upn: emailSchema.optional(),
+    upn: upnSchema.optional(),
     display_name: optStr(160),
     kind: blankToNull(z.enum(RESOURCE_ACCOUNT_KINDS)),
     ...buildResourceAccountWritable,

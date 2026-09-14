@@ -96,19 +96,27 @@ type Parsed = {
   row: Row;
   status: 'ok' | 'warn' | 'error';
   notes: string[];
+  /** number-warning flavour, for a distinct badge - both still pass validation */
+  numberFlag?: 'unknown' | 'other-site';
 };
 
 export function ImportUsersDialog({
   base,
   siteId,
+  siteCode,
   availableE164,
+  numberSiteMap,
   policyNames,
   onClose,
   onDone,
 }: {
   base: string;
   siteId: string;
+  siteCode: string;
   availableE164: string[];
+  /** e164 -> sitecode for every number in the tenant, so a requested number that
+   * belongs to a different site can be told apart from one nobody owns. */
+  numberSiteMap: { e164: string; sitecode: string }[];
   policyNames: string[];
   onClose: () => void;
   onDone: () => void;
@@ -124,6 +132,11 @@ export function ImportUsersDialog({
   const [templateDone, setTemplateDone] = useState(false);
 
   const freeNumKeys = useMemo(() => new Set(availableE164.map(numKey)), [availableE164]);
+  const otherSiteByNumKey = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const n of numberSiteMap) if (n.sitecode !== siteCode) m.set(numKey(n.e164), n.sitecode);
+    return m;
+  }, [numberSiteMap, siteCode]);
   const policySet = useMemo(() => new Set(policyNames.map((p) => p.trim().toLowerCase())), [policyNames]);
 
   const loadXlsx = () => import('xlsx');
@@ -164,13 +177,21 @@ export function ImportUsersDialog({
         }
         const notes: string[] = [];
         let status: Parsed['status'] = 'ok';
+        let numberFlag: Parsed['numberFlag'];
         if (!row.upn || !isEmail(row.upn)) {
           status = 'error';
           notes.push('missing or invalid UPN');
         }
         if (row.requested_number && !freeNumKeys.has(numKey(row.requested_number))) {
           if (status !== 'error') status = 'warn';
-          notes.push('number not free in this site’s inventory — flag for Design & Build');
+          const otherSite = otherSiteByNumKey.get(numKey(row.requested_number));
+          if (otherSite) {
+            numberFlag = 'other-site';
+            notes.push(`number belongs to site ${otherSite} — confirm with customer before import`);
+          } else {
+            numberFlag = 'unknown';
+            notes.push('number not free in this site’s inventory — flag for Design & Build');
+          }
         }
         if (row.calling_policy && !policySet.has(row.calling_policy.toLowerCase())) {
           if (status !== 'error') status = 'warn';
@@ -186,7 +207,7 @@ export function ImportUsersDialog({
             delete row.voicemail_language;
           }
         }
-        out.push({ n: r + 1, row, status, notes });
+        out.push({ n: r + 1, row, status, notes, numberFlag });
       }
       if (!out.length) throw new Error('No data rows below the header.');
       setParsed(out);
@@ -243,12 +264,38 @@ export function ImportUsersDialog({
       setResult(r);
       onDone();
     },
-    onError: (e) => setErr(e instanceof ApiError ? e.message : 'Import failed'),
+    onError: (e) => {
+      // The API validates the whole rows[] array in one pass, so a single bad
+      // row rejects the entire batch - surface which row and why, rather than
+      // the pipe's bare "Validation failed", or this is undiagnosable without
+      // reading network logs.
+      const issues = e instanceof ApiError && e.body && typeof e.body === 'object' && 'issues' in e.body
+        ? ((e.body as { issues?: { path: string; message: string }[] }).issues ?? [])
+        : [];
+      if (issues.length) {
+        const validParsed = (parsed ?? []).filter((p) => p.status !== 'error');
+        const detail = issues
+          .map((iss) => {
+            const m = /^rows\.(\d+)\.(.+)$/.exec(iss.path);
+            if (!m) return `${iss.path || 'request'}: ${iss.message}`;
+            const entry = validParsed[Number(m[1])];
+            const label = entry ? ` (row ${entry.n}${entry.row.upn ? `, ${entry.row.upn}` : ''})` : '';
+            return `${iss.message}${label}`;
+          })
+          .join('; ');
+        setErr(`Import failed - ${detail}`);
+      } else {
+        setErr(e instanceof ApiError ? e.message : 'Import failed');
+      }
+    },
   });
 
   const counts = useMemo(() => {
-    const c = { ok: 0, warn: 0, error: 0 };
-    for (const p of parsed ?? []) c[p.status] += 1;
+    const c = { ok: 0, warn: 0, error: 0, otherSite: 0 };
+    for (const p of parsed ?? []) {
+      c[p.status] += 1;
+      if (p.numberFlag === 'other-site') c.otherSite += 1;
+    }
     return c;
   }, [parsed]);
 
@@ -318,8 +365,11 @@ export function ImportUsersDialog({
                 <>
                   <div className={s.summary}>
                     <Badge appearance="tint" color="success">{counts.ok} ready</Badge>
-                    {counts.warn > 0 && (
-                      <Badge appearance="tint" color="warning">{counts.warn} with warnings</Badge>
+                    {counts.warn - counts.otherSite > 0 && (
+                      <Badge appearance="tint" color="warning">{counts.warn - counts.otherSite} with warnings</Badge>
+                    )}
+                    {counts.otherSite > 0 && (
+                      <Badge appearance="tint" color="important">{counts.otherSite} number from another site</Badge>
                     )}
                     {counts.error > 0 && (
                       <Badge appearance="tint" color="danger">{counts.error} skipped (errors)</Badge>
@@ -345,7 +395,15 @@ export function ImportUsersDialog({
                               <Badge
                                 appearance="tint"
                                 size="small"
-                                color={p.status === 'ok' ? 'success' : p.status === 'warn' ? 'warning' : 'danger'}
+                                color={
+                                  p.status === 'ok'
+                                    ? 'success'
+                                    : p.status === 'error'
+                                      ? 'danger'
+                                      : p.numberFlag === 'other-site'
+                                        ? 'important'
+                                        : 'warning'
+                                }
                               >
                                 {p.status === 'ok' ? 'Ready' : p.notes.join(' · ')}
                               </Badge>

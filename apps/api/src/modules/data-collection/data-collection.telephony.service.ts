@@ -348,6 +348,17 @@ export class TelephonyService {
     };
   }
 
+  /** e164 -> sitecode for every number in the tenant, regardless of status -
+   * deliberately unpaginated (two columns, cheap) since a caller needs the
+   * full picture to tell a cross-site number apart from one nobody owns. */
+  async listNumberSiteMap(t: TenantContext) {
+    return this.s(t)
+      .selectFrom('phone_numbers as n')
+      .innerJoin('discovery_number_ranges as r', 'r.id', 'n.range_id')
+      .select(['n.e164 as e164', 'r.sitecode as sitecode'])
+      .execute();
+  }
+
   /* ====================== calling policies ====================== */
 
   async addCallingPolicy(t: TenantContext, u: AuthedUser, i: CallingPolicyInput, canReview: boolean) {
