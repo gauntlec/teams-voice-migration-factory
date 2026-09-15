@@ -1109,7 +1109,7 @@ function DiscoveryCallFlowSection({ base }: { base: string }) {
   });
   const schedQ = useQuery({
     queryKey: ['tdisc', 'callflow-sched', base],
-    queryFn: () => api<Paginated<TenantObject>>(`${base}/objects?type=schedule&limit=500`),
+    queryFn: () => api<Paginated<TenantObject>>(`${base}/objects?type=schedule&limit=200`),
   });
 
   const graph = useMemo(() => {
