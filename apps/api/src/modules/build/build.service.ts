@@ -427,6 +427,11 @@ export class BuildService {
   ) {
     const { phone_number_id, policy_ids, ...rest } = body;
     const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
+    // pg serialises a plain object to jsonb fine, but a top-level array value
+    // gets bound as a native Postgres array instead of JSON text unless
+    // stringified first (see schema.ts) - delegates is the one array-shaped
+    // field here (call_forwarding/pickup_group are plain objects).
+    if (patch.delegates !== undefined) patch.delegates = JSON.stringify(patch.delegates);
     if (phone_number_id !== undefined) {
       Object.assign(patch, await this.applyNumberChange(t, table, holderType, id, phone_number_id, 'number_type' in rest));
     }
