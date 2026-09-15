@@ -7,17 +7,11 @@ import {
   CALL_QUEUE_ROUTING_METHODS,
   CALL_QUEUE_TIMEOUT_ACTIONS,
   decodeCallQueueEnum,
-  parseLiveCallFlow,
-  parseLiveCallTarget,
-  parseLiveSchedule,
+  liveAutoAttendantToStructured,
   POLICY_KIND_TO_TENANT_TYPE,
   POLICY_KINDS,
   RESOURCE_ACCOUNT_APPLICATION_IDS,
   type AutoAttendantCallableEntity,
-  type AutoAttendantCallFlow,
-  type AutoAttendantHolidayCallFlow,
-  type AutoAttendantMenu,
-  type AutoAttendantMenuOption,
   type BuildAutoAttendantCreateInput,
   type BuildAutoAttendantPatchInput,
   type BuildBulkPatchInput,
@@ -39,7 +33,6 @@ import {
   type CallingPolicySiteMapSetInput,
   type DiscoverySiteOverview,
   type LiveCallableEntityRef,
-  type LiveCallFlow,
   type NumberHolderType,
   type NumberType,
   type Paginated,
@@ -750,10 +743,22 @@ export class BuildService {
     const linked = new Set(
       [...existingRa, ...existingAa, ...existingCq].map((e) => e.discovery_resource_account_id).filter(Boolean),
     );
+    // Get-CsOnlineApplicationInstance's own live snapshot, matched by name -
+    // proof this resource account already exists and is licensed, so a row
+    // reverse-engineered from an already-live tenant (Populate's other job -
+    // see the "reverse-engineer OVP012" plan) starts with its real UPN and
+    // application_id already set, instead of looking like a brand new
+    // account New-CsOnlineApplicationInstance still needs to create.
+    const liveRas = await s.selectFrom('tenant_objects').select(['display_name', 'data']).where('object_type', '=', 'resource_account').where('removed_at', 'is', null).execute();
+    const liveRaByName = new Map(
+      liveRas.filter((r) => r.display_name).map((r) => [r.display_name!.toLowerCase(), r.data as Record<string, unknown>]),
+    );
     let created = 0;
     const createdDiscoveryIds: string[] = [];
     for (const d of source) {
       if (linked.has(d.id)) continue;
+      const live = liveRaByName.get(d.name.toLowerCase());
+      const liveUpn = live && typeof live.UserPrincipalName === 'string' ? live.UserPrincipalName : undefined;
       await s
         .insertInto('build_resource_accounts')
         .values({
@@ -761,7 +766,8 @@ export class BuildService {
           discovery_resource_account_id: d.id,
           display_name: d.name,
           kind: d.kind,
-          upn: '',
+          upn: liveUpn ?? '',
+          application_id: liveUpn ? RESOURCE_ACCOUNT_APPLICATION_IDS[d.kind] : null,
           status: {},
         })
         .execute();
@@ -891,56 +897,28 @@ export class BuildService {
       }
       return undefined;
     };
-    const resolveMenuOption = (opt: { dtmf: string; action: string; target?: LiveCallableEntityRef }): AutoAttendantMenuOption => ({
-      dtmf: opt.dtmf as AutoAttendantMenuOption['dtmf'],
-      action: opt.action as AutoAttendantMenuOption['action'],
-      target: resolveTarget(opt.target),
-    });
-    const resolveMenu = (m: LiveCallFlow['menu']): AutoAttendantMenu => ({
-      enableDialByName: m.enableDialByName,
-      directorySearchMethod: m.directorySearchMethod,
-      options: m.options.map(resolveMenuOption),
-    });
-    const resolveCallFlow = (cf: LiveCallFlow): AutoAttendantCallFlow => ({
-      greetings: cf.greetings.map((g) => ({ type: g.type, text: g.text })),
-      menu: resolveMenu(cf.menu),
-    });
 
+    // Same conversion the deployment planner runs fresh at preview/execute
+    // time (see resolveAutoAttendantDeepContext in
+    // apps/api/.../deployment.service.ts) - using it here too means a row
+    // Populate just wrote is guaranteed to already match what that diff
+    // sees, instead of two independent implementations that could quietly
+    // drift and make every freshly-populated row look "changed".
     for (const row of createdAa) {
       const live = aaByName.get(row.name.toLowerCase());
       if (!live) continue;
+      const structured = liveAutoAttendantToStructured(live, scheduleByGuid, resolveTarget);
       const patch: Record<string, unknown> = {
-        language_id: typeof live.LanguageId === 'string' ? live.LanguageId : null,
-        time_zone_id: typeof live.TimeZoneId === 'string' ? live.TimeZoneId : null,
-        voice_id: typeof live.VoiceId === 'string' ? live.VoiceId : null,
-        voice_response_enabled: typeof live.EnableVoiceResponse === 'boolean' ? live.EnableVoiceResponse : false,
-        operator: resolveTarget(parseLiveCallTarget(live.Operator)) ?? null,
+        language_id: structured.languageId ?? null,
+        time_zone_id: structured.timeZoneId ?? null,
+        voice_id: structured.voiceId ?? null,
+        voice_response_enabled: structured.enableVoiceResponse ?? false,
+        operator: structured.operator ?? null,
+        default_call_flow: structured.defaultCallFlow ?? null,
+        after_hours_call_flow: structured.afterHoursCallFlow ?? null,
+        schedule: structured.schedule ?? null,
       };
-      const defaultCf = parseLiveCallFlow(live.DefaultCallFlow);
-      if (defaultCf) patch.default_call_flow = resolveCallFlow(defaultCf);
-
-      const callFlowsById = new Map(
-        (Array.isArray(live.CallFlows) ? (live.CallFlows as Record<string, unknown>[]) : []).map((cf) => [cf.Id as string, cf]),
-      );
-      const holidayCallFlows: AutoAttendantHolidayCallFlow[] = [];
-      for (const cha of Array.isArray(live.CallHandlingAssociations) ? (live.CallHandlingAssociations as Record<string, unknown>[]) : []) {
-        const cfRaw = typeof cha.CallFlowId === 'string' ? callFlowsById.get(cha.CallFlowId) : undefined;
-        const parsedCf = cfRaw ? parseLiveCallFlow(cfRaw) : undefined;
-        const scheduleRaw = typeof cha.ScheduleId === 'string' ? scheduleByGuid.get(cha.ScheduleId) : undefined;
-        const parsedSchedule = scheduleRaw ? parseLiveSchedule(scheduleRaw) : undefined;
-        if (!parsedCf) continue;
-        if (cha.Type === 0) {
-          patch.after_hours_call_flow = resolveCallFlow(parsedCf);
-          if (parsedSchedule) patch.schedule = parsedSchedule;
-        } else if (cha.Type === 1 && parsedSchedule) {
-          holidayCallFlows.push({
-            name: (typeof scheduleRaw?.Name === 'string' && scheduleRaw.Name) || (typeof cfRaw?.Name === 'string' && cfRaw.Name) || 'Holiday',
-            callFlow: resolveCallFlow(parsedCf),
-            schedule: parsedSchedule as AutoAttendantHolidayCallFlow['schedule'],
-          });
-        }
-      }
-      if (holidayCallFlows.length > 0) patch.holiday_call_flows = JSON.stringify(holidayCallFlows);
+      if (structured.holidayCallFlows.length > 0) patch.holiday_call_flows = JSON.stringify(structured.holidayCallFlows);
       await s.updateTable('build_auto_attendants').set(patch as never).where('id', '=', row.id).execute();
     }
 

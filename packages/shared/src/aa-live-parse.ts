@@ -15,6 +15,14 @@
  * the caller has.
  */
 import { AA_DTMF_RESPONSES, AA_DIRECTORY_SEARCH_METHODS } from './domain';
+import type {
+  AutoAttendantCallableEntity,
+  AutoAttendantCallFlow,
+  AutoAttendantHolidayCallFlow,
+  AutoAttendantMenu,
+  AutoAttendantMenuOption,
+  AutoAttendantSchedule,
+} from './deployment';
 
 export interface LiveCallableEntityRef {
   kind: 'voice_app' | 'user' | 'external' | 'unknown';
@@ -190,4 +198,95 @@ export function parseLiveSchedule(raw: unknown): LiveSchedule | undefined {
     };
   }
   return undefined;
+}
+
+/** What liveAutoAttendantToStructured converts one live Auto Attendant object into - the same shape build_auto_attendants stores, so it can be deep-compared against a saved row. */
+export interface LiveAutoAttendantStructured {
+  languageId?: string;
+  timeZoneId?: string;
+  voiceId?: string;
+  enableVoiceResponse?: boolean;
+  operator: AutoAttendantCallableEntity | null;
+  defaultCallFlow: AutoAttendantCallFlow | null;
+  afterHoursCallFlow: AutoAttendantCallFlow | null;
+  holidayCallFlows: AutoAttendantHolidayCallFlow[];
+  schedule: AutoAttendantSchedule | null;
+}
+
+/**
+ * Converts a live Get-CsAutoAttendant object into the same structured shape
+ * build_auto_attendants stores. This IS the conversion
+ * BuildService.populateStructuredFromLive uses to pre-fill a row from live
+ * data (factored out here so it's one implementation, not two that can
+ * silently drift) - and, run fresh at deploy-preview time, it's also what
+ * lets the deployment planner tell "this row already matches the tenant"
+ * from "something really changed", instead of always re-sending
+ * Set-CsAutoAttendant just because a live object exists.
+ *
+ * `resolveTarget` turns a live CallTarget/-Operator reference into a
+ * build-shaped one (a UPN for a user, a same-site buildId for another
+ * AA/CQ) - the caller supplies it since that resolution needs a DB lookup
+ * (tenant_users, and this site's own build_auto_attendants/build_call_queues
+ * rows) this pure function doesn't have access to. `scheduleByKey` is every
+ * live Schedule object keyed by its own object_key/GUID (a
+ * CallHandlingAssociation's ScheduleId), needed to resolve the after-hours/
+ * holiday schedule paired with each CallFlow.
+ */
+export function liveAutoAttendantToStructured(
+  data: Record<string, unknown>,
+  scheduleByKey: Map<string, Record<string, unknown>>,
+  resolveTarget: (ref: LiveCallableEntityRef | undefined) => AutoAttendantCallableEntity | undefined,
+): LiveAutoAttendantStructured {
+  const resolveMenuOption = (opt: LiveMenuOption): AutoAttendantMenuOption => ({
+    dtmf: opt.dtmf,
+    action: opt.action,
+    target: resolveTarget(opt.target),
+  });
+  const resolveMenu = (m: LiveMenu): AutoAttendantMenu => ({
+    enableDialByName: m.enableDialByName,
+    directorySearchMethod: m.directorySearchMethod,
+    options: m.options.map(resolveMenuOption),
+  });
+  const resolveCallFlow = (cf: LiveCallFlow): AutoAttendantCallFlow => ({
+    greetings: cf.greetings.map((g) => ({ type: g.type, text: g.text })),
+    menu: resolveMenu(cf.menu),
+  });
+
+  const out: LiveAutoAttendantStructured = {
+    languageId: typeof data.LanguageId === 'string' ? data.LanguageId : undefined,
+    timeZoneId: typeof data.TimeZoneId === 'string' ? data.TimeZoneId : undefined,
+    voiceId: typeof data.VoiceId === 'string' ? data.VoiceId : undefined,
+    enableVoiceResponse: typeof data.EnableVoiceResponse === 'boolean' ? data.EnableVoiceResponse : undefined,
+    operator: resolveTarget(parseLiveCallTarget(data.Operator)) ?? null,
+    defaultCallFlow: null,
+    afterHoursCallFlow: null,
+    holidayCallFlows: [],
+    schedule: null,
+  };
+
+  const defaultCf = parseLiveCallFlow(data.DefaultCallFlow);
+  if (defaultCf) out.defaultCallFlow = resolveCallFlow(defaultCf);
+
+  const callFlowsById = new Map(
+    (Array.isArray(data.CallFlows) ? (data.CallFlows as Record<string, unknown>[]) : []).map((cf) => [cf.Id as string, cf]),
+  );
+  for (const cha of Array.isArray(data.CallHandlingAssociations) ? (data.CallHandlingAssociations as Record<string, unknown>[]) : []) {
+    const cfRaw = typeof cha.CallFlowId === 'string' ? callFlowsById.get(cha.CallFlowId) : undefined;
+    const parsedCf = cfRaw ? parseLiveCallFlow(cfRaw) : undefined;
+    const scheduleRaw = typeof cha.ScheduleId === 'string' ? scheduleByKey.get(cha.ScheduleId) : undefined;
+    const parsedSchedule = scheduleRaw ? parseLiveSchedule(scheduleRaw) : undefined;
+    if (!parsedCf) continue;
+    if (cha.Type === 0) {
+      out.afterHoursCallFlow = resolveCallFlow(parsedCf);
+      if (parsedSchedule) out.schedule = parsedSchedule;
+    } else if (cha.Type === 1 && parsedSchedule) {
+      out.holidayCallFlows.push({
+        name: (typeof scheduleRaw?.Name === 'string' && scheduleRaw.Name) || (typeof cfRaw?.Name === 'string' && cfRaw.Name) || 'Holiday',
+        callFlow: resolveCallFlow(parsedCf),
+        schedule: parsedSchedule as AutoAttendantHolidayCallFlow['schedule'],
+      });
+    }
+  }
+
+  return out;
 }

@@ -10,6 +10,7 @@ import {
   CALL_QUEUE_ROUTING_METHODS,
   CALL_QUEUE_TIMEOUT_ACTIONS,
   decodeCallQueueEnum,
+  liveAutoAttendantToStructured,
   planAutoAttendantRow,
   planCallQueueRow,
   planIdentityRow,
@@ -27,6 +28,7 @@ import {
   type CallQueueActionSettings,
   type CallQueueLiveState,
   type CmdletInvocation,
+  type LiveCallableEntityRef,
   type LiveIdentityState,
   type PickupGroupSettings,
 } from '@tvmf/shared';
@@ -381,7 +383,11 @@ async function resolveLiveCallQueueState(scoped: ReturnType<typeof tenantDb>, na
 }
 
 /** Mirrors the identical apps/api/.../deployment.service.ts helper - see that copy for why it's duplicated. */
-async function resolveLiveAutoAttendantState(scoped: ReturnType<typeof tenantDb>, names: string[]) {
+async function resolveLiveAutoAttendantState(
+  scoped: ReturnType<typeof tenantDb>,
+  names: string[],
+  deep?: { scheduleByKey: Map<string, Record<string, unknown>>; resolveTarget: (ref: LiveCallableEntityRef | undefined) => AutoAttendantCallableEntity | undefined },
+): Promise<Map<string, AutoAttendantLiveState>> {
   const wanted = [...new Set(names.map((n) => n.toLowerCase()).filter(Boolean))];
   const out = new Map<string, AutoAttendantLiveState>();
   if (wanted.length === 0) return out;
@@ -401,9 +407,42 @@ async function resolveLiveAutoAttendantState(scoped: ReturnType<typeof tenantDb>
       timeZoneId: typeof d.TimeZoneId === 'string' ? d.TimeZoneId : undefined,
       voiceId: typeof d.VoiceId === 'string' ? d.VoiceId : undefined,
       enableVoiceResponse: typeof d.EnableVoiceResponse === 'boolean' ? d.EnableVoiceResponse : undefined,
+      applicationInstanceIds: Array.isArray(d.ApplicationInstances)
+        ? (d.ApplicationInstances as unknown[]).filter((v): v is string => typeof v === 'string')
+        : undefined,
+      structured: deep ? liveAutoAttendantToStructured(d, deep.scheduleByKey, deep.resolveTarget) : undefined,
     });
   }
   return out;
+}
+
+/** Mirrors the identical apps/api/.../deployment.service.ts helper - see that copy for why it's duplicated. */
+async function resolveAutoAttendantDeepContext(scoped: ReturnType<typeof tenantDb>, crossRef: AutoAttendantCrossRef) {
+  const [scheduleRows, userRows] = await Promise.all([
+    scoped.selectFrom('tenant_objects').select(['object_key', 'data']).where('object_type', '=', 'schedule').where('removed_at', 'is', null).execute(),
+    scoped.selectFrom('tenant_users').select(['entra_id', 'upn']).where('entra_id', 'is not', null).execute(),
+  ]);
+  const scheduleByKey = new Map(scheduleRows.map((r) => [r.object_key, r.data as Record<string, unknown>]));
+  const upnByEntraId = new Map(userRows.map((r) => [r.entra_id!.toLowerCase(), r.upn]));
+  const liveIdToBuild = new Map<string, { kind: 'auto_attendant' | 'call_queue'; buildId: string }>();
+  for (const [key, identity] of crossRef) {
+    const sep = key.indexOf(':');
+    liveIdToBuild.set(identity.toLowerCase(), { kind: key.slice(0, sep) as 'auto_attendant' | 'call_queue', buildId: key.slice(sep + 1) });
+  }
+  const resolveTarget = (ref: LiveCallableEntityRef | undefined): AutoAttendantCallableEntity | undefined => {
+    if (!ref) return undefined;
+    if (ref.kind === 'external' && ref.number) return { kind: 'external', number: ref.number };
+    if (ref.kind === 'user' && ref.liveId) {
+      const upn = upnByEntraId.get(ref.liveId.toLowerCase());
+      return upn ? { kind: 'user', upn } : undefined;
+    }
+    if (ref.kind === 'voice_app' && ref.liveId) {
+      const hit = liveIdToBuild.get(ref.liveId.toLowerCase());
+      return hit ? { kind: hit.kind, buildId: hit.buildId } : undefined;
+    }
+    return undefined;
+  };
+  return { scheduleByKey, resolveTarget };
 }
 
 /** Mirrors the identical apps/api/.../deployment.service.ts helper - see that copy for why it's duplicated. */
@@ -643,7 +682,8 @@ async function handleDeploymentRun(job: Job) {
       const oid = liveIdentity.get(ra.upn.toLowerCase())?.objectId;
       if (oid && ra.discovery_resource_account_id) raInstanceByDiscoveryId.set(ra.discovery_resource_account_id, oid);
     }
-    const liveAutoAttendants = await resolveLiveAutoAttendantState(scoped, rows.map((r) => r.name));
+    const aaDeep = await resolveAutoAttendantDeepContext(scoped, crossRef);
+    const liveAutoAttendants = await resolveLiveAutoAttendantState(scoped, rows.map((r) => r.name), aaDeep);
     for (const row of rows) {
       const planRow: BuildAutoAttendantRow = {
         id: row.id,

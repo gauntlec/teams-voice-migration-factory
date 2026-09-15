@@ -10,6 +10,7 @@ import {
   callQueueRowWarnings,
   decodeCallQueueEnum,
   identityRowWarnings,
+  liveAutoAttendantToStructured,
   planAutoAttendantRow,
   planCallQueueRow,
   planIdentityRow,
@@ -33,6 +34,7 @@ import {
   type DeploymentSiteRollup,
   type FileRow,
   type GenerateDeploymentDocumentInput,
+  type LiveCallableEntityRef,
   type LiveIdentityState,
   type PickupGroupSettings,
 } from '@tvmf/shared';
@@ -158,11 +160,19 @@ async function resolveLiveCallQueueState(scoped: Scoped, names: string[]) {
 /**
  * What Discovery's live-tenant snapshot (tenant_objects, object_type
  * 'auto_attendant') knows about an AA, matched by lowercased Name - same
- * rationale as resolveLiveCallQueueState. Only the scalar fields
- * planAutoAttendantRow diffs on are read here; the compound call-flow/
- * schedule structure isn't (see AutoAttendantLiveState's own doc comment).
+ * rationale as resolveLiveCallQueueState. Always reads the scalar fields;
+ * `deep` (when the caller has it - previewChanges does, buildAutoAttendantCrossRef's
+ * own identity-only pass doesn't need it) additionally resolves the
+ * compound call-flow/schedule/operator structure via
+ * aa-live-parse.ts's liveAutoAttendantToStructured, so planAutoAttendantRow
+ * can diff a saved row against it instead of always re-sending
+ * Set-CsAutoAttendant.
  */
-async function resolveLiveAutoAttendantState(scoped: Scoped, names: string[]) {
+async function resolveLiveAutoAttendantState(
+  scoped: Scoped,
+  names: string[],
+  deep?: { scheduleByKey: Map<string, Record<string, unknown>>; resolveTarget: (ref: LiveCallableEntityRef | undefined) => AutoAttendantCallableEntity | undefined },
+): Promise<Map<string, AutoAttendantLiveState>> {
   const wanted = [...new Set(names.map((n) => n.toLowerCase()).filter(Boolean))];
   const out = new Map<string, AutoAttendantLiveState>();
   if (wanted.length === 0) return out;
@@ -182,9 +192,51 @@ async function resolveLiveAutoAttendantState(scoped: Scoped, names: string[]) {
       timeZoneId: typeof d.TimeZoneId === 'string' ? d.TimeZoneId : undefined,
       voiceId: typeof d.VoiceId === 'string' ? d.VoiceId : undefined,
       enableVoiceResponse: typeof d.EnableVoiceResponse === 'boolean' ? d.EnableVoiceResponse : undefined,
+      applicationInstanceIds: Array.isArray(d.ApplicationInstances)
+        ? (d.ApplicationInstances as unknown[]).filter((v): v is string => typeof v === 'string')
+        : undefined,
+      structured: deep ? liveAutoAttendantToStructured(d, deep.scheduleByKey, deep.resolveTarget) : undefined,
     });
   }
   return out;
+}
+
+/**
+ * Every piece resolveLiveAutoAttendantState's `deep` option needs to convert
+ * a live AA into build_auto_attendants' own shape: every live Schedule
+ * (keyed by the GUID a CallHandlingAssociation's ScheduleId references),
+ * every tenant_users UPN (keyed by entra_id, the same column a live
+ * CallTarget/-Operator's ObjectId matches - see the "GUID rather than UPN"
+ * bug fix in the call-flow diagram), and this site's own live-Identity ->
+ * buildId map (the exact reverse of `crossRef`, which the caller already
+ * built) to resolve a menu option/-Operator that targets a sibling AA/CQ.
+ */
+async function resolveAutoAttendantDeepContext(s: Scoped, crossRef: AutoAttendantCrossRef) {
+  const [scheduleRows, userRows] = await Promise.all([
+    s.selectFrom('tenant_objects').select(['object_key', 'data']).where('object_type', '=', 'schedule').where('removed_at', 'is', null).execute(),
+    s.selectFrom('tenant_users').select(['entra_id', 'upn']).where('entra_id', 'is not', null).execute(),
+  ]);
+  const scheduleByKey = new Map(scheduleRows.map((r) => [r.object_key, r.data as Record<string, unknown>]));
+  const upnByEntraId = new Map(userRows.map((r) => [r.entra_id!.toLowerCase(), r.upn]));
+  const liveIdToBuild = new Map<string, { kind: 'auto_attendant' | 'call_queue'; buildId: string }>();
+  for (const [key, identity] of crossRef) {
+    const sep = key.indexOf(':');
+    liveIdToBuild.set(identity.toLowerCase(), { kind: key.slice(0, sep) as 'auto_attendant' | 'call_queue', buildId: key.slice(sep + 1) });
+  }
+  const resolveTarget = (ref: LiveCallableEntityRef | undefined): AutoAttendantCallableEntity | undefined => {
+    if (!ref) return undefined;
+    if (ref.kind === 'external' && ref.number) return { kind: 'external', number: ref.number };
+    if (ref.kind === 'user' && ref.liveId) {
+      const upn = upnByEntraId.get(ref.liveId.toLowerCase());
+      return upn ? { kind: 'user', upn } : undefined;
+    }
+    if (ref.kind === 'voice_app' && ref.liveId) {
+      const hit = liveIdToBuild.get(ref.liveId.toLowerCase());
+      return hit ? { kind: hit.kind, buildId: hit.buildId } : undefined;
+    }
+    return undefined;
+  };
+  return { scheduleByKey, resolveTarget };
 }
 
 /**
@@ -448,7 +500,8 @@ export class DeploymentService {
         const oid = liveIdentity.get(ra.upn.toLowerCase())?.objectId;
         if (oid && ra.discovery_resource_account_id) raInstanceByDiscoveryId.set(ra.discovery_resource_account_id, oid);
       }
-      const liveAutoAttendants = await resolveLiveAutoAttendantState(s, rows.map((r) => r.name));
+      const deep = await resolveAutoAttendantDeepContext(s, crossRef);
+      const liveAutoAttendants = await resolveLiveAutoAttendantState(s, rows.map((r) => r.name), deep);
 
       for (const row of rows) {
         const planRow: BuildAutoAttendantRow = {

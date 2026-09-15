@@ -13,6 +13,7 @@ import {
   POLICY_KINDS,
   RESOURCE_ACCOUNT_APPLICATION_IDS,
 } from './domain';
+import type { LiveAutoAttendantStructured } from './aa-live-parse';
 
 /**
  * What Discovery's live-tenant snapshot (tenant_users) knows about a UPN -
@@ -50,12 +51,32 @@ function numKey(v: string | null | undefined): string {
  * see renderCommand and handleDeploymentRun in apps/worker/src/main.ts,
  * which treats a CmdletInvocation with a `preamble` as a single change.
  */
-export interface PreambleStep {
+export interface PreambleCallStep {
+  kind?: 'call';
   /** PowerShell variable name (no leading $) this step's result is assigned to. */
   assignTo: string;
   cmdlet: string;
   parameters: Record<string, unknown>;
 }
+
+/**
+ * `$target.property = value` - not a cmdlet call. Set-CsAutoAttendant has no
+ * -Identity/-Name/-LanguageId/... parameters of its own (confirmed against
+ * Microsoft Learn - its entire parameter surface is `-Instance`/`-Tenant`);
+ * the only supported pattern is Get-CsAutoAttendant -Identity ... into a
+ * variable, set each property on that object, then
+ * Set-CsAutoAttendant -Instance $that. These steps are how
+ * planAutoAttendantRow renders the "set each property" half of that.
+ */
+export interface PreambleAssignStep {
+  kind: 'assign';
+  /** PowerShell variable name (no leading $) whose property is being set. */
+  target: string;
+  property: string;
+  value: unknown;
+}
+
+export type PreambleStep = PreambleCallStep | PreambleAssignStep;
 
 /**
  * Sentinel: reference an earlier PreambleStep's result by variable name,
@@ -141,7 +162,11 @@ function renderStatement(cmdlet: string, parameters: Record<string, unknown>): s
  * call's own `parameters`.
  */
 export function renderCommand(call: CmdletInvocation): string {
-  const lines = (call.preamble ?? []).map((step) => `$${step.assignTo} = ${renderStatement(step.cmdlet, step.parameters)}`);
+  const lines = (call.preamble ?? []).map((step) =>
+    step.kind === 'assign'
+      ? `$${step.target}.${step.property} = ${renderValue(step.value) ?? '$null'}`
+      : `$${step.assignTo} = ${renderStatement(step.cmdlet, step.parameters)}`,
+  );
   lines.push(renderStatement(call.cmdlet, call.parameters));
   return lines.join('\n');
 }
@@ -764,7 +789,12 @@ export interface BuildAutoAttendantRow {
  * 'auto_attendant') knows about an AA, matched by Name - same rationale as
  * CallQueueLiveState. `identity` is needed both to target Set-CsAutoAttendant
  * and to resolve this AA as a menu-option target from another AA (see
- * AutoAttendantCrossRef).
+ * AutoAttendantCrossRef). `structured`, when the caller resolved it (the
+ * deployment preview/execute path does; AutoAttendantCrossRef's own
+ * identity-only resolution pass doesn't need to), is the same live object
+ * converted to build_auto_attendants' own shape via
+ * aa-live-parse.ts's liveAutoAttendantToStructured - what planAutoAttendantRow
+ * diffs the saved row against to decide whether anything actually changed.
  */
 export interface AutoAttendantLiveState {
   identity: string;
@@ -772,6 +802,9 @@ export interface AutoAttendantLiveState {
   timeZoneId?: string;
   voiceId?: string;
   enableVoiceResponse?: boolean;
+  structured?: LiveAutoAttendantStructured;
+  /** Get-CsAutoAttendant's own ApplicationInstances array (the resource accounts already associated with it) - lets the resource-account association step diff instead of always re-sending. */
+  applicationInstanceIds?: string[];
 }
 
 /**
@@ -972,23 +1005,99 @@ function buildCallHandlingAssociation(ctx: AaBuildCtx, type: 'AfterHours' | 'Hol
   return { $var: varName };
 }
 
+/** Deep-equal with object keys sorted and `undefined` values dropped, so key order and an omitted-vs-undefined field never register as a difference. */
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      const v = (value as Record<string, unknown>)[key];
+      if (v !== undefined) out[key] = canonicalize(v);
+    }
+    return out;
+  }
+  return value;
+}
+function structurallyEqual(a: unknown, b: unknown): boolean {
+  return JSON.stringify(canonicalize(a)) === JSON.stringify(canonicalize(b));
+}
+
+/** Menu options compared by DTMF key rather than array position - a harmless reordering shouldn't read as a change. */
+function sortedMenuOptions(cf: AutoAttendantCallFlow | null): AutoAttendantMenuOption[] {
+  return cf ? [...cf.menu.options].sort((a, b) => a.dtmf.localeCompare(b.dtmf)) : [];
+}
+function callFlowEqual(a: AutoAttendantCallFlow | null, b: AutoAttendantCallFlow | null): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  if (!structurallyEqual(a.greetings, b.greetings)) return false;
+  if (!!a.menu.enableDialByName !== !!b.menu.enableDialByName) return false;
+  if ((a.menu.directorySearchMethod ?? undefined) !== (b.menu.directorySearchMethod ?? undefined)) return false;
+  return structurallyEqual(sortedMenuOptions(a), sortedMenuOptions(b));
+}
+/** Holidays compared by name rather than array position, for the same reason. */
+function sortedHolidays(list: AutoAttendantHolidayCallFlow[]): AutoAttendantHolidayCallFlow[] {
+  return [...list].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * True when a saved row already matches what's live, field for field -
+ * decides whether planAutoAttendantRow needs to send Set-CsAutoAttendant at
+ * all. Compares against `live.structured` (aa-live-parse.ts's
+ * liveAutoAttendantToStructured, run fresh by the caller against the same
+ * live object) rather than the raw columns directly, because after-hours
+ * only actually deploys when both the call flow AND its schedule are set
+ * (see planAutoAttendantRow's own preamble-building below) - a half-filled
+ * after-hours config that wouldn't be sent live yet must not register as a
+ * "change" just because the column itself is non-null.
+ */
+function autoAttendantMatchesLive(row: BuildAutoAttendantRow, live: AutoAttendantLiveState): boolean {
+  const s = live.structured;
+  if (!s) return false;
+  if ((row.language_id ?? undefined) !== (s.languageId ?? undefined)) return false;
+  if ((row.time_zone_id ?? undefined) !== (s.timeZoneId ?? undefined)) return false;
+  if ((row.voice_id ?? undefined) !== (s.voiceId ?? undefined)) return false;
+  if (!!row.voice_response_enabled !== !!s.enableVoiceResponse) return false;
+  if (!structurallyEqual(row.operator ?? null, s.operator ?? null)) return false;
+  if (!callFlowEqual(row.default_call_flow, s.defaultCallFlow)) return false;
+
+  const effectiveAfterHours = row.after_hours_call_flow && row.schedule ? row.after_hours_call_flow : null;
+  const effectiveAfterHoursSchedule = row.after_hours_call_flow && row.schedule ? row.schedule : null;
+  if (!callFlowEqual(effectiveAfterHours, s.afterHoursCallFlow)) return false;
+  if (!structurallyEqual(effectiveAfterHoursSchedule, s.schedule)) return false;
+
+  const rowHolidays = sortedHolidays(row.holiday_call_flows);
+  const liveHolidays = sortedHolidays(s.holidayCallFlows);
+  if (rowHolidays.length !== liveHolidays.length) return false;
+  for (let i = 0; i < rowHolidays.length; i++) {
+    const a = rowHolidays[i];
+    const b = liveHolidays[i];
+    if (!a || !b) return false;
+    if (a.name !== b.name) return false;
+    if (!callFlowEqual(a.callFlow, b.callFlow)) return false;
+    if (!structurallyEqual(a.schedule, b.schedule)) return false;
+  }
+  return true;
+}
+
 /**
  * Turn a build_auto_attendants row into its cmdlet chain: the real
  * New-CsAutoAttendant construction chain (CallableEntity -> Prompt ->
  * MenuOption -> Menu -> CallFlow -> TimeRange/DateTimeRange -> Schedule ->
  * CallHandlingAssociation), run as one `preamble` before the single
  * mutating New-CsAutoAttendant/Set-CsAutoAttendant call, then a resource-
- * account association mirroring planCallQueueRow's own. Plans nothing when
- * there's no default_call_flow yet - see autoAttendantRowWarnings, which is
- * what surfaces that (and any unresolved target) to the preview.
+ * account association. Plans nothing when there's no default_call_flow yet -
+ * see autoAttendantRowWarnings, which is what surfaces that (and any
+ * unresolved target) to the preview.
  *
- * Unlike planCallQueueRow, a live AA is always re-Set rather than diffed on
- * its compound call-flow/schedule structure: Get-CsAutoAttendant's own
- * round-trip shape for that structure isn't confirmed field-for-field (see
- * the "reverse-engineer OVP012" plan), so diffing it risks silently missing
- * a real change. Set-CsAutoAttendant re-run with identical values is a
- * harmless no-op live - the same tradeoff planCallQueueRow's own resource-
- * account association step already makes for the same underlying reason.
+ * A live AA is only re-Set when autoAttendantMatchesLive finds an actual
+ * difference - the preamble/parameters are only built at all in that case,
+ * so a row that already matches the tenant plans nothing and disappears
+ * from the preview, the same as every other object type. The resource-
+ * account association is similarly only re-sent when `live`'s own
+ * ApplicationInstances array (Get-CsAutoAttendant reliably exposes this,
+ * confirmed against OVP012's real data - see the "front door" badge in the
+ * call-flow diagram, which relies on the same field) doesn't already list
+ * the target.
  */
 export function planAutoAttendantRow(
   row: BuildAutoAttendantRow,
@@ -999,56 +1108,77 @@ export function planAutoAttendantRow(
   const calls: CmdletInvocation[] = [];
   if (!row.default_call_flow) return calls;
 
-  const ctx: AaBuildCtx = { steps: [], counters: {} };
+  if (!live || !autoAttendantMatchesLive(row, live)) {
+    const ctx: AaBuildCtx = { steps: [], counters: {} };
 
-  const defaultFlowRef = buildCallFlow(ctx, row.default_call_flow, `${row.name} - Business hours`, crossRef);
-  const otherFlowRefs: VarRef[] = [];
-  const chaRefs: VarRef[] = [];
+    const defaultFlowRef = buildCallFlow(ctx, row.default_call_flow, `${row.name} - Business hours`, crossRef);
+    const otherFlowRefs: VarRef[] = [];
+    const chaRefs: VarRef[] = [];
 
-  if (row.after_hours_call_flow && row.schedule) {
-    const afRef = buildCallFlow(ctx, row.after_hours_call_flow, `${row.name} - After hours`, crossRef);
-    const schedRef = buildSchedule(ctx, row.schedule, `${row.name} - After hours schedule`);
-    otherFlowRefs.push(afRef);
-    chaRefs.push(buildCallHandlingAssociation(ctx, 'AfterHours', schedRef, afRef));
+    if (row.after_hours_call_flow && row.schedule) {
+      const afRef = buildCallFlow(ctx, row.after_hours_call_flow, `${row.name} - After hours`, crossRef);
+      const schedRef = buildSchedule(ctx, row.schedule, `${row.name} - After hours schedule`);
+      otherFlowRefs.push(afRef);
+      chaRefs.push(buildCallHandlingAssociation(ctx, 'AfterHours', schedRef, afRef));
+    }
+    for (const holiday of row.holiday_call_flows) {
+      const hfRef = buildCallFlow(ctx, holiday.callFlow, `${row.name} - ${holiday.name}`, crossRef);
+      const schedRef = buildSchedule(ctx, holiday.schedule, holiday.name);
+      otherFlowRefs.push(hfRef);
+      chaRefs.push(buildCallHandlingAssociation(ctx, 'Holiday', schedRef, hfRef));
+    }
+
+    const operatorRef = row.operator ? buildCallableEntity(ctx, row.operator, crossRef) : undefined;
+
+    if (!live) {
+      // New-CsAutoAttendant takes every property directly as a parameter -
+      // confirmed against Microsoft Learn.
+      const parameters: Record<string, unknown> = {
+        Name: row.name,
+        ...(row.language_id ? { LanguageId: row.language_id } : {}),
+        ...(row.time_zone_id ? { TimeZoneId: row.time_zone_id } : {}),
+        ...(row.voice_id ? { VoiceId: row.voice_id } : {}),
+        ...(row.voice_response_enabled ? { EnableVoiceResponse: true } : {}),
+        DefaultCallFlow: defaultFlowRef,
+        ...(otherFlowRefs.length ? { CallFlows: otherFlowRefs } : {}),
+        ...(chaRefs.length ? { CallHandlingAssociations: chaRefs } : {}),
+        ...(operatorRef ? { Operator: operatorRef } : {}),
+      };
+      calls.push({ cmdlet: 'New-CsAutoAttendant', parameters, objectType: 'auto_attendant', objectId: row.id, preamble: ctx.steps });
+    } else {
+      // Unlike New-CsAutoAttendant, Set-CsAutoAttendant has no -Identity/
+      // -Name/-LanguageId/... parameters at all - confirmed against
+      // Microsoft Learn, its entire parameter surface is -Instance/-Tenant.
+      // The only supported pattern is Get-CsAutoAttendant into a variable,
+      // set each property on that object, then Set-CsAutoAttendant -Instance
+      // $that - an earlier version of this function passed every parameter
+      // directly the same way New-CsAutoAttendant does, which Teams would
+      // have rejected outright the first time this ever actually ran live.
+      ctx.steps.push({ assignTo: 'aa', cmdlet: 'Get-CsAutoAttendant', parameters: { Identity: live.identity } });
+      const assign = (property: string, value: unknown) => ctx.steps.push({ kind: 'assign', target: 'aa', property, value });
+      assign('Name', row.name);
+      if (row.language_id) assign('LanguageId', row.language_id);
+      if (row.time_zone_id) assign('TimeZoneId', row.time_zone_id);
+      if (row.voice_id) assign('VoiceId', row.voice_id);
+      assign('EnableVoiceResponse', !!row.voice_response_enabled);
+      assign('DefaultCallFlow', defaultFlowRef);
+      assign('CallFlows', otherFlowRefs);
+      assign('CallHandlingAssociations', chaRefs);
+      if (operatorRef) assign('Operator', operatorRef);
+      calls.push({
+        cmdlet: 'Set-CsAutoAttendant',
+        parameters: { Instance: { $var: 'aa' } },
+        objectType: 'auto_attendant',
+        objectId: row.id,
+        preamble: ctx.steps,
+      });
+    }
   }
-  for (const holiday of row.holiday_call_flows) {
-    const hfRef = buildCallFlow(ctx, holiday.callFlow, `${row.name} - ${holiday.name}`, crossRef);
-    const schedRef = buildSchedule(ctx, holiday.schedule, holiday.name);
-    otherFlowRefs.push(hfRef);
-    chaRefs.push(buildCallHandlingAssociation(ctx, 'Holiday', schedRef, hfRef));
-  }
 
-  const operatorRef = row.operator ? buildCallableEntity(ctx, row.operator, crossRef) : undefined;
-
-  const parameters: Record<string, unknown> = {
-    Name: row.name,
-    ...(row.language_id ? { LanguageId: row.language_id } : {}),
-    ...(row.time_zone_id ? { TimeZoneId: row.time_zone_id } : {}),
-    ...(row.voice_id ? { VoiceId: row.voice_id } : {}),
-    ...(row.voice_response_enabled ? { EnableVoiceResponse: true } : {}),
-    DefaultCallFlow: defaultFlowRef,
-    ...(otherFlowRefs.length ? { CallFlows: otherFlowRefs } : {}),
-    ...(chaRefs.length ? { CallHandlingAssociations: chaRefs } : {}),
-    ...(operatorRef ? { Operator: operatorRef } : {}),
-  };
-
-  if (!live) {
-    calls.push({ cmdlet: 'New-CsAutoAttendant', parameters, objectType: 'auto_attendant', objectId: row.id, preamble: ctx.steps });
-  } else {
-    calls.push({
-      cmdlet: 'Set-CsAutoAttendant',
-      parameters: { Identity: live.identity, ...parameters },
-      objectType: 'auto_attendant',
-      objectId: row.id,
-      preamble: ctx.steps,
-    });
-  }
-
-  // Mirrors planCallQueueRow's own resource-account association step -
-  // same known limitation (can't diff whether it's already associated live,
-  // so this re-emits every pass; New-CsOnlineApplicationInstanceAssociation
-  // tolerates being re-run with the same target).
-  if (live?.identity && resourceAccountInstanceId) {
+  const alreadyAssociated = resourceAccountInstanceId
+    ? (live?.applicationInstanceIds ?? []).some((id) => id.toLowerCase() === resourceAccountInstanceId.toLowerCase())
+    : false;
+  if (live?.identity && resourceAccountInstanceId && !alreadyAssociated) {
     calls.push({
       cmdlet: 'New-CsOnlineApplicationInstanceAssociation',
       parameters: { Identities: [resourceAccountInstanceId], ConfigurationId: live.identity, ConfigurationType: 'AutoAttendant' },
