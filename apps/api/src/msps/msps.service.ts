@@ -15,12 +15,16 @@ export class MspsService {
     @Inject(FILE_STORAGE_BACKEND) private readonly storage: FileStorageBackend,
   ) {}
 
-  async list() {
-    return platformDb(this.db)
+  async list(search?: string) {
+    let q = platformDb(this.db)
       .selectFrom('msps')
       .select(['id', 'name', 'slug', 'domains', 'branding', 'created_at'])
-      .orderBy('name')
-      .execute();
+      .orderBy('name');
+    if (search) {
+      const like = `%${search}%`;
+      q = q.where((eb) => eb.or([eb('name', 'ilike', like), eb('slug', 'ilike', like)]));
+    }
+    return q.execute();
   }
 
   async create(input: CreateMspInput, actor: AuditActor) {

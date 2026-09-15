@@ -1,12 +1,14 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
   addMembershipSchema,
   createTenantSchema,
+  searchQuerySchema,
   updateMembershipSchema,
   updateTenantBrandingSchema,
   updateTenantSchema,
   type CreateTenantInput,
+  type SearchQuery,
   type UpdateTenantBrandingInput,
   type UpdateTenantInput,
 } from '@tvmf/shared';
@@ -26,8 +28,8 @@ export class TenantsController {
 
   @Get()
   @RequirePermission('tenant:read')
-  list(@CurrentUser() user: AuthedUser) {
-    return this.tenants.list(user);
+  list(@CurrentUser() user: AuthedUser, @Query(new ZodBody(searchQuerySchema)) query: SearchQuery) {
+    return this.tenants.list(user, query.q);
   }
 
   @Post()

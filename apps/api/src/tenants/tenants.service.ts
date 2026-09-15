@@ -24,21 +24,26 @@ export class TenantsService {
     @Inject(FILE_STORAGE_BACKEND) private readonly storage: FileStorageBackend,
   ) {}
 
-  async list(user: { id: string; role: Role }) {
-    const q = platformDb(this.db)
+  async list(user: { id: string; role: Role }, search?: string) {
+    let q = platformDb(this.db)
       .selectFrom('tenants')
       .select(['id', 'slug', 'name', 'primary_domain', 'status', 'teams_read_only', 'branding', 'created_at'])
       .orderBy('name');
-    if (user.role === 'SUPER_ADMIN') return q.execute();
-    return q
-      .where('id', 'in', (eb) =>
-        eb
-          .selectFrom('tenant_memberships')
-          .select('tenant_id')
-          .where('user_id', '=', user.id),
-      )
-      .where('status', '=', 'active')
-      .execute();
+    if (user.role !== 'SUPER_ADMIN') {
+      q = q
+        .where('id', 'in', (eb) =>
+          eb
+            .selectFrom('tenant_memberships')
+            .select('tenant_id')
+            .where('user_id', '=', user.id),
+        )
+        .where('status', '=', 'active');
+    }
+    if (search) {
+      const like = `%${search}%`;
+      q = q.where((eb) => eb.or([eb('name', 'ilike', like), eb('slug', 'ilike', like), eb('primary_domain', 'ilike', like)]));
+    }
+    return q.execute();
   }
 
   async create(input: CreateTenantInput, actor: AuditActor) {

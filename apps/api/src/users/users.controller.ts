@@ -1,5 +1,12 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
-import { createUserSchema, updateUserMspSchema, type CreateUserInput, type UpdateUserMspInput } from '@tvmf/shared';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import {
+  createUserSchema,
+  searchQuerySchema,
+  updateUserMspSchema,
+  type CreateUserInput,
+  type SearchQuery,
+  type UpdateUserMspInput,
+} from '@tvmf/shared';
 import { CurrentUser } from '../auth/auth.decorators';
 import type { AuthedUser } from '../common/request';
 import { ZodBody } from '../common/zod.pipe';
@@ -16,8 +23,8 @@ export class UsersController {
 
   @Get()
   @RequirePermission('user:read')
-  list(@CurrentUser() user: AuthedUser) {
-    return this.users.list({ id: user.id, role: user.role });
+  list(@CurrentUser() user: AuthedUser, @Query(new ZodBody(searchQuerySchema)) query: SearchQuery) {
+    return this.users.list({ id: user.id, role: user.role }, query.q);
   }
 
   @Get(':id/memberships')

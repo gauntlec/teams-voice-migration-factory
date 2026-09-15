@@ -19,6 +19,7 @@ import {
   MessageBarBody,
   MessageBarTitle,
   Option,
+  SearchBox,
   Spinner,
   TableBody,
   TableCell,
@@ -45,6 +46,7 @@ import { useAuth } from '../../auth';
 import { DataTable } from '../../components/DataTable';
 import { Page } from '../../components/Page';
 import { LoadError } from '../../components/records';
+import { useDebounced } from '../../hooks/useDebounced';
 
 const useStyles = makeStyles({
   actions: { display: 'flex', ...shorthands.gap('4px'), flexWrap: 'nowrap' },
@@ -244,7 +246,12 @@ export function AdminUsers() {
     resent: boolean;
   } | null>(null);
 
-  const users = useQuery({ queryKey: ['users'], queryFn: () => api<UserRow[]>('/users') });
+  const [searchInput, setSearchInput] = useState('');
+  const search = useDebounced(searchInput);
+  const users = useQuery({
+    queryKey: ['users', search],
+    queryFn: () => api<UserRow[]>(`/users${search ? `?q=${encodeURIComponent(search)}` : ''}`),
+  });
   const tenants = useQuery({ queryKey: ['tenants'], queryFn: () => api<TenantRow[]>('/tenants') });
   const msps = useQuery({
     queryKey: ['msps'],
@@ -452,6 +459,13 @@ export function AdminUsers() {
       </Card>
 
       <Card>
+        <SearchBox
+          size="small"
+          placeholder="Search by name or email…"
+          value={searchInput}
+          onChange={(_, d) => setSearchInput(d.value)}
+          style={{ maxWidth: 320 }}
+        />
         {users.isLoading ? (
           <Spinner size="tiny" />
         ) : users.isError ? (

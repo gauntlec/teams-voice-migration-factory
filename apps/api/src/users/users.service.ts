@@ -28,14 +28,14 @@ export class UsersService {
     @Inject(APP_CONFIG) private readonly cfg: AppConfig,
   ) {}
 
-  async list(actor: { id: string; role: Role }) {
-    let q = platformDb(this.db)
+  async list(actor: { id: string; role: Role }, search?: string) {
+    let query = platformDb(this.db)
       .selectFrom('users')
       .select(['id', 'email', 'display_name', 'role', 'status', 'totp_enrolled', 'msp_id', 'created_at'])
       .orderBy('created_at', 'desc');
     if (actor.role !== 'SUPER_ADMIN') {
       // Non-admins only see users who belong to a customer they are assigned to.
-      q = q.where('id', 'in', (eb) =>
+      query = query.where('id', 'in', (eb) =>
         eb
           .selectFrom('tenant_memberships')
           .select('user_id')
@@ -47,7 +47,11 @@ export class UsersService {
           ),
       );
     }
-    const users = await q.execute();
+    if (search) {
+      const like = `%${search}%`;
+      query = query.where((eb) => eb.or([eb('email', 'ilike', like), eb('display_name', 'ilike', like)]));
+    }
+    const users = await query.execute();
     if (users.length === 0) return users;
 
     // Attach each user's customer names for the list view.

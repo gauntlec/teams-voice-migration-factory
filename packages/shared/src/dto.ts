@@ -1013,5 +1013,12 @@ export const filesQuerySchema = z.object({
   category: z.enum(['deployment_change_document', 'number_port_document']).optional(),
   sourceType: z.string().max(60).optional(),
   sourceId: z.string().uuid().optional(),
+  q: z.string().trim().max(200).optional(),
 });
 export type FilesQuery = z.infer<typeof filesQuerySchema>;
+
+/* ------------------------------ Shared search DTO ------------------------------ */
+
+/** The plain `?q=` search param, for list endpoints with nothing else to filter by. */
+export const searchQuerySchema = z.object({ q: z.string().trim().max(200).optional() }).strict();
+export type SearchQuery = z.infer<typeof searchQuerySchema>;

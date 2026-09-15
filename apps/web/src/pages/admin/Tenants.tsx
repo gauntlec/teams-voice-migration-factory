@@ -16,6 +16,7 @@ import {
   Field,
   Input,
   Option,
+  SearchBox,
   Spinner,
   TableBody,
   TableCell,
@@ -30,6 +31,7 @@ import { useAuth } from '../../auth';
 import { DataTable } from '../../components/DataTable';
 import { Page } from '../../components/Page';
 import { Wordmark } from '../../components/Logo';
+import { useDebounced } from '../../hooks/useDebounced';
 import { LoadError } from '../DataCollection';
 
 const DEFAULT_ACCENT = '#4657D2';
@@ -74,7 +76,16 @@ export function AdminTenants() {
   const [err, setErr] = useState<string | null>(null);
   const [brandingFor, setBrandingFor] = useState<Tenant | null>(null);
 
-  const list = useQuery({ queryKey: ['tenants'], queryFn: () => api<Tenant[]>('/tenants') });
+  const [searchInput, setSearchInput] = useState('');
+  const search = useDebounced(searchInput);
+  const list = useQuery({
+    queryKey: ['tenants', search],
+    queryFn: () => api<Tenant[]>(`/tenants${search ? `?q=${encodeURIComponent(search)}` : ''}`),
+  });
+  // Unfiltered, for CustomerMembers' customer picker below - that's a
+  // different concern (which customer to manage members for) and shouldn't
+  // shrink/disappear just because the branding table above is being searched.
+  const allTenants = useQuery({ queryKey: ['tenants', 'all'], queryFn: () => api<Tenant[]>('/tenants') });
   const setReadOnly = useMutation({
     mutationFn: ({ id, teamsReadOnly }: { id: string; teamsReadOnly: boolean }) =>
       api(`/tenants/${id}`, { method: 'PATCH', body: JSON.stringify({ teamsReadOnly }) }),
@@ -150,6 +161,13 @@ export function AdminTenants() {
       </Card>
 
       <Card>
+        <SearchBox
+          size="small"
+          placeholder="Search by name, slug or domain…"
+          value={searchInput}
+          onChange={(_, d) => setSearchInput(d.value)}
+          style={{ maxWidth: 320 }}
+        />
         {list.isLoading ? (
           <Spinner size="tiny" />
         ) : list.isError ? (
@@ -235,7 +253,7 @@ export function AdminTenants() {
         />
       )}
 
-      {list.data && list.data.length > 0 && <CustomerMembers tenants={list.data} />}
+      {allTenants.data && allTenants.data.length > 0 && <CustomerMembers tenants={allTenants.data} />}
     </Page>
   );
 }

@@ -12,6 +12,7 @@ import {
   DialogTrigger,
   Field,
   Input,
+  SearchBox,
   Spinner,
   TableBody,
   TableCell,
@@ -27,6 +28,7 @@ import { useAuth } from '../../auth';
 import { DataTable } from '../../components/DataTable';
 import { Page } from '../../components/Page';
 import { Wordmark } from '../../components/Logo';
+import { useDebounced } from '../../hooks/useDebounced';
 import { LoadError } from '../DataCollection';
 
 const DEFAULT_ACCENT = '#4657D2';
@@ -61,7 +63,12 @@ export function AdminMsps() {
   const [brandingFor, setBrandingFor] = useState<Msp | null>(null);
   const [editFor, setEditFor] = useState<Msp | null>(null);
 
-  const list = useQuery({ queryKey: ['msps'], queryFn: () => api<Msp[]>('/msps') });
+  const [searchInput, setSearchInput] = useState('');
+  const search = useDebounced(searchInput);
+  const list = useQuery({
+    queryKey: ['msps', search],
+    queryFn: () => api<Msp[]>(`/msps${search ? `?q=${encodeURIComponent(search)}` : ''}`),
+  });
   const create = useMutation({
     mutationFn: async () => {
       const created = await api<Msp>('/msps', {
@@ -129,6 +136,13 @@ export function AdminMsps() {
       </Card>
 
       <Card>
+        <SearchBox
+          size="small"
+          placeholder="Search by name or slug…"
+          value={searchInput}
+          onChange={(_, d) => setSearchInput(d.value)}
+          style={{ maxWidth: 320 }}
+        />
         {list.isLoading ? (
           <Spinner size="tiny" />
         ) : list.isError ? (

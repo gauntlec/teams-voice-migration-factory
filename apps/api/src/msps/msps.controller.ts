@@ -1,10 +1,12 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
   createMspSchema,
+  searchQuerySchema,
   updateMspBrandingSchema,
   updateMspSchema,
   type CreateMspInput,
+  type SearchQuery,
   type UpdateMspBrandingInput,
   type UpdateMspInput,
 } from '@tvmf/shared';
@@ -24,8 +26,8 @@ export class MspsController {
 
   @Get()
   @RequirePermission('msp:read')
-  list() {
-    return this.msps.list();
+  list(@Query(new ZodBody(searchQuerySchema)) query: SearchQuery) {
+    return this.msps.list(query.q);
   }
 
   @Post()
