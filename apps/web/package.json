@@ -16,6 +16,8 @@
     "@tvmf/shared": "0.1.0",
     "@xyflow/react": "^12.11.6",
     "dagre": "^0.8.5",
+    "html-to-image": "^1.11.13",
+    "jspdf": "^4.2.1",
     "leaflet": "1.9.4",
     "react": "18.3.1",
     "react-dom": "18.3.1",

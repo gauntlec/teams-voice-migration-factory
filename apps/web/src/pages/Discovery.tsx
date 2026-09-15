@@ -1101,10 +1101,13 @@ function JsonDialog({ title, data, onClose }: { title: string; data: unknown; on
  * counterpart to Design & Build's own per-object "as-designed" diagram
  * (AutoAttendantFlowDialog/CallQueueFlowDialog in BuildSiteWorkspace.tsx),
  * which reads the structured build_auto_attendants/build_call_queues
- * columns instead. For an Auto Attendant, the sibling Auto Attendant/Call
- * Queue/Schedule lists are fetched tenant-wide only to label a menu-option
- * target with its real name and to expand one hop into a target Call
- * Queue's own routing - a Call Queue's own diagram needs no sibling fetch.
+ * columns instead. For an Auto Attendant, every menu option that transfers
+ * to another Auto Attendant is followed and expanded too (the sibling
+ * Auto Attendant/Call Queue/Schedule lists are fetched tenant-wide to do
+ * that, and to label a target with its real name) - a Call Queue's own
+ * diagram needs no sibling fetch since it's always a leaf. The users list
+ * is fetched either way, best-effort (capped at 200), to resolve a person
+ * target's UPN instead of a raw Entra object id.
  */
 function LiveCallFlowDialog({ base, type, row, onClose }: { base: string; type: 'auto_attendant' | 'call_queue'; row: TenantObject; onClose: () => void }) {
   const s = useStyles();
@@ -1124,10 +1127,16 @@ function LiveCallFlowDialog({ base, type, row, onClose }: { base: string; type: 
     queryFn: () => api<Paginated<TenantObject>>(`${base}/objects?type=schedule&limit=200`),
     enabled: needsSiblings,
   });
+  const usersQ = useQuery({
+    queryKey: ['tdisc', 'callflow-users-all', base],
+    queryFn: () => api<Paginated<TenantUserSummary>>(`${base}/users?limit=200`),
+  });
+
+  const usersByObjectId = useMemo(() => new Map((usersQ.data?.items ?? []).map((u) => [u.object_id.toLowerCase(), u.upn])), [usersQ.data]);
 
   const graph = useMemo(() => {
     if (type === 'call_queue') {
-      return buildCallQueueFlowGraphFromLive({ name: row.display_name ?? row.object_key, data: row.data });
+      return buildCallQueueFlowGraphFromLive({ name: row.display_name ?? row.object_key, data: row.data }, usersByObjectId);
     }
     if (!aaQ.data || !cqQ.data || !schedQ.data) return null;
     return buildAutoAttendantFlowGraphFromLive(
@@ -1135,11 +1144,12 @@ function LiveCallFlowDialog({ base, type, row, onClose }: { base: string; type: 
       aaQ.data.items.map((o) => ({ name: o.display_name ?? o.object_key, data: o.data })),
       cqQ.data.items.map((o) => ({ name: o.display_name ?? o.object_key, data: o.data })),
       schedQ.data.items.map((o) => ({ key: o.object_key, data: o.data })),
+      usersByObjectId,
     );
-  }, [type, row, aaQ.data, cqQ.data, schedQ.data]);
+  }, [type, row, aaQ.data, cqQ.data, schedQ.data, usersByObjectId]);
 
-  const loading = needsSiblings && (aaQ.isLoading || cqQ.isLoading || schedQ.isLoading);
-  const loadError = needsSiblings ? ((aaQ.error ?? cqQ.error ?? schedQ.error) as Error | null) : null;
+  const loading = (needsSiblings && (aaQ.isLoading || cqQ.isLoading || schedQ.isLoading)) || usersQ.isLoading;
+  const loadError = (needsSiblings ? (aaQ.error ?? cqQ.error ?? schedQ.error) : null) as Error | null;
 
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
@@ -1149,7 +1159,7 @@ function LiveCallFlowDialog({ base, type, row, onClose }: { base: string; type: 
           <DialogContent>
             <Text size={200} className={s.muted} style={{ display: 'block', marginBottom: 10 }}>
               {type === 'auto_attendant'
-                ? "Business hours, after hours and holiday routing, from this tenant's live configuration. A menu option that transfers to another Auto Attendant is shown as a single box - open that Auto Attendant's own call flow to see its routing."
+                ? "Business hours, after hours and holiday routing, from this tenant's live configuration - including every Auto Attendant a menu option hands off to, followed all the way through. \"Front door\" marks an Auto Attendant with a phone number attached."
                 : 'What happens to a call in this queue - overflow, timeout and no-agent routing, from live configuration.'}
             </Text>
             {loading ? (
@@ -1161,7 +1171,7 @@ function LiveCallFlowDialog({ base, type, row, onClose }: { base: string; type: 
                 Nothing to draw.
               </Text>
             ) : (
-              <CallFlowDiagram graph={graph} />
+              <CallFlowDiagram graph={graph} exportFilename={`call-flow-${row.display_name ?? row.object_key}`} />
             )}
           </DialogContent>
           <DialogActions>

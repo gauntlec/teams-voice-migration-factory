@@ -881,8 +881,16 @@ function toDesignCqInput(r: Row): DesignCallQueueInput {
   };
 }
 
-/** Maps a Design & Build Auto Attendant row to the shape buildAutoAttendantFlowGraphFromDesign needs. */
-function toDesignAaInput(r: Row): DesignAutoAttendantInput {
+/**
+ * Maps a Design & Build Auto Attendant row to the shape
+ * buildAutoAttendantFlowGraphFromDesign needs. `hasPhoneNumberById` looks up
+ * this AA's own `discovery_resource_account_id` against the site's resource
+ * accounts to tell whether it's a front door (a phone number rings into it
+ * directly) vs. only reachable via another AA's menu - see
+ * AutoAttendantFlowDialog, which builds that map.
+ */
+function toDesignAaInput(r: Row, hasPhoneNumberById?: Map<string, boolean>): DesignAutoAttendantInput {
+  const discoveryResourceAccountId = r.discovery_resource_account_id as string | null;
   return {
     buildId: String(r.id),
     name: String(r.name),
@@ -890,6 +898,7 @@ function toDesignAaInput(r: Row): DesignAutoAttendantInput {
     defaultCallFlow: (r.default_call_flow as AutoAttendantCallFlow | null) ?? null,
     afterHoursCallFlow: (r.after_hours_call_flow as AutoAttendantCallFlow | null) ?? null,
     holidayCallFlows: Array.isArray(r.holiday_call_flows) ? (r.holiday_call_flows as AutoAttendantHolidayCallFlow[]) : [],
+    hasPhoneNumber: discoveryResourceAccountId ? hasPhoneNumberById?.get(discoveryResourceAccountId) : undefined,
   };
 }
 
@@ -912,7 +921,7 @@ function CallQueueFlowDialog({ row, onClose }: { row: Row; onClose: () => void }
             <Text size={200} className={s.muted} style={{ display: 'block', marginBottom: 10 }}>
               What happens to a call in this queue - overflow, timeout and no-agent routing, as currently configured here - not yet deployed.
             </Text>
-            <CallFlowDiagram graph={graph} />
+            <CallFlowDiagram graph={graph} exportFilename={`call-flow-${String(row.name)}`} />
           </DialogContent>
           <DialogActions>
             <Button appearance="primary" onClick={onClose}>
@@ -928,11 +937,13 @@ function CallQueueFlowDialog({ row, onClose }: { row: Row; onClose: () => void }
 /**
  * The "as-designed" call-flow diagram for one Auto Attendant - business
  * hours, after hours and holiday routing, built from Design & Build's
- * structured columns via buildAutoAttendantFlowGraphFromDesign. Fetches the
- * site's other Auto Attendants/Call Queues only to label a menu-option
- * target with its real name and to expand one hop into a target Call
- * Queue's own routing - the counterpart to Discovery's own per-object "as-is"
- * diagram (AutoAttendantFlowDialog in Discovery.tsx), which reads live
+ * structured columns via buildAutoAttendantFlowGraphFromDesign, following
+ * every menu option that transfers to another Auto Attendant and expanding
+ * it too. Fetches the site's other Auto Attendants/Call Queues to do that
+ * (and to label a target with its real name), plus the site's resource
+ * accounts to tell which Auto Attendant is the "front door" (has a phone
+ * number attached) - the counterpart to Discovery's own per-object "as-is"
+ * diagram (LiveCallFlowDialog in Discovery.tsx), which reads live
  * tenant_objects directly instead.
  */
 function AutoAttendantFlowDialog({ tid, base, siteId, row, onClose }: { tid: string; base: string; siteId: string; row: Row; onClose: () => void }) {
@@ -945,11 +956,29 @@ function AutoAttendantFlowDialog({ tid, base, siteId, row, onClose }: { tid: str
     queryKey: ['call-queues', tid, siteId, 'call-flow'],
     queryFn: () => api<Paginated<Row>>(`${base}/call-queues?siteId=${siteId}&limit=500`),
   });
+  const raQ = useQuery({
+    queryKey: ['resource-accounts', tid, siteId, 'call-flow'],
+    queryFn: () => api<Paginated<Row>>(`${base}/resource-accounts?siteId=${siteId}&limit=500`),
+  });
+
+  const hasPhoneNumberById = useMemo(() => {
+    const m = new Map<string, boolean>();
+    for (const r of raQ.data?.items ?? []) {
+      const discoveryResourceAccountId = r.discovery_resource_account_id as string | null;
+      if (!discoveryResourceAccountId) continue;
+      m.set(discoveryResourceAccountId, !!(r.phone_number_id || r.phone_number));
+    }
+    return m;
+  }, [raQ.data]);
 
   const graph = useMemo(() => {
     if (!aaQ.data || !cqQ.data) return null;
-    return buildAutoAttendantFlowGraphFromDesign(toDesignAaInput(row), aaQ.data.items.map(toDesignAaInput), cqQ.data.items.map(toDesignCqInput));
-  }, [aaQ.data, cqQ.data, row]);
+    return buildAutoAttendantFlowGraphFromDesign(
+      toDesignAaInput(row, hasPhoneNumberById),
+      aaQ.data.items.map((r) => toDesignAaInput(r, hasPhoneNumberById)),
+      cqQ.data.items.map(toDesignCqInput),
+    );
+  }, [aaQ.data, cqQ.data, row, hasPhoneNumberById]);
 
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
@@ -958,19 +987,19 @@ function AutoAttendantFlowDialog({ tid, base, siteId, row, onClose }: { tid: str
           <DialogTitle>Call flow: {String(row.name)}</DialogTitle>
           <DialogContent>
             <Text size={200} className={s.muted} style={{ display: 'block', marginBottom: 10 }}>
-              Business hours, after hours and holiday routing, as currently configured here - not yet deployed. A menu option that transfers to another
-              Auto Attendant is shown as a single box - open that Auto Attendant's own call flow to see its routing.
+              Business hours, after hours and holiday routing, as currently configured here - not yet deployed - including every Auto Attendant a menu
+              option hands off to, followed all the way through. "Front door" marks an Auto Attendant with a phone number attached.
             </Text>
-            {aaQ.isLoading || cqQ.isLoading ? (
+            {aaQ.isLoading || cqQ.isLoading || raQ.isLoading ? (
               <Spinner size="tiny" label="Loading…" />
-            ) : aaQ.isError || cqQ.isError ? (
-              <LoadError message={((aaQ.error ?? cqQ.error) as Error).message} />
+            ) : aaQ.isError || cqQ.isError || raQ.isError ? (
+              <LoadError message={((aaQ.error ?? cqQ.error ?? raQ.error) as Error).message} />
             ) : !graph || graph.nodes.length === 0 ? (
               <Text size={200} className={s.muted}>
                 Nothing to draw yet - configure a business hours menu first.
               </Text>
             ) : (
-              <CallFlowDiagram graph={graph} />
+              <CallFlowDiagram graph={graph} exportFilename={`call-flow-${String(row.name)}`} />
             )}
           </DialogContent>
           <DialogActions>

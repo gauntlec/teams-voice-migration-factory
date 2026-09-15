@@ -1,8 +1,11 @@
-import { useMemo } from 'react';
-import { Background, Controls, MarkerType, MiniMap, ReactFlow, ReactFlowProvider } from '@xyflow/react';
+import { useMemo, useState } from 'react';
+import { Background, Controls, getNodesBounds, getViewportForBounds, MarkerType, MiniMap, type Node, Panel, ReactFlow, ReactFlowProvider, useReactFlow } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
-import { Text } from '@fluentui/react-components';
+import { toPng } from 'html-to-image';
+import { jsPDF } from 'jspdf';
+import { Button, Text, Tooltip } from '@fluentui/react-components';
+import { ArrowDownloadRegular } from '@fluentui/react-icons';
 import type { CallFlowBranch, CallFlowGraph, CallFlowNode, CallFlowNodeKind } from '@tvmf/shared';
 
 const NODE_WIDTH = 210;
@@ -29,12 +32,16 @@ const BRANCH_STYLE: Record<CallFlowBranch, { color: string; dash?: string; label
   no_agent: { color: '#DC2626', dash: '5,3', label: 'No agents' },
 };
 
-/** A greeting sublabel wraps over several lines, so a node showing one renders taller than NODE_HEIGHT - dagre needs that real height or it packs the next node in the same column right on top of it. */
+/** A greeting sublabel wraps over several lines, and a badge chip adds its own row - both render taller than NODE_HEIGHT, so dagre needs that real height or it packs the next node in the same column right on top of it. */
 function estimateNodeHeight(n: CallFlowNode): number {
-  if (!n.sublabel) return NODE_HEIGHT;
-  const charsPerLine = 32;
-  const lines = Math.max(1, Math.ceil(n.sublabel.length / charsPerLine));
-  return Math.max(NODE_HEIGHT, 30 + lines * 14 + 12);
+  let height = NODE_HEIGHT;
+  if (n.sublabel) {
+    const charsPerLine = 32;
+    const lines = Math.max(1, Math.ceil(n.sublabel.length / charsPerLine));
+    height = Math.max(height, 30 + lines * 14 + 12);
+  }
+  if (n.badge) height += 18;
+  return height;
 }
 
 /** dagre only computes positions - it's not rendered itself, xyflow does the actual drawing. */
@@ -48,6 +55,74 @@ function layout(graph: CallFlowGraph) {
   return new Map(graph.nodes.map((n) => [n.id, g.node(n.id)]));
 }
 
+function downloadDataUrl(dataUrl: string, filename: string) {
+  const a = document.createElement('a');
+  a.href = dataUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+/** Captures the whole diagram (not just what's currently visible/panned-to) as a PNG data URL, sized to fit every node - the same technique xyflow's own "download image" example uses. */
+async function captureDiagramPng(nodes: Node[]): Promise<{ dataUrl: string; width: number; height: number } | null> {
+  if (nodes.length === 0) return null;
+  const viewportEl = document.querySelector('.react-flow__viewport') as HTMLElement | null;
+  if (!viewportEl) return null;
+  const bounds = getNodesBounds(nodes);
+  const padding = 48;
+  const width = Math.max(400, Math.ceil(bounds.width) + padding * 2);
+  const height = Math.max(300, Math.ceil(bounds.height) + padding * 2);
+  const viewport = getViewportForBounds(bounds, width, height, 0.1, 2, padding);
+  const dataUrl = await toPng(viewportEl, {
+    backgroundColor: '#ffffff',
+    width,
+    height,
+    style: { width: `${width}px`, height: `${height}px`, transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})` },
+  });
+  return { dataUrl, width, height };
+}
+
+/** Export-to-PNG/PDF buttons - a child of ReactFlow so useReactFlow can read the laid-out node positions/sizes. */
+function ExportControls({ filename }: { filename: string }) {
+  const { getNodes } = useReactFlow();
+  const [busy, setBusy] = useState(false);
+
+  const runExport = async (kind: 'png' | 'pdf') => {
+    setBusy(true);
+    try {
+      const shot = await captureDiagramPng(getNodes());
+      if (!shot) return;
+      if (kind === 'png') {
+        downloadDataUrl(shot.dataUrl, `${filename}.png`);
+      } else {
+        const pdf = new jsPDF({ orientation: shot.width >= shot.height ? 'landscape' : 'portrait', unit: 'px', format: [shot.width, shot.height] });
+        pdf.addImage(shot.dataUrl, 'PNG', 0, 0, shot.width, shot.height);
+        pdf.save(`${filename}.pdf`);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Panel position="top-right">
+      <div style={{ display: 'flex', gap: 6 }}>
+        <Tooltip content="Export this diagram as a PNG image" relationship="label">
+          <Button size="small" icon={<ArrowDownloadRegular />} disabled={busy} onClick={() => runExport('png')}>
+            PNG
+          </Button>
+        </Tooltip>
+        <Tooltip content="Export this diagram as a PDF" relationship="label">
+          <Button size="small" icon={<ArrowDownloadRegular />} disabled={busy} onClick={() => runExport('pdf')}>
+            PDF
+          </Button>
+        </Tooltip>
+      </div>
+    </Panel>
+  );
+}
+
 /**
  * Renders a CallFlowGraph (packages/shared/src/call-flow-graph.ts) with
  * @xyflow/react - dagre auto-layout since the graph can cycle (a Directory
@@ -55,15 +130,18 @@ function layout(graph: CallFlowGraph) {
  * hand-rolled tree layout won't fit every real Auto Attendant/Call Queue
  * chain.
  */
-export function CallFlowDiagram({ graph }: { graph: CallFlowGraph }) {
+export function CallFlowDiagram({ graph, exportFilename }: { graph: CallFlowGraph; exportFilename?: string }) {
   const { nodes, edges } = useMemo(() => {
     const positions = layout(graph);
     const nodes = graph.nodes.map((n) => {
       const style = KIND_STYLE[n.kind];
       const pos = positions.get(n.id) ?? { x: 0, y: 0 };
+      const height = estimateNodeHeight(n);
       return {
         id: n.id,
-        position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - estimateNodeHeight(n) / 2 },
+        position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - height / 2 },
+        width: NODE_WIDTH,
+        height,
         data: {
           label: (
             <div>
@@ -71,6 +149,25 @@ export function CallFlowDiagram({ graph }: { graph: CallFlowGraph }) {
                 {style.icon} {n.label}
               </div>
               {n.sublabel && <div style={{ fontSize: 10, opacity: 0.7, marginTop: 2 }}>{n.sublabel}</div>}
+              {n.badge && (
+                <div
+                  style={{
+                    display: 'inline-block',
+                    marginTop: 4,
+                    fontSize: 9,
+                    fontWeight: 600,
+                    letterSpacing: 0.3,
+                    textTransform: 'uppercase',
+                    color: '#166534',
+                    background: '#DCFCE7',
+                    border: '1px solid #86EFAC',
+                    borderRadius: 999,
+                    padding: '1px 7px',
+                  }}
+                >
+                  {n.badge}
+                </div>
+              )}
             </div>
           ),
         },
@@ -116,6 +213,7 @@ export function CallFlowDiagram({ graph }: { graph: CallFlowGraph }) {
             <Background />
             <Controls showInteractive={false} />
             <MiniMap pannable zoomable style={{ width: 120, height: 80 }} />
+            <ExportControls filename={exportFilename ?? 'call-flow'} />
           </ReactFlow>
         </ReactFlowProvider>
       </div>
