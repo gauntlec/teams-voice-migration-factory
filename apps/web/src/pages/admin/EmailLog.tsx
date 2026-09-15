@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Badge,
@@ -6,6 +7,7 @@ import {
   MessageBar,
   MessageBarBody,
   MessageBarTitle,
+  SearchBox,
   Spinner,
   TableBody,
   TableCell,
@@ -18,6 +20,7 @@ import { ArrowClockwiseRegular } from '@fluentui/react-icons';
 import { api } from '../../api';
 import { DataTable } from '../../components/DataTable';
 import { Page } from '../../components/Page';
+import { useDebounced } from '../../hooks/useDebounced';
 import { LoadError } from '../../components/records';
 
 interface EmailMessage {
@@ -63,9 +66,11 @@ const mono: React.CSSProperties = {
 export function AdminEmailLog() {
   const qc = useQueryClient();
 
+  const [searchInput, setSearchInput] = useState('');
+  const search = useDebounced(searchInput);
   const q = useQuery({
-    queryKey: ['email-messages'],
-    queryFn: () => api<EmailLogResponse>('/email-messages'),
+    queryKey: ['email-messages', search],
+    queryFn: () => api<EmailLogResponse>(`/email-messages${search ? `?q=${encodeURIComponent(search)}` : ''}`),
     refetchInterval: 10_000,
   });
 
@@ -117,6 +122,13 @@ export function AdminEmailLog() {
       </Card>
 
       <Card>
+        <SearchBox
+          size="small"
+          placeholder="Search by recipient, subject or template…"
+          value={searchInput}
+          onChange={(_, d) => setSearchInput(d.value)}
+          style={{ maxWidth: 320 }}
+        />
         {q.isLoading ? (
           <Spinner size="tiny" />
         ) : q.isError ? (

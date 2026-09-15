@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Card,
+  SearchBox,
   Spinner,
   TableBody,
   TableCell,
@@ -11,6 +13,7 @@ import {
 import { api } from '../../api';
 import { DataTable } from '../../components/DataTable';
 import { Page } from '../../components/Page';
+import { useDebounced } from '../../hooks/useDebounced';
 import { LoadError } from '../DataCollection';
 
 interface Entry {
@@ -24,19 +27,28 @@ interface Entry {
 }
 
 export function AdminAudit() {
-  const q = useQuery({
-    queryKey: ['platform-audit'],
+  const [searchInput, setSearchInput] = useState('');
+  const search = useDebounced(searchInput);
+  const entries = useQuery({
+    queryKey: ['platform-audit', search],
     refetchInterval: 10000,
-    queryFn: () => api<Entry[]>('/audit/platform'),
+    queryFn: () => api<Entry[]>(`/audit/platform${search ? `?q=${encodeURIComponent(search)}` : ''}`),
   });
 
   return (
     <Page title="Platform Audit" subtitle="Authentication, user and customer administration, and tenant connections.">
       <Card>
-        {q.isLoading ? (
+        <SearchBox
+          size="small"
+          placeholder="Search by actor, action or target…"
+          value={searchInput}
+          onChange={(_, d) => setSearchInput(d.value)}
+          style={{ maxWidth: 320 }}
+        />
+        {entries.isLoading ? (
           <Spinner size="tiny" />
-        ) : q.isError ? (
-          <LoadError message={(q.error as Error).message} />
+        ) : entries.isError ? (
+          <LoadError message={(entries.error as Error).message} />
         ) : (
           <DataTable size="small" minWidth={760}>
             <TableHeader>
@@ -48,7 +60,7 @@ export function AdminAudit() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {q.data!.map((e) => (
+              {entries.data!.map((e) => (
                 <TableRow key={e.id}>
                   <TableCell>{new Date(e.at).toLocaleString()}</TableCell>
                   <TableCell>{e.actor_email ?? '—'}</TableCell>

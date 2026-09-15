@@ -14,7 +14,7 @@ export class MailController {
 
   @Get()
   @RequirePermission('audit:read:platform')
-  async list(@Query('limit') limit = '250') {
+  async list(@Query('limit') limit = '250', @Query('q') q?: string) {
     return {
       smtp: {
         configured: !!process.env.SMTP_HOST,
@@ -24,7 +24,7 @@ export class MailController {
         // true only tells the operator whether a password is present, never its value
         hasCredentials: !!process.env.SMTP_USER,
       },
-      items: await this.mail.list(Number(limit) || 250),
+      items: await this.mail.list(Number(limit) || 250, q),
     };
   }
 

@@ -10,6 +10,7 @@ import {
   Popover,
   PopoverSurface,
   PopoverTrigger,
+  SearchBox,
   Spinner,
   TableBody,
   TableCell,
@@ -25,6 +26,7 @@ import { api, apiDownload, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
 import { Page } from '../components/Page';
+import { useDebounced } from '../hooks/useDebounced';
 import { LoadError, NoTenant, useRecordStyles } from '../components/records';
 
 const CATEGORY_LABEL: Record<string, string> = {
@@ -113,6 +115,8 @@ export function Files() {
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [siteFilter, setSiteFilter] = useState<Set<string>>(new Set());
   const [categoryFilter, setCategoryFilter] = useState<Set<string>>(new Set());
+  const [searchInput, setSearchInput] = useState('');
+  const search = useDebounced(searchInput);
 
   // Site picker: Deployment's summary needs deployment:read, which
   // PROJECT_MANAGER and CUSTOMER don't have, but this page (files:read) is
@@ -126,9 +130,9 @@ export function Files() {
   });
 
   const files = useQuery({
-    queryKey: ['files', tid],
+    queryKey: ['files', tid, search],
     enabled: !!tid,
-    queryFn: () => api<FileRow[]>(`/t/${tid}/files`),
+    queryFn: () => api<FileRow[]>(`/t/${tid}/files${search ? `?q=${encodeURIComponent(search)}` : ''}`),
   });
 
   if (!tid) return <NoTenant />;
@@ -195,6 +199,14 @@ export function Files() {
             </Link>
           )}
         </div>
+
+        <SearchBox
+          size="small"
+          placeholder="Search by filename…"
+          value={searchInput}
+          onChange={(_, d) => setSearchInput(d.value)}
+          style={{ maxWidth: 320 }}
+        />
 
         {downloadError && <LoadError message={downloadError} />}
 

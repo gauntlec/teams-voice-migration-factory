@@ -100,6 +100,7 @@ export class FilesService {
     if (filter.category) q = q.where('category', '=', filter.category);
     if (filter.sourceType) q = q.where('source_type', '=', filter.sourceType);
     if (filter.sourceId) q = q.where('source_id', '=', filter.sourceId);
+    if (filter.q) q = q.where('filename', 'ilike', `%${filter.q}%`);
     if (isSiteScoped(t)) q = q.where('site_id', 'in', t.siteScope);
     const rows = await q.execute();
     return rows.map(toRow);

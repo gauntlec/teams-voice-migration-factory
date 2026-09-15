@@ -70,8 +70,8 @@ export class MailService {
   }
 
   /** Recent messages for a communications log view. */
-  list(limit = 100) {
-    return platformDb(this.db)
+  list(limit = 100, search?: string) {
+    let q = platformDb(this.db)
       .selectFrom('email_messages')
       .select([
         'id',
@@ -88,7 +88,11 @@ export class MailService {
         'sent_at',
       ])
       .orderBy('created_at', 'desc')
-      .limit(Math.min(Math.max(limit, 1), 500))
-      .execute();
+      .limit(Math.min(Math.max(limit, 1), 500));
+    if (search) {
+      const like = `%${search}%`;
+      q = q.where((eb) => eb.or([eb('to_email', 'ilike', like), eb('subject', 'ilike', like), eb('template', 'ilike', like)]));
+    }
+    return q.execute();
   }
 }

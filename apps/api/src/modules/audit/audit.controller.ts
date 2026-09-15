@@ -13,10 +13,13 @@ export class AuditController {
   @Get('t/:tenantId/audit')
   @UseGuards(TenantGuard)
   @RequirePermission('audit:read:tenant')
-  tenantLog(@TenantCtx() t: TenantContext, @Query('limit') limit = '200') {
-    return tenantDb(this.db, t.schema)
-      .selectFrom('audit_log')
-      .selectAll()
+  tenantLog(@TenantCtx() t: TenantContext, @Query('limit') limit = '200', @Query('q') q?: string) {
+    let query = tenantDb(this.db, t.schema).selectFrom('audit_log').selectAll();
+    if (q) {
+      const like = `%${q}%`;
+      query = query.where((eb) => eb.or([eb('actor_email', 'ilike', like), eb('action', 'ilike', like), eb('target_type', 'ilike', like)]));
+    }
+    return query
       .orderBy('at', 'desc')
       .limit(Math.min(Number(limit) || 200, 1000))
       .execute();
@@ -24,10 +27,13 @@ export class AuditController {
 
   @Get('audit/platform')
   @RequirePermission('audit:read:platform')
-  platformLog(@Query('limit') limit = '200') {
-    return platformDb(this.db)
-      .selectFrom('platform_audit_log')
-      .selectAll()
+  platformLog(@Query('limit') limit = '200', @Query('q') q?: string) {
+    let query = platformDb(this.db).selectFrom('platform_audit_log').selectAll();
+    if (q) {
+      const like = `%${q}%`;
+      query = query.where((eb) => eb.or([eb('actor_email', 'ilike', like), eb('action', 'ilike', like), eb('target_type', 'ilike', like)]));
+    }
+    return query
       .orderBy('at', 'desc')
       .limit(Math.min(Number(limit) || 200, 1000))
       .execute();
