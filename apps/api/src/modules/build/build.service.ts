@@ -1457,6 +1457,8 @@ export class BuildService {
         numberType: r.number_type,
         provisioningCommand: renderCommand({
           cmdlet: 'New-CsOnlineApplicationInstance',
+          objectType: 'resource_account',
+          objectId: r.id,
           parameters: {
             UserPrincipalName: r.upn,
             ApplicationId: RESOURCE_ACCOUNT_APPLICATION_IDS[r.kind],
