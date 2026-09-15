@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Badge,
@@ -45,6 +45,7 @@ import {
   PlugConnectedRegular,
 } from '@fluentui/react-icons';
 import {
+  buildCallFlowGraphFromLive,
   TENANT_DISCOVERY_STEPS,
   TENANT_DISCOVERY_STEP_LABELS,
   TENANT_DISCOVERY_STEP_TYPES,
@@ -71,6 +72,7 @@ import {
 } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { useAuth } from '../auth';
+import { CallFlowDiagram } from '../components/CallFlowDiagram';
 import { DataTable } from '../components/DataTable';
 import { JsonTree } from '../components/JsonTree';
 import { Page } from '../components/Page';
@@ -1082,6 +1084,70 @@ function JsonDialog({ title, data, onClose }: { title: string; data: unknown; on
   );
 }
 
+/**
+ * The "as-is" call-flow diagram - built straight from Discovery's live
+ * tenant_objects snapshot (buildCallFlowGraphFromLive), no Design & Build
+ * populate step needed. tenant_objects has no site scoping, so a name
+ * filter (matching the sitecode/name-prefix convention already used
+ * elsewhere, e.g. Populate's own name matching) narrows a large tenant down
+ * to one site's worth of Auto Attendants/Call Queues - schedules are always
+ * fetched in full since a holiday/after-hours schedule's own name rarely
+ * matches its AA's name filter.
+ */
+function DiscoveryCallFlowSection({ base }: { base: string }) {
+  const s = useStyles();
+  const [qInput, setQInput] = useState('');
+  const q = useDebounced(qInput);
+
+  const aaQ = useQuery({
+    queryKey: ['tdisc', 'callflow-aa', base, q],
+    queryFn: () => api<Paginated<TenantObject>>(`${base}/objects?type=auto_attendant&limit=200${q ? `&q=${encodeURIComponent(q)}` : ''}`),
+  });
+  const cqQ = useQuery({
+    queryKey: ['tdisc', 'callflow-cq', base, q],
+    queryFn: () => api<Paginated<TenantObject>>(`${base}/objects?type=call_queue&limit=200${q ? `&q=${encodeURIComponent(q)}` : ''}`),
+  });
+  const schedQ = useQuery({
+    queryKey: ['tdisc', 'callflow-sched', base],
+    queryFn: () => api<Paginated<TenantObject>>(`${base}/objects?type=schedule&limit=500`),
+  });
+
+  const graph = useMemo(() => {
+    if (!aaQ.data || !cqQ.data || !schedQ.data) return null;
+    return buildCallFlowGraphFromLive({
+      autoAttendants: aaQ.data.items.map((o) => ({ name: o.display_name ?? o.object_key, data: o.data })),
+      callQueues: cqQ.data.items.map((o) => ({ name: o.display_name ?? o.object_key, data: o.data })),
+      schedules: schedQ.data.items.map((o) => ({ key: o.object_key, data: o.data })),
+    });
+  }, [aaQ.data, cqQ.data, schedQ.data]);
+
+  const loading = aaQ.isLoading || cqQ.isLoading || schedQ.isLoading;
+
+  return (
+    <Card className={s.card}>
+      <div className={s.toolbar}>
+        <Text weight="semibold">Call flow (as-is, from live data)</Text>
+        <SearchBox placeholder="Filter by name (e.g. a sitecode)…" value={qInput} onChange={(_, d) => setQInput(d.value)} style={{ minWidth: 260 }} />
+      </div>
+      {loading ? (
+        <Spinner size="tiny" label="Loading…" />
+      ) : aaQ.isError || cqQ.isError || schedQ.isError ? (
+        <LoadError message={((aaQ.error ?? cqQ.error ?? schedQ.error) as Error).message} />
+      ) : !graph || (graph.nodes.length === 0 && !q) ? (
+        <Text size={200} className={s.muted}>
+          Nothing discovered yet.
+        </Text>
+      ) : graph.nodes.length === 0 ? (
+        <Text size={200} className={s.muted}>
+          No Auto Attendants or Call Queues match "{q}".
+        </Text>
+      ) : (
+        <CallFlowDiagram graph={graph} />
+      )}
+    </Card>
+  );
+}
+
 /** Generic snapshot list for one object type. */
 function ObjectsTable({
   base,
@@ -1867,6 +1933,7 @@ export function Discovery() {
 
       {tab === 'voice_apps' && (
         <>
+          <DiscoveryCallFlowSection base={base} />
           <ObjectsTable base={base} type="auto_attendant" columns={[{ label: 'Name', render: (o) => o.display_name ?? o.object_key }, { label: 'Language', render: (o) => str(o, 'LanguageId') }, { label: 'Time zone', render: (o) => str(o, 'TimeZoneId') }]} />
           <ObjectsTable base={base} type="call_queue" columns={[{ label: 'Name', render: (o) => o.display_name ?? o.object_key }, { label: 'Routing', render: (o) => str(o, 'RoutingMethod') }, { label: 'Agents', render: (o) => String((o.data.Agents as unknown[] | undefined)?.length ?? '—') }]} />
           <ObjectsTable base={base} type="schedule" columns={[{ label: 'Name', render: (o) => o.display_name ?? o.object_key }, { label: 'Type', render: (o) => str(o, 'Type') }]} />

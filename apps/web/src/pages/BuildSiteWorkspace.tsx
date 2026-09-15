@@ -31,6 +31,7 @@ import {
   AA_DTMF_RESPONSES,
   AA_MENU_OPTION_ACTIONS,
   AA_SCHEDULE_TYPES,
+  buildCallFlowGraphFromDesign,
   BUSY_ON_BUSY_OPTIONS,
   CALL_FORWARDING_TYPES,
   CALL_GROUP_ORDERS,
@@ -63,6 +64,7 @@ import {
 } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { useAuth } from '../auth';
+import { CallFlowDiagram } from '../components/CallFlowDiagram';
 import { Page } from '../components/Page';
 import { UpnAutocomplete } from '../components/UpnAutocomplete';
 import {
@@ -147,7 +149,7 @@ export function BuildSiteWorkspace() {
   const { siteId = '' } = useParams();
   const { activeTenantId, can } = useAuth();
   const qc = useQueryClient();
-  const [tab, setTab] = useState<'users' | 'caps' | 'resource-accounts' | 'call-queues' | 'auto-attendants'>('users');
+  const [tab, setTab] = useState<'users' | 'caps' | 'resource-accounts' | 'call-queues' | 'auto-attendants' | 'call-flow'>('users');
 
   const tid = activeTenantId;
   const base = `/t/${tid}/build`;
@@ -522,6 +524,7 @@ export function BuildSiteWorkspace() {
         <Tab value="resource-accounts">Resource accounts</Tab>
         <Tab value="call-queues">Call queues</Tab>
         <Tab value="auto-attendants">Auto attendants</Tab>
+        <Tab value="call-flow">Call flow</Tab>
       </TabList>
 
       {tab === 'users' && (
@@ -829,7 +832,70 @@ export function BuildSiteWorkspace() {
           ]}
         />
       )}
+
+      {tab === 'call-flow' && tid && <BuildCallFlowSection tid={tid} base={base} siteId={siteId} />}
     </Page>
+  );
+}
+
+/**
+ * The "as-designed" call-flow diagram - built from Design & Build's
+ * structured build_auto_attendants/build_call_queues columns
+ * (buildCallFlowGraphFromDesign), the counterpart to Discovery's own
+ * "as-is" diagram (DiscoveryCallFlowSection in Discovery.tsx), which reads
+ * live tenant_objects directly instead.
+ */
+function BuildCallFlowSection({ tid, base, siteId }: { tid: string; base: string; siteId: string }) {
+  const s = useRecordStyles();
+  const aaQ = useQuery({
+    queryKey: ['auto-attendants', tid, siteId, 'call-flow'],
+    queryFn: () => api<Paginated<Row>>(`${base}/auto-attendants?siteId=${siteId}&limit=500`),
+  });
+  const cqQ = useQuery({
+    queryKey: ['call-queues', tid, siteId, 'call-flow'],
+    queryFn: () => api<Paginated<Row>>(`${base}/call-queues?siteId=${siteId}&limit=500`),
+  });
+
+  const graph = useMemo(() => {
+    if (!aaQ.data || !cqQ.data) return null;
+    return buildCallFlowGraphFromDesign({
+      autoAttendants: aaQ.data.items.map((r) => ({
+        buildId: String(r.id),
+        name: String(r.name),
+        operator: (r.operator as AutoAttendantCallableEntity | null) ?? null,
+        defaultCallFlow: (r.default_call_flow as AutoAttendantCallFlow | null) ?? null,
+        afterHoursCallFlow: (r.after_hours_call_flow as AutoAttendantCallFlow | null) ?? null,
+        schedule: (r.schedule as AutoAttendantSchedule | null) ?? null,
+        holidayCallFlows: Array.isArray(r.holiday_call_flows) ? (r.holiday_call_flows as AutoAttendantHolidayCallFlow[]) : [],
+      })),
+      callQueues: cqQ.data.items.map((r) => ({
+        buildId: String(r.id),
+        name: String(r.name),
+        overflow: (r.overflow as CallQueueActionSettings | null) ?? null,
+        timeout: (r.timeout as CallQueueActionSettings | null) ?? null,
+        noAgentAction: (r.no_agent_action as CallQueueActionSettings | null) ?? null,
+      })),
+    });
+  }, [aaQ.data, cqQ.data]);
+
+  return (
+    <Card className={s.card}>
+      <Text weight="semibold">Call flow (as-designed, from Design &amp; Build)</Text>
+      <Text size={200} className={s.muted} style={{ display: 'block', marginTop: 2, marginBottom: 10 }}>
+        Business hours, after hours and holiday routing for this site's Auto Attendants and Call Queues, as currently configured here - not yet deployed.
+      </Text>
+      {aaQ.isLoading || cqQ.isLoading ? (
+        <Spinner size="tiny" label="Loading…" />
+      ) : aaQ.isError || cqQ.isError ? (
+        <LoadError message={((aaQ.error ?? cqQ.error) as Error).message} />
+      ) : !graph || graph.nodes.length === 0 ? (
+        <Text size={200} className={s.muted}>
+          No Auto Attendants or Call Queues configured yet - Populate from Discovery on the Resource accounts tab first.
+        </Text>
+      ) : (
+        <CallFlowDiagram graph={graph} />
+      )}
+    </Card>
   );
 }
 
