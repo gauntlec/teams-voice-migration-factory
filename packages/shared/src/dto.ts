@@ -970,7 +970,13 @@ const callQueueActionSchema = (actions: readonly [string, ...string[]]) =>
 
 const buildCallQueueWritable = {
   routing_method: blankToNull(z.enum(CALL_QUEUE_ROUTING_METHODS)),
-  agent_alert_time: z.number().int().min(15).max(180).optional(),
+  // RecordDialog's `type: 'number'` sends '' (then null, via buildPayload) for
+  // an untouched/cleared field - treat as "use the DB default", not a
+  // validation error (same pattern as discoveryNetworkSchema's mask/vlan_id).
+  agent_alert_time: z.preprocess(
+    (v) => (v === '' || v == null ? undefined : v),
+    z.coerce.number().int().min(15).max(180).optional(),
+  ),
   presence_based_routing: z.boolean().optional(),
   /** Agent UPNs - resolved to Entra object GUIDs at deploy time (Set-CsCallQueue -Users needs GUIDs). */
   agents: z.array(str(200)).max(200).optional(),
