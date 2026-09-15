@@ -22,6 +22,7 @@ import {
   MessageBar,
   MessageBarBody,
   Option,
+  SearchBox,
   Spinner,
   Text,
   Textarea,
@@ -723,6 +724,7 @@ export function FeatureRequests() {
   const [detail, setDetail] = useState<FeatureRequest | null>(null);
   const [overCol, setOverCol] = useState<FeatureStatus | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<FeatureRequest | null>(null);
+  const [search, setSearch] = useState('');
 
   const list = useQuery({
     queryKey: ['feature-requests'],
@@ -746,11 +748,15 @@ export function FeatureRequests() {
   });
 
   const byStatus = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    const rows = term
+      ? (list.data ?? []).filter((f) => f.title.toLowerCase().includes(term) || f.problem.toLowerCase().includes(term))
+      : (list.data ?? []);
     const m = new Map<FeatureStatus, FeatureRequest[]>();
     for (const st of FEATURE_STATUSES) m.set(st, []);
-    for (const f of list.data ?? []) m.get(f.status)?.push(f);
+    for (const f of rows) m.get(f.status)?.push(f);
     return m;
-  }, [list.data]);
+  }, [list.data, search]);
 
   const actions: ReactNode = canCreate ? (
     <Button appearance="primary" icon={<AddRegular />} onClick={() => setDialog({ mode: 'create' })}>
@@ -764,6 +770,13 @@ export function FeatureRequests() {
       subtitle="Ideas to improve the platform. An admin moves a card to “In development” to hand it to Claude Code; it returns to “Deployed” when the change ships."
       actions={actions}
     >
+      <SearchBox
+        size="small"
+        placeholder="Search by title or problem…"
+        value={search}
+        onChange={(_, d) => setSearch(d.value)}
+        style={{ maxWidth: 320, marginBottom: 8 }}
+      />
       {list.isLoading ? (
         <Spinner size="tiny" />
       ) : list.isError ? (

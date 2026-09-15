@@ -6,6 +6,7 @@ import {
   Button,
   Card,
   Link,
+  SearchBox,
   Spinner,
   TableBody,
   TableCell,
@@ -98,7 +99,12 @@ export function DeploymentSites() {
   if (q.isLoading) return <Spinner label="Loading Deployment…" />;
   if (q.isError) return <LoadError message={(q.error as Error).message} />;
 
-  const sites = q.data ?? [];
+  const [search, setSearch] = useState('');
+  const term = search.trim().toLowerCase();
+  const allSites = q.data ?? [];
+  const sites = term
+    ? allSites.filter((r) => r.sitecode.toLowerCase().includes(term) || (r.name ?? '').toLowerCase().includes(term))
+    : allSites;
   const open = (id: string) => navigate(`/deployment/sites/${id}`);
 
   return (
@@ -203,13 +209,29 @@ export function DeploymentSites() {
       <Card className={s.card}>
         <div className={s.cardHead}>
           <Text weight="semibold" size={400}>
-            Sites <span className={s.muted}>({sites.length})</span>
+            Sites{' '}
+            <span className={s.muted}>
+              ({sites.length}
+              {term ? ` of ${allSites.length}` : ''})
+            </span>
           </Text>
         </div>
 
-        {sites.length === 0 ? (
+        <SearchBox
+          size="small"
+          placeholder="Search by sitecode or name…"
+          value={search}
+          onChange={(_, d) => setSearch(d.value)}
+          style={{ maxWidth: 320 }}
+        />
+
+        {allSites.length === 0 ? (
           <Text size={200} className={s.muted}>
             No sites yet — add one in Data Collection first.
+          </Text>
+        ) : sites.length === 0 ? (
+          <Text size={200} className={s.muted}>
+            No sites match “{search}”.
           </Text>
         ) : (
           <DataTable size="small" minWidth={780}>

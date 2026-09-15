@@ -7,6 +7,7 @@ import {
   Card,
   MessageBar,
   MessageBarBody,
+  SearchBox,
   Spinner,
   TableBody,
   TableCell,
@@ -77,6 +78,7 @@ export function DataCollection() {
     setViewState(v);
     localStorage.setItem('tvmf.sitesView', v);
   };
+  const [search, setSearch] = useState('');
 
   const q = useQuery({
     queryKey: key,
@@ -107,7 +109,11 @@ export function DataCollection() {
     return <Navigate to={`/data-collection/sites/${d.sites[0].id}`} replace />;
   }
 
-  const placed = d.sites.filter((x) => x.latitude != null && x.longitude != null).length;
+  const term = search.trim().toLowerCase();
+  const sites = term
+    ? d.sites.filter((x) => x.sitecode.toLowerCase().includes(term) || (x.name ?? '').toLowerCase().includes(term))
+    : d.sites;
+  const placed = sites.filter((x) => x.latitude != null && x.longitude != null).length;
 
   return (
     <Page
@@ -170,7 +176,11 @@ export function DataCollection() {
         <div className={s.cardHead}>
           <div>
             <Text weight="semibold" size={400}>
-              Sites <span className={s.muted}>({d.sites.length})</span>
+              Sites{' '}
+              <span className={s.muted}>
+                ({sites.length}
+                {term ? ` of ${d.sites.length}` : ''})
+              </span>
             </Text>
             {canManageSites && (
               <Text size={200} className={s.muted} block>
@@ -193,6 +203,16 @@ export function DataCollection() {
           </TabList>
         </div>
 
+        {d.sites.length > 0 && (
+          <SearchBox
+            size="small"
+            placeholder="Search by sitecode or name…"
+            value={search}
+            onChange={(_, ev) => setSearch(ev.value)}
+            style={{ maxWidth: 320 }}
+          />
+        )}
+
         {d.sites.length === 0 ? (
           <Text size={200} className={s.muted}>
             No sites yet.{' '}
@@ -204,12 +224,16 @@ export function DataCollection() {
               'The migration team will add them.'
             )}
           </Text>
+        ) : sites.length === 0 ? (
+          <Text size={200} className={s.muted}>
+            No sites match “{search}”.
+          </Text>
         ) : view === 'map' ? (
           <>
-            <SitesMap sites={d.sites as unknown as MapSite[]} onOpen={open} />
-            {placed < d.sites.length && (
+            <SitesMap sites={sites as unknown as MapSite[]} onOpen={open} />
+            {placed < sites.length && (
               <Text size={200} className={s.muted}>
-                {d.sites.length - placed} site(s) not on the map yet — set their coordinates in{' '}
+                {sites.length - placed} site(s) not on the map yet — set their coordinates in{' '}
                 <Link to="/admin/sites">Sites admin</Link>.
               </Text>
             )}
@@ -229,7 +253,7 @@ export function DataCollection() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {d.sites.map((r) => (
+                {sites.map((r) => (
                   <TableRow key={r.id}>
                     <TableCell>{r.sitecode}</TableCell>
                     <TableCell>{r.name || '—'}</TableCell>

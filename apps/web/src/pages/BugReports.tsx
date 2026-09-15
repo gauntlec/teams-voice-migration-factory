@@ -22,6 +22,7 @@ import {
   MessageBar,
   MessageBarBody,
   Option,
+  SearchBox,
   Spinner,
   Text,
   Textarea,
@@ -640,6 +641,7 @@ export function BugReports() {
   const [detail, setDetail] = useState<BugReport | null>(null);
   const [overCol, setOverCol] = useState<BugStatus | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<BugReport | null>(null);
+  const [search, setSearch] = useState('');
 
   const list = useQuery({
     queryKey: ['bug-reports'],
@@ -663,11 +665,17 @@ export function BugReports() {
   });
 
   const byStatus = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    const rows = term
+      ? (list.data ?? []).filter(
+          (b) => b.title.toLowerCase().includes(term) || (b.affected_customer ?? '').toLowerCase().includes(term),
+        )
+      : (list.data ?? []);
     const m = new Map<BugStatus, BugReport[]>();
     for (const st of BUG_STATUSES) m.set(st, []);
-    for (const b of list.data ?? []) m.get(b.status)?.push(b);
+    for (const b of rows) m.get(b.status)?.push(b);
     return m;
-  }, [list.data]);
+  }, [list.data, search]);
 
   const actions: ReactNode = canCreate ? (
     <Button appearance="primary" icon={<AddRegular />} onClick={() => setDialog({ mode: 'create' })}>
@@ -681,6 +689,13 @@ export function BugReports() {
       subtitle="Defects found in the platform itself. An admin moves a card through triage as it's confirmed, fixed and shipped."
       actions={actions}
     >
+      <SearchBox
+        size="small"
+        placeholder="Search by title or affected customer…"
+        value={search}
+        onChange={(_, d) => setSearch(d.value)}
+        style={{ maxWidth: 320, marginBottom: 8 }}
+      />
       {list.isLoading ? (
         <Spinner size="tiny" />
       ) : list.isError ? (
