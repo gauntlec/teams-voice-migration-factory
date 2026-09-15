@@ -11,8 +11,10 @@ export interface EnqueueMailInput {
   context: EmailContext;
   related?: { type: string; id: string };
   createdBy?: string | null;
-  /** Which customer this email is for - drives branding at render time. Omit for cross-tenant/platform-level mail (invitations, feature/bug status). */
+  /** Which customer this email is for - drives branding at render time. Omit for cross-tenant/platform-level mail (feature/bug status). */
   tenantId?: string | null;
+  /** Which MSP this email is for, when the recipient is MSP staff - drives branding at render time. Mutually exclusive with tenantId in practice. */
+  mspId?: string | null;
 }
 
 /** BullMQ options: retry a handful of times with growing backoff. */
@@ -47,6 +49,7 @@ export class MailService {
         related_type: input.related?.type ?? null,
         related_id: input.related?.id ?? null,
         tenant_id: input.tenantId ?? null,
+        msp_id: input.mspId ?? null,
         created_by: input.createdBy ?? null,
       })
       .returning('id')

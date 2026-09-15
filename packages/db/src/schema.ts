@@ -72,8 +72,10 @@ export interface EmailMessagesTable {
   attempts: ColumnType<number, number | undefined, number>;
   related_type: string | null;
   related_id: string | null;
-  /** Which customer this email is for, when it's tenant-scoped - drives branding at render time. Null for cross-tenant/platform-level mail (invitations, feature/bug status). */
+  /** Which customer this email is for, when it's tenant-scoped - drives branding at render time. Null for cross-tenant/platform-level mail (feature/bug status). */
   tenant_id: string | null;
+  /** Which MSP this email is for, when the recipient is MSP staff - drives branding at render time (see loadEmailBranding in apps/worker/src/main.ts). Mutually exclusive with tenant_id in practice. */
+  msp_id: string | null;
   created_by: string | null;
   created_at: Ts;
   sent_at: string | null;

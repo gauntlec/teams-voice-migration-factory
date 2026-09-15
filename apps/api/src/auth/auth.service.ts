@@ -4,11 +4,11 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import * as argon2 from 'argon2';
-import { sql } from 'kysely';
 import { platformDb } from '@tvmf/db';
 import type { Branding, Me } from '@tvmf/shared';
 import { AuditService } from '../common/audit.service';
 import { decryptSecret, encryptSecret } from '../common/crypto';
+import { resolveMspId } from '../common/msp-resolution.util';
 import { InjectDb, type Db } from '../db/db.module';
 import { TokenService } from './token.service';
 import { TotpService } from './totp.service';
@@ -337,24 +337,10 @@ export class AuthService {
     email: string,
     mspIdOverride: string | null,
   ): Promise<{ id: string; branding: Branding | null } | null> {
-    const domain = email.split('@')[1]?.toLowerCase();
-    if (domain) {
-      const byDomain = await platformDb(this.db)
-        .selectFrom('msps')
-        .select(['id', 'branding'])
-        .where(sql<boolean>`${domain} = any(domains)`)
-        .executeTakeFirst();
-      if (byDomain) return { id: byDomain.id, branding: byDomain.branding ?? null };
-    }
-    if (mspIdOverride) {
-      const byOverride = await platformDb(this.db)
-        .selectFrom('msps')
-        .select(['id', 'branding'])
-        .where('id', '=', mspIdOverride)
-        .executeTakeFirst();
-      if (byOverride) return { id: byOverride.id, branding: byOverride.branding ?? null };
-    }
-    return null;
+    const id = await resolveMspId(this.db, email, mspIdOverride);
+    if (!id) return null;
+    const msp = await platformDb(this.db).selectFrom('msps').select('branding').where('id', '=', id).executeTakeFirst();
+    return { id, branding: msp?.branding ?? null };
   }
 
   private async issueLogin(userId: string, role: string, email: string, meta: Meta) {

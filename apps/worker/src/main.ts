@@ -589,25 +589,33 @@ async function handleDeploymentRun(job: Job) {
  * Look up a tenant's branding (if any) and turn it into what the email
  * layout needs - a derived color ramp, plus an absolute logo URL when one's
  * been uploaded (unauthenticated by design, so it loads in any email
- * client). Returns undefined for platform-level mail (no tenant_id) or a
- * tenant with no branding set at all, so renderEmail falls back to default
+ * client). Tries tenant branding first, then MSP branding (the two are
+ * mutually exclusive in practice - see UsersService.sendInvitation).
+ * Returns undefined for platform-level mail (neither id set) or an
+ * owner with no branding set at all, so renderEmail falls back to default
  * Voxshift branding.
  */
-async function loadEmailBranding(tenantId: string | null): Promise<EmailBranding | undefined> {
-  if (!tenantId) return undefined;
-  const t = await platformDb(db).selectFrom('tenants').select('branding').where('id', '=', tenantId).executeTakeFirst();
-  const branding = t?.branding as Branding | null | undefined;
-  if (!branding) return undefined;
+async function loadEmailBranding(tenantId: string | null, mspId: string | null): Promise<EmailBranding | undefined> {
   const webOrigin = (process.env.WEB_ORIGIN ?? '').replace(/\/+$/, '');
-  return {
-    logoUrl: branding.logo
-      ? `${webOrigin}/api/public/tenants/${tenantId}/logo?v=${branding.logo.version}`
-      : null,
+  const toEmailBranding = (branding: Branding, logoPath: string): EmailBranding => ({
+    logoUrl: branding.logo ? `${webOrigin}${logoPath}?v=${branding.logo.version}` : null,
     // Older logos uploaded before dimension-capture was added won't have
     // these - renderHtml falls back to a square aspect ratio in that case.
     logoSize: branding.logo?.width && branding.logo.height ? { width: branding.logo.width, height: branding.logo.height } : undefined,
     ramp: buildColorRamp(branding.accentColor),
-  };
+  });
+
+  if (tenantId) {
+    const t = await platformDb(db).selectFrom('tenants').select('branding').where('id', '=', tenantId).executeTakeFirst();
+    const branding = t?.branding as Branding | null | undefined;
+    if (branding) return toEmailBranding(branding, `/api/public/tenants/${tenantId}/logo`);
+  }
+  if (mspId) {
+    const m = await platformDb(db).selectFrom('msps').select('branding').where('id', '=', mspId).executeTakeFirst();
+    const branding = m?.branding as Branding | null | undefined;
+    if (branding) return toEmailBranding(branding, `/api/public/msps/${mspId}/logo`);
+  }
+  return undefined;
 }
 
 /**
@@ -620,7 +628,7 @@ async function handleMail(job: Job) {
   const { id } = job.data as { id: string };
   const row = await platformDb(db)
     .selectFrom('email_messages')
-    .select(['id', 'to_email', 'to_name', 'template', 'context', 'status', 'tenant_id'])
+    .select(['id', 'to_email', 'to_name', 'template', 'context', 'status', 'tenant_id', 'msp_id'])
     .where('id', '=', id)
     .executeTakeFirst();
   if (!row) {
@@ -630,7 +638,7 @@ async function handleMail(job: Job) {
   }
   if (row.status === 'sent') return;
 
-  const branding = await loadEmailBranding(row.tenant_id);
+  const branding = await loadEmailBranding(row.tenant_id, row.msp_id);
   const rendered = renderEmail(row.template, (row.context ?? {}) as Record<string, unknown>, branding);
 
   if (!mailerConfigured) {

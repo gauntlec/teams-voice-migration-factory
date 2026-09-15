@@ -22,14 +22,16 @@ export interface RenderedEmail {
 /**
  * Turn a stored `template` + `context` into a ready-to-send email. Add a new
  * kind by adding a `case` here and a name in `packages/shared/src/email.ts`.
- * `branding` only applies to the customer-facing, tenant-scoped templates -
- * invitations (zero-or-many tenants) and feature/bug status emails
- * (platform-level) always render default Voxshift branding.
+ * `branding` applies to every template with a single resolvable owner -
+ * tenant-scoped templates, and invitations/resets when the recipient
+ * resolves to exactly one tenant or MSP (see UsersService.sendInvitation).
+ * feature/bug status emails are genuinely platform-level (no single owner)
+ * and always render default Voxshift branding.
  */
 export function renderEmail(template: string, context: Record<string, unknown>, branding?: EmailBranding): RenderedEmail {
   switch (template as EmailTemplate) {
     case 'user_invitation':
-      return invitation(context as unknown as UserInvitationContext);
+      return invitation(context as unknown as UserInvitationContext, branding);
     case 'discovery_completed':
       return discoveryCompleted(context as unknown as DiscoveryCompletedContext, branding);
     case 'port_documents_requested':
@@ -47,7 +49,7 @@ export function renderEmail(template: string, context: Record<string, unknown>, 
   }
 }
 
-function invitation(c: UserInvitationContext): RenderedEmail {
+function invitation(c: UserInvitationContext, branding?: EmailBranding): RenderedEmail {
   const subject = "You've been invited to Voxshift";
   const scope =
     c.tenantNames && c.tenantNames.length
@@ -70,7 +72,7 @@ function invitation(c: UserInvitationContext): RenderedEmail {
     ],
   };
 
-  return { subject, html: renderHtml(layout), text: renderText(layout) };
+  return { subject, html: renderHtml(layout, branding), text: renderText(layout) };
 }
 
 function discoveryCompleted(c: DiscoveryCompletedContext, branding?: EmailBranding): RenderedEmail {

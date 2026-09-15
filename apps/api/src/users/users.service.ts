@@ -11,6 +11,7 @@ import type { CreateUserInput, Role, UserInvitationContext } from '@tvmf/shared'
 import { AuditService } from '../common/audit.service';
 import type { AuditActor } from '../common/audit.service';
 import { APP_CONFIG, type AppConfig } from '../common/config';
+import { resolveMspId } from '../common/msp-resolution.util';
 import { InjectDb, type Db } from '../db/db.module';
 import { MailService } from '../mail/mail.service';
 import { generateTempPassword } from './password.util';
@@ -191,23 +192,37 @@ export class UsersService {
       detail: { role: user.role, tenantIds, siteIds },
     });
 
-    await this.sendInvitation(user.id, user.email, user.display_name, user.role, tenantIds, tempPassword, actor);
+    const mspId = input.role === 'ENGINEER' || input.role === 'PROJECT_MANAGER' ? (input.mspId ?? null) : null;
+    await this.sendInvitation(user.id, user.email, user.display_name, user.role, tenantIds, mspId, tempPassword, actor);
 
     // tempPassword is surfaced to the admin once (the create dialog) as a
     // fallback for when SMTP is not yet configured. Never audited/logged here.
     return { ...user, tempPassword };
   }
 
-  /** Build the invitation context and enqueue it on the mail queue. */
+  /**
+   * Build the invitation context and enqueue it on the mail queue. Also
+   * resolves which branding (if any) the email should render: an MSP
+   * staff (ENGINEER/PROJECT_MANAGER) recipient gets their MSP's branding
+   * (same domain-match/override lookup as the app chrome uses, see
+   * resolveMspId), a CUSTOMER with exactly one tenant gets that tenant's -
+   * anything ambiguous (zero/many tenants, no MSP match) falls back to
+   * default Voxshift branding, same as before this fix.
+   */
   private async sendInvitation(
     userId: string,
     email: string,
     displayName: string,
     role: string,
     tenantIds: string[],
+    mspId: string | null,
     tempPassword: string,
     actor: UserActor,
   ) {
+    const brandingMspId =
+      role === 'ENGINEER' || role === 'PROJECT_MANAGER' ? await resolveMspId(this.db, email, mspId) : null;
+    const brandingTenantId = !brandingMspId && tenantIds.length === 1 ? tenantIds[0] : null;
+
     const tenantNames = tenantIds.length
       ? (
           await platformDb(this.db)
@@ -234,6 +249,8 @@ export class UsersService {
       context: context as unknown as Record<string, unknown>,
       related: { type: 'user', id: userId },
       createdBy: actor.id ?? null,
+      tenantId: brandingTenantId,
+      mspId: brandingMspId,
     });
   }
 
@@ -244,7 +261,7 @@ export class UsersService {
   async resendInvitation(id: string, actor: UserActor) {
     const user = await platformDb(this.db)
       .selectFrom('users')
-      .select(['id', 'email', 'display_name', 'role', 'status'])
+      .select(['id', 'email', 'display_name', 'role', 'status', 'msp_id'])
       .where('id', '=', id)
       .executeTakeFirst();
     if (!user) throw new NotFoundException('user not found');
@@ -302,6 +319,7 @@ export class UsersService {
       user.display_name,
       user.role,
       tenantIds,
+      user.msp_id,
       tempPassword,
       actor,
     );
