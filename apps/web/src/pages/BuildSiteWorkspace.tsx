@@ -119,7 +119,7 @@ function callingSettingsSummary(r: Row): string {
   if (cf?.forwarding?.enabled) bits.push('Forwarding');
   if (cf?.unanswered?.enabled) bits.push('Unanswered');
   if (cf?.busyOnBusy) bits.push('Busy on busy');
-  if (pg?.targets.length) bits.push('Pickup group');
+  if (pg?.targets?.length) bits.push('Pickup group');
   if (delegates.length) bits.push(`${delegates.length} delegate${delegates.length === 1 ? '' : 's'}`);
   return bits.length ? bits.join(', ') : 'Calling settings…';
 }
@@ -1136,7 +1136,7 @@ function CallingSettingsDialog({
   const [busyOnBusy, setBusyOnBusy] = useState<string>(cf?.busyOnBusy ?? '');
 
   const [pgOrder, setPgOrder] = useState<string>(pg?.order ?? 'Simultaneous');
-  const [pgTargetsRaw, setPgTargetsRaw] = useState(pg?.targets.join(', ') ?? '');
+  const [pgTargetsRaw, setPgTargetsRaw] = useState(pg?.targets?.join(', ') ?? '');
 
   const [delegates, setDelegates] = useState<CallDelegate[]>(((row.delegates as CallDelegate[] | null) ?? []).slice());
 

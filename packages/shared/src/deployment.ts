@@ -287,7 +287,7 @@ export function planIdentityRow(
       objectId: row.id,
     });
   }
-  if (row.pickup_group?.targets.length) {
+  if (row.pickup_group?.targets?.length) {
     calls.push({
       cmdlet: 'Set-CsUserCallingSettings',
       parameters: {
