@@ -2,7 +2,12 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { sql } from 'kysely';
 import { tenantDb } from '@tvmf/db';
 import {
+  CALL_QUEUE_NO_AGENT_ACTIONS,
+  CALL_QUEUE_OVERFLOW_ACTIONS,
+  CALL_QUEUE_ROUTING_METHODS,
+  CALL_QUEUE_TIMEOUT_ACTIONS,
   callQueueRowWarnings,
+  decodeCallQueueEnum,
   identityRowWarnings,
   planCallQueueRow,
   planIdentityRow,
@@ -120,14 +125,15 @@ async function resolveLiveCallQueueState(scoped: Scoped, names: string[]) {
       : [];
     out.set(r.display_name.toLowerCase(), {
       identity: String(d.Identity ?? ''),
-      routingMethod: typeof d.RoutingMethod === 'string' ? d.RoutingMethod : undefined,
+      routingMethod: decodeCallQueueEnum(d.RoutingMethod, CALL_QUEUE_ROUTING_METHODS),
       agentAlertTime: typeof d.AgentAlertTime === 'number' ? d.AgentAlertTime : undefined,
       presenceBasedRouting: typeof d.PresenceBasedRouting === 'boolean' ? d.PresenceBasedRouting : undefined,
       agentObjectIds: agents,
-      overflowAction: typeof d.OverflowAction === 'string' ? d.OverflowAction : undefined,
+      overflowAction: decodeCallQueueEnum(d.OverflowAction, CALL_QUEUE_OVERFLOW_ACTIONS),
       overflowThreshold: typeof d.OverflowThreshold === 'number' ? d.OverflowThreshold : undefined,
-      timeoutAction: typeof d.TimeoutAction === 'string' ? d.TimeoutAction : undefined,
+      timeoutAction: decodeCallQueueEnum(d.TimeoutAction, CALL_QUEUE_TIMEOUT_ACTIONS),
       timeoutThreshold: typeof d.TimeoutThreshold === 'number' ? d.TimeoutThreshold : undefined,
+      noAgentAction: decodeCallQueueEnum(d.NoAgentAction, CALL_QUEUE_NO_AGENT_ACTIONS),
     });
   }
   return out;

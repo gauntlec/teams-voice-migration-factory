@@ -3,6 +3,7 @@ export * from './domain';
 export * from './dto';
 export * from './email';
 export * from './deployment';
+export * from './aa-live-parse';
 export * from './color';
 
 import type { CmdletInvocation } from './deployment';

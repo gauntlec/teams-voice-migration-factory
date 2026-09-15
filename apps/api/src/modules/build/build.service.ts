@@ -2,9 +2,22 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { sql, type Kysely } from 'kysely';
 import { tenantDb, type DB } from '@tvmf/db';
 import {
+  CALL_QUEUE_NO_AGENT_ACTIONS,
+  CALL_QUEUE_OVERFLOW_ACTIONS,
+  CALL_QUEUE_ROUTING_METHODS,
+  CALL_QUEUE_TIMEOUT_ACTIONS,
+  decodeCallQueueEnum,
+  parseLiveCallFlow,
+  parseLiveCallTarget,
+  parseLiveSchedule,
   POLICY_KIND_TO_TENANT_TYPE,
   POLICY_KINDS,
   RESOURCE_ACCOUNT_APPLICATION_IDS,
+  type AutoAttendantCallableEntity,
+  type AutoAttendantCallFlow,
+  type AutoAttendantHolidayCallFlow,
+  type AutoAttendantMenu,
+  type AutoAttendantMenuOption,
   type BuildAutoAttendantCreateInput,
   type BuildAutoAttendantPatchInput,
   type BuildBulkPatchInput,
@@ -25,6 +38,8 @@ import {
   type BuildValidateResult,
   type CallingPolicySiteMapSetInput,
   type DiscoverySiteOverview,
+  type LiveCallableEntityRef,
+  type LiveCallFlow,
   type NumberHolderType,
   type NumberType,
   type Paginated,
@@ -728,6 +743,7 @@ export class BuildService {
       .execute();
     const linked = new Set(existing.map((e) => e.discovery_resource_account_id).filter(Boolean));
     let created = 0;
+    const createdDiscoveryIds: string[] = [];
     for (const d of source) {
       if (linked.has(d.id)) continue;
       await s
@@ -775,6 +791,10 @@ export class BuildService {
           .execute();
       }
       created += 1;
+      createdDiscoveryIds.push(d.id);
+    }
+    if (createdDiscoveryIds.length > 0) {
+      await this.populateStructuredFromLive(s, siteId, createdDiscoveryIds);
     }
     await this.audit.tenant(t.schema, 'build.resource_accounts_populated', {
       actor: actorOf(u),
@@ -783,6 +803,170 @@ export class BuildService {
       detail: { created, total: source.length },
     });
     return { created, skipped: source.length - created, total: source.length };
+  }
+
+  /**
+   * Second pass of populateResourceAccounts: best-effort pre-fills the
+   * structured AA/CQ columns (Workstream 1/2's real Set-CsAutoAttendant/
+   * Set-CsCallQueue shape) from Discovery's live tenant_objects snapshot,
+   * matched to the just-created rows by name (case-insensitive) - the same
+   * matching key resolveLiveCallQueueState already uses (deployment.service.ts),
+   * since discovery_resource_accounts carries no live object id. Anything
+   * that can't be confidently mapped (no live match, an unresolvable call
+   * target, a truncated CallTarget placeholder string) is left null/absent
+   * for the engineer to complete in the Design & Build UI - never guessed.
+   */
+  private async populateStructuredFromLive(s: Scoped, siteId: string, createdDiscoveryIds: string[]) {
+    const [createdAa, createdCq] = await Promise.all([
+      s.selectFrom('build_auto_attendants').select(['id', 'name']).where('discovery_resource_account_id', 'in', createdDiscoveryIds).execute(),
+      s.selectFrom('build_call_queues').select(['id', 'name']).where('discovery_resource_account_id', 'in', createdDiscoveryIds).execute(),
+    ]);
+    if (createdAa.length === 0 && createdCq.length === 0) return;
+
+    const aaNames = createdAa.map((r) => r.name.toLowerCase());
+    const cqNames = createdCq.map((r) => r.name.toLowerCase());
+    const [liveAa, liveCq, liveSchedules, liveUsers] = await Promise.all([
+      aaNames.length === 0
+        ? []
+        : s
+            .selectFrom('tenant_objects')
+            .select(['display_name', 'data'])
+            .where('object_type', '=', 'auto_attendant')
+            .where('removed_at', 'is', null)
+            .where(sql`lower(display_name)`, 'in', aaNames)
+            .execute(),
+      cqNames.length === 0
+        ? []
+        : s
+            .selectFrom('tenant_objects')
+            .select(['display_name', 'data'])
+            .where('object_type', '=', 'call_queue')
+            .where('removed_at', 'is', null)
+            .where(sql`lower(display_name)`, 'in', cqNames)
+            .execute(),
+      // Schedules are looked up by ScheduleId (an arbitrary tenant-wide GUID), not name, so all of them are fetched.
+      s.selectFrom('tenant_objects').select(['object_key', 'data']).where('object_type', '=', 'schedule').where('removed_at', 'is', null).execute(),
+      s.selectFrom('tenant_users').select(['object_id', 'upn']).execute(),
+    ]);
+    const aaByName = new Map(liveAa.filter((r) => r.display_name).map((r) => [r.display_name!.toLowerCase(), r.data as Record<string, unknown>]));
+    const cqByName = new Map(liveCq.filter((r) => r.display_name).map((r) => [r.display_name!.toLowerCase(), r.data as Record<string, unknown>]));
+    const scheduleByGuid = new Map(liveSchedules.map((r) => [r.object_key, r.data as Record<string, unknown>]));
+    const upnByObjectId = new Map(liveUsers.map((r) => [r.object_id.toLowerCase(), r.upn]));
+
+    // Live Identity GUID -> this site's own build row, so a menu option that
+    // transfers to another AA/CQ on the same site resolves to a same-site
+    // buildId (deployment.ts's app-enforced reference), not a dangling GUID.
+    const liveIdToBuild = new Map<string, { kind: 'auto_attendant' | 'call_queue'; buildId: string }>();
+    for (const row of createdAa) {
+      const live = aaByName.get(row.name.toLowerCase());
+      if (live && typeof live.Identity === 'string') liveIdToBuild.set(live.Identity.toLowerCase(), { kind: 'auto_attendant', buildId: row.id });
+    }
+    for (const row of createdCq) {
+      const live = cqByName.get(row.name.toLowerCase());
+      if (live && typeof live.Identity === 'string') liveIdToBuild.set(live.Identity.toLowerCase(), { kind: 'call_queue', buildId: row.id });
+    }
+
+    const resolveTarget = (ref: LiveCallableEntityRef | undefined): AutoAttendantCallableEntity | undefined => {
+      if (!ref) return undefined;
+      if (ref.kind === 'external' && ref.number) return { kind: 'external', number: ref.number };
+      if (ref.kind === 'user' && ref.liveId) {
+        const upn = upnByObjectId.get(ref.liveId.toLowerCase());
+        return upn ? { kind: 'user', upn } : undefined;
+      }
+      if (ref.kind === 'voice_app' && ref.liveId) {
+        const hit = liveIdToBuild.get(ref.liveId.toLowerCase());
+        return hit ? { kind: hit.kind, buildId: hit.buildId } : undefined;
+      }
+      return undefined;
+    };
+    const resolveMenuOption = (opt: { dtmf: string; action: string; target?: LiveCallableEntityRef }): AutoAttendantMenuOption => ({
+      dtmf: opt.dtmf as AutoAttendantMenuOption['dtmf'],
+      action: opt.action as AutoAttendantMenuOption['action'],
+      target: resolveTarget(opt.target),
+    });
+    const resolveMenu = (m: LiveCallFlow['menu']): AutoAttendantMenu => ({
+      enableDialByName: m.enableDialByName,
+      directorySearchMethod: m.directorySearchMethod,
+      options: m.options.map(resolveMenuOption),
+    });
+    const resolveCallFlow = (cf: LiveCallFlow): AutoAttendantCallFlow => ({
+      greetings: cf.greetings.map((g) => ({ type: g.type, text: g.text })),
+      menu: resolveMenu(cf.menu),
+    });
+
+    for (const row of createdAa) {
+      const live = aaByName.get(row.name.toLowerCase());
+      if (!live) continue;
+      const patch: Record<string, unknown> = {
+        language_id: typeof live.LanguageId === 'string' ? live.LanguageId : null,
+        time_zone_id: typeof live.TimeZoneId === 'string' ? live.TimeZoneId : null,
+        voice_id: typeof live.VoiceId === 'string' ? live.VoiceId : null,
+        voice_response_enabled: typeof live.EnableVoiceResponse === 'boolean' ? live.EnableVoiceResponse : false,
+        operator: resolveTarget(parseLiveCallTarget(live.Operator)) ?? null,
+      };
+      const defaultCf = parseLiveCallFlow(live.DefaultCallFlow);
+      if (defaultCf) patch.default_call_flow = resolveCallFlow(defaultCf);
+
+      const callFlowsById = new Map(
+        (Array.isArray(live.CallFlows) ? (live.CallFlows as Record<string, unknown>[]) : []).map((cf) => [cf.Id as string, cf]),
+      );
+      const holidayCallFlows: AutoAttendantHolidayCallFlow[] = [];
+      for (const cha of Array.isArray(live.CallHandlingAssociations) ? (live.CallHandlingAssociations as Record<string, unknown>[]) : []) {
+        const cfRaw = typeof cha.CallFlowId === 'string' ? callFlowsById.get(cha.CallFlowId) : undefined;
+        const parsedCf = cfRaw ? parseLiveCallFlow(cfRaw) : undefined;
+        const scheduleRaw = typeof cha.ScheduleId === 'string' ? scheduleByGuid.get(cha.ScheduleId) : undefined;
+        const parsedSchedule = scheduleRaw ? parseLiveSchedule(scheduleRaw) : undefined;
+        if (!parsedCf) continue;
+        if (cha.Type === 0) {
+          patch.after_hours_call_flow = resolveCallFlow(parsedCf);
+          if (parsedSchedule) patch.schedule = parsedSchedule;
+        } else if (cha.Type === 1 && parsedSchedule) {
+          holidayCallFlows.push({
+            name: (typeof scheduleRaw?.Name === 'string' && scheduleRaw.Name) || (typeof cfRaw?.Name === 'string' && cfRaw.Name) || 'Holiday',
+            callFlow: resolveCallFlow(parsedCf),
+            schedule: parsedSchedule as AutoAttendantHolidayCallFlow['schedule'],
+          });
+        }
+      }
+      if (holidayCallFlows.length > 0) patch.holiday_call_flows = JSON.stringify(holidayCallFlows);
+      await s.updateTable('build_auto_attendants').set(patch as never).where('id', '=', row.id).execute();
+    }
+
+    for (const row of createdCq) {
+      const live = cqByName.get(row.name.toLowerCase());
+      if (!live) continue;
+      const agentUpns = Array.isArray(live.Agents)
+        ? (live.Agents as Record<string, unknown>[])
+            .map((a) => (typeof a?.ObjectId === 'string' ? upnByObjectId.get(a.ObjectId.toLowerCase()) : undefined))
+            .filter((v): v is string => !!v)
+        : [];
+      const targetOf = (t: unknown): string | null => {
+        const o = t as Record<string, unknown> | null;
+        if (!o || typeof o.Id !== 'string') return null;
+        return typeof o.Id === 'string' && o.Id.startsWith('tel:') ? null : (upnByObjectId.get(o.Id.toLowerCase()) ?? null);
+      };
+      const patch: Record<string, unknown> = {
+        routing_method: decodeCallQueueEnum(live.RoutingMethod, CALL_QUEUE_ROUTING_METHODS) ?? 'Attendant',
+        agent_alert_time: typeof live.AgentAlertTime === 'number' ? live.AgentAlertTime : 30,
+        presence_based_routing: typeof live.PresenceBasedRouting === 'boolean' ? live.PresenceBasedRouting : true,
+        agents: JSON.stringify(agentUpns),
+        overflow: {
+          action: decodeCallQueueEnum(live.OverflowAction, CALL_QUEUE_OVERFLOW_ACTIONS),
+          threshold: typeof live.OverflowThreshold === 'number' ? live.OverflowThreshold : undefined,
+          target: targetOf(live.OverflowActionTarget),
+        },
+        timeout: {
+          action: decodeCallQueueEnum(live.TimeoutAction, CALL_QUEUE_TIMEOUT_ACTIONS),
+          threshold: typeof live.TimeoutThreshold === 'number' ? live.TimeoutThreshold : undefined,
+          target: targetOf(live.TimeoutActionTarget),
+        },
+        no_agent_action: {
+          action: decodeCallQueueEnum(live.NoAgentAction, CALL_QUEUE_NO_AGENT_ACTIONS),
+          target: targetOf(live.NoAgentActionTarget),
+        },
+      };
+      await s.updateTable('build_call_queues').set(patch as never).where('id', '=', row.id).execute();
+    }
   }
 
   /* ========================== call queues ========================== */

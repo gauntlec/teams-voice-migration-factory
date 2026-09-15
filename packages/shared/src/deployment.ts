@@ -4,7 +4,10 @@ import {
   AA_DTMF_RESPONSES,
   AA_MENU_OPTION_ACTIONS,
   AA_SCHEDULE_TYPES,
+  CALL_QUEUE_NO_AGENT_ACTIONS,
+  CALL_QUEUE_OVERFLOW_ACTIONS,
   CALL_QUEUE_ROUTING_METHODS,
+  CALL_QUEUE_TIMEOUT_ACTIONS,
   GREETING_TYPES,
   POLICY_KIND_TO_TENANT_TYPE,
   POLICY_KINDS,
@@ -503,6 +506,22 @@ export interface CallQueueLiveState {
   timeoutThreshold?: number;
   /** No live NoAgentThreshold exists - "no agents" fires purely on zero agents opted in, not a numeric threshold. */
   noAgentAction?: string;
+}
+
+/**
+ * Get-CsCallQueue serializes RoutingMethod/OverflowAction/TimeoutAction/
+ * NoAgentAction as their underlying numeric enum value, not the string name
+ * PowerShell displays - confirmed against OVP012's real live tenant_objects
+ * data this session (e.g. `OverflowAction: 3`, not `"SharedVoicemail"`).
+ * Callers building CallQueueLiveState from raw tenant_objects.data must
+ * decode through this instead of a bare `typeof v === 'string'` check, or
+ * every real tenant's live-diff silently sees `undefined` and never detects
+ * "unchanged". The numeric codes line up with these arrays' own index order.
+ */
+export function decodeCallQueueEnum(v: unknown, values: readonly string[]): string | undefined {
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' && values[v] !== undefined) return values[v];
+  return undefined;
 }
 
 /**

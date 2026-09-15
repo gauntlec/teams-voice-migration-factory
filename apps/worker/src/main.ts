@@ -5,6 +5,11 @@ import { sql } from 'kysely';
 import { createDb, platformDb, tenantDb } from '@tvmf/db';
 import { buildColorRamp, type Branding, type DiscoverySiteOverview, type PortDocumentItemSummary } from '@tvmf/shared';
 import {
+  CALL_QUEUE_NO_AGENT_ACTIONS,
+  CALL_QUEUE_OVERFLOW_ACTIONS,
+  CALL_QUEUE_ROUTING_METHODS,
+  CALL_QUEUE_TIMEOUT_ACTIONS,
+  decodeCallQueueEnum,
   planCallQueueRow,
   planIdentityRow,
   planResourceAccountRow,
@@ -350,14 +355,15 @@ async function resolveLiveCallQueueState(scoped: ReturnType<typeof tenantDb>, na
       : [];
     out.set(r.display_name.toLowerCase(), {
       identity: String(d.Identity ?? ''),
-      routingMethod: typeof d.RoutingMethod === 'string' ? d.RoutingMethod : undefined,
+      routingMethod: decodeCallQueueEnum(d.RoutingMethod, CALL_QUEUE_ROUTING_METHODS),
       agentAlertTime: typeof d.AgentAlertTime === 'number' ? d.AgentAlertTime : undefined,
       presenceBasedRouting: typeof d.PresenceBasedRouting === 'boolean' ? d.PresenceBasedRouting : undefined,
       agentObjectIds: agents,
-      overflowAction: typeof d.OverflowAction === 'string' ? d.OverflowAction : undefined,
+      overflowAction: decodeCallQueueEnum(d.OverflowAction, CALL_QUEUE_OVERFLOW_ACTIONS),
       overflowThreshold: typeof d.OverflowThreshold === 'number' ? d.OverflowThreshold : undefined,
-      timeoutAction: typeof d.TimeoutAction === 'string' ? d.TimeoutAction : undefined,
+      timeoutAction: decodeCallQueueEnum(d.TimeoutAction, CALL_QUEUE_TIMEOUT_ACTIONS),
       timeoutThreshold: typeof d.TimeoutThreshold === 'number' ? d.TimeoutThreshold : undefined,
+      noAgentAction: decodeCallQueueEnum(d.NoAgentAction, CALL_QUEUE_NO_AGENT_ACTIONS),
     });
   }
   return out;

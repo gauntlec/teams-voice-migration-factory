@@ -267,6 +267,14 @@ export const STEP_CMDLETS: Record<TenantDiscoveryStep, CmdletSpec[]> = {
       key: (r) => s(r.Identity),
       name: (r) => s(r.Name),
       page: { size: 100, style: 'first-skip' },
+      // AA > CallFlows (After hours/Holiday) > [i] > Menu > MenuOptions > [j] >
+      // CallTarget is 7 levels deep - one past the default depth 6, so every
+      // non-default CallFlow's MenuOption.CallTarget silently truncated to the
+      // .NET type name string instead of the real target object (confirmed
+      // against OVP012's live data this session - DefaultCallFlow, which has
+      // no extra array wrapper and sits one level shallower, was never
+      // affected). Serialise a few levels deeper so it isn't.
+      depth: 10,
     },
     {
       command: 'Get-CsCallQueue',
