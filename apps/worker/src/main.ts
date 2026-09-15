@@ -328,7 +328,15 @@ async function resolveLiveIdentityState(scoped: ReturnType<typeof tenantDb>, upn
   if (wanted.length === 0) return out;
   const rows = await scoped
     .selectFrom('tenant_users')
-    .select(['upn', 'enterprise_voice_enabled', 'line_uri', 'policies', 'entra_id'])
+    .select([
+      'upn',
+      'enterprise_voice_enabled',
+      'line_uri',
+      'policies',
+      'entra_id',
+      'voicemail_enabled',
+      'voicemail_prompt_language',
+    ])
     .where('removed_at', 'is', null)
     .where(sql`lower(upn)`, 'in', wanted)
     .execute();
@@ -341,6 +349,10 @@ async function resolveLiveIdentityState(scoped: ReturnType<typeof tenantDb>, upn
       // entra_id (not object_id, our own internal tenant_objects.id) is the
       // real Entra GUID Set-CsCallQueue -Users etc. expect.
       objectId: r.entra_id ?? undefined,
+      // null (never targeted-checked) becomes undefined so planIdentityRow's
+      // fallback-to-always-emit applies, same as an unmatched UPN.
+      voicemailEnabled: r.voicemail_enabled ?? undefined,
+      voicemailPromptLanguage: r.voicemail_prompt_language,
     });
   }
   return out;

@@ -93,7 +93,15 @@ async function resolveLiveIdentityState(scoped: Scoped, upns: string[]) {
   if (wanted.length === 0) return out;
   const rows = await scoped
     .selectFrom('tenant_users')
-    .select(['upn', 'enterprise_voice_enabled', 'line_uri', 'policies', 'entra_id'])
+    .select([
+      'upn',
+      'enterprise_voice_enabled',
+      'line_uri',
+      'policies',
+      'entra_id',
+      'voicemail_enabled',
+      'voicemail_prompt_language',
+    ])
     .where('removed_at', 'is', null)
     .where(sql`lower(upn)`, 'in', wanted)
     .execute();
@@ -110,6 +118,10 @@ async function resolveLiveIdentityState(scoped: Scoped, upns: string[]) {
       // OVP012's real live Call Queue Agents this session: a live Agent's
       // ObjectId matched entra_id, never object_id).
       objectId: r.entra_id ?? undefined,
+      // null (never targeted-checked) becomes undefined so planIdentityRow's
+      // fallback-to-always-emit applies, same as an unmatched UPN.
+      voicemailEnabled: r.voicemail_enabled ?? undefined,
+      voicemailPromptLanguage: r.voicemail_prompt_language,
     });
   }
   return out;

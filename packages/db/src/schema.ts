@@ -707,6 +707,9 @@ export interface TenantUsersTable {
   account_enabled: boolean | null;
   enterprise_voice_enabled: ColumnType<boolean, boolean | undefined, boolean>;
   line_uri: string | null;
+  /** From a targeted Get-CsOnlineVoicemailUserSettings check (Validate against tenant), not the full-tenant sweep - null until that's run for this UPN. */
+  voicemail_enabled: boolean | null;
+  voicemail_prompt_language: string | null;
   telephone_numbers: JsonOpt<{ number: string; category?: string }[]>;
   feature_types: ColumnType<string[], string[] | undefined, string[]>;
   assigned_plans: JsonOpt<unknown[]>;

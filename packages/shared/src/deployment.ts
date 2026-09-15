@@ -32,6 +32,17 @@ export interface LiveIdentityState {
   policies: Record<string, string | null>;
   /** tenant_users.entra_id - the real Entra/Azure AD object GUID, needed by cmdlets that take -Users/-Identities as GUIDs (e.g. Set-CsCallQueue), not UPNs. NOT tenant_users.object_id, which is our own internal tenant_objects.id row reference - a bug fixed this session (confirmed against OVP012's real live Call Queue Agents, whose ObjectId matched entra_id, never object_id). */
   objectId?: string;
+  /**
+   * From a targeted Get-CsOnlineVoicemailUserSettings check (Design &
+   * Build's "Validate against tenant"), not the full-tenant sweep -
+   * Get-CsOnlineVoicemailUserSettings has no bulk/wildcard form (confirmed
+   * against Microsoft Learn: -Identity is mandatory, single value), so it
+   * can't join Get-CsOnlineUser's tenant-wide sweep. `undefined` means this
+   * UPN has never had a targeted check run - planIdentityRow falls back to
+   * always emitting, same as an unmatched `live` elsewhere in this file.
+   */
+  voicemailEnabled?: boolean;
+  voicemailPromptLanguage?: string | null;
 }
 
 /** Last 10 significant digits, for loose number matching (same rule Data Collection and Design & Build use). */
@@ -329,21 +340,28 @@ export function planIdentityRow(
   // voicemail_policy in POLICY_KINDS above, which governs a different set of
   // tenant-defined behaviours. `row.voicemail.enabled` undefined/null means
   // "not designed yet" and is left alone; explicitly true/false is a real
-  // target either way. Can't be diffed against live like the fields above -
-  // Discovery doesn't sync voicemail settings yet (Get-CsOnlineVoicemailUserSettings
-  // is per-user, so it's a targeted-run job, not a full-sweep one) - so this
-  // always re-issues the cmdlet whenever a target is set.
+  // target either way. Diffed against live.voicemailEnabled/
+  // voicemailPromptLanguage when available (from a targeted
+  // Get-CsOnlineVoicemailUserSettings check - see LiveIdentityState); if that
+  // UPN has never had a targeted check run, `live.voicemailEnabled` is
+  // undefined and this falls back to always emitting, same as every other
+  // live-optional check in this function.
   if (row.voicemail?.enabled != null) {
-    calls.push({
-      cmdlet: 'Set-CsOnlineVoicemailUserSettings',
-      parameters: {
-        Identity: identity,
-        VoicemailEnabled: row.voicemail.enabled,
-        ...(row.voicemail.enabled && row.voicemail.language ? { PromptLanguage: row.voicemail.language } : {}),
-      },
-      objectType,
-      objectId: row.id,
-    });
+    const matches =
+      live?.voicemailEnabled === row.voicemail.enabled &&
+      (!row.voicemail.enabled || !row.voicemail.language || live.voicemailPromptLanguage === row.voicemail.language);
+    if (!matches) {
+      calls.push({
+        cmdlet: 'Set-CsOnlineVoicemailUserSettings',
+        parameters: {
+          Identity: identity,
+          VoicemailEnabled: row.voicemail.enabled,
+          ...(row.voicemail.enabled && row.voicemail.language ? { PromptLanguage: row.voicemail.language } : {}),
+        },
+        objectType,
+        objectId: row.id,
+      });
+    }
   }
 
   // Call forwarding / unanswered / busy-on-busy / pickup group / delegates -

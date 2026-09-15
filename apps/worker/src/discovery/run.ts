@@ -906,9 +906,37 @@ async function runTargetedUserSync(
       prevRow ? { data: prevRow.data as Rec, display_name: prevRow.display_name, removed_at: prevRow.removed_at } : undefined,
     );
     await projectUser(s, runId, objectId, r);
+    await syncVoicemailSettings(s, exec, objectId, upn);
     progress.counts.user += 1;
   }
   progress.note = null;
+}
+
+/**
+ * Get-CsOnlineVoicemailUserSettings has no bulk/wildcard form (-Identity is
+ * mandatory, single value - confirmed against Microsoft Learn), so it can't
+ * join the full-tenant sweep the way Get-CsOnlineUser does. Piggybacked onto
+ * the targeted per-UPN loop above instead, which already pays the per-user
+ * round-trip cost for Get-CsOnlineUser. Best-effort: a failure here (e.g. the
+ * user has no mailbox) is swallowed rather than failing the whole targeted
+ * check - voicemail is diffing data, not core sync data.
+ */
+async function syncVoicemailSettings(s: Scoped, exec: TeamsExecutor, objectId: string, upn: string) {
+  try {
+    const recs = await exec.query('Get-CsOnlineVoicemailUserSettings', { Identity: upn }, { depth: 4 });
+    const vm = recs.find((x) => x && typeof x === 'object') as Rec | undefined;
+    if (!vm) return;
+    await s
+      .updateTable('tenant_users')
+      .set({
+        voicemail_enabled: bool(vm.VoicemailEnabled),
+        voicemail_prompt_language: str(vm.PromptLanguage),
+      })
+      .where('object_id', '=', objectId)
+      .execute();
+  } catch {
+    // best-effort - see docstring
+  }
 }
 
 async function projectPolicy(s: Scoped, runId: string, objectId: string, policyType: string, r: Rec) {
