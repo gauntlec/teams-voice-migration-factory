@@ -232,7 +232,7 @@ export function buildCallQueueFlowGraphFromDesign(cq: DesignCallQueueInput): Cal
  * phone number rings into), following every menu option that transfers to
  * another Auto Attendant and expanding it fully in turn (a real chain: a
  * Language AA hands off to a Main Number AA, which hands off to further
- * AAs), and expanding one hop into any target Call Queue's own
+ * AAs), and expanding one hop into any target Call Queue's own agents and
  * Overflow/Timeout/No-agent routing. `allAutoAttendants`/`allCallQueues`
  * are this site's full lists (not all of them necessarily drawn) - needed
  * to look up a transfer target's own configuration and real name.
@@ -292,7 +292,10 @@ export function buildAutoAttendantFlowGraphFromDesign(
       if (opt.target?.kind === 'call_queue' && opt.target.buildId && !visitedCq.has(opt.target.buildId)) {
         visitedCq.add(opt.target.buildId);
         const cq = cqById.get(opt.target.buildId);
-        if (cq) designCqActionEdges(b, cq);
+        if (cq) {
+          designCqAgentEdges(b, cq);
+          designCqActionEdges(b, cq);
+        }
       } else if (opt.target?.kind === 'auto_attendant' && opt.target.buildId) {
         const target = aaById.get(opt.target.buildId);
         if (target) expandAa(target);
@@ -496,6 +499,7 @@ export function buildAutoAttendantFlowGraphFromLive(
     const cq = cqByIdentity.get(key);
     if (cq && !visitedCq.has(key)) {
       visitedCq.add(key);
+      liveCqAgentEdges(b, cq, usersByEntraId);
       liveCqActionEdges(b, cq, usersByEntraId);
       return;
     }

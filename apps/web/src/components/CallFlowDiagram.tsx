@@ -65,7 +65,19 @@ function downloadDataUrl(dataUrl: string, filename: string) {
   document.body.removeChild(a);
 }
 
-/** Captures the whole diagram (not just what's currently visible/panned-to) as a PNG data URL, sized to fit every node - the same technique xyflow's own "download image" example uses. */
+/** A browser canvas gets unreliable (or refuses outright) past roughly this many pixels on a side, so the requested pixel ratio is capped to stay under it rather than requested unconditionally. */
+const MAX_CAPTURE_DIM = 6000;
+const EXPORT_PIXEL_RATIO = 3;
+
+/**
+ * Captures the whole diagram (not just what's currently visible/panned-to)
+ * as a PNG data URL, sized to fit every node - the same technique xyflow's
+ * own "download image" example uses. `pixelRatio` renders at that many
+ * device pixels per CSS pixel (html-to-image's own option) - without it,
+ * the raster is exactly the on-screen CSS size, which reads fine at a
+ * glance but turns to mud the moment a viewer zooms in on the PNG/PDF, since
+ * there's no extra pixel data to zoom into.
+ */
 async function captureDiagramPng(nodes: Node[]): Promise<{ dataUrl: string; width: number; height: number } | null> {
   if (nodes.length === 0) return null;
   const viewportEl = document.querySelector('.react-flow__viewport') as HTMLElement | null;
@@ -75,12 +87,19 @@ async function captureDiagramPng(nodes: Node[]): Promise<{ dataUrl: string; widt
   const width = Math.max(400, Math.ceil(bounds.width) + padding * 2);
   const height = Math.max(300, Math.ceil(bounds.height) + padding * 2);
   const viewport = getViewportForBounds(bounds, width, height, 0.1, 2, padding);
+  const pixelRatio = Math.max(1, Math.min(EXPORT_PIXEL_RATIO, MAX_CAPTURE_DIM / width, MAX_CAPTURE_DIM / height));
   const dataUrl = await toPng(viewportEl, {
     backgroundColor: '#ffffff',
     width,
     height,
+    pixelRatio,
     style: { width: `${width}px`, height: `${height}px`, transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})` },
   });
+  // width/height here are the diagram's logical (CSS) size, not the PNG's
+  // actual raster size (which is pixelRatio times larger) - a PDF page
+  // built from these keeps the same physical page size while the image data
+  // embedded in it carries the extra resolution, so zooming into the PDF
+  // reveals real detail instead of just enlarging blur.
   return { dataUrl, width, height };
 }
 
