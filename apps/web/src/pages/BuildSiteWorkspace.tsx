@@ -878,6 +878,7 @@ function toDesignCqInput(r: Row): DesignCallQueueInput {
     routingMethod: (r.routing_method as string | null) ?? undefined,
     agentAlertTime: typeof r.agent_alert_time === 'number' ? r.agent_alert_time : undefined,
     agentCount: Array.isArray(r.agents) ? (r.agents as string[]).length : undefined,
+    agents: Array.isArray(r.agents) ? (r.agents as string[]) : undefined,
   };
 }
 
@@ -914,7 +915,7 @@ function CallQueueFlowDialog({ row, onClose }: { row: Row; onClose: () => void }
 
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: 760 }}>
+      <DialogSurface style={{ maxWidth: '95vw', width: '95vw' }}>
         <DialogBody>
           <DialogTitle>Call flow: {String(row.name)}</DialogTitle>
           <DialogContent>
@@ -982,7 +983,7 @@ function AutoAttendantFlowDialog({ tid, base, siteId, row, onClose }: { tid: str
 
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: 920 }}>
+      <DialogSurface style={{ maxWidth: '95vw', width: '95vw' }}>
         <DialogBody>
           <DialogTitle>Call flow: {String(row.name)}</DialogTitle>
           <DialogContent>

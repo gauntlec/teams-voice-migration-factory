@@ -1132,11 +1132,17 @@ function LiveCallFlowDialog({ base, type, row, onClose }: { base: string; type: 
     queryFn: () => api<Paginated<TenantUserSummary>>(`${base}/users?limit=200`),
   });
 
-  const usersByObjectId = useMemo(() => new Map((usersQ.data?.items ?? []).map((u) => [u.object_id.toLowerCase(), u.upn])), [usersQ.data]);
+  // Get-CsAutoAttendant/Get-CsCallQueue's own CallTarget/Agent ObjectId
+  // fields are tenant_users.entra_id, not object_id - matching on the wrong
+  // column silently resolved nothing.
+  const usersByEntraId = useMemo(
+    () => new Map((usersQ.data?.items ?? []).filter((u) => u.entra_id).map((u) => [u.entra_id!.toLowerCase(), u.upn])),
+    [usersQ.data],
+  );
 
   const graph = useMemo(() => {
     if (type === 'call_queue') {
-      return buildCallQueueFlowGraphFromLive({ name: row.display_name ?? row.object_key, data: row.data }, usersByObjectId);
+      return buildCallQueueFlowGraphFromLive({ name: row.display_name ?? row.object_key, data: row.data }, usersByEntraId);
     }
     if (!aaQ.data || !cqQ.data || !schedQ.data) return null;
     return buildAutoAttendantFlowGraphFromLive(
@@ -1144,16 +1150,16 @@ function LiveCallFlowDialog({ base, type, row, onClose }: { base: string; type: 
       aaQ.data.items.map((o) => ({ name: o.display_name ?? o.object_key, data: o.data })),
       cqQ.data.items.map((o) => ({ name: o.display_name ?? o.object_key, data: o.data })),
       schedQ.data.items.map((o) => ({ key: o.object_key, data: o.data })),
-      usersByObjectId,
+      usersByEntraId,
     );
-  }, [type, row, aaQ.data, cqQ.data, schedQ.data, usersByObjectId]);
+  }, [type, row, aaQ.data, cqQ.data, schedQ.data, usersByEntraId]);
 
   const loading = (needsSiblings && (aaQ.isLoading || cqQ.isLoading || schedQ.isLoading)) || usersQ.isLoading;
   const loadError = (needsSiblings ? (aaQ.error ?? cqQ.error ?? schedQ.error) : null) as Error | null;
 
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: 920 }}>
+      <DialogSurface style={{ maxWidth: '95vw', width: '95vw' }}>
         <DialogBody>
           <DialogTitle>Call flow: {row.display_name ?? row.object_key}</DialogTitle>
           <DialogContent>

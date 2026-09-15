@@ -30,6 +30,7 @@ const BRANCH_STYLE: Record<CallFlowBranch, { color: string; dash?: string; label
   overflow: { color: '#DC2626', dash: '5,3', label: 'Overflow' },
   timeout: { color: '#DC2626', dash: '5,3', label: 'Timeout' },
   no_agent: { color: '#DC2626', dash: '5,3', label: 'No agents' },
+  agent: { color: '#059669', label: 'Agent' },
 };
 
 /** A greeting sublabel wraps over several lines, and a badge chip adds its own row - both render taller than NODE_HEIGHT, so dagre needs that real height or it packs the next node in the same column right on top of it. */
@@ -207,7 +208,7 @@ export function CallFlowDiagram({ graph, exportFilename }: { graph: CallFlowGrap
 
   return (
     <div style={{ display: 'grid', gap: 8 }}>
-      <div style={{ height: 560, border: '1px solid #E1E1E1', borderRadius: 8 }}>
+      <div style={{ height: '75vh', minHeight: 480, border: '1px solid #E1E1E1', borderRadius: 8 }}>
         <ReactFlowProvider>
           <ReactFlow
             nodes={nodes}

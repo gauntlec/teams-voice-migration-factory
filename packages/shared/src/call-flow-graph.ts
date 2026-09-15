@@ -55,8 +55,8 @@ export interface CallFlowNode {
   badge?: string;
 }
 
-/** Which schedule branch an edge belongs to - 'operator' is the AA-level -Operator link, not schedule-tied. */
-export type CallFlowBranch = 'business_hours' | 'after_hours' | 'holiday' | 'operator' | 'overflow' | 'timeout' | 'no_agent';
+/** Which schedule branch an edge belongs to - 'operator' is the AA-level -Operator link, not schedule-tied; 'agent' isn't a routing branch at all, it's a Call Queue's membership edge (an agent -> the queue they can be offered calls from). */
+export type CallFlowBranch = 'business_hours' | 'after_hours' | 'holiday' | 'operator' | 'overflow' | 'timeout' | 'no_agent' | 'agent';
 
 export interface CallFlowEdge {
   id: string;
@@ -161,6 +161,8 @@ export interface DesignCallQueueInput {
   routingMethod?: string | null;
   agentAlertTime?: number;
   agentCount?: number;
+  /** Agent UPNs - drawn as their own nodes feeding into the queue, not just counted in the sublabel. */
+  agents?: string[];
 }
 
 function designGreeting(cf: AutoAttendantCallFlow | null): string | undefined {
@@ -205,10 +207,21 @@ function designCqActionEdges(b: GraphBuilder, cq: DesignCallQueueInput): void {
   action(cq.noAgentAction, 'no_agent', 'No agents');
 }
 
+/** One node + edge per agent, feeding into the queue - "28 agents" as a sublabel count isn't the same as seeing who they are. */
+function designCqAgentEdges(b: GraphBuilder, cq: DesignCallQueueInput): void {
+  const sourceId = `cq:${cq.buildId}`;
+  for (const upn of cq.agents ?? []) {
+    if (!upn) continue;
+    const nodeId = b.ensureNode({ id: `user:${upn.toLowerCase()}`, kind: 'person', label: upn });
+    b.addEdge(nodeId, sourceId, 'Agent', 'agent');
+  }
+}
+
 /** The "as-designed" graph for one Call Queue, from Design & Build's structured columns. */
 export function buildCallQueueFlowGraphFromDesign(cq: DesignCallQueueInput): CallFlowGraph {
   const b = new GraphBuilder();
   b.ensureNode({ id: `cq:${cq.buildId}`, kind: 'call_queue', label: cq.name, sublabel: designCqSublabel(cq) });
+  designCqAgentEdges(b, cq);
   designCqActionEdges(b, cq);
   return b.build();
 }
@@ -349,8 +362,25 @@ function liveHasPhoneNumber(data: Record<string, unknown>): boolean {
 
 const CQ_ACTION_LABEL: Record<'overflow' | 'timeout' | 'no_agent', string> = { overflow: 'Overflow', timeout: 'Timeout', no_agent: 'No agents' };
 
-/** `usersByObjectId` (Entra object id, lowercased -> UPN) resolves a person target to a real UPN when the caller has that user loaded - otherwise falls back to a truncated id, same as an unresolved M365 group. */
-function liveCqActionEdges(b: GraphBuilder, cq: LiveCallQueueInput, usersByObjectId?: Map<string, string>): void {
+/** One node + edge per agent, feeding into the queue - "28 agents" as a sublabel count isn't the same as seeing who they are. Get-CsCallQueue's Agents entries carry `.ObjectId`, the same tenant_users.entra_id key as every other live person reference. */
+function liveCqAgentEdges(b: GraphBuilder, cq: LiveCallQueueInput, usersByEntraId?: Map<string, string>): void {
+  const identity = typeof cq.data.Identity === 'string' ? cq.data.Identity : cq.name;
+  const sourceId = `cq:${identity}`;
+  const agents = Array.isArray(cq.data.Agents) ? (cq.data.Agents as Record<string, unknown>[]) : [];
+  for (const agent of agents) {
+    const objectId = typeof agent.ObjectId === 'string' ? agent.ObjectId : undefined;
+    if (!objectId) continue;
+    const nodeId = b.ensureNode({
+      id: `user:${objectId}`,
+      kind: 'person',
+      label: usersByEntraId?.get(objectId.toLowerCase()) ?? `User (${objectId.slice(0, 8)}…)`,
+    });
+    b.addEdge(nodeId, sourceId, 'Agent', 'agent');
+  }
+}
+
+/** `usersByEntraId` (tenant_users.entra_id, lowercased -> UPN) resolves a person target to a real UPN when the caller has that user loaded - otherwise falls back to a truncated id, same as an unresolved M365 group. */
+function liveCqActionEdges(b: GraphBuilder, cq: LiveCallQueueInput, usersByEntraId?: Map<string, string>): void {
   const identity = typeof cq.data.Identity === 'string' ? cq.data.Identity : cq.name;
   const sourceId = `cq:${identity}`;
   for (const [actionKey, targetKey, branch] of [
@@ -368,18 +398,19 @@ function liveCqActionEdges(b: GraphBuilder, cq: LiveCallQueueInput, usersByObjec
         : b.ensureNode({
             id: `user:${targetObj.Id}`,
             kind: 'person',
-            label: usersByObjectId?.get(targetObj.Id.toLowerCase()) ?? `User (${targetObj.Id.slice(0, 8)}…)`,
+            label: usersByEntraId?.get(targetObj.Id.toLowerCase()) ?? `User (${targetObj.Id.slice(0, 8)}…)`,
           });
     b.addEdge(sourceId, nodeId, CQ_ACTION_LABEL[branch], branch);
   }
 }
 
 /** The "as-is" graph for one Call Queue, straight from Discovery's live tenant_objects snapshot. */
-export function buildCallQueueFlowGraphFromLive(cq: LiveCallQueueInput, usersByObjectId?: Map<string, string>): CallFlowGraph {
+export function buildCallQueueFlowGraphFromLive(cq: LiveCallQueueInput, usersByEntraId?: Map<string, string>): CallFlowGraph {
   const b = new GraphBuilder();
   const identity = typeof cq.data.Identity === 'string' ? cq.data.Identity : cq.name;
   b.ensureNode({ id: `cq:${identity}`, kind: 'call_queue', label: cq.name, sublabel: liveCqSublabel(cq.data) });
-  liveCqActionEdges(b, cq, usersByObjectId);
+  liveCqAgentEdges(b, cq, usersByEntraId);
+  liveCqActionEdges(b, cq, usersByEntraId);
   return b.build();
 }
 
@@ -395,16 +426,17 @@ export function buildCallQueueFlowGraphFromLive(cq: LiveCallQueueInput, usersByO
  * routing. `allAutoAttendants`/`allCallQueues`/`schedules` are the tenant's
  * full live snapshot (not all of them necessarily drawn) - needed to look
  * up a transfer target's own configuration, real name, and a holiday's
- * schedule name. `usersByObjectId` (Entra object id, lowercased -> UPN)
- * resolves a person target to a real UPN when loaded, else falls back to a
- * truncated id.
+ * schedule name. `usersByEntraId` (tenant_users.entra_id, lowercased -> UPN
+ * - the same key Get-CsAutoAttendant/Get-CsCallQueue's own CallTarget/Agent
+ * ObjectId fields use) resolves a person target to a real UPN when loaded,
+ * else falls back to a truncated id.
  */
 export function buildAutoAttendantFlowGraphFromLive(
   aa: LiveAutoAttendantInput,
   allAutoAttendants: LiveAutoAttendantInput[],
   allCallQueues: LiveCallQueueInput[],
   schedules: LiveScheduleInput[],
-  usersByObjectId?: Map<string, string>,
+  usersByEntraId?: Map<string, string>,
 ): CallFlowGraph {
   const b = new GraphBuilder();
   const aaByIdentity = new Map<string, LiveAutoAttendantInput>();
@@ -432,7 +464,7 @@ export function buildAutoAttendantFlowGraphFromLive(
     if (!ref) return undefined;
     if (ref.kind === 'external' && ref.number) return b.ensureNode({ id: `ext:${ref.number}`, kind: 'external_number', label: ref.number });
     if (ref.kind === 'user' && ref.liveId) {
-      const upn = usersByObjectId?.get(ref.liveId.toLowerCase());
+      const upn = usersByEntraId?.get(ref.liveId.toLowerCase());
       return b.ensureNode({ id: `user:${ref.liveId}`, kind: 'person', label: upn ?? `User (${ref.liveId.slice(0, 8)}…)` });
     }
     if (ref.kind === 'voice_app' && ref.liveId) {
@@ -464,7 +496,7 @@ export function buildAutoAttendantFlowGraphFromLive(
     const cq = cqByIdentity.get(key);
     if (cq && !visitedCq.has(key)) {
       visitedCq.add(key);
-      liveCqActionEdges(b, cq, usersByObjectId);
+      liveCqActionEdges(b, cq, usersByEntraId);
       return;
     }
     const nextAa = aaByIdentity.get(key);
