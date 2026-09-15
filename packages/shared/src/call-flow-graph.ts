@@ -71,10 +71,18 @@ export interface CallFlowGraph {
   edges: CallFlowEdge[];
 }
 
-/** Accumulates nodes (deduped by id) and edges while a graph is built - shared by every builder below. */
+/**
+ * Accumulates nodes (deduped by id) and edges while a graph is built -
+ * shared by every builder below. Two edges between the same pair of nodes
+ * (e.g. a Call Queue's Overflow and No-agent both routing to the same
+ * shared voicemail) render as one bezier curve exactly on top of the
+ * other in xyflow, hiding all but the last label - merged into a single
+ * "Overflow + No agents"-style edge instead of a duplicate addEdge call.
+ */
 class GraphBuilder {
   private nodes = new Map<string, CallFlowNode>();
   private edges: CallFlowEdge[] = [];
+  private edgeIndexByPair = new Map<string, number>();
 
   ensureNode(node: CallFlowNode): string {
     if (!this.nodes.has(node.id)) this.nodes.set(node.id, node);
@@ -82,6 +90,14 @@ class GraphBuilder {
   }
 
   addEdge(source: string, target: string, label: string, branch: CallFlowBranch, branchLabel?: string): void {
+    const key = `${source}->${target}`;
+    const existingIdx = this.edgeIndexByPair.get(key);
+    const existing = existingIdx != null ? this.edges[existingIdx] : undefined;
+    if (existing) {
+      if (!existing.label.split(' + ').includes(label)) existing.label = `${existing.label} + ${label}`;
+      return;
+    }
+    this.edgeIndexByPair.set(key, this.edges.length);
     this.edges.push({ id: `e${this.edges.length}:${source}->${target}`, source, target, label, branch, branchLabel });
   }
 
