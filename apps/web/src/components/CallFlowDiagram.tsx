@@ -3,7 +3,7 @@ import { Background, Controls, MarkerType, MiniMap, ReactFlow, ReactFlowProvider
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
 import { Text } from '@fluentui/react-components';
-import type { CallFlowBranch, CallFlowGraph, CallFlowNodeKind } from '@tvmf/shared';
+import type { CallFlowBranch, CallFlowGraph, CallFlowNode, CallFlowNodeKind } from '@tvmf/shared';
 
 const NODE_WIDTH = 210;
 const NODE_HEIGHT = 52;
@@ -29,12 +29,20 @@ const BRANCH_STYLE: Record<CallFlowBranch, { color: string; dash?: string; label
   no_agent: { color: '#DC2626', dash: '5,3', label: 'No agents' },
 };
 
+/** A greeting sublabel wraps over several lines, so a node showing one renders taller than NODE_HEIGHT - dagre needs that real height or it packs the next node in the same column right on top of it. */
+function estimateNodeHeight(n: CallFlowNode): number {
+  if (!n.sublabel) return NODE_HEIGHT;
+  const charsPerLine = 32;
+  const lines = Math.max(1, Math.ceil(n.sublabel.length / charsPerLine));
+  return Math.max(NODE_HEIGHT, 30 + lines * 14 + 12);
+}
+
 /** dagre only computes positions - it's not rendered itself, xyflow does the actual drawing. */
 function layout(graph: CallFlowGraph) {
   const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir: 'LR', nodesep: 36, ranksep: 90 });
+  g.setGraph({ rankdir: 'LR', nodesep: 40, ranksep: 90 });
   g.setDefaultEdgeLabel(() => ({}));
-  for (const n of graph.nodes) g.setNode(n.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
+  for (const n of graph.nodes) g.setNode(n.id, { width: NODE_WIDTH, height: estimateNodeHeight(n) });
   for (const e of graph.edges) g.setEdge(e.source, e.target);
   dagre.layout(g);
   return new Map(graph.nodes.map((n) => [n.id, g.node(n.id)]));
@@ -55,7 +63,7 @@ export function CallFlowDiagram({ graph }: { graph: CallFlowGraph }) {
       const pos = positions.get(n.id) ?? { x: 0, y: 0 };
       return {
         id: n.id,
-        position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - NODE_HEIGHT / 2 },
+        position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - estimateNodeHeight(n) / 2 },
         data: {
           label: (
             <div>
