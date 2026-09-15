@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useDebounced } from '../hooks/useDebounced';
 import {
   Button,
   Card,
@@ -734,18 +735,14 @@ export function PagedSection({
   const qc = useQueryClient();
   const [page, setPage] = useState(1);
   const [qInput, setQInput] = useState('');
-  const [q, setQ] = useState('');
+  const q = useDebounced(qInput);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Row | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const h = setTimeout(() => {
-      setQ(qInput.trim());
-      setPage(1);
-    }, 250);
-    return () => clearTimeout(h);
-  }, [qInput]);
+    setPage(1);
+  }, [q]);
 
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(params ?? {})) if (v) qs.set(k, v);

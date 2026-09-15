@@ -75,6 +75,7 @@ import { DataTable } from '../components/DataTable';
 import { JsonTree } from '../components/JsonTree';
 import { Page } from '../components/Page';
 import { LoadError, NoTenant } from '../components/records';
+import { useDebounced } from '../hooks/useDebounced';
 
 /* --------------------------------- styles --------------------------------- */
 
@@ -1079,15 +1080,6 @@ function JsonDialog({ title, data, onClose }: { title: string; data: unknown; on
       </DialogSurface>
     </Dialog>
   );
-}
-
-function useDebounced(value: string, ms = 250) {
-  const [v, setV] = useState(value);
-  useEffect(() => {
-    const h = setTimeout(() => setV(value.trim()), ms);
-    return () => clearTimeout(h);
-  }, [value, ms]);
-  return v;
 }
 
 /** Generic snapshot list for one object type. */

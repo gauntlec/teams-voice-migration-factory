@@ -47,6 +47,7 @@ import {
 import { api, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { Page } from '../components/Page';
+import { UpnAutocomplete } from '../components/UpnAutocomplete';
 import {
   BulkEditDialog,
   LoadError,
@@ -450,8 +451,9 @@ export function BuildSiteWorkspace() {
           }}
         />
       )}
-      {callingSettingsFor && (
+      {callingSettingsFor && tid && (
         <CallingSettingsDialog
+          tenantId={tid}
           endpoint={callingSettingsFor.endpoint}
           row={callingSettingsFor.row}
           onClose={() => setCallingSettingsFor(null)}
@@ -1110,11 +1112,13 @@ type TriState = 'unset' | 'off' | 'on';
 const UNANSWERED_DELAYS = [5, 10, 15, 20, 30, 40, 50, 60];
 
 function CallingSettingsDialog({
+  tenantId,
   endpoint,
   row,
   onClose,
   onSaved,
 }: {
+  tenantId: string;
   endpoint: string;
   row: Row;
   onClose: () => void;
@@ -1136,7 +1140,7 @@ function CallingSettingsDialog({
   const [busyOnBusy, setBusyOnBusy] = useState<string>(cf?.busyOnBusy ?? '');
 
   const [pgOrder, setPgOrder] = useState<string>(pg?.order ?? 'Simultaneous');
-  const [pgTargetsRaw, setPgTargetsRaw] = useState(pg?.targets?.join(', ') ?? '');
+  const [pgTargets, setPgTargets] = useState<string[]>(pg?.targets ? [...pg.targets] : []);
 
   const [delegates, setDelegates] = useState<CallDelegate[]>(
     Array.isArray(row.delegates) ? (row.delegates as CallDelegate[]).slice() : [],
@@ -1171,10 +1175,7 @@ function CallingSettingsDialog({
       }
       if (busyOnBusy) call_forwarding.busyOnBusy = busyOnBusy as (typeof BUSY_ON_BUSY_OPTIONS)[number];
 
-      const targets = pgTargetsRaw
-        .split(',')
-        .map((t) => t.trim())
-        .filter(Boolean);
+      const targets = pgTargets.map((t) => t.trim()).filter(Boolean);
       const pickup_group = targets.length ? { order: pgOrder as (typeof CALL_GROUP_ORDERS)[number], targets } : undefined;
 
       return api(`${endpoint}/${row.id}`, {
@@ -1189,6 +1190,10 @@ function CallingSettingsDialog({
     onSuccess: onSaved,
     onError: (e) => setErr(e instanceof ApiError ? e.message : 'Failed'),
   });
+
+  const addPgTarget = () => setPgTargets((t) => [...t, '']);
+  const updatePgTarget = (i: number, value: string) => setPgTargets((t) => t.map((x, idx) => (idx === i ? value : x)));
+  const removePgTarget = (i: number) => setPgTargets((t) => t.filter((_, idx) => idx !== i));
 
   const addDelegate = () =>
     setDelegates((d) => [
@@ -1249,7 +1254,7 @@ function CallingSettingsDialog({
                       </Field>
                       {fwdTargetType === 'SingleTarget' && (
                         <Field label="Target (user, SIP address or number)">
-                          <Input value={fwdTarget} onChange={(_, d) => setFwdTarget(d.value)} style={{ minWidth: 200 }} />
+                          <UpnAutocomplete tenantId={tenantId} value={fwdTarget} onChange={setFwdTarget} style={{ minWidth: 220 }} />
                         </Field>
                       )}
                     </>
@@ -1291,7 +1296,7 @@ function CallingSettingsDialog({
                       </Field>
                       {unaTargetType === 'SingleTarget' && (
                         <Field label="Target (user, SIP address or number)">
-                          <Input value={unaTarget} onChange={(_, d) => setUnaTarget(d.value)} style={{ minWidth: 200 }} />
+                          <UpnAutocomplete tenantId={tenantId} value={unaTarget} onChange={setUnaTarget} style={{ minWidth: 220 }} />
                         </Field>
                       )}
                     </>
@@ -1316,10 +1321,15 @@ function CallingSettingsDialog({
               </Field>
 
               <div>
-                <Text weight="semibold">Pickup group (call group)</Text>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end', marginTop: 6 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text weight="semibold">Pickup group (call group)</Text>
+                  <Button size="small" appearance="subtle" disabled={pgTargets.length >= 25} onClick={addPgTarget}>
+                    Add member
+                  </Button>
+                </div>
+                <div style={{ marginTop: 6 }}>
                   <Field label="Order">
-                    <Dropdown value={pgOrder} selectedOptions={[pgOrder]} onOptionSelect={(_, d) => setPgOrder(d.optionValue ?? '')}>
+                    <Dropdown value={pgOrder} selectedOptions={[pgOrder]} onOptionSelect={(_, d) => setPgOrder(d.optionValue ?? '')} style={{ maxWidth: 200 }}>
                       {CALL_GROUP_ORDERS.map((o) => (
                         <Option key={o} value={o}>
                           {o}
@@ -1327,13 +1337,18 @@ function CallingSettingsDialog({
                       ))}
                     </Dropdown>
                   </Field>
-                  <Field
-                    label="Members (UPNs)"
-                    hint="Comma-separated. Clearing this leaves a previously-saved group untouched - removing all members isn't deployed automatically yet."
-                  >
-                    <Input value={pgTargetsRaw} onChange={(_, d) => setPgTargetsRaw(d.value)} style={{ minWidth: 260 }} />
-                  </Field>
                 </div>
+                {pgTargets.map((t, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
+                    <UpnAutocomplete tenantId={tenantId} value={t} onChange={(v) => updatePgTarget(i, v)} style={{ minWidth: 220 }} />
+                    <Button size="small" appearance="subtle" icon={<DeleteRegular />} onClick={() => removePgTarget(i)} />
+                  </div>
+                ))}
+                {pgTargets.length === 0 && (
+                  <Text size={200} style={{ color: '#616161', display: 'block', marginTop: 6 }}>
+                    No members - removing the last member here leaves a previously-saved group untouched (not deployed automatically yet).
+                  </Text>
+                )}
               </div>
 
               <div>
@@ -1345,11 +1360,12 @@ function CallingSettingsDialog({
                 </div>
                 {delegates.map((d, i) => (
                   <div key={i} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}>
-                    <Input
-                      placeholder="delegate@contoso.com"
+                    <UpnAutocomplete
+                      tenantId={tenantId}
                       value={d.delegateUpn}
-                      onChange={(_, ev) => updateDelegate(i, { delegateUpn: ev.value })}
-                      style={{ minWidth: 200 }}
+                      onChange={(v) => updateDelegate(i, { delegateUpn: v })}
+                      placeholder="delegate@contoso.com"
+                      style={{ minWidth: 220 }}
                     />
                     <Checkbox label="Make calls" checked={d.makeCalls} onChange={(_, ev) => updateDelegate(i, { makeCalls: !!ev.checked })} />
                     <Checkbox label="Receive calls" checked={d.receiveCalls} onChange={(_, ev) => updateDelegate(i, { receiveCalls: !!ev.checked })} />
