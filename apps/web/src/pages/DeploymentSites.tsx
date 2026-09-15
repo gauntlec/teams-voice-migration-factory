@@ -94,12 +94,12 @@ export function DeploymentSites() {
     (connPageClamped - 1) * CONNECTIONS_PAGE_SIZE,
     connPageClamped * CONNECTIONS_PAGE_SIZE,
   );
+  const [search, setSearch] = useState('');
 
   if (!activeTenantId) return <NoTenant />;
   if (q.isLoading) return <Spinner label="Loading Deployment…" />;
   if (q.isError) return <LoadError message={(q.error as Error).message} />;
 
-  const [search, setSearch] = useState('');
   const term = search.trim().toLowerCase();
   const allSites = q.data ?? [];
   const sites = term
