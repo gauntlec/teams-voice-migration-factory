@@ -209,16 +209,15 @@ const queryArray = <T extends z.ZodTypeAny>(arraySchema: T) =>
 
 /**
  * Read-only "what would this deploy right now" preview - no connection, no
- * worker/queue involvement. Deliberately excludes auto_attendants/m365_groups:
- * no worker code path handles those sheets yet (see planIdentityRow/
- * planResourceAccountRow/planCallQueueRow and handleDeploymentRun), so
- * previewing them would be misleading. call_queues is planned
- * (planCallQueueRow) but not in the default list, matching resource_accounts'
- * own opt-in-by-caller shape.
+ * worker/queue involvement. Deliberately excludes m365_groups: no worker code
+ * path handles that sheet yet (build_m365_groups has no CRUD/API wiring at
+ * all - see the "reverse-engineer OVP012" plan). call_queues/auto_attendants
+ * are planned (planCallQueueRow/planAutoAttendantRow) but not in the default
+ * list, matching resource_accounts' own opt-in-by-caller shape.
  */
 export const deploymentPreviewQuerySchema = z.object({
   siteId: z.string().uuid(),
-  sheets: queryArray(z.array(z.enum(['users', 'caps', 'resource_accounts', 'call_queues'])).min(1)).default([
+  sheets: queryArray(z.array(z.enum(['users', 'caps', 'resource_accounts', 'call_queues', 'auto_attendants'])).min(1)).default([
     'users',
     'caps',
     'resource_accounts',

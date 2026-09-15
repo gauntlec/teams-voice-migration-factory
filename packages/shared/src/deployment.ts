@@ -57,9 +57,17 @@ export interface PreambleStep {
   parameters: Record<string, unknown>;
 }
 
-/** Sentinel: reference an earlier PreambleStep's result by variable name, instead of a literal value. */
+/**
+ * Sentinel: reference an earlier PreambleStep's result by variable name,
+ * instead of a literal value. `prop` renders a property access on it
+ * (`$name.Id`) - needed for New-CsAutoAttendantCallHandlingAssociation's
+ * -ScheduleId/-CallFlowId, which take the *string* Id a locally-constructed
+ * New-CsOnlineSchedule/New-CsAutoAttendantCallFlow object generates, not the
+ * object itself.
+ */
 export interface VarRef {
   $var: string;
+  prop?: string;
 }
 
 function isVarRef(v: unknown): v is VarRef {
@@ -97,13 +105,18 @@ export function psQuote(v: string): string {
   return `'${v.replace(/'/g, "''")}'`;
 }
 
-/** Render one -Param value; a VarRef renders as a bare `$name` (no quoting - it's a variable reference, not a literal). */
+/** Renders a VarRef as `$name` or, with `prop` set, `$name.Prop` (no quoting either way - it's a variable/property reference, not a literal). */
+function renderVarRef(v: VarRef): string {
+  return v.prop ? `$${v.$var}.${v.prop}` : `$${v.$var}`;
+}
+
+/** Render one -Param value; a VarRef renders per renderVarRef. */
 function renderValue(v: unknown): string | null {
   if (v === undefined || v === null || v === '') return null;
-  if (isVarRef(v)) return `$${v.$var}`;
+  if (isVarRef(v)) return renderVarRef(v);
   if (Array.isArray(v)) {
     if (v.length === 0) return null;
-    return `@(${v.map((item) => (isVarRef(item) ? `$${item.$var}` : psQuote(String(item)))).join(', ')})`;
+    return `@(${v.map((item) => (isVarRef(item) ? renderVarRef(item) : psQuote(String(item)))).join(', ')})`;
   }
   if (typeof v === 'boolean') return `$${v}`;
   if (typeof v === 'number') return String(v);
@@ -730,4 +743,319 @@ export interface AutoAttendantHolidayCallFlow {
   name: string;
   callFlow: AutoAttendantCallFlow;
   schedule: AutoAttendantSchedule;
+}
+
+export interface BuildAutoAttendantRow {
+  id: string;
+  name: string;
+  language_id: string | null;
+  time_zone_id: string | null;
+  voice_id: string | null;
+  voice_response_enabled: boolean;
+  operator: AutoAttendantCallableEntity | null;
+  default_call_flow: AutoAttendantCallFlow | null;
+  after_hours_call_flow: AutoAttendantCallFlow | null;
+  holiday_call_flows: AutoAttendantHolidayCallFlow[];
+  schedule: AutoAttendantSchedule | null;
+}
+
+/**
+ * What Discovery's live-tenant snapshot (tenant_objects, object_type
+ * 'auto_attendant') knows about an AA, matched by Name - same rationale as
+ * CallQueueLiveState. `identity` is needed both to target Set-CsAutoAttendant
+ * and to resolve this AA as a menu-option target from another AA (see
+ * AutoAttendantCrossRef).
+ */
+export interface AutoAttendantLiveState {
+  identity: string;
+  languageId?: string;
+  timeZoneId?: string;
+  voiceId?: string;
+  enableVoiceResponse?: boolean;
+}
+
+/**
+ * Live Identity GUIDs for every same-site Auto Attendant/Call Queue, keyed
+ * `${kind}:${buildId}` - resolves a menu option or -Operator that targets
+ * another AA/CQ on the same site (AutoAttendantCallableEntity.buildId) to
+ * the live GUID New-CsAutoAttendantCallableEntity -Type ApplicationEndpoint
+ * -Identity needs. Built by the caller (mirrors raObjectIds/agentObjectIds
+ * in planCallQueueRow) from every build_auto_attendants/build_call_queues
+ * row on the site, not just the one(s) being planned - a target can point at
+ * a sibling row outside the current plan/preview scope.
+ */
+export type AutoAttendantCrossRef = Map<string, string>;
+
+function crossRefKey(kind: 'auto_attendant' | 'call_queue', buildId: string): string {
+  return `${kind}:${buildId}`;
+}
+
+/**
+ * Flags anything planAutoAttendantRow silently drops rather than guesses -
+ * an unresolved menu-option/operator target, or no default call flow at all
+ * (nothing to deploy without one, so the row plans no calls).
+ */
+export function autoAttendantRowWarnings(row: BuildAutoAttendantRow, crossRef: AutoAttendantCrossRef): string[] {
+  const warnings: string[] = [];
+  if (!row.default_call_flow) {
+    warnings.push('No business-hours call flow configured yet, so nothing will deploy for this Auto Attendant.');
+    return warnings;
+  }
+  const unresolved: string[] = [];
+  const check = (entity: AutoAttendantCallableEntity | undefined, where: string) => {
+    if (!entity) return;
+    if ((entity.kind === 'auto_attendant' || entity.kind === 'call_queue') && (!entity.buildId || !crossRef.has(crossRefKey(entity.kind, entity.buildId)))) {
+      unresolved.push(`${where} targets an Auto Attendant/Call Queue that doesn't resolve live yet`);
+    }
+    if (entity.kind === 'user' && !entity.upn) {
+      unresolved.push(`${where} has no UPN set for its user target`);
+    }
+  };
+  check(row.operator ?? undefined, 'Operator');
+  const checkFlow = (cf: AutoAttendantCallFlow | null | undefined, label: string) => {
+    for (const opt of cf?.menu.options ?? []) {
+      if (opt.action === 'TransferCallToTarget') check(opt.target, `${label} DTMF ${opt.dtmf}`);
+    }
+  };
+  checkFlow(row.default_call_flow, 'Business hours');
+  checkFlow(row.after_hours_call_flow, 'After hours');
+  for (const h of row.holiday_call_flows) checkFlow(h.callFlow, h.name);
+  if (unresolved.length) warnings.push(...unresolved);
+  return warnings;
+}
+
+/** Accumulates one AA row's preamble steps plus its own per-prefix variable-name counters - passed through every builder below instead of module state, so nothing leaks across calls. */
+interface AaBuildCtx {
+  steps: PreambleStep[];
+  counters: Record<string, number>;
+}
+function nextAaVar(ctx: AaBuildCtx, prefix: string): string {
+  ctx.counters[prefix] = (ctx.counters[prefix] ?? 0) + 1;
+  return `${prefix}${ctx.counters[prefix]}`;
+}
+
+/**
+ * New-CsAutoAttendantCallableEntity - a menu option's transfer target or the
+ * AA's -Operator. Returns undefined (skip, don't guess) when the target
+ * can't resolve to a live identity - an unresolved same-site AA/CQ, or a
+ * user target with no UPN. 'external'/'voicemail'/'shared_voicemail' always
+ * resolve (a raw number needs no live lookup; Voicemail/SharedVoicemail
+ * don't take an -Identity at all).
+ */
+function buildCallableEntity(ctx: AaBuildCtx, entity: AutoAttendantCallableEntity, crossRef: AutoAttendantCrossRef): VarRef | undefined {
+  let type: string;
+  let identity: string | undefined;
+  switch (entity.kind) {
+    case 'auto_attendant':
+    case 'call_queue':
+      type = 'ApplicationEndpoint';
+      identity = entity.buildId ? crossRef.get(crossRefKey(entity.kind, entity.buildId)) : undefined;
+      if (!identity) return undefined;
+      break;
+    case 'user':
+      type = 'User';
+      identity = entity.upn;
+      if (!identity) return undefined;
+      break;
+    case 'external':
+      type = 'ExternalPstn';
+      identity = entity.number;
+      if (!identity) return undefined;
+      break;
+    case 'voicemail':
+      type = 'Voicemail';
+      break;
+    case 'shared_voicemail':
+      type = 'SharedVoicemail';
+      break;
+  }
+  const varName = nextAaVar(ctx, 'ce');
+  ctx.steps.push({ assignTo: varName, cmdlet: 'New-CsAutoAttendantCallableEntity', parameters: { Type: type, ...(identity ? { Identity: identity } : {}) } });
+  return { $var: varName };
+}
+
+/** New-CsAutoAttendantMenuOption. Drops the -CallTarget (falls back to a bare disconnect-shaped option) rather than guess when a TransferCallToTarget's target didn't resolve - see autoAttendantRowWarnings, which is what actually surfaces that gap. */
+function buildMenuOption(ctx: AaBuildCtx, opt: AutoAttendantMenuOption, crossRef: AutoAttendantCrossRef): VarRef {
+  const callTarget = opt.action === 'TransferCallToTarget' && opt.target ? buildCallableEntity(ctx, opt.target, crossRef) : undefined;
+  const varName = nextAaVar(ctx, 'opt');
+  ctx.steps.push({
+    assignTo: varName,
+    cmdlet: 'New-CsAutoAttendantMenuOption',
+    parameters: { Action: callTarget ? opt.action : 'DisconnectCall', DtmfResponse: opt.dtmf, ...(callTarget ? { CallTarget: callTarget } : {}) },
+  });
+  return { $var: varName };
+}
+
+/** New-CsAutoAttendantPrompt. Only a text-to-speech prompt is deployable today - an AudioFile prompt needs Import-CsOnlineAudioFile run first (not modeled), so it's silently skipped rather than emitted broken. */
+function buildPrompt(ctx: AaBuildCtx, p: AutoAttendantPrompt): VarRef | undefined {
+  if (p.type !== 'Text' || !p.text) return undefined;
+  const varName = nextAaVar(ctx, 'prompt');
+  ctx.steps.push({ assignTo: varName, cmdlet: 'New-CsAutoAttendantPrompt', parameters: { TextToSpeechPrompt: p.text } });
+  return { $var: varName };
+}
+
+/** New-CsAutoAttendantMenu. */
+function buildMenu(ctx: AaBuildCtx, menu: AutoAttendantMenu, crossRef: AutoAttendantCrossRef): VarRef {
+  const optionRefs = menu.options.map((o) => buildMenuOption(ctx, o, crossRef));
+  const varName = nextAaVar(ctx, 'menu');
+  ctx.steps.push({
+    assignTo: varName,
+    cmdlet: 'New-CsAutoAttendantMenu',
+    parameters: {
+      MenuOptions: optionRefs,
+      ...(menu.enableDialByName ? { EnableDialByName: true } : {}),
+      ...(menu.directorySearchMethod ? { DirectorySearchMethod: menu.directorySearchMethod } : {}),
+    },
+  });
+  return { $var: varName };
+}
+
+/** New-CsAutoAttendantCallFlow. */
+function buildCallFlow(ctx: AaBuildCtx, cf: AutoAttendantCallFlow, name: string, crossRef: AutoAttendantCrossRef): VarRef {
+  const greetingRefs = cf.greetings.map((g) => buildPrompt(ctx, g)).filter((v): v is VarRef => !!v);
+  const menuRef = buildMenu(ctx, cf.menu, crossRef);
+  const varName = nextAaVar(ctx, 'flow');
+  ctx.steps.push({
+    assignTo: varName,
+    cmdlet: 'New-CsAutoAttendantCallFlow',
+    parameters: { Name: name, ...(greetingRefs.length ? { Greetings: greetingRefs } : {}), Menu: menuRef },
+  });
+  return { $var: varName };
+}
+
+const WEEKLY_SCHEDULE_PARAMS = [
+  ['monday', 'MondayHours'],
+  ['tuesday', 'TuesdayHours'],
+  ['wednesday', 'WednesdayHours'],
+  ['thursday', 'ThursdayHours'],
+  ['friday', 'FridayHours'],
+  ['saturday', 'SaturdayHours'],
+  ['sunday', 'SundayHours'],
+] as const;
+
+/** New-CsOnlineSchedule - -WeeklyRecurrentSchedule with per-day New-CsOnlineTimeRange objects, or -FixedSchedule with New-CsOnlineDateTimeRange objects (a distinct cmdlet from TimeRange - real dates, not times of day). */
+function buildSchedule(ctx: AaBuildCtx, sched: AutoAttendantSchedule, name: string): VarRef {
+  const varName = nextAaVar(ctx, 'sched');
+  if (sched.type === 'fixed' && sched.fixed) {
+    const rangeRefs = sched.fixed.ranges.map((r) => {
+      const rv = nextAaVar(ctx, 'dtr');
+      ctx.steps.push({ assignTo: rv, cmdlet: 'New-CsOnlineDateTimeRange', parameters: { Start: r.start, End: r.end } });
+      return { $var: rv };
+    });
+    ctx.steps.push({ assignTo: varName, cmdlet: 'New-CsOnlineSchedule', parameters: { Name: name, FixedSchedule: true, DateTimeRanges: rangeRefs } });
+  } else {
+    const params: Record<string, unknown> = { Name: name, WeeklyRecurrentSchedule: true };
+    for (const [day, param] of WEEKLY_SCHEDULE_PARAMS) {
+      const ranges = sched.weekly?.[day] ?? [];
+      if (ranges.length) {
+        params[param] = ranges.map((r) => {
+          const rv = nextAaVar(ctx, 'tr');
+          ctx.steps.push({ assignTo: rv, cmdlet: 'New-CsOnlineTimeRange', parameters: { Start: r.start, End: r.end } });
+          return { $var: rv };
+        });
+      }
+    }
+    if (sched.weekly?.complement) params.Complement = true;
+    ctx.steps.push({ assignTo: varName, cmdlet: 'New-CsOnlineSchedule', parameters: params });
+  }
+  return { $var: varName };
+}
+
+/** New-CsAutoAttendantCallHandlingAssociation - -ScheduleId/-CallFlowId are the *string* Id a locally-constructed schedule/call-flow object generates, not the object itself (see VarRef's `prop`). */
+function buildCallHandlingAssociation(ctx: AaBuildCtx, type: 'AfterHours' | 'Holiday', scheduleRef: VarRef, callFlowRef: VarRef): VarRef {
+  const varName = nextAaVar(ctx, 'cha');
+  ctx.steps.push({
+    assignTo: varName,
+    cmdlet: 'New-CsAutoAttendantCallHandlingAssociation',
+    parameters: { Type: type, ScheduleId: { ...scheduleRef, prop: 'Id' }, CallFlowId: { ...callFlowRef, prop: 'Id' } },
+  });
+  return { $var: varName };
+}
+
+/**
+ * Turn a build_auto_attendants row into its cmdlet chain: the real
+ * New-CsAutoAttendant construction chain (CallableEntity -> Prompt ->
+ * MenuOption -> Menu -> CallFlow -> TimeRange/DateTimeRange -> Schedule ->
+ * CallHandlingAssociation), run as one `preamble` before the single
+ * mutating New-CsAutoAttendant/Set-CsAutoAttendant call, then a resource-
+ * account association mirroring planCallQueueRow's own. Plans nothing when
+ * there's no default_call_flow yet - see autoAttendantRowWarnings, which is
+ * what surfaces that (and any unresolved target) to the preview.
+ *
+ * Unlike planCallQueueRow, a live AA is always re-Set rather than diffed on
+ * its compound call-flow/schedule structure: Get-CsAutoAttendant's own
+ * round-trip shape for that structure isn't confirmed field-for-field (see
+ * the "reverse-engineer OVP012" plan), so diffing it risks silently missing
+ * a real change. Set-CsAutoAttendant re-run with identical values is a
+ * harmless no-op live - the same tradeoff planCallQueueRow's own resource-
+ * account association step already makes for the same underlying reason.
+ */
+export function planAutoAttendantRow(
+  row: BuildAutoAttendantRow,
+  crossRef: AutoAttendantCrossRef,
+  resourceAccountInstanceId: string | undefined,
+  live?: AutoAttendantLiveState,
+): CmdletInvocation[] {
+  const calls: CmdletInvocation[] = [];
+  if (!row.default_call_flow) return calls;
+
+  const ctx: AaBuildCtx = { steps: [], counters: {} };
+
+  const defaultFlowRef = buildCallFlow(ctx, row.default_call_flow, `${row.name} - Business hours`, crossRef);
+  const otherFlowRefs: VarRef[] = [];
+  const chaRefs: VarRef[] = [];
+
+  if (row.after_hours_call_flow && row.schedule) {
+    const afRef = buildCallFlow(ctx, row.after_hours_call_flow, `${row.name} - After hours`, crossRef);
+    const schedRef = buildSchedule(ctx, row.schedule, `${row.name} - After hours schedule`);
+    otherFlowRefs.push(afRef);
+    chaRefs.push(buildCallHandlingAssociation(ctx, 'AfterHours', schedRef, afRef));
+  }
+  for (const holiday of row.holiday_call_flows) {
+    const hfRef = buildCallFlow(ctx, holiday.callFlow, `${row.name} - ${holiday.name}`, crossRef);
+    const schedRef = buildSchedule(ctx, holiday.schedule, holiday.name);
+    otherFlowRefs.push(hfRef);
+    chaRefs.push(buildCallHandlingAssociation(ctx, 'Holiday', schedRef, hfRef));
+  }
+
+  const operatorRef = row.operator ? buildCallableEntity(ctx, row.operator, crossRef) : undefined;
+
+  const parameters: Record<string, unknown> = {
+    Name: row.name,
+    ...(row.language_id ? { LanguageId: row.language_id } : {}),
+    ...(row.time_zone_id ? { TimeZoneId: row.time_zone_id } : {}),
+    ...(row.voice_id ? { VoiceId: row.voice_id } : {}),
+    ...(row.voice_response_enabled ? { EnableVoiceResponse: true } : {}),
+    DefaultCallFlow: defaultFlowRef,
+    ...(otherFlowRefs.length ? { CallFlows: otherFlowRefs } : {}),
+    ...(chaRefs.length ? { CallHandlingAssociations: chaRefs } : {}),
+    ...(operatorRef ? { Operator: operatorRef } : {}),
+  };
+
+  if (!live) {
+    calls.push({ cmdlet: 'New-CsAutoAttendant', parameters, objectType: 'auto_attendant', objectId: row.id, preamble: ctx.steps });
+  } else {
+    calls.push({
+      cmdlet: 'Set-CsAutoAttendant',
+      parameters: { Identity: live.identity, ...parameters },
+      objectType: 'auto_attendant',
+      objectId: row.id,
+      preamble: ctx.steps,
+    });
+  }
+
+  // Mirrors planCallQueueRow's own resource-account association step -
+  // same known limitation (can't diff whether it's already associated live,
+  // so this re-emits every pass; New-CsOnlineApplicationInstanceAssociation
+  // tolerates being re-run with the same target).
+  if (live?.identity && resourceAccountInstanceId) {
+    calls.push({
+      cmdlet: 'New-CsOnlineApplicationInstanceAssociation',
+      parameters: { Identities: [resourceAccountInstanceId], ConfigurationId: live.identity, ConfigurationType: 'AutoAttendant' },
+      objectType: 'auto_attendant',
+      objectId: row.id,
+    });
+  }
+
+  return calls;
 }

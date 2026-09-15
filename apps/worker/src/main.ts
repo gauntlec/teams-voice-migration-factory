@@ -10,10 +10,18 @@ import {
   CALL_QUEUE_ROUTING_METHODS,
   CALL_QUEUE_TIMEOUT_ACTIONS,
   decodeCallQueueEnum,
+  planAutoAttendantRow,
   planCallQueueRow,
   planIdentityRow,
   planResourceAccountRow,
   renderCommand,
+  type AutoAttendantCallableEntity,
+  type AutoAttendantCallFlow,
+  type AutoAttendantCrossRef,
+  type AutoAttendantHolidayCallFlow,
+  type AutoAttendantLiveState,
+  type AutoAttendantSchedule,
+  type BuildAutoAttendantRow,
   type CallDelegate,
   type CallForwardingSettings,
   type CallQueueActionSettings,
@@ -372,6 +380,54 @@ async function resolveLiveCallQueueState(scoped: ReturnType<typeof tenantDb>, na
   return out;
 }
 
+/** Mirrors the identical apps/api/.../deployment.service.ts helper - see that copy for why it's duplicated. */
+async function resolveLiveAutoAttendantState(scoped: ReturnType<typeof tenantDb>, names: string[]) {
+  const wanted = [...new Set(names.map((n) => n.toLowerCase()).filter(Boolean))];
+  const out = new Map<string, AutoAttendantLiveState>();
+  if (wanted.length === 0) return out;
+  const rows = await scoped
+    .selectFrom('tenant_objects')
+    .select(['display_name', 'data'])
+    .where('object_type', '=', 'auto_attendant')
+    .where('removed_at', 'is', null)
+    .where(sql`lower(display_name)`, 'in', wanted)
+    .execute();
+  for (const r of rows) {
+    if (!r.display_name) continue;
+    const d = r.data as Record<string, unknown>;
+    out.set(r.display_name.toLowerCase(), {
+      identity: String(d.Identity ?? ''),
+      languageId: typeof d.LanguageId === 'string' ? d.LanguageId : undefined,
+      timeZoneId: typeof d.TimeZoneId === 'string' ? d.TimeZoneId : undefined,
+      voiceId: typeof d.VoiceId === 'string' ? d.VoiceId : undefined,
+      enableVoiceResponse: typeof d.EnableVoiceResponse === 'boolean' ? d.EnableVoiceResponse : undefined,
+    });
+  }
+  return out;
+}
+
+/** Mirrors the identical apps/api/.../deployment.service.ts helper - see that copy for why it's duplicated. */
+async function buildAutoAttendantCrossRef(scoped: ReturnType<typeof tenantDb>, siteId: string): Promise<AutoAttendantCrossRef> {
+  const [aaRows, cqRows] = await Promise.all([
+    scoped.selectFrom('build_auto_attendants').select(['id', 'name']).where('site_id', '=', siteId).execute(),
+    scoped.selectFrom('build_call_queues').select(['id', 'name']).where('site_id', '=', siteId).execute(),
+  ]);
+  const [liveAa, liveCq] = await Promise.all([
+    resolveLiveAutoAttendantState(scoped, aaRows.map((r) => r.name)),
+    resolveLiveCallQueueState(scoped, cqRows.map((r) => r.name)),
+  ]);
+  const crossRef: AutoAttendantCrossRef = new Map();
+  for (const row of aaRows) {
+    const live = liveAa.get(row.name.toLowerCase());
+    if (live?.identity) crossRef.set(`auto_attendant:${row.id}`, live.identity);
+  }
+  for (const row of cqRows) {
+    const live = liveCq.get(row.name.toLowerCase());
+    if (live?.identity) crossRef.set(`call_queue:${row.id}`, live.identity);
+  }
+  return crossRef;
+}
+
 async function handleDeploymentRun(job: Job) {
   const { schema, deploymentId, connectionId, mode, scope, operatorUserId, tenantId } = job.data as {
     schema: string;
@@ -566,6 +622,44 @@ async function handleDeploymentRun(job: Job) {
         raObjectIds,
         liveQueues.get(row.name.toLowerCase()),
       );
+      for (const call of calls) await runCall(call);
+    }
+  }
+
+  if (scope.sheets.includes('auto_attendants')) {
+    let q = scoped.selectFrom('build_auto_attendants').selectAll().where('site_id', '=', scope.siteId);
+    if (scope.rowIds?.length) q = q.where('id', 'in', scope.rowIds);
+    const rows = await q.execute();
+    const discoveryIds = rows.map((r) => r.discovery_resource_account_id).filter((id): id is string => !!id);
+    const [ras, crossRef] = await Promise.all([
+      discoveryIds.length
+        ? scoped.selectFrom('build_resource_accounts').select(['discovery_resource_account_id', 'upn']).where('discovery_resource_account_id', 'in', discoveryIds).execute()
+        : Promise.resolve([]),
+      buildAutoAttendantCrossRef(scoped, scope.siteId),
+    ]);
+    const liveIdentity = await resolveLiveIdentityState(scoped, ras.map((r) => r.upn));
+    const raInstanceByDiscoveryId = new Map<string, string>();
+    for (const ra of ras) {
+      const oid = liveIdentity.get(ra.upn.toLowerCase())?.objectId;
+      if (oid && ra.discovery_resource_account_id) raInstanceByDiscoveryId.set(ra.discovery_resource_account_id, oid);
+    }
+    const liveAutoAttendants = await resolveLiveAutoAttendantState(scoped, rows.map((r) => r.name));
+    for (const row of rows) {
+      const planRow: BuildAutoAttendantRow = {
+        id: row.id,
+        name: row.name,
+        language_id: row.language_id,
+        time_zone_id: row.time_zone_id,
+        voice_id: row.voice_id,
+        voice_response_enabled: row.voice_response_enabled,
+        operator: (row.operator as AutoAttendantCallableEntity) ?? null,
+        default_call_flow: (row.default_call_flow as AutoAttendantCallFlow) ?? null,
+        after_hours_call_flow: (row.after_hours_call_flow as AutoAttendantCallFlow) ?? null,
+        holiday_call_flows: (row.holiday_call_flows as AutoAttendantHolidayCallFlow[]) ?? [],
+        schedule: (row.schedule as AutoAttendantSchedule) ?? null,
+      };
+      const resourceAccountInstanceId = row.discovery_resource_account_id ? raInstanceByDiscoveryId.get(row.discovery_resource_account_id) : undefined;
+      const calls = planAutoAttendantRow(planRow, crossRef, resourceAccountInstanceId, liveAutoAttendants.get(row.name.toLowerCase()));
       for (const call of calls) await runCall(call);
     }
   }

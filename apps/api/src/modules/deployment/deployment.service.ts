@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { sql } from 'kysely';
 import { tenantDb } from '@tvmf/db';
 import {
+  autoAttendantRowWarnings,
   CALL_QUEUE_NO_AGENT_ACTIONS,
   CALL_QUEUE_OVERFLOW_ACTIONS,
   CALL_QUEUE_ROUTING_METHODS,
@@ -9,11 +10,19 @@ import {
   callQueueRowWarnings,
   decodeCallQueueEnum,
   identityRowWarnings,
+  planAutoAttendantRow,
   planCallQueueRow,
   planIdentityRow,
   planResourceAccountRow,
   renderCommand,
   resourceAccountRowWarnings,
+  type AutoAttendantCallableEntity,
+  type AutoAttendantCallFlow,
+  type AutoAttendantCrossRef,
+  type AutoAttendantHolidayCallFlow,
+  type AutoAttendantLiveState,
+  type AutoAttendantSchedule,
+  type BuildAutoAttendantRow,
   type CallDelegate,
   type CallForwardingSettings,
   type CallQueueActionSettings,
@@ -144,6 +153,66 @@ async function resolveLiveCallQueueState(scoped: Scoped, names: string[]) {
     });
   }
   return out;
+}
+
+/**
+ * What Discovery's live-tenant snapshot (tenant_objects, object_type
+ * 'auto_attendant') knows about an AA, matched by lowercased Name - same
+ * rationale as resolveLiveCallQueueState. Only the scalar fields
+ * planAutoAttendantRow diffs on are read here; the compound call-flow/
+ * schedule structure isn't (see AutoAttendantLiveState's own doc comment).
+ */
+async function resolveLiveAutoAttendantState(scoped: Scoped, names: string[]) {
+  const wanted = [...new Set(names.map((n) => n.toLowerCase()).filter(Boolean))];
+  const out = new Map<string, AutoAttendantLiveState>();
+  if (wanted.length === 0) return out;
+  const rows = await scoped
+    .selectFrom('tenant_objects')
+    .select(['display_name', 'data'])
+    .where('object_type', '=', 'auto_attendant')
+    .where('removed_at', 'is', null)
+    .where(sql`lower(display_name)`, 'in', wanted)
+    .execute();
+  for (const r of rows) {
+    if (!r.display_name) continue;
+    const d = r.data as Record<string, unknown>;
+    out.set(r.display_name.toLowerCase(), {
+      identity: String(d.Identity ?? ''),
+      languageId: typeof d.LanguageId === 'string' ? d.LanguageId : undefined,
+      timeZoneId: typeof d.TimeZoneId === 'string' ? d.TimeZoneId : undefined,
+      voiceId: typeof d.VoiceId === 'string' ? d.VoiceId : undefined,
+      enableVoiceResponse: typeof d.EnableVoiceResponse === 'boolean' ? d.EnableVoiceResponse : undefined,
+    });
+  }
+  return out;
+}
+
+/**
+ * Builds the `${kind}:${buildId}` -> live Identity map planAutoAttendantRow
+ * needs to resolve a menu option/-Operator that targets a sibling AA/CQ on
+ * the same site - every build_auto_attendants/build_call_queues row on the
+ * site, not just the one(s) being planned, since a target can point outside
+ * the current plan/preview scope.
+ */
+async function buildAutoAttendantCrossRef(s: Scoped, siteId: string): Promise<AutoAttendantCrossRef> {
+  const [aaRows, cqRows] = await Promise.all([
+    s.selectFrom('build_auto_attendants').select(['id', 'name']).where('site_id', '=', siteId).execute(),
+    s.selectFrom('build_call_queues').select(['id', 'name']).where('site_id', '=', siteId).execute(),
+  ]);
+  const [liveAa, liveCq] = await Promise.all([
+    resolveLiveAutoAttendantState(s, aaRows.map((r) => r.name)),
+    resolveLiveCallQueueState(s, cqRows.map((r) => r.name)),
+  ]);
+  const crossRef: AutoAttendantCrossRef = new Map();
+  for (const row of aaRows) {
+    const live = liveAa.get(row.name.toLowerCase());
+    if (live?.identity) crossRef.set(`auto_attendant:${row.id}`, live.identity);
+  }
+  for (const row of cqRows) {
+    const live = liveCq.get(row.name.toLowerCase());
+    if (live?.identity) crossRef.set(`call_queue:${row.id}`, live.identity);
+  }
+  return crossRef;
 }
 
 @Injectable()
@@ -349,6 +418,60 @@ export class DeploymentService {
         out.push({
           rowId: row.id,
           objectType: 'call_queue',
+          upn: row.name,
+          calls,
+          renderedCommands: calls.map(renderCommand),
+          warnings,
+        });
+      }
+    }
+
+    if (query.sheets.includes('auto_attendants')) {
+      let q = s.selectFrom('build_auto_attendants').selectAll().where('site_id', '=', query.siteId);
+      if (query.rowIds?.length) q = q.where('id', 'in', query.rowIds);
+      const rows = await q.execute();
+
+      // A row's own resource account is found by discovery_resource_account_id,
+      // not an array field - unlike call queues, an AA has exactly one
+      // resource account/phone number (build_auto_attendants.resource_accounts
+      // is a dead, never-wired column - see the "reverse-engineer OVP012" plan).
+      const discoveryIds = rows.map((r) => r.discovery_resource_account_id).filter((id): id is string => !!id);
+      const [ras, crossRef] = await Promise.all([
+        discoveryIds.length
+          ? s.selectFrom('build_resource_accounts').select(['discovery_resource_account_id', 'upn']).where('discovery_resource_account_id', 'in', discoveryIds).execute()
+          : Promise.resolve([]),
+        buildAutoAttendantCrossRef(s, query.siteId),
+      ]);
+      const liveIdentity = await resolveLiveIdentityState(s, ras.map((r) => r.upn));
+      const raInstanceByDiscoveryId = new Map<string, string>();
+      for (const ra of ras) {
+        const oid = liveIdentity.get(ra.upn.toLowerCase())?.objectId;
+        if (oid && ra.discovery_resource_account_id) raInstanceByDiscoveryId.set(ra.discovery_resource_account_id, oid);
+      }
+      const liveAutoAttendants = await resolveLiveAutoAttendantState(s, rows.map((r) => r.name));
+
+      for (const row of rows) {
+        const planRow: BuildAutoAttendantRow = {
+          id: row.id,
+          name: row.name,
+          language_id: row.language_id,
+          time_zone_id: row.time_zone_id,
+          voice_id: row.voice_id,
+          voice_response_enabled: row.voice_response_enabled,
+          operator: (row.operator as AutoAttendantCallableEntity) ?? null,
+          default_call_flow: (row.default_call_flow as AutoAttendantCallFlow) ?? null,
+          after_hours_call_flow: (row.after_hours_call_flow as AutoAttendantCallFlow) ?? null,
+          holiday_call_flows: (row.holiday_call_flows as AutoAttendantHolidayCallFlow[]) ?? [],
+          schedule: (row.schedule as AutoAttendantSchedule) ?? null,
+        };
+        const live: AutoAttendantLiveState | undefined = liveAutoAttendants.get(row.name.toLowerCase());
+        const resourceAccountInstanceId = row.discovery_resource_account_id ? raInstanceByDiscoveryId.get(row.discovery_resource_account_id) : undefined;
+        const calls = planAutoAttendantRow(planRow, crossRef, resourceAccountInstanceId, live);
+        const warnings = autoAttendantRowWarnings(planRow, crossRef);
+        if (calls.length === 0 && warnings.length === 0) continue;
+        out.push({
+          rowId: row.id,
+          objectType: 'auto_attendant',
           upn: row.name,
           calls,
           renderedCommands: calls.map(renderCommand),

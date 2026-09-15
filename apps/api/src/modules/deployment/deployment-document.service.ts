@@ -52,6 +52,7 @@ const OBJECT_TYPE_LABEL: Record<DeploymentPreviewRow['objectType'], string> = {
   cap: 'Common Area Phone',
   resource_account: 'Resource Account',
   call_queue: 'Call Queue',
+  auto_attendant: 'Auto Attendant',
 };
 
 export interface DeploymentDocumentInput {

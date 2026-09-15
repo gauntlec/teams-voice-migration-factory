@@ -736,12 +736,20 @@ export class BuildService {
   async populateResourceAccounts(t: TenantContext, u: AuthedUser, siteId: string) {
     const s = this.s(t);
     const source = await s.selectFrom('discovery_resource_accounts').selectAll().where('site_id', '=', siteId).execute();
-    const existing = await s
-      .selectFrom('build_resource_accounts')
-      .select(['discovery_resource_account_id'])
-      .where('site_id', '=', siteId)
-      .execute();
-    const linked = new Set(existing.map((e) => e.discovery_resource_account_id).filter(Boolean));
+    // build_resource_accounts/build_auto_attendants/build_call_queues each
+    // carry their own independent discovery_resource_account_id FK (no FK
+    // between the three) - checking only build_resource_accounts let a
+    // deleted-and-repopulated resource account silently create a *second*
+    // build_auto_attendants/build_call_queues row alongside the surviving
+    // original, since that table's own existence was never checked.
+    const [existingRa, existingAa, existingCq] = await Promise.all([
+      s.selectFrom('build_resource_accounts').select(['discovery_resource_account_id']).where('site_id', '=', siteId).execute(),
+      s.selectFrom('build_auto_attendants').select(['discovery_resource_account_id']).where('site_id', '=', siteId).execute(),
+      s.selectFrom('build_call_queues').select(['discovery_resource_account_id']).where('site_id', '=', siteId).execute(),
+    ]);
+    const linked = new Set(
+      [...existingRa, ...existingAa, ...existingCq].map((e) => e.discovery_resource_account_id).filter(Boolean),
+    );
     let created = 0;
     const createdDiscoveryIds: string[] = [];
     for (const d of source) {
