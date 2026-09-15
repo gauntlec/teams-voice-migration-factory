@@ -209,7 +209,16 @@ export function CallFlowDiagram({ graph, exportFilename }: { graph: CallFlowGrap
     <div style={{ display: 'grid', gap: 8 }}>
       <div style={{ height: 560, border: '1px solid #E1E1E1', borderRadius: 8 }}>
         <ReactFlowProvider>
-          <ReactFlow nodes={nodes} edges={edges} fitView nodesDraggable={false} nodesConnectable={false} edgesFocusable={false} proOptions={{ hideAttribution: true }}>
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            fitView
+            minZoom={0.05}
+            nodesDraggable={false}
+            nodesConnectable={false}
+            edgesFocusable={false}
+            proOptions={{ hideAttribution: true }}
+          >
             <Background />
             <Controls showInteractive={false} />
             <MiniMap pannable zoomable style={{ width: 120, height: 80 }} />
