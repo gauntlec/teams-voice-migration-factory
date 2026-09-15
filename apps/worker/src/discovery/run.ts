@@ -2,6 +2,7 @@ import type { Job } from 'bullmq';
 import type { Kysely } from 'kysely';
 import { platformDb, tenantDb, type DB } from '@tvmf/db';
 import {
+  RESOURCE_ACCOUNT_APPLICATION_IDS,
   TENANT_DISCOVERY_STEPS,
   TENANT_POLICY_TYPES,
   type DiscoveryCompletedContext,
@@ -266,6 +267,9 @@ export async function handleTenantDiscoveryRun(
         .where('removed_at', 'is', null)
         .where((eb) => eb.or([eb('last_seen_run_id', '<>', runId), eb('last_seen_run_id', 'is', null)]))
         .execute();
+    }
+    if (succeededTypes.has('resource_account')) {
+      await linkRequestedResourceAccounts(s);
     }
   }
 
@@ -934,6 +938,59 @@ async function syncVoicemailSettings(s: Scoped, exec: TeamsExecutor, objectId: s
       })
       .where('object_id', '=', objectId)
       .execute();
+  } catch {
+    // best-effort - see docstring
+  }
+}
+
+/**
+ * The "Resource Account Request" workflow's auto-detection step: once an
+ * engineer generates a request document for a not-yet-live
+ * build_resource_accounts row (requested_at gets stamped then), this is
+ * what promotes it to "Created & licensed" on the next sync - no manual
+ * toggle needed. Runs tenant-wide (Discovery isn't site-scoped) after a
+ * successful 'resource_account' step, matching every requested-but-not-yet-
+ * linked row against this run's fresh tenant_objects snapshot by UPN.
+ *
+ * Get-CsOnlineApplicationInstance (the cmdlet backing this object type)
+ * only ever returns an object once New-CsOnlineApplicationInstance has
+ * already run against it successfully - which itself requires the Phone
+ * System (Virtual User) license to already be applied. So "appears in this
+ * sweep at all" is exactly equivalent to "created & licensed"; no separate
+ * license check is needed. Best-effort, like syncVoicemailSettings above -
+ * never fails the run.
+ */
+async function linkRequestedResourceAccounts(s: Scoped) {
+  try {
+    const pending = await s
+      .selectFrom('build_resource_accounts')
+      .select(['id', 'upn', 'kind'])
+      .where('application_id', 'is', null)
+      .where('requested_at', 'is not', null)
+      .execute();
+    if (!pending.length) return;
+    const liveByUpn = new Map(
+      (
+        await s
+          .selectFrom('tenant_objects')
+          .select('data')
+          .where('object_type', '=', 'resource_account')
+          .where('removed_at', 'is', null)
+          .execute()
+      )
+        .map((r) => str((r.data as Rec).UserPrincipalName)?.toLowerCase())
+        .filter((upn): upn is string => !!upn)
+        .map((upn) => [upn, true] as const),
+    );
+    const now = new Date().toISOString();
+    for (const row of pending) {
+      if (!liveByUpn.has(row.upn.toLowerCase())) continue;
+      await s
+        .updateTable('build_resource_accounts')
+        .set({ application_id: RESOURCE_ACCOUNT_APPLICATION_IDS[row.kind], linked_at: now })
+        .where('id', '=', row.id)
+        .execute();
+    }
   } catch {
     // best-effort - see docstring
   }

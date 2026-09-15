@@ -920,6 +920,12 @@ export type BuildPopulateInput = z.infer<typeof buildPopulateSchema>;
 export const buildValidateSchema = buildPopulateSchema.extend({ live: z.boolean().optional() }).strict();
 export type BuildValidateInput = z.infer<typeof buildValidateSchema>;
 
+/** rowIds omitted = every not-yet-created resource account on the site. */
+export const buildResourceAccountRequestSchema = buildPopulateSchema.extend({
+  rowIds: z.array(z.string().uuid()).optional(),
+}).strict();
+export type BuildResourceAccountRequestInput = z.infer<typeof buildResourceAccountRequestSchema>;
+
 const buildResourceAccountWritable = {
   location_id: optStr(80),
   number_type: numberType,
@@ -1117,6 +1123,8 @@ const autoAttendantHolidayCallFlowSchema = z
 
 const buildAutoAttendantWritable = {
   ...buildAutoAttendantNarrative,
+  /** build_resource_accounts.id - the direct, hand-editable link (discovery_resource_account_id is Populate-only). */
+  resource_account_id: refId,
   /** Set-CsAutoAttendant -LanguageId. */
   language_id: optStr(20),
   /** Set-CsAutoAttendant -TimeZoneId. */

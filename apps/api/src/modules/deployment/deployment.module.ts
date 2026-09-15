@@ -9,6 +9,9 @@ import { DeploymentService } from './deployment.service';
   controllers: [DeploymentController],
   providers: [DeploymentService, DeploymentDocumentService],
   // Discovery reuses the same live device-code connection flow.
-  exports: [DeploymentService],
+  // DeploymentDocumentService is also exported for Build's Resource Account
+  // Request document (BuildService.generateResourceAccountRequestDocument),
+  // which reuses its brand/header/footer helpers rather than duplicating them.
+  exports: [DeploymentService, DeploymentDocumentService],
 })
 export class DeploymentModule {}

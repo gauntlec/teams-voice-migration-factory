@@ -164,6 +164,9 @@ async function resolveLiveCallQueueState(scoped: Scoped, names: string[]) {
       timeoutAction: decodeCallQueueEnum(d.TimeoutAction, CALL_QUEUE_TIMEOUT_ACTIONS),
       timeoutThreshold: typeof d.TimeoutThreshold === 'number' ? d.TimeoutThreshold : undefined,
       noAgentAction: decodeCallQueueEnum(d.NoAgentAction, CALL_QUEUE_NO_AGENT_ACTIONS),
+      applicationInstanceIds: Array.isArray(d.ApplicationInstances)
+        ? (d.ApplicationInstances as unknown[]).filter((v): v is string => typeof v === 'string')
+        : undefined,
     });
   }
   return out;
@@ -495,20 +498,34 @@ export class DeploymentService {
       if (query.rowIds?.length) q = q.where('id', 'in', query.rowIds);
       const rows = await q.execute();
 
-      // A row's own resource account is found by discovery_resource_account_id,
-      // not an array field - unlike call queues, an AA has exactly one
-      // resource account/phone number (build_auto_attendants.resource_accounts
-      // is a dead, never-wired column - see the "reverse-engineer OVP012" plan).
+      // A row's own resource account resolves via resource_account_id (a
+      // direct, hand-editable FK an engineer can set from the Design &
+      // Build UI regardless of Populate) first, falling back to
+      // discovery_resource_account_id (Populate-only - set via the shared
+      // Data Collection ancestor both rows were seeded from) for older
+      // rows that predate the direct link. Unlike call queues, an AA has
+      // exactly one resource account/phone number
+      // (build_auto_attendants.resource_accounts is a dead, never-wired
+      // column - see the "reverse-engineer OVP012" plan).
+      const raIds = rows.map((r) => r.resource_account_id).filter((id): id is string => !!id);
       const discoveryIds = rows.map((r) => r.discovery_resource_account_id).filter((id): id is string => !!id);
-      const [ras, crossRef] = await Promise.all([
+      const [rasById, rasByDiscoveryId, crossRef] = await Promise.all([
+        raIds.length
+          ? s.selectFrom('build_resource_accounts').select(['id', 'upn']).where('id', 'in', raIds).execute()
+          : Promise.resolve([]),
         discoveryIds.length
           ? s.selectFrom('build_resource_accounts').select(['discovery_resource_account_id', 'upn']).where('discovery_resource_account_id', 'in', discoveryIds).execute()
           : Promise.resolve([]),
         buildAutoAttendantCrossRef(s, query.siteId),
       ]);
-      const liveIdentity = await resolveLiveIdentityState(s, ras.map((r) => r.upn));
+      const liveIdentity = await resolveLiveIdentityState(s, [...rasById.map((r) => r.upn), ...rasByDiscoveryId.map((r) => r.upn)]);
+      const raInstanceById = new Map<string, string>();
+      for (const ra of rasById) {
+        const oid = liveIdentity.get(ra.upn.toLowerCase())?.objectId;
+        if (oid) raInstanceById.set(ra.id, oid);
+      }
       const raInstanceByDiscoveryId = new Map<string, string>();
-      for (const ra of ras) {
+      for (const ra of rasByDiscoveryId) {
         const oid = liveIdentity.get(ra.upn.toLowerCase())?.objectId;
         if (oid && ra.discovery_resource_account_id) raInstanceByDiscoveryId.set(ra.discovery_resource_account_id, oid);
       }
@@ -530,9 +547,11 @@ export class DeploymentService {
           schedule: (row.schedule as AutoAttendantSchedule) ?? null,
         };
         const live: AutoAttendantLiveState | undefined = liveAutoAttendants.get(row.name.toLowerCase());
-        const resourceAccountInstanceId = row.discovery_resource_account_id ? raInstanceByDiscoveryId.get(row.discovery_resource_account_id) : undefined;
+        const resourceAccountInstanceId =
+          (row.resource_account_id ? raInstanceById.get(row.resource_account_id) : undefined) ??
+          (row.discovery_resource_account_id ? raInstanceByDiscoveryId.get(row.discovery_resource_account_id) : undefined);
         const calls = planAutoAttendantRow(planRow, crossRef, resourceAccountInstanceId, live);
-        const warnings = autoAttendantRowWarnings(planRow, crossRef);
+        const warnings = autoAttendantRowWarnings(planRow, crossRef, !!row.resource_account_id || !!row.discovery_resource_account_id);
         if (calls.length === 0 && warnings.length === 0) continue;
         out.push({
           rowId: row.id,

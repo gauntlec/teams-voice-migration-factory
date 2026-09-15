@@ -389,6 +389,9 @@ async function resolveLiveCallQueueState(scoped: ReturnType<typeof tenantDb>, na
       timeoutAction: decodeCallQueueEnum(d.TimeoutAction, CALL_QUEUE_TIMEOUT_ACTIONS),
       timeoutThreshold: typeof d.TimeoutThreshold === 'number' ? d.TimeoutThreshold : undefined,
       noAgentAction: decodeCallQueueEnum(d.NoAgentAction, CALL_QUEUE_NO_AGENT_ACTIONS),
+      applicationInstanceIds: Array.isArray(d.ApplicationInstances)
+        ? (d.ApplicationInstances as unknown[]).filter((v): v is string => typeof v === 'string')
+        : undefined,
     });
   }
   return out;
@@ -681,16 +684,28 @@ async function handleDeploymentRun(job: Job) {
     let q = scoped.selectFrom('build_auto_attendants').selectAll().where('site_id', '=', scope.siteId);
     if (scope.rowIds?.length) q = q.where('id', 'in', scope.rowIds);
     const rows = await q.execute();
+    // Mirrors the identical apps/api/.../deployment.service.ts block - see
+    // that copy's comment for why resource_account_id (direct, hand-
+    // editable) is tried before discovery_resource_account_id (Populate-only).
+    const raIds = rows.map((r) => r.resource_account_id).filter((id): id is string => !!id);
     const discoveryIds = rows.map((r) => r.discovery_resource_account_id).filter((id): id is string => !!id);
-    const [ras, crossRef] = await Promise.all([
+    const [rasById, rasByDiscoveryId, crossRef] = await Promise.all([
+      raIds.length
+        ? scoped.selectFrom('build_resource_accounts').select(['id', 'upn']).where('id', 'in', raIds).execute()
+        : Promise.resolve([]),
       discoveryIds.length
         ? scoped.selectFrom('build_resource_accounts').select(['discovery_resource_account_id', 'upn']).where('discovery_resource_account_id', 'in', discoveryIds).execute()
         : Promise.resolve([]),
       buildAutoAttendantCrossRef(scoped, scope.siteId),
     ]);
-    const liveIdentity = await resolveLiveIdentityState(scoped, ras.map((r) => r.upn));
+    const liveIdentity = await resolveLiveIdentityState(scoped, [...rasById.map((r) => r.upn), ...rasByDiscoveryId.map((r) => r.upn)]);
+    const raInstanceById = new Map<string, string>();
+    for (const ra of rasById) {
+      const oid = liveIdentity.get(ra.upn.toLowerCase())?.objectId;
+      if (oid) raInstanceById.set(ra.id, oid);
+    }
     const raInstanceByDiscoveryId = new Map<string, string>();
-    for (const ra of ras) {
+    for (const ra of rasByDiscoveryId) {
       const oid = liveIdentity.get(ra.upn.toLowerCase())?.objectId;
       if (oid && ra.discovery_resource_account_id) raInstanceByDiscoveryId.set(ra.discovery_resource_account_id, oid);
     }
@@ -710,7 +725,9 @@ async function handleDeploymentRun(job: Job) {
         holiday_call_flows: (row.holiday_call_flows as AutoAttendantHolidayCallFlow[]) ?? [],
         schedule: (row.schedule as AutoAttendantSchedule) ?? null,
       };
-      const resourceAccountInstanceId = row.discovery_resource_account_id ? raInstanceByDiscoveryId.get(row.discovery_resource_account_id) : undefined;
+      const resourceAccountInstanceId =
+        (row.resource_account_id ? raInstanceById.get(row.resource_account_id) : undefined) ??
+        (row.discovery_resource_account_id ? raInstanceByDiscoveryId.get(row.discovery_resource_account_id) : undefined);
       const calls = planAutoAttendantRow(planRow, crossRef, resourceAccountInstanceId, liveAutoAttendants.get(row.name.toLowerCase()));
       for (const call of calls) await runCall(call);
     }

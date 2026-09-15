@@ -65,6 +65,30 @@ export interface DeploymentDocumentInput {
   rows: DeploymentPreviewRow[];
 }
 
+const RESOURCE_ACCOUNT_KIND_LABEL: Record<'auto_attendant' | 'call_queue', string> = {
+  auto_attendant: 'Auto Attendant',
+  call_queue: 'Call Queue',
+};
+
+export interface ResourceAccountRequestItem {
+  displayName: string;
+  kind: 'auto_attendant' | 'call_queue';
+  upn: string;
+  phoneNumber: string | null;
+  numberType: string | null;
+  /** New-CsOnlineApplicationInstance rendered for the technical appendix - deferred, never run by Voxshift itself. */
+  provisioningCommand: string;
+}
+
+export interface ResourceAccountRequestInput {
+  tenantName: string;
+  siteName: string;
+  sitecode: string;
+  generatedBy: string;
+  generatedAt: Date;
+  accounts: ResourceAccountRequestItem[];
+}
+
 function metaRow(label: string, body: string): Paragraph {
   return new Paragraph({
     spacing: { after: 80 },
@@ -149,8 +173,133 @@ function rowSection(row: DeploymentPreviewRow, index: number): (Paragraph | Tabl
   ];
 }
 
+function accountSection(item: ResourceAccountRequestItem, index: number): (Paragraph | Table)[] {
+  const licenseNote =
+    item.numberType === 'CallingPlan'
+      ? 'Requires: Microsoft Teams Phone Resource Account license, plus a Microsoft Calling Plan license (Domestic or Domestic & International) to carry the number.'
+      : 'Requires: Microsoft Teams Phone Resource Account license. The number itself is provided separately (Operator Connect/Direct Routing) - no extra calling-plan license needed for it.';
+  return [
+    new Paragraph({
+      spacing: { before: 280, after: 60 },
+      children: [
+        new TextRun({ text: `${index + 1}. ${item.displayName}`, bold: true, size: 24, color: BRAND, font: UI_FONT }),
+        new TextRun({ text: `   ${RESOURCE_ACCOUNT_KIND_LABEL[item.kind]}`, size: 18, color: MUTED, font: UI_FONT }),
+      ],
+    }),
+    metaRow('UPN to create', item.upn),
+    ...(item.phoneNumber ? [metaRow('Phone number', `${item.phoneNumber}${item.numberType ? ` (${item.numberType})` : ''}`)] : []),
+    new Paragraph({
+      spacing: { before: 60, after: 100 },
+      children: [new TextRun({ text: licenseNote, size: 19, color: INK, font: UI_FONT })],
+    }),
+    new Paragraph({
+      spacing: { before: 40, after: 40 },
+      children: [new TextRun({ text: 'Technical appendix - for an admin who prefers to run this directly:', size: 17, color: MUTED, font: UI_FONT })],
+    }),
+    codeBlockTable([item.provisioningCommand]),
+  ];
+}
+
 @Injectable()
 export class DeploymentDocumentService {
+  async buildResourceAccountRequest(input: ResourceAccountRequestInput): Promise<Buffer> {
+    const header = new Header({
+      children: [
+        new Paragraph({
+          tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
+          border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: GRID, space: 4 } },
+          children: [
+            new TextRun({ text: 'vox', bold: true, size: 20, color: INK, font: UI_FONT }),
+            new TextRun({ text: 'shift', size: 20, color: ACCENT, font: UI_FONT }),
+            new TextRun({ text: '\tResource Account Request', size: 18, color: MUTED, font: UI_FONT }),
+          ],
+        }),
+      ],
+    });
+
+    const footer = new Footer({
+      children: [
+        new Paragraph({
+          tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
+          border: { top: { style: BorderStyle.SINGLE, size: 6, color: GRID, space: 4 } },
+          children: [
+            new TextRun({ text: `Voxshift  ·  ${input.sitecode} resource account request`, size: 17, color: MUTED, font: UI_FONT }),
+            new TextRun({ text: '\t' }),
+            new TextRun({ children: [PageNumber.CURRENT], size: 17, color: MUTED, font: UI_FONT }),
+          ],
+        }),
+      ],
+    });
+
+    const blankHeader = new Header({ children: [new Paragraph('')] });
+    const blankFooter = new Footer({ children: [new Paragraph('')] });
+
+    const cover: (Paragraph | Table)[] = [
+      new Paragraph({
+        alignment: AlignmentType.LEFT,
+        spacing: { after: 200 },
+        children: [
+          new ImageRun({
+            type: 'png',
+            data: Buffer.from(VOX_TILE_PNG_BASE64, 'base64'),
+            transformation: { width: 68, height: 68 },
+          }),
+        ],
+      }),
+      new Paragraph({
+        spacing: { after: 40 },
+        children: [
+          new TextRun({ text: 'vox', bold: true, size: 80, color: INK, font: UI_FONT }),
+          new TextRun({ text: 'shift', size: 80, color: ACCENT, font: UI_FONT }),
+        ],
+      }),
+      new Paragraph({
+        spacing: { after: 200 },
+        border: { bottom: { style: BorderStyle.SINGLE, size: 12, color: TINT, space: 6 } },
+        children: [new TextRun({ text: 'Resource Account Request', size: 34, color: BRAND, font: UI_FONT })],
+      }),
+      metaRow('Tenant', input.tenantName),
+      metaRow('Site', `${input.siteName} (${input.sitecode})`),
+      metaRow('Requested by', input.generatedBy),
+      metaRow('Requested at', input.generatedAt.toISOString()),
+      metaRow('Accounts', String(input.accounts.length)),
+      new Paragraph({ children: [new PageBreak()] }),
+    ];
+
+    const body: (Paragraph | Table)[] = [
+      calloutTable(
+        'Please create and license the resource accounts below in Microsoft 365/Teams admin center (or ask your Microsoft partner to). Once each account is created and licensed, Voxshift will detect it automatically on the next sync - no need to reply confirming completion.',
+      ),
+      new Paragraph({ spacing: { after: 120 } }),
+    ];
+    if (input.accounts.length === 0) {
+      body.push(
+        new Paragraph({
+          spacing: { before: 200 },
+          children: [new TextRun({ text: 'No accounts to request.', size: 20, color: MUTED, font: UI_FONT })],
+        }),
+      );
+    } else {
+      input.accounts.forEach((item, i) => body.push(...accountSection(item, i)));
+    }
+
+    const doc = new Document({
+      sections: [
+        {
+          properties: {
+            page: { margin: { top: 1296, bottom: 1296, left: 1440, right: 1440 } },
+            titlePage: true,
+          },
+          headers: { default: header, first: blankHeader },
+          footers: { default: footer, first: blankFooter },
+          children: [...cover, ...body],
+        },
+      ],
+    });
+
+    return Packer.toBuffer(doc);
+  }
+
   async build(input: DeploymentDocumentInput): Promise<Buffer> {
     const header = new Header({
       children: [

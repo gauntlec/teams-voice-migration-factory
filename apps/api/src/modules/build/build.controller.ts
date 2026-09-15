@@ -13,6 +13,7 @@ import {
   buildPopulateSchema,
   buildResourceAccountCreateSchema,
   buildResourceAccountPatchSchema,
+  buildResourceAccountRequestSchema,
   buildTemplateApplySchema,
   buildTemplateCreateSchema,
   buildTemplateListQuerySchema,
@@ -33,6 +34,7 @@ import {
   type BuildPopulateInput,
   type BuildResourceAccountCreateInput,
   type BuildResourceAccountPatchInput,
+  type BuildResourceAccountRequestInput,
   type BuildTemplateApplyInput,
   type BuildTemplateCreateInput,
   type BuildTemplateListQuery,
@@ -221,6 +223,15 @@ export class BuildController {
     @Body(new ZodBody(buildPopulateSchema)) body: BuildPopulateInput,
   ) {
     return this.svc.populateResourceAccounts(t, user, body.site_id);
+  }
+  @Post('resource-accounts/request-document')
+  @RequirePermission('build:write')
+  generateResourceAccountRequestDocument(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(buildResourceAccountRequestSchema)) body: BuildResourceAccountRequestInput,
+  ) {
+    return this.svc.generateResourceAccountRequestDocument(t, user, body.site_id, body.rowIds);
   }
 
   /* call queues */

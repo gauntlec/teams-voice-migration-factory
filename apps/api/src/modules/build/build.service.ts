@@ -10,6 +10,7 @@ import {
   liveAutoAttendantToStructured,
   POLICY_KIND_TO_TENANT_TYPE,
   POLICY_KINDS,
+  renderCommand,
   RESOURCE_ACCOUNT_APPLICATION_IDS,
   type AutoAttendantCallableEntity,
   type BuildAutoAttendantCreateInput,
@@ -42,6 +43,8 @@ import { AuditService } from '../../common/audit.service';
 import { applyBulkPatch, auditBulkPatch } from '../../common/bulk-patch';
 import type { AuthedUser, TenantContext } from '../../common/request';
 import { InjectDb, type Db } from '../../db/db.module';
+import { DeploymentDocumentService } from '../deployment/deployment-document.service';
+import { FilesService } from '../files/files.service';
 import { TenantDiscoveryService } from '../tenant-discovery/tenant-discovery.service';
 import { BuildValidationService } from './build-validation.service';
 
@@ -55,6 +58,8 @@ export class BuildService {
     private readonly audit: AuditService,
     private readonly validation: BuildValidationService,
     private readonly discovery: TenantDiscoveryService,
+    private readonly documentBuilder: DeploymentDocumentService,
+    private readonly files: FilesService,
   ) {}
   private s(t: TenantContext): Scoped {
     return tenantDb(this.db, t.schema);
@@ -1082,6 +1087,7 @@ export class BuildService {
       .values({
         site_id: body.site_id,
         name: body.name,
+        resource_account_id: body.resource_account_id ?? null,
         resource_accounts: JSON.stringify([]),
         config: {},
         business_hours: body.business_hours || null,
@@ -1410,6 +1416,91 @@ export class BuildService {
     return out;
   }
 
+  /* ===================== resource account request ===================== */
+
+  /**
+   * The "design process for greenfield resource accounts": generate a
+   * customer-facing document listing not-yet-live `build_resource_accounts`
+   * rows (application_id still null) to create and license, and stamp
+   * `requested_at` on each so the row's status moves from "Designed" to
+   * "Requested" and Discovery's post-sync reconciliation
+   * (linkRequestedResourceAccounts, apps/worker/src/discovery/run.ts) knows
+   * to watch for it. Mirrors DeploymentService.generateChangeDocument end to
+   * end - same FilesService.store() call, new `resource_account_request`
+   * category.
+   */
+  async generateResourceAccountRequestDocument(t: TenantContext, u: AuthedUser, siteId: string, rowIds?: string[]) {
+    const s = this.s(t);
+    const site = await s.selectFrom('discovery_sites').select(['id', 'sitecode', 'name']).where('id', '=', siteId).executeTakeFirst();
+    if (!site) throw new NotFoundException('site not found');
+
+    let q = s
+      .selectFrom('build_resource_accounts')
+      .select(['id', 'display_name', 'upn', 'kind', 'phone_number', 'number_type'])
+      .where('site_id', '=', siteId)
+      .where('application_id', 'is', null);
+    if (rowIds?.length) q = q.where('id', 'in', rowIds);
+    const rows = await q.execute();
+
+    const generatedAt = new Date();
+    const data = await this.documentBuilder.buildResourceAccountRequest({
+      tenantName: t.name,
+      siteName: site.name ?? site.sitecode,
+      sitecode: site.sitecode,
+      generatedBy: u.displayName,
+      generatedAt,
+      accounts: rows.map((r) => ({
+        displayName: r.display_name ?? r.upn,
+        kind: r.kind,
+        upn: r.upn,
+        phoneNumber: r.phone_number,
+        numberType: r.number_type,
+        provisioningCommand: renderCommand({
+          cmdlet: 'New-CsOnlineApplicationInstance',
+          parameters: {
+            UserPrincipalName: r.upn,
+            ApplicationId: RESOURCE_ACCOUNT_APPLICATION_IDS[r.kind],
+            DisplayName: r.display_name ?? r.upn,
+          },
+        }),
+      })),
+    });
+
+    const file = await this.files.store(t, {
+      category: 'resource_account_request',
+      sourceType: 'build_site',
+      sourceId: siteId,
+      siteId,
+      filename: `${site.sitecode}-resource-account-request-${generatedAt.toISOString().slice(0, 10)}.docx`,
+      contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      data,
+      uploadedBy: u.id,
+      metadata: { rowCount: rows.length, rowIds: rowIds ?? null },
+    });
+
+    if (rows.length) {
+      await s
+        .updateTable('build_resource_accounts')
+        .set({ requested_at: generatedAt.toISOString() })
+        .where(
+          'id',
+          'in',
+          rows.map((r) => r.id),
+        )
+        .where('requested_at', 'is', null)
+        .execute();
+    }
+
+    await this.audit.tenant(t.schema, 'build.resource_account_request_generated', {
+      actor: actorOf(u),
+      targetType: 'file',
+      targetId: file.id,
+      detail: { siteId, rowCount: rows.length },
+    });
+
+    return file;
+  }
+
   /* ============================== validate ============================== */
 
   /**
@@ -1422,9 +1513,12 @@ export class BuildService {
    */
   async validateSite(t: TenantContext, u: AuthedUser, siteId: string, live = true): Promise<BuildValidateResult> {
     const s = this.s(t);
-    const [users, caps] = await Promise.all([
+    const [users, caps, resourceAccounts, autoAttendants, callQueues] = await Promise.all([
       s.selectFrom('build_users').select(['id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids']).where('site_id', '=', siteId).execute(),
       s.selectFrom('build_caps').select(['id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids']).where('site_id', '=', siteId).execute(),
+      s.selectFrom('build_resource_accounts').select(['id', 'upn', 'phone_number', 'number_type', 'voice_routing_policy', 'voice_routing_policy_id']).where('site_id', '=', siteId).execute(),
+      s.selectFrom('build_auto_attendants').select(['id', 'name', 'default_call_flow']).where('site_id', '=', siteId).execute(),
+      s.selectFrom('build_call_queues').select(['id', 'name', 'routing_method']).where('site_id', '=', siteId).execute(),
     ]);
     const rows = [...users.map((r) => ({ ...r, table: 'build_users' as const })), ...caps.map((r) => ({ ...r, table: 'build_caps' as const }))];
     const validated = await this.validation.validateRows(t, rows);
@@ -1445,6 +1539,55 @@ export class BuildService {
         .where('id', '=', row.id)
         .execute();
     }
+
+    // Resource accounts are identity rows under their own UPN, same as
+    // Users/CAPs - reuse validateRows rather than new comparison logic
+    // (was previously skipped entirely - the "no validation coverage for
+    // AA/CQ/resource accounts" gap found while auditing the greenfield
+    // path). voice_routing_policy is the one policy a resource account has,
+    // mapped into the same policies/policy_ids shape validateRows expects.
+    const raRows = resourceAccounts.map((r) => ({
+      id: r.id,
+      upn: r.upn,
+      e164: r.phone_number,
+      number_type: r.number_type,
+      policies: { voice_routing_policy: r.voice_routing_policy },
+      policy_ids: { voice_routing_policy: r.voice_routing_policy_id },
+    }));
+    const raValidated = raRows.length ? await this.validation.validateRows(t, raRows) : new Map<string, BuildRowValidation>();
+    for (const row of raRows) {
+      const v = raValidated.get(row.id);
+      if (!v) continue;
+      if (hasIssue(v)) issues += 1;
+      if (!v.existsInTenant) unmatchedUpns.push(row.upn);
+    }
+
+    // AA/CQ: existence-only for now (does this name resolve live at all) -
+    // the Deployment preview already surfaces full structural mismatches
+    // via autoAttendantMatchesLive/planCallQueueRow's own diffing; this
+    // just stops a hand-built, never-checked AA/CQ from being invisible to
+    // "Validate against tenant" the way it was before this fix. Only rows
+    // with real content configured are checked - an empty stub row isn't a
+    // validation issue, it's just not designed yet.
+    const configuredAas = autoAttendants.filter((r) => r.default_call_flow);
+    const configuredCqs = callQueues.filter((r) => !!r.routing_method);
+    if (configuredAas.length || configuredCqs.length) {
+      const liveNames = new Set(
+        (
+          await s
+            .selectFrom('tenant_objects')
+            .select('display_name')
+            .where('object_type', 'in', ['auto_attendant', 'call_queue'])
+            .where('removed_at', 'is', null)
+            .execute()
+        )
+          .map((r) => (r.display_name ?? '').toLowerCase())
+          .filter(Boolean),
+      );
+      for (const r of configuredAas) if (!liveNames.has(r.name.toLowerCase())) issues += 1;
+      for (const r of configuredCqs) if (!liveNames.has(r.name.toLowerCase())) issues += 1;
+    }
+
     await this.audit.tenant(t.schema, 'build.validated', {
       actor: actorOf(u),
       targetType: 'discovery_site',

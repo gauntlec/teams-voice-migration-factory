@@ -60,12 +60,13 @@ import {
   type CallQueueActionSettings,
   type DesignAutoAttendantInput,
   type DesignCallQueueInput,
+  type FileRow,
   type Paginated,
   type PickupGroupSettings,
   type PolicyKey,
   type TenantPolicySummary,
 } from '@tvmf/shared';
-import { api, ApiError } from '../api';
+import { api, apiDownload, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { CallFlowDiagram } from '../components/CallFlowDiagram';
 import { Page } from '../components/Page';
@@ -178,6 +179,23 @@ export function BuildSiteWorkspace() {
     () => (avail.data?.items ?? []).map((n) => ({ value: n.id, label: n.e164 })),
     [avail.data],
   );
+
+  // This site's Auto Attendant-kind resource accounts, for the AA edit
+  // dialog's direct resource_account_id picker - lets an engineer link a
+  // manually-created AA to one without going through Populate (which is the
+  // only thing that could set this link before today).
+  const aaRaQ = useQuery({
+    queryKey: ['resource-accounts', tid, siteId, 'for-auto-attendant'],
+    enabled: !!tid,
+    queryFn: () => api<Paginated<Row>>(`${base}/resource-accounts?siteId=${siteId}&limit=500`),
+  });
+  const aaResourceAccountChoices: Choice[] = useMemo(
+    () =>
+      (aaRaQ.data?.items ?? [])
+        .filter((r) => r.kind === 'auto_attendant')
+        .map((r) => ({ value: String(r.id), label: String(r.display_name ?? r.upn) })),
+    [aaRaQ.data],
+  );
   const numberChoicesFor = (row: Row | null): Choice[] => {
     const cur =
       row && row.phone_number_id
@@ -242,6 +260,17 @@ export function BuildSiteWorkspace() {
     // on this site aren't mapped to a real tenant policy yet (see the
     // Calling policy map panel below).
     onError: (e) => setPopulateError(e instanceof ApiError ? e.message : 'Populate failed'),
+  });
+  // The "Resource Account Request" document: generates a customer-facing
+  // request for every not-yet-created resource account on this site and
+  // stamps requested_at on them - see BuildService.generateResourceAccountRequestDocument.
+  const [requestedFile, setRequestedFile] = useState<FileRow | null>(null);
+  const requestAccounts = useMutation({
+    mutationFn: () => api<FileRow>(`${base}/resource-accounts/request-document`, { method: 'POST', body: JSON.stringify({ site_id: siteId }) }),
+    onSuccess: (file) => {
+      setRequestedFile(file);
+      qc.invalidateQueries({ queryKey: ['resource-accounts', tid, siteId] });
+    },
   });
   const [validateMsg, setValidateMsg] = useState<string | null>(null);
   // Set when validate() found rows with no stored tenant match and a live
@@ -669,7 +698,7 @@ export function BuildSiteWorkspace() {
       {tab === 'resource-accounts' && (
         <PagedSection
           title="Resource accounts"
-          hint="Identity + number for Auto Attendant / Call Queue resource accounts. Creating one always needs a manual licensing step - see the note below."
+          hint="Identity + number for Auto Attendant / Call Queue resource accounts. Model a new one before it exists live, then use Request accounts below to ask the customer to create and license it - see the note below."
           endpoint={`${base}/resource-accounts`}
           queryKey={['resource-accounts', tid, siteId]}
           params={{ siteId }}
@@ -677,9 +706,23 @@ export function BuildSiteWorkspace() {
           readOnly={!canWrite}
           headerActions={
             canWrite && (
-              <Button size="small" disabled={populate.isPending} onClick={() => populate.mutate('resource-accounts')}>
-                Populate from Discovery
-              </Button>
+              <>
+                <Button size="small" disabled={populate.isPending} onClick={() => populate.mutate('resource-accounts')}>
+                  Populate from Discovery
+                </Button>
+                <Button size="small" disabled={requestAccounts.isPending} onClick={() => requestAccounts.mutate()}>
+                  {requestAccounts.isPending ? 'Generating…' : 'Request accounts'}
+                </Button>
+                {requestedFile && (
+                  <Button
+                    size="small"
+                    appearance="subtle"
+                    onClick={() => apiDownload(`/t/${tid}/files/${requestedFile.id}/download`, requestedFile.filename)}
+                  >
+                    Download request
+                  </Button>
+                )}
+              </>
             )
           }
           emptyText="No resource accounts yet."
@@ -696,9 +739,13 @@ export function BuildSiteWorkspace() {
                   <Badge appearance="tint" color="success">
                     created &amp; licensed
                   </Badge>
+                ) : r.requested_at ? (
+                  <Badge appearance="tint" color="warning">
+                    requested {new Date(String(r.requested_at)).toLocaleDateString()}
+                  </Badge>
                 ) : (
                   <Badge appearance="tint" color="informative">
-                    not yet created
+                    designed
                   </Badge>
                 ),
             },
@@ -728,10 +775,13 @@ export function BuildSiteWorkspace() {
         <Card className={s.card}>
           <Text size={200} className={s.muted}>
             New-CsOnlineApplicationInstance always needs a Phone System license applied by a
-            User/Global Admin - a role a Teams Administrator doesn't have. Running a deployment
-            on this site generates a script for that step (see the Deployment page); once it's
-            run and the account is licensed, tick "Created &amp; licensed" above so the number and
-            voice routing policy can be assigned live on the next run.
+            User/Global Admin - a role a Teams Administrator doesn't have. Model the account here
+            first (name, phone number, and an Auto Attendant/Call Queue linked to it - all before
+            it exists live), then click "Request accounts" to generate a document for the
+            customer listing what to create and license. Once it's live, the next Discovery sync
+            detects it automatically and moves the row to "created &amp; licensed" - no manual
+            step needed. The toggle in the edit dialog is a fallback for when the account was
+            already created before a formal request, or you want to unblock a row immediately.
           </Text>
         </Card>
       )}
@@ -803,15 +853,20 @@ export function BuildSiteWorkspace() {
       {tab === 'auto-attendants' && (
         <PagedSection
           title="Auto attendants"
-          hint="Language/voice and the real call-flow menu (business hours, after hours, holidays) for Auto Attendant resource accounts. New rows are seeded by Populate from Discovery on the Resource accounts tab."
+          hint="Language/voice and the real call-flow menu (business hours, after hours, holidays) for Auto Attendant resource accounts. Populate from Discovery pre-fills these from a live tenant; for a greenfield site, add one by hand and link it to a resource account below - it just won't get a phone number until that account is created and licensed."
           endpoint={`${base}/auto-attendants`}
           queryKey={['auto-attendants', tid, siteId]}
           params={{ siteId }}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
-          emptyText="No auto attendants yet - Populate from Discovery on the Resource accounts tab first."
+          emptyText="No auto attendants yet - add one, or Populate from Discovery on the Resource accounts tab."
           columns={[
             { key: 'name', label: 'Name' },
+            {
+              key: 'resource_account_id',
+              label: 'Resource account',
+              render: (r) => aaResourceAccountChoices.find((c) => c.value === String(r.resource_account_id))?.label ?? (r.discovery_resource_account_id ? 'Linked (via Populate)' : '—'),
+            },
             { key: 'language_id', label: 'Language' },
             { key: 'time_zone_id', label: 'Time zone' },
             { key: 'voice_id', label: 'Voice' },
@@ -854,6 +909,7 @@ export function BuildSiteWorkspace() {
           ]}
           fields={[
             { key: 'name', label: 'Name', required: true },
+            { key: 'resource_account_id', label: 'Resource account', type: 'ref', choices: () => aaResourceAccountChoices },
             { key: 'language_id', label: 'Language ID', placeholder: 'en-US' },
             { key: 'time_zone_id', label: 'Time zone ID', placeholder: 'Central Standard Time' },
             { key: 'voice_id', label: 'Voice ID', placeholder: 'Male / Female' },

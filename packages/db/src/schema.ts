@@ -520,6 +520,10 @@ export interface BuildResourceAccountsTable {
   voice_routing_policy_id: string | null;
   /** set once New-CsOnlineApplicationInstance has run - gates the number/policy assignment phase */
   application_id: string | null;
+  /** Set when a "Resource Account Request" document was generated including this row - null = not yet requested. */
+  requested_at: string | null;
+  /** Set by Discovery's post-sync reconciliation once this UPN appears live (application_id auto-populated at the same time) - null if never auto-detected (e.g. application_id was set via the manual toggle instead). */
+  linked_at: string | null;
   /** requested/completed dates, same shape as build_users.status */
   status: Json;
   errors: string | null;
@@ -531,8 +535,10 @@ export interface BuildAutoAttendantsTable {
   id: Generated<string>;
   /** FK -> discovery_sites.id (ON DELETE CASCADE). Build rows are always site-scoped. */
   site_id: string;
-  /** FK -> discovery_resource_accounts.id (ON DELETE SET NULL): the row this was seeded from. */
+  /** FK -> discovery_resource_accounts.id (ON DELETE SET NULL): the row this was seeded from - only ever set by Populate. */
   discovery_resource_account_id: string | null;
+  /** FK -> build_resource_accounts.id (ON DELETE SET NULL): the direct, hand-editable link Populate-created rows don't need but manually-created ones do - see deployment.service.ts/worker main.ts's resourceAccountInstanceId resolution, which tries this first and falls back to discovery_resource_account_id. */
+  resource_account_id: string | null;
   name: string;
   resource_accounts: Json;
   language: string | null;
@@ -814,7 +820,7 @@ export interface HandoverSectionsTable {
  */
 export interface FilesTable {
   id: Generated<string>;
-  category: 'deployment_change_document' | 'number_port_document';
+  category: 'deployment_change_document' | 'number_port_document' | 'resource_account_request';
   source_type: string;
   source_id: string;
   site_id: string | null;

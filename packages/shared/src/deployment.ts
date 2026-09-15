@@ -562,6 +562,15 @@ export interface CallQueueLiveState {
   timeoutThreshold?: number;
   /** No live NoAgentThreshold exists - "no agents" fires purely on zero agents opted in, not a numeric threshold. */
   noAgentAction?: string;
+  /**
+   * From the live tenant_objects call_queue record's ApplicationInstances -
+   * confirmed live across several real tenants this session (populates with
+   * real GUIDs when a resource account is directly linked, `[]` when none
+   * is - same field AutoAttendantLiveState already uses reliably), despite
+   * an earlier comment here claiming Get-CsCallQueue's output "doesn't
+   * reliably expose" this. That was wrong; the diffing below relies on it.
+   */
+  applicationInstanceIds?: string[];
 }
 
 /**
@@ -677,18 +686,17 @@ export function planCallQueueRow(
   // The queue needs a live Identity before it can be associated with a
   // resource account, so this only ever plans once New-CsCallQueue has
   // already run on a prior pass (mirrors the two-phase resource-account
-  // pattern above). Known limitation, called out in the Phase B plan:
-  // Get-CsCallQueue's raw output doesn't reliably expose which Application
-  // Instances are already associated (undocumented on Microsoft Learn as of
-  // this writing), so this can't diff against live state the way the rest
-  // of this function does - it re-emits every pass a linked resource
-  // account resolves live, which New-CsOnlineApplicationInstanceAssociation
-  // tolerates being re-run with the same target.
+  // pattern above). Diffed against live.applicationInstanceIds - same
+  // pattern as planAutoAttendantRow's equivalent step - so it only emits
+  // instance ids not already associated live, instead of re-emitting every
+  // pass regardless.
   const linkedInstanceIds = row.resource_accounts.map((id) => raObjectIds.get(id)).filter((id): id is string => !!id);
-  if (live?.identity && linkedInstanceIds.length > 0) {
+  const alreadyAssociated = new Set((live?.applicationInstanceIds ?? []).map((id) => id.toLowerCase()));
+  const unassociatedInstanceIds = linkedInstanceIds.filter((id) => !alreadyAssociated.has(id.toLowerCase()));
+  if (live?.identity && unassociatedInstanceIds.length > 0) {
     calls.push({
       cmdlet: 'New-CsOnlineApplicationInstanceAssociation',
-      parameters: { Identities: linkedInstanceIds, ConfigurationId: live.identity, ConfigurationType: 'CallQueue' },
+      parameters: { Identities: unassociatedInstanceIds, ConfigurationId: live.identity, ConfigurationType: 'CallQueue' },
       objectType: 'call_queue',
       objectId: row.id,
     });
@@ -843,11 +851,23 @@ function crossRefKey(kind: 'auto_attendant' | 'call_queue', buildId: string): st
 
 /**
  * Flags anything planAutoAttendantRow silently drops rather than guesses -
- * an unresolved menu-option/operator target, or no default call flow at all
- * (nothing to deploy without one, so the row plans no calls).
+ * an unresolved menu-option/operator target, no default call flow at all
+ * (nothing to deploy without one, so the row plans no calls), or - the
+ * "greenfield gap" this session's audit found - no resource account link at
+ * all, in which case New-CsOnlineApplicationInstanceAssociation never fires
+ * and nothing ever tells the engineer why. `hasResourceAccountLink` is
+ * `!!row.resource_account_id || !!row.discovery_resource_account_id`,
+ * computed by the caller (which already has both).
  */
-export function autoAttendantRowWarnings(row: BuildAutoAttendantRow, crossRef: AutoAttendantCrossRef): string[] {
+export function autoAttendantRowWarnings(
+  row: BuildAutoAttendantRow,
+  crossRef: AutoAttendantCrossRef,
+  hasResourceAccountLink: boolean,
+): string[] {
   const warnings: string[] = [];
+  if (!hasResourceAccountLink) {
+    warnings.push('No resource account linked - this Auto Attendant will never get a phone number until one is linked.');
+  }
   if (!row.default_call_flow) {
     warnings.push('No business-hours call flow configured yet, so nothing will deploy for this Auto Attendant.');
     return warnings;

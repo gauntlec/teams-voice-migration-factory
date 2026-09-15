@@ -8,7 +8,7 @@ import { InjectDb, type Db } from '../../db/db.module';
 import { FILE_STORAGE_BACKEND, type FileStorageBackend } from './file-storage.interface';
 
 export interface StoreFileInput {
-  category: 'deployment_change_document' | 'number_port_document';
+  category: 'deployment_change_document' | 'number_port_document' | 'resource_account_request';
   sourceType: string;
   sourceId: string;
   siteId: string | null;
