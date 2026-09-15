@@ -299,7 +299,7 @@ export function planIdentityRow(
       objectId: row.id,
     });
   }
-  for (const d of row.delegates ?? []) {
+  for (const d of Array.isArray(row.delegates) ? row.delegates : []) {
     calls.push({
       cmdlet: 'New-CsUserCallingDelegate',
       parameters: {

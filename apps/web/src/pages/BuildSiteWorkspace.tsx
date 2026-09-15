@@ -114,7 +114,7 @@ function ValidationBadge({ v }: { v: BuildRowValidation | null }) {
 function callingSettingsSummary(r: Row): string {
   const cf = r.call_forwarding as CallForwardingSettings | null;
   const pg = r.pickup_group as PickupGroupSettings | null;
-  const delegates = (r.delegates as CallDelegate[] | null) ?? [];
+  const delegates = Array.isArray(r.delegates) ? (r.delegates as CallDelegate[]) : [];
   const bits: string[] = [];
   if (cf?.forwarding?.enabled) bits.push('Forwarding');
   if (cf?.unanswered?.enabled) bits.push('Unanswered');
@@ -1138,7 +1138,9 @@ function CallingSettingsDialog({
   const [pgOrder, setPgOrder] = useState<string>(pg?.order ?? 'Simultaneous');
   const [pgTargetsRaw, setPgTargetsRaw] = useState(pg?.targets?.join(', ') ?? '');
 
-  const [delegates, setDelegates] = useState<CallDelegate[]>(((row.delegates as CallDelegate[] | null) ?? []).slice());
+  const [delegates, setDelegates] = useState<CallDelegate[]>(
+    Array.isArray(row.delegates) ? (row.delegates as CallDelegate[]).slice() : [],
+  );
 
   const [err, setErr] = useState<string | null>(null);
 
