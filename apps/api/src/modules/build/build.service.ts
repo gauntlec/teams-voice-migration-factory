@@ -952,10 +952,16 @@ export class BuildService {
             .map((a) => (typeof a?.ObjectId === 'string' ? upnByObjectId.get(a.ObjectId.toLowerCase()) : undefined))
             .filter((v): v is string => !!v)
         : [];
+      // A SharedVoicemail/Forward target that isn't a resolvable user (e.g. an
+      // M365 group's object id - Get-CsCallQueue never returns a display name
+      // for one, and Discovery doesn't capture groups at all yet, see the bug
+      // report) falls back to the raw id rather than being silently dropped -
+      // visible-but-unfriendly beats blank.
       const targetOf = (t: unknown): string | null => {
         const o = t as Record<string, unknown> | null;
         if (!o || typeof o.Id !== 'string') return null;
-        return typeof o.Id === 'string' && o.Id.startsWith('tel:') ? null : (upnByObjectId.get(o.Id.toLowerCase()) ?? null);
+        if (o.Id.startsWith('tel:')) return null;
+        return upnByObjectId.get(o.Id.toLowerCase()) ?? o.Id;
       };
       const patch: Record<string, unknown> = {
         routing_method: decodeCallQueueEnum(live.RoutingMethod, CALL_QUEUE_ROUTING_METHODS) ?? 'Attendant',
