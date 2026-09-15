@@ -26,6 +26,10 @@ import {
 } from '@fluentui/react-components';
 import { ArrowLeftRegular, CheckmarkCircleRegular, DeleteRegular, WarningRegular } from '@fluentui/react-icons';
 import {
+  BUSY_ON_BUSY_OPTIONS,
+  CALL_FORWARDING_TYPES,
+  CALL_GROUP_ORDERS,
+  CALL_TARGET_TYPES,
   NUMBER_TYPES,
   POLICY_KIND_TO_TENANT_TYPE,
   POLICY_KINDS,
@@ -33,7 +37,10 @@ import {
   VOICEMAIL_PROMPT_LANGUAGES,
   type BuildRowValidation,
   type BuildSiteRollup,
+  type CallDelegate,
+  type CallForwardingSettings,
   type Paginated,
+  type PickupGroupSettings,
   type PolicyKey,
   type TenantPolicySummary,
 } from '@tvmf/shared';
@@ -101,6 +108,20 @@ function ValidationBadge({ v }: { v: BuildRowValidation | null }) {
       {issues} issue{issues === 1 ? '' : 's'}
     </Badge>
   );
+}
+
+/** Short label for the "Calling settings" button - what's actually designed for this row, at a glance. */
+function callingSettingsSummary(r: Row): string {
+  const cf = r.call_forwarding as CallForwardingSettings | null;
+  const pg = r.pickup_group as PickupGroupSettings | null;
+  const delegates = (r.delegates as CallDelegate[] | null) ?? [];
+  const bits: string[] = [];
+  if (cf?.forwarding?.enabled) bits.push('Forwarding');
+  if (cf?.unanswered?.enabled) bits.push('Unanswered');
+  if (cf?.busyOnBusy) bits.push('Busy on busy');
+  if (pg?.targets.length) bits.push('Pickup group');
+  if (delegates.length) bits.push(`${delegates.length} delegate${delegates.length === 1 ? '' : 's'}`);
+  return bits.length ? bits.join(', ') : 'Calling settings…';
 }
 
 export function BuildSiteWorkspace() {
@@ -280,6 +301,14 @@ export function BuildSiteWorkspace() {
   const [mapOpen, setMapOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState<'user' | 'cap' | null>(null);
 
+  // Forwarding/delegates/pickup group - see CallingSettingsDialog below. Compound
+  // JSON doesn't fit the generic FieldDef grid, so this is its own dialog.
+  const [callingSettingsFor, setCallingSettingsFor] = useState<{
+    endpoint: string;
+    queryKey: unknown[];
+    row: Row;
+  } | null>(null);
+
   if (!tid) return <NoTenant />;
   if (rollup.isLoading) return <Spinner label="Loading site…" />;
   if (rollup.isError) return <LoadError message={(rollup.error as Error).message} />;
@@ -421,6 +450,17 @@ export function BuildSiteWorkspace() {
           }}
         />
       )}
+      {callingSettingsFor && (
+        <CallingSettingsDialog
+          endpoint={callingSettingsFor.endpoint}
+          row={callingSettingsFor.row}
+          onClose={() => setCallingSettingsFor(null)}
+          onSaved={() => {
+            qc.invalidateQueries({ queryKey: callingSettingsFor.queryKey });
+            setCallingSettingsFor(null);
+          }}
+        />
+      )}
 
       <TabList selectedValue={tab} onTabSelect={(_, d) => setTab(d.value as typeof tab)}>
         <Tab value="users">Users</Tab>
@@ -470,6 +510,21 @@ export function BuildSiteWorkspace() {
               },
             },
             { key: 'migration_wave', label: 'Wave' },
+            {
+              key: 'calling_settings',
+              label: 'Calling',
+              render: (r) => (
+                <Button
+                  size="small"
+                  appearance="subtle"
+                  onClick={() =>
+                    setCallingSettingsFor({ endpoint: `${base}/users`, queryKey: ['users', tid, siteId], row: r })
+                  }
+                >
+                  {callingSettingsSummary(r)}
+                </Button>
+              ),
+            },
             { key: 'validation', label: 'Validation', render: (r) => <ValidationBadge v={r.validation as BuildRowValidation | null} /> },
           ]}
           fields={identityFields(policyFields, numberChoicesFor)}
@@ -510,6 +565,21 @@ export function BuildSiteWorkspace() {
             { key: 'e164', label: 'Number' },
             { key: 'phone_model', label: 'Model' },
             ...policyColumns(),
+            {
+              key: 'calling_settings',
+              label: 'Calling',
+              render: (r) => (
+                <Button
+                  size="small"
+                  appearance="subtle"
+                  onClick={() =>
+                    setCallingSettingsFor({ endpoint: `${base}/caps`, queryKey: ['caps', tid, siteId], row: r })
+                  }
+                >
+                  {callingSettingsSummary(r)}
+                </Button>
+              ),
+            },
             { key: 'validation', label: 'Validation', render: (r) => <ValidationBadge v={r.validation as BuildRowValidation | null} /> },
           ]}
           fields={[
@@ -1026,6 +1096,285 @@ function TemplatesDialog({
             <DialogTrigger disableButtonEnhancement>
               <Button appearance="secondary">Close</Button>
             </DialogTrigger>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  );
+}
+
+/* ------------------------- calling settings dialog ------------------------- */
+
+/** unset = no cmdlet planned at all; off = explicitly disabled (Set-...-Enabled $false); on = configured. */
+type TriState = 'unset' | 'off' | 'on';
+const UNANSWERED_DELAYS = [5, 10, 15, 20, 30, 40, 50, 60];
+
+function CallingSettingsDialog({
+  endpoint,
+  row,
+  onClose,
+  onSaved,
+}: {
+  endpoint: string;
+  row: Row;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const cf = (row.call_forwarding as CallForwardingSettings | null) ?? null;
+  const pg = (row.pickup_group as PickupGroupSettings | null) ?? null;
+
+  const [fwdMode, setFwdMode] = useState<TriState>(cf?.forwarding ? (cf.forwarding.enabled ? 'on' : 'off') : 'unset');
+  const [fwdType, setFwdType] = useState<string>(cf?.forwarding?.type ?? 'Immediate');
+  const [fwdTargetType, setFwdTargetType] = useState<string>(cf?.forwarding?.targetType ?? 'Voicemail');
+  const [fwdTarget, setFwdTarget] = useState(cf?.forwarding?.target ?? '');
+
+  const [unaMode, setUnaMode] = useState<TriState>(cf?.unanswered ? (cf.unanswered.enabled ? 'on' : 'off') : 'unset');
+  const [unaDelay, setUnaDelay] = useState<number>(cf?.unanswered?.delaySeconds ?? 20);
+  const [unaTargetType, setUnaTargetType] = useState<string>(cf?.unanswered?.targetType ?? 'Voicemail');
+  const [unaTarget, setUnaTarget] = useState(cf?.unanswered?.target ?? '');
+
+  const [busyOnBusy, setBusyOnBusy] = useState<string>(cf?.busyOnBusy ?? '');
+
+  const [pgOrder, setPgOrder] = useState<string>(pg?.order ?? 'Simultaneous');
+  const [pgTargetsRaw, setPgTargetsRaw] = useState(pg?.targets.join(', ') ?? '');
+
+  const [delegates, setDelegates] = useState<CallDelegate[]>(((row.delegates as CallDelegate[] | null) ?? []).slice());
+
+  const [err, setErr] = useState<string | null>(null);
+
+  const save = useMutation({
+    mutationFn: () => {
+      const call_forwarding: CallForwardingSettings = {};
+      if (fwdMode !== 'unset') {
+        call_forwarding.forwarding =
+          fwdMode === 'on'
+            ? {
+                enabled: true,
+                type: fwdType as (typeof CALL_FORWARDING_TYPES)[number],
+                targetType: fwdTargetType as (typeof CALL_TARGET_TYPES)[number],
+                target: fwdTargetType === 'SingleTarget' ? fwdTarget : undefined,
+              }
+            : { enabled: false };
+      }
+      if (unaMode !== 'unset') {
+        call_forwarding.unanswered =
+          unaMode === 'on'
+            ? {
+                enabled: true,
+                delaySeconds: unaDelay,
+                targetType: unaTargetType as (typeof CALL_TARGET_TYPES)[number],
+                target: unaTargetType === 'SingleTarget' ? unaTarget : undefined,
+              }
+            : { enabled: false };
+      }
+      if (busyOnBusy) call_forwarding.busyOnBusy = busyOnBusy as (typeof BUSY_ON_BUSY_OPTIONS)[number];
+
+      const targets = pgTargetsRaw
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean);
+      const pickup_group = targets.length ? { order: pgOrder as (typeof CALL_GROUP_ORDERS)[number], targets } : undefined;
+
+      return api(`${endpoint}/${row.id}`, {
+        method: 'PATCH',
+        // call_forwarding/delegates are always sent (even {}/[]) so this dialog
+        // can explicitly clear a previously-designed setting, not just add one.
+        // pickup_group can't represent "cleared" (order is required whenever
+        // the object is present at all) - see the hint under that field.
+        body: JSON.stringify({ call_forwarding, pickup_group, delegates }),
+      });
+    },
+    onSuccess: onSaved,
+    onError: (e) => setErr(e instanceof ApiError ? e.message : 'Failed'),
+  });
+
+  const addDelegate = () =>
+    setDelegates((d) => [
+      ...d,
+      { delegateUpn: '', makeCalls: true, receiveCalls: true, manageSettings: false, pickUpHeldCalls: true, joinActiveCalls: true },
+    ]);
+  const updateDelegate = (i: number, patch: Partial<CallDelegate>) =>
+    setDelegates((d) => d.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
+  const removeDelegate = (i: number) => setDelegates((d) => d.filter((_, idx) => idx !== i));
+
+  const triStateDropdown = (value: TriState, onChange: (v: TriState) => void) => (
+    <Dropdown
+      value={value === 'on' ? 'On' : value === 'off' ? 'Off' : '— not set —'}
+      selectedOptions={[value]}
+      onOptionSelect={(_, d) => onChange((d.optionValue as TriState) ?? 'unset')}
+      style={{ minWidth: 140 }}
+    >
+      <Option value="unset">— not set —</Option>
+      <Option value="off">Off</Option>
+      <Option value="on">On</Option>
+    </Dropdown>
+  );
+
+  return (
+    <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
+      <DialogSurface style={{ maxWidth: 640 }}>
+        <DialogBody>
+          <DialogTitle>Calling settings — {String(row.upn)}</DialogTitle>
+          <DialogContent>
+            <div style={{ display: 'grid', gap: 16, minWidth: 560 }}>
+              <div>
+                <Text weight="semibold">Forwarding</Text>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end', marginTop: 6 }}>
+                  <Field label="Status">{triStateDropdown(fwdMode, setFwdMode)}</Field>
+                  {fwdMode === 'on' && (
+                    <>
+                      <Field label="Type">
+                        <Dropdown value={fwdType} selectedOptions={[fwdType]} onOptionSelect={(_, d) => setFwdType(d.optionValue ?? '')}>
+                          {CALL_FORWARDING_TYPES.map((t) => (
+                            <Option key={t} value={t}>
+                              {t}
+                            </Option>
+                          ))}
+                        </Dropdown>
+                      </Field>
+                      <Field label="Target type">
+                        <Dropdown
+                          value={fwdTargetType}
+                          selectedOptions={[fwdTargetType]}
+                          onOptionSelect={(_, d) => setFwdTargetType(d.optionValue ?? '')}
+                        >
+                          {CALL_TARGET_TYPES.map((t) => (
+                            <Option key={t} value={t}>
+                              {t}
+                            </Option>
+                          ))}
+                        </Dropdown>
+                      </Field>
+                      {fwdTargetType === 'SingleTarget' && (
+                        <Field label="Target (user, SIP address or number)">
+                          <Input value={fwdTarget} onChange={(_, d) => setFwdTarget(d.value)} style={{ minWidth: 200 }} />
+                        </Field>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <Text weight="semibold">Unanswered calls</Text>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end', marginTop: 6 }}>
+                  <Field label="Status">{triStateDropdown(unaMode, setUnaMode)}</Field>
+                  {unaMode === 'on' && (
+                    <>
+                      <Field label="Ring for">
+                        <Dropdown
+                          value={`${unaDelay}s`}
+                          selectedOptions={[String(unaDelay)]}
+                          onOptionSelect={(_, d) => setUnaDelay(Number(d.optionValue) || 20)}
+                        >
+                          {UNANSWERED_DELAYS.map((s) => (
+                            <Option key={s} value={String(s)} text={`${s}s`}>
+                              {s}s
+                            </Option>
+                          ))}
+                        </Dropdown>
+                      </Field>
+                      <Field label="Target type">
+                        <Dropdown
+                          value={unaTargetType}
+                          selectedOptions={[unaTargetType]}
+                          onOptionSelect={(_, d) => setUnaTargetType(d.optionValue ?? '')}
+                        >
+                          {CALL_TARGET_TYPES.map((t) => (
+                            <Option key={t} value={t}>
+                              {t}
+                            </Option>
+                          ))}
+                        </Dropdown>
+                      </Field>
+                      {unaTargetType === 'SingleTarget' && (
+                        <Field label="Target (user, SIP address or number)">
+                          <Input value={unaTarget} onChange={(_, d) => setUnaTarget(d.value)} style={{ minWidth: 200 }} />
+                        </Field>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <Field label="Busy on busy" hint="What happens to a new call while already on one">
+                <Dropdown
+                  value={BUSY_ON_BUSY_OPTIONS.find((o) => o === busyOnBusy) ?? '— not set —'}
+                  selectedOptions={[busyOnBusy || 'unset']}
+                  onOptionSelect={(_, d) => setBusyOnBusy(d.optionValue === 'unset' ? '' : d.optionValue ?? '')}
+                  style={{ maxWidth: 260 }}
+                >
+                  <Option value="unset">— not set —</Option>
+                  {BUSY_ON_BUSY_OPTIONS.map((o) => (
+                    <Option key={o} value={o}>
+                      {o}
+                    </Option>
+                  ))}
+                </Dropdown>
+              </Field>
+
+              <div>
+                <Text weight="semibold">Pickup group (call group)</Text>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end', marginTop: 6 }}>
+                  <Field label="Order">
+                    <Dropdown value={pgOrder} selectedOptions={[pgOrder]} onOptionSelect={(_, d) => setPgOrder(d.optionValue ?? '')}>
+                      {CALL_GROUP_ORDERS.map((o) => (
+                        <Option key={o} value={o}>
+                          {o}
+                        </Option>
+                      ))}
+                    </Dropdown>
+                  </Field>
+                  <Field
+                    label="Members (UPNs)"
+                    hint="Comma-separated. Clearing this leaves a previously-saved group untouched - removing all members isn't deployed automatically yet."
+                  >
+                    <Input value={pgTargetsRaw} onChange={(_, d) => setPgTargetsRaw(d.value)} style={{ minWidth: 260 }} />
+                  </Field>
+                </div>
+              </div>
+
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text weight="semibold">Delegates</Text>
+                  <Button size="small" appearance="subtle" disabled={delegates.length >= 25} onClick={addDelegate}>
+                    Add delegate
+                  </Button>
+                </div>
+                {delegates.map((d, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}>
+                    <Input
+                      placeholder="delegate@contoso.com"
+                      value={d.delegateUpn}
+                      onChange={(_, ev) => updateDelegate(i, { delegateUpn: ev.value })}
+                      style={{ minWidth: 200 }}
+                    />
+                    <Checkbox label="Make calls" checked={d.makeCalls} onChange={(_, ev) => updateDelegate(i, { makeCalls: !!ev.checked })} />
+                    <Checkbox label="Receive calls" checked={d.receiveCalls} onChange={(_, ev) => updateDelegate(i, { receiveCalls: !!ev.checked })} />
+                    <Checkbox label="Manage settings" checked={d.manageSettings} onChange={(_, ev) => updateDelegate(i, { manageSettings: !!ev.checked })} />
+                    <Checkbox label="Pick up held calls" checked={d.pickUpHeldCalls} onChange={(_, ev) => updateDelegate(i, { pickUpHeldCalls: !!ev.checked })} />
+                    <Checkbox label="Join active calls" checked={d.joinActiveCalls} onChange={(_, ev) => updateDelegate(i, { joinActiveCalls: !!ev.checked })} />
+                    <Button size="small" appearance="subtle" icon={<DeleteRegular />} onClick={() => removeDelegate(i)} />
+                  </div>
+                ))}
+              </div>
+
+              {err && (
+                <Text block style={{ color: tokens.colorPaletteRedForeground1 }}>
+                  {err}
+                </Text>
+              )}
+            </div>
+          </DialogContent>
+          <DialogActions>
+            <DialogTrigger disableButtonEnhancement>
+              <Button appearance="secondary" onClick={onClose}>
+                Cancel
+              </Button>
+            </DialogTrigger>
+            <Button appearance="primary" disabled={save.isPending} onClick={() => save.mutate()}>
+              {save.isPending ? 'Saving…' : 'Save'}
+            </Button>
           </DialogActions>
         </DialogBody>
       </DialogSurface>

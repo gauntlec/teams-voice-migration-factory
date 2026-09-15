@@ -7,6 +7,8 @@ import {
   planResourceAccountRow,
   renderCommand,
   resourceAccountRowWarnings,
+  type CallDelegate,
+  type CallForwardingSettings,
   type CreateDeploymentInput,
   type DeploymentPreviewQuery,
   type DeploymentPreviewRow,
@@ -14,6 +16,7 @@ import {
   type FileRow,
   type GenerateDeploymentDocumentInput,
   type LiveIdentityState,
+  type PickupGroupSettings,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
 import type { AuthedUser, TenantContext } from '../../common/request';
@@ -184,6 +187,9 @@ export class DeploymentService {
               revoke_ev: row.revoke_ev,
               policies,
               voicemail: (row.voicemail as { enabled?: boolean | null; language?: string | null }) ?? null,
+              call_forwarding: (row.call_forwarding as CallForwardingSettings) ?? null,
+              pickup_group: (row.pickup_group as PickupGroupSettings) ?? null,
+              delegates: (row.delegates as CallDelegate[]) ?? null,
             },
             objectType,
             liveState.get(row.upn.toLowerCase()),

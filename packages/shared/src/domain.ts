@@ -277,8 +277,16 @@ export function normalizeVoicemailLanguage(v: unknown): VoicemailPromptLanguage 
   return VOICEMAIL_LANGUAGE_ALIASES[t.toLowerCase()] ?? null;
 }
 
-export const CALL_FORWARDING_TYPES = ['Off', 'Immediate', 'Simultaneous'] as const;
-export const CALL_FORWARD_TARGET_TYPES = ['Voicemail', 'SingleTarget', 'Delegates', 'MyDelegates'] as const;
+/**
+ * Vocab for Set-CsUserCallingSettings / New-CsUserCallingDelegate, matching
+ * the cmdlets' actual accepted values (Microsoft Learn) - see
+ * planIdentityRow in deployment.ts and build_users/build_caps'
+ * call_forwarding/pickup_group/delegates jsonb columns.
+ */
+export const CALL_TARGET_TYPES = ['Voicemail', 'SingleTarget', 'MyDelegates', 'Group'] as const;
+export const CALL_FORWARDING_TYPES = ['Immediate', 'Simultaneous'] as const;
+export const CALL_GROUP_ORDERS = ['Simultaneous', 'InOrder'] as const;
+export const BUSY_ON_BUSY_OPTIONS = ['PlayBusySignal', 'RedirectAsUnansweredCall', 'RingUser'] as const;
 export const VOICEMAIL_ANSWERING_RULES = ['PromptOnly', 'PromptOnlyWithTransfer', 'RegularVoicemail', 'VoicemailWithTransferOption'] as const;
 
 export const CALL_QUEUE_ROUTING_METHODS = [

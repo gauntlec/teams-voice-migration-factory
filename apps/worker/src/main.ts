@@ -8,8 +8,11 @@ import {
   planIdentityRow,
   planResourceAccountRow,
   renderCommand,
+  type CallDelegate,
+  type CallForwardingSettings,
   type CmdletInvocation,
   type LiveIdentityState,
+  type PickupGroupSettings,
 } from '@tvmf/shared';
 import { SimulatedTeamsExecutor, type TeamsExecutor } from './teams/executor';
 import { PwshTeamsExecutor } from './teams/pwsh-executor';
@@ -435,6 +438,9 @@ async function handleDeploymentRun(job: Job) {
             revoke_ev: row.revoke_ev,
             policies,
             voicemail: (row.voicemail as { enabled?: boolean | null; language?: string | null }) ?? null,
+            call_forwarding: (row.call_forwarding as CallForwardingSettings) ?? null,
+            pickup_group: (row.pickup_group as PickupGroupSettings) ?? null,
+            delegates: (row.delegates as CallDelegate[]) ?? null,
           },
           objectType,
           liveState.get(row.upn.toLowerCase()),

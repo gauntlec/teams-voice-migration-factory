@@ -56,11 +56,47 @@ export function renderCommand(call: CmdletInvocation): string {
   const parts = [call.cmdlet];
   for (const [k, v] of Object.entries(call.parameters)) {
     if (v === undefined || v === null || v === '') continue;
-    if (typeof v === 'boolean') parts.push(`-${k} $${v}`);
+    if (Array.isArray(v)) {
+      if (v.length === 0) continue;
+      parts.push(`-${k} @(${v.map((item) => psQuote(String(item))).join(', ')})`);
+    } else if (typeof v === 'boolean') parts.push(`-${k} $${v}`);
     else if (typeof v === 'number') parts.push(`-${k} ${v}`);
     else parts.push(`-${k} ${psQuote(String(v))}`);
   }
   return parts.join(' ');
+}
+
+/** Mirrors dto.ts's callForwardingSchema exactly - see that file for the field-by-field cmdlet mapping. */
+export interface CallForwardingSettings {
+  forwarding?: {
+    enabled: boolean;
+    type?: 'Immediate' | 'Simultaneous';
+    targetType?: 'Voicemail' | 'SingleTarget' | 'MyDelegates' | 'Group';
+    target?: string | null;
+  };
+  unanswered?: {
+    enabled: boolean;
+    delaySeconds?: number;
+    targetType?: 'Voicemail' | 'SingleTarget' | 'MyDelegates' | 'Group';
+    target?: string | null;
+  };
+  busyOnBusy?: 'PlayBusySignal' | 'RedirectAsUnansweredCall' | 'RingUser';
+}
+
+/** Mirrors dto.ts's pickupGroupSchema - Set-CsUserCallingSettings' CallGroup settings group. */
+export interface PickupGroupSettings {
+  order: 'Simultaneous' | 'InOrder';
+  targets: string[];
+}
+
+/** Mirrors dto.ts's delegateSchema - New-CsUserCallingDelegate's own parameters, one entry per delegate. */
+export interface CallDelegate {
+  delegateUpn: string;
+  makeCalls: boolean;
+  receiveCalls: boolean;
+  manageSettings: boolean;
+  pickUpHeldCalls: boolean;
+  joinActiveCalls: boolean;
 }
 
 export interface BuildIdentityRow {
@@ -71,6 +107,18 @@ export interface BuildIdentityRow {
   revoke_ev: boolean;
   policies: Record<string, string | null> | null;
   voicemail: { enabled?: boolean | null; language?: string | null } | null;
+  call_forwarding: CallForwardingSettings | null;
+  pickup_group: PickupGroupSettings | null;
+  delegates: CallDelegate[] | null;
+}
+
+/** hh:mm:ss format Set-CsUserCallingSettings' -UnansweredDelay expects. */
+function toHms(totalSeconds: number): string {
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(h)}:${pad(m)}:${pad(s)}`;
 }
 
 /**
@@ -187,6 +235,81 @@ export function planIdentityRow(
         Identity: identity,
         VoicemailEnabled: row.voicemail.enabled,
         ...(row.voicemail.enabled && row.voicemail.language ? { PromptLanguage: row.voicemail.language } : {}),
+      },
+      objectType,
+      objectId: row.id,
+    });
+  }
+
+  // Call forwarding / unanswered / busy-on-busy / pickup group / delegates -
+  // Set-CsUserCallingSettings and New-CsUserCallingDelegate, per
+  // docs/DEPLOYMENT.md's "natural next increment". None of these are
+  // diffable against live state yet (Discovery doesn't capture
+  // Get-CsUserCallingSettings - see build-validation.service.ts), so - like
+  // voicemail above - they always re-issue whenever a target is designed.
+  if (row.call_forwarding?.forwarding) {
+    const f = row.call_forwarding.forwarding;
+    calls.push({
+      cmdlet: 'Set-CsUserCallingSettings',
+      parameters: {
+        Identity: identity,
+        IsForwardingEnabled: f.enabled,
+        ...(f.enabled ? { ForwardingType: f.type, ForwardingTargetType: f.targetType, ForwardingTarget: f.target } : {}),
+      },
+      objectType,
+      objectId: row.id,
+    });
+  }
+  if (row.call_forwarding?.unanswered) {
+    const u = row.call_forwarding.unanswered;
+    calls.push({
+      cmdlet: 'Set-CsUserCallingSettings',
+      parameters: {
+        Identity: identity,
+        IsUnansweredEnabled: u.enabled,
+        ...(u.enabled
+          ? {
+              UnansweredDelay: toHms(u.delaySeconds ?? 20),
+              UnansweredTargetType: u.targetType,
+              UnansweredTarget: u.target,
+            }
+          : {}),
+      },
+      objectType,
+      objectId: row.id,
+    });
+  }
+  if (row.call_forwarding?.busyOnBusy) {
+    calls.push({
+      cmdlet: 'Set-CsUserCallingSettings',
+      parameters: { Identity: identity, BusyOnBusyOption: row.call_forwarding.busyOnBusy },
+      objectType,
+      objectId: row.id,
+    });
+  }
+  if (row.pickup_group?.targets.length) {
+    calls.push({
+      cmdlet: 'Set-CsUserCallingSettings',
+      parameters: {
+        Identity: identity,
+        CallGroupOrder: row.pickup_group.order,
+        CallGroupTargets: row.pickup_group.targets,
+      },
+      objectType,
+      objectId: row.id,
+    });
+  }
+  for (const d of row.delegates ?? []) {
+    calls.push({
+      cmdlet: 'New-CsUserCallingDelegate',
+      parameters: {
+        Identity: identity,
+        Delegate: d.delegateUpn,
+        MakeCalls: d.makeCalls,
+        ReceiveCalls: d.receiveCalls,
+        ManageSettings: d.manageSettings,
+        PickUpHeldCalls: d.pickUpHeldCalls,
+        JoinActiveCalls: d.joinActiveCalls,
       },
       objectType,
       objectId: row.id,

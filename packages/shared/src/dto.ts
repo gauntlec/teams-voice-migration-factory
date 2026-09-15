@@ -3,7 +3,11 @@ import { ROLES } from './rbac';
 import {
   BUG_SEVERITIES,
   BUG_STATUSES,
+  BUSY_ON_BUSY_OPTIONS,
   CALLER_ID_OPTIONS,
+  CALL_FORWARDING_TYPES,
+  CALL_GROUP_ORDERS,
+  CALL_TARGET_TYPES,
   FEATURE_AREAS,
   FEATURE_PRIORITIES,
   FEATURE_STATUSES,
@@ -773,10 +777,59 @@ export type TenantUsersImportInput = z.infer<typeof tenantUsersImportSchema>;
 const policyMap = z.record(z.string(), z.string().nullable()).optional();
 /** Picker submits a tenant_policies.id per PolicyKey - see BuildService.resolvePolicyIds. */
 const policyIdMap = z.record(z.string(), z.string().uuid().nullable()).optional();
-const jsonObj = z.record(z.unknown()).optional();
-const jsonArr = z.array(z.unknown()).optional();
 /** RecordDialog's `type: 'select'` sends '' for an untouched/cleared dropdown - treat as null, not a validation error. */
 const numberType = blankToNull(z.enum(NUMBER_TYPES));
+
+/**
+ * Structured shape for build_users/build_caps' call_forwarding jsonb -
+ * mirrors Set-CsUserCallingSettings' Forwarding/Unanswered/BusyOnBusy
+ * settings groups exactly (see planIdentityRow in deployment.ts).
+ */
+const callForwardingSchema = z
+  .object({
+    forwarding: z
+      .object({
+        enabled: z.boolean(),
+        type: z.enum(CALL_FORWARDING_TYPES).optional(),
+        targetType: z.enum(CALL_TARGET_TYPES).optional(),
+        target: optStr(200),
+      })
+      .strict()
+      .optional(),
+    unanswered: z
+      .object({
+        enabled: z.boolean(),
+        // seconds, per Learn's allowed range/increments (5-60s)
+        delaySeconds: z.number().int().min(5).max(60).optional(),
+        targetType: z.enum(CALL_TARGET_TYPES).optional(),
+        target: optStr(200),
+      })
+      .strict()
+      .optional(),
+    busyOnBusy: z.enum(BUSY_ON_BUSY_OPTIONS).optional(),
+  })
+  .strict()
+  .optional();
+
+/** build_users/build_caps' pickup_group jsonb - Set-CsUserCallingSettings' CallGroup settings group. */
+const pickupGroupSchema = z
+  .object({
+    order: z.enum(CALL_GROUP_ORDERS),
+    targets: z.array(str(200)).max(25),
+  })
+  .strict()
+  .optional();
+
+/** One entry of build_users/build_caps' delegates jsonb array - New-CsUserCallingDelegate's own parameters. */
+const delegateSchema = z.object({
+  delegateUpn: str(200),
+  makeCalls: z.boolean(),
+  receiveCalls: z.boolean(),
+  manageSettings: z.boolean(),
+  pickUpHeldCalls: z.boolean(),
+  joinActiveCalls: z.boolean(),
+});
+const delegatesSchema = z.array(delegateSchema).max(25).optional();
 
 /**
  * Fields writable on a build_users/build_caps row beyond the natural key
@@ -797,9 +850,9 @@ const buildIdentityWritable = {
   // a Teams culture code here, so it's never stored in a form deployment
   // would then be rejected on.
   voicemail: z.object({ enabled: z.boolean().nullable().optional(), language: voicemailLanguage }).optional(),
-  call_forwarding: jsonObj,
-  delegates: jsonArr,
-  pickup_group: jsonObj,
+  call_forwarding: callForwardingSchema,
+  delegates: delegatesSchema,
+  pickup_group: pickupGroupSchema,
   comments: optStr(2000),
   hidden: z.boolean().optional(),
   /** assign / move / clear this row's number in the same call - null clears it */
