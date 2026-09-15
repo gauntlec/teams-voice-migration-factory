@@ -5,11 +5,16 @@ import dagre from 'dagre';
 import { toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
 import { Button, Text, Tooltip } from '@fluentui/react-components';
-import { ArrowDownloadRegular } from '@fluentui/react-icons';
+import { ArrowDownloadRegular, ArrowDownRegular, ArrowRightRegular } from '@fluentui/react-icons';
 import type { CallFlowBranch, CallFlowGraph, CallFlowNode, CallFlowNodeKind } from '@tvmf/shared';
+
+type Direction = 'LR' | 'TB';
 
 const NODE_WIDTH = 210;
 const NODE_HEIGHT = 52;
+const GROUP_PAD_X = 24;
+const GROUP_PAD_TOP = 30;
+const GROUP_PAD_BOTTOM = 14;
 
 const KIND_STYLE: Record<CallFlowNodeKind, { bg: string; border: string; icon: string; label: string }> = {
   auto_attendant: { bg: '#EEF2FF', border: '#4657D2', icon: '☎️', label: 'Auto attendant' },
@@ -46,9 +51,9 @@ function estimateNodeHeight(n: CallFlowNode): number {
 }
 
 /** dagre only computes positions - it's not rendered itself, xyflow does the actual drawing. */
-function layout(graph: CallFlowGraph) {
+function layout(graph: CallFlowGraph, direction: Direction) {
   const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir: 'LR', nodesep: 40, ranksep: 90 });
+  g.setGraph({ rankdir: direction, nodesep: 40, ranksep: 90 });
   g.setDefaultEdgeLabel(() => ({}));
   for (const n of graph.nodes) g.setNode(n.id, { width: NODE_WIDTH, height: estimateNodeHeight(n) });
   for (const e of graph.edges) g.setEdge(e.source, e.target);
@@ -77,16 +82,24 @@ const EXPORT_PIXEL_RATIO = 3;
  * the raster is exactly the on-screen CSS size, which reads fine at a
  * glance but turns to mud the moment a viewer zooms in on the PNG/PDF, since
  * there's no extra pixel data to zoom into.
+ *
+ * getViewportForBounds's own `padding` argument is a RATIO, not pixels
+ * (0.1 means 10% of the frame) - passing a pixel value like 48 there (as an
+ * earlier version of this function did) is read as "pad by 4800%", which
+ * shrinks the actual content to a sliver in the middle of a mostly-blank
+ * frame. The margin here is added once, directly into `width`/`height`
+ * before layout, so `getViewportForBounds` gets 0 - no second, mis-scaled
+ * padding pass.
  */
 async function captureDiagramPng(nodes: Node[]): Promise<{ dataUrl: string; width: number; height: number } | null> {
   if (nodes.length === 0) return null;
   const viewportEl = document.querySelector('.react-flow__viewport') as HTMLElement | null;
   if (!viewportEl) return null;
   const bounds = getNodesBounds(nodes);
-  const padding = 48;
-  const width = Math.max(400, Math.ceil(bounds.width) + padding * 2);
-  const height = Math.max(300, Math.ceil(bounds.height) + padding * 2);
-  const viewport = getViewportForBounds(bounds, width, height, 0.1, 2, padding);
+  const margin = 48;
+  const width = Math.max(400, Math.ceil(bounds.width) + margin * 2);
+  const height = Math.max(300, Math.ceil(bounds.height) + margin * 2);
+  const viewport = getViewportForBounds(bounds, width, height, 0.1, 2, 0);
   const pixelRatio = Math.max(1, Math.min(EXPORT_PIXEL_RATIO, MAX_CAPTURE_DIM / width, MAX_CAPTURE_DIM / height));
   const dataUrl = await toPng(viewportEl, {
     backgroundColor: '#ffffff',
@@ -143,6 +156,22 @@ function ExportControls({ filename }: { filename: string }) {
   );
 }
 
+/** Left-to-right / top-to-bottom layout toggle. */
+function DirectionControls({ direction, onChange }: { direction: Direction; onChange: (d: Direction) => void }) {
+  return (
+    <Panel position="top-left">
+      <div style={{ display: 'flex', gap: 4 }}>
+        <Tooltip content="Lay out left to right" relationship="label">
+          <Button size="small" appearance={direction === 'LR' ? 'primary' : 'secondary'} icon={<ArrowRightRegular />} onClick={() => onChange('LR')} />
+        </Tooltip>
+        <Tooltip content="Lay out top to bottom" relationship="label">
+          <Button size="small" appearance={direction === 'TB' ? 'primary' : 'secondary'} icon={<ArrowDownRegular />} onClick={() => onChange('TB')} />
+        </Tooltip>
+      </div>
+    </Panel>
+  );
+}
+
 /**
  * Renders a CallFlowGraph (packages/shared/src/call-flow-graph.ts) with
  * @xyflow/react - dagre auto-layout since the graph can cycle (a Directory
@@ -151,8 +180,11 @@ function ExportControls({ filename }: { filename: string }) {
  * chain.
  */
 export function CallFlowDiagram({ graph, exportFilename }: { graph: CallFlowGraph; exportFilename?: string }) {
+  const [direction, setDirection] = useState<Direction>('LR');
+
   const { nodes, edges } = useMemo(() => {
-    const positions = layout(graph);
+    const positions = layout(graph, direction);
+
     const nodes = graph.nodes.map((n) => {
       const style = KIND_STYLE[n.kind];
       const pos = positions.get(n.id) ?? { x: 0, y: 0 };
@@ -201,6 +233,53 @@ export function CallFlowDiagram({ graph, exportFilename }: { graph: CallFlowGrap
         },
       };
     });
+
+    // A dashed frame behind every Call Queue's agent cluster (agent -> queue
+    // edges), so "28 agents" reads as one labeled group instead of a loose
+    // pile of boxes that happens to be near the queue.
+    const agentSourcesByTarget = new Map<string, string[]>();
+    for (const e of graph.edges) {
+      if (e.branch !== 'agent') continue;
+      const arr = agentSourcesByTarget.get(e.target) ?? [];
+      arr.push(e.source);
+      agentSourcesByTarget.set(e.target, arr);
+    }
+    const groupNodes = [...agentSourcesByTarget.entries()].flatMap(([targetId, agentIds]) => {
+      const rects = agentIds.map((id) => positions.get(id)).filter((p): p is NonNullable<typeof p> => !!p);
+      if (rects.length === 0) return [];
+      const minX = Math.min(...rects.map((p) => p.x - NODE_WIDTH / 2)) - GROUP_PAD_X;
+      const maxX = Math.max(...rects.map((p) => p.x + NODE_WIDTH / 2)) + GROUP_PAD_X;
+      const minY = Math.min(...rects.map((p) => p.y - NODE_HEIGHT / 2)) - GROUP_PAD_TOP;
+      const maxY = Math.max(...rects.map((p) => p.y + NODE_HEIGHT / 2)) + GROUP_PAD_BOTTOM;
+      return [
+        {
+          id: `agent-group:${targetId}`,
+          position: { x: minX, y: minY },
+          width: maxX - minX,
+          height: maxY - minY,
+          zIndex: -1,
+          draggable: false,
+          selectable: false,
+          connectable: false,
+          data: {
+            label: (
+              <div style={{ position: 'absolute', top: 7, left: 12, fontSize: 10, fontWeight: 700, color: '#059669', letterSpacing: 0.4, textTransform: 'uppercase' as const }}>
+                Agents ({agentIds.length})
+              </div>
+            ),
+          },
+          style: {
+            width: maxX - minX,
+            height: maxY - minY,
+            background: 'rgba(5, 150, 105, 0.05)',
+            border: '1.5px dashed #059669',
+            borderRadius: 12,
+            padding: 0,
+          },
+        },
+      ];
+    });
+
     const edges = graph.edges.map((e) => {
       const bs = BRANCH_STYLE[e.branch];
       return {
@@ -214,8 +293,8 @@ export function CallFlowDiagram({ graph, exportFilename }: { graph: CallFlowGrap
         markerEnd: { type: MarkerType.ArrowClosed, color: bs.color },
       };
     });
-    return { nodes, edges };
-  }, [graph]);
+    return { nodes: [...groupNodes, ...nodes], edges };
+  }, [graph, direction]);
 
   if (graph.nodes.length === 0) {
     return (
@@ -242,6 +321,7 @@ export function CallFlowDiagram({ graph, exportFilename }: { graph: CallFlowGrap
             <Background />
             <Controls showInteractive={false} />
             <MiniMap pannable zoomable style={{ width: 120, height: 80 }} />
+            <DirectionControls direction={direction} onChange={setDirection} />
             <ExportControls filename={exportFilename ?? 'call-flow'} />
           </ReactFlow>
         </ReactFlowProvider>
