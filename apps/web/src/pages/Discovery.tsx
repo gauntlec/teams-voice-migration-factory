@@ -45,7 +45,8 @@ import {
   PlugConnectedRegular,
 } from '@fluentui/react-icons';
 import {
-  buildCallFlowGraphFromLive,
+  buildAutoAttendantFlowGraphFromLive,
+  buildCallQueueFlowGraphFromLive,
   TENANT_DISCOVERY_STEPS,
   TENANT_DISCOVERY_STEP_LABELS,
   TENANT_DISCOVERY_STEP_TYPES,
@@ -1094,57 +1095,83 @@ function JsonDialog({ title, data, onClose }: { title: string; data: unknown; on
  * fetched in full since a holiday/after-hours schedule's own name rarely
  * matches its AA's name filter.
  */
-function DiscoveryCallFlowSection({ base }: { base: string }) {
+/**
+ * The "as-is" call-flow diagram for one Auto Attendant or Call Queue,
+ * straight from this tenant's live tenant_objects snapshot - the
+ * counterpart to Design & Build's own per-object "as-designed" diagram
+ * (AutoAttendantFlowDialog/CallQueueFlowDialog in BuildSiteWorkspace.tsx),
+ * which reads the structured build_auto_attendants/build_call_queues
+ * columns instead. For an Auto Attendant, the sibling Auto Attendant/Call
+ * Queue/Schedule lists are fetched tenant-wide only to label a menu-option
+ * target with its real name and to expand one hop into a target Call
+ * Queue's own routing - a Call Queue's own diagram needs no sibling fetch.
+ */
+function LiveCallFlowDialog({ base, type, row, onClose }: { base: string; type: 'auto_attendant' | 'call_queue'; row: TenantObject; onClose: () => void }) {
   const s = useStyles();
-  const [qInput, setQInput] = useState('');
-  const q = useDebounced(qInput);
-
+  const needsSiblings = type === 'auto_attendant';
   const aaQ = useQuery({
-    queryKey: ['tdisc', 'callflow-aa', base, q],
-    queryFn: () => api<Paginated<TenantObject>>(`${base}/objects?type=auto_attendant&limit=200${q ? `&q=${encodeURIComponent(q)}` : ''}`),
+    queryKey: ['tdisc', 'callflow-aa-all', base],
+    queryFn: () => api<Paginated<TenantObject>>(`${base}/objects?type=auto_attendant&limit=200`),
+    enabled: needsSiblings,
   });
   const cqQ = useQuery({
-    queryKey: ['tdisc', 'callflow-cq', base, q],
-    queryFn: () => api<Paginated<TenantObject>>(`${base}/objects?type=call_queue&limit=200${q ? `&q=${encodeURIComponent(q)}` : ''}`),
+    queryKey: ['tdisc', 'callflow-cq-all', base],
+    queryFn: () => api<Paginated<TenantObject>>(`${base}/objects?type=call_queue&limit=200`),
+    enabled: needsSiblings,
   });
   const schedQ = useQuery({
-    queryKey: ['tdisc', 'callflow-sched', base],
+    queryKey: ['tdisc', 'callflow-sched-all', base],
     queryFn: () => api<Paginated<TenantObject>>(`${base}/objects?type=schedule&limit=200`),
+    enabled: needsSiblings,
   });
 
   const graph = useMemo(() => {
+    if (type === 'call_queue') {
+      return buildCallQueueFlowGraphFromLive({ name: row.display_name ?? row.object_key, data: row.data });
+    }
     if (!aaQ.data || !cqQ.data || !schedQ.data) return null;
-    return buildCallFlowGraphFromLive({
-      autoAttendants: aaQ.data.items.map((o) => ({ name: o.display_name ?? o.object_key, data: o.data })),
-      callQueues: cqQ.data.items.map((o) => ({ name: o.display_name ?? o.object_key, data: o.data })),
-      schedules: schedQ.data.items.map((o) => ({ key: o.object_key, data: o.data })),
-    });
-  }, [aaQ.data, cqQ.data, schedQ.data]);
+    return buildAutoAttendantFlowGraphFromLive(
+      { name: row.display_name ?? row.object_key, data: row.data },
+      aaQ.data.items.map((o) => ({ name: o.display_name ?? o.object_key, data: o.data })),
+      cqQ.data.items.map((o) => ({ name: o.display_name ?? o.object_key, data: o.data })),
+      schedQ.data.items.map((o) => ({ key: o.object_key, data: o.data })),
+    );
+  }, [type, row, aaQ.data, cqQ.data, schedQ.data]);
 
-  const loading = aaQ.isLoading || cqQ.isLoading || schedQ.isLoading;
+  const loading = needsSiblings && (aaQ.isLoading || cqQ.isLoading || schedQ.isLoading);
+  const loadError = needsSiblings ? ((aaQ.error ?? cqQ.error ?? schedQ.error) as Error | null) : null;
 
   return (
-    <Card className={s.card}>
-      <div className={s.toolbar}>
-        <Text weight="semibold">Call flow (as-is, from live data)</Text>
-        <SearchBox placeholder="Filter by name (e.g. a sitecode)…" value={qInput} onChange={(_, d) => setQInput(d.value)} style={{ minWidth: 260 }} />
-      </div>
-      {loading ? (
-        <Spinner size="tiny" label="Loading…" />
-      ) : aaQ.isError || cqQ.isError || schedQ.isError ? (
-        <LoadError message={((aaQ.error ?? cqQ.error ?? schedQ.error) as Error).message} />
-      ) : !graph || (graph.nodes.length === 0 && !q) ? (
-        <Text size={200} className={s.muted}>
-          Nothing discovered yet.
-        </Text>
-      ) : graph.nodes.length === 0 ? (
-        <Text size={200} className={s.muted}>
-          No Auto Attendants or Call Queues match "{q}".
-        </Text>
-      ) : (
-        <CallFlowDiagram graph={graph} />
-      )}
-    </Card>
+    <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
+      <DialogSurface style={{ maxWidth: 920 }}>
+        <DialogBody>
+          <DialogTitle>Call flow: {row.display_name ?? row.object_key}</DialogTitle>
+          <DialogContent>
+            <Text size={200} className={s.muted} style={{ display: 'block', marginBottom: 10 }}>
+              {type === 'auto_attendant'
+                ? "Business hours, after hours and holiday routing, from this tenant's live configuration. A menu option that transfers to another Auto Attendant is shown as a single box - open that Auto Attendant's own call flow to see its routing."
+                : 'What happens to a call in this queue - overflow, timeout and no-agent routing, from live configuration.'}
+            </Text>
+            {loading ? (
+              <Spinner size="tiny" label="Loading…" />
+            ) : loadError ? (
+              <LoadError message={loadError.message} />
+            ) : !graph || graph.nodes.length === 0 ? (
+              <Text size={200} className={s.muted}>
+                Nothing to draw.
+              </Text>
+            ) : (
+              <CallFlowDiagram graph={graph} />
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button appearance="primary" onClick={onClose}>
+              Close
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
   );
 }
 
@@ -1154,17 +1181,21 @@ function ObjectsTable({
   type,
   title,
   columns,
+  flowType,
 }: {
   base: string;
   type: TenantObjectType;
   title?: string;
   columns?: { label: string; render: (o: TenantObject) => ReactNode }[];
+  /** When set, adds a "Call flow" button per row opening LiveCallFlowDialog scoped to that object. */
+  flowType?: 'auto_attendant' | 'call_queue';
 }) {
   const s = useStyles();
   const [qInput, setQInput] = useState('');
   const q = useDebounced(qInput);
   const [page, setPage] = useState(1);
   const [view, setView] = useState<TenantObject | null>(null);
+  const [flowFor, setFlowFor] = useState<TenantObject | null>(null);
   const limit = 50;
   useEffect(() => setPage(1), [q]);
 
@@ -1224,6 +1255,11 @@ function ObjectsTable({
                       <Button size="small" appearance="subtle" icon={<EyeRegular />} onClick={() => setView(o)}>
                         View
                       </Button>
+                      {flowType && (
+                        <Button size="small" appearance="subtle" onClick={() => setFlowFor(o)}>
+                          Call flow
+                        </Button>
+                      )}
                       <HistoryButton base={base} objectId={o.id} title={o.display_name ?? o.object_key} />
                     </div>
                   </TableCell>
@@ -1235,6 +1271,7 @@ function ObjectsTable({
         </>
       )}
       {view && <JsonDialog title={view.display_name ?? view.object_key} data={view.data} onClose={() => setView(null)} />}
+      {flowFor && flowType && <LiveCallFlowDialog base={base} type={flowType} row={flowFor} onClose={() => setFlowFor(null)} />}
     </Card>
   );
 }
@@ -1933,9 +1970,8 @@ export function Discovery() {
 
       {tab === 'voice_apps' && (
         <>
-          <DiscoveryCallFlowSection base={base} />
-          <ObjectsTable base={base} type="auto_attendant" columns={[{ label: 'Name', render: (o) => o.display_name ?? o.object_key }, { label: 'Language', render: (o) => str(o, 'LanguageId') }, { label: 'Time zone', render: (o) => str(o, 'TimeZoneId') }]} />
-          <ObjectsTable base={base} type="call_queue" columns={[{ label: 'Name', render: (o) => o.display_name ?? o.object_key }, { label: 'Routing', render: (o) => str(o, 'RoutingMethod') }, { label: 'Agents', render: (o) => String((o.data.Agents as unknown[] | undefined)?.length ?? '—') }]} />
+          <ObjectsTable base={base} type="auto_attendant" flowType="auto_attendant" columns={[{ label: 'Name', render: (o) => o.display_name ?? o.object_key }, { label: 'Language', render: (o) => str(o, 'LanguageId') }, { label: 'Time zone', render: (o) => str(o, 'TimeZoneId') }]} />
+          <ObjectsTable base={base} type="call_queue" flowType="call_queue" columns={[{ label: 'Name', render: (o) => o.display_name ?? o.object_key }, { label: 'Routing', render: (o) => str(o, 'RoutingMethod') }, { label: 'Agents', render: (o) => String((o.data.Agents as unknown[] | undefined)?.length ?? '—') }]} />
           <ObjectsTable base={base} type="schedule" columns={[{ label: 'Name', render: (o) => o.display_name ?? o.object_key }, { label: 'Type', render: (o) => str(o, 'Type') }]} />
         </>
       )}

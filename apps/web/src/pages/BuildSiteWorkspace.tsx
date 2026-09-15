@@ -31,7 +31,8 @@ import {
   AA_DTMF_RESPONSES,
   AA_MENU_OPTION_ACTIONS,
   AA_SCHEDULE_TYPES,
-  buildCallFlowGraphFromDesign,
+  buildAutoAttendantFlowGraphFromDesign,
+  buildCallQueueFlowGraphFromDesign,
   BUSY_ON_BUSY_OPTIONS,
   CALL_FORWARDING_TYPES,
   CALL_GROUP_ORDERS,
@@ -57,6 +58,8 @@ import {
   type CallDelegate,
   type CallForwardingSettings,
   type CallQueueActionSettings,
+  type DesignAutoAttendantInput,
+  type DesignCallQueueInput,
   type Paginated,
   type PickupGroupSettings,
   type PolicyKey,
@@ -149,7 +152,7 @@ export function BuildSiteWorkspace() {
   const { siteId = '' } = useParams();
   const { activeTenantId, can } = useAuth();
   const qc = useQueryClient();
-  const [tab, setTab] = useState<'users' | 'caps' | 'resource-accounts' | 'call-queues' | 'auto-attendants' | 'call-flow'>('users');
+  const [tab, setTab] = useState<'users' | 'caps' | 'resource-accounts' | 'call-queues' | 'auto-attendants'>('users');
 
   const tid = activeTenantId;
   const base = `/t/${tid}/build`;
@@ -338,6 +341,12 @@ export function BuildSiteWorkspace() {
   // below, same "compound JSON needs its own dialog" reasoning as above.
   const [aaSettingsFor, setAaSettingsFor] = useState<Row | null>(null);
 
+  // Read-only call-flow diagrams - one Auto Attendant or Call Queue at a
+  // time (see AutoAttendantFlowDialog/CallQueueFlowDialog below), not a
+  // standing tab - a whole-site graph is too dense to read in one diagram.
+  const [aaFlowFor, setAaFlowFor] = useState<Row | null>(null);
+  const [cqFlowFor, setCqFlowFor] = useState<Row | null>(null);
+
   if (!tid) return <NoTenant />;
   if (rollup.isLoading) return <Spinner label="Loading site…" />;
   if (rollup.isError) return <LoadError message={(rollup.error as Error).message} />;
@@ -517,6 +526,10 @@ export function BuildSiteWorkspace() {
           }}
         />
       )}
+      {aaFlowFor && tid && (
+        <AutoAttendantFlowDialog tid={tid} base={base} siteId={siteId} row={aaFlowFor} onClose={() => setAaFlowFor(null)} />
+      )}
+      {cqFlowFor && <CallQueueFlowDialog row={cqFlowFor} onClose={() => setCqFlowFor(null)} />}
 
       <TabList selectedValue={tab} onTabSelect={(_, d) => setTab(d.value as typeof tab)}>
         <Tab value="users">Users</Tab>
@@ -524,7 +537,6 @@ export function BuildSiteWorkspace() {
         <Tab value="resource-accounts">Resource accounts</Tab>
         <Tab value="call-queues">Call queues</Tab>
         <Tab value="auto-attendants">Auto attendants</Tab>
-        <Tab value="call-flow">Call flow</Tab>
       </TabList>
 
       {tab === 'users' && (
@@ -767,6 +779,15 @@ export function BuildSiteWorkspace() {
                 </Button>
               ),
             },
+            {
+              key: 'call_flow',
+              label: 'Call flow',
+              render: (r) => (
+                <Button size="small" appearance="subtle" onClick={() => setCqFlowFor(r)}>
+                  View diagram
+                </Button>
+              ),
+            },
           ]}
           fields={[
             { key: 'name', label: 'Name', required: true },
@@ -814,10 +835,19 @@ export function BuildSiteWorkspace() {
             },
             {
               key: 'settings',
-              label: 'Call flow',
+              label: 'Menu editor',
               render: (r) => (
                 <Button size="small" appearance="subtle" onClick={() => setAaSettingsFor(r)}>
                   Configure…
+                </Button>
+              ),
+            },
+            {
+              key: 'call_flow',
+              label: 'Call flow',
+              render: (r) => (
+                <Button size="small" appearance="subtle" onClick={() => setAaFlowFor(r)}>
+                  View diagram
                 </Button>
               ),
             },
@@ -833,19 +863,79 @@ export function BuildSiteWorkspace() {
         />
       )}
 
-      {tab === 'call-flow' && tid && <BuildCallFlowSection tid={tid} base={base} siteId={siteId} />}
     </Page>
   );
 }
 
+/** Maps a Design & Build Call Queue row to the shape buildCallQueueFlowGraphFromDesign/buildAutoAttendantFlowGraphFromDesign need. */
+function toDesignCqInput(r: Row): DesignCallQueueInput {
+  return {
+    buildId: String(r.id),
+    name: String(r.name),
+    overflow: (r.overflow as CallQueueActionSettings | null) ?? null,
+    timeout: (r.timeout as CallQueueActionSettings | null) ?? null,
+    noAgentAction: (r.no_agent_action as CallQueueActionSettings | null) ?? null,
+    routingMethod: (r.routing_method as string | null) ?? undefined,
+    agentAlertTime: typeof r.agent_alert_time === 'number' ? r.agent_alert_time : undefined,
+    agentCount: Array.isArray(r.agents) ? (r.agents as string[]).length : undefined,
+  };
+}
+
+/** Maps a Design & Build Auto Attendant row to the shape buildAutoAttendantFlowGraphFromDesign needs. */
+function toDesignAaInput(r: Row): DesignAutoAttendantInput {
+  return {
+    buildId: String(r.id),
+    name: String(r.name),
+    operator: (r.operator as AutoAttendantCallableEntity | null) ?? null,
+    defaultCallFlow: (r.default_call_flow as AutoAttendantCallFlow | null) ?? null,
+    afterHoursCallFlow: (r.after_hours_call_flow as AutoAttendantCallFlow | null) ?? null,
+    holidayCallFlows: Array.isArray(r.holiday_call_flows) ? (r.holiday_call_flows as AutoAttendantHolidayCallFlow[]) : [],
+  };
+}
+
 /**
- * The "as-designed" call-flow diagram - built from Design & Build's
- * structured build_auto_attendants/build_call_queues columns
- * (buildCallFlowGraphFromDesign), the counterpart to Discovery's own
- * "as-is" diagram (DiscoveryCallFlowSection in Discovery.tsx), which reads
- * live tenant_objects directly instead.
+ * The "as-designed" call-flow diagram for one Call Queue - what happens on
+ * Overflow/Timeout/No-agent, built from this row's own columns via
+ * buildCallQueueFlowGraphFromDesign. No fetch needed - the row the "View
+ * diagram" button was clicked from already carries everything.
  */
-function BuildCallFlowSection({ tid, base, siteId }: { tid: string; base: string; siteId: string }) {
+function CallQueueFlowDialog({ row, onClose }: { row: Row; onClose: () => void }) {
+  const s = useRecordStyles();
+  const graph = useMemo(() => buildCallQueueFlowGraphFromDesign(toDesignCqInput(row)), [row]);
+
+  return (
+    <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
+      <DialogSurface style={{ maxWidth: 760 }}>
+        <DialogBody>
+          <DialogTitle>Call flow: {String(row.name)}</DialogTitle>
+          <DialogContent>
+            <Text size={200} className={s.muted} style={{ display: 'block', marginBottom: 10 }}>
+              What happens to a call in this queue - overflow, timeout and no-agent routing, as currently configured here - not yet deployed.
+            </Text>
+            <CallFlowDiagram graph={graph} />
+          </DialogContent>
+          <DialogActions>
+            <Button appearance="primary" onClick={onClose}>
+              Close
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  );
+}
+
+/**
+ * The "as-designed" call-flow diagram for one Auto Attendant - business
+ * hours, after hours and holiday routing, built from Design & Build's
+ * structured columns via buildAutoAttendantFlowGraphFromDesign. Fetches the
+ * site's other Auto Attendants/Call Queues only to label a menu-option
+ * target with its real name and to expand one hop into a target Call
+ * Queue's own routing - the counterpart to Discovery's own per-object "as-is"
+ * diagram (AutoAttendantFlowDialog in Discovery.tsx), which reads live
+ * tenant_objects directly instead.
+ */
+function AutoAttendantFlowDialog({ tid, base, siteId, row, onClose }: { tid: string; base: string; siteId: string; row: Row; onClose: () => void }) {
   const s = useRecordStyles();
   const aaQ = useQuery({
     queryKey: ['auto-attendants', tid, siteId, 'call-flow'],
@@ -858,44 +948,39 @@ function BuildCallFlowSection({ tid, base, siteId }: { tid: string; base: string
 
   const graph = useMemo(() => {
     if (!aaQ.data || !cqQ.data) return null;
-    return buildCallFlowGraphFromDesign({
-      autoAttendants: aaQ.data.items.map((r) => ({
-        buildId: String(r.id),
-        name: String(r.name),
-        operator: (r.operator as AutoAttendantCallableEntity | null) ?? null,
-        defaultCallFlow: (r.default_call_flow as AutoAttendantCallFlow | null) ?? null,
-        afterHoursCallFlow: (r.after_hours_call_flow as AutoAttendantCallFlow | null) ?? null,
-        schedule: (r.schedule as AutoAttendantSchedule | null) ?? null,
-        holidayCallFlows: Array.isArray(r.holiday_call_flows) ? (r.holiday_call_flows as AutoAttendantHolidayCallFlow[]) : [],
-      })),
-      callQueues: cqQ.data.items.map((r) => ({
-        buildId: String(r.id),
-        name: String(r.name),
-        overflow: (r.overflow as CallQueueActionSettings | null) ?? null,
-        timeout: (r.timeout as CallQueueActionSettings | null) ?? null,
-        noAgentAction: (r.no_agent_action as CallQueueActionSettings | null) ?? null,
-      })),
-    });
-  }, [aaQ.data, cqQ.data]);
+    return buildAutoAttendantFlowGraphFromDesign(toDesignAaInput(row), aaQ.data.items.map(toDesignAaInput), cqQ.data.items.map(toDesignCqInput));
+  }, [aaQ.data, cqQ.data, row]);
 
   return (
-    <Card className={s.card}>
-      <Text weight="semibold">Call flow (as-designed, from Design &amp; Build)</Text>
-      <Text size={200} className={s.muted} style={{ display: 'block', marginTop: 2, marginBottom: 10 }}>
-        Business hours, after hours and holiday routing for this site's Auto Attendants and Call Queues, as currently configured here - not yet deployed.
-      </Text>
-      {aaQ.isLoading || cqQ.isLoading ? (
-        <Spinner size="tiny" label="Loading…" />
-      ) : aaQ.isError || cqQ.isError ? (
-        <LoadError message={((aaQ.error ?? cqQ.error) as Error).message} />
-      ) : !graph || graph.nodes.length === 0 ? (
-        <Text size={200} className={s.muted}>
-          No Auto Attendants or Call Queues configured yet - Populate from Discovery on the Resource accounts tab first.
-        </Text>
-      ) : (
-        <CallFlowDiagram graph={graph} />
-      )}
-    </Card>
+    <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
+      <DialogSurface style={{ maxWidth: 920 }}>
+        <DialogBody>
+          <DialogTitle>Call flow: {String(row.name)}</DialogTitle>
+          <DialogContent>
+            <Text size={200} className={s.muted} style={{ display: 'block', marginBottom: 10 }}>
+              Business hours, after hours and holiday routing, as currently configured here - not yet deployed. A menu option that transfers to another
+              Auto Attendant is shown as a single box - open that Auto Attendant's own call flow to see its routing.
+            </Text>
+            {aaQ.isLoading || cqQ.isLoading ? (
+              <Spinner size="tiny" label="Loading…" />
+            ) : aaQ.isError || cqQ.isError ? (
+              <LoadError message={((aaQ.error ?? cqQ.error) as Error).message} />
+            ) : !graph || graph.nodes.length === 0 ? (
+              <Text size={200} className={s.muted}>
+                Nothing to draw yet - configure a business hours menu first.
+              </Text>
+            ) : (
+              <CallFlowDiagram graph={graph} />
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button appearance="primary" onClick={onClose}>
+              Close
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
   );
 }
 
