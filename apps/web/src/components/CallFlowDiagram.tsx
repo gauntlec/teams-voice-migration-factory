@@ -101,13 +101,22 @@ async function captureDiagramPng(nodes: Node[]): Promise<{ dataUrl: string; widt
   const height = Math.max(300, Math.ceil(bounds.height) + margin * 2);
   const viewport = getViewportForBounds(bounds, width, height, 0.1, 2, 0);
   const pixelRatio = Math.max(1, Math.min(EXPORT_PIXEL_RATIO, MAX_CAPTURE_DIM / width, MAX_CAPTURE_DIM / height));
-  const dataUrl = await toPng(viewportEl, {
+  const capture = toPng(viewportEl, {
     backgroundColor: '#ffffff',
     width,
     height,
     pixelRatio,
+    // html-to-image otherwise scans every stylesheet on the page for
+    // @font-face rules and fetches each one to embed - with none of this
+    // diagram's text actually depending on a custom webfont, that fetch has
+    // nothing useful to do and, if any of those requests never settles
+    // (blocked by an extension, offline, CORS), the whole export hangs
+    // forever with no error - skipping it removes the failure mode entirely.
+    skipFonts: true,
     style: { width: `${width}px`, height: `${height}px`, transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})` },
   });
+  const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Rendering the export timed out.')), 20000));
+  const dataUrl = await Promise.race([capture, timeout]);
   // width/height here are the diagram's logical (CSS) size, not the PNG's
   // actual raster size (which is pixelRatio times larger) - a PDF page
   // built from these keeps the same physical page size while the image data
@@ -120,9 +129,11 @@ async function captureDiagramPng(nodes: Node[]): Promise<{ dataUrl: string; widt
 function ExportControls({ filename }: { filename: string }) {
   const { getNodes } = useReactFlow();
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const runExport = async (kind: 'png' | 'pdf') => {
     setBusy(true);
+    setError(null);
     try {
       const shot = await captureDiagramPng(getNodes());
       if (!shot) return;
@@ -133,6 +144,8 @@ function ExportControls({ filename }: { filename: string }) {
         pdf.addImage(shot.dataUrl, 'PNG', 0, 0, shot.width, shot.height);
         pdf.save(`${filename}.pdf`);
       }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Export failed.');
     } finally {
       setBusy(false);
     }
@@ -140,17 +153,24 @@ function ExportControls({ filename }: { filename: string }) {
 
   return (
     <Panel position="top-right">
-      <div style={{ display: 'flex', gap: 6 }}>
-        <Tooltip content="Export this diagram as a PNG image" relationship="label">
-          <Button size="small" icon={<ArrowDownloadRegular />} disabled={busy} onClick={() => runExport('png')}>
-            PNG
-          </Button>
-        </Tooltip>
-        <Tooltip content="Export this diagram as a PDF" relationship="label">
-          <Button size="small" icon={<ArrowDownloadRegular />} disabled={busy} onClick={() => runExport('pdf')}>
-            PDF
-          </Button>
-        </Tooltip>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <Tooltip content="Export this diagram as a PNG image" relationship="label">
+            <Button size="small" icon={<ArrowDownloadRegular />} disabled={busy} onClick={() => runExport('png')}>
+              PNG
+            </Button>
+          </Tooltip>
+          <Tooltip content="Export this diagram as a PDF" relationship="label">
+            <Button size="small" icon={<ArrowDownloadRegular />} disabled={busy} onClick={() => runExport('pdf')}>
+              PDF
+            </Button>
+          </Tooltip>
+        </div>
+        {error && (
+          <Text size={200} style={{ color: '#B10E1C', background: '#FDF3F4', border: '1px solid #F3D6D8', borderRadius: 4, padding: '2px 8px' }}>
+            {error}
+          </Text>
+        )}
       </div>
     </Panel>
   );
