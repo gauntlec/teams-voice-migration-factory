@@ -29,7 +29,7 @@ export interface LiveIdentityState {
   lineUri: string | null;
   /** keyed by TenantPolicyType (e.g. 'OnlineVoiceRoutingPolicy') - the raw tenant_users.policies shape. */
   policies: Record<string, string | null>;
-  /** tenant_users.object_id - the Entra object GUID, needed by cmdlets that take -Users/-Identities as GUIDs (e.g. Set-CsCallQueue), not UPNs. */
+  /** tenant_users.entra_id - the real Entra/Azure AD object GUID, needed by cmdlets that take -Users/-Identities as GUIDs (e.g. Set-CsCallQueue), not UPNs. NOT tenant_users.object_id, which is our own internal tenant_objects.id row reference - a bug fixed this session (confirmed against OVP012's real live Call Queue Agents, whose ObjectId matched entra_id, never object_id). */
   objectId?: string;
 }
 

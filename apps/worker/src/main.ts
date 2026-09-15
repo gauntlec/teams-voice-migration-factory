@@ -318,7 +318,7 @@ async function resolveLiveIdentityState(scoped: ReturnType<typeof tenantDb>, upn
   if (wanted.length === 0) return out;
   const rows = await scoped
     .selectFrom('tenant_users')
-    .select(['upn', 'enterprise_voice_enabled', 'line_uri', 'policies', 'object_id'])
+    .select(['upn', 'enterprise_voice_enabled', 'line_uri', 'policies', 'entra_id'])
     .where('removed_at', 'is', null)
     .where(sql`lower(upn)`, 'in', wanted)
     .execute();
@@ -327,7 +327,10 @@ async function resolveLiveIdentityState(scoped: ReturnType<typeof tenantDb>, upn
       enterpriseVoiceEnabled: r.enterprise_voice_enabled,
       lineUri: r.line_uri,
       policies: (r.policies as Record<string, string | null>) ?? {},
-      objectId: r.object_id,
+      // See the identical apps/api/.../deployment.service.ts helper's comment:
+      // entra_id (not object_id, our own internal tenant_objects.id) is the
+      // real Entra GUID Set-CsCallQueue -Users etc. expect.
+      objectId: r.entra_id ?? undefined,
     });
   }
   return out;

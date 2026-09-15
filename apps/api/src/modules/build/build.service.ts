@@ -846,12 +846,16 @@ export class BuildService {
             .execute(),
       // Schedules are looked up by ScheduleId (an arbitrary tenant-wide GUID), not name, so all of them are fetched.
       s.selectFrom('tenant_objects').select(['object_key', 'data']).where('object_type', '=', 'schedule').where('removed_at', 'is', null).execute(),
-      s.selectFrom('tenant_users').select(['object_id', 'upn']).execute(),
+      // entra_id, not object_id (our own internal tenant_objects.id row
+      // reference) - the real Entra GUID that a live CallTarget/Agents
+      // ObjectId matches (confirmed against OVP012's real data this session,
+      // same bug just fixed in resolveLiveIdentityState).
+      s.selectFrom('tenant_users').select(['entra_id', 'upn']).where('entra_id', 'is not', null).execute(),
     ]);
     const aaByName = new Map(liveAa.filter((r) => r.display_name).map((r) => [r.display_name!.toLowerCase(), r.data as Record<string, unknown>]));
     const cqByName = new Map(liveCq.filter((r) => r.display_name).map((r) => [r.display_name!.toLowerCase(), r.data as Record<string, unknown>]));
     const scheduleByGuid = new Map(liveSchedules.map((r) => [r.object_key, r.data as Record<string, unknown>]));
-    const upnByObjectId = new Map(liveUsers.map((r) => [r.object_id.toLowerCase(), r.upn]));
+    const upnByObjectId = new Map(liveUsers.map((r) => [r.entra_id!.toLowerCase(), r.upn]));
 
     // Live Identity GUID -> this site's own build row, so a menu option that
     // transfers to another AA/CQ on the same site resolves to a same-site

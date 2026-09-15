@@ -82,7 +82,7 @@ async function resolveLiveIdentityState(scoped: Scoped, upns: string[]) {
   if (wanted.length === 0) return out;
   const rows = await scoped
     .selectFrom('tenant_users')
-    .select(['upn', 'enterprise_voice_enabled', 'line_uri', 'policies', 'object_id'])
+    .select(['upn', 'enterprise_voice_enabled', 'line_uri', 'policies', 'entra_id'])
     .where('removed_at', 'is', null)
     .where(sql`lower(upn)`, 'in', wanted)
     .execute();
@@ -91,7 +91,14 @@ async function resolveLiveIdentityState(scoped: Scoped, upns: string[]) {
       enterpriseVoiceEnabled: r.enterprise_voice_enabled,
       lineUri: r.line_uri,
       policies: (r.policies as Record<string, string | null>) ?? {},
-      objectId: r.object_id,
+      // objectId must be the real Entra/Azure AD object GUID that
+      // Set-CsCallQueue -Users / New-CsOnlineApplicationInstanceAssociation
+      // -Identities expects - that's tenant_users.entra_id (populated from
+      // Get-CsOnlineUser's own .Identity), NOT tenant_users.object_id (our
+      // internal tenant_objects.id row reference - a bug, confirmed against
+      // OVP012's real live Call Queue Agents this session: a live Agent's
+      // ObjectId matched entra_id, never object_id).
+      objectId: r.entra_id ?? undefined,
     });
   }
   return out;
