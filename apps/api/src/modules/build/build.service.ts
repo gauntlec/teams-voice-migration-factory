@@ -751,6 +751,7 @@ export class BuildService {
             name: d.name,
             resource_accounts: JSON.stringify([]),
             config: {},
+            holiday_call_flows: JSON.stringify([]),
             business_hours: d.business_hours,
             ooh_action: d.ooh_action,
             holiday: d.holiday,
@@ -802,7 +803,7 @@ export class BuildService {
   }
 
   async createCallQueue(t: TenantContext, u: AuthedUser, body: BuildCallQueueCreateInput) {
-    this.assertCallQueueLanguage(body.overflow, body.timeout, body.language_id);
+    this.assertCallQueueLanguage(body.overflow, body.timeout, body.no_agent_action, body.language_id);
     const row = await this.s(t)
       .insertInto('build_call_queues')
       .values({
@@ -814,6 +815,8 @@ export class BuildService {
         agents: JSON.stringify(body.agents ?? []),
         overflow: body.overflow ?? {},
         timeout: body.timeout ?? {},
+        no_agent_action: body.no_agent_action ?? {},
+        no_agent_apply_to: body.no_agent_apply_to ?? null,
         language_id: body.language_id || null,
         resource_accounts: JSON.stringify(body.resource_accounts ?? []),
         notes: body.notes || null,
@@ -832,8 +835,9 @@ export class BuildService {
     const existing = await this.getCallQueue(t, id);
     const overflow = body.overflow !== undefined ? body.overflow : (existing.overflow as Record<string, unknown>);
     const timeout = body.timeout !== undefined ? body.timeout : (existing.timeout as Record<string, unknown>);
+    const noAgentAction = body.no_agent_action !== undefined ? body.no_agent_action : (existing.no_agent_action as Record<string, unknown>);
     const languageId = body.language_id !== undefined ? body.language_id : existing.language_id;
-    this.assertCallQueueLanguage(overflow, timeout, languageId);
+    this.assertCallQueueLanguage(overflow, timeout, noAgentAction, languageId);
     const { agents, resource_accounts, ...rest } = body;
     const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
     // pg binds a plain array as a native Postgres array, not jsonb, unless
@@ -864,11 +868,14 @@ export class BuildService {
     return { ok: true };
   }
 
-  /** Set-CsCallQueue requires -LanguageId whenever Overflow/TimeoutAction is SharedVoicemail. */
-  private assertCallQueueLanguage(overflow: unknown, timeout: unknown, languageId: string | null | undefined) {
+  /** Set-CsCallQueue requires -LanguageId whenever Overflow/Timeout/NoAgentAction is SharedVoicemail. */
+  private assertCallQueueLanguage(overflow: unknown, timeout: unknown, noAgentAction: unknown, languageId: string | null | undefined) {
     const action = (v: unknown) => (v as { action?: string } | null | undefined)?.action;
-    if ((action(overflow) === 'SharedVoicemail' || action(timeout) === 'SharedVoicemail') && !languageId) {
-      throw new BadRequestException('language_id is required when overflow or timeout action is SharedVoicemail');
+    if (
+      (action(overflow) === 'SharedVoicemail' || action(timeout) === 'SharedVoicemail' || action(noAgentAction) === 'SharedVoicemail') &&
+      !languageId
+    ) {
+      throw new BadRequestException('language_id is required when overflow, timeout or no-agent action is SharedVoicemail');
     }
   }
 
@@ -902,6 +909,15 @@ export class BuildService {
         holiday: body.holiday || null,
         advanced_features: body.advanced_features || null,
         notes: body.notes || null,
+        language_id: body.language_id || null,
+        time_zone_id: body.time_zone_id || null,
+        voice_id: body.voice_id || null,
+        voice_response_enabled: body.voice_response_enabled ?? false,
+        operator: body.operator ?? null,
+        default_call_flow: body.default_call_flow ?? null,
+        after_hours_call_flow: body.after_hours_call_flow ?? null,
+        holiday_call_flows: JSON.stringify(body.holiday_call_flows ?? []),
+        schedule: body.schedule ?? null,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -914,7 +930,13 @@ export class BuildService {
   }
 
   async updateAutoAttendant(t: TenantContext, u: AuthedUser, id: string, body: BuildAutoAttendantPatchInput) {
-    const patch: Record<string, unknown> = { ...body, updated_at: new Date().toISOString() };
+    const { holiday_call_flows, ...rest } = body;
+    const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
+    // pg binds a plain array as a native Postgres array, not jsonb, unless
+    // stringified first (see schema.ts) - holiday_call_flows is the one
+    // array-shaped field here (operator/default_call_flow/after_hours_call_flow/
+    // schedule are plain objects).
+    if (holiday_call_flows !== undefined) patch.holiday_call_flows = JSON.stringify(holiday_call_flows);
     const row = await this.s(t)
       .updateTable('build_auto_attendants')
       .set(patch as never)

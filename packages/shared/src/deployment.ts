@@ -1,4 +1,15 @@
-import { CALL_QUEUE_ROUTING_METHODS, POLICY_KIND_TO_TENANT_TYPE, POLICY_KINDS, RESOURCE_ACCOUNT_APPLICATION_IDS } from './domain';
+import {
+  AA_CALLABLE_ENTITY_KINDS,
+  AA_DIRECTORY_SEARCH_METHODS,
+  AA_DTMF_RESPONSES,
+  AA_MENU_OPTION_ACTIONS,
+  AA_SCHEDULE_TYPES,
+  CALL_QUEUE_ROUTING_METHODS,
+  GREETING_TYPES,
+  POLICY_KIND_TO_TENANT_TYPE,
+  POLICY_KINDS,
+  RESOURCE_ACCOUNT_APPLICATION_IDS,
+} from './domain';
 
 /**
  * What Discovery's live-tenant snapshot (tenant_users) knows about a UPN -
@@ -24,6 +35,34 @@ function numKey(v: string | null | undefined): string {
   return String(v ?? '').replace(/\D/g, '').slice(-10);
 }
 
+/**
+ * One local, non-mutating object-constructor line needed before a compound
+ * cmdlet can run - e.g. Auto Attendant deployment's real construction chain
+ * (New-CsAutoAttendantCallableEntity -> ...Prompt -> ...MenuOption ->
+ * ...Menu -> ...CallFlow -> New-CsOnlineSchedule -> ...CallHandlingAssociation)
+ * before the one call that actually mutates the tenant
+ * (New-CsAutoAttendant). Assigned to a PowerShell variable so later steps -
+ * including the CmdletInvocation's own `parameters` - can reference it via
+ * a `VarRef` instead of a literal value. Never audited/recorded on its own;
+ * see renderCommand and handleDeploymentRun in apps/worker/src/main.ts,
+ * which treats a CmdletInvocation with a `preamble` as a single change.
+ */
+export interface PreambleStep {
+  /** PowerShell variable name (no leading $) this step's result is assigned to. */
+  assignTo: string;
+  cmdlet: string;
+  parameters: Record<string, unknown>;
+}
+
+/** Sentinel: reference an earlier PreambleStep's result by variable name, instead of a literal value. */
+export interface VarRef {
+  $var: string;
+}
+
+function isVarRef(v: unknown): v is VarRef {
+  return typeof v === 'object' && v !== null && typeof (v as VarRef).$var === 'string';
+}
+
 export interface CmdletInvocation {
   cmdlet: string;
   parameters: Record<string, unknown>;
@@ -37,6 +76,8 @@ export interface CmdletInvocation {
    * dry_run and execute mode - see handleDeploymentRun in apps/worker/src/main.ts.
    */
   deferred?: boolean;
+  /** Local object-construction lines to run first - see PreambleStep. Rendered (renderCommand) and executed (pwsh-executor's invoke) as one multi-line script; still exactly one deployment_changes row. */
+  preamble?: PreambleStep[];
 }
 
 /**
@@ -53,19 +94,40 @@ export function psQuote(v: string): string {
   return `'${v.replace(/'/g, "''")}'`;
 }
 
-/** Render a cmdlet + params as the PowerShell one-liner (What-If output, and the executor). */
-export function renderCommand(call: CmdletInvocation): string {
-  const parts = [call.cmdlet];
-  for (const [k, v] of Object.entries(call.parameters)) {
-    if (v === undefined || v === null || v === '') continue;
-    if (Array.isArray(v)) {
-      if (v.length === 0) continue;
-      parts.push(`-${k} @(${v.map((item) => psQuote(String(item))).join(', ')})`);
-    } else if (typeof v === 'boolean') parts.push(`-${k} $${v}`);
-    else if (typeof v === 'number') parts.push(`-${k} ${v}`);
-    else parts.push(`-${k} ${psQuote(String(v))}`);
+/** Render one -Param value; a VarRef renders as a bare `$name` (no quoting - it's a variable reference, not a literal). */
+function renderValue(v: unknown): string | null {
+  if (v === undefined || v === null || v === '') return null;
+  if (isVarRef(v)) return `$${v.$var}`;
+  if (Array.isArray(v)) {
+    if (v.length === 0) return null;
+    return `@(${v.map((item) => (isVarRef(item) ? `$${item.$var}` : psQuote(String(item)))).join(', ')})`;
+  }
+  if (typeof v === 'boolean') return `$${v}`;
+  if (typeof v === 'number') return String(v);
+  return psQuote(String(v));
+}
+
+function renderStatement(cmdlet: string, parameters: Record<string, unknown>): string {
+  const parts = [cmdlet];
+  for (const [k, v] of Object.entries(parameters)) {
+    const rendered = renderValue(v);
+    if (rendered !== null) parts.push(`-${k} ${rendered}`);
   }
   return parts.join(' ');
+}
+
+/**
+ * Render a cmdlet + params as PowerShell (What-If output, and the
+ * executor - see PwshTeamsExecutor.invoke, which appends `-ErrorAction Stop`
+ * straight onto this string, so the LAST line must always be the one real
+ * mutating call). A `preamble` renders as one construction line per step
+ * before it, each usable by name (via VarRef) in any later step or in this
+ * call's own `parameters`.
+ */
+export function renderCommand(call: CmdletInvocation): string {
+  const lines = (call.preamble ?? []).map((step) => `$${step.assignTo} = ${renderStatement(step.cmdlet, step.parameters)}`);
+  lines.push(renderStatement(call.cmdlet, call.parameters));
+  return lines.join('\n');
 }
 
 /** Mirrors dto.ts's callForwardingSchema exactly - see that file for the field-by-field cmdlet mapping. */
@@ -413,6 +475,10 @@ export interface BuildCallQueueRow {
   agents: string[];
   overflow: CallQueueActionSettings | null;
   timeout: CallQueueActionSettings | null;
+  /** Zero-agents-opted-in action - same shape as overflow/timeout, Set-CsCallQueue -NoAgentAction/-NoAgentActionTarget. */
+  no_agent_action: CallQueueActionSettings | null;
+  /** Set-CsCallQueue -NoAgentApplyTo. */
+  no_agent_apply_to: 'AllCalls' | 'NewCalls' | null;
   language_id: string | null;
   /** build_resource_accounts.id array - resolved to Application Instance GUIDs via raObjectIds. */
   resource_accounts: string[];
@@ -435,6 +501,8 @@ export interface CallQueueLiveState {
   overflowThreshold?: number;
   timeoutAction?: string;
   timeoutThreshold?: number;
+  /** No live NoAgentThreshold exists - "no agents" fires purely on zero agents opted in, not a numeric threshold. */
+  noAgentAction?: string;
 }
 
 /**
@@ -483,7 +551,10 @@ export function planCallQueueRow(
   const users = row.agents
     .map((upn) => agentObjectIds.get(upn.toLowerCase()))
     .filter((id): id is string => !!id);
-  const needsLanguage = row.overflow?.action === 'SharedVoicemail' || row.timeout?.action === 'SharedVoicemail';
+  const needsLanguage =
+    row.overflow?.action === 'SharedVoicemail' ||
+    row.timeout?.action === 'SharedVoicemail' ||
+    row.no_agent_action?.action === 'SharedVoicemail';
 
   const parameters: Record<string, unknown> = {
     Name: row.name,
@@ -498,6 +569,9 @@ export function planCallQueueRow(
     ...(row.timeout?.action ? { TimeoutAction: row.timeout.action } : {}),
     ...(row.timeout?.threshold != null ? { TimeoutThreshold: row.timeout.threshold } : {}),
     ...(row.timeout?.target ? { TimeoutActionTarget: row.timeout.target } : {}),
+    ...(row.no_agent_action?.action ? { NoAgentAction: row.no_agent_action.action } : {}),
+    ...(row.no_agent_action?.target ? { NoAgentActionTarget: row.no_agent_action.target } : {}),
+    ...(row.no_agent_apply_to ? { NoAgentApplyTo: row.no_agent_apply_to } : {}),
   };
 
   if (!live) {
@@ -513,6 +587,7 @@ export function planCallQueueRow(
       (live.overflowThreshold ?? undefined) !== (row.overflow?.threshold ?? undefined) ||
       (live.timeoutAction ?? undefined) !== (row.timeout?.action ?? undefined) ||
       (live.timeoutThreshold ?? undefined) !== (row.timeout?.threshold ?? undefined) ||
+      (live.noAgentAction ?? undefined) !== (row.no_agent_action?.action ?? undefined) ||
       JSON.stringify(sortedUsers) !== JSON.stringify(sortedLive);
     if (changed) {
       calls.push({
@@ -545,4 +620,95 @@ export function planCallQueueRow(
   }
 
   return calls;
+}
+
+/* ========================================================================
+ * Auto Attendants - structured call-flow config, mirroring
+ * BuildAutoAttendantsTable's columns (packages/db/src/schema.ts). Reverse-
+ * engineered against OVP012's real live Auto Attendants and Microsoft
+ * Learn's New-CsAutoAttendant construction chain this session - see the
+ * "reverse-engineer OVP012" plan. planAutoAttendantRow itself (the actual
+ * cmdlet-chain builder) needs the `preamble` extension to CmdletInvocation
+ * below and is implemented separately; these are the data shapes it will
+ * consume, and what BuildAutoAttendantsTable/buildAutoAttendantWritable
+ * already store today.
+ * ======================================================================== */
+
+/**
+ * A transfer target - New-CsAutoAttendantCallableEntity's -Type, plus the
+ * app-only 'auto_attendant'/'call_queue' kinds for same-site menu targets
+ * (resolved to the target's live Identity at deploy time, the same way
+ * planCallQueueRow resolves agent UPNs - see raObjectIds-style resolution).
+ * Mirrors dto.ts's autoAttendantCallableEntitySchema.
+ */
+export interface AutoAttendantCallableEntity {
+  kind: (typeof AA_CALLABLE_ENTITY_KINDS)[number];
+  /** build_auto_attendants.id or build_call_queues.id - same-site, app-enforced like policy_ids. Only for kind 'auto_attendant'|'call_queue'. */
+  buildId?: string;
+  /** UPN - only for kind 'user'. */
+  upn?: string;
+  /** tel: number or raw digits - only for kind 'external'. */
+  number?: string;
+}
+
+/** New-CsAutoAttendantPrompt - a greeting or menu prompt. Mirrors dto.ts's autoAttendantPromptSchema. */
+export interface AutoAttendantPrompt {
+  type: (typeof GREETING_TYPES)[number];
+  text?: string;
+  /** files.id (an uploaded audio prompt) - only for type 'AudioFile'. */
+  fileId?: string;
+}
+
+/** New-CsAutoAttendantMenuOption. Mirrors dto.ts's autoAttendantMenuOptionSchema. */
+export interface AutoAttendantMenuOption {
+  dtmf: (typeof AA_DTMF_RESPONSES)[number];
+  action: (typeof AA_MENU_OPTION_ACTIONS)[number];
+  target?: AutoAttendantCallableEntity;
+}
+
+/** New-CsAutoAttendantMenu. Mirrors dto.ts's autoAttendantMenuSchema. */
+export interface AutoAttendantMenu {
+  enableDialByName?: boolean;
+  directorySearchMethod?: (typeof AA_DIRECTORY_SEARCH_METHODS)[number];
+  options: AutoAttendantMenuOption[];
+}
+
+/** New-CsAutoAttendantCallFlow. Mirrors dto.ts's autoAttendantCallFlowSchema. */
+export interface AutoAttendantCallFlow {
+  greetings: AutoAttendantPrompt[];
+  menu: AutoAttendantMenu;
+}
+
+/** New-CsOnlineTimeRange. */
+export interface AutoAttendantTimeRange {
+  /** "HH:mm" */
+  start: string;
+  end: string;
+}
+
+/** New-CsOnlineSchedule. Mirrors dto.ts's autoAttendantScheduleSchema. */
+export interface AutoAttendantSchedule {
+  type: (typeof AA_SCHEDULE_TYPES)[number];
+  weekly?: {
+    monday: AutoAttendantTimeRange[];
+    tuesday: AutoAttendantTimeRange[];
+    wednesday: AutoAttendantTimeRange[];
+    thursday: AutoAttendantTimeRange[];
+    friday: AutoAttendantTimeRange[];
+    saturday: AutoAttendantTimeRange[];
+    sunday: AutoAttendantTimeRange[];
+    /** New-CsOnlineSchedule -Complement - the hours above are business hours; this schedule fires outside them. */
+    complement?: boolean;
+  };
+  fixed?: {
+    /** ISO date strings, e.g. a holiday date range. */
+    ranges: { start: string; end: string }[];
+  };
+}
+
+/** One New-CsAutoAttendantCallHandlingAssociation of Type Holiday, paired with its own schedule. Mirrors dto.ts's autoAttendantHolidayCallFlowSchema. */
+export interface AutoAttendantHolidayCallFlow {
+  name: string;
+  callFlow: AutoAttendantCallFlow;
+  schedule: AutoAttendantSchedule;
 }

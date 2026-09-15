@@ -548,6 +548,8 @@ async function handleDeploymentRun(job: Job) {
           agents: (row.agents as string[] | null) ?? [],
           overflow: (row.overflow as CallQueueActionSettings) ?? null,
           timeout: (row.timeout as CallQueueActionSettings) ?? null,
+          no_agent_action: (row.no_agent_action as CallQueueActionSettings) ?? null,
+          no_agent_apply_to: row.no_agent_apply_to,
           language_id: row.language_id,
           resource_accounts: (row.resource_accounts as string[] | null) ?? [],
         },

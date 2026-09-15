@@ -29,6 +29,8 @@ import {
   BUSY_ON_BUSY_OPTIONS,
   CALL_FORWARDING_TYPES,
   CALL_GROUP_ORDERS,
+  CALL_QUEUE_NO_AGENT_ACTIONS,
+  CALL_QUEUE_NO_AGENT_APPLY_TO,
   CALL_QUEUE_OVERFLOW_ACTIONS,
   CALL_QUEUE_ROUTING_METHODS,
   CALL_QUEUE_TIMEOUT_ACTIONS,
@@ -720,6 +722,11 @@ export function BuildSiteWorkspace() {
               render: (r) => (r.timeout as CallQueueActionSettings | null)?.action ?? '—',
             },
             {
+              key: 'no_agent_action',
+              label: 'No agents',
+              render: (r) => (r.no_agent_action as CallQueueActionSettings | null)?.action ?? '—',
+            },
+            {
               key: 'settings',
               label: 'Agents / overflow / timeout',
               render: (r) => (
@@ -734,7 +741,7 @@ export function BuildSiteWorkspace() {
             { key: 'routing_method', label: 'Routing method', type: 'select', options: CALL_QUEUE_ROUTING_METHODS },
             { key: 'agent_alert_time', label: 'Agent alert time (seconds, 15-180)', type: 'number' },
             { key: 'presence_based_routing', label: 'Presence-based routing', type: 'boolean' },
-            { key: 'language_id', label: 'Language ID (required if overflow/timeout uses Shared Voicemail)' },
+            { key: 'language_id', label: 'Language ID (required if overflow/timeout/no-agent uses Shared Voicemail)' },
             { key: 'notes', label: 'Notes', type: 'textarea', full: true },
           ]}
         />
@@ -1498,6 +1505,7 @@ function CallQueueSettingsDialog({
 }) {
   const overflowInit = (row.overflow as CallQueueActionSettings | null) ?? null;
   const timeoutInit = (row.timeout as CallQueueActionSettings | null) ?? null;
+  const noAgentInit = (row.no_agent_action as CallQueueActionSettings | null) ?? null;
 
   const [agents, setAgents] = useState<string[]>(Array.isArray(row.agents) ? (row.agents as string[]).slice() : []);
   const [overflowAction, setOverflowAction] = useState(overflowInit?.action ?? '');
@@ -1510,6 +1518,9 @@ function CallQueueSettingsDialog({
     timeoutInit?.threshold != null ? String(timeoutInit.threshold) : '',
   );
   const [timeoutTarget, setTimeoutTarget] = useState(timeoutInit?.target ?? '');
+  const [noAgentAction, setNoAgentAction] = useState(noAgentInit?.action ?? '');
+  const [noAgentTarget, setNoAgentTarget] = useState(noAgentInit?.target ?? '');
+  const [noAgentApplyTo, setNoAgentApplyTo] = useState((row.no_agent_apply_to as string) ?? '');
   const [resourceAccounts, setResourceAccounts] = useState<string[]>(
     Array.isArray(row.resource_accounts) ? (row.resource_accounts as string[]).slice() : [],
   );
@@ -1539,9 +1550,19 @@ function CallQueueSettingsDialog({
             target: timeoutTarget || undefined,
           }
         : {};
+      const no_agent_action: CallQueueActionSettings = noAgentAction
+        ? { action: noAgentAction as (typeof CALL_QUEUE_NO_AGENT_ACTIONS)[number], target: noAgentTarget || undefined }
+        : {};
       return api(`${base}/call-queues/${row.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ agents, overflow, timeout, resource_accounts: resourceAccounts }),
+        body: JSON.stringify({
+          agents,
+          overflow,
+          timeout,
+          no_agent_action,
+          no_agent_apply_to: noAgentApplyTo || null,
+          resource_accounts: resourceAccounts,
+        }),
       });
     },
     onSuccess: onSaved,
@@ -1652,7 +1673,20 @@ function CallQueueSettingsDialog({
                 </div>
               </div>
 
-              {(overflowAction === 'SharedVoicemail' || timeoutAction === 'SharedVoicemail') && (
+              <div>
+                <Text weight="semibold">No agents (zero opted in)</Text>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end', marginTop: 6 }}>
+                  {actionDropdown('Action', noAgentAction, setNoAgentAction, CALL_QUEUE_NO_AGENT_ACTIONS)}
+                  {(noAgentAction === 'Forward' || noAgentAction === 'SharedVoicemail') && (
+                    <Field label="Target">
+                      <UpnAutocomplete tenantId={tenantId} value={noAgentTarget} onChange={setNoAgentTarget} style={{ minWidth: 220 }} />
+                    </Field>
+                  )}
+                  {noAgentAction && actionDropdown('Applies to', noAgentApplyTo, setNoAgentApplyTo, CALL_QUEUE_NO_AGENT_APPLY_TO)}
+                </div>
+              </div>
+
+              {(overflowAction === 'SharedVoicemail' || timeoutAction === 'SharedVoicemail' || noAgentAction === 'SharedVoicemail') && (
                 <Text size={200} style={{ color: tokens.colorPaletteMarigoldForeground1 }}>
                   Shared Voicemail needs a Language ID set on this row - edit it from the table's Edit form.
                 </Text>

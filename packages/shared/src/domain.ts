@@ -296,11 +296,47 @@ export const CALL_QUEUE_ROUTING_METHODS = [
   'LongestIdle',
 ] as const;
 
-/** Set-CsCallQueue -OverflowAction / -TimeoutAction - see planCallQueueRow in deployment.ts. */
+/** Set-CsCallQueue -OverflowAction / -TimeoutAction / -NoAgentAction - see planCallQueueRow in deployment.ts. */
 export const CALL_QUEUE_OVERFLOW_ACTIONS = ['DisconnectWithBusy', 'Forward', 'Voicemail', 'SharedVoicemail'] as const;
 export const CALL_QUEUE_TIMEOUT_ACTIONS = ['Disconnect', 'Forward', 'Voicemail', 'SharedVoicemail'] as const;
+/** NoAgentAction fires when zero agents are opted in - distinct from Overflow (queue full) and Timeout (waited too long). */
+export const CALL_QUEUE_NO_AGENT_ACTIONS = ['Queue', 'Disconnect', 'Forward', 'Voicemail', 'SharedVoicemail'] as const;
+export const CALL_QUEUE_NO_AGENT_APPLY_TO = ['AllCalls', 'NewCalls'] as const;
 
 export const GREETING_TYPES = ['None', 'Text', 'AudioFile'] as const;
+
+/**
+ * Set-CsAutoAttendant's construction chain (New-CsAutoAttendantCallableEntity
+ * -> ...Prompt -> ...MenuOption -> ...Menu -> ...CallFlow -> New-CsOnlineSchedule
+ * -> ...CallHandlingAssociation -> New-CsAutoAttendant) - see planAutoAttendantRow
+ * in deployment.ts and BuildAutoAttendantsTable's structured columns
+ * (packages/db/src/schema.ts). Verified against real live OVP012 Auto
+ * Attendants and Microsoft Learn's own example scripts this session.
+ */
+
+/** New-CsAutoAttendantCallableEntity -Type, plus the app-only 'auto_attendant'/'call_queue' kinds for same-site menu targets (New-CsOnlineApplicationInstanceAssociation links the actual resource account at deploy time, not this reference). */
+export const AA_CALLABLE_ENTITY_KINDS = ['auto_attendant', 'call_queue', 'user', 'external', 'voicemail', 'shared_voicemail'] as const;
+
+/**
+ * New-CsAutoAttendantMenuOption -Action. Microsoft's own example scripts use
+ * both "Disconnect" and "DisconnectCall" inconsistently for the same
+ * action - DisconnectCall appears in 3 of 4 published examples, used here;
+ * re-confirm against Get-CsAutoAttendantMenuOption's own reference page
+ * before relying on this for a live deployment.
+ */
+export const AA_MENU_OPTION_ACTIONS = ['TransferCallToTarget', 'TransferCallToOperator', 'DisconnectCall'] as const;
+
+/** New-CsAutoAttendantMenuOption -DtmfResponse. 'Automatic' is Teams' sentinel for "no key pressed"/the catch-all option (DtmfResponse:100 in the raw live data). */
+export const AA_DTMF_RESPONSES = ['Tone0', 'Tone1', 'Tone2', 'Tone3', 'Tone4', 'Tone5', 'Tone6', 'Tone7', 'Tone8', 'Tone9', 'Automatic'] as const;
+
+/** New-CsAutoAttendantMenu -DirectorySearchMethod. */
+export const AA_DIRECTORY_SEARCH_METHODS = ['ByName', 'ByExtension'] as const;
+
+/** New-CsOnlineSchedule -WeeklyRecurrentSchedule / -FixedSchedule. */
+export const AA_SCHEDULE_TYPES = ['weekly', 'fixed'] as const;
+
+/** New-CsAutoAttendantCallHandlingAssociation -Type. */
+export const AA_CALL_HANDLING_TYPES = ['AfterHours', 'Holiday'] as const;
 
 /** Sections of the Service Hand-Over Pack (from V1.18.docx). */
 export const HANDOVER_SECTIONS = [

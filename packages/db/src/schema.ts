@@ -538,12 +538,40 @@ export interface BuildAutoAttendantsTable {
   language: string | null;
   timezone: string | null;
   config: Json;
-  /** Narrative-only fields carried through from discovery_resource_accounts by Populate - no cmdlet planning reads these yet. */
+  /** Narrative-only fields carried through from discovery_resource_accounts by Populate - a human-readable fallback alongside the structured columns below, never read by planAutoAttendantRow. */
   business_hours: string | null;
   ooh_action: string | null;
   holiday: string | null;
   advanced_features: string | null;
   notes: string | null;
+  /** Set-CsAutoAttendant -LanguageId (required to deploy, nullable until configured). */
+  language_id: string | null;
+  /** Set-CsAutoAttendant -TimeZoneId. */
+  time_zone_id: string | null;
+  /** Set-CsAutoAttendant -VoiceId. */
+  voice_id: string | null;
+  /** Set-CsAutoAttendant -EnableVoiceResponse. */
+  voice_response_enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  /**
+   * Callable-entity reference ({kind:'user'|'external', upn|number}) -
+   * Set-CsAutoAttendant -Operator. Null = no operator. Untyped `Json` (not
+   * `Json<AutoAttendantCallableEntity>`) like build_call_queues' overflow/
+   * timeout - cast at the read site instead, since a specifically-typed
+   * `Json<T>` column would force Kysely to accept a real `T[]` on insert
+   * for the array-shaped columns below, which pg then binds as a native
+   * Postgres array instead of jsonb (see the JSON.stringify comment on
+   * schema.ts's array columns) - untyped `Json` accepts the pre-stringified
+   * string those inserts actually need.
+   */
+  operator: Json | null;
+  /** { greetings, menu } - Set-CsAutoAttendant -DefaultCallFlow (business hours, or 24/7 if no after-hours flow is set). */
+  default_call_flow: Json | null;
+  /** { greetings, menu } - paired with `schedule` via a CallHandlingAssociation (Type AfterHours). */
+  after_hours_call_flow: Json | null;
+  /** Array of { name, callFlow, schedule } - one CallHandlingAssociation (Type Holiday) per entry. */
+  holiday_call_flows: Json;
+  /** { type, weekly?, fixed? } - the after-hours schedule (New-CsOnlineSchedule). Each holiday_call_flows entry carries its own schedule instead. */
+  schedule: Json | null;
   created_at: Ts;
   updated_at: Ts;
 }
@@ -573,7 +601,11 @@ export interface BuildCallQueuesTable {
   overflow: Json;
   /** { action, threshold, target } - Set-CsCallQueue -TimeoutAction/-TimeoutThreshold/-TimeoutActionTarget. */
   timeout: Json;
-  /** Set-CsCallQueue -LanguageId - required only when overflow/timeout action is SharedVoicemail. */
+  /** { action, threshold, target } - Set-CsCallQueue -NoAgentAction/-NoAgentActionTarget (zero agents opted in - distinct from Overflow/Timeout). */
+  no_agent_action: Json;
+  /** Set-CsCallQueue -NoAgentApplyTo ('AllCalls' | 'NewCalls'). */
+  no_agent_apply_to: 'AllCalls' | 'NewCalls' | null;
+  /** Set-CsCallQueue -LanguageId - required only when overflow/timeout/no-agent action is SharedVoicemail. */
   language_id: string | null;
   notes: string | null;
   created_at: Ts;

@@ -1,12 +1,19 @@
 import { z } from 'zod';
 import { ROLES } from './rbac';
 import {
+  AA_CALLABLE_ENTITY_KINDS,
+  AA_DIRECTORY_SEARCH_METHODS,
+  AA_DTMF_RESPONSES,
+  AA_MENU_OPTION_ACTIONS,
+  AA_SCHEDULE_TYPES,
   BUG_SEVERITIES,
   BUG_STATUSES,
   BUSY_ON_BUSY_OPTIONS,
   CALLER_ID_OPTIONS,
   CALL_FORWARDING_TYPES,
   CALL_GROUP_ORDERS,
+  CALL_QUEUE_NO_AGENT_ACTIONS,
+  CALL_QUEUE_NO_AGENT_APPLY_TO,
   CALL_QUEUE_OVERFLOW_ACTIONS,
   CALL_QUEUE_ROUTING_METHODS,
   CALL_QUEUE_TIMEOUT_ACTIONS,
@@ -15,6 +22,7 @@ import {
   FEATURE_PRIORITIES,
   FEATURE_STATUSES,
   FLOW_KINDS,
+  GREETING_TYPES,
   LICENSING_MODELS,
   NETWORK_SCOPES,
   NETWORK_TYPES,
@@ -982,7 +990,10 @@ const buildCallQueueWritable = {
   agents: z.array(str(200)).max(200).optional(),
   overflow: callQueueActionSchema(CALL_QUEUE_OVERFLOW_ACTIONS),
   timeout: callQueueActionSchema(CALL_QUEUE_TIMEOUT_ACTIONS),
-  /** Required by Set-CsCallQueue when overflow/timeout action is SharedVoicemail - checked in BuildService. */
+  /** Zero-agents-opted-in action - same shape as overflow/timeout, Set-CsCallQueue -NoAgentAction/-NoAgentActionTarget. */
+  no_agent_action: callQueueActionSchema(CALL_QUEUE_NO_AGENT_ACTIONS),
+  no_agent_apply_to: blankToNull(z.enum(CALL_QUEUE_NO_AGENT_APPLY_TO)),
+  /** Required by Set-CsCallQueue when overflow/timeout/no-agent action is SharedVoicemail - checked in BuildService. */
   language_id: optStr(20),
   /** build_resource_accounts.id array - which RA(s)/phone numbers present this queue. */
   resource_accounts: z.array(z.string().uuid()).max(10).optional(),
@@ -1000,15 +1011,128 @@ export type BuildCallQueuePatchInput = z.infer<typeof buildCallQueuePatchSchema>
 /**
  * build_auto_attendants' narrative-only fields, carried through from
  * discovery_resource_accounts by Populate (see BuildService.populateResourceAccounts) -
- * no cmdlet planning reads these yet, same deliberate cut as the rest of
- * this project's Auto Attendant scope.
+ * a human-readable fallback alongside the structured fields below, never
+ * read by planAutoAttendantRow.
  */
-const buildAutoAttendantWritable = {
+const buildAutoAttendantNarrative = {
   business_hours: optStr(400),
   ooh_action: optStr(400),
   holiday: optStr(400),
   advanced_features: optStr(400),
   notes: optStr(2000),
+};
+
+/**
+ * Set-CsAutoAttendant's structured call-flow config - mirrors
+ * BuildAutoAttendantsTable's columns (packages/db/src/schema.ts) and the
+ * AutoAttendant* interfaces in deployment.ts exactly. Reverse-engineered
+ * against OVP012's real live Auto Attendants and Microsoft Learn's
+ * New-CsAutoAttendant construction chain this session - see the
+ * "reverse-engineer OVP012" plan.
+ */
+
+/** A transfer target - New-CsAutoAttendantCallableEntity's -Type, plus the app-only 'auto_attendant'/'call_queue' kinds for same-site menu targets. */
+const autoAttendantCallableEntitySchema = z
+  .object({
+    kind: z.enum(AA_CALLABLE_ENTITY_KINDS),
+    /** build_auto_attendants.id or build_call_queues.id - same-site, app-enforced like policy_ids. */
+    buildId: refId,
+    upn: optStr(200),
+    number: optStr(64),
+  })
+  .strict();
+
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const timeOfDay = () => z.string().regex(HHMM_RE, 'Use HH:mm, 24-hour');
+
+const autoAttendantTimeRangeSchema = z.object({ start: timeOfDay(), end: timeOfDay() }).strict();
+
+const autoAttendantPromptSchema = z
+  .object({
+    type: z.enum(GREETING_TYPES),
+    text: optStr(1000),
+    /** files.id (an uploaded audio prompt) - only for type 'AudioFile'. */
+    fileId: refId,
+  })
+  .strict();
+
+const autoAttendantMenuOptionSchema = z
+  .object({
+    dtmf: z.enum(AA_DTMF_RESPONSES),
+    action: z.enum(AA_MENU_OPTION_ACTIONS),
+    target: autoAttendantCallableEntitySchema.optional(),
+  })
+  .strict();
+
+const autoAttendantMenuSchema = z
+  .object({
+    enableDialByName: z.boolean().optional(),
+    directorySearchMethod: z.enum(AA_DIRECTORY_SEARCH_METHODS).optional(),
+    options: z.array(autoAttendantMenuOptionSchema).max(12),
+  })
+  .strict();
+
+const autoAttendantCallFlowSchema = z
+  .object({
+    greetings: z.array(autoAttendantPromptSchema).max(5),
+    menu: autoAttendantMenuSchema,
+  })
+  .strict();
+
+const autoAttendantWeekdayHours = () => z.array(autoAttendantTimeRangeSchema).max(4);
+
+const autoAttendantScheduleSchema = z
+  .object({
+    type: z.enum(AA_SCHEDULE_TYPES),
+    weekly: z
+      .object({
+        monday: autoAttendantWeekdayHours(),
+        tuesday: autoAttendantWeekdayHours(),
+        wednesday: autoAttendantWeekdayHours(),
+        thursday: autoAttendantWeekdayHours(),
+        friday: autoAttendantWeekdayHours(),
+        saturday: autoAttendantWeekdayHours(),
+        sunday: autoAttendantWeekdayHours(),
+        /** New-CsOnlineSchedule -Complement - the hours above are business hours; this schedule fires outside them. */
+        complement: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
+    fixed: z
+      .object({
+        /** ISO date strings, e.g. a holiday date range. */
+        ranges: z.array(z.object({ start: z.string(), end: z.string() }).strict()).max(10),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+const autoAttendantHolidayCallFlowSchema = z
+  .object({
+    name: str(160).min(1),
+    callFlow: autoAttendantCallFlowSchema,
+    schedule: autoAttendantScheduleSchema,
+  })
+  .strict();
+
+const buildAutoAttendantWritable = {
+  ...buildAutoAttendantNarrative,
+  /** Set-CsAutoAttendant -LanguageId. */
+  language_id: optStr(20),
+  /** Set-CsAutoAttendant -TimeZoneId. */
+  time_zone_id: optStr(80),
+  /** Set-CsAutoAttendant -VoiceId. */
+  voice_id: optStr(20),
+  /** Set-CsAutoAttendant -EnableVoiceResponse. */
+  voice_response_enabled: z.boolean().optional(),
+  operator: autoAttendantCallableEntitySchema.nullable().optional(),
+  /** Business hours (or 24/7 if no after-hours flow is set) - Set-CsAutoAttendant -DefaultCallFlow. */
+  default_call_flow: autoAttendantCallFlowSchema.nullable().optional(),
+  after_hours_call_flow: autoAttendantCallFlowSchema.nullable().optional(),
+  holiday_call_flows: z.array(autoAttendantHolidayCallFlowSchema).max(10).optional(),
+  /** The after-hours schedule - each holiday_call_flows entry carries its own schedule instead. */
+  schedule: autoAttendantScheduleSchema.nullable().optional(),
 };
 
 export const buildAutoAttendantCreateSchema = z
