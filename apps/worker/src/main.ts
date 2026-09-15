@@ -5,11 +5,14 @@ import { sql } from 'kysely';
 import { createDb, platformDb, tenantDb } from '@tvmf/db';
 import { buildColorRamp, type Branding, type DiscoverySiteOverview, type PortDocumentItemSummary } from '@tvmf/shared';
 import {
+  planCallQueueRow,
   planIdentityRow,
   planResourceAccountRow,
   renderCommand,
   type CallDelegate,
   type CallForwardingSettings,
+  type CallQueueActionSettings,
+  type CallQueueLiveState,
   type CmdletInvocation,
   type LiveIdentityState,
   type PickupGroupSettings,
@@ -310,7 +313,7 @@ async function resolveLiveIdentityState(scoped: ReturnType<typeof tenantDb>, upn
   if (wanted.length === 0) return out;
   const rows = await scoped
     .selectFrom('tenant_users')
-    .select(['upn', 'enterprise_voice_enabled', 'line_uri', 'policies'])
+    .select(['upn', 'enterprise_voice_enabled', 'line_uri', 'policies', 'object_id'])
     .where('removed_at', 'is', null)
     .where(sql`lower(upn)`, 'in', wanted)
     .execute();
@@ -319,6 +322,42 @@ async function resolveLiveIdentityState(scoped: ReturnType<typeof tenantDb>, upn
       enterpriseVoiceEnabled: r.enterprise_voice_enabled,
       lineUri: r.line_uri,
       policies: (r.policies as Record<string, string | null>) ?? {},
+      objectId: r.object_id,
+    });
+  }
+  return out;
+}
+
+/** Mirrors the identical apps/api/.../deployment.service.ts helper - see that copy for why it's duplicated. */
+async function resolveLiveCallQueueState(scoped: ReturnType<typeof tenantDb>, names: string[]) {
+  const wanted = [...new Set(names.map((n) => n.toLowerCase()).filter(Boolean))];
+  const out = new Map<string, CallQueueLiveState>();
+  if (wanted.length === 0) return out;
+  const rows = await scoped
+    .selectFrom('tenant_objects')
+    .select(['display_name', 'data'])
+    .where('object_type', '=', 'call_queue')
+    .where('removed_at', 'is', null)
+    .where(sql`lower(display_name)`, 'in', wanted)
+    .execute();
+  for (const r of rows) {
+    if (!r.display_name) continue;
+    const d = r.data as Record<string, unknown>;
+    const agents = Array.isArray(d.Agents)
+      ? (d.Agents as Record<string, unknown>[])
+          .map((a) => (typeof a?.ObjectId === 'string' ? a.ObjectId : null))
+          .filter((v): v is string => !!v)
+      : [];
+    out.set(r.display_name.toLowerCase(), {
+      identity: String(d.Identity ?? ''),
+      routingMethod: typeof d.RoutingMethod === 'string' ? d.RoutingMethod : undefined,
+      agentAlertTime: typeof d.AgentAlertTime === 'number' ? d.AgentAlertTime : undefined,
+      presenceBasedRouting: typeof d.PresenceBasedRouting === 'boolean' ? d.PresenceBasedRouting : undefined,
+      agentObjectIds: agents,
+      overflowAction: typeof d.OverflowAction === 'string' ? d.OverflowAction : undefined,
+      overflowThreshold: typeof d.OverflowThreshold === 'number' ? d.OverflowThreshold : undefined,
+      timeoutAction: typeof d.TimeoutAction === 'string' ? d.TimeoutAction : undefined,
+      timeoutThreshold: typeof d.TimeoutThreshold === 'number' ? d.TimeoutThreshold : undefined,
     });
   }
   return out;
@@ -473,6 +512,48 @@ async function handleDeploymentRun(job: Job) {
           application_id: row.application_id,
         },
         liveState.get(row.upn.toLowerCase()),
+      );
+      for (const call of calls) await runCall(call);
+    }
+  }
+
+  if (scope.sheets.includes('call_queues')) {
+    let q = scoped.selectFrom('build_call_queues').selectAll().where('site_id', '=', scope.siteId);
+    if (scope.rowIds?.length) q = q.where('id', 'in', scope.rowIds);
+    const rows = await q.execute();
+    const raIds = [...new Set(rows.flatMap((r) => (r.resource_accounts as string[] | null) ?? []))];
+    const ras = raIds.length
+      ? await scoped.selectFrom('build_resource_accounts').select(['id', 'upn']).where('id', 'in', raIds).execute()
+      : [];
+    const allUpns = [...rows.flatMap((r) => (r.agents as string[] | null) ?? []), ...ras.map((r) => r.upn)];
+    const [liveIdentity, liveQueues] = await Promise.all([
+      resolveLiveIdentityState(scoped, allUpns),
+      resolveLiveCallQueueState(scoped, rows.map((r) => r.name)),
+    ]);
+    const agentObjectIds = new Map<string, string>();
+    for (const [upn, v] of liveIdentity) if (v.objectId) agentObjectIds.set(upn, v.objectId);
+    const raObjectIds = new Map<string, string>();
+    for (const ra of ras) {
+      const oid = liveIdentity.get(ra.upn.toLowerCase())?.objectId;
+      if (oid) raObjectIds.set(ra.id, oid);
+    }
+    for (const row of rows) {
+      const calls = planCallQueueRow(
+        {
+          id: row.id,
+          name: row.name,
+          routing_method: row.routing_method,
+          agent_alert_time: row.agent_alert_time,
+          presence_based_routing: row.presence_based_routing,
+          agents: (row.agents as string[] | null) ?? [],
+          overflow: (row.overflow as CallQueueActionSettings) ?? null,
+          timeout: (row.timeout as CallQueueActionSettings) ?? null,
+          language_id: row.language_id,
+          resource_accounts: (row.resource_accounts as string[] | null) ?? [],
+        },
+        agentObjectIds,
+        raObjectIds,
+        liveQueues.get(row.name.toLowerCase()),
       );
       for (const call of calls) await runCall(call);
     }

@@ -296,6 +296,10 @@ export const CALL_QUEUE_ROUTING_METHODS = [
   'LongestIdle',
 ] as const;
 
+/** Set-CsCallQueue -OverflowAction / -TimeoutAction - see planCallQueueRow in deployment.ts. */
+export const CALL_QUEUE_OVERFLOW_ACTIONS = ['DisconnectWithBusy', 'Forward', 'Voicemail', 'SharedVoicemail'] as const;
+export const CALL_QUEUE_TIMEOUT_ACTIONS = ['Disconnect', 'Forward', 'Voicemail', 'SharedVoicemail'] as const;
+
 export const GREETING_TYPES = ['None', 'Text', 'AudioFile'] as const;
 
 /** Sections of the Service Hand-Over Pack (from V1.18.docx). */

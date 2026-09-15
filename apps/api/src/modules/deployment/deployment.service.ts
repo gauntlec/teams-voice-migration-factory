@@ -2,13 +2,17 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { sql } from 'kysely';
 import { tenantDb } from '@tvmf/db';
 import {
+  callQueueRowWarnings,
   identityRowWarnings,
+  planCallQueueRow,
   planIdentityRow,
   planResourceAccountRow,
   renderCommand,
   resourceAccountRowWarnings,
   type CallDelegate,
   type CallForwardingSettings,
+  type CallQueueActionSettings,
+  type CallQueueLiveState,
   type CreateDeploymentInput,
   type DeploymentPreviewQuery,
   type DeploymentPreviewRow,
@@ -73,7 +77,7 @@ async function resolveLiveIdentityState(scoped: Scoped, upns: string[]) {
   if (wanted.length === 0) return out;
   const rows = await scoped
     .selectFrom('tenant_users')
-    .select(['upn', 'enterprise_voice_enabled', 'line_uri', 'policies'])
+    .select(['upn', 'enterprise_voice_enabled', 'line_uri', 'policies', 'object_id'])
     .where('removed_at', 'is', null)
     .where(sql`lower(upn)`, 'in', wanted)
     .execute();
@@ -82,6 +86,48 @@ async function resolveLiveIdentityState(scoped: Scoped, upns: string[]) {
       enterpriseVoiceEnabled: r.enterprise_voice_enabled,
       lineUri: r.line_uri,
       policies: (r.policies as Record<string, string | null>) ?? {},
+      objectId: r.object_id,
+    });
+  }
+  return out;
+}
+
+/**
+ * What Discovery's live-tenant snapshot (tenant_objects, object_type
+ * 'call_queue') knows about a queue, matched by lowercased Name - the same
+ * queue can't be matched by any stored id yet (build_call_queues has no live
+ * Identity column), so Name is the best available key, same as a fresh
+ * tenant would show in Teams admin center.
+ */
+async function resolveLiveCallQueueState(scoped: Scoped, names: string[]) {
+  const wanted = [...new Set(names.map((n) => n.toLowerCase()).filter(Boolean))];
+  const out = new Map<string, CallQueueLiveState>();
+  if (wanted.length === 0) return out;
+  const rows = await scoped
+    .selectFrom('tenant_objects')
+    .select(['display_name', 'data'])
+    .where('object_type', '=', 'call_queue')
+    .where('removed_at', 'is', null)
+    .where(sql`lower(display_name)`, 'in', wanted)
+    .execute();
+  for (const r of rows) {
+    if (!r.display_name) continue;
+    const d = r.data as Record<string, unknown>;
+    const agents = Array.isArray(d.Agents)
+      ? (d.Agents as Record<string, unknown>[])
+          .map((a) => (typeof a?.ObjectId === 'string' ? a.ObjectId : null))
+          .filter((v): v is string => !!v)
+      : [];
+    out.set(r.display_name.toLowerCase(), {
+      identity: String(d.Identity ?? ''),
+      routingMethod: typeof d.RoutingMethod === 'string' ? d.RoutingMethod : undefined,
+      agentAlertTime: typeof d.AgentAlertTime === 'number' ? d.AgentAlertTime : undefined,
+      presenceBasedRouting: typeof d.PresenceBasedRouting === 'boolean' ? d.PresenceBasedRouting : undefined,
+      agentObjectIds: agents,
+      overflowAction: typeof d.OverflowAction === 'string' ? d.OverflowAction : undefined,
+      overflowThreshold: typeof d.OverflowThreshold === 'number' ? d.OverflowThreshold : undefined,
+      timeoutAction: typeof d.TimeoutAction === 'string' ? d.TimeoutAction : undefined,
+      timeoutThreshold: typeof d.TimeoutThreshold === 'number' ? d.TimeoutThreshold : undefined,
     });
   }
   return out;
@@ -231,6 +277,64 @@ export class DeploymentService {
           rowId: row.id,
           objectType: 'resource_account',
           upn: row.upn,
+          calls,
+          renderedCommands: calls.map(renderCommand),
+          warnings,
+        });
+      }
+    }
+
+    if (query.sheets.includes('call_queues')) {
+      let q = s.selectFrom('build_call_queues').selectAll().where('site_id', '=', query.siteId);
+      if (query.rowIds?.length) q = q.where('id', 'in', query.rowIds);
+      const rows = await q.execute();
+
+      // A queue's agents and its linked resource accounts are both stored
+      // as UPNs (agents) or an internal build_resource_accounts.id
+      // (resource_accounts) - Set-CsCallQueue/the association cmdlet both
+      // need live Entra object GUIDs, resolved via tenant_users.object_id
+      // the same way resolveLiveIdentityState already resolves for
+      // users/caps/resource-account diffing above.
+      const raIds = [...new Set(rows.flatMap((r) => (r.resource_accounts as string[] | null) ?? []))];
+      const ras = raIds.length
+        ? await s.selectFrom('build_resource_accounts').select(['id', 'upn']).where('id', 'in', raIds).execute()
+        : [];
+      const allUpns = [...rows.flatMap((r) => (r.agents as string[] | null) ?? []), ...ras.map((r) => r.upn)];
+      const [liveIdentity, liveQueues] = await Promise.all([
+        resolveLiveIdentityState(s, allUpns),
+        resolveLiveCallQueueState(s, rows.map((r) => r.name)),
+      ]);
+      const agentObjectIds = new Map<string, string>();
+      for (const [upn, v] of liveIdentity) if (v.objectId) agentObjectIds.set(upn, v.objectId);
+      const raObjectIds = new Map<string, string>();
+      for (const ra of ras) {
+        const oid = liveIdentity.get(ra.upn.toLowerCase())?.objectId;
+        if (oid) raObjectIds.set(ra.id, oid);
+      }
+
+      for (const row of rows) {
+        const agents = (row.agents as string[] | null) ?? [];
+        const resourceAccounts = (row.resource_accounts as string[] | null) ?? [];
+        const planRow = {
+          id: row.id,
+          name: row.name,
+          routing_method: row.routing_method,
+          agent_alert_time: row.agent_alert_time,
+          presence_based_routing: row.presence_based_routing,
+          agents,
+          overflow: (row.overflow as CallQueueActionSettings) ?? null,
+          timeout: (row.timeout as CallQueueActionSettings) ?? null,
+          language_id: row.language_id,
+          resource_accounts: resourceAccounts,
+        };
+        const live: CallQueueLiveState | undefined = liveQueues.get(row.name.toLowerCase());
+        const calls = planCallQueueRow(planRow, agentObjectIds, raObjectIds, live);
+        const warnings = callQueueRowWarnings({ agents, resource_accounts: resourceAccounts }, agentObjectIds, raObjectIds);
+        if (calls.length === 0 && warnings.length === 0) continue;
+        out.push({
+          rowId: row.id,
+          objectType: 'call_queue',
+          upn: row.name,
           calls,
           renderedCommands: calls.map(renderCommand),
           warnings,

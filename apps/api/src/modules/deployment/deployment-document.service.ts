@@ -51,6 +51,7 @@ const OBJECT_TYPE_LABEL: Record<DeploymentPreviewRow['objectType'], string> = {
   user: 'User',
   cap: 'Common Area Phone',
   resource_account: 'Resource Account',
+  call_queue: 'Call Queue',
 };
 
 export interface DeploymentDocumentInput {

@@ -376,7 +376,7 @@ export interface DeploymentSiteRollup {
  */
 export interface DeploymentPreviewRow {
   rowId: string;
-  objectType: 'user' | 'cap' | 'resource_account';
+  objectType: 'user' | 'cap' | 'resource_account' | 'call_queue';
   upn: string;
   calls: CmdletInvocation[];
   renderedCommands: string[];

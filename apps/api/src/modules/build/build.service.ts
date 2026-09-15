@@ -5,7 +5,11 @@ import {
   POLICY_KIND_TO_TENANT_TYPE,
   POLICY_KINDS,
   RESOURCE_ACCOUNT_APPLICATION_IDS,
+  type BuildAutoAttendantCreateInput,
+  type BuildAutoAttendantPatchInput,
   type BuildBulkPatchInput,
+  type BuildCallQueueCreateInput,
+  type BuildCallQueuePatchInput,
   type BuildCapCreateInput,
   type BuildCapPatchInput,
   type BuildIdentityCreateInput,
@@ -705,6 +709,15 @@ export class BuildService {
     return row;
   }
 
+  /**
+   * Populate also seeds build_call_queues/build_auto_attendants alongside
+   * build_resource_accounts, so the narrative discovery fields
+   * (business_hours/who_answers/ooh_action/exception_conditions/
+   * exception_action/holiday/advanced_features/comments) don't silently
+   * vanish the moment this runs - they used to be discarded entirely.
+   * Only `comments` maps onto call_queues (-> notes); the rest are AA-only,
+   * matching the "no CQ narrative fields" note in buildCallQueueWritable.
+   */
   async populateResourceAccounts(t: TenantContext, u: AuthedUser, siteId: string) {
     const s = this.s(t);
     const source = await s.selectFrom('discovery_resource_accounts').selectAll().where('site_id', '=', siteId).execute();
@@ -728,6 +741,38 @@ export class BuildService {
           status: {},
         })
         .execute();
+      if (d.kind === 'auto_attendant') {
+        const notes = [d.exception_conditions, d.exception_action].filter(Boolean).join(' / ') || null;
+        await s
+          .insertInto('build_auto_attendants')
+          .values({
+            site_id: siteId,
+            discovery_resource_account_id: d.id,
+            name: d.name,
+            resource_accounts: JSON.stringify([]),
+            config: {},
+            business_hours: d.business_hours,
+            ooh_action: d.ooh_action,
+            holiday: d.holiday,
+            advanced_features: d.advanced_features,
+            notes: [d.comments, notes].filter(Boolean).join(' / ') || null,
+          })
+          .execute();
+      } else {
+        await s
+          .insertInto('build_call_queues')
+          .values({
+            site_id: siteId,
+            discovery_resource_account_id: d.id,
+            name: d.name,
+            resource_accounts: JSON.stringify([]),
+            agents: JSON.stringify([]),
+            overflow: {},
+            timeout: {},
+            notes: d.comments,
+          })
+          .execute();
+      }
       created += 1;
     }
     await this.audit.tenant(t.schema, 'build.resource_accounts_populated', {
@@ -737,6 +782,164 @@ export class BuildService {
       detail: { created, total: source.length },
     });
     return { created, skipped: source.length - created, total: source.length };
+  }
+
+  /* ========================== call queues ========================== */
+
+  async listCallQueues(t: TenantContext, q: BuildListQuery) {
+    const s = this.s(t);
+    let base = s.selectFrom('build_call_queues').where('site_id', '=', q.siteId);
+    if (q.q) base = base.where('name', 'ilike', `%${q.q}%`);
+    const [{ n }] = await base.select((eb) => eb.fn.countAll<number>().as('n')).execute();
+    const items = await base.selectAll().orderBy('name').limit(q.limit).offset((q.page - 1) * q.limit).execute();
+    return { items, total: Number(n), page: q.page, limit: q.limit } satisfies Paginated<unknown>;
+  }
+
+  async getCallQueue(t: TenantContext, id: string) {
+    const row = await this.s(t).selectFrom('build_call_queues').selectAll().where('id', '=', id).executeTakeFirst();
+    if (!row) throw new NotFoundException('row not found');
+    return row;
+  }
+
+  async createCallQueue(t: TenantContext, u: AuthedUser, body: BuildCallQueueCreateInput) {
+    this.assertCallQueueLanguage(body.overflow, body.timeout, body.language_id);
+    const row = await this.s(t)
+      .insertInto('build_call_queues')
+      .values({
+        site_id: body.site_id,
+        name: body.name,
+        routing_method: body.routing_method ?? 'Attendant',
+        agent_alert_time: body.agent_alert_time ?? 30,
+        presence_based_routing: body.presence_based_routing ?? true,
+        agents: JSON.stringify(body.agents ?? []),
+        overflow: body.overflow ?? {},
+        timeout: body.timeout ?? {},
+        language_id: body.language_id || null,
+        resource_accounts: JSON.stringify(body.resource_accounts ?? []),
+        notes: body.notes || null,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    await this.audit.tenant(t.schema, 'build.call_queue_created', {
+      actor: actorOf(u),
+      targetType: 'build_call_queue',
+      targetId: row.id,
+    });
+    return row;
+  }
+
+  async updateCallQueue(t: TenantContext, u: AuthedUser, id: string, body: BuildCallQueuePatchInput) {
+    const existing = await this.getCallQueue(t, id);
+    const overflow = body.overflow !== undefined ? body.overflow : (existing.overflow as Record<string, unknown>);
+    const timeout = body.timeout !== undefined ? body.timeout : (existing.timeout as Record<string, unknown>);
+    const languageId = body.language_id !== undefined ? body.language_id : existing.language_id;
+    this.assertCallQueueLanguage(overflow, timeout, languageId);
+    const { agents, resource_accounts, ...rest } = body;
+    const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
+    // pg binds a plain array as a native Postgres array, not jsonb, unless
+    // stringified first (see schema.ts) - agents/resource_accounts are the
+    // array-shaped fields here (overflow/timeout are plain objects).
+    if (agents !== undefined) patch.agents = JSON.stringify(agents);
+    if (resource_accounts !== undefined) patch.resource_accounts = JSON.stringify(resource_accounts);
+    const row = await this.s(t)
+      .updateTable('build_call_queues')
+      .set(patch as never)
+      .where('id', '=', id)
+      .returningAll()
+      .executeTakeFirst();
+    if (!row) throw new NotFoundException('row not found');
+    await this.audit.tenant(t.schema, 'build.call_queue_updated', {
+      actor: actorOf(u),
+      targetType: 'build_call_queue',
+      targetId: id,
+      detail: { fields: Object.keys(patch) },
+    });
+    return row;
+  }
+
+  async deleteCallQueue(t: TenantContext, u: AuthedUser, id: string) {
+    const row = await this.s(t).deleteFrom('build_call_queues').where('id', '=', id).returningAll().executeTakeFirst();
+    if (!row) throw new NotFoundException('row not found');
+    await this.audit.tenant(t.schema, 'build.call_queue_deleted', { actor: actorOf(u), targetType: 'build_call_queue', targetId: id });
+    return { ok: true };
+  }
+
+  /** Set-CsCallQueue requires -LanguageId whenever Overflow/TimeoutAction is SharedVoicemail. */
+  private assertCallQueueLanguage(overflow: unknown, timeout: unknown, languageId: string | null | undefined) {
+    const action = (v: unknown) => (v as { action?: string } | null | undefined)?.action;
+    if ((action(overflow) === 'SharedVoicemail' || action(timeout) === 'SharedVoicemail') && !languageId) {
+      throw new BadRequestException('language_id is required when overflow or timeout action is SharedVoicemail');
+    }
+  }
+
+  /* ======================== auto attendants ========================= */
+
+  async listAutoAttendants(t: TenantContext, q: BuildListQuery) {
+    const s = this.s(t);
+    let base = s.selectFrom('build_auto_attendants').where('site_id', '=', q.siteId);
+    if (q.q) base = base.where('name', 'ilike', `%${q.q}%`);
+    const [{ n }] = await base.select((eb) => eb.fn.countAll<number>().as('n')).execute();
+    const items = await base.selectAll().orderBy('name').limit(q.limit).offset((q.page - 1) * q.limit).execute();
+    return { items, total: Number(n), page: q.page, limit: q.limit } satisfies Paginated<unknown>;
+  }
+
+  async getAutoAttendant(t: TenantContext, id: string) {
+    const row = await this.s(t).selectFrom('build_auto_attendants').selectAll().where('id', '=', id).executeTakeFirst();
+    if (!row) throw new NotFoundException('row not found');
+    return row;
+  }
+
+  async createAutoAttendant(t: TenantContext, u: AuthedUser, body: BuildAutoAttendantCreateInput) {
+    const row = await this.s(t)
+      .insertInto('build_auto_attendants')
+      .values({
+        site_id: body.site_id,
+        name: body.name,
+        resource_accounts: JSON.stringify([]),
+        config: {},
+        business_hours: body.business_hours || null,
+        ooh_action: body.ooh_action || null,
+        holiday: body.holiday || null,
+        advanced_features: body.advanced_features || null,
+        notes: body.notes || null,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    await this.audit.tenant(t.schema, 'build.auto_attendant_created', {
+      actor: actorOf(u),
+      targetType: 'build_auto_attendant',
+      targetId: row.id,
+    });
+    return row;
+  }
+
+  async updateAutoAttendant(t: TenantContext, u: AuthedUser, id: string, body: BuildAutoAttendantPatchInput) {
+    const patch: Record<string, unknown> = { ...body, updated_at: new Date().toISOString() };
+    const row = await this.s(t)
+      .updateTable('build_auto_attendants')
+      .set(patch as never)
+      .where('id', '=', id)
+      .returningAll()
+      .executeTakeFirst();
+    if (!row) throw new NotFoundException('row not found');
+    await this.audit.tenant(t.schema, 'build.auto_attendant_updated', {
+      actor: actorOf(u),
+      targetType: 'build_auto_attendant',
+      targetId: id,
+      detail: { fields: Object.keys(patch) },
+    });
+    return row;
+  }
+
+  async deleteAutoAttendant(t: TenantContext, u: AuthedUser, id: string) {
+    const row = await this.s(t).deleteFrom('build_auto_attendants').where('id', '=', id).returningAll().executeTakeFirst();
+    if (!row) throw new NotFoundException('row not found');
+    await this.audit.tenant(t.schema, 'build.auto_attendant_deleted', {
+      actor: actorOf(u),
+      targetType: 'build_auto_attendant',
+      targetId: id,
+    });
+    return { ok: true };
   }
 
   /** Well-known Microsoft ApplicationId for this account's kind - what New-CsOnlineApplicationInstance needs. */
@@ -1094,6 +1297,8 @@ export class BuildService {
       s.deleteFrom('build_users').where('site_id', '=', siteId).execute(),
       s.deleteFrom('build_caps').where('site_id', '=', siteId).execute(),
       s.deleteFrom('build_resource_accounts').where('site_id', '=', siteId).execute(),
+      s.deleteFrom('build_call_queues').where('site_id', '=', siteId).execute(),
+      s.deleteFrom('build_auto_attendants').where('site_id', '=', siteId).execute(),
     ]);
     const counts = { users: users.length, caps: caps.length, resourceAccounts: ras.length };
     await this.audit.tenant(t.schema, 'build.site_reset', {

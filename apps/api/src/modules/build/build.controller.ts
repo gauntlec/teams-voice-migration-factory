@@ -1,6 +1,10 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import {
+  buildAutoAttendantCreateSchema,
+  buildAutoAttendantPatchSchema,
   buildBulkPatchSchema,
+  buildCallQueueCreateSchema,
+  buildCallQueuePatchSchema,
   buildCapCreateSchema,
   buildCapPatchSchema,
   buildIdentityCreateSchema,
@@ -16,7 +20,11 @@ import {
   buildValidateSchema,
   callingPolicyMapListQuerySchema,
   callingPolicySiteMapSetSchema,
+  type BuildAutoAttendantCreateInput,
+  type BuildAutoAttendantPatchInput,
   type BuildBulkPatchInput,
+  type BuildCallQueueCreateInput,
+  type BuildCallQueuePatchInput,
   type BuildCapCreateInput,
   type BuildCapPatchInput,
   type BuildIdentityCreateInput,
@@ -213,6 +221,80 @@ export class BuildController {
     @Body(new ZodBody(buildPopulateSchema)) body: BuildPopulateInput,
   ) {
     return this.svc.populateResourceAccounts(t, user, body.site_id);
+  }
+
+  /* call queues */
+
+  @Get('call-queues')
+  @RequirePermission('build:read')
+  listCallQueues(@TenantCtx() t: TenantContext, @Query(new ZodBody(buildListQuerySchema)) q: BuildListQuery) {
+    return this.svc.listCallQueues(t, q);
+  }
+  @Get('call-queues/:id')
+  @RequirePermission('build:read')
+  getCallQueue(@TenantCtx() t: TenantContext, @Param('id') id: string) {
+    return this.svc.getCallQueue(t, id);
+  }
+  @Post('call-queues')
+  @RequirePermission('build:write')
+  createCallQueue(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(buildCallQueueCreateSchema)) body: BuildCallQueueCreateInput,
+  ) {
+    return this.svc.createCallQueue(t, user, body);
+  }
+  @Patch('call-queues/:id')
+  @RequirePermission('build:write')
+  updateCallQueue(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Param('id') id: string,
+    @Body(new ZodBody(buildCallQueuePatchSchema)) body: BuildCallQueuePatchInput,
+  ) {
+    return this.svc.updateCallQueue(t, user, id, body);
+  }
+  @Delete('call-queues/:id')
+  @RequirePermission('build:write')
+  deleteCallQueue(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string) {
+    return this.svc.deleteCallQueue(t, user, id);
+  }
+
+  /* auto attendants */
+
+  @Get('auto-attendants')
+  @RequirePermission('build:read')
+  listAutoAttendants(@TenantCtx() t: TenantContext, @Query(new ZodBody(buildListQuerySchema)) q: BuildListQuery) {
+    return this.svc.listAutoAttendants(t, q);
+  }
+  @Get('auto-attendants/:id')
+  @RequirePermission('build:read')
+  getAutoAttendant(@TenantCtx() t: TenantContext, @Param('id') id: string) {
+    return this.svc.getAutoAttendant(t, id);
+  }
+  @Post('auto-attendants')
+  @RequirePermission('build:write')
+  createAutoAttendant(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(buildAutoAttendantCreateSchema)) body: BuildAutoAttendantCreateInput,
+  ) {
+    return this.svc.createAutoAttendant(t, user, body);
+  }
+  @Patch('auto-attendants/:id')
+  @RequirePermission('build:write')
+  updateAutoAttendant(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Param('id') id: string,
+    @Body(new ZodBody(buildAutoAttendantPatchSchema)) body: BuildAutoAttendantPatchInput,
+  ) {
+    return this.svc.updateAutoAttendant(t, user, id, body);
+  }
+  @Delete('auto-attendants/:id')
+  @RequirePermission('build:write')
+  deleteAutoAttendant(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string) {
+    return this.svc.deleteAutoAttendant(t, user, id);
   }
 
   /* validate */

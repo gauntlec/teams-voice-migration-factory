@@ -7,6 +7,9 @@ import {
   CALLER_ID_OPTIONS,
   CALL_FORWARDING_TYPES,
   CALL_GROUP_ORDERS,
+  CALL_QUEUE_OVERFLOW_ACTIONS,
+  CALL_QUEUE_ROUTING_METHODS,
+  CALL_QUEUE_TIMEOUT_ACTIONS,
   CALL_TARGET_TYPES,
   FEATURE_AREAS,
   FEATURE_PRIORITIES,
@@ -198,14 +201,16 @@ const queryArray = <T extends z.ZodTypeAny>(arraySchema: T) =>
 
 /**
  * Read-only "what would this deploy right now" preview - no connection, no
- * worker/queue involvement. Deliberately excludes auto_attendants/call_queues/
- * m365_groups: no worker code path handles those sheets yet (see planIdentityRow/
- * planResourceAccountRow and handleDeploymentRun), so previewing them would be
- * misleading.
+ * worker/queue involvement. Deliberately excludes auto_attendants/m365_groups:
+ * no worker code path handles those sheets yet (see planIdentityRow/
+ * planResourceAccountRow/planCallQueueRow and handleDeploymentRun), so
+ * previewing them would be misleading. call_queues is planned
+ * (planCallQueueRow) but not in the default list, matching resource_accounts'
+ * own opt-in-by-caller shape.
  */
 export const deploymentPreviewQuerySchema = z.object({
   siteId: z.string().uuid(),
-  sheets: queryArray(z.array(z.enum(['users', 'caps', 'resource_accounts'])).min(1)).default([
+  sheets: queryArray(z.array(z.enum(['users', 'caps', 'resource_accounts', 'call_queues'])).min(1)).default([
     'users',
     'caps',
     'resource_accounts',
@@ -945,6 +950,68 @@ export const buildResourceAccountPatchSchema = z
   })
   .strict();
 export type BuildResourceAccountPatchInput = z.infer<typeof buildResourceAccountPatchSchema>;
+
+/**
+ * build_call_queues' overflow/timeout jsonb - Set-CsCallQueue's
+ * Overflow/Timeout parameter groups. `target` is a Guid, 'tel:' number, or
+ * group id depending on `action` (see Set-CsCallQueue's own docs) - not
+ * validated further here, same "trust the cmdlet to reject a bad value"
+ * approach as call_forwarding's target fields.
+ */
+const callQueueActionSchema = (actions: readonly [string, ...string[]]) =>
+  z
+    .object({
+      action: z.enum(actions).optional(),
+      threshold: z.number().int().min(0).max(2700).optional(),
+      target: optStr(200),
+    })
+    .strict()
+    .optional();
+
+const buildCallQueueWritable = {
+  routing_method: blankToNull(z.enum(CALL_QUEUE_ROUTING_METHODS)),
+  agent_alert_time: z.number().int().min(15).max(180).optional(),
+  presence_based_routing: z.boolean().optional(),
+  /** Agent UPNs - resolved to Entra object GUIDs at deploy time (Set-CsCallQueue -Users needs GUIDs). */
+  agents: z.array(str(200)).max(200).optional(),
+  overflow: callQueueActionSchema(CALL_QUEUE_OVERFLOW_ACTIONS),
+  timeout: callQueueActionSchema(CALL_QUEUE_TIMEOUT_ACTIONS),
+  /** Required by Set-CsCallQueue when overflow/timeout action is SharedVoicemail - checked in BuildService. */
+  language_id: optStr(20),
+  /** build_resource_accounts.id array - which RA(s)/phone numbers present this queue. */
+  resource_accounts: z.array(z.string().uuid()).max(10).optional(),
+  notes: optStr(2000),
+};
+
+export const buildCallQueueCreateSchema = z
+  .object({ site_id: z.string().uuid(), name: str(160).min(1), ...buildCallQueueWritable })
+  .strict();
+export type BuildCallQueueCreateInput = z.infer<typeof buildCallQueueCreateSchema>;
+
+export const buildCallQueuePatchSchema = z.object({ name: optStr(160), ...buildCallQueueWritable }).strict();
+export type BuildCallQueuePatchInput = z.infer<typeof buildCallQueuePatchSchema>;
+
+/**
+ * build_auto_attendants' narrative-only fields, carried through from
+ * discovery_resource_accounts by Populate (see BuildService.populateResourceAccounts) -
+ * no cmdlet planning reads these yet, same deliberate cut as the rest of
+ * this project's Auto Attendant scope.
+ */
+const buildAutoAttendantWritable = {
+  business_hours: optStr(400),
+  ooh_action: optStr(400),
+  holiday: optStr(400),
+  advanced_features: optStr(400),
+  notes: optStr(2000),
+};
+
+export const buildAutoAttendantCreateSchema = z
+  .object({ site_id: z.string().uuid(), name: str(160).min(1), ...buildAutoAttendantWritable })
+  .strict();
+export type BuildAutoAttendantCreateInput = z.infer<typeof buildAutoAttendantCreateSchema>;
+
+export const buildAutoAttendantPatchSchema = z.object({ name: optStr(160), ...buildAutoAttendantWritable }).strict();
+export type BuildAutoAttendantPatchInput = z.infer<typeof buildAutoAttendantPatchSchema>;
 
 /**
  * Per site: which real tenant_policies row a Data Collection generic

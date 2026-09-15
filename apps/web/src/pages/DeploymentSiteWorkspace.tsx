@@ -62,6 +62,7 @@ const OBJECT_TYPE_LABEL: Record<DeploymentPreviewRow['objectType'], string> = {
   user: 'User',
   cap: 'Common Area Phone',
   resource_account: 'Resource Account',
+  call_queue: 'Call Queue',
 };
 
 export function DeploymentSiteWorkspace() {
@@ -101,7 +102,7 @@ export function DeploymentSiteWorkspace() {
     enabled: !!tid && !!siteId,
     queryFn: () =>
       api<DeploymentPreviewRow[]>(
-        `${base}/preview?siteId=${siteId}&sheets=users,caps,resource_accounts`,
+        `${base}/preview?siteId=${siteId}&sheets=users,caps,resource_accounts,call_queues`,
       ),
   });
 
@@ -120,7 +121,7 @@ export function DeploymentSiteWorkspace() {
   });
 
   const sheetsFor = (rowIds: Set<string> | undefined) => {
-    if (!rowIds || rowIds.size === 0) return ['users', 'caps', 'resource_accounts'];
+    if (!rowIds || rowIds.size === 0) return ['users', 'caps', 'resource_accounts', 'call_queues'];
     const selectedTypes = new Set(
       (preview.data ?? []).filter((r) => rowIds.has(r.rowId)).map((r) => r.objectType),
     );
@@ -128,6 +129,7 @@ export function DeploymentSiteWorkspace() {
     if (selectedTypes.has('user')) sheets.push('users');
     if (selectedTypes.has('cap')) sheets.push('caps');
     if (selectedTypes.has('resource_account')) sheets.push('resource_accounts');
+    if (selectedTypes.has('call_queue')) sheets.push('call_queues');
     return sheets;
   };
 
@@ -140,7 +142,7 @@ export function DeploymentSiteWorkspace() {
           mode,
           scope: {
             siteId,
-            sheets: everyone ? ['users', 'caps', 'resource_accounts'] : sheetsFor(selectedRowIds),
+            sheets: everyone ? ['users', 'caps', 'resource_accounts', 'call_queues'] : sheetsFor(selectedRowIds),
             rowIds: everyone ? undefined : [...selectedRowIds],
           },
         }),

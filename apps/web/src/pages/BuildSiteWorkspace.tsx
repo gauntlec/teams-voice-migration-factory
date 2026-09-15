@@ -29,6 +29,9 @@ import {
   BUSY_ON_BUSY_OPTIONS,
   CALL_FORWARDING_TYPES,
   CALL_GROUP_ORDERS,
+  CALL_QUEUE_OVERFLOW_ACTIONS,
+  CALL_QUEUE_ROUTING_METHODS,
+  CALL_QUEUE_TIMEOUT_ACTIONS,
   CALL_TARGET_TYPES,
   NUMBER_TYPES,
   POLICY_KIND_TO_TENANT_TYPE,
@@ -39,6 +42,7 @@ import {
   type BuildSiteRollup,
   type CallDelegate,
   type CallForwardingSettings,
+  type CallQueueActionSettings,
   type Paginated,
   type PickupGroupSettings,
   type PolicyKey,
@@ -130,7 +134,7 @@ export function BuildSiteWorkspace() {
   const { siteId = '' } = useParams();
   const { activeTenantId, can } = useAuth();
   const qc = useQueryClient();
-  const [tab, setTab] = useState<'users' | 'caps' | 'resource-accounts'>('users');
+  const [tab, setTab] = useState<'users' | 'caps' | 'resource-accounts' | 'call-queues'>('users');
 
   const tid = activeTenantId;
   const base = `/t/${tid}/build`;
@@ -213,6 +217,7 @@ export function BuildSiteWorkspace() {
       qc.invalidateQueries({ queryKey: ['users', tid, siteId] });
       qc.invalidateQueries({ queryKey: ['caps', tid, siteId] });
       qc.invalidateQueries({ queryKey: ['resource-accounts', tid, siteId] });
+      qc.invalidateQueries({ queryKey: ['call-queues', tid, siteId] });
       qc.invalidateQueries({ queryKey: ['build-summary', tid] });
     },
     // Most commonly assertCallingPoliciesMapped - some calling policies used
@@ -309,6 +314,10 @@ export function BuildSiteWorkspace() {
     queryKey: unknown[];
     row: Row;
   } | null>(null);
+
+  // Agents/overflow/timeout/linked resource accounts - see CallQueueSettingsDialog
+  // below, same "compound JSON needs its own dialog" reasoning as above.
+  const [callQueueSettingsFor, setCallQueueSettingsFor] = useState<Row | null>(null);
 
   if (!tid) return <NoTenant />;
   if (rollup.isLoading) return <Spinner label="Loading site…" />;
@@ -463,11 +472,25 @@ export function BuildSiteWorkspace() {
           }}
         />
       )}
+      {callQueueSettingsFor && tid && (
+        <CallQueueSettingsDialog
+          tenantId={tid}
+          base={base}
+          siteId={siteId}
+          row={callQueueSettingsFor}
+          onClose={() => setCallQueueSettingsFor(null)}
+          onSaved={() => {
+            qc.invalidateQueries({ queryKey: ['call-queues', tid, siteId] });
+            setCallQueueSettingsFor(null);
+          }}
+        />
+      )}
 
       <TabList selectedValue={tab} onTabSelect={(_, d) => setTab(d.value as typeof tab)}>
         <Tab value="users">Users</Tab>
         <Tab value="caps">Common area phones</Tab>
         <Tab value="resource-accounts">Resource accounts</Tab>
+        <Tab value="call-queues">Call queues</Tab>
       </TabList>
 
       {tab === 'users' && (
@@ -665,6 +688,56 @@ export function BuildSiteWorkspace() {
             voice routing policy can be assigned live on the next run.
           </Text>
         </Card>
+      )}
+
+      {tab === 'call-queues' && (
+        <PagedSection
+          title="Call queues"
+          hint="Routing, agents and overflow/timeout behaviour for Call Queue resource accounts. New rows are seeded by Populate from Discovery on the Resource accounts tab."
+          endpoint={`${base}/call-queues`}
+          queryKey={['call-queues', tid, siteId]}
+          params={{ siteId }}
+          fixed={{ site_id: siteId }}
+          readOnly={!canWrite}
+          emptyText="No call queues yet - Populate from Discovery on the Resource accounts tab first."
+          columns={[
+            { key: 'name', label: 'Name' },
+            { key: 'routing_method', label: 'Routing' },
+            { key: 'agent_alert_time', label: 'Alert (s)' },
+            {
+              key: 'agents',
+              label: 'Agents',
+              render: (r) => (Array.isArray(r.agents) ? (r.agents as string[]).length : 0),
+            },
+            {
+              key: 'overflow',
+              label: 'Overflow',
+              render: (r) => (r.overflow as CallQueueActionSettings | null)?.action ?? '—',
+            },
+            {
+              key: 'timeout',
+              label: 'Timeout',
+              render: (r) => (r.timeout as CallQueueActionSettings | null)?.action ?? '—',
+            },
+            {
+              key: 'settings',
+              label: 'Agents / overflow / timeout',
+              render: (r) => (
+                <Button size="small" appearance="subtle" onClick={() => setCallQueueSettingsFor(r)}>
+                  Configure…
+                </Button>
+              ),
+            },
+          ]}
+          fields={[
+            { key: 'name', label: 'Name', required: true },
+            { key: 'routing_method', label: 'Routing method', type: 'select', options: CALL_QUEUE_ROUTING_METHODS },
+            { key: 'agent_alert_time', label: 'Agent alert time (seconds, 15-180)', type: 'number' },
+            { key: 'presence_based_routing', label: 'Presence-based routing', type: 'boolean' },
+            { key: 'language_id', label: 'Language ID (required if overflow/timeout uses Shared Voicemail)' },
+            { key: 'notes', label: 'Notes', type: 'textarea', full: true },
+          ]}
+        />
       )}
     </Page>
   );
@@ -1375,6 +1448,236 @@ function CallingSettingsDialog({
                     <Button size="small" appearance="subtle" icon={<DeleteRegular />} onClick={() => removeDelegate(i)} />
                   </div>
                 ))}
+              </div>
+
+              {err && (
+                <Text block style={{ color: tokens.colorPaletteRedForeground1 }}>
+                  {err}
+                </Text>
+              )}
+            </div>
+          </DialogContent>
+          <DialogActions>
+            <DialogTrigger disableButtonEnhancement>
+              <Button appearance="secondary" onClick={onClose}>
+                Cancel
+              </Button>
+            </DialogTrigger>
+            <Button appearance="primary" disabled={save.isPending} onClick={() => save.mutate()}>
+              {save.isPending ? 'Saving…' : 'Save'}
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  );
+}
+
+/* ----------------------- call queue settings dialog ----------------------- */
+
+/**
+ * Agents/overflow/timeout/linked resource accounts for one build_call_queues
+ * row - same "compound JSON doesn't fit the generic FieldDef grid" reasoning
+ * as CallingSettingsDialog above; the scalar fields (name, routing method,
+ * agent alert time, ...) go through the normal PagedSection edit dialog.
+ */
+function CallQueueSettingsDialog({
+  tenantId,
+  base,
+  siteId,
+  row,
+  onClose,
+  onSaved,
+}: {
+  tenantId: string;
+  base: string;
+  siteId: string;
+  row: Row;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const overflowInit = (row.overflow as CallQueueActionSettings | null) ?? null;
+  const timeoutInit = (row.timeout as CallQueueActionSettings | null) ?? null;
+
+  const [agents, setAgents] = useState<string[]>(Array.isArray(row.agents) ? (row.agents as string[]).slice() : []);
+  const [overflowAction, setOverflowAction] = useState(overflowInit?.action ?? '');
+  const [overflowThreshold, setOverflowThreshold] = useState(
+    overflowInit?.threshold != null ? String(overflowInit.threshold) : '',
+  );
+  const [overflowTarget, setOverflowTarget] = useState(overflowInit?.target ?? '');
+  const [timeoutAction, setTimeoutAction] = useState(timeoutInit?.action ?? '');
+  const [timeoutThreshold, setTimeoutThreshold] = useState(
+    timeoutInit?.threshold != null ? String(timeoutInit.threshold) : '',
+  );
+  const [timeoutTarget, setTimeoutTarget] = useState(timeoutInit?.target ?? '');
+  const [resourceAccounts, setResourceAccounts] = useState<string[]>(
+    Array.isArray(row.resource_accounts) ? (row.resource_accounts as string[]).slice() : [],
+  );
+  const [err, setErr] = useState<string | null>(null);
+
+  // Only Call Queue-kind resource accounts on this site can be linked -
+  // reuses the Resource accounts tab's own list rather than a new endpoint.
+  const raQ = useQuery({
+    queryKey: ['resource-accounts', tenantId, siteId, 'for-call-queue'],
+    queryFn: () => api<Paginated<Row>>(`${base}/resource-accounts?siteId=${siteId}&limit=500`),
+  });
+  const raChoices = (raQ.data?.items ?? []).filter((r) => r.kind === 'call_queue');
+
+  const save = useMutation({
+    mutationFn: () => {
+      const overflow: CallQueueActionSettings = overflowAction
+        ? {
+            action: overflowAction as (typeof CALL_QUEUE_OVERFLOW_ACTIONS)[number],
+            threshold: overflowThreshold ? Number(overflowThreshold) : undefined,
+            target: overflowTarget || undefined,
+          }
+        : {};
+      const timeout: CallQueueActionSettings = timeoutAction
+        ? {
+            action: timeoutAction as (typeof CALL_QUEUE_TIMEOUT_ACTIONS)[number],
+            threshold: timeoutThreshold ? Number(timeoutThreshold) : undefined,
+            target: timeoutTarget || undefined,
+          }
+        : {};
+      return api(`${base}/call-queues/${row.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ agents, overflow, timeout, resource_accounts: resourceAccounts }),
+      });
+    },
+    onSuccess: onSaved,
+    onError: (e) => setErr(e instanceof ApiError ? e.message : 'Failed'),
+  });
+
+  const addAgent = () => setAgents((a) => [...a, '']);
+  const updateAgent = (i: number, v: string) => setAgents((a) => a.map((x, idx) => (idx === i ? v : x)));
+  const removeAgent = (i: number) => setAgents((a) => a.filter((_, idx) => idx !== i));
+  const toggleRa = (id: string) =>
+    setResourceAccounts((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+
+  const actionDropdown = (
+    label: string,
+    value: string,
+    onChange: (v: string) => void,
+    options: readonly string[],
+  ) => (
+    <Field label={label}>
+      <Dropdown
+        value={value || '— not set —'}
+        selectedOptions={[value || 'unset']}
+        onOptionSelect={(_, d) => onChange(d.optionValue === 'unset' ? '' : (d.optionValue ?? ''))}
+        style={{ minWidth: 180 }}
+      >
+        <Option value="unset">— not set —</Option>
+        {options.map((o) => (
+          <Option key={o} value={o}>
+            {o}
+          </Option>
+        ))}
+      </Dropdown>
+    </Field>
+  );
+
+  return (
+    <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
+      <DialogSurface style={{ maxWidth: 640 }}>
+        <DialogBody>
+          <DialogTitle>Call queue settings — {String(row.name)}</DialogTitle>
+          <DialogContent>
+            <div style={{ display: 'grid', gap: 16, minWidth: 560 }}>
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text weight="semibold">Agents</Text>
+                  <Button size="small" appearance="subtle" disabled={agents.length >= 200} onClick={addAgent}>
+                    Add agent
+                  </Button>
+                </div>
+                {agents.map((a, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
+                    <UpnAutocomplete tenantId={tenantId} value={a} onChange={(v) => updateAgent(i, v)} style={{ minWidth: 220 }} />
+                    <Button size="small" appearance="subtle" icon={<DeleteRegular />} onClick={() => removeAgent(i)} />
+                  </div>
+                ))}
+                {agents.length === 0 && (
+                  <Text size={200} style={{ color: '#616161', display: 'block', marginTop: 6 }}>
+                    No agents yet.
+                  </Text>
+                )}
+              </div>
+
+              <div>
+                <Text weight="semibold">Overflow (queue full)</Text>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end', marginTop: 6 }}>
+                  {actionDropdown('Action', overflowAction, setOverflowAction, CALL_QUEUE_OVERFLOW_ACTIONS)}
+                  {overflowAction && (
+                    <>
+                      <Field label="Threshold (0-200 calls)">
+                        <Input
+                          type="number"
+                          value={overflowThreshold}
+                          onChange={(_, d) => setOverflowThreshold(d.value)}
+                          style={{ width: 120 }}
+                        />
+                      </Field>
+                      {(overflowAction === 'Forward' || overflowAction === 'SharedVoicemail') && (
+                        <Field label="Target">
+                          <UpnAutocomplete tenantId={tenantId} value={overflowTarget} onChange={setOverflowTarget} style={{ minWidth: 220 }} />
+                        </Field>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <Text weight="semibold">Timeout (waited too long)</Text>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end', marginTop: 6 }}>
+                  {actionDropdown('Action', timeoutAction, setTimeoutAction, CALL_QUEUE_TIMEOUT_ACTIONS)}
+                  {timeoutAction && (
+                    <>
+                      <Field label="Threshold (0-2700 seconds)">
+                        <Input
+                          type="number"
+                          value={timeoutThreshold}
+                          onChange={(_, d) => setTimeoutThreshold(d.value)}
+                          style={{ width: 120 }}
+                        />
+                      </Field>
+                      {(timeoutAction === 'Forward' || timeoutAction === 'SharedVoicemail') && (
+                        <Field label="Target">
+                          <UpnAutocomplete tenantId={tenantId} value={timeoutTarget} onChange={setTimeoutTarget} style={{ minWidth: 220 }} />
+                        </Field>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {(overflowAction === 'SharedVoicemail' || timeoutAction === 'SharedVoicemail') && (
+                <Text size={200} style={{ color: tokens.colorPaletteMarigoldForeground1 }}>
+                  Shared Voicemail needs a Language ID set on this row - edit it from the table's Edit form.
+                </Text>
+              )}
+
+              <div>
+                <Text weight="semibold">Linked resource accounts (phone numbers)</Text>
+                {raQ.isLoading ? (
+                  <Spinner size="tiny" label="Loading…" />
+                ) : raChoices.length === 0 ? (
+                  <Text size={200} style={{ color: '#616161', display: 'block', marginTop: 6 }}>
+                    No Call Queue-kind resource accounts on this site yet - add one on the Resource accounts tab.
+                  </Text>
+                ) : (
+                  <div style={{ display: 'grid', gap: 4, marginTop: 6 }}>
+                    {raChoices.map((r) => (
+                      <Checkbox
+                        key={String(r.id)}
+                        label={`${r.display_name ?? r.upn}${r.upn ? ` (${r.upn})` : ''}`}
+                        checked={resourceAccounts.includes(String(r.id))}
+                        onChange={() => toggleRa(String(r.id))}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
 
               {err && (

@@ -527,20 +527,53 @@ export interface BuildResourceAccountsTable {
 
 export interface BuildAutoAttendantsTable {
   id: Generated<string>;
+  /** FK -> discovery_sites.id (ON DELETE CASCADE). Build rows are always site-scoped. */
+  site_id: string;
+  /** FK -> discovery_resource_accounts.id (ON DELETE SET NULL): the row this was seeded from. */
+  discovery_resource_account_id: string | null;
   name: string;
   resource_accounts: Json;
   language: string | null;
   timezone: string | null;
   config: Json;
+  /** Narrative-only fields carried through from discovery_resource_accounts by Populate - no cmdlet planning reads these yet. */
+  business_hours: string | null;
+  ooh_action: string | null;
+  holiday: string | null;
+  advanced_features: string | null;
+  notes: string | null;
   created_at: Ts;
   updated_at: Ts;
 }
 
 export interface BuildCallQueuesTable {
   id: Generated<string>;
+  /** FK -> discovery_sites.id (ON DELETE CASCADE). Build rows are always site-scoped. */
+  site_id: string;
+  /** FK -> discovery_resource_accounts.id (ON DELETE SET NULL): the row this was seeded from. */
+  discovery_resource_account_id: string | null;
   name: string;
+  /** build_resource_accounts.id array - which RA(s)/phone numbers present this queue. */
   resource_accounts: Json;
-  config: Json;
+  /** Set-CsCallQueue -RoutingMethod. */
+  routing_method: ColumnType<
+    'Attendant' | 'Serial' | 'RoundRobin' | 'LongestIdle',
+    'Attendant' | 'Serial' | 'RoundRobin' | 'LongestIdle' | undefined,
+    'Attendant' | 'Serial' | 'RoundRobin' | 'LongestIdle'
+  >;
+  /** Set-CsCallQueue -AgentAlertTime (seconds, 15-180). */
+  agent_alert_time: ColumnType<number, number | undefined, number>;
+  /** Set-CsCallQueue -PresenceBasedRouting. */
+  presence_based_routing: ColumnType<boolean, boolean | undefined, boolean>;
+  /** Agent UPN strings - resolved to Entra object GUIDs at deploy time (Set-CsCallQueue -Users needs GUIDs, not UPNs). */
+  agents: Json;
+  /** { action, threshold, target } - Set-CsCallQueue -OverflowAction/-OverflowThreshold/-OverflowActionTarget. */
+  overflow: Json;
+  /** { action, threshold, target } - Set-CsCallQueue -TimeoutAction/-TimeoutThreshold/-TimeoutActionTarget. */
+  timeout: Json;
+  /** Set-CsCallQueue -LanguageId - required only when overflow/timeout action is SharedVoicemail. */
+  language_id: string | null;
+  notes: string | null;
   created_at: Ts;
   updated_at: Ts;
 }

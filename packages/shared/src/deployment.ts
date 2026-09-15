@@ -1,4 +1,4 @@
-import { POLICY_KIND_TO_TENANT_TYPE, POLICY_KINDS, RESOURCE_ACCOUNT_APPLICATION_IDS } from './domain';
+import { CALL_QUEUE_ROUTING_METHODS, POLICY_KIND_TO_TENANT_TYPE, POLICY_KINDS, RESOURCE_ACCOUNT_APPLICATION_IDS } from './domain';
 
 /**
  * What Discovery's live-tenant snapshot (tenant_users) knows about a UPN -
@@ -15,6 +15,8 @@ export interface LiveIdentityState {
   lineUri: string | null;
   /** keyed by TenantPolicyType (e.g. 'OnlineVoiceRoutingPolicy') - the raw tenant_users.policies shape. */
   policies: Record<string, string | null>;
+  /** tenant_users.object_id - the Entra object GUID, needed by cmdlets that take -Users/-Identities as GUIDs (e.g. Set-CsCallQueue), not UPNs. */
+  objectId?: string;
 }
 
 /** Last 10 significant digits, for loose number matching (same rule Data Collection and Design & Build use). */
@@ -389,5 +391,158 @@ export function planResourceAccountRow(row: BuildResourceAccountRow, live?: Live
       objectId: row.id,
     });
   }
+  return calls;
+}
+
+type CallQueueRoutingMethod = (typeof CALL_QUEUE_ROUTING_METHODS)[number];
+
+/** Mirrors dto.ts's callQueueActionSchema - Set-CsCallQueue's Overflow/Timeout parameter groups. */
+export interface CallQueueActionSettings {
+  action?: string;
+  threshold?: number;
+  target?: string | null;
+}
+
+export interface BuildCallQueueRow {
+  id: string;
+  name: string;
+  routing_method: CallQueueRoutingMethod;
+  agent_alert_time: number;
+  presence_based_routing: boolean;
+  /** agent UPNs - resolved to Entra object GUIDs via agentObjectIds before planning, see planCallQueueRow. */
+  agents: string[];
+  overflow: CallQueueActionSettings | null;
+  timeout: CallQueueActionSettings | null;
+  language_id: string | null;
+  /** build_resource_accounts.id array - resolved to Application Instance GUIDs via raObjectIds. */
+  resource_accounts: string[];
+}
+
+/**
+ * What Discovery's live-tenant snapshot (tenant_objects, object_type
+ * 'call_queue') knows about a queue matched by Name - undefined means the
+ * queue doesn't exist live yet, so New-CsCallQueue is emitted instead of
+ * Set-CsCallQueue. `identity` is the queue's own Identity GUID, needed to
+ * target Set-CsCallQueue and to associate a resource account with it.
+ */
+export interface CallQueueLiveState {
+  identity: string;
+  routingMethod?: string;
+  agentAlertTime?: number;
+  presenceBasedRouting?: boolean;
+  agentObjectIds?: string[];
+  overflowAction?: string;
+  overflowThreshold?: number;
+  timeoutAction?: string;
+  timeoutThreshold?: number;
+}
+
+/**
+ * Flags agent UPNs / linked resource accounts that don't resolve to a live
+ * Entra object id - planCallQueueRow silently skips these (a typo'd UPN or a
+ * resource account not yet licensed shouldn't block the rest of the queue's
+ * config from deploying), so this is the only place that gap is visible.
+ */
+export function callQueueRowWarnings(
+  row: Pick<BuildCallQueueRow, 'agents' | 'resource_accounts'>,
+  agentObjectIds: Map<string, string>,
+  raObjectIds: Map<string, string>,
+): string[] {
+  const warnings: string[] = [];
+  const unresolvedAgents = row.agents.filter((upn) => !agentObjectIds.has(upn.toLowerCase()));
+  if (unresolvedAgents.length) {
+    warnings.push(
+      `${unresolvedAgents.length} agent UPN(s) not found in the tenant's synced users, so they'll be skipped: ${unresolvedAgents.join(', ')}`,
+    );
+  }
+  const unresolvedRas = row.resource_accounts.filter((id) => !raObjectIds.has(id));
+  if (unresolvedRas.length) {
+    warnings.push(
+      `${unresolvedRas.length} linked resource account(s) have no live Application Instance yet (New-CsOnlineApplicationInstance not run), so this queue won't get a phone number until that's done.`,
+    );
+  }
+  return warnings;
+}
+
+/**
+ * Turn a build_call_queues row into the ordered list of cmdlets: create/
+ * update the queue itself (New-CsCallQueue / Set-CsCallQueue), then
+ * associate any linked resource accounts so the queue actually has a phone
+ * number (New-CsOnlineApplicationInstanceAssociation). Only the Call Queue
+ * subset of Set-CsCallQueue's full parameter surface is implemented here -
+ * see the Phase B plan for the full list of what's deliberately left out
+ * (ConferenceMode, DistributionLists, compliance recording, etc).
+ */
+export function planCallQueueRow(
+  row: BuildCallQueueRow,
+  agentObjectIds: Map<string, string>,
+  raObjectIds: Map<string, string>,
+  live?: CallQueueLiveState,
+): CmdletInvocation[] {
+  const calls: CmdletInvocation[] = [];
+  const users = row.agents
+    .map((upn) => agentObjectIds.get(upn.toLowerCase()))
+    .filter((id): id is string => !!id);
+  const needsLanguage = row.overflow?.action === 'SharedVoicemail' || row.timeout?.action === 'SharedVoicemail';
+
+  const parameters: Record<string, unknown> = {
+    Name: row.name,
+    RoutingMethod: row.routing_method,
+    AgentAlertTime: row.agent_alert_time,
+    PresenceBasedRouting: row.presence_based_routing,
+    Users: users,
+    ...(needsLanguage && row.language_id ? { LanguageId: row.language_id } : {}),
+    ...(row.overflow?.action ? { OverflowAction: row.overflow.action } : {}),
+    ...(row.overflow?.threshold != null ? { OverflowThreshold: row.overflow.threshold } : {}),
+    ...(row.overflow?.target ? { OverflowActionTarget: row.overflow.target } : {}),
+    ...(row.timeout?.action ? { TimeoutAction: row.timeout.action } : {}),
+    ...(row.timeout?.threshold != null ? { TimeoutThreshold: row.timeout.threshold } : {}),
+    ...(row.timeout?.target ? { TimeoutActionTarget: row.timeout.target } : {}),
+  };
+
+  if (!live) {
+    calls.push({ cmdlet: 'New-CsCallQueue', parameters, objectType: 'call_queue', objectId: row.id });
+  } else {
+    const sortedUsers = [...users].sort();
+    const sortedLive = [...(live.agentObjectIds ?? [])].sort();
+    const changed =
+      live.routingMethod !== row.routing_method ||
+      live.agentAlertTime !== row.agent_alert_time ||
+      live.presenceBasedRouting !== row.presence_based_routing ||
+      (live.overflowAction ?? undefined) !== (row.overflow?.action ?? undefined) ||
+      (live.overflowThreshold ?? undefined) !== (row.overflow?.threshold ?? undefined) ||
+      (live.timeoutAction ?? undefined) !== (row.timeout?.action ?? undefined) ||
+      (live.timeoutThreshold ?? undefined) !== (row.timeout?.threshold ?? undefined) ||
+      JSON.stringify(sortedUsers) !== JSON.stringify(sortedLive);
+    if (changed) {
+      calls.push({
+        cmdlet: 'Set-CsCallQueue',
+        parameters: { Identity: live.identity, ...parameters },
+        objectType: 'call_queue',
+        objectId: row.id,
+      });
+    }
+  }
+
+  // The queue needs a live Identity before it can be associated with a
+  // resource account, so this only ever plans once New-CsCallQueue has
+  // already run on a prior pass (mirrors the two-phase resource-account
+  // pattern above). Known limitation, called out in the Phase B plan:
+  // Get-CsCallQueue's raw output doesn't reliably expose which Application
+  // Instances are already associated (undocumented on Microsoft Learn as of
+  // this writing), so this can't diff against live state the way the rest
+  // of this function does - it re-emits every pass a linked resource
+  // account resolves live, which New-CsOnlineApplicationInstanceAssociation
+  // tolerates being re-run with the same target.
+  const linkedInstanceIds = row.resource_accounts.map((id) => raObjectIds.get(id)).filter((id): id is string => !!id);
+  if (live?.identity && linkedInstanceIds.length > 0) {
+    calls.push({
+      cmdlet: 'New-CsOnlineApplicationInstanceAssociation',
+      parameters: { Identities: linkedInstanceIds, ConfigurationId: live.identity, ConfigurationType: 'CallQueue' },
+      objectType: 'call_queue',
+      objectId: row.id,
+    });
+  }
+
   return calls;
 }
