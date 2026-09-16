@@ -31,6 +31,8 @@ import {
   AA_DTMF_RESPONSES,
   AA_MENU_OPTION_ACTIONS,
   AA_SCHEDULE_TYPES,
+  AA_SUPPORTED_LANGUAGES,
+  AA_TIME_ZONES,
   buildAutoAttendantFlowGraphFromDesign,
   buildCallQueueFlowGraphFromDesign,
   BUSY_ON_BUSY_OPTIONS,
@@ -89,6 +91,17 @@ const numKey = (v: string | null | undefined): string => String(v ?? '').replace
 const VOICEMAIL_LANGUAGE_CHOICES: Choice[] = VOICEMAIL_PROMPT_LANGUAGES.map((l) => ({
   value: l.code,
   label: `${l.label} (${l.code})`,
+}));
+
+/** Every language New-CsAutoAttendant/Set-CsAutoAttendant -LanguageId accepts - see AA_SUPPORTED_LANGUAGES. */
+const AA_LANGUAGE_CHOICES: Choice[] = AA_SUPPORTED_LANGUAGES.map((l) => ({
+  value: l.code,
+  label: l.speechInput ? `${l.label} (${l.code})` : `${l.label} (${l.code}, no voice input)`,
+}));
+/** Every Windows time zone ID New-CsAutoAttendant/Set-CsAutoAttendant -TimeZoneId accepts - see AA_TIME_ZONES. */
+const AA_TIME_ZONE_CHOICES: Choice[] = AA_TIME_ZONES.map((z) => ({
+  value: z.id,
+  label: `${z.label} (${z.id})`,
 }));
 
 /** Small live-vs-target badge - the replacement for the workbook's `G-*` columns. */
@@ -910,9 +923,9 @@ export function BuildSiteWorkspace() {
           fields={[
             { key: 'name', label: 'Name', required: true },
             { key: 'resource_account_id', label: 'Resource account', type: 'ref', choices: () => aaResourceAccountChoices },
-            { key: 'language_id', label: 'Language ID', placeholder: 'en-US' },
-            { key: 'time_zone_id', label: 'Time zone ID', placeholder: 'Central Standard Time' },
-            { key: 'voice_id', label: 'Voice ID', placeholder: 'Male / Female' },
+            { key: 'language_id', label: 'Language', type: 'ref', choices: AA_LANGUAGE_CHOICES },
+            { key: 'time_zone_id', label: 'Time zone', type: 'ref', choices: AA_TIME_ZONE_CHOICES },
+            { key: 'voice_id', label: 'Voice', type: 'radio', options: ['Male', 'Female'] },
             { key: 'voice_response_enabled', label: 'Enable voice response (speech input)', type: 'boolean' },
             { key: 'notes', label: 'Notes', type: 'textarea', full: true },
           ]}

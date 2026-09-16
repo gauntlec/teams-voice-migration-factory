@@ -18,6 +18,8 @@ import {
   MessageBar,
   MessageBarBody,
   Option,
+  Radio,
+  RadioGroup,
   SearchBox,
   Spinner,
   Switch,
@@ -68,7 +70,7 @@ export type Choice = { value: string; label: string };
 export interface FieldDef {
   key: string;
   label: string;
-  type?: 'text' | 'textarea' | 'number' | 'select' | 'boolean' | 'ref';
+  type?: 'text' | 'textarea' | 'number' | 'select' | 'boolean' | 'ref' | 'radio';
   options?: readonly string[];
   choices?: Choice[] | ((row: Row | null) => Choice[]);
   required?: boolean;
@@ -253,13 +255,13 @@ export function BulkEditDialog({
                     </Field>
                   );
                 }
-                if (f.type === 'select' || f.type === 'ref') {
+                if (f.type === 'select' || f.type === 'ref' || f.type === 'radio') {
                   const choices: Choice[] =
-                    f.type === 'select'
-                      ? (f.options ?? []).map((o) => ({ value: o, label: o }))
-                      : typeof f.choices === 'function'
+                    f.type === 'ref'
+                      ? typeof f.choices === 'function'
                         ? f.choices(null)
-                        : (f.choices ?? []);
+                        : (f.choices ?? [])
+                      : (f.options ?? []).map((o) => ({ value: o, label: o }));
                   return (
                     <Field key={f.key} label={f.label} style={wide}>
                       <Dropdown
@@ -474,6 +476,17 @@ export function RecordDialog({
                         setValues((v) => ({ ...v, [f.key]: d.checked ? 'true' : 'false' }))
                       }
                     />
+                  ) : f.type === 'radio' ? (
+                    <RadioGroup
+                      layout="horizontal"
+                      disabled={disabled}
+                      value={values[f.key] ?? ''}
+                      onChange={(_, d) => setValues((v) => ({ ...v, [f.key]: d.value }))}
+                    >
+                      {(f.options ?? []).map((o) => (
+                        <Radio key={o} value={o} label={o} />
+                      ))}
+                    </RadioGroup>
                   ) : f.type === 'textarea' ? (
                     <Textarea
                       value={values[f.key] ?? ''}
