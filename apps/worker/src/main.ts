@@ -498,22 +498,6 @@ async function handleDeploymentRun(job: Job) {
   if (!executors.has(connectionId)) await exec.awaitSignIn(); // scaffold fallback
   const startedAt = Date.now();
 
-  // Re-checked fresh here rather than trusted from the queued job payload,
-  // so toggling this off/on always takes effect on the next cmdlet, even
-  // for a run already in flight. See docs/SECURITY.md.
-  const tenantRow = await platformDb(db)
-    .selectFrom('tenants')
-    .select('teams_read_only')
-    .where('id', '=', tenantId)
-    .executeTakeFirst();
-  const teamsReadOnly = tenantRow?.teams_read_only ?? false;
-
-  await scoped
-    .updateTable('deployments')
-    .set({ status: 'running', started_at: new Date().toISOString() })
-    .where('id', '=', deploymentId)
-    .execute();
-
   const counts = { applied: 0, skipped: 0, failed: 0, whatif: 0 };
   // One entry per failed cmdlet, with its own error text - see
   // notifyDeploymentRunComplete, which is the entire reason this is tracked
@@ -522,7 +506,61 @@ async function handleDeploymentRun(job: Job) {
   const failures: DeploymentCompletedContext['failures'] = [];
   const scriptLines: string[] = [];
   let seq = 0;
-  const whatIf = mode === 'dry_run';
+
+  try {
+    await runDeployment();
+  } catch (err) {
+    // A run that throws (e.g. a pwsh command timeout - see pwsh-executor.ts)
+    // must still leave `deployments` in a terminal state. Without this, the
+    // row is orphaned at 'running' forever: confirmed live in production,
+    // where a hung New-CsAutoAttendant call timed out in BullMQ but the
+    // Postgres row never moved past 'running' because nothing here caught
+    // the throw. Mirrors Discovery's own failure path in run.ts.
+    const message = (err as Error).message || 'Unknown error';
+    // eslint-disable-next-line no-console
+    console.error(`[deployment ${deploymentId}] ${mode} failed:`, message);
+    await scoped
+      .updateTable('deployments')
+      .set({
+        status: 'failed',
+        finished_at: new Date().toISOString(),
+        summary: { ...counts, total: seq },
+      })
+      .where('id', '=', deploymentId)
+      .execute();
+    await notifyDeploymentRunComplete(scoped, {
+      tenantId,
+      siteId: scope.siteId,
+      deploymentId,
+      operatorUserId,
+      mode,
+      startedAt,
+      counts,
+      total: seq,
+      failures,
+      errorMessage: message,
+    });
+    throw err;
+  }
+
+  async function runDeployment() {
+    // Re-checked fresh here rather than trusted from the queued job payload,
+    // so toggling this off/on always takes effect on the next cmdlet, even
+    // for a run already in flight. See docs/SECURITY.md.
+    const tenantRow = await platformDb(db)
+      .selectFrom('tenants')
+      .select('teams_read_only')
+      .where('id', '=', tenantId)
+      .executeTakeFirst();
+    const teamsReadOnly = tenantRow?.teams_read_only ?? false;
+
+    await scoped
+      .updateTable('deployments')
+      .set({ status: 'running', started_at: new Date().toISOString() })
+      .where('id', '=', deploymentId)
+      .execute();
+
+    const whatIf = mode === 'dry_run';
 
   /** Records one cmdlet's outcome as a deployment_changes row. */
   const record = async (call: CmdletInvocation, res: Awaited<ReturnType<typeof exec.invoke>>) => {
@@ -779,6 +817,7 @@ async function handleDeploymentRun(job: Job) {
     total: seq,
     failures,
   });
+  }
 }
 
 /**
@@ -800,6 +839,8 @@ async function notifyDeploymentRunComplete(
     counts: { applied: number; skipped: number; failed: number; whatif: number };
     total: number;
     failures: DeploymentCompletedContext['failures'];
+    /** Set when the run itself didn't finish (e.g. a cmdlet timeout) - drives `outcome: 'failed'`. */
+    errorMessage?: string;
   },
 ): Promise<void> {
   try {
@@ -827,7 +868,7 @@ async function notifyDeploymentRunComplete(
       siteName: site?.name ?? site?.sitecode ?? 'the site',
       sitecode: site?.sitecode ?? '',
       mode: args.mode,
-      outcome: args.counts.failed > 0 ? 'completed_with_errors' : 'completed',
+      outcome: args.errorMessage ? 'failed' : args.counts.failed > 0 ? 'completed_with_errors' : 'completed',
       durationText,
       total: args.total,
       applied: args.counts.applied,
@@ -835,6 +876,7 @@ async function notifyDeploymentRunComplete(
       skipped: args.counts.skipped,
       failed: args.counts.failed,
       failures: args.failures,
+      errorMessage: args.errorMessage ?? null,
       runUrl: webOrigin ? `${webOrigin}/deployment/sites/${args.siteId}` : `/deployment/sites/${args.siteId}`,
     };
 
