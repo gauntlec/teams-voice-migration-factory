@@ -58,6 +58,30 @@ interface Change {
   message: string | null;
 }
 
+/**
+ * A run's own `status` only ever tracks the pwsh session lifecycle (queued/
+ * running/completed/failed) - it says nothing about whether the individual
+ * cmdlets inside a "completed" run actually succeeded. A run where every
+ * cmdlet failed still shows `status: 'completed'` (the session finished
+ * cleanly, it just failed to change anything), so the badge has to look at
+ * `summary.failed` too or a 100%-failed run reads as a success at a glance.
+ */
+function runStatusBadge(d: Deployment): { label: string; color: 'success' | 'danger' | 'informative'; icon?: boolean } {
+  const failed = d.summary?.failed ?? 0;
+  if (d.status === 'failed') return { label: 'failed', color: 'danger', icon: true };
+  if (d.status === 'completed' && failed > 0) return { label: `completed - ${failed} failed`, color: 'danger', icon: true };
+  if (d.status === 'completed') return { label: 'completed', color: 'success' };
+  return { label: d.status, color: 'informative' };
+}
+
+/** Result column badge for one deployment_changes row - 'failed' is the one that must never blend in with the rest. */
+const RESULT_BADGE_COLOR: Record<string, 'success' | 'danger' | 'informative' | 'subtle'> = {
+  applied: 'success',
+  failed: 'danger',
+  whatif: 'informative',
+  skipped: 'subtle',
+};
+
 const OBJECT_TYPE_LABEL: Record<DeploymentPreviewRow['objectType'], string> = {
   user: 'User',
   cap: 'Common Area Phone',
@@ -341,25 +365,40 @@ export function DeploymentSiteWorkspace() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {siteDeployments.map((d) => (
+                {siteDeployments.map((d) => {
+                  const badge = runStatusBadge(d);
+                  return (
                   <TableRow key={d.id}>
                     <TableCell>{new Date(d.created_at).toLocaleString()}</TableCell>
                     <TableCell>{d.mode}</TableCell>
                     <TableCell>
-                      <Badge appearance="tint" color={d.status === 'completed' ? 'success' : 'informative'}>
-                        {d.status}
+                      <Badge appearance="tint" color={badge.color} icon={badge.icon ? <WarningRegular /> : undefined}>
+                        {badge.label}
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      {Object.entries(d.summary ?? {})
-                        .map(([k, v]) => `${k}:${v}`)
-                        .join('  ') || '—'}
+                      {Object.keys(d.summary ?? {}).length ? (
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          {Object.entries(d.summary ?? {}).map(([k, v]) => (
+                            <Badge
+                              key={k}
+                              appearance={k === 'failed' && v > 0 ? 'tint' : 'outline'}
+                              color={k === 'failed' && v > 0 ? 'danger' : 'informative'}
+                            >
+                              {k}:{v}
+                            </Badge>
+                          ))}
+                        </div>
+                      ) : (
+                        '—'
+                      )}
                     </TableCell>
                     <TableCell>
                       <Link onClick={() => setSelectedDeployment(d.id)}>View changes</Link>
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </DataTable>
           </Card>
@@ -382,11 +421,22 @@ export function DeploymentSiteWorkspace() {
                   </TableHeader>
                   <TableBody>
                     {(changes.data ?? []).map((c) => (
-                      <TableRow key={c.id}>
+                      <TableRow
+                        key={c.id}
+                        style={c.result === 'failed' ? { backgroundColor: 'var(--colorPaletteRedBackground1)' } : undefined}
+                      >
                         <TableCell>{c.seq}</TableCell>
                         <TableCell>{c.object_type}</TableCell>
                         <TableCell className={cs.mono}>{c.cmdlet}</TableCell>
-                        <TableCell>{c.result}</TableCell>
+                        <TableCell>
+                          <Badge
+                            appearance="tint"
+                            color={RESULT_BADGE_COLOR[c.result] ?? 'informative'}
+                            icon={c.result === 'failed' ? <WarningRegular /> : undefined}
+                          >
+                            {c.result}
+                          </Badge>
+                        </TableCell>
                         <TableCell className={cs.mono}>
                           <div style={{ maxWidth: 420, whiteSpace: 'pre-wrap' }}>{c.message ?? ''}</div>
                         </TableCell>
