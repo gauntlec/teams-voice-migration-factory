@@ -949,26 +949,33 @@ async function syncVoicemailSettings(s: Scoped, exec: TeamsExecutor, objectId: s
  * build_resource_accounts row (requested_at gets stamped then), this is
  * what promotes it to "Created & licensed" on the next sync - no manual
  * toggle needed. Runs tenant-wide (Discovery isn't site-scoped) after a
- * successful 'resource_account' step, matching every requested-but-not-yet-
- * linked row against this run's fresh tenant_objects snapshot by UPN.
+ * successful 'resource_account' step, matching every build_resource_accounts
+ * row against this run's fresh tenant_objects snapshot by UPN.
  *
  * Get-CsOnlineApplicationInstance (the cmdlet backing this object type)
  * only ever returns an object once New-CsOnlineApplicationInstance has
  * already run against it successfully - which itself requires the Phone
  * System (Virtual User) license to already be applied. So "appears in this
  * sweep at all" is exactly equivalent to "created & licensed"; no separate
- * license check is needed. Best-effort, like syncVoicemailSettings above -
- * never fails the run.
+ * license check is needed.
+ *
+ * Also backfills a missing `phone_number` from the same live record's
+ * PhoneNumber field - the bug this fixes: populateResourceAccounts only
+ * ever copied UserPrincipalName/ApplicationId from a live match, never the
+ * number, so a linked resource account's Number column stayed blank
+ * forever even once live. Only ever fills a *missing* number - never
+ * overwrites one an engineer already set (a planned number for an account
+ * not live yet is real input, not something a blank/stale live record
+ * should clear). Best-effort, like syncVoicemailSettings above - never
+ * fails the run.
  */
 async function linkRequestedResourceAccounts(s: Scoped) {
   try {
-    const pending = await s
+    const rows = await s
       .selectFrom('build_resource_accounts')
-      .select(['id', 'upn', 'kind'])
-      .where('application_id', 'is', null)
-      .where('requested_at', 'is not', null)
+      .select(['id', 'upn', 'kind', 'application_id', 'requested_at', 'phone_number'])
       .execute();
-    if (!pending.length) return;
+    if (!rows.length) return;
     const liveByUpn = new Map(
       (
         await s
@@ -978,18 +985,27 @@ async function linkRequestedResourceAccounts(s: Scoped) {
           .where('removed_at', 'is', null)
           .execute()
       )
-        .map((r) => str((r.data as Rec).UserPrincipalName)?.toLowerCase())
-        .filter((upn): upn is string => !!upn)
-        .map((upn) => [upn, true] as const),
+        .map((r) => {
+          const d = r.data as Rec;
+          const upn = str(d.UserPrincipalName)?.toLowerCase();
+          const phone = str(d.PhoneNumber);
+          return upn ? [upn, phone ? phone.replace(/^tel:/i, '') : null] : null;
+        })
+        .filter((e): e is [string, string | null] => !!e),
     );
     const now = new Date().toISOString();
-    for (const row of pending) {
-      if (!liveByUpn.has(row.upn.toLowerCase())) continue;
-      await s
-        .updateTable('build_resource_accounts')
-        .set({ application_id: RESOURCE_ACCOUNT_APPLICATION_IDS[row.kind], linked_at: now })
-        .where('id', '=', row.id)
-        .execute();
+    for (const row of rows) {
+      const live = liveByUpn.get(row.upn.toLowerCase());
+      if (live === undefined) continue;
+      const patch: Record<string, unknown> = {};
+      if (!row.application_id && row.requested_at) {
+        patch.application_id = RESOURCE_ACCOUNT_APPLICATION_IDS[row.kind];
+        patch.linked_at = now;
+      }
+      if (live && !row.phone_number) patch.phone_number = live;
+      if (Object.keys(patch).length) {
+        await s.updateTable('build_resource_accounts').set(patch as never).where('id', '=', row.id).execute();
+      }
     }
   } catch {
     // best-effort - see docstring

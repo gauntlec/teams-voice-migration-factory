@@ -764,6 +764,11 @@ export class BuildService {
       if (linked.has(d.id)) continue;
       const live = liveRaByName.get(d.name.toLowerCase());
       const liveUpn = live && typeof live.UserPrincipalName === 'string' ? live.UserPrincipalName : undefined;
+      // Bug: a linked resource account's Number column stayed blank forever
+      // even once live, because only UserPrincipalName/ApplicationId were
+      // ever copied from the live match here - never PhoneNumber.
+      const livePhoneRaw = live && typeof live.PhoneNumber === 'string' ? live.PhoneNumber : undefined;
+      const livePhone = livePhoneRaw ? livePhoneRaw.replace(/^tel:/i, '') : null;
       await s
         .insertInto('build_resource_accounts')
         .values({
@@ -773,6 +778,7 @@ export class BuildService {
           kind: d.kind,
           upn: liveUpn ?? '',
           application_id: liveUpn ? RESOURCE_ACCOUNT_APPLICATION_IDS[d.kind] : null,
+          phone_number: livePhone,
           status: {},
         })
         .execute();
