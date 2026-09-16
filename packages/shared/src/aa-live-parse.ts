@@ -43,6 +43,8 @@ export interface LiveMenu {
   enableDialByName?: boolean;
   directorySearchMethod?: (typeof AA_DIRECTORY_SEARCH_METHODS)[number];
   options: LiveMenuOption[];
+  /** New-CsAutoAttendantMenu -Prompts - the menu's own spoken prompt (e.g. "For Sales press 1..."), distinct from the CallFlow's Greetings. */
+  prompts?: LivePrompt[];
 }
 
 export interface LivePrompt {
@@ -118,12 +120,16 @@ export function parseLiveMenu(raw: unknown): LiveMenu | undefined {
   const options = Array.isArray(o.MenuOptions)
     ? (o.MenuOptions as unknown[]).map(parseLiveMenuOption).filter((v): v is LiveMenuOption => !!v)
     : [];
+  const prompts = Array.isArray(o.Prompts)
+    ? (o.Prompts as unknown[]).map(parseLivePrompt).filter((v): v is LivePrompt => !!v)
+    : [];
   return {
     enableDialByName: typeof o.DialByNameEnabled === 'boolean' ? o.DialByNameEnabled : undefined,
     // Unconfirmed index direction (0/1 -> ByName/ByExtension) - see AA_DIRECTORY_SEARCH_METHODS's own "confirm during implementation" note in domain.ts.
     directorySearchMethod:
       o.DirectorySearchMethod === 0 ? AA_DIRECTORY_SEARCH_METHODS[0] : o.DirectorySearchMethod === 1 ? AA_DIRECTORY_SEARCH_METHODS[1] : undefined,
     options,
+    prompts,
   };
 }
 
@@ -246,6 +252,7 @@ export function liveAutoAttendantToStructured(
     enableDialByName: m.enableDialByName,
     directorySearchMethod: m.directorySearchMethod,
     options: m.options.map(resolveMenuOption),
+    prompts: m.prompts?.map((p) => ({ type: p.type, text: p.text })),
   });
   const resolveCallFlow = (cf: LiveCallFlow): AutoAttendantCallFlow => ({
     greetings: cf.greetings.map((g) => ({ type: g.type, text: g.text })),

@@ -2235,11 +2235,17 @@ function CallFlowEditor({
   aaChoices: { id: string; name: string }[];
   cqChoices: { id: string; name: string }[];
 }) {
-  // Only a text-to-speech greeting is editable here - an AudioFile prompt needs
-  // a file upload + Import-CsOnlineAudioFile flow not built yet (planAutoAttendantRow
-  // silently drops one for the same reason, see its buildPrompt).
+  // Only a text-to-speech greeting/menu prompt is editable here - an AudioFile
+  // prompt needs a file upload + Import-CsOnlineAudioFile flow not built yet
+  // (planAutoAttendantRow silently drops one for the same reason, see its buildPrompt).
   const greetingText = value.greetings.find((g) => g.type === 'Text')?.text ?? '';
   const setGreetingText = (text: string) => onChange({ ...value, greetings: text ? [{ type: 'Text', text }] : [] });
+  // New-CsAutoAttendantMenu -Prompts - what the menu itself reads out (e.g.
+  // "For Sales press 1, for Support press 2") - distinct from the greeting
+  // above, which only plays once when the call is answered.
+  const menuPromptText = value.menu.prompts?.find((p) => p.type === 'Text')?.text ?? '';
+  const setMenuPromptText = (text: string) =>
+    onChange({ ...value, menu: { ...value.menu, prompts: text ? [{ type: 'Text', text }] : [] } });
 
   const addOption = () => {
     const used = new Set(value.menu.options.map((o) => o.dtmf));
@@ -2253,8 +2259,11 @@ function CallFlowEditor({
 
   return (
     <div style={{ display: 'grid', gap: 10 }}>
-      <Field label="Greeting (text-to-speech)">
+      <Field label="Greeting (text-to-speech)" hint="Played once when the call is answered.">
         <Textarea value={greetingText} onChange={(_, d) => setGreetingText(d.value)} rows={2} />
+      </Field>
+      <Field label="Menu prompt (text-to-speech)" hint='Read out after the greeting, e.g. "For Sales press 1, for Support press 2."'>
+        <Textarea value={menuPromptText} onChange={(_, d) => setMenuPromptText(d.value)} rows={2} />
       </Field>
       <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
         <Checkbox

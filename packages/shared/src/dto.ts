@@ -1074,6 +1074,8 @@ const autoAttendantMenuSchema = z
     enableDialByName: z.boolean().optional(),
     directorySearchMethod: z.enum(AA_DIRECTORY_SEARCH_METHODS).optional(),
     options: z.array(autoAttendantMenuOptionSchema).max(12),
+    /** New-CsAutoAttendantMenu -Prompts - the menu's own spoken prompt, distinct from the call flow's greetings. */
+    prompts: z.array(autoAttendantPromptSchema).max(5).optional(),
   })
   .strict();
 

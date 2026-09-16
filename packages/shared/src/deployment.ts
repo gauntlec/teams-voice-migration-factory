@@ -754,6 +754,8 @@ export interface AutoAttendantMenu {
   enableDialByName?: boolean;
   directorySearchMethod?: (typeof AA_DIRECTORY_SEARCH_METHODS)[number];
   options: AutoAttendantMenuOption[];
+  /** -Prompts - the menu's own spoken prompt (e.g. "For Sales press 1, for Support press 2"), distinct from the CallFlow's Greetings (the initial "Thank you for calling..."). Confirmed against Microsoft Learn's own New-CsAutoAttendantMenu examples. */
+  prompts?: AutoAttendantPrompt[];
 }
 
 /** New-CsAutoAttendantCallFlow. Mirrors dto.ts's autoAttendantCallFlowSchema. */
@@ -968,12 +970,14 @@ function buildPrompt(ctx: AaBuildCtx, p: AutoAttendantPrompt): VarRef | undefine
 /** New-CsAutoAttendantMenu. */
 function buildMenu(ctx: AaBuildCtx, menu: AutoAttendantMenu, crossRef: AutoAttendantCrossRef): VarRef {
   const optionRefs = menu.options.map((o) => buildMenuOption(ctx, o, crossRef));
+  const promptRefs = (menu.prompts ?? []).map((p) => buildPrompt(ctx, p)).filter((v): v is VarRef => !!v);
   const varName = nextAaVar(ctx, 'menu');
   ctx.steps.push({
     assignTo: varName,
     cmdlet: 'New-CsAutoAttendantMenu',
     parameters: {
       MenuOptions: optionRefs,
+      ...(promptRefs.length ? { Prompts: promptRefs } : {}),
       ...(menu.enableDialByName ? { EnableDialByName: true } : {}),
       ...(menu.directorySearchMethod ? { DirectorySearchMethod: menu.directorySearchMethod } : {}),
     },
@@ -1068,6 +1072,7 @@ function callFlowEqual(a: AutoAttendantCallFlow | null, b: AutoAttendantCallFlow
   if (!a && !b) return true;
   if (!a || !b) return false;
   if (!structurallyEqual(a.greetings, b.greetings)) return false;
+  if (!structurallyEqual(a.menu.prompts ?? [], b.menu.prompts ?? [])) return false;
   if (!!a.menu.enableDialByName !== !!b.menu.enableDialByName) return false;
   if ((a.menu.directorySearchMethod ?? undefined) !== (b.menu.directorySearchMethod ?? undefined)) return false;
   return structurallyEqual(sortedMenuOptions(a), sortedMenuOptions(b));
