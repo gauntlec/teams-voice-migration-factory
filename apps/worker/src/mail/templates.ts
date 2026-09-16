@@ -2,6 +2,7 @@ import {
   BUG_STATUS_LABELS,
   FEATURE_STATUS_LABELS,
   type BugReportStatusChangedContext,
+  type DeploymentCompletedContext,
   type DiscoveryCompletedContext,
   type EmailTemplate,
   type FeatureRequestStatusChangedContext,
@@ -34,6 +35,8 @@ export function renderEmail(template: string, context: Record<string, unknown>, 
       return invitation(context as unknown as UserInvitationContext, branding);
     case 'discovery_completed':
       return discoveryCompleted(context as unknown as DiscoveryCompletedContext, branding);
+    case 'deployment_completed':
+      return deploymentCompleted(context as unknown as DeploymentCompletedContext, branding);
     case 'port_documents_requested':
       return portDocumentsRequested(context as unknown as PortDocumentsRequestedContext, branding);
     case 'port_documents_reminder':
@@ -135,6 +138,56 @@ function discoveryCompleted(c: DiscoveryCompletedContext, branding?: EmailBrandi
       ...stats,
       'You are receiving this because you started this discovery run. A project administrator can turn these emails off per customer in the Discovery settings.',
     ],
+  };
+
+  return { subject, html: renderHtml(layout, branding), text: renderText(layout) };
+}
+
+function deploymentCompleted(c: DeploymentCompletedContext, branding?: EmailBranding): RenderedEmail {
+  const failed = c.outcome === 'failed';
+  const withErrors = c.outcome === 'completed_with_errors';
+  const modeLabel = c.mode === 'dry_run' ? 'What-If' : 'Execute';
+  const failureWord = c.failed === 1 ? 'failure' : 'failures';
+
+  const subject = failed
+    ? `Deployment failed — ${c.siteName}`
+    : withErrors
+      ? `Deployment completed with ${c.failed} ${failureWord} — ${c.siteName}`
+      : `Deployment complete — ${c.siteName}`;
+
+  const summaryLine = `applied:${c.applied}  whatif:${c.whatif}  skipped:${c.skipped}  failed:${c.failed}`;
+
+  const intro = [
+    failed
+      ? `The ${modeLabel} deployment you ran for ${c.siteName} (${c.sitecode}) at ${c.customerName} did not finish.`
+      : `The ${modeLabel} deployment you ran for ${c.siteName} (${c.sitecode}) at ${c.customerName} has completed${
+          withErrors ? `, but ${c.failed} ${failureWord} to ${c.total} planned change${c.total === 1 ? '' : 's'} failed` : ''
+        }.`,
+    `${c.total} change${c.total === 1 ? '' : 's'} processed · ran for ${c.durationText}.`,
+  ];
+  if (failed && c.errorMessage) intro.push(c.errorMessage);
+
+  const outro: string[] = [];
+  if (c.failures.length) {
+    outro.push('What failed, and why:');
+    for (const f of c.failures) outro.push(`${f.object} · ${f.cmdlet} — ${f.message}`);
+  }
+  outro.push('You are receiving this because you ran this deployment.');
+
+  const layout: LayoutInput = {
+    previewText: failed
+      ? `Deployment for ${c.siteName} did not finish.`
+      : `Deployment for ${c.siteName}: ${summaryLine}.`,
+    eyebrow: 'Deployment',
+    heading: failed
+      ? `Deployment did not finish — ${c.siteName}`
+      : withErrors
+        ? `Completed with ${c.failed} ${failureWord} — ${c.siteName}`
+        : `Deployment complete — ${c.siteName}`,
+    intro,
+    callout: failed ? undefined : { label: 'Result', value: summaryLine },
+    cta: { label: 'Open Deployment', url: c.runUrl },
+    outro,
   };
 
   return { subject, html: renderHtml(layout, branding), text: renderText(layout) };

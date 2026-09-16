@@ -18,8 +18,9 @@ API (MailService.enqueue)
 - **Enqueue side** — the API's `apps/api/src/mail/mail.service.ts` `enqueue()`
   writes the row and adds a `send` job (`attempts: 5`, exponential backoff from
   15 s); `resend(id)` re-queues an existing row. The **worker** can also enqueue,
-  for emails it originates (the discovery-run completion email): same contract in
-  `apps/worker/src/mail/enqueue.ts` (`makeMailEnqueuer(db, connection)`).
+  for emails it originates (the discovery-run and deployment-run completion
+  emails): same contract in `apps/worker/src/mail/enqueue.ts`
+  (`makeMailEnqueuer(db, connection)`).
 - **Send side** — `apps/worker/src/mail/`:
   - `mailer.ts` — nodemailer transport from `SMTP_*`; `mailerConfigured` is
     `false` when `SMTP_HOST` is unset.
@@ -28,9 +29,10 @@ API (MailService.enqueue)
     strip, primary button `#4657D2`, callout `#EEEFFD` / `#C3C7F6`, Segoe UI /
     Consolas. `renderHtml` + `renderText`, plus an optional `eyebrow` kicker.
   - `templates.ts` — `renderEmail(template, context)` switch; one function per
-    template (`user_invitation`, `discovery_completed`).
-  - `apps/worker/src/main.ts` — the `mail` BullMQ `Worker` and the shared
-    `enqueueMail` producer passed into the discovery runner.
+    template (`user_invitation`, `discovery_completed`, `deployment_completed`).
+  - `apps/worker/src/main.ts` — the `mail` BullMQ `Worker`, the shared
+    `enqueueMail` producer passed into the discovery runner, and
+    `notifyDeploymentRunComplete()` called at the end of `handleDeploymentRun`.
 
 ## `platform.email_messages`
 
@@ -134,3 +136,21 @@ Carries the outcome, scope, duration, change counts (`added`/`updated`/`removed`
 `readded`), the per-type breakdown, the skipped-not-licensed count and step-error
 count, and a link to `WEB_ORIGIN/discovery`. Built in
 `notifyRunComplete()` in `apps/worker/src/discovery/run.ts`.
+
+## `deployment_completed`
+
+Sent by the worker when a deployment run (What-If or Execute) finishes, to
+the operator who ran it (`deployments.started_by` / the job's
+`operatorUserId`). Always sent - no per-customer opt-out yet, since a
+deployment is a deliberate action the operator is already watching, not a
+background sync. `outcome` is derived from the run's own change counts
+(`completed_with_errors` when `failed > 0`) rather than trusted from
+`deployments.status`, which only tracks whether the pwsh session finished -
+not whether the cmdlets inside it succeeded (the same gap the Deployment
+page's own run-history badges had before they were fixed to check
+`summary.failed` too). Carries the mode, duration, `applied`/`whatif`/
+`skipped`/`failed` counts, and - the reason this template exists - one line
+per failed cmdlet with its own live error text (`object`, `cmdlet`,
+`message`), so the recipient sees what broke without opening the app. Links
+to `WEB_ORIGIN/deployment/sites/:siteId`. Built in
+`notifyDeploymentRunComplete()` in `apps/worker/src/main.ts`.

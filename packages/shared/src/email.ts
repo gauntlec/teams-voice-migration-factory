@@ -8,6 +8,7 @@
 export const EMAIL_TEMPLATES = [
   'user_invitation',
   'discovery_completed',
+  'deployment_completed',
   'port_documents_requested',
   'port_documents_reminder',
   'port_documents_completed',
@@ -62,6 +63,37 @@ export interface DiscoveryCompletedContext {
   /** biggest object types this run stored, for a quick breakdown */
   breakdown: { label: string; count: number }[];
   /** absolute URL of the Discovery page */
+  runUrl: string;
+}
+
+/**
+ * Context for the `deployment_completed` template (sent by the worker when a
+ * deployment run - What-If or Execute - reaches a terminal state). Unlike
+ * discovery, a deployment's own `status` only tracks whether the pwsh
+ * session finished, not whether the individual cmdlets inside it succeeded -
+ * `outcome` here is derived from `failed` so a 100%-failed run doesn't read
+ * as a plain success (the same gap the Deployment page's own badges had).
+ */
+export interface DeploymentCompletedContext {
+  /** display name of the person who ran the deployment */
+  recipientName: string;
+  customerName: string;
+  siteName: string;
+  sitecode: string;
+  mode: 'dry_run' | 'execute';
+  outcome: 'completed' | 'completed_with_errors' | 'failed';
+  /** human duration, e.g. "4 min 12 s" */
+  durationText: string;
+  total: number;
+  applied: number;
+  whatif: number;
+  skipped: number;
+  failed: number;
+  /** one entry per failed cmdlet, with its own error text - the reason for this email existing at all. */
+  failures: { object: string; cmdlet: string; message: string }[];
+  /** set when the run itself didn't finish (e.g. lost the tenant sign-in) */
+  errorMessage?: string | null;
+  /** absolute URL of this site's Deployment page */
   runUrl: string;
 }
 

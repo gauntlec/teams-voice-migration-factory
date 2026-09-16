@@ -28,6 +28,7 @@ import {
   type CallQueueActionSettings,
   type CallQueueLiveState,
   type CmdletInvocation,
+  type DeploymentCompletedContext,
   type LiveCallableEntityRef,
   type LiveIdentityState,
   type PickupGroupSettings,
@@ -495,6 +496,7 @@ async function handleDeploymentRun(job: Job) {
   const scoped = tenantDb(db, schema);
   const exec = executors.get(connectionId) ?? new SimulatedTeamsExecutor();
   if (!executors.has(connectionId)) await exec.awaitSignIn(); // scaffold fallback
+  const startedAt = Date.now();
 
   // Re-checked fresh here rather than trusted from the queued job payload,
   // so toggling this off/on always takes effect on the next cmdlet, even
@@ -513,6 +515,11 @@ async function handleDeploymentRun(job: Job) {
     .execute();
 
   const counts = { applied: 0, skipped: 0, failed: 0, whatif: 0 };
+  // One entry per failed cmdlet, with its own error text - see
+  // notifyDeploymentRunComplete, which is the entire reason this is tracked
+  // separately from `counts.failed` (a count alone can't tell the recipient
+  // what actually broke).
+  const failures: DeploymentCompletedContext['failures'] = [];
   const scriptLines: string[] = [];
   let seq = 0;
   const whatIf = mode === 'dry_run';
@@ -521,6 +528,9 @@ async function handleDeploymentRun(job: Job) {
   const record = async (call: CmdletInvocation, res: Awaited<ReturnType<typeof exec.invoke>>) => {
     counts[res.result] += 1;
     if (res.result === 'whatif') scriptLines.push(renderCommand(call));
+    if (res.result === 'failed') {
+      failures.push({ object: call.objectType, cmdlet: call.cmdlet, message: res.message ?? 'Unknown error' });
+    }
     await scoped
       .insertInto('deployment_changes')
       .values({
@@ -757,6 +767,89 @@ async function handleDeploymentRun(job: Job) {
 
   // eslint-disable-next-line no-console
   console.log(`[deployment ${deploymentId}] ${mode} done`, counts);
+
+  await notifyDeploymentRunComplete(scoped, {
+    tenantId,
+    siteId: scope.siteId,
+    deploymentId,
+    operatorUserId,
+    mode,
+    startedAt,
+    counts,
+    total: seq,
+    failures,
+  });
+}
+
+/**
+ * Email the person who ran a deployment once it reaches a terminal state -
+ * mirrors discovery/run.ts's notifyRunComplete. Unlike discovery, there's no
+ * per-customer opt-out for this yet (deployments are a deliberate, one-off
+ * action the operator is already watching, not a background sync) - always
+ * sent. Best-effort: a mail failure is logged and never fails the run.
+ */
+async function notifyDeploymentRunComplete(
+  scoped: ReturnType<typeof tenantDb>,
+  args: {
+    tenantId: string;
+    siteId: string;
+    deploymentId: string;
+    operatorUserId: string;
+    mode: 'dry_run' | 'execute';
+    startedAt: number;
+    counts: { applied: number; skipped: number; failed: number; whatif: number };
+    total: number;
+    failures: DeploymentCompletedContext['failures'];
+  },
+): Promise<void> {
+  try {
+    const user = await platformDb(db)
+      .selectFrom('users')
+      .select(['email', 'display_name'])
+      .where('id', '=', args.operatorUserId)
+      .executeTakeFirst();
+    if (!user?.email) return;
+
+    const tenant = await platformDb(db).selectFrom('tenants').select('name').where('id', '=', args.tenantId).executeTakeFirst();
+    const site = await scoped
+      .selectFrom('discovery_sites')
+      .select(['name', 'sitecode'])
+      .where('id', '=', args.siteId)
+      .executeTakeFirst();
+
+    const secs = Math.max(1, Math.round((Date.now() - args.startedAt) / 1000));
+    const durationText = secs < 90 ? `${secs} s` : `${Math.floor(secs / 60)} min ${String(secs % 60).padStart(2, '0')} s`;
+    const webOrigin = (process.env.WEB_ORIGIN ?? '').replace(/\/+$/, '');
+
+    const context: DeploymentCompletedContext = {
+      recipientName: user.display_name ?? user.email,
+      customerName: tenant?.name ?? 'your customer',
+      siteName: site?.name ?? site?.sitecode ?? 'the site',
+      sitecode: site?.sitecode ?? '',
+      mode: args.mode,
+      outcome: args.counts.failed > 0 ? 'completed_with_errors' : 'completed',
+      durationText,
+      total: args.total,
+      applied: args.counts.applied,
+      whatif: args.counts.whatif,
+      skipped: args.counts.skipped,
+      failed: args.counts.failed,
+      failures: args.failures,
+      runUrl: webOrigin ? `${webOrigin}/deployment/sites/${args.siteId}` : `/deployment/sites/${args.siteId}`,
+    };
+
+    await enqueueMail({
+      template: 'deployment_completed',
+      to: { email: user.email, name: user.display_name },
+      createdBy: args.operatorUserId,
+      related: { type: 'deployment', id: args.deploymentId },
+      context,
+      tenantId: args.tenantId,
+    });
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn(`[deployment ${args.deploymentId}] completion email not sent: ${(e as Error).message}`);
+  }
 }
 
 /**
