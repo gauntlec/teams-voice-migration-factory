@@ -27,8 +27,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
   && apt-get install -y --no-install-recommends nodejs \
   && apt-get purge -y gnupg && apt-get autoremove -y \
   && rm -rf /var/lib/apt/lists/*
+# No -RequiredVersion pin - always grabs whatever's newest on PSGallery.
+# CACHE_BUST forces this layer to actually re-run that install on every CI
+# build (build-images.yml passes a fresh value each time) instead of reusing
+# Docker's cached layer indefinitely, which would otherwise freeze the module
+# at whatever version happened to be cached the first time this line built.
+ARG CACHE_BUST=0
 RUN pwsh -NoLogo -NonInteractive -Command \
-    "Set-PSRepository -Name PSGallery -InstallationPolicy Trusted; \
+    "Write-Output 'cache bust: ${CACHE_BUST}'; \
+     Set-PSRepository -Name PSGallery -InstallationPolicy Trusted; \
      Install-Module -Name MicrosoftTeams -Scope AllUsers -Force -AcceptLicense; \
      Import-Module MicrosoftTeams; (Get-Module MicrosoftTeams).Version.ToString()"
 WORKDIR /app

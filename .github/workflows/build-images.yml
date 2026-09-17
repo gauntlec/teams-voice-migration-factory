@@ -12,6 +12,11 @@ on:
       - 'docs/**'
       - '**/*.md'
   workflow_dispatch:
+  # Rebuild weekly even with zero code changes, so the worker image's
+  # MicrosoftTeams PowerShell module (installed with no version pin) never
+  # goes stale for more than a week during a quiet period.
+  schedule:
+    - cron: '0 6 * * 1'
 
 concurrency:
   group: images-${{ github.ref }}
@@ -65,3 +70,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          # Only the worker Dockerfile declares this ARG (busts the
+          # Install-Module layer so it always re-fetches latest from
+          # PSGallery) - harmless no-op for api/web, which don't consume it.
+          build-args: |
+            CACHE_BUST=${{ github.run_id }}
