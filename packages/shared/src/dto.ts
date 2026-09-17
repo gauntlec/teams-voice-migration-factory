@@ -1152,8 +1152,8 @@ const autoAttendantHolidayCallFlowSchema = z
 
 const buildAutoAttendantWritable = {
   ...buildAutoAttendantNarrative,
-  /** build_resource_accounts.id - the direct, hand-editable link (discovery_resource_account_id is Populate-only). */
-  resource_account_id: refId,
+  /** build_resource_accounts.id array - which RA(s)/phone numbers this AA answers on. Mirrors buildCallQueueWritable's own field - an AA can have several resource accounts, or none yet. */
+  resource_accounts: z.array(z.string().uuid()).max(10).optional(),
   /** Set-CsAutoAttendant -LanguageId. */
   language_id: optStr(20),
   /** Set-CsAutoAttendant -TimeZoneId. */

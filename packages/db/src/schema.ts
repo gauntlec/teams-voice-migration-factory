@@ -537,9 +537,8 @@ export interface BuildAutoAttendantsTable {
   site_id: string;
   /** FK -> discovery_resource_accounts.id (ON DELETE SET NULL): the row this was seeded from - only ever set by Populate. */
   discovery_resource_account_id: string | null;
-  /** FK -> build_resource_accounts.id (ON DELETE SET NULL): the direct, hand-editable link Populate-created rows don't need but manually-created ones do - see deployment.service.ts/worker main.ts's resourceAccountInstanceId resolution, which tries this first and falls back to discovery_resource_account_id. */
-  resource_account_id: string | null;
   name: string;
+  /** build_resource_accounts.id array - which RA(s)/phone numbers this AA answers on, same pattern as build_call_queues' own field. An AA can have several, or none yet. */
   resource_accounts: Json;
   language: string | null;
   timezone: string | null;

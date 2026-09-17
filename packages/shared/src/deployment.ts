@@ -840,6 +840,8 @@ export interface BuildAutoAttendantRow {
   after_hours_call_flow: AutoAttendantCallFlow | null;
   holiday_call_flows: AutoAttendantHolidayCallFlow[];
   schedule: AutoAttendantSchedule | null;
+  /** build_resource_accounts.id array - resolved to Application Instance GUIDs via raObjectIds, same as BuildCallQueueRow's own field. */
+  resource_accounts: string[];
 }
 
 /**
@@ -884,21 +886,22 @@ function crossRefKey(kind: 'auto_attendant' | 'call_queue', buildId: string): st
 /**
  * Flags anything planAutoAttendantRow silently drops rather than guesses -
  * an unresolved menu-option/operator target, no default call flow at all
- * (nothing to deploy without one, so the row plans no calls), or - the
- * "greenfield gap" this session's audit found - no resource account link at
- * all, in which case New-CsOnlineApplicationInstanceAssociation never fires
- * and nothing ever tells the engineer why. `hasResourceAccountLink` is
- * `!!row.resource_account_id || !!row.discovery_resource_account_id`,
- * computed by the caller (which already has both).
+ * (nothing to deploy without one, so the row plans no calls), or a linked
+ * resource account with no live Application Instance yet - same check,
+ * same wording, as callQueueRowWarnings' own unresolved-RA warning (an AA
+ * can have several resource accounts or none, exactly like a Call Queue).
  */
 export function autoAttendantRowWarnings(
   row: BuildAutoAttendantRow,
   crossRef: AutoAttendantCrossRef,
-  hasResourceAccountLink: boolean,
+  raObjectIds: Map<string, string>,
 ): string[] {
   const warnings: string[] = [];
-  if (!hasResourceAccountLink) {
-    warnings.push('No resource account linked - this Auto Attendant will never get a phone number until one is linked.');
+  const unresolvedRas = row.resource_accounts.filter((id) => !raObjectIds.has(id));
+  if (unresolvedRas.length) {
+    warnings.push(
+      `${unresolvedRas.length} linked resource account(s) have no live Application Instance yet (New-CsOnlineApplicationInstance not run), so this Auto Attendant won't get a phone number until that's done.`,
+    );
   }
   if (!row.default_call_flow) {
     warnings.push('No business-hours call flow configured yet, so nothing will deploy for this Auto Attendant.');
@@ -1218,7 +1221,7 @@ function autoAttendantMatchesLive(row: BuildAutoAttendantRow, live: AutoAttendan
 export function planAutoAttendantRow(
   row: BuildAutoAttendantRow,
   crossRef: AutoAttendantCrossRef,
-  resourceAccountInstanceId: string | undefined,
+  raObjectIds: Map<string, string>,
   live?: AutoAttendantLiveState,
 ): CmdletInvocation[] {
   const calls: CmdletInvocation[] = [];
@@ -1300,13 +1303,16 @@ export function planAutoAttendantRow(
     }
   }
 
-  const alreadyAssociated = resourceAccountInstanceId
-    ? (live?.applicationInstanceIds ?? []).some((id) => id.toLowerCase() === resourceAccountInstanceId.toLowerCase())
-    : false;
-  if (live?.identity && resourceAccountInstanceId && !alreadyAssociated) {
+  // Mirrors planCallQueueRow's own association-diff block exactly - only
+  // emits instance ids not already associated live, instead of re-emitting
+  // every pass regardless.
+  const linkedInstanceIds = row.resource_accounts.map((id) => raObjectIds.get(id)).filter((id): id is string => !!id);
+  const alreadyAssociated = new Set((live?.applicationInstanceIds ?? []).map((id) => id.toLowerCase()));
+  const unassociatedInstanceIds = linkedInstanceIds.filter((id) => !alreadyAssociated.has(id.toLowerCase()));
+  if (live?.identity && unassociatedInstanceIds.length > 0) {
     calls.push({
       cmdlet: 'New-CsOnlineApplicationInstanceAssociation',
-      parameters: { Identities: [resourceAccountInstanceId], ConfigurationId: live.identity, ConfigurationType: 'AutoAttendant' },
+      parameters: { Identities: unassociatedInstanceIds, ConfigurationId: live.identity, ConfigurationType: 'AutoAttendant' },
       objectType: 'auto_attendant',
       objectId: row.id,
     });

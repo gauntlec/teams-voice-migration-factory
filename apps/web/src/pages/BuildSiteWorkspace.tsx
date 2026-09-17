@@ -193,22 +193,6 @@ export function BuildSiteWorkspace() {
     [avail.data],
   );
 
-  // This site's Auto Attendant-kind resource accounts, for the AA edit
-  // dialog's direct resource_account_id picker - lets an engineer link a
-  // manually-created AA to one without going through Populate (which is the
-  // only thing that could set this link before today).
-  const aaRaQ = useQuery({
-    queryKey: ['resource-accounts', tid, siteId, 'for-auto-attendant'],
-    enabled: !!tid,
-    queryFn: () => api<Paginated<Row>>(`${base}/resource-accounts?siteId=${siteId}&limit=500`),
-  });
-  const aaResourceAccountChoices: Choice[] = useMemo(
-    () =>
-      (aaRaQ.data?.items ?? [])
-        .filter((r) => r.kind === 'auto_attendant')
-        .map((r) => ({ value: String(r.id), label: String(r.display_name ?? r.upn) })),
-    [aaRaQ.data],
-  );
   const numberChoicesFor = (row: Row | null): Choice[] => {
     const cur =
       row && row.phone_number_id
@@ -887,7 +871,7 @@ export function BuildSiteWorkspace() {
       {tab === 'auto-attendants' && (
         <PagedSection
           title="Auto attendants"
-          hint="Language/voice and the real call-flow menu (business hours, after hours, holidays) for Auto Attendant resource accounts. Populate from Discovery pre-fills these from a live tenant; for a greenfield site, add one by hand and link it to a resource account below - it just won't get a phone number until that account is created and licensed."
+          hint="Language/voice and the real call-flow menu (business hours, after hours, holidays) for Auto Attendant resource accounts. Populate from Discovery pre-fills these from a live tenant; for a greenfield site, add one by hand and link resource accounts to it in Configure… - it just won't get a phone number until that account is created and licensed."
           endpoint={`${base}/auto-attendants`}
           queryKey={['auto-attendants', tid, siteId]}
           params={{ siteId }}
@@ -896,11 +880,6 @@ export function BuildSiteWorkspace() {
           emptyText="No auto attendants yet - add one, or Populate from Discovery on the Resource accounts tab."
           columns={[
             { key: 'name', label: 'Name' },
-            {
-              key: 'resource_account_id',
-              label: 'Resource account',
-              render: (r) => aaResourceAccountChoices.find((c) => c.value === String(r.resource_account_id))?.label ?? (r.discovery_resource_account_id ? 'Linked (via Populate)' : '—'),
-            },
             { key: 'language_id', label: 'Language' },
             { key: 'time_zone_id', label: 'Time zone' },
             { key: 'voice_id', label: 'Voice' },
@@ -943,7 +922,6 @@ export function BuildSiteWorkspace() {
           ]}
           fields={[
             { key: 'name', label: 'Name', required: true },
-            { key: 'resource_account_id', label: 'Resource account', type: 'ref', choices: () => aaResourceAccountChoices },
             { key: 'language_id', label: 'Language', type: 'ref', choices: AA_LANGUAGE_CHOICES },
             { key: 'time_zone_id', label: 'Time zone', type: 'ref', choices: AA_TIME_ZONE_CHOICES },
             { key: 'voice_id', label: 'Voice', type: 'radio', options: ['Male', 'Female'] },
@@ -2591,6 +2569,9 @@ function AutoAttendantSettingsDialog({
   const [holidays, setHolidays] = useState<AutoAttendantHolidayCallFlow[]>(
     Array.isArray(row.holiday_call_flows) ? (row.holiday_call_flows as AutoAttendantHolidayCallFlow[]).slice() : [],
   );
+  const [resourceAccounts, setResourceAccounts] = useState<string[]>(
+    Array.isArray(row.resource_accounts) ? (row.resource_accounts as string[]).slice() : [],
+  );
   const [err, setErr] = useState<string | null>(null);
 
   // Same-site AA/CQ choices for menu-option/-Operator targets - this row excluded
@@ -2606,6 +2587,17 @@ function AutoAttendantSettingsDialog({
   const aaChoices = (aaQ.data?.items ?? []).filter((r) => r.id !== row.id).map((r) => ({ id: String(r.id), name: String(r.name) }));
   const cqChoices = (cqQ.data?.items ?? []).map((r) => ({ id: String(r.id), name: String(r.name) }));
 
+  // Only Auto Attendant-kind resource accounts on this site can be linked -
+  // same pattern as CallQueueSettingsDialog's own raQ/raChoices. An AA can
+  // have several resource accounts, or none yet, exactly like a Call Queue.
+  const raQ = useQuery({
+    queryKey: ['resource-accounts', tenantId, siteId, 'for-auto-attendant'],
+    queryFn: () => api<Paginated<Row>>(`${base}/resource-accounts?siteId=${siteId}&limit=500`),
+  });
+  const raChoices = (raQ.data?.items ?? []).filter((r) => r.kind === 'auto_attendant');
+  const toggleRa = (id: string) =>
+    setResourceAccounts((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+
   const save = useMutation({
     mutationFn: () =>
       api(`${base}/auto-attendants/${row.id}`, {
@@ -2616,6 +2608,7 @@ function AutoAttendantSettingsDialog({
           after_hours_call_flow: afterHoursEnabled ? afterHoursCallFlow : null,
           schedule: afterHoursEnabled ? schedule : null,
           holiday_call_flows: holidays,
+          resource_accounts: resourceAccounts,
         }),
       }),
     onSuccess: onSaved,
@@ -2702,6 +2695,28 @@ function AutoAttendantSettingsDialog({
                     </Text>
                   )}
                 </div>
+              </div>
+
+              <div>
+                <Text weight="semibold">Linked resource accounts (phone numbers)</Text>
+                {raQ.isLoading ? (
+                  <Spinner size="tiny" label="Loading…" />
+                ) : raChoices.length === 0 ? (
+                  <Text size={200} style={{ color: '#616161', display: 'block', marginTop: 6 }}>
+                    No Auto Attendant-kind resource accounts on this site yet - add one on the Resource accounts tab.
+                  </Text>
+                ) : (
+                  <div style={{ display: 'grid', gap: 4, marginTop: 6 }}>
+                    {raChoices.map((r) => (
+                      <Checkbox
+                        key={String(r.id)}
+                        label={`${r.display_name ?? r.upn}${r.upn ? ` (${r.upn})` : ''}`}
+                        checked={resourceAccounts.includes(String(r.id))}
+                        onChange={() => toggleRa(String(r.id))}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
 
               {err && (

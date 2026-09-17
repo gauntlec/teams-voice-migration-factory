@@ -807,7 +807,7 @@ export class BuildService {
       // ever copied from the live match here - never PhoneNumber.
       const livePhoneRaw = live && typeof live.PhoneNumber === 'string' ? live.PhoneNumber : undefined;
       const livePhone = livePhoneRaw ? livePhoneRaw.replace(/^tel:/i, '') : null;
-      await s
+      const raRow = await s
         .insertInto('build_resource_accounts')
         .values({
           site_id: siteId,
@@ -819,7 +819,8 @@ export class BuildService {
           phone_number: livePhone,
           status: {},
         })
-        .execute();
+        .returning('id')
+        .executeTakeFirstOrThrow();
       if (d.kind === 'auto_attendant') {
         const notes = [d.exception_conditions, d.exception_action].filter(Boolean).join(' / ') || null;
         await s
@@ -828,7 +829,7 @@ export class BuildService {
             site_id: siteId,
             discovery_resource_account_id: d.id,
             name: d.name,
-            resource_accounts: JSON.stringify([]),
+            resource_accounts: JSON.stringify([raRow.id]),
             config: {},
             holiday_call_flows: JSON.stringify([]),
             business_hours: d.business_hours,
@@ -845,7 +846,7 @@ export class BuildService {
             site_id: siteId,
             discovery_resource_account_id: d.id,
             name: d.name,
-            resource_accounts: JSON.stringify([]),
+            resource_accounts: JSON.stringify([raRow.id]),
             agents: JSON.stringify([]),
             overflow: {},
             timeout: {},
@@ -1152,8 +1153,7 @@ export class BuildService {
       .values({
         site_id: body.site_id,
         name: body.name,
-        resource_account_id: body.resource_account_id ?? null,
-        resource_accounts: JSON.stringify([]),
+        resource_accounts: JSON.stringify(body.resource_accounts ?? []),
         config: {},
         business_hours: body.business_hours || null,
         ooh_action: body.ooh_action || null,
@@ -1181,13 +1181,14 @@ export class BuildService {
   }
 
   async updateAutoAttendant(t: TenantContext, u: AuthedUser, id: string, body: BuildAutoAttendantPatchInput) {
-    const { holiday_call_flows, ...rest } = body;
+    const { holiday_call_flows, resource_accounts, ...rest } = body;
     const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
     // pg binds a plain array as a native Postgres array, not jsonb, unless
-    // stringified first (see schema.ts) - holiday_call_flows is the one
-    // array-shaped field here (operator/default_call_flow/after_hours_call_flow/
-    // schedule are plain objects).
+    // stringified first (see schema.ts) - holiday_call_flows and
+    // resource_accounts are the array-shaped fields here (operator/
+    // default_call_flow/after_hours_call_flow/schedule are plain objects).
     if (holiday_call_flows !== undefined) patch.holiday_call_flows = JSON.stringify(holiday_call_flows);
+    if (resource_accounts !== undefined) patch.resource_accounts = JSON.stringify(resource_accounts);
     const row = await this.s(t)
       .updateTable('build_auto_attendants')
       .set(patch as never)
