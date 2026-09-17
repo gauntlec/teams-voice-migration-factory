@@ -125,9 +125,16 @@ export function parseLiveMenu(raw: unknown): LiveMenu | undefined {
     : [];
   return {
     enableDialByName: typeof o.DialByNameEnabled === 'boolean' ? o.DialByNameEnabled : undefined,
-    // Unconfirmed index direction (0/1 -> ByName/ByExtension) - see AA_DIRECTORY_SEARCH_METHODS's own "confirm during implementation" note in domain.ts.
+    // Confirmed live (was previously flagged "unconfirmed" here and in
+    // AA_DIRECTORY_SEARCH_METHODS's own domain.ts note): Teams' numeric
+    // encoding is None=0, ByName=1, ByExtension=2 - matching Microsoft
+    // Learn's own documented order (None | ByName | ByExtension) - not
+    // ByName=0/ByExtension=1 as this previously assumed. A row that never
+    // set -DirectorySearchMethod at all deploys as plain 0/None, which this
+    // used to misread as 'ByName', permanently disagreeing with the row's
+    // own undefined value even though nothing had actually changed.
     directorySearchMethod:
-      o.DirectorySearchMethod === 0 ? AA_DIRECTORY_SEARCH_METHODS[0] : o.DirectorySearchMethod === 1 ? AA_DIRECTORY_SEARCH_METHODS[1] : undefined,
+      o.DirectorySearchMethod === 1 ? AA_DIRECTORY_SEARCH_METHODS[0] : o.DirectorySearchMethod === 2 ? AA_DIRECTORY_SEARCH_METHODS[1] : undefined,
     options,
     prompts,
   };
