@@ -987,8 +987,17 @@ function buildPrompt(ctx: AaBuildCtx, p: AutoAttendantPrompt): VarRef | undefine
   return { $var: varName };
 }
 
-/** New-CsAutoAttendantMenu. */
-function buildMenu(ctx: AaBuildCtx, menu: AutoAttendantMenu, crossRef: AutoAttendantCrossRef): VarRef {
+/**
+ * New-CsAutoAttendantMenu. `-Name` is mandatory (Microsoft Learn) - omitting
+ * it doesn't error, it makes the cmdlet fall back to PowerShell's own
+ * "Supply values for the following parameters: Name:" interactive prompt,
+ * which then blocks forever since nothing is listening on stdin to answer
+ * it. Confirmed live in production: this exact prompt, caught in a raw pwsh
+ * session log, was the real cause behind three consecutive 15-minute
+ * "hangs" that looked network- or module-related but had nothing to do with
+ * either.
+ */
+function buildMenu(ctx: AaBuildCtx, menu: AutoAttendantMenu, name: string, crossRef: AutoAttendantCrossRef): VarRef {
   const optionRefs = menu.options.map((o) => buildMenuOption(ctx, o, crossRef));
   const promptRefs = (menu.prompts ?? []).map((p) => buildPrompt(ctx, p)).filter((v): v is VarRef => !!v);
   const varName = nextAaVar(ctx, 'menu');
@@ -996,6 +1005,7 @@ function buildMenu(ctx: AaBuildCtx, menu: AutoAttendantMenu, crossRef: AutoAtten
     assignTo: varName,
     cmdlet: 'New-CsAutoAttendantMenu',
     parameters: {
+      Name: `${name} Menu`,
       MenuOptions: optionRefs,
       ...(promptRefs.length ? { Prompts: promptRefs } : {}),
       ...(menu.enableDialByName ? { EnableDialByName: true } : {}),
@@ -1008,7 +1018,7 @@ function buildMenu(ctx: AaBuildCtx, menu: AutoAttendantMenu, crossRef: AutoAtten
 /** New-CsAutoAttendantCallFlow. */
 function buildCallFlow(ctx: AaBuildCtx, cf: AutoAttendantCallFlow, name: string, crossRef: AutoAttendantCrossRef): VarRef {
   const greetingRefs = cf.greetings.map((g) => buildPrompt(ctx, g)).filter((v): v is VarRef => !!v);
-  const menuRef = buildMenu(ctx, cf.menu, crossRef);
+  const menuRef = buildMenu(ctx, cf.menu, name, crossRef);
   const varName = nextAaVar(ctx, 'flow');
   ctx.steps.push({
     assignTo: varName,
