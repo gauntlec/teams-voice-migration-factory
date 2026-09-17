@@ -998,7 +998,20 @@ function buildPrompt(ctx: AaBuildCtx, p: AutoAttendantPrompt): VarRef | undefine
  * either.
  */
 function buildMenu(ctx: AaBuildCtx, menu: AutoAttendantMenu, name: string, crossRef: AutoAttendantCrossRef): VarRef {
-  const optionRefs = menu.options.map((o) => buildMenuOption(ctx, o, crossRef));
+  let optionRefs = menu.options.map((o) => buildMenuOption(ctx, o, crossRef));
+  // New-CsAutoAttendantMenu itself rejects an empty menu ("must have either
+  // menu options, dial-by-name or dial-by-extension") - confirmed live: this
+  // is the real shape of a "just play the greeting" after-hours flow (no
+  // caller interaction at all, e.g. "we're closed, please leave a
+  // voicemail"). Microsoft's own documented way to model that is a single
+  // option with DtmfResponse Automatic ("executed without user response"),
+  // so the caller never sees a menu at all - synthesize one rather than
+  // reject a row that has always been a legitimate, common AA shape.
+  if (!optionRefs.length && !menu.enableDialByName && !menu.directorySearchMethod) {
+    const varName = nextAaVar(ctx, 'opt');
+    ctx.steps.push({ assignTo: varName, cmdlet: 'New-CsAutoAttendantMenuOption', parameters: { Action: 'DisconnectCall', DtmfResponse: 'Automatic' } });
+    optionRefs = [{ $var: varName }];
+  }
   const promptRefs = (menu.prompts ?? []).map((p) => buildPrompt(ctx, p)).filter((v): v is VarRef => !!v);
   const varName = nextAaVar(ctx, 'menu');
   ctx.steps.push({
