@@ -285,6 +285,10 @@ export function BuildSiteWorkspace() {
       qc.invalidateQueries({ queryKey: ['resource-accounts', tid, siteId] });
     },
   });
+  // "Link discovered resource account" - pulls one specific live resource
+  // account straight into this site without visiting Data Collection first
+  // (BuildService.importAndLinkResourceAccount).
+  const [linkOpen, setLinkOpen] = useState(false);
   const [validateMsg, setValidateMsg] = useState<string | null>(null);
   // Set when validate() found rows with no stored tenant match and a live
   // connection could check them - polled until the targeted check
@@ -726,6 +730,9 @@ export function BuildSiteWorkspace() {
                 <Button size="small" disabled={requestAccounts.isPending} onClick={() => requestAccounts.mutate()}>
                   {requestAccounts.isPending ? 'Generating…' : 'Request accounts'}
                 </Button>
+                <Button size="small" onClick={() => setLinkOpen(true)}>
+                  Link discovered resource account…
+                </Button>
                 {requestedFile && (
                   <Button
                     size="small"
@@ -782,6 +789,20 @@ export function BuildSiteWorkspace() {
               type: 'boolean',
             },
           ]}
+        />
+      )}
+      {linkOpen && (
+        <LinkDiscoveredResourceAccountDialog
+          tid={tid}
+          siteId={siteId}
+          onClose={() => setLinkOpen(false)}
+          onDone={() => {
+            setLinkOpen(false);
+            qc.invalidateQueries({ queryKey: ['resource-accounts', tid, siteId] });
+            qc.invalidateQueries({ queryKey: ['call-queues', tid, siteId] });
+            qc.invalidateQueries({ queryKey: ['auto-attendants', tid, siteId] });
+            qc.invalidateQueries({ queryKey: ['build-summary', tid] });
+          }}
         />
       )}
       {tab === 'resource-accounts' && (
@@ -970,6 +991,102 @@ function toDesignAaInput(r: Row, hasPhoneNumberById?: Map<string, boolean>): Des
     holidayCallFlows: Array.isArray(r.holiday_call_flows) ? (r.holiday_call_flows as AutoAttendantHolidayCallFlow[]) : [],
     hasPhoneNumber: discoveryResourceAccountId ? hasPhoneNumberById?.get(discoveryResourceAccountId) : undefined,
   };
+}
+
+/**
+ * "Link discovered resource account" - pulls one specific live resource
+ * account (not yet in Data Collection at all) straight into this site,
+ * without the engineer having to visit Data Collection first. Candidates
+ * come from the same tenant-wide preview Data Collection's own Resource
+ * accounts import uses (TenantDiscoveryService.importResourceAccountsPreview) -
+ * ones whose auto-suggested site matches this workspace sort first, since
+ * the live object may not carry this site's own naming convention at all.
+ */
+function LinkDiscoveredResourceAccountDialog({
+  tid,
+  siteId,
+  onClose,
+  onDone,
+}: {
+  tid: string;
+  siteId: string;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [objectId, setObjectId] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  const preview = useQuery({
+    queryKey: ['tdisc', 'import-resource-accounts-preview', tid],
+    queryFn: () =>
+      api<{ candidates: { id: string; name: string | null; kind: string | null; phone: string | null; suggestedSiteId: string | null }[] }>(
+        `/t/${tid}/tenant-discovery/import-resource-accounts/preview`,
+      ),
+  });
+  const candidates = useMemo(() => {
+    const items = preview.data?.candidates ?? [];
+    return [...items].sort((a, b) => Number(b.suggestedSiteId === siteId) - Number(a.suggestedSiteId === siteId));
+  }, [preview.data, siteId]);
+  const link = useMutation({
+    mutationFn: () =>
+      api(`/t/${tid}/build/resource-accounts/import-and-link`, {
+        method: 'POST',
+        body: JSON.stringify({ site_id: siteId, object_id: objectId }),
+      }),
+    onSuccess: onDone,
+    onError: (e) => setErr(e instanceof ApiError ? e.message : 'Link failed'),
+  });
+  const selected = candidates.find((c) => c.id === objectId);
+
+  return (
+    <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
+      <DialogSurface>
+        <DialogBody>
+          <DialogTitle>Link discovered resource account</DialogTitle>
+          <DialogContent>
+            <div style={{ display: 'grid', gap: 12 }}>
+              <Text size={200}>
+                Pulls one live resource account that isn't in Data Collection yet straight into this
+                site - creates its Data Collection row and populates it here in one step.
+              </Text>
+              {preview.isLoading ? (
+                <Spinner size="tiny" />
+              ) : preview.isError ? (
+                <LoadError message={(preview.error as Error).message} />
+              ) : candidates.length === 0 ? (
+                <Text size={200}>Every discovered resource account is already captured.</Text>
+              ) : (
+                <Field label="Resource account">
+                  <Dropdown
+                    placeholder="Pick a resource account…"
+                    selectedOptions={objectId ? [objectId] : []}
+                    value={selected ? `${selected.name ?? '(unnamed)'}${selected.phone ? ` · ${selected.phone}` : ''}` : ''}
+                    onOptionSelect={(_, d) => setObjectId(d.optionValue ?? '')}
+                  >
+                    {candidates.map((c) => (
+                      <Option key={c.id} value={c.id} text={c.name ?? c.id}>
+                        {c.name ?? '(unnamed)'}
+                        {c.phone ? ` · ${c.phone}` : ''}
+                        {c.suggestedSiteId === siteId ? ' · suggested for this site' : ''}
+                      </Option>
+                    ))}
+                  </Dropdown>
+                </Field>
+              )}
+              {err && <LoadError message={err} />}
+            </div>
+          </DialogContent>
+          <DialogActions>
+            <Button appearance="secondary" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button appearance="primary" disabled={!objectId || link.isPending} onClick={() => link.mutate()}>
+              Link
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  );
 }
 
 /**

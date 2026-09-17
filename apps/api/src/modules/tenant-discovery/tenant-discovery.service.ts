@@ -7,6 +7,8 @@ import {
 import { sql, type Kysely } from 'kysely';
 import { platformDb, tenantDb, type DB } from '@tvmf/db';
 import {
+  matchSitecodeFromName,
+  RESOURCE_ACCOUNT_APPLICATION_IDS,
   TENANT_OBJECT_TYPES,
   type Paginated,
   type TenantConnectionInfo,
@@ -15,6 +17,7 @@ import {
   type TenantObjectType,
   type TenantObjectVersion,
   type TenantObjectsQuery,
+  type TenantResourceAccountsImportInput,
   type TenantUsersImportInput,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
@@ -23,10 +26,15 @@ import { InjectDb, type Db } from '../../db/db.module';
 import { InjectDeployQueue, type Queue } from '../../queue/queue.module';
 import { DataCollectionService } from '../data-collection/data-collection.service';
 import { assertSiteInScope } from '../data-collection/site-scope';
+import { TelephonyService } from '../data-collection/data-collection.telephony.service';
 import { DeploymentService } from '../deployment/deployment.service';
 
 type Scoped = ReturnType<typeof tenantDb>;
 const actorOf = (u: AuthedUser) => ({ id: u.id, email: u.email });
+const stripTel = (v: string | null | undefined): string | null => {
+  const raw = String(v ?? '').replace(/^tel:/i, '').trim();
+  return raw || null;
+};
 
 /** Columns the UI needs from `tenant_users` (never the raw object). */
 const USER_COLS = [
@@ -67,6 +75,7 @@ export class TenantDiscoveryService {
     private readonly audit: AuditService,
     private readonly deployments: DeploymentService,
     private readonly dataCollection: DataCollectionService,
+    private readonly telephony: TelephonyService,
   ) {}
 
   private s(t: TenantContext): Scoped {
@@ -721,25 +730,45 @@ export class TenantDiscoveryService {
 
   /* ============================ import to DC ============================ */
 
+  /** Site id/sitecode list for this tenant, for suggestion matching and site-id validation. */
+  private async siteLookup(t: TenantContext) {
+    const sites = await this.s(t).selectFrom('discovery_sites').select(['id', 'sitecode']).execute();
+    return { byId: new Map(sites.map((s) => [s.id, s.sitecode])), bySitecode: new Map(sites.map((s) => [s.sitecode, s.id])) };
+  }
+
+  /** Best-effort site suggestion for one candidate: phone-number match first, naming-convention second. */
+  private suggestSiteId(
+    name: string | null,
+    phone: string | null,
+    phoneSitecodes: Map<string, string>,
+    sites: { bySitecode: Map<string, string> },
+  ): string | null {
+    const viaPhone = phone ? phoneSitecodes.get(phone) : undefined;
+    const viaName = name ? matchSitecodeFromName(name, [...sites.bySitecode.keys()]) : null;
+    const sitecode = viaPhone ?? viaName ?? null;
+    return sitecode ? sites.bySitecode.get(sitecode) ?? null : null;
+  }
+
+  /** Validates every distinct siteId an import call references (fallback + per-row) belongs to this tenant and is in the caller's scope. */
+  private async assertSitesUsable(t: TenantContext, siteIds: Set<string>) {
+    if (!siteIds.size) return;
+    const known = await this.s(t).selectFrom('discovery_sites').select('id').where('id', 'in', [...siteIds]).execute();
+    if (known.length !== siteIds.size) throw new BadRequestException('Unknown site for this customer.');
+    for (const id of siteIds) assertSiteInScope(t, id);
+  }
+
   /**
    * Create Data Collection users for discovered tenant users that aren't captured
    * yet (matched on lower(upn)), and link any existing unlinked matches.
+   * `input.assignments` gives each included candidate its own site; a
+   * candidate not named there falls back to `input.siteId` (the "set all
+   * to..." convenience), and is skipped if neither is given.
    */
-  async importUsers(
-    t: TenantContext,
-    user: AuthedUser,
-    input: TenantUsersImportInput,
-    canReview: boolean,
-  ) {
+  async importUsers(t: TenantContext, user: AuthedUser, input: TenantUsersImportInput, canReview: boolean) {
     await this.dataCollection.assertEditable(t, canReview);
     const s = this.s(t);
-    const site = await s
-      .selectFrom('discovery_sites')
-      .select('id')
-      .where('id', '=', input.siteId)
-      .executeTakeFirst();
-    if (!site) throw new BadRequestException('Unknown site for this customer.');
-    assertSiteInScope(t, site.id);
+    const assignmentMap = new Map(input.assignments.map((a) => [a.id, a.siteId]));
+    await this.assertSitesUsable(t, new Set([...assignmentMap.values(), ...(input.siteId ? [input.siteId] : [])]));
 
     // 1. Link existing Data Collection users that match a tenant user but aren't linked yet.
     const relinked = await s
@@ -771,11 +800,17 @@ export class TenantDiscoveryService {
     const rows = await cand.orderBy('u.display_name').execute();
 
     let created = 0;
+    let skipped = 0;
     for (const r of rows) {
+      const siteId = assignmentMap.get(r.id) ?? input.siteId;
+      if (!siteId) {
+        skipped += 1;
+        continue;
+      }
       await s
         .insertInto('discovery_users')
         .values({
-          site_id: site.id,
+          site_id: siteId,
           upn: r.upn,
           display_name: r.display_name,
           calling_policy_id: input.calling_policy_id ?? null,
@@ -785,25 +820,25 @@ export class TenantDiscoveryService {
       created += 1;
     }
 
-    const result = {
-      created,
-      linked: Number(relinked?.numUpdatedRows ?? 0),
-      skippedExisting: undefined as number | undefined,
-    };
+    const result = { created, skipped, linked: Number(relinked?.numUpdatedRows ?? 0) };
     await this.audit.tenant(t.schema, 'discovery.users_imported', {
       actor: actorOf(user),
       targetType: 'discovery_site',
-      targetId: site.id,
-      detail: { created, linked: result.linked, onlyEnterpriseVoice: input.onlyEnterpriseVoice },
+      targetId: input.siteId,
+      detail: { created, skipped, linked: result.linked, onlyEnterpriseVoice: input.onlyEnterpriseVoice },
     });
     return result;
   }
 
-  /** How many tenant users an import would create right now (for the dialog). */
+  /** Candidate tenant users an import would create, each with a best-effort suggested site (for the dialog). */
   async importPreview(t: TenantContext, onlyEnterpriseVoice: boolean) {
-    let cand = this.s(t)
+    const s = this.s(t);
+    const [sites, phoneMap] = await Promise.all([this.siteLookup(t), this.telephony.listNumberSiteMap(t)]);
+    const phoneSitecodes = new Map(phoneMap.filter((p) => p.sitecode).map((p) => [p.e164, p.sitecode as string]));
+
+    let cand = s
       .selectFrom('tenant_users as u')
-      .select((eb) => eb.fn.count<number>('u.id').as('n'))
+      .select(['u.id', 'u.upn', 'u.display_name', 'u.line_uri', 'u.telephone_numbers'])
       .where('u.removed_at', 'is', null)
       .where((eb) => eb.or([eb('u.account_type', '=', 'User'), eb('u.account_type', 'is', null)]))
       .where(
@@ -811,7 +846,103 @@ export class TenantDiscoveryService {
                          WHERE lower(d.upn) = lower(u.upn))`,
       );
     if (onlyEnterpriseVoice) cand = cand.where('u.enterprise_voice_enabled', '=', true);
-    const row = await cand.executeTakeFirst();
-    return { wouldCreate: Number(row?.n ?? 0) };
+    const rows = await cand.orderBy('u.display_name').execute();
+
+    const candidates = rows.map((r) => {
+      const nums = Array.isArray(r.telephone_numbers) ? (r.telephone_numbers as { number?: string }[]) : [];
+      const phone = stripTel(r.line_uri) ?? stripTel(nums[0]?.number ?? null);
+      return {
+        id: r.id,
+        name: r.display_name,
+        upn: r.upn,
+        phone,
+        suggestedSiteId: this.suggestSiteId(r.display_name, phone, phoneSitecodes, sites),
+      };
+    });
+    return { candidates };
+  }
+
+  /**
+   * Same idea as `importPreview`/`importUsers` but for discovered resource
+   * accounts (`tenant_objects`, `object_type = 'resource_account'`) -
+   * Data Collection's own import never covered these until now. Matched
+   * on lower(name), same convention `BuildService.populateResourceAccounts`
+   * already uses to correlate a Data Collection row to its live match.
+   */
+  async importResourceAccountsPreview(t: TenantContext) {
+    const s = this.s(t);
+    const [sites, phoneMap] = await Promise.all([this.siteLookup(t), this.telephony.listNumberSiteMap(t)]);
+    const phoneSitecodes = new Map(phoneMap.filter((p) => p.sitecode).map((p) => [p.e164, p.sitecode as string]));
+    const kindByAppId = new Map(Object.entries(RESOURCE_ACCOUNT_APPLICATION_IDS).map(([kind, id]) => [id, kind]));
+
+    const rows = await s
+      .selectFrom('tenant_objects as o')
+      .select(['o.id', 'o.display_name', 'o.data'])
+      .where('o.object_type', '=', 'resource_account')
+      .where('o.removed_at', 'is', null)
+      .where(
+        sql<boolean>`NOT EXISTS (SELECT 1 FROM ${sql.table(`${t.schema}.discovery_resource_accounts`)} d
+                         WHERE lower(d.name) = lower(o.display_name))`,
+      )
+      .orderBy('o.display_name')
+      .execute();
+
+    const candidates = rows.map((r) => {
+      const d = (r.data ?? {}) as Record<string, unknown>;
+      const phone = stripTel(typeof d.PhoneNumber === 'string' ? d.PhoneNumber : null);
+      const kind = typeof d.ApplicationId === 'string' ? kindByAppId.get(d.ApplicationId) ?? null : null;
+      return {
+        id: r.id,
+        name: r.display_name,
+        kind,
+        phone,
+        suggestedSiteId: this.suggestSiteId(r.display_name, phone, phoneSitecodes, sites),
+      };
+    });
+    return { candidates };
+  }
+
+  async importResourceAccounts(t: TenantContext, user: AuthedUser, input: TenantResourceAccountsImportInput, canReview: boolean) {
+    await this.dataCollection.assertEditable(t, canReview);
+    const s = this.s(t);
+    const assignmentMap = new Map(input.assignments.map((a) => [a.id, a.siteId]));
+    await this.assertSitesUsable(t, new Set([...assignmentMap.values(), ...(input.siteId ? [input.siteId] : [])]));
+    const kindByAppId = new Map(Object.entries(RESOURCE_ACCOUNT_APPLICATION_IDS).map(([kind, id]) => [id, kind]));
+
+    const rows = await s
+      .selectFrom('tenant_objects as o')
+      .select(['o.id', 'o.display_name', 'o.data'])
+      .where('o.object_type', '=', 'resource_account')
+      .where('o.removed_at', 'is', null)
+      .where(
+        sql<boolean>`NOT EXISTS (SELECT 1 FROM ${sql.table(`${t.schema}.discovery_resource_accounts`)} d
+                         WHERE lower(d.name) = lower(o.display_name))`,
+      )
+      .execute();
+
+    let created = 0;
+    let skipped = 0;
+    for (const r of rows) {
+      const siteId = assignmentMap.get(r.id) ?? input.siteId;
+      if (!siteId || !r.display_name) {
+        skipped += 1;
+        continue;
+      }
+      const d = (r.data ?? {}) as Record<string, unknown>;
+      const kind = (typeof d.ApplicationId === 'string' ? kindByAppId.get(d.ApplicationId) : undefined) ?? 'auto_attendant';
+      await s
+        .insertInto('discovery_resource_accounts')
+        .values({ site_id: siteId, name: r.display_name, kind: kind as 'auto_attendant' | 'call_queue' })
+        .execute();
+      created += 1;
+    }
+
+    await this.audit.tenant(t.schema, 'discovery.resource_accounts_imported', {
+      actor: actorOf(user),
+      targetType: 'discovery_site',
+      targetId: input.siteId,
+      detail: { created, skipped },
+    });
+    return { created, skipped };
   }
 }

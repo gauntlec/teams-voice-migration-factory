@@ -8,7 +8,9 @@ import { GeocodeService } from './geocode.service';
 @Module({
   controllers: [DataCollectionController, TelephonyController],
   providers: [DataCollectionService, TelephonyService, GeocodeService],
-  // Discovery's "import users" respects the same draft/submitted/accepted lock.
-  exports: [DataCollectionService],
+  // Discovery's "import users"/"import resource accounts" respect the same
+  // draft/submitted/accepted lock, and reuse TelephonyService's e164->sitecode
+  // map for site suggestions (see TenantDiscoveryService.importPreview).
+  exports: [DataCollectionService, TelephonyService],
 })
 export class DataCollectionModule {}

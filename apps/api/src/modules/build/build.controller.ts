@@ -1,5 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import {
+  can,
   buildAutoAttendantCreateSchema,
   buildAutoAttendantPatchSchema,
   buildBulkPatchSchema,
@@ -9,6 +10,7 @@ import {
   buildCapPatchSchema,
   buildIdentityCreateSchema,
   buildIdentityPatchSchema,
+  buildImportAndLinkResourceAccountSchema,
   buildListQuerySchema,
   buildPopulateSchema,
   buildResourceAccountCreateSchema,
@@ -30,6 +32,7 @@ import {
   type BuildCapPatchInput,
   type BuildIdentityCreateInput,
   type BuildIdentityPatchInput,
+  type BuildImportAndLinkResourceAccountInput,
   type BuildListQuery,
   type BuildPopulateInput,
   type BuildResourceAccountCreateInput,
@@ -223,6 +226,15 @@ export class BuildController {
     @Body(new ZodBody(buildPopulateSchema)) body: BuildPopulateInput,
   ) {
     return this.svc.populateResourceAccounts(t, user, body.site_id);
+  }
+  @Post('resource-accounts/import-and-link')
+  @RequirePermission('build:write')
+  importAndLinkResourceAccount(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(buildImportAndLinkResourceAccountSchema)) body: BuildImportAndLinkResourceAccountInput,
+  ) {
+    return this.svc.importAndLinkResourceAccount(t, user, body.object_id, body.site_id, can(user.role, 'discovery:review'));
   }
   @Post('resource-accounts/request-document')
   @RequirePermission('build:write')

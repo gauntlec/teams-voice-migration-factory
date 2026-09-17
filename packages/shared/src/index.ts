@@ -6,6 +6,7 @@ export * from './deployment';
 export * from './aa-live-parse';
 export * from './call-flow-graph';
 export * from './color';
+export * from './site-match';
 
 import type { CmdletInvocation } from './deployment';
 

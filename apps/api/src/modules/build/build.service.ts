@@ -831,6 +831,27 @@ export class BuildService {
   }
 
   /**
+   * "Link discovered resource account" - lets an engineer pull one specific
+   * live resource account (`tenant_objects.id`) straight into this site
+   * without visiting Data Collection first. Thin combinator: reuses
+   * `TenantDiscoveryService.importResourceAccounts` to create the Data
+   * Collection row under this site, then `populateResourceAccounts` (above)
+   * to seed the matching build_resource_accounts/build_auto_attendants/
+   * build_call_queues row from the same live snapshot - identical to what
+   * happens when both steps are run separately from their own modules.
+   */
+  async importAndLinkResourceAccount(t: TenantContext, u: AuthedUser, objectId: string, siteId: string, canReview: boolean) {
+    const imported = await this.discovery.importResourceAccounts(
+      t,
+      u,
+      { assignments: [{ id: objectId, siteId }] },
+      canReview,
+    );
+    const populated = await this.populateResourceAccounts(t, u, siteId);
+    return { imported, populated };
+  }
+
+  /**
    * Second pass of populateResourceAccounts: best-effort pre-fills the
    * structured AA/CQ columns (Workstream 1/2's real Set-CsAutoAttendant/
    * Set-CsCallQueue shape) from Discovery's live tenant_objects snapshot,

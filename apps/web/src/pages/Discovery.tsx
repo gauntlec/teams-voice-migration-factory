@@ -1198,6 +1198,7 @@ function ObjectsTable({
   title,
   columns,
   flowType,
+  actions,
 }: {
   base: string;
   type: TenantObjectType;
@@ -1205,6 +1206,8 @@ function ObjectsTable({
   columns?: { label: string; render: (o: TenantObject) => ReactNode }[];
   /** When set, adds a "Call flow" button per row opening LiveCallFlowDialog scoped to that object. */
   flowType?: 'auto_attendant' | 'call_queue';
+  /** Extra toolbar content (e.g. an Import button) rendered after the search box. */
+  actions?: ReactNode;
 }) {
   const s = useStyles();
   const [qInput, setQInput] = useState('');
@@ -1237,7 +1240,10 @@ function ObjectsTable({
         <Text weight="semibold">
           {title ?? TENANT_OBJECT_TYPE_LABELS[type]} <span className={s.muted}>({total.toLocaleString()})</span>
         </Text>
-        <SearchBox size="small" placeholder="Search…" value={qInput} onChange={(_, d) => setQInput(d.value)} style={{ minWidth: 220 }} />
+        <div className={s.row}>
+          <SearchBox size="small" placeholder="Search…" value={qInput} onChange={(_, d) => setQInput(d.value)} style={{ minWidth: 220 }} />
+          {actions}
+        </div>
       </div>
       {list.isLoading ? (
         <Spinner size="tiny" />
@@ -1548,6 +1554,7 @@ function UsersTable({ base, canImport, onImported }: { base: string; canImport: 
       {importOpen && (
         <ImportDialog
           base={base}
+          kind="user"
           onClose={() => setImportOpen(false)}
           onDone={() => {
             setImportOpen(false);
@@ -1559,12 +1566,72 @@ function UsersTable({ base, canImport, onImported }: { base: string; canImport: 
   );
 }
 
-function ImportDialog({ base, onClose, onDone }: { base: string; onClose: () => void; onDone: () => void }) {
+function ResourceAccountsTab({ base, canImport, onImported }: { base: string; canImport: boolean; onImported: () => void }) {
+  const [importOpen, setImportOpen] = useState(false);
+
+  return (
+    <>
+      <ObjectsTable
+        base={base}
+        type="resource_account"
+        columns={[
+          { label: 'Name', render: (o) => o.display_name ?? o.object_key },
+          { label: 'UPN', render: (o) => str(o, 'UserPrincipalName') },
+          { label: 'Application', render: (o) => str(o, 'ApplicationId') },
+          { label: 'Number', render: (o) => str(o, 'PhoneNumber') },
+        ]}
+        actions={
+          canImport && (
+            <Button size="small" appearance="primary" onClick={() => setImportOpen(true)}>
+              Import into Data Collection…
+            </Button>
+          )
+        }
+      />
+      {importOpen && (
+        <ImportDialog
+          base={base}
+          kind="resource_account"
+          onClose={() => setImportOpen(false)}
+          onDone={() => {
+            setImportOpen(false);
+            onImported();
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+/** One discovered-but-not-yet-captured candidate, shape shared by the users and resource-account import previews. */
+type ImportCandidate = { id: string; name: string | null; upn?: string | null; kind?: string | null; phone: string | null; suggestedSiteId: string | null };
+
+/**
+ * Reverse-import a live-discovered object (Users tab or Resource accounts
+ * tab) into Data Collection. Each candidate gets its own destination site -
+ * pre-filled from a best-effort suggestion (phone-number range match, then
+ * naming-convention match against known sitecodes) and editable per row -
+ * plus a "set all to" convenience for the common single-site case.
+ */
+function ImportDialog({
+  base,
+  kind,
+  onClose,
+  onDone,
+}: {
+  base: string;
+  kind: 'user' | 'resource_account';
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const s = useStyles();
   const { activeTenantId } = useAuth();
-  const [siteId, setSiteId] = useState('');
   const [evOnly, setEvOnly] = useState(true);
-  const [result, setResult] = useState<{ created: number; linked: number } | null>(null);
+  const [bulkSiteId, setBulkSiteId] = useState('');
+  const [rowSiteId, setRowSiteId] = useState<Record<string, string>>({});
+  const [result, setResult] = useState<{ created: number; skipped: number; linked?: number } | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const importPath = kind === 'user' ? 'import-users' : 'import-resource-accounts';
 
   const sites = useQuery({
     queryKey: ['tdisc', 'sites', activeTenantId],
@@ -1572,66 +1639,138 @@ function ImportDialog({ base, onClose, onDone }: { base: string; onClose: () => 
       api<{ sites: { id: string; sitecode: string; name: string | null }[] }>(`/t/${activeTenantId}/discovery`),
   });
   const preview = useQuery({
-    queryKey: ['tdisc', 'import-preview', base, evOnly],
-    queryFn: () => api<{ wouldCreate: number }>(`${base}/import-users/preview?onlyEnterpriseVoice=${evOnly}`),
+    queryKey: ['tdisc', 'import-preview', kind, base, evOnly],
+    queryFn: () =>
+      api<{ candidates: ImportCandidate[] }>(
+        `${base}/${importPath}/preview${kind === 'user' ? `?onlyEnterpriseVoice=${evOnly}` : ''}`,
+      ),
   });
+  const candidates = preview.data?.candidates ?? [];
   const run = useMutation({
     mutationFn: () =>
-      api<{ created: number; linked: number }>(`${base}/import-users`, {
+      api<{ created: number; skipped: number; linked?: number }>(`${base}/${importPath}`, {
         method: 'POST',
-        body: JSON.stringify({ siteId, onlyEnterpriseVoice: evOnly }),
+        body: JSON.stringify({
+          assignments: candidates
+            .map((c) => ({ id: c.id, siteId: rowSiteId[c.id] ?? c.suggestedSiteId ?? '' }))
+            .filter((a) => a.siteId),
+          ...(kind === 'user' ? { onlyEnterpriseVoice: evOnly } : {}),
+        }),
       }),
     onSuccess: (r) => setResult(r),
     onError: (e) => setErr(e instanceof ApiError ? e.message : 'Import failed'),
   });
 
   const siteList = sites.data?.sites ?? [];
-  const selected = siteList.find((x) => x.id === siteId);
+  const siteLabel = (id: string) => {
+    const x = siteList.find((s) => s.id === id);
+    return x ? `${x.sitecode} · ${x.name ?? ''}` : '';
+  };
+  const readyCount = candidates.filter((c) => rowSiteId[c.id] ?? c.suggestedSiteId).length;
+  const noun = kind === 'user' ? 'user' : 'resource account';
 
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
       <DialogSurface>
         <DialogBody>
-          <DialogTitle>Import discovered users into Data Collection</DialogTitle>
+          <DialogTitle>Import discovered {noun}s into Data Collection</DialogTitle>
           <DialogContent>
             {result ? (
               <MessageBar intent="success">
                 <MessageBarBody>
-                  Created <b>{result.created}</b> Data Collection user{result.created === 1 ? '' : 's'}
-                  {result.linked ? ` and linked ${result.linked} existing` : ''}. Users already captured were skipped.
+                  Created <b>{result.created}</b> Data Collection {noun}
+                  {result.created === 1 ? '' : 's'}
+                  {result.linked ? ` and linked ${result.linked} existing` : ''}
+                  {result.skipped ? `; skipped ${result.skipped} with no site chosen` : ''}.
                 </MessageBarBody>
               </MessageBar>
             ) : (
               <div style={{ display: 'grid', gap: 12 }}>
                 <Text size={200}>
-                  Creates a Data Collection user for every discovered tenant user that is not captured yet
-                  (matched on UPN). Existing users are never overwritten; unlinked matches are linked.
+                  {kind === 'user'
+                    ? 'Creates a Data Collection user for every discovered tenant user that is not captured yet (matched on UPN). Existing users are never overwritten; unlinked matches are linked.'
+                    : 'Creates a Data Collection resource account for every discovered resource account that is not captured yet (matched on name).'}
+                  {' '}Each row below is pre-filled with a best-effort site suggestion (phone number range, then
+                  naming convention) - review and override before importing; rows left blank are skipped.
                 </Text>
-                <Field label="Site" required hint="Imported users are placed under this site; move them later if needed.">
-                  <Dropdown
-                    placeholder={sites.isLoading ? 'Loading sites…' : 'Select a site'}
-                    selectedOptions={siteId ? [siteId] : []}
-                    value={selected ? `${selected.sitecode} · ${selected.name ?? ''}` : ''}
-                    onOptionSelect={(_, d) => setSiteId(d.optionValue ?? '')}
-                  >
-                    {siteList.map((x) => (
-                      <Option key={x.id} value={x.id} text={`${x.sitecode} · ${x.name ?? ''}`}>
-                        {x.sitecode} · {x.name ?? ''}
-                      </Option>
-                    ))}
-                  </Dropdown>
+                {kind === 'user' && (
+                  <Checkbox
+                    checked={evOnly}
+                    onChange={(_, d) => setEvOnly(!!d.checked)}
+                    label="Only users with Enterprise Voice enabled"
+                  />
+                )}
+                <Field label="Set all rows to">
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <Dropdown
+                      placeholder={sites.isLoading ? 'Loading sites…' : 'Select a site'}
+                      selectedOptions={bulkSiteId ? [bulkSiteId] : []}
+                      value={bulkSiteId ? siteLabel(bulkSiteId) : ''}
+                      onOptionSelect={(_, d) => setBulkSiteId(d.optionValue ?? '')}
+                      style={{ minWidth: 220 }}
+                    >
+                      {siteList.map((x) => (
+                        <Option key={x.id} value={x.id} text={`${x.sitecode} · ${x.name ?? ''}`}>
+                          {x.sitecode} · {x.name ?? ''}
+                        </Option>
+                      ))}
+                    </Dropdown>
+                    <Button
+                      size="small"
+                      disabled={!bulkSiteId}
+                      onClick={() =>
+                        setRowSiteId(Object.fromEntries(candidates.map((c) => [c.id, bulkSiteId])))
+                      }
+                    >
+                      Apply to all
+                    </Button>
+                  </div>
                 </Field>
-                <Checkbox
-                  checked={evOnly}
-                  onChange={(_, d) => setEvOnly(!!d.checked)}
-                  label="Only users with Enterprise Voice enabled"
-                />
                 {preview.isError ? (
-                  <LoadError message={`Could not count candidates: ${(preview.error as Error).message}`} />
-                ) : (
-                  <Text size={200}>
-                    {preview.isLoading ? 'Counting…' : `${(preview.data?.wouldCreate ?? 0).toLocaleString()} user(s) would be created.`}
+                  <LoadError message={`Could not load candidates: ${(preview.error as Error).message}`} />
+                ) : preview.isLoading ? (
+                  <Spinner size="tiny" />
+                ) : candidates.length === 0 ? (
+                  <Text size={200} className={s.muted}>
+                    Nothing to import - every discovered {noun} is already captured.
                   </Text>
+                ) : (
+                  <DataTable size="small" minWidth={560}>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHeaderCell>Name</TableHeaderCell>
+                        <TableHeaderCell>{kind === 'user' ? 'UPN' : 'Number'}</TableHeaderCell>
+                        <TableHeaderCell>Site</TableHeaderCell>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {candidates.map((c) => {
+                        const value = rowSiteId[c.id] ?? c.suggestedSiteId ?? '';
+                        return (
+                          <TableRow key={c.id}>
+                            <TableCell>{c.name ?? '—'}</TableCell>
+                            <TableCell>{kind === 'user' ? c.upn : c.phone ?? '—'}</TableCell>
+                            <TableCell>
+                              <Dropdown
+                                size="small"
+                                placeholder="Pick a site…"
+                                selectedOptions={value ? [value] : []}
+                                value={value ? siteLabel(value) : ''}
+                                onOptionSelect={(_, d) => setRowSiteId((prev) => ({ ...prev, [c.id]: d.optionValue ?? '' }))}
+                                style={{ minWidth: 200 }}
+                              >
+                                {siteList.map((x) => (
+                                  <Option key={x.id} value={x.id} text={`${x.sitecode} · ${x.name ?? ''}`}>
+                                    {x.sitecode} · {x.name ?? ''}
+                                  </Option>
+                                ))}
+                              </Dropdown>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </DataTable>
                 )}
                 {err && <LoadError message={err} />}
               </div>
@@ -1647,12 +1786,8 @@ function ImportDialog({ base, onClose, onDone }: { base: string; onClose: () => 
                 <Button appearance="secondary" onClick={onClose}>
                   Cancel
                 </Button>
-                <Button
-                  appearance="primary"
-                  disabled={!siteId || run.isPending || (preview.data?.wouldCreate ?? 0) === 0}
-                  onClick={() => run.mutate()}
-                >
-                  Import
+                <Button appearance="primary" disabled={readyCount === 0 || run.isPending} onClick={() => run.mutate()}>
+                  Import {readyCount > 0 ? readyCount.toLocaleString() : ''}
                 </Button>
               </>
             )}
@@ -1934,16 +2069,7 @@ export function Discovery() {
       {tab === 'users' && <UsersTable base={base} canImport={can('discovery:write')} onImported={invalidateAll} />}
 
       {tab === 'resource_accounts' && (
-        <ObjectsTable
-          base={base}
-          type="resource_account"
-          columns={[
-            { label: 'Name', render: (o) => o.display_name ?? o.object_key },
-            { label: 'UPN', render: (o) => str(o, 'UserPrincipalName') },
-            { label: 'Application', render: (o) => str(o, 'ApplicationId') },
-            { label: 'Number', render: (o) => str(o, 'PhoneNumber') },
-          ]}
-        />
+        <ResourceAccountsTab base={base} canImport={can('discovery:write')} onImported={invalidateAll} />
       )}
 
       {tab === 'numbers' && (

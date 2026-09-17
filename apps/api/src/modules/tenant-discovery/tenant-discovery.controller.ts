@@ -5,11 +5,13 @@ import {
   tenantDiscoverySettingsSchema,
   tenantDiscoveryStartSchema,
   tenantObjectsQuerySchema,
+  tenantResourceAccountsImportSchema,
   tenantUserLookupSchema,
   tenantUsersImportSchema,
   type TenantDiscoverySettingsInput,
   type TenantDiscoveryStartInput,
   type TenantObjectsQuery,
+  type TenantResourceAccountsImportInput,
   type TenantUserLookupQuery,
   type TenantUsersImportInput,
 } from '@tvmf/shared';
@@ -211,5 +213,21 @@ export class TenantDiscoveryController {
     @Body(new ZodBody(tenantUsersImportSchema)) body: TenantUsersImportInput,
   ) {
     return this.svc.importUsers(t, user, body, can(user.role, 'discovery:review'));
+  }
+
+  @Get('import-resource-accounts/preview')
+  @RequirePermission('tenantdiscovery:read', 'discovery:write')
+  importResourceAccountsPreview(@TenantCtx() t: TenantContext) {
+    return this.svc.importResourceAccountsPreview(t);
+  }
+
+  @Post('import-resource-accounts')
+  @RequirePermission('tenantdiscovery:read', 'discovery:write')
+  importResourceAccounts(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(tenantResourceAccountsImportSchema)) body: TenantResourceAccountsImportInput,
+  ) {
+    return this.svc.importResourceAccounts(t, user, body, can(user.role, 'discovery:review'));
   }
 }

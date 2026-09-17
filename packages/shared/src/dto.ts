@@ -770,18 +770,36 @@ export const tenantUserLookupSchema = z.object({
 });
 export type TenantUserLookupQuery = z.infer<typeof tenantUserLookupSchema>;
 
+/** One candidate's chosen (or overridden) destination site for an import. */
+const importAssignmentSchema = z.object({ id: z.string().uuid(), siteId: z.string().uuid() }).strict();
+
 /**
  * Bulk-create Data Collection users from the discovered tenant users that are
- * not already captured (matched on lower(upn)).
+ * not already captured (matched on lower(upn)). `assignments` gives each
+ * included candidate its own site (from the import dialog's per-row
+ * suggestion/override); `siteId` is an optional fallback applied to any
+ * candidate not named in `assignments` (the "set all to..." convenience -
+ * omit `assignments` entirely and every candidate goes to `siteId`, same as
+ * this endpoint's original whole-batch-one-site behaviour).
  */
 export const tenantUsersImportSchema = z
   .object({
-    siteId: z.string().uuid(),
+    siteId: z.string().uuid().optional(),
+    assignments: z.array(importAssignmentSchema).max(2000).default([]),
     onlyEnterpriseVoice: z.boolean().default(true),
     calling_policy_id: z.string().uuid().nullable().optional(),
   })
   .strict();
 export type TenantUsersImportInput = z.infer<typeof tenantUsersImportSchema>;
+
+/** Same shape as `tenantUsersImportSchema`, for discovered resource accounts. */
+export const tenantResourceAccountsImportSchema = z
+  .object({
+    siteId: z.string().uuid().optional(),
+    assignments: z.array(importAssignmentSchema).max(2000).default([]),
+  })
+  .strict();
+export type TenantResourceAccountsImportInput = z.infer<typeof tenantResourceAccountsImportSchema>;
 
 /* ------------------------- Design & Build DTOs ------------------------- */
 /* Every build_* row is reached through a site workspace (see docs/DATA-MODEL.md). */
@@ -911,6 +929,15 @@ export type BuildCapPatchInput = z.infer<typeof buildCapPatchSchema>;
 /** Bulk-seed build_users/build_caps from that site's discovery_users/discovery_caps. Idempotent. */
 export const buildPopulateSchema = z.object({ site_id: z.string().uuid() }).strict();
 export type BuildPopulateInput = z.infer<typeof buildPopulateSchema>;
+
+/**
+ * Design & Build's "Link discovered resource account" action - pulls one
+ * specific `tenant_objects` row (a live resource account not yet in Data
+ * Collection at all) straight into this site, without the engineer having
+ * to visit Data Collection first.
+ */
+export const buildImportAndLinkResourceAccountSchema = z.object({ site_id: z.string().uuid(), object_id: z.string().uuid() }).strict();
+export type BuildImportAndLinkResourceAccountInput = z.infer<typeof buildImportAndLinkResourceAccountSchema>;
 
 /**
  * `live: false` on the automatic re-check after a targeted live check
