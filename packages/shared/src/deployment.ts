@@ -1001,6 +1001,27 @@ function buildMenuOption(ctx: AaBuildCtx, opt: AutoAttendantMenuOption, crossRef
   return { $var: varName };
 }
 
+/**
+ * New-CsAutoAttendantMenu itself rejects an empty menu ("must have either
+ * menu options, dial-by-name or dial-by-extension") - confirmed live: this
+ * is the real shape of a "just play the greeting" after-hours flow (no
+ * caller interaction at all, e.g. "we're closed, please leave a
+ * voicemail"). Microsoft's own documented way to model that is a single
+ * option with DtmfResponse Automatic ("executed without user response"),
+ * so the caller never sees a menu at all - synthesize one rather than
+ * reject a row that has always been a legitimate, common AA shape. Shared
+ * between buildMenu (what actually gets sent) and sortedMenuOptions (what a
+ * saved row is compared against once live) so they never disagree - a
+ * deployed row whose comparison didn't know about this synthesized option
+ * saw a permanent, unfixable mismatch against its own live state, even
+ * though nothing had actually changed - confirmed live right after this
+ * exact fix first shipped.
+ */
+const SYNTHESIZED_DISCONNECT_OPTION: AutoAttendantMenuOption = { dtmf: 'Automatic', action: 'DisconnectCall' };
+function effectiveMenuOptions(menu: AutoAttendantMenu): AutoAttendantMenuOption[] {
+  return menu.options.length || menu.enableDialByName || menu.directorySearchMethod ? menu.options : [SYNTHESIZED_DISCONNECT_OPTION];
+}
+
 /** New-CsAutoAttendantPrompt. Only a text-to-speech prompt is deployable today - an AudioFile prompt needs Import-CsOnlineAudioFile run first (not modeled), so it's silently skipped rather than emitted broken. */
 function buildPrompt(ctx: AaBuildCtx, p: AutoAttendantPrompt): VarRef | undefined {
   if (p.type !== 'Text' || !p.text) return undefined;
@@ -1020,20 +1041,7 @@ function buildPrompt(ctx: AaBuildCtx, p: AutoAttendantPrompt): VarRef | undefine
  * either.
  */
 function buildMenu(ctx: AaBuildCtx, menu: AutoAttendantMenu, name: string, crossRef: AutoAttendantCrossRef): VarRef {
-  let optionRefs = menu.options.map((o) => buildMenuOption(ctx, o, crossRef));
-  // New-CsAutoAttendantMenu itself rejects an empty menu ("must have either
-  // menu options, dial-by-name or dial-by-extension") - confirmed live: this
-  // is the real shape of a "just play the greeting" after-hours flow (no
-  // caller interaction at all, e.g. "we're closed, please leave a
-  // voicemail"). Microsoft's own documented way to model that is a single
-  // option with DtmfResponse Automatic ("executed without user response"),
-  // so the caller never sees a menu at all - synthesize one rather than
-  // reject a row that has always been a legitimate, common AA shape.
-  if (!optionRefs.length && !menu.enableDialByName && !menu.directorySearchMethod) {
-    const varName = nextAaVar(ctx, 'opt');
-    ctx.steps.push({ assignTo: varName, cmdlet: 'New-CsAutoAttendantMenuOption', parameters: { Action: 'DisconnectCall', DtmfResponse: 'Automatic' } });
-    optionRefs = [{ $var: varName }];
-  }
+  const optionRefs = effectiveMenuOptions(menu).map((o) => buildMenuOption(ctx, o, crossRef));
   const promptRefs = (menu.prompts ?? []).map((p) => buildPrompt(ctx, p)).filter((v): v is VarRef => !!v);
   const varName = nextAaVar(ctx, 'menu');
   ctx.steps.push({
@@ -1131,7 +1139,7 @@ function structurallyEqual(a: unknown, b: unknown): boolean {
 
 /** Menu options compared by DTMF key rather than array position - a harmless reordering shouldn't read as a change. */
 function sortedMenuOptions(cf: AutoAttendantCallFlow | null): AutoAttendantMenuOption[] {
-  return cf ? [...cf.menu.options].sort((a, b) => a.dtmf.localeCompare(b.dtmf)) : [];
+  return cf ? [...effectiveMenuOptions(cf.menu)].sort((a, b) => a.dtmf.localeCompare(b.dtmf)) : [];
 }
 function callFlowEqual(a: AutoAttendantCallFlow | null, b: AutoAttendantCallFlow | null): boolean {
   if (!a && !b) return true;
