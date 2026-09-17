@@ -904,6 +904,9 @@ export function autoAttendantRowWarnings(
     warnings.push('No business-hours call flow configured yet, so nothing will deploy for this Auto Attendant.');
     return warnings;
   }
+  if (!row.language_id || !row.time_zone_id) {
+    warnings.push('Language and time zone must both be set before this Auto Attendant can be created - New-CsAutoAttendant requires both, and this row deploys nothing until they are.');
+  }
   const unresolved: string[] = [];
   const check = (entity: AutoAttendantCallableEntity | undefined, where: string) => {
     if (!entity) return;
@@ -966,11 +969,20 @@ function buildCallableEntity(ctx: AaBuildCtx, entity: AutoAttendantCallableEntit
       if (!identity) return undefined;
       break;
     case 'voicemail':
-      type = 'Voicemail';
-      break;
+      // Microsoft's cmdlet has no plain "Voicemail" -Type at all (Microsoft
+      // Learn's -Type enum is only User | ApplicationEndpoint |
+      // ConfigurationEndpoint | ExternalPstn | SharedVoicemail) and
+      // -Identity is mandatory for every type it does support - there is no
+      // way to render this kind correctly today. Skip it, same as any other
+      // unresolved target (buildMenuOption falls back to DisconnectCall),
+      // instead of sending an invalid enum value.
+      return undefined;
     case 'shared_voicemail':
-      type = 'SharedVoicemail';
-      break;
+      // SharedVoicemail's -Identity must be an M365 group GUID (Find-CsGroup
+      // per Microsoft Learn's own example) - AutoAttendantCallableEntity has
+      // no field to supply one today, so this can't be rendered correctly
+      // either. Same fallback until that field exists.
+      return undefined;
   }
   const varName = nextAaVar(ctx, 'ce');
   ctx.steps.push({ assignTo: varName, cmdlet: 'New-CsAutoAttendantCallableEntity', parameters: { Type: type, ...(identity ? { Identity: identity } : {}) } });
@@ -1203,6 +1215,15 @@ export function planAutoAttendantRow(
 ): CmdletInvocation[] {
   const calls: CmdletInvocation[] = [];
   if (!row.default_call_flow) return calls;
+  // New-CsAutoAttendant requires -LanguageId/-TimeZoneId (Microsoft Learn:
+  // both Mandatory: True). Unlike the update path below (Set-CsAutoAttendant
+  // via an existing $aa object), there's no live object to inherit a value
+  // from when creating brand new, so a row missing either can't be created
+  // at all - skip rather than send an incomplete mandatory-param call that
+  // hangs on PowerShell's own interactive prompt (the same failure mode as
+  // the already-fixed New-CsAutoAttendantMenu -Name bug). Surfaced to the
+  // user ahead of time via autoAttendantRowWarnings.
+  if (!live && (!row.language_id || !row.time_zone_id)) return calls;
 
   if (!live || !autoAttendantMatchesLive(row, live)) {
     const ctx: AaBuildCtx = { steps: [], counters: {} };
