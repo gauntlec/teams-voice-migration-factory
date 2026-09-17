@@ -1,14 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { psQuote } from '@tvmf/shared';
-import {
-  renderCommand,
-  type CmdletInvocation,
-  type CmdletResult,
-  type DeviceCodePrompt,
-  type QueryOpts,
-  type TeamsExecutor,
-} from './executor';
+import { psQuote, renderCommand, renderPreambleStep, renderStatement } from '@tvmf/shared';
+import type { CmdletInvocation, CmdletResult, DeviceCodePrompt, QueryOpts, TeamsExecutor } from './executor';
 
 /**
  * Default per-command timeout. Big read cmdlets on a large tenant (a full
@@ -261,15 +254,43 @@ try {
     return [];
   }
 
+  /** Runs one already-fully-rendered statement and returns its error message, or null on success. */
+  private async execStatement(statement: string): Promise<string | null> {
+    const out = await this.exec(`try { ${statement}; Write-Output '__OK__' } catch { Write-Output ('__ERR__' + $_.Exception.Message) }`);
+    const err = out.split('\n').find((l) => l.startsWith('__ERR__'));
+    return err ? err.slice('__ERR__'.length) : null;
+  }
+
+  /**
+   * Every preamble step, then the final call, is its own separate exec()
+   * round-trip - not one bundled multi-line script. pwsh session state
+   * (`$ce1`, `$sched1`, ...) persists across these since they run on the same
+   * long-lived child process, serialised through `exec`'s queue. This means a
+   * hang or error pins to one named step (its own timeout, its own message)
+   * instead of being lost inside an opaque combined script - confirmed live
+   * in production: a stuck Auto Attendant build gave no way to tell which of
+   * its several local constructions vs. the final New-CsAutoAttendant call
+   * was the one actually stuck.
+   */
   async invoke(call: CmdletInvocation, opts: { whatIf: boolean }): Promise<CmdletResult> {
     if (!this.signedIn) return { result: 'failed', before: {}, after: {}, message: 'not connected' };
     const rendered = renderCommand(call);
     if (opts.whatIf) return { result: 'whatif', before: {}, after: {}, message: rendered };
-    const out = await this.exec(
-      `try { ${rendered} -ErrorAction Stop | Out-Null; Write-Output '__OK__' } catch { Write-Output ('__ERR__' + $_.Exception.Message) }`,
-    );
-    const err = out.split('\n').find((l) => l.startsWith('__ERR__'));
-    if (err) return { result: 'failed', before: {}, after: {}, message: err.slice('__ERR__'.length) };
+    for (const step of call.preamble ?? []) {
+      const base = renderPreambleStep(step);
+      // A call step's return value must land in its variable untouched, so
+      // it's never piped to Out-Null (that would replace the real result
+      // with Out-Null's own empty output) - -ErrorAction Stop as a plain
+      // parameter is still safe, since it's evaluated before the assignment.
+      // An assign step is a bare property set, not a cmdlet call, so no
+      // -ErrorAction parameter applies to it at all.
+      const statement = step.kind === 'assign' ? base : `${base} -ErrorAction Stop`;
+      const label = step.kind === 'assign' ? `$${step.target}.${step.property}` : `$${step.assignTo} = ${step.cmdlet}`;
+      const err = await this.execStatement(statement);
+      if (err) return { result: 'failed', before: {}, after: {}, message: `${label}: ${err}` };
+    }
+    const err = await this.execStatement(`${renderStatement(call.cmdlet, call.parameters)} -ErrorAction Stop | Out-Null`);
+    if (err) return { result: 'failed', before: {}, after: {}, message: `${call.cmdlet}: ${err}` };
     return { result: 'applied', before: {}, after: call.parameters, message: rendered };
   }
 

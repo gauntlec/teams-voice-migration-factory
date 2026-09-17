@@ -119,7 +119,15 @@ export interface CmdletInvocation {
    * dry_run and execute mode - see handleDeploymentRun in apps/worker/src/main.ts.
    */
   deferred?: boolean;
-  /** Local object-construction lines to run first - see PreambleStep. Rendered (renderCommand) and executed (pwsh-executor's invoke) as one multi-line script; still exactly one deployment_changes row. */
+  /**
+   * Local object-construction lines to run first - see PreambleStep.
+   * `renderCommand` flattens these into one multi-line string for display
+   * (What-If preview, exported PS1 script), but PwshTeamsExecutor.invoke
+   * executes each step as its own separate round-trip to the pwsh session,
+   * then the final call as one more - so a hang or error pins to a single
+   * named step instead of an opaque combined script. Still exactly one
+   * deployment_changes row per CmdletInvocation regardless of preamble size.
+   */
   preamble?: PreambleStep[];
 }
 
@@ -155,7 +163,8 @@ function renderValue(v: unknown): string | null {
   return psQuote(String(v));
 }
 
-function renderStatement(cmdlet: string, parameters: Record<string, unknown>): string {
+/** Render one `Cmdlet -Param value ...` statement, with no assignment/wrapping. */
+export function renderStatement(cmdlet: string, parameters: Record<string, unknown>): string {
   const parts = [cmdlet];
   for (const [k, v] of Object.entries(parameters)) {
     const rendered = renderValue(v);
@@ -165,19 +174,30 @@ function renderStatement(cmdlet: string, parameters: Record<string, unknown>): s
 }
 
 /**
- * Render a cmdlet + params as PowerShell (What-If output, and the
- * executor - see PwshTeamsExecutor.invoke, which appends `-ErrorAction Stop`
- * straight onto this string, so the LAST line must always be the one real
- * mutating call). A `preamble` renders as one construction line per step
+ * Render exactly one PreambleStep as its own standalone statement - either
+ * `$var = Cmdlet ...` (call) or `$target.property = value` (assign). Used
+ * both by renderCommand (the flattened preview/export text) and by
+ * PwshTeamsExecutor.invoke, which now runs each step as its own separate
+ * round-trip to the pwsh session instead of bundling every step into one
+ * script - see that file for why (a hung step used to be untraceable inside
+ * an opaque multi-line blob).
+ */
+export function renderPreambleStep(step: PreambleStep): string {
+  return step.kind === 'assign'
+    ? `$${step.target}.${step.property} = ${renderValue(step.value) ?? '$null'}`
+    : `$${step.assignTo} = ${renderStatement(step.cmdlet, step.parameters)}`;
+}
+
+/**
+ * Render a cmdlet + params as PowerShell (What-If output and the exported
+ * PS1 script). A `preamble` renders as one construction line per step
  * before it, each usable by name (via VarRef) in any later step or in this
- * call's own `parameters`.
+ * call's own `parameters`. This flattened text is for *display* only now -
+ * PwshTeamsExecutor.invoke executes each line as its own round-trip rather
+ * than sending this whole string at once.
  */
 export function renderCommand(call: CmdletInvocation): string {
-  const lines = (call.preamble ?? []).map((step) =>
-    step.kind === 'assign'
-      ? `$${step.target}.${step.property} = ${renderValue(step.value) ?? '$null'}`
-      : `$${step.assignTo} = ${renderStatement(step.cmdlet, step.parameters)}`,
-  );
+  const lines = (call.preamble ?? []).map(renderPreambleStep);
   lines.push(renderStatement(call.cmdlet, call.parameters));
   return lines.join('\n');
 }
