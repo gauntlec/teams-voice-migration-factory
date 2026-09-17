@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { appendFileSync } from 'node:fs';
 import { psQuote, renderCommand, renderPreambleStep, renderStatement } from '@tvmf/shared';
 import type { CmdletInvocation, CmdletResult, DeviceCodePrompt, QueryOpts, TeamsExecutor } from './executor';
 
@@ -12,6 +13,24 @@ const DEFAULT_COMMAND_TIMEOUT_MS = Math.max(
   60_000,
   Number(process.env.TEAMS_COMMAND_TIMEOUT_MS) || 15 * 60_000,
 );
+
+/**
+ * Off by default - raw pwsh stdout/stderr is deliberately never persisted
+ * (see the SECURITY note below: a device-code sign-in can echo auth details
+ * to stderr). Set TEAMS_DEBUG_LOG_PATH to an explicit, temporary path to
+ * `tail -f` exactly what's sent to and read from the session live while
+ * debugging a hang - turn it back off afterwards, since the log can contain
+ * whatever the tenant's own commands and responses contain.
+ */
+const DEBUG_LOG_PATH = process.env.TEAMS_DEBUG_LOG_PATH;
+function debugLog(dir: 'OUT' | 'IN' | 'ERR', text: string) {
+  if (!DEBUG_LOG_PATH) return;
+  try {
+    appendFileSync(DEBUG_LOG_PATH, `[${new Date().toISOString()}] ${dir} ${text}\n`);
+  } catch {
+    /* best-effort only - never let debug logging break the executor */
+  }
+}
 
 /**
  * Real executor: one long-lived `pwsh` child per connection running the
@@ -63,11 +82,15 @@ export class PwshTeamsExecutor implements TeamsExecutor {
     );
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => this.onStdout(chunk));
+    child.stdout.on('data', (chunk: string) => {
+      debugLog('IN', chunk);
+      this.onStdout(chunk);
+    });
     // stderr is never logged or surfaced (it could echo auth details). The only
     // thing we look for on it is the device-code prompt, in case the module
     // writes that line to the error/warning stream on this host.
     child.stderr.on('data', (chunk: string) => {
+      debugLog('ERR', chunk);
       this.errBuf += chunk;
       let nl: number;
       while ((nl = this.errBuf.indexOf('\n')) >= 0) {
@@ -169,6 +192,7 @@ export class PwshTeamsExecutor implements TeamsExecutor {
         // One physical line per command: the script goes over base64 so
         // multi-line try/catch blocks and quoting never confuse the line reader.
         const b64 = Buffer.from(script, 'utf16le').toString('base64');
+        debugLog('OUT', `[${id}] ${script}`);
         child.stdin.write(
           `iex ([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${b64}'))); Write-Output '__END__${id}'\n`,
         );
