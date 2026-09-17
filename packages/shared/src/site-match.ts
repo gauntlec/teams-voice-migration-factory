@@ -7,21 +7,23 @@
  * match second.
  */
 
-/** Splits on anything that isn't part of a `sitecode` (see `sitecodeSchema`). */
-const NAME_TOKEN_RE = /[^A-Za-z0-9._-]+/;
-
 /**
- * Looks for a token in `name` that case-insensitively matches one of
- * `sitecodes`. Confirmed live: `AA-UK-LUT-01-01-Reception` tokenizes to
- * `[AA, UK, LUT, 01, 01, Reception]`, matching a site whose sitecode is
- * `LUT`.
+ * Looks for a `sitecode` that appears as a case-insensitive substring of
+ * `name`, returning the longest match (a site's `sitecode` may itself be
+ * dash-joined - e.g. `LUT-01-01` - so it can't be found by splitting the
+ * name into tokens on the same delimiters `sitecodeSchema` allows inside a
+ * sitecode; those delimiters never split it back out). Confirmed live:
+ * `AA-UK-LUT-01-01-Reception` contains sitecode `LUT-01-01` as a literal
+ * substring, not as a standalone token.
  */
 export function matchSitecodeFromName(name: string, sitecodes: string[]): string | null {
   if (!name || !sitecodes.length) return null;
-  const byLower = new Map(sitecodes.map((c) => [c.toLowerCase(), c]));
-  for (const token of name.split(NAME_TOKEN_RE)) {
-    const hit = byLower.get(token.toLowerCase());
-    if (hit) return hit;
+  const lowerName = name.toLowerCase();
+  let best: string | null = null;
+  for (const code of sitecodes) {
+    if (code && lowerName.includes(code.toLowerCase())) {
+      if (!best || code.length > best.length) best = code;
+    }
   }
-  return null;
+  return best;
 }
