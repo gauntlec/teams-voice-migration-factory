@@ -276,6 +276,21 @@ try {
     if (!this.signedIn) return { result: 'failed', before: {}, after: {}, message: 'not connected' };
     const rendered = renderCommand(call);
     if (opts.whatIf) return { result: 'whatif', before: {}, after: {}, message: rendered };
+    // A step can fail two different ways: PowerShell itself catches an
+    // exception (execStatement's own __ERR__ sentinel), or exec()'s timeout
+    // rejects the whole promise from outside PowerShell entirely (nothing
+    // ever printed __END__). Both need to land on the SAME labelled message -
+    // missing the second case was exactly why the first version of this still
+    // reported a bare "pwsh command timed out after 900s" with no step name,
+    // confirmed live in production on a run this fix was supposed to pin down.
+    const runStep = async (statement: string, label: string): Promise<CmdletResult | null> => {
+      try {
+        const err = await this.execStatement(statement);
+        return err ? { result: 'failed', before: {}, after: {}, message: `${label}: ${err}` } : null;
+      } catch (e) {
+        return { result: 'failed', before: {}, after: {}, message: `${label}: ${(e as Error).message}` };
+      }
+    };
     for (const step of call.preamble ?? []) {
       const base = renderPreambleStep(step);
       // A call step's return value must land in its variable untouched, so
@@ -286,11 +301,11 @@ try {
       // -ErrorAction parameter applies to it at all.
       const statement = step.kind === 'assign' ? base : `${base} -ErrorAction Stop`;
       const label = step.kind === 'assign' ? `$${step.target}.${step.property}` : `$${step.assignTo} = ${step.cmdlet}`;
-      const err = await this.execStatement(statement);
-      if (err) return { result: 'failed', before: {}, after: {}, message: `${label}: ${err}` };
+      const failure = await runStep(statement, label);
+      if (failure) return failure;
     }
-    const err = await this.execStatement(`${renderStatement(call.cmdlet, call.parameters)} -ErrorAction Stop | Out-Null`);
-    if (err) return { result: 'failed', before: {}, after: {}, message: `${call.cmdlet}: ${err}` };
+    const failure = await runStep(`${renderStatement(call.cmdlet, call.parameters)} -ErrorAction Stop | Out-Null`, call.cmdlet);
+    if (failure) return failure;
     return { result: 'applied', before: {}, after: call.parameters, message: rendered };
   }
 
