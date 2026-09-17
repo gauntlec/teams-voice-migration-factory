@@ -263,7 +263,14 @@ export function liveAutoAttendantToStructured(
     languageId: typeof data.LanguageId === 'string' ? data.LanguageId : undefined,
     timeZoneId: typeof data.TimeZoneId === 'string' ? data.TimeZoneId : undefined,
     voiceId: typeof data.VoiceId === 'string' ? data.VoiceId : undefined,
-    enableVoiceResponse: typeof data.EnableVoiceResponse === 'boolean' ? data.EnableVoiceResponse : undefined,
+    // Get-CsAutoAttendant's own object names this VoiceResponseEnabled, not
+    // EnableVoiceResponse (that's only the New/Set-CsAutoAttendant *write*
+    // parameter name - Microsoft's read/write asymmetry). Reading the write
+    // name here always came back undefined, permanently disagreeing with a
+    // row that had it enabled - confirmed live: a just-deployed, correctly
+    // configured Auto Attendant never stopped showing as "needs deploying"
+    // after this exact field silently failed to round-trip.
+    enableVoiceResponse: typeof data.VoiceResponseEnabled === 'boolean' ? data.VoiceResponseEnabled : undefined,
     operator: resolveTarget(parseLiveCallTarget(data.Operator)) ?? null,
     defaultCallFlow: null,
     afterHoursCallFlow: null,

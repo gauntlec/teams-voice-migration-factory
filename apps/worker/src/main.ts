@@ -422,7 +422,10 @@ async function resolveLiveAutoAttendantState(
       languageId: typeof d.LanguageId === 'string' ? d.LanguageId : undefined,
       timeZoneId: typeof d.TimeZoneId === 'string' ? d.TimeZoneId : undefined,
       voiceId: typeof d.VoiceId === 'string' ? d.VoiceId : undefined,
-      enableVoiceResponse: typeof d.EnableVoiceResponse === 'boolean' ? d.EnableVoiceResponse : undefined,
+      // Get-CsAutoAttendant's own property is VoiceResponseEnabled, not the
+      // New/Set-CsAutoAttendant *write* parameter name EnableVoiceResponse -
+      // see aa-live-parse.ts's liveAutoAttendantToStructured for the same fix.
+      enableVoiceResponse: typeof d.VoiceResponseEnabled === 'boolean' ? d.VoiceResponseEnabled : undefined,
       applicationInstanceIds: Array.isArray(d.ApplicationInstances)
         ? (d.ApplicationInstances as unknown[]).filter((v): v is string => typeof v === 'string')
         : undefined,
