@@ -168,7 +168,17 @@ export function renderStatement(cmdlet: string, parameters: Record<string, unkno
   const parts = [cmdlet];
   for (const [k, v] of Object.entries(parameters)) {
     const rendered = renderValue(v);
-    if (rendered !== null) parts.push(`-${k} ${rendered}`);
+    if (rendered === null) continue;
+    // A boolean must bind with colon syntax (-Param:$true), never a bare
+    // space (-Param $true) - PowerShell only auto-consumes the next token
+    // for a switch parameter when it's `:`-joined; written with a space,
+    // $true/$false is parsed as a *positional* argument instead, and fails
+    // with "A positional parameter cannot be found that accepts argument
+    // 'True'" the moment the cmdlet has no positional slot free - confirmed
+    // live on New-CsOnlineSchedule's -WeeklyRecurrentSchedule/-Complement.
+    // Colon syntax is valid for every switch AND every plain [bool]
+    // parameter, so it's safe to use unconditionally here.
+    parts.push(typeof v === 'boolean' ? `-${k}:${rendered}` : `-${k} ${rendered}`);
   }
   return parts.join(' ');
 }
