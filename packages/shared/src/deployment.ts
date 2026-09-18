@@ -985,7 +985,12 @@ function buildCallableEntity(ctx: AaBuildCtx, entity: AutoAttendantCallableEntit
   switch (entity.kind) {
     case 'auto_attendant':
     case 'call_queue':
-      type = 'ApplicationEndpoint';
+      // Microsoft Learn's own -Type parameter doc is explicit: ApplicationEndpoint
+      // is "when transferring to a Resource Account", ConfigurationEndpoint is
+      // "when transferring directly to a nested Auto Attendant or Call Queue" -
+      // this is the nested-AA/CQ case, not the resource-account one (that's the
+      // separate New-CsOnlineApplicationInstanceAssociation step below).
+      type = 'ConfigurationEndpoint';
       identity = entity.buildId ? crossRef.get(crossRefKey(entity.kind, entity.buildId)) : undefined;
       if (!identity) return undefined;
       break;
