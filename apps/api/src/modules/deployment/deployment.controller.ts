@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import {
   can,
   createDeploymentSchema,
@@ -59,16 +59,22 @@ export class DeploymentController {
     return this.svc.startConnection(t, user, body.tenantDomain);
   }
 
+  /** Non-SUPER_ADMIN engineers only see their own sessions - a connection's user_code/verification_uri lets whoever holds it complete that device-code sign-in as its owner. Same ownership rule as TenantDiscoveryService's own getConnection/listConnections. */
   @Get('connections')
   @RequirePermission('deployment:read')
-  listConnections(@TenantCtx() t: TenantContext) {
-    return this.svc.listConnections(t);
+  async listConnections(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser) {
+    const rows = await this.svc.listConnections(t);
+    return user.role === 'SUPER_ADMIN' ? rows : rows.filter((r) => r.started_by === user.id);
   }
 
   @Get('connections/:id')
   @RequirePermission('deployment:read')
-  getConnection(@TenantCtx() t: TenantContext, @Param('id') id: string) {
-    return this.svc.getConnection(t, id);
+  async getConnection(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string) {
+    const row = await this.svc.getConnection(t, id);
+    if (row.started_by !== user.id && user.role !== 'SUPER_ADMIN') {
+      throw new ForbiddenException('This customer-tenant session belongs to another engineer.');
+    }
+    return row;
   }
 
   @Post()
