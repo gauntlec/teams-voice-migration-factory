@@ -77,11 +77,16 @@ export class BuildService {
       s.selectFrom('build_users').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids']).where('site_id', 'in', siteIds).execute(),
       s.selectFrom('build_caps').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids']).where('site_id', 'in', siteIds).execute(),
       s.selectFrom('build_resource_accounts').select(['id', 'site_id']).where('site_id', 'in', siteIds).execute(),
+      // One row per site (its own latest), not the tenant's latest 500 rows
+      // overall - a flat `.limit(500)` silently dropped a quieter site's
+      // whole history once other sites' activity pushed it out of that
+      // tenant-wide window (confirmed live on a busy tenant this session).
       s
         .selectFrom('deployments')
         .select(['id', 'mode', 'status', 'created_at', 'summary', sql<string>`scope->>'siteId'`.as('site_id')])
+        .distinctOn(sql`scope->>'siteId'`)
+        .orderBy(sql`scope->>'siteId'`)
         .orderBy('created_at', 'desc')
-        .limit(500)
         .execute(),
     ]);
 
