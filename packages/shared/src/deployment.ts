@@ -891,10 +891,37 @@ function crossRefKey(kind: 'auto_attendant' | 'call_queue', buildId: string): st
  * same wording, as callQueueRowWarnings' own unresolved-RA warning (an AA
  * can have several resource accounts or none, exactly like a Call Queue).
  */
+function collectUserUpnsFromCallFlow(cf: AutoAttendantCallFlow | null | undefined, out: string[]) {
+  for (const opt of cf?.menu.options ?? []) {
+    if (opt.action === 'TransferCallToTarget' && opt.target?.kind === 'user' && opt.target.upn) out.push(opt.target.upn);
+  }
+}
+/**
+ * Every UPN a 'user'-kind callable entity (an AA's -Operator, or a menu
+ * option's TransferCallToTarget) references across a batch of rows -
+ * planAutoAttendantRow/autoAttendantRowWarnings need each one resolved to
+ * its live Entra Object ID first (see buildCallableEntity's 'user' case),
+ * so the caller collects them up front the same way it already does for
+ * Call Queue agent UPNs before calling resolveLiveIdentityState.
+ */
+export function collectAutoAttendantUserUpns(
+  rows: Pick<BuildAutoAttendantRow, 'operator' | 'default_call_flow' | 'after_hours_call_flow' | 'holiday_call_flows'>[],
+): string[] {
+  const out: string[] = [];
+  for (const row of rows) {
+    if (row.operator?.kind === 'user' && row.operator.upn) out.push(row.operator.upn);
+    collectUserUpnsFromCallFlow(row.default_call_flow, out);
+    collectUserUpnsFromCallFlow(row.after_hours_call_flow, out);
+    for (const h of row.holiday_call_flows) collectUserUpnsFromCallFlow(h.callFlow, out);
+  }
+  return out;
+}
+
 export function autoAttendantRowWarnings(
   row: BuildAutoAttendantRow,
   crossRef: AutoAttendantCrossRef,
   raObjectIds: Map<string, string>,
+  userObjectIds: Map<string, string>,
 ): string[] {
   const warnings: string[] = [];
   const unresolvedRas = row.resource_accounts.filter((id) => !raObjectIds.has(id));
@@ -916,8 +943,9 @@ export function autoAttendantRowWarnings(
     if ((entity.kind === 'auto_attendant' || entity.kind === 'call_queue') && (!entity.buildId || !crossRef.has(crossRefKey(entity.kind, entity.buildId)))) {
       unresolved.push(`${where} targets an Auto Attendant/Call Queue that doesn't resolve live yet`);
     }
-    if (entity.kind === 'user' && !entity.upn) {
-      unresolved.push(`${where} has no UPN set for its user target`);
+    if (entity.kind === 'user') {
+      if (!entity.upn) unresolved.push(`${where} has no UPN set for its user target`);
+      else if (!userObjectIds.has(entity.upn.toLowerCase())) unresolved.push(`${where} targets a user (${entity.upn}) that doesn't resolve to a live Entra identity yet`);
     }
   };
   check(row.operator ?? undefined, 'Operator');
@@ -951,7 +979,7 @@ function nextAaVar(ctx: AaBuildCtx, prefix: string): string {
  * resolve (a raw number needs no live lookup; Voicemail/SharedVoicemail
  * don't take an -Identity at all).
  */
-function buildCallableEntity(ctx: AaBuildCtx, entity: AutoAttendantCallableEntity, crossRef: AutoAttendantCrossRef): VarRef | undefined {
+function buildCallableEntity(ctx: AaBuildCtx, entity: AutoAttendantCallableEntity, crossRef: AutoAttendantCrossRef, userObjectIds: Map<string, string>): VarRef | undefined {
   let type: string;
   let identity: string | undefined;
   switch (entity.kind) {
@@ -962,8 +990,12 @@ function buildCallableEntity(ctx: AaBuildCtx, entity: AutoAttendantCallableEntit
       if (!identity) return undefined;
       break;
     case 'user':
+      // New-CsAutoAttendantCallableEntity -Type User needs the Enterprise-
+      // Voice-enabled user's Entra Object ID (every Microsoft Learn example
+      // resolves via Get-CsOnlineUser), not the raw UPN - mirrors how
+      // planCallQueueRow already resolves agent UPNs via agentObjectIds.
       type = 'User';
-      identity = entity.upn;
+      identity = entity.upn ? userObjectIds.get(entity.upn.toLowerCase()) : undefined;
       if (!identity) return undefined;
       break;
     case 'external':
@@ -993,8 +1025,8 @@ function buildCallableEntity(ctx: AaBuildCtx, entity: AutoAttendantCallableEntit
 }
 
 /** New-CsAutoAttendantMenuOption. Drops the -CallTarget (falls back to a bare disconnect-shaped option) rather than guess when a TransferCallToTarget's target didn't resolve - see autoAttendantRowWarnings, which is what actually surfaces that gap. */
-function buildMenuOption(ctx: AaBuildCtx, opt: AutoAttendantMenuOption, crossRef: AutoAttendantCrossRef): VarRef {
-  const callTarget = opt.action === 'TransferCallToTarget' && opt.target ? buildCallableEntity(ctx, opt.target, crossRef) : undefined;
+function buildMenuOption(ctx: AaBuildCtx, opt: AutoAttendantMenuOption, crossRef: AutoAttendantCrossRef, userObjectIds: Map<string, string>): VarRef {
+  const callTarget = opt.action === 'TransferCallToTarget' && opt.target ? buildCallableEntity(ctx, opt.target, crossRef, userObjectIds) : undefined;
   const varName = nextAaVar(ctx, 'opt');
   ctx.steps.push({
     assignTo: varName,
@@ -1043,8 +1075,8 @@ function buildPrompt(ctx: AaBuildCtx, p: AutoAttendantPrompt): VarRef | undefine
  * "hangs" that looked network- or module-related but had nothing to do with
  * either.
  */
-function buildMenu(ctx: AaBuildCtx, menu: AutoAttendantMenu, name: string, crossRef: AutoAttendantCrossRef): VarRef {
-  const optionRefs = effectiveMenuOptions(menu).map((o) => buildMenuOption(ctx, o, crossRef));
+function buildMenu(ctx: AaBuildCtx, menu: AutoAttendantMenu, name: string, crossRef: AutoAttendantCrossRef, userObjectIds: Map<string, string>): VarRef {
+  const optionRefs = effectiveMenuOptions(menu).map((o) => buildMenuOption(ctx, o, crossRef, userObjectIds));
   const promptRefs = (menu.prompts ?? []).map((p) => buildPrompt(ctx, p)).filter((v): v is VarRef => !!v);
   const varName = nextAaVar(ctx, 'menu');
   ctx.steps.push({
@@ -1062,9 +1094,9 @@ function buildMenu(ctx: AaBuildCtx, menu: AutoAttendantMenu, name: string, cross
 }
 
 /** New-CsAutoAttendantCallFlow. */
-function buildCallFlow(ctx: AaBuildCtx, cf: AutoAttendantCallFlow, name: string, crossRef: AutoAttendantCrossRef): VarRef {
+function buildCallFlow(ctx: AaBuildCtx, cf: AutoAttendantCallFlow, name: string, crossRef: AutoAttendantCrossRef, userObjectIds: Map<string, string>): VarRef {
   const greetingRefs = cf.greetings.map((g) => buildPrompt(ctx, g)).filter((v): v is VarRef => !!v);
-  const menuRef = buildMenu(ctx, cf.menu, name, crossRef);
+  const menuRef = buildMenu(ctx, cf.menu, name, crossRef, userObjectIds);
   const varName = nextAaVar(ctx, 'flow');
   ctx.steps.push({
     assignTo: varName,
@@ -1222,6 +1254,7 @@ export function planAutoAttendantRow(
   row: BuildAutoAttendantRow,
   crossRef: AutoAttendantCrossRef,
   raObjectIds: Map<string, string>,
+  userObjectIds: Map<string, string>,
   live?: AutoAttendantLiveState,
 ): CmdletInvocation[] {
   const calls: CmdletInvocation[] = [];
@@ -1239,24 +1272,24 @@ export function planAutoAttendantRow(
   if (!live || !autoAttendantMatchesLive(row, live)) {
     const ctx: AaBuildCtx = { steps: [], counters: {} };
 
-    const defaultFlowRef = buildCallFlow(ctx, row.default_call_flow, `${row.name} - Business hours`, crossRef);
+    const defaultFlowRef = buildCallFlow(ctx, row.default_call_flow, `${row.name} - Business hours`, crossRef, userObjectIds);
     const otherFlowRefs: VarRef[] = [];
     const chaRefs: VarRef[] = [];
 
     if (row.after_hours_call_flow && row.schedule) {
-      const afRef = buildCallFlow(ctx, row.after_hours_call_flow, `${row.name} - After hours`, crossRef);
+      const afRef = buildCallFlow(ctx, row.after_hours_call_flow, `${row.name} - After hours`, crossRef, userObjectIds);
       const schedRef = buildSchedule(ctx, row.schedule, `${row.name} - After hours schedule`);
       otherFlowRefs.push(afRef);
       chaRefs.push(buildCallHandlingAssociation(ctx, 'AfterHours', schedRef, afRef));
     }
     for (const holiday of row.holiday_call_flows) {
-      const hfRef = buildCallFlow(ctx, holiday.callFlow, `${row.name} - ${holiday.name}`, crossRef);
+      const hfRef = buildCallFlow(ctx, holiday.callFlow, `${row.name} - ${holiday.name}`, crossRef, userObjectIds);
       const schedRef = buildSchedule(ctx, holiday.schedule, holiday.name);
       otherFlowRefs.push(hfRef);
       chaRefs.push(buildCallHandlingAssociation(ctx, 'Holiday', schedRef, hfRef));
     }
 
-    const operatorRef = row.operator ? buildCallableEntity(ctx, row.operator, crossRef) : undefined;
+    const operatorRef = row.operator ? buildCallableEntity(ctx, row.operator, crossRef, userObjectIds) : undefined;
 
     if (!live) {
       // New-CsAutoAttendant takes every property directly as a parameter -

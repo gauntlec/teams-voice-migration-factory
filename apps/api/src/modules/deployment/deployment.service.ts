@@ -8,6 +8,7 @@ import {
   CALL_QUEUE_ROUTING_METHODS,
   CALL_QUEUE_TIMEOUT_ACTIONS,
   callQueueRowWarnings,
+  collectAutoAttendantUserUpns,
   decodeCallQueueEnum,
   identityRowWarnings,
   liveAutoAttendantToStructured,
@@ -527,30 +528,36 @@ export class DeploymentService {
       const deep = await resolveAutoAttendantDeepContext(s, crossRef);
       const liveAutoAttendants = await resolveLiveAutoAttendantState(s, rows.map((r) => r.name), deep);
 
-      for (const row of rows) {
-        const resourceAccounts = (row.resource_accounts as string[] | null) ?? [];
-        const planRow: BuildAutoAttendantRow = {
-          id: row.id,
-          name: row.name,
-          language_id: row.language_id,
-          time_zone_id: row.time_zone_id,
-          voice_id: row.voice_id,
-          voice_response_enabled: row.voice_response_enabled,
-          operator: (row.operator as AutoAttendantCallableEntity) ?? null,
-          default_call_flow: (row.default_call_flow as AutoAttendantCallFlow) ?? null,
-          after_hours_call_flow: (row.after_hours_call_flow as AutoAttendantCallFlow) ?? null,
-          holiday_call_flows: (row.holiday_call_flows as AutoAttendantHolidayCallFlow[]) ?? [],
-          schedule: (row.schedule as AutoAttendantSchedule) ?? null,
-          resource_accounts: resourceAccounts,
-        };
-        const live: AutoAttendantLiveState | undefined = liveAutoAttendants.get(row.name.toLowerCase());
-        const calls = planAutoAttendantRow(planRow, crossRef, raObjectIds, live);
-        const warnings = autoAttendantRowWarnings(planRow, crossRef, raObjectIds);
+      const planRows: BuildAutoAttendantRow[] = rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        language_id: row.language_id,
+        time_zone_id: row.time_zone_id,
+        voice_id: row.voice_id,
+        voice_response_enabled: row.voice_response_enabled,
+        operator: (row.operator as AutoAttendantCallableEntity) ?? null,
+        default_call_flow: (row.default_call_flow as AutoAttendantCallFlow) ?? null,
+        after_hours_call_flow: (row.after_hours_call_flow as AutoAttendantCallFlow) ?? null,
+        holiday_call_flows: (row.holiday_call_flows as AutoAttendantHolidayCallFlow[]) ?? [],
+        schedule: (row.schedule as AutoAttendantSchedule) ?? null,
+        resource_accounts: (row.resource_accounts as string[] | null) ?? [],
+      }));
+      // 'user'-kind callable entities (operator / menu-option transfer
+      // targets) need their own UPN -> live Entra Object ID resolution -
+      // see buildCallableEntity's 'user' case.
+      const userLiveIdentity = await resolveLiveIdentityState(s, collectAutoAttendantUserUpns(planRows));
+      const userObjectIds = new Map<string, string>();
+      for (const [upn, v] of userLiveIdentity) if (v.objectId) userObjectIds.set(upn, v.objectId);
+
+      for (const planRow of planRows) {
+        const live: AutoAttendantLiveState | undefined = liveAutoAttendants.get(planRow.name.toLowerCase());
+        const calls = planAutoAttendantRow(planRow, crossRef, raObjectIds, userObjectIds, live);
+        const warnings = autoAttendantRowWarnings(planRow, crossRef, raObjectIds, userObjectIds);
         if (calls.length === 0 && warnings.length === 0) continue;
         out.push({
-          rowId: row.id,
+          rowId: planRow.id,
           objectType: 'auto_attendant',
-          upn: row.name,
+          upn: planRow.name,
           calls,
           renderedCommands: calls.map(renderCommand),
           warnings,
