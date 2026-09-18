@@ -188,9 +188,13 @@ export const createDeploymentSchema = z.object({
     .object({
       /** Every deployment run acts on one site's Build rows at a time. */
       siteId: z.string().uuid(),
-      sheets: z
-        .array(z.enum(['users', 'caps', 'resource_accounts', 'auto_attendants', 'call_queues', 'm365_groups']))
-        .min(1),
+      // 'm365_groups' deliberately excluded - apps/worker/src/main.ts's
+      // handleDeploymentRun has no `scope.sheets.includes('m365_groups')`
+      // branch at all (build_m365_groups has no worker wiring yet), so a
+      // request naming it ran to completion doing nothing for that sheet
+      // while reporting success - confirmed this session. Matches
+      // deploymentPreviewQuerySchema's own already-correct exclusion below.
+      sheets: z.array(z.enum(['users', 'caps', 'resource_accounts', 'auto_attendants', 'call_queues'])).min(1),
       waves: z.array(z.string()).optional(),
       rowIds: z.array(z.string().uuid()).optional(),
     })
