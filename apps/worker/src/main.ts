@@ -118,6 +118,7 @@ async function expireOrphanedWork() {
   const tenants = await platformDb(db).selectFrom('tenants').select('schema_name').execute();
   let conns = 0;
   let runs = 0;
+  let deployments = 0;
   for (const { schema_name } of tenants) {
     const c = await tenantDb(db, schema_name)
       .updateTable('connections')
@@ -137,11 +138,22 @@ async function expireOrphanedWork() {
       .executeTakeFirst()
       .catch(() => undefined);
     runs += Number(r?.numUpdatedRows ?? 0);
+    const d = await tenantDb(db, schema_name)
+      .updateTable('deployments')
+      .set({
+        status: 'failed',
+        finished_at: new Date().toISOString(),
+        summary: { applied: 0, skipped: 0, failed: 0, whatif: 0, total: 0 },
+      })
+      .where('status', 'in', ['queued', 'running'])
+      .executeTakeFirst()
+      .catch(() => undefined);
+    deployments += Number(d?.numUpdatedRows ?? 0);
   }
-  if (conns || runs) {
+  if (conns || runs || deployments) {
     // eslint-disable-next-line no-console
     console.log(
-      `startup sweep: expired ${conns} orphaned connection(s), failed ${runs} orphaned discovery run(s)`,
+      `startup sweep: expired ${conns} orphaned connection(s), failed ${runs} orphaned discovery run(s), failed ${deployments} orphaned deployment run(s)`,
     );
   }
 }
