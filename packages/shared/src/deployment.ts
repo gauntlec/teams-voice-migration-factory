@@ -970,6 +970,17 @@ export function autoAttendantRowWarnings(
       if (!entity.upn) unresolved.push(`${where} has no UPN set for its user target`);
       else if (!userObjectIds.has(entity.upn.toLowerCase())) unresolved.push(`${where} targets a user (${entity.upn}) that doesn't resolve to a live Entra identity yet`);
     }
+    // buildCallableEntity always returns undefined for these two kinds (see
+    // its own comments) - Microsoft's cmdlet has no plain Voicemail -Type at
+    // all, and SharedVoicemail has no data field to supply its M365 group
+    // identity yet. Both silently fall back to DisconnectCall with no
+    // warning until now - confirmed live this session.
+    if (entity.kind === 'voicemail') {
+      unresolved.push(`${where} targets plain Voicemail, which has no deployable cmdlet form - it will disconnect the call instead of deploying`);
+    }
+    if (entity.kind === 'shared_voicemail') {
+      unresolved.push(`${where} targets Shared Voicemail, but its M365 group identity can't be supplied yet - it will disconnect the call instead of deploying`);
+    }
   };
   check(row.operator ?? undefined, 'Operator');
   const checkFlow = (cf: AutoAttendantCallFlow | null | undefined, label: string) => {
