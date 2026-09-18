@@ -440,7 +440,11 @@ export function planIdentityRow(
       objectId: row.id,
     });
   }
-  if (row.pickup_group?.targets?.length) {
+  // Checking the object itself (not `.targets.length`) matters: `null` means
+  // "never designed, leave alone", but `{ order, targets: [] }` is a real,
+  // intentional "clear this pickup group" target that must still deploy -
+  // the old truthy-on-targets check silently dropped that case forever.
+  if (row.pickup_group) {
     calls.push({
       cmdlet: 'Set-CsUserCallingSettings',
       parameters: {
