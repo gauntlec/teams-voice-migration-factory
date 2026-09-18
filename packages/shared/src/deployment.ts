@@ -547,6 +547,21 @@ export function planResourceAccountRow(row: BuildResourceAccountRow, live?: Live
 
 type CallQueueRoutingMethod = (typeof CALL_QUEUE_ROUTING_METHODS)[number];
 
+const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/**
+ * Confirmed against Microsoft Learn: Set-CsCallQueue's Overflow/Timeout/
+ * NoAgentActionTarget ("must be set to a Guid or a telephone number with a
+ * mandatory 'tel:' prefix") and New-CsAutoAttendantCallableEntity's
+ * ExternalPstn -Identity both require a raw PSTN number to carry a 'tel:'
+ * prefix - a bare GUID (person, or a nested AA/CQ resource account) or an
+ * already-prefixed value passes through unchanged.
+ */
+export function normalizePstnTarget(target: string): string {
+  const trimmed = target.trim();
+  if (/^tel:/i.test(trimmed) || GUID_RE.test(trimmed)) return trimmed;
+  return `tel:${trimmed}`;
+}
+
 /** Mirrors dto.ts's callQueueActionSchema - Set-CsCallQueue's Overflow/Timeout parameter groups. */
 export interface CallQueueActionSettings {
   action?: string;
@@ -679,12 +694,12 @@ export function planCallQueueRow(
     ...(needsLanguage && row.language_id ? { LanguageId: row.language_id } : {}),
     ...(row.overflow?.action ? { OverflowAction: row.overflow.action } : {}),
     ...(row.overflow?.threshold != null ? { OverflowThreshold: row.overflow.threshold } : {}),
-    ...(row.overflow?.target ? { OverflowActionTarget: row.overflow.target } : {}),
+    ...(row.overflow?.target ? { OverflowActionTarget: normalizePstnTarget(row.overflow.target) } : {}),
     ...(row.timeout?.action ? { TimeoutAction: row.timeout.action } : {}),
     ...(row.timeout?.threshold != null ? { TimeoutThreshold: row.timeout.threshold } : {}),
-    ...(row.timeout?.target ? { TimeoutActionTarget: row.timeout.target } : {}),
+    ...(row.timeout?.target ? { TimeoutActionTarget: normalizePstnTarget(row.timeout.target) } : {}),
     ...(row.no_agent_action?.action ? { NoAgentAction: row.no_agent_action.action } : {}),
-    ...(row.no_agent_action?.target ? { NoAgentActionTarget: row.no_agent_action.target } : {}),
+    ...(row.no_agent_action?.target ? { NoAgentActionTarget: normalizePstnTarget(row.no_agent_action.target) } : {}),
     ...(row.no_agent_apply_to ? { NoAgentApplyTo: row.no_agent_apply_to } : {}),
   };
 
@@ -1004,8 +1019,12 @@ function buildCallableEntity(ctx: AaBuildCtx, entity: AutoAttendantCallableEntit
       if (!identity) return undefined;
       break;
     case 'external':
+      // New-CsAutoAttendantCallableEntity's -Identity for ExternalPstn is a
+      // TEL URI (Microsoft Learn's own example: 'tel:+1234567890') - the
+      // Design & Build editor only hints at the 'tel:' prefix via a
+      // placeholder, it doesn't enforce it, so normalize here too.
       type = 'ExternalPstn';
-      identity = entity.number;
+      identity = entity.number ? normalizePstnTarget(entity.number) : undefined;
       if (!identity) return undefined;
       break;
     case 'voicemail':
