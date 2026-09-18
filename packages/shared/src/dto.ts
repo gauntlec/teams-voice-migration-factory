@@ -839,6 +839,26 @@ const callForwardingSchema = z
     busyOnBusy: z.enum(BUSY_ON_BUSY_OPTIONS).optional(),
   })
   .strict()
+  .superRefine((val, ctx) => {
+    // Set-CsUserCallingSettings' -IsForwardingEnabled/-IsUnansweredEnabled
+    // don't require a target - planIdentityRow just omits ForwardingType/
+    // Target when they're unset, so `enabled: true` with nothing else
+    // silently deployed "forwarding on, no destination" (confirmed this
+    // session). Reject that combination here instead of at deploy time.
+    if (val.forwarding?.enabled) {
+      if (!val.forwarding.type) ctx.addIssue({ code: 'custom', path: ['forwarding', 'type'], message: 'Required when forwarding is enabled' });
+      if (!val.forwarding.targetType) ctx.addIssue({ code: 'custom', path: ['forwarding', 'targetType'], message: 'Required when forwarding is enabled' });
+      if (val.forwarding.targetType === 'SingleTarget' && !val.forwarding.target) {
+        ctx.addIssue({ code: 'custom', path: ['forwarding', 'target'], message: 'Required for a single target' });
+      }
+    }
+    if (val.unanswered?.enabled) {
+      if (!val.unanswered.targetType) ctx.addIssue({ code: 'custom', path: ['unanswered', 'targetType'], message: 'Required when unanswered forwarding is enabled' });
+      if (val.unanswered.targetType === 'SingleTarget' && !val.unanswered.target) {
+        ctx.addIssue({ code: 'custom', path: ['unanswered', 'target'], message: 'Required for a single target' });
+      }
+    }
+  })
   .optional();
 
 /** build_users/build_caps' pickup_group jsonb - Set-CsUserCallingSettings' CallGroup settings group. */
