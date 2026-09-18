@@ -1684,14 +1684,20 @@ function CallingSettingsDialog({
       if (busyOnBusy) call_forwarding.busyOnBusy = busyOnBusy as (typeof BUSY_ON_BUSY_OPTIONS)[number];
 
       const targets = pgTargets.map((t) => t.trim()).filter(Boolean);
-      const pickup_group = targets.length ? { order: pgOrder as (typeof CALL_GROUP_ORDERS)[number], targets } : undefined;
+      // Always send a full { order, targets } object, even when targets is
+      // empty - pgOrder always has a real value (defaults to 'Simultaneous'),
+      // so this still matches pickupGroupSchema and lets an intentional
+      // clear-to-empty actually reach the server, instead of vanishing as
+      // `undefined` (which JSON.stringify drops, leaving the DB column
+      // untouched - confirmed this was why a save here couldn't clear a
+      // previously-saved group).
+      const pickup_group = { order: pgOrder as (typeof CALL_GROUP_ORDERS)[number], targets };
 
       return api(`${endpoint}/${row.id}`, {
         method: 'PATCH',
-        // call_forwarding/delegates are always sent (even {}/[]) so this dialog
-        // can explicitly clear a previously-designed setting, not just add one.
-        // pickup_group can't represent "cleared" (order is required whenever
-        // the object is present at all) - see the hint under that field.
+        // call_forwarding/delegates/pickup_group are always sent (even {}/[])
+        // so this dialog can explicitly clear a previously-designed setting,
+        // not just add one.
         body: JSON.stringify({ call_forwarding, pickup_group, delegates }),
       });
     },
@@ -1854,7 +1860,7 @@ function CallingSettingsDialog({
                 ))}
                 {pgTargets.length === 0 && (
                   <Text size={200} style={{ color: '#616161', display: 'block', marginTop: 6 }}>
-                    No members - removing the last member here leaves a previously-saved group untouched (not deployed automatically yet).
+                    No members - saving now will clear a previously-saved group on next deploy.
                   </Text>
                 )}
               </div>

@@ -440,11 +440,15 @@ export function planIdentityRow(
       objectId: row.id,
     });
   }
-  // Checking the object itself (not `.targets.length`) matters: `null` means
-  // "never designed, leave alone", but `{ order, targets: [] }` is a real,
-  // intentional "clear this pickup group" target that must still deploy -
-  // the old truthy-on-targets check silently dropped that case forever.
-  if (row.pickup_group) {
+  // build_users/build_caps.pickup_group defaults to `{}` (NOT NULL, see the
+  // 0001_init migration) for every never-designed row, so checking the
+  // object's mere presence would fire this call for literally every row on
+  // every deploy. `order` is only ever set by the settings dialog's own
+  // save (BuildSiteWorkspace.tsx) - present means "explicitly designed",
+  // absent means "still the untouched default" - so it's the real signal,
+  // not `.targets.length` (which the dialog can legitimately save as empty
+  // to clear a previously-saved group).
+  if (row.pickup_group?.order) {
     calls.push({
       cmdlet: 'Set-CsUserCallingSettings',
       parameters: {
