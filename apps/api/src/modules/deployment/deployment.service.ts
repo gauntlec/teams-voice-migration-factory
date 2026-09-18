@@ -613,7 +613,7 @@ export class DeploymentService {
 
     const rows = await this.previewChanges(t, {
       siteId,
-      sheets: ['users', 'caps', 'resource_accounts'],
+      sheets: ['users', 'caps', 'resource_accounts', 'call_queues', 'auto_attendants'],
       rowIds: input.rowIds,
     });
 
