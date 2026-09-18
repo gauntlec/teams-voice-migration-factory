@@ -132,12 +132,12 @@ export function DeploymentSiteWorkspace() {
   });
 
   const deployments = useQuery({
-    queryKey: ['deployments', tid],
-    enabled: !!tid,
+    queryKey: ['deployments', tid, siteId],
+    enabled: !!tid && !!siteId,
     refetchInterval: tab === 'history' ? 4000 : false,
-    queryFn: () => api<Deployment[]>(base),
+    queryFn: () => api<Deployment[]>(`${base}?siteId=${siteId}`),
   });
-  const siteDeployments = (deployments.data ?? []).filter((d) => d.scope?.siteId === siteId);
+  const siteDeployments = deployments.data ?? [];
 
   const changes = useQuery({
     queryKey: ['changes', tid, selectedDeployment],

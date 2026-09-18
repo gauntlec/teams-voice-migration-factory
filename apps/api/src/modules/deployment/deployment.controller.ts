@@ -4,10 +4,12 @@ import {
   createDeploymentSchema,
   deploymentPreviewQuerySchema,
   generateDeploymentDocumentSchema,
+  listDeploymentsQuerySchema,
   startConnectionSchema,
   type CreateDeploymentInput,
   type DeploymentPreviewQuery,
   type GenerateDeploymentDocumentInput,
+  type ListDeploymentsQuery,
 } from '@tvmf/shared';
 import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
 import type { AuthedUser, TenantContext } from '../../common/request';
@@ -89,8 +91,8 @@ export class DeploymentController {
 
   @Get()
   @RequirePermission('deployment:read')
-  list(@TenantCtx() t: TenantContext) {
-    return this.svc.listDeployments(t);
+  list(@TenantCtx() t: TenantContext, @Query(new ZodBody(listDeploymentsQuerySchema)) query: ListDeploymentsQuery) {
+    return this.svc.listDeployments(t, query.siteId);
   }
 
   @Get(':id')

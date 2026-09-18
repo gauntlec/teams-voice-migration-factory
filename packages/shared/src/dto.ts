@@ -226,6 +226,19 @@ export const deploymentPreviewQuerySchema = z.object({
 });
 export type DeploymentPreviewQuery = z.infer<typeof deploymentPreviewQuerySchema>;
 
+/**
+ * GET /deployments' own query - `siteId` scopes the site workspace's Run
+ * history to that site before the service's own `limit(50)` applies.
+ * Omitting it keeps the old tenant-wide behaviour for any other caller.
+ * Without this, a busy tenant's `limit(50)` was taken tenant-wide first,
+ * so a quieter site's own history could be pushed out of the window
+ * entirely - confirmed this session.
+ */
+export const listDeploymentsQuerySchema = z.object({
+  siteId: z.string().uuid().optional(),
+});
+export type ListDeploymentsQuery = z.infer<typeof listDeploymentsQuerySchema>;
+
 /** rowIds omitted = generate for the whole site. */
 export const generateDeploymentDocumentSchema = z.object({
   rowIds: z.array(z.string().uuid()).optional(),

@@ -800,13 +800,10 @@ export class DeploymentService {
     return dep;
   }
 
-  listDeployments(t: TenantContext) {
-    return tenantDb(this.db, t.schema)
-      .selectFrom('deployments')
-      .selectAll()
-      .orderBy('created_at', 'desc')
-      .limit(50)
-      .execute();
+  listDeployments(t: TenantContext, siteId?: string) {
+    let q = tenantDb(this.db, t.schema).selectFrom('deployments').selectAll();
+    if (siteId) q = q.where(sql<boolean>`scope->>'siteId' = ${siteId}`);
+    return q.orderBy('created_at', 'desc').limit(50).execute();
   }
 
   async getDeployment(t: TenantContext, id: string) {
