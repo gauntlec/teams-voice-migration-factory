@@ -510,8 +510,7 @@ async function handleDeploymentRun(job: Job) {
     tenantId: string;
   };
   const scoped = tenantDb(db, schema);
-  const exec = executors.get(connectionId) ?? new SimulatedTeamsExecutor();
-  if (!executors.has(connectionId)) await exec.awaitSignIn(); // scaffold fallback
+  const exec = executors.get(connectionId);
   const startedAt = Date.now();
 
   const counts = { applied: 0, skipped: 0, failed: 0, whatif: 0 };
@@ -524,7 +523,16 @@ async function handleDeploymentRun(job: Job) {
   let seq = 0;
 
   try {
-    await runDeployment();
+    // The in-memory executors map is empty after a worker restart, and an
+    // idle connection is deleted from it by the sweeper above - either way,
+    // a queued job whose connection is gone must fail closed, never fall
+    // back to a fake executor that reports every cmdlet as applied without
+    // touching the tenant (confirmed this session: the old
+    // `?? new SimulatedTeamsExecutor()` fallback did exactly that).
+    if (!exec) {
+      throw new Error('The tenant connection is no longer available (it expired, or the worker restarted since it was made) - reconnect to the customer tenant and run the deployment again.');
+    }
+    await runDeployment(exec);
   } catch (err) {
     // A run that throws (e.g. a pwsh command timeout - see pwsh-executor.ts)
     // must still leave `deployments` in a terminal state. Without this, the
@@ -559,7 +567,7 @@ async function handleDeploymentRun(job: Job) {
     throw err;
   }
 
-  async function runDeployment() {
+  async function runDeployment(exec: TeamsExecutor) {
     // Re-checked fresh here rather than trusted from the queued job payload,
     // so toggling this off/on always takes effect on the next cmdlet, even
     // for a run already in flight. See docs/SECURITY.md.
