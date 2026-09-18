@@ -728,6 +728,10 @@ export class DeploymentService {
         'This customer tenant is set to read-only - live changes are disabled. Run a dry run, or ask a Super Admin to turn off read-only mode first.',
       );
     }
+    // Same hard stop generateChangeDocument already applies - a requested
+    // number that doesn't match what's actually assigned must be resolved
+    // before ANY deploy path runs, not just before the change document.
+    await this.assertNoUnresolvedNumberMismatches(t, input.scope.siteId);
     const conn = await this.getConnection(t, input.connectionId);
     if (conn.started_by !== user.id && user.role !== 'SUPER_ADMIN') {
       throw new ForbiddenException(
