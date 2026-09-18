@@ -256,8 +256,18 @@ export function DeploymentSites() {
                   <TableCell>{r.counts.resourceAccounts}</TableCell>
                   <TableCell>
                     {r.lastDeployment ? (
-                      <Badge appearance="tint" color={DEPLOY_COLOR[r.lastDeployment.status] ?? 'informative'}>
-                        {r.lastDeployment.mode === 'dry_run' ? 'dry run' : 'deployed'} · {r.lastDeployment.status}
+                      <Badge
+                        appearance="tint"
+                        color={
+                          r.lastDeployment.status === 'completed' && r.lastDeployment.failed > 0
+                            ? 'danger'
+                            : DEPLOY_COLOR[r.lastDeployment.status] ?? 'informative'
+                        }
+                      >
+                        {r.lastDeployment.mode === 'dry_run' ? 'dry run' : 'deployed'} ·{' '}
+                        {r.lastDeployment.status === 'completed' && r.lastDeployment.failed > 0
+                          ? `completed - ${r.lastDeployment.failed} failed`
+                          : r.lastDeployment.status}
                       </Badge>
                     ) : (
                       '—'

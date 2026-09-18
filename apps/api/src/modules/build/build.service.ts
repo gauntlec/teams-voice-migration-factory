@@ -79,7 +79,7 @@ export class BuildService {
       s.selectFrom('build_resource_accounts').select(['id', 'site_id']).where('site_id', 'in', siteIds).execute(),
       s
         .selectFrom('deployments')
-        .select(['id', 'mode', 'status', 'created_at', sql<string>`scope->>'siteId'`.as('site_id')])
+        .select(['id', 'mode', 'status', 'created_at', 'summary', sql<string>`scope->>'siteId'`.as('site_id')])
         .orderBy('created_at', 'desc')
         .limit(500)
         .execute(),
@@ -110,7 +110,13 @@ export class BuildService {
         },
         validationIssues: issuesBySite.get(site.id) ?? 0,
         lastDeployment: last
-          ? { id: last.id, mode: last.mode as 'dry_run' | 'execute', status: last.status, createdAt: String(last.created_at) }
+          ? {
+              id: last.id,
+              mode: last.mode as 'dry_run' | 'execute',
+              status: last.status,
+              createdAt: String(last.created_at),
+              failed: Number((last.summary as Record<string, number> | null)?.failed ?? 0),
+            }
           : null,
       };
     });

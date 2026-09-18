@@ -358,7 +358,8 @@ export interface BuildSiteRollup {
   counts: { users: number; caps: number; resourceAccounts: number };
   /** rows whose computed BuildRowValidation has any issue (missing/mismatch/unknown/conflict) */
   validationIssues: number;
-  lastDeployment: { id: string; mode: 'dry_run' | 'execute'; status: string; createdAt: string } | null;
+  /** `failed` mirrors deployments.summary.failed - a `completed` run with failed > 0 finished cleanly but changed nothing for those rows, so callers must check this alongside `status` rather than treating `completed` alone as success (see DeploymentSiteWorkspace's own runStatusBadge). */
+  lastDeployment: { id: string; mode: 'dry_run' | 'execute'; status: string; createdAt: string; failed: number } | null;
 }
 
 /** Per-site rollup shown on the Deployment landing page. */
@@ -367,7 +368,8 @@ export interface DeploymentSiteRollup {
   sitecode: string;
   name: string | null;
   counts: { users: number; caps: number; resourceAccounts: number };
-  lastDeployment: { id: string; mode: 'dry_run' | 'execute'; status: string; createdAt: string } | null;
+  /** `failed` mirrors deployments.summary.failed - a `completed` run with failed > 0 finished cleanly but changed nothing for those rows, so callers must check this alongside `status` rather than treating `completed` alone as success (see DeploymentSiteWorkspace's own runStatusBadge). */
+  lastDeployment: { id: string; mode: 'dry_run' | 'execute'; status: string; createdAt: string; failed: number } | null;
 }
 
 /**
