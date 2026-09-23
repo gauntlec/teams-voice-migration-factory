@@ -1247,7 +1247,6 @@ export class BuildService {
     const flow = await s.selectFrom('discovery_flows').selectAll().where('id', '=', flowId).executeTakeFirst();
     if (!flow) throw new NotFoundException('flow not found');
     if (!flow.wizard_answers) throw new BadRequestException('This call flow has no wizard capture to import.');
-    if (flow.imported_at) throw new BadRequestException('This call flow has already been imported.');
     if (!flow.site_id) throw new BadRequestException('This call flow has no site.');
     const siteId = flow.site_id;
 
@@ -1287,16 +1286,33 @@ export class BuildService {
 
     const resolvers = { resolvePerson, resolveTeam };
 
+    // A second "Import" click after the wizard capture has been edited
+    // (see FlowImportButton's "Update Design & Build" state) re-syncs the
+    // row it already created instead of making a duplicate - every field
+    // the wizard owns is overwritten with the freshly-converted answers,
+    // but anything the converter doesn't produce (resource_accounts is only
+    // ever touched by the block below) is left exactly as an engineer may
+    // have hand-adjusted it in Design & Build since the last sync.
     let warnings: string[];
-    let created: { id: string };
+    let result: { id: string };
     if (flow.kind === 'auto_attendant') {
       const { value, warnings: w } = convertAutoAttendantWizard(flow.wizard_answers as AutoAttendantWizardAnswers, { siteId, name: flow.name, resolvers });
       warnings = w;
-      created = await this.createAutoAttendant(t, u, value);
+      if (flow.build_auto_attendant_id) {
+        const { site_id: _site, ...patch } = value;
+        result = await this.updateAutoAttendant(t, u, flow.build_auto_attendant_id, patch);
+      } else {
+        result = await this.createAutoAttendant(t, u, value);
+      }
     } else if (flow.kind === 'call_queue') {
       const { value, warnings: w } = convertCallQueueWizard(flow.wizard_answers as CallQueueWizardAnswers, { siteId, name: flow.name, resolvers });
       warnings = w;
-      created = await this.createCallQueue(t, u, value);
+      if (flow.build_call_queue_id) {
+        const { site_id: _site, ...patch } = value;
+        result = await this.updateCallQueue(t, u, flow.build_call_queue_id, patch);
+      } else {
+        result = await this.createCallQueue(t, u, value);
+      }
     } else {
       throw new BadRequestException(`Call flows of kind "${flow.kind}" can't be imported.`);
     }
@@ -1314,20 +1330,26 @@ export class BuildService {
         .where('discovery_resource_account_id', '=', flow.resource_account_id)
         .executeTakeFirst();
       if (ra) {
-        if (flow.kind === 'auto_attendant') await this.updateAutoAttendant(t, u, created.id, { resource_accounts: [ra.id] });
-        else await this.updateCallQueue(t, u, created.id, { resource_accounts: [ra.id] });
+        if (flow.kind === 'auto_attendant') await this.updateAutoAttendant(t, u, result.id, { resource_accounts: [ra.id] });
+        else await this.updateCallQueue(t, u, result.id, { resource_accounts: [ra.id] });
       } else {
         warnings.push("The chosen resource account hasn't been populated into Design & Build yet - link it manually once it has (Resource accounts → Populate).");
       }
     }
 
+    // Deliberately NOT touching updated_at here - "in sync" means
+    // imported_at is at least as recent as the last real edit, and
+    // imported_at = now() is always >= whatever updated_at already holds.
+    // A later edit through the normal updateFlow path (PATCH .../flows/:id)
+    // stamps a strictly-later updated_at on its own, which is what flips
+    // the row back to "out of date" until the next import - see the web
+    // app's `stale` check (updated_at > imported_at).
     const updatedFlow = await s
       .updateTable('discovery_flows')
       .set({
         imported_at: new Date().toISOString(),
-        build_auto_attendant_id: flow.kind === 'auto_attendant' ? created.id : null,
-        build_call_queue_id: flow.kind === 'call_queue' ? created.id : null,
-        updated_at: new Date().toISOString(),
+        build_auto_attendant_id: flow.kind === 'auto_attendant' ? result.id : null,
+        build_call_queue_id: flow.kind === 'call_queue' ? result.id : null,
       })
       .where('id', '=', flowId)
       .returningAll()
@@ -1336,11 +1358,11 @@ export class BuildService {
     await this.audit.tenant(t.schema, 'build.flow_wizard_imported', {
       actor: actorOf(u),
       targetType: flow.kind === 'auto_attendant' ? 'build_auto_attendant' : 'build_call_queue',
-      targetId: created.id,
-      detail: { flowId, warnings: warnings.length },
+      targetId: result.id,
+      detail: { flowId, warnings: warnings.length, resynced: !!(flow.build_auto_attendant_id || flow.build_call_queue_id) },
     });
 
-    return { row: created, flow: updatedFlow, warnings };
+    return { row: result, flow: updatedFlow, warnings };
   }
 
   /** Well-known Microsoft ApplicationId for this account's kind - what New-CsOnlineApplicationInstance needs. */

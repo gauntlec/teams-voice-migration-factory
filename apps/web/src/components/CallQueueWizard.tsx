@@ -117,6 +117,14 @@ const DEFAULT_ANSWERS: CallQueueWizardAnswers = {
   noAgentsApplyTo: 'AllCalls',
 };
 
+/** An existing wizard-captured Call flows row, reopened for editing - see SiteWorkspace.tsx's onEditRow. */
+export interface CallQueueWizardEditing {
+  id: string;
+  name: string;
+  answers: CallQueueWizardAnswers;
+  resourceAccountId: string | null;
+}
+
 export function CallQueueWizard({
   open,
   onOpenChange,
@@ -125,6 +133,7 @@ export function CallQueueWizard({
   siteId,
   resourceAccountChoices,
   onCreated,
+  editing,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -133,31 +142,33 @@ export function CallQueueWizard({
   siteId: string;
   resourceAccountChoices: Choice[];
   onCreated: () => void;
+  /** Editing an already-saved wizard capture instead of creating a new one - PATCHes the existing flow row and shows "Save changes" instead of "Create". Render with `key={editing.id}` so each row gets its own fresh state. */
+  editing?: CallQueueWizardEditing;
 }) {
-  const [name, setName] = useState('');
-  const [answers, setAnswers] = useState<CallQueueWizardAnswers>(DEFAULT_ANSWERS);
-  const [resourceAccountId, setResourceAccountId] = useState('');
+  const [name, setName] = useState(editing?.name ?? '');
+  const [answers, setAnswers] = useState<CallQueueWizardAnswers>(editing?.answers ?? DEFAULT_ANSWERS);
+  const [resourceAccountId, setResourceAccountId] = useState(editing?.resourceAccountId ?? '');
   const [error, setError] = useState<string | null>(null);
 
   const save = useMutation({
-    mutationFn: () =>
-      api(`${base}/flows`, {
-        method: 'POST',
-        body: JSON.stringify({
-          site_id: siteId,
-          kind: 'call_queue',
-          name,
-          description: `Captured via the Call Queue wizard - ${answers.agents.length} agent(s), ${ROUTING_LABELS[answers.routingMethod]}`,
-          wizard_answers: answers,
-          wizard_version: 1,
-          resource_account_id: resourceAccountId || null,
-        }),
-      }),
+    mutationFn: () => {
+      const body = JSON.stringify({
+        ...(editing ? {} : { site_id: siteId, kind: 'call_queue' }),
+        name,
+        description: `Captured via the Call Queue wizard - ${answers.agents.length} agent(s), ${ROUTING_LABELS[answers.routingMethod]}`,
+        wizard_answers: answers,
+        wizard_version: 1,
+        resource_account_id: resourceAccountId || null,
+      });
+      return editing ? api(`${base}/flows/${editing.id}`, { method: 'PATCH', body }) : api(`${base}/flows`, { method: 'POST', body });
+    },
     onSuccess: () => {
       onOpenChange(false);
-      setName('');
-      setAnswers(DEFAULT_ANSWERS);
-      setResourceAccountId('');
+      if (!editing) {
+        setName('');
+        setAnswers(DEFAULT_ANSWERS);
+        setResourceAccountId('');
+      }
       onCreated();
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Save failed'),
@@ -366,21 +377,23 @@ export function CallQueueWizard({
       open={open}
       onOpenChange={(o) => {
         onOpenChange(o);
-        if (!o) {
-          // Reset on Cancel too, not just on a successful save - the dialog
-          // stays mounted (WizardTiles just toggles `open`), so leftover
-          // text/answers from an abandoned attempt would otherwise still be
-          // there next time this tile is opened.
+        // Reset on Cancel too, not just on a successful save - the "New"
+        // instance stays mounted the whole time (WizardTiles just toggles
+        // `open`), so leftover text/answers from an abandoned attempt would
+        // otherwise still be there next time this tile is opened. Not
+        // needed in edit mode - that instance is remounted fresh (key={editing.id})
+        // every time a different row is opened for editing.
+        if (!o && !editing) {
           setError(null);
           setName('');
           setAnswers(DEFAULT_ANSWERS);
           setResourceAccountId('');
         }
       }}
-      title="New Call Queue"
+      title={editing ? `Edit "${editing.name}"` : 'New Call Queue'}
       steps={steps}
       completing={save.isPending}
-      completeLabel="Create"
+      completeLabel={editing ? 'Save changes' : 'Create'}
       error={error}
       onComplete={() => {
         setError(null);

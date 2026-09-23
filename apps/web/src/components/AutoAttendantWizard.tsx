@@ -228,6 +228,14 @@ const DEFAULT_ANSWERS: AutoAttendantWizardAnswers = {
   holidays: [],
 };
 
+/** An existing wizard-captured Call flows row, reopened for editing - see SiteWorkspace.tsx's onEditRow. */
+export interface AutoAttendantWizardEditing {
+  id: string;
+  name: string;
+  answers: AutoAttendantWizardAnswers;
+  resourceAccountId: string | null;
+}
+
 export function AutoAttendantWizard({
   open,
   onOpenChange,
@@ -237,6 +245,7 @@ export function AutoAttendantWizard({
   resourceAccountChoices,
   teamChoices,
   onCreated,
+  editing,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -246,31 +255,33 @@ export function AutoAttendantWizard({
   resourceAccountChoices: Choice[];
   teamChoices: Choice[];
   onCreated: () => void;
+  /** Editing an already-saved wizard capture instead of creating a new one - PATCHes the existing flow row and shows "Save changes" instead of "Create". Render with `key={editing.id}` so each row gets its own fresh state. */
+  editing?: AutoAttendantWizardEditing;
 }) {
-  const [name, setName] = useState('');
-  const [answers, setAnswers] = useState<AutoAttendantWizardAnswers>(DEFAULT_ANSWERS);
-  const [resourceAccountId, setResourceAccountId] = useState('');
+  const [name, setName] = useState(editing?.name ?? '');
+  const [answers, setAnswers] = useState<AutoAttendantWizardAnswers>(editing?.answers ?? DEFAULT_ANSWERS);
+  const [resourceAccountId, setResourceAccountId] = useState(editing?.resourceAccountId ?? '');
   const [error, setError] = useState<string | null>(null);
 
   const save = useMutation({
-    mutationFn: () =>
-      api(`${base}/flows`, {
-        method: 'POST',
-        body: JSON.stringify({
-          site_id: siteId,
-          kind: 'auto_attendant',
-          name,
-          description: `Captured via the Auto Attendant wizard - ${flowSummary(answers.businessFlow, 'Business hours')[0] ?? ''}`,
-          wizard_answers: answers,
-          wizard_version: 1,
-          resource_account_id: resourceAccountId || null,
-        }),
-      }),
+    mutationFn: () => {
+      const body = JSON.stringify({
+        ...(editing ? {} : { site_id: siteId, kind: 'auto_attendant' }),
+        name,
+        description: `Captured via the Auto Attendant wizard - ${flowSummary(answers.businessFlow, 'Business hours')[0] ?? ''}`,
+        wizard_answers: answers,
+        wizard_version: 1,
+        resource_account_id: resourceAccountId || null,
+      });
+      return editing ? api(`${base}/flows/${editing.id}`, { method: 'PATCH', body }) : api(`${base}/flows`, { method: 'POST', body });
+    },
     onSuccess: () => {
       onOpenChange(false);
-      setName('');
-      setAnswers(DEFAULT_ANSWERS);
-      setResourceAccountId('');
+      if (!editing) {
+        setName('');
+        setAnswers(DEFAULT_ANSWERS);
+        setResourceAccountId('');
+      }
       onCreated();
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Save failed'),
@@ -509,21 +520,23 @@ export function AutoAttendantWizard({
       open={open}
       onOpenChange={(o) => {
         onOpenChange(o);
-        if (!o) {
-          // Reset on Cancel too, not just on a successful save - the dialog
-          // stays mounted (WizardTiles just toggles `open`), so leftover
-          // text/answers from an abandoned attempt would otherwise still be
-          // there next time this tile is opened.
+        // Reset on Cancel too, not just on a successful save - the "New"
+        // instance stays mounted the whole time (WizardTiles just toggles
+        // `open`), so leftover text/answers from an abandoned attempt would
+        // otherwise still be there next time this tile is opened. Not
+        // needed in edit mode - that instance is remounted fresh (key={editing.id})
+        // every time a different row is opened for editing.
+        if (!o && !editing) {
           setError(null);
           setName('');
           setAnswers(DEFAULT_ANSWERS);
           setResourceAccountId('');
         }
       }}
-      title="New Auto Attendant"
+      title={editing ? `Edit "${editing.name}"` : 'New Auto Attendant'}
       steps={steps}
       completing={save.isPending}
-      completeLabel="Create"
+      completeLabel={editing ? 'Save changes' : 'Create'}
       error={error}
       onComplete={() => {
         setError(null);

@@ -19,6 +19,31 @@ interface WizardTileDef {
 }
 
 /**
+ * "A department/team" suggestions - this site's own already-built Call
+ * Queues/Auto Attendants, so the wizard's "where should this go?" picker
+ * can match (and, at import, actually link to) something that already
+ * exists instead of always leaving it as a free-text guess. Exported so
+ * SiteWorkspace.tsx's "edit a wizard-captured row" flow (outside this tile
+ * grid) can reuse the exact same query/cache instead of duplicating it.
+ */
+export function useTeamChoices(tenantId: string, siteId: string): Choice[] {
+  const cqs = useQuery({
+    queryKey: ['wizard-team-cqs', tenantId, siteId],
+    enabled: !!tenantId && !!siteId,
+    queryFn: () => api<Paginated<{ id: string; name: string }>>(`/t/${tenantId}/build/call-queues?siteId=${siteId}&limit=500`),
+  });
+  const aas = useQuery({
+    queryKey: ['wizard-team-aas', tenantId, siteId],
+    enabled: !!tenantId && !!siteId,
+    queryFn: () => api<Paginated<{ id: string; name: string }>>(`/t/${tenantId}/build/auto-attendants?siteId=${siteId}&limit=500`),
+  });
+  return useMemo(
+    () => [...(cqs.data?.items ?? []), ...(aas.data?.items ?? [])].map((r) => ({ value: r.name, label: r.name })),
+    [cqs.data, aas.data],
+  );
+}
+
+/**
  * "Guided setup" - a small, data-driven tile grid above the site workspace's
  * tab bar (Data Collection's "Discovery" site page). Each tile launches a
  * multi-step wizard that captures Auto Attendant/Call Queue requirements in
@@ -47,25 +72,7 @@ export function WizardTiles({
 }) {
   const s = useStyles();
   const [open, setOpen] = useState<WizardTileDef['key'] | null>(null);
-
-  // "A department/team" suggestions - this site's own already-built Call
-  // Queues/Auto Attendants, so the wizard's "where should this go?" picker
-  // can match (and, at import, actually link to) something that already
-  // exists instead of always leaving it as a free-text guess.
-  const cqs = useQuery({
-    queryKey: ['wizard-team-cqs', tenantId, siteId],
-    enabled: !!tenantId && !!siteId,
-    queryFn: () => api<Paginated<{ id: string; name: string }>>(`/t/${tenantId}/build/call-queues?siteId=${siteId}&limit=500`),
-  });
-  const aas = useQuery({
-    queryKey: ['wizard-team-aas', tenantId, siteId],
-    enabled: !!tenantId && !!siteId,
-    queryFn: () => api<Paginated<{ id: string; name: string }>>(`/t/${tenantId}/build/auto-attendants?siteId=${siteId}&limit=500`),
-  });
-  const teamChoices: Choice[] = useMemo(
-    () => [...(cqs.data?.items ?? []), ...(aas.data?.items ?? [])].map((r) => ({ value: r.name, label: r.name })),
-    [cqs.data, aas.data],
-  );
+  const teamChoices = useTeamChoices(tenantId, siteId);
 
   return (
     <>

@@ -722,6 +722,7 @@ export function PagedSection({
   selectable,
   selected,
   onSelectedChange,
+  onEditRow,
 }: {
   title: string;
   hint?: string;
@@ -743,6 +744,16 @@ export function PagedSection({
   selectable?: boolean;
   selected?: Set<string>;
   onSelectedChange?: (next: Set<string>) => void;
+  /**
+   * Intercepts the row's Edit click before the generic RecordDialog opens -
+   * return true to say "I've handled this row myself" (e.g. opened a
+   * bespoke editor for it) and skip the generic dialog entirely; return
+   * false/undefined to fall through to the normal edit-in-place dialog.
+   * Lets one row type in a list (e.g. a wizard-captured Call flow) open a
+   * completely different editor without changing this component's default
+   * behavior for every other caller.
+   */
+  onEditRow?: (r: Row) => boolean;
 }) {
   const s = useRecordStyles();
   const qc = useQueryClient();
@@ -850,6 +861,7 @@ export function PagedSection({
             removing={remove.isPending}
             extraRowAction={extraRowAction}
             onEdit={(r) => {
+              if (onEditRow?.(r)) return;
               setEditing(r);
               setError(null);
               setOpen(true);

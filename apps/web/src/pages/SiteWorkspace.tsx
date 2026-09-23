@@ -46,17 +46,21 @@ import {
   RESOURCE_ACCOUNT_KINDS,
   SITE_REGIONS,
   VOICEMAIL_PROMPT_LANGUAGES,
+  type AutoAttendantWizardAnswers,
+  type CallQueueWizardAnswers,
   type DiscoverySiteOverview,
   type Paginated,
   type TenantUserSummary,
 } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { useAuth } from '../auth';
+import { AutoAttendantWizard } from '../components/AutoAttendantWizard';
+import { CallQueueWizard } from '../components/CallQueueWizard';
 import { DataTable } from '../components/DataTable';
 import { ImportUsersDialog } from '../components/ImportUsersDialog';
 import { Page } from '../components/Page';
 import { NetworkDiagram, type NetworkRow } from '../components/NetworkDiagram';
-import { WizardTiles } from '../components/WizardTiles';
+import { WizardTiles, useTeamChoices } from '../components/WizardTiles';
 import {
   BulkEditDialog,
   LoadError,
@@ -104,6 +108,18 @@ type TabKey = (typeof TABS)[number];
 
 /** Last 10 significant digits — for loosely matching a requested vs assigned number. */
 const numKey = (v: unknown) => String(v ?? '').replace(/\D/g, '').slice(-10);
+
+/**
+ * A wizard-captured Call flows row is "stale" once it's been edited again
+ * after its last import - discovery_flows.updated_at bumps on every PATCH
+ * (including the wizard's own "Save changes"), while imported_at only
+ * moves when BuildService.importFlowWizard runs, so a strictly-later
+ * updated_at means Design & Build hasn't seen the newest answers yet.
+ */
+function isFlowStale(r: Row): boolean {
+  if (!r.imported_at || !r.updated_at) return false;
+  return new Date(r.updated_at as string).getTime() > new Date(r.imported_at as string).getTime();
+}
 
 const TAB_LABEL: Record<TabKey, string> = {
   overview: 'Overview',
@@ -216,6 +232,14 @@ export function SiteWorkspace() {
     () => (siteResourceAccounts.data?.items ?? []).map((r) => ({ value: r.id, label: r.name })),
     [siteResourceAccounts.data],
   );
+
+  // Shares WizardTiles' own query/cache (same queryKey) - the "edit an
+  // existing wizard capture" flow below needs the same "department/team"
+  // suggestions the "New" tiles already fetch, without a second network call.
+  const teamChoices = useTeamChoices(tid ?? '', siteId);
+  // The wizard-captured Call flows row currently reopened for editing (see
+  // onEditRow on the flows PagedSection below) - null when nothing's open.
+  const [editingFlow, setEditingFlow] = useState<Row | null>(null);
 
   // Every number's owning site, tenant-wide - so the import preview can tell
   // "this belongs to a different site" apart from "not in inventory anywhere".
@@ -715,6 +739,16 @@ export function SiteWorkspace() {
           params={{ siteId }}
           fixed={{ site_id: siteId }}
           readOnly={locked}
+          onEditRow={(r) => {
+            // A wizard-captured row reopens the same guided wizard it was
+            // built with (pre-filled), instead of the generic kind/name/
+            // description dialog every other Call flows row still uses -
+            // editing structured wizard_answers through a plain textarea
+            // isn't something a customer should have to do.
+            if (!r.wizard_answers) return false;
+            setEditingFlow(r);
+            return true;
+          }}
           extraRowAction={(r) =>
             // "Import to Design & Build" is engineer/admin-only work - the
             // API already blocks it (RequirePermission('build:write'), which
@@ -731,7 +765,19 @@ export function SiteWorkspace() {
             {
               key: 'wizard_answers',
               label: 'Source',
-              render: (r) => (r.wizard_answers ? <Badge appearance="tint" color="brand">Wizard</Badge> : <Badge appearance="outline">Manual</Badge>),
+              render: (r) =>
+                r.wizard_answers ? (
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                    <Badge appearance="tint" color="brand">Wizard</Badge>
+                    {isFlowStale(r) && (
+                      <Badge appearance="tint" color="warning" title="Edited since it was last imported into Design & Build">
+                        Edited
+                      </Badge>
+                    )}
+                  </div>
+                ) : (
+                  <Badge appearance="outline">Manual</Badge>
+                ),
             },
             {
               key: 'description',
@@ -747,6 +793,53 @@ export function SiteWorkspace() {
             { key: 'name', label: 'Name', required: true },
             { key: 'description', label: 'Description', type: 'textarea', full: true },
           ]}
+        />
+      )}
+
+      {/* Reopening a wizard-captured Call flows row for editing (see onEditRow above) - a
+          fresh instance per row (key={editingFlow.id}) so each edit starts from that row's
+          own saved answers, not whatever an earlier edit left behind. */}
+      {tid && editingFlow?.kind === 'auto_attendant' && (
+        <AutoAttendantWizard
+          key={editingFlow.id}
+          open
+          onOpenChange={(o) => !o && setEditingFlow(null)}
+          base={base}
+          tenantId={tid}
+          siteId={siteId}
+          resourceAccountChoices={resourceAccountChoices}
+          teamChoices={teamChoices}
+          editing={{
+            id: editingFlow.id,
+            name: editingFlow.name as string,
+            answers: editingFlow.wizard_answers as AutoAttendantWizardAnswers,
+            resourceAccountId: (editingFlow.resource_account_id as string | null) ?? null,
+          }}
+          onCreated={() => {
+            setEditingFlow(null);
+            qc.invalidateQueries({ queryKey: ['flows', tid, siteId] });
+          }}
+        />
+      )}
+      {tid && editingFlow?.kind === 'call_queue' && (
+        <CallQueueWizard
+          key={editingFlow.id}
+          open
+          onOpenChange={(o) => !o && setEditingFlow(null)}
+          base={base}
+          tenantId={tid}
+          siteId={siteId}
+          resourceAccountChoices={resourceAccountChoices}
+          editing={{
+            id: editingFlow.id,
+            name: editingFlow.name as string,
+            answers: editingFlow.wizard_answers as CallQueueWizardAnswers,
+            resourceAccountId: (editingFlow.resource_account_id as string | null) ?? null,
+          }}
+          onCreated={() => {
+            setEditingFlow(null);
+            qc.invalidateQueries({ queryKey: ['flows', tid, siteId] });
+          }}
         />
       )}
     </Page>
@@ -1291,7 +1384,7 @@ function FlowImportButton({
   siteId,
   onChanged,
 }: {
-  flow: Row & { wizard_answers?: unknown; imported_at?: string | null };
+  flow: Row & { wizard_answers?: unknown; imported_at?: string | null; updated_at?: string | null };
   tid: string;
   siteId: string;
   onChanged: () => void;
@@ -1309,6 +1402,7 @@ function FlowImportButton({
   });
 
   if (!flow.wizard_answers) return null;
+  const stale = isFlowStale(flow);
   // The trigger swaps to "Imported →" the moment the row list refetches
   // (onChanged, called from the same onSuccess that also opens the
   // warnings dialog below) - keep the dialog itself unconditional so that
@@ -1316,15 +1410,21 @@ function FlowImportButton({
   // opened. Confirmed live: without this, the dialog never appeared at all.
   return (
     <>
-      {flow.imported_at ? (
+      {flow.imported_at && !stale ? (
         <Link to={`/build/sites/${siteId}`}>
           <Button size="small" appearance="subtle">
             Imported →
           </Button>
         </Link>
       ) : (
-        <Button size="small" appearance="subtle" disabled={doImport.isPending} onClick={() => doImport.mutate()}>
-          {doImport.isPending ? 'Importing…' : 'Import to Design & Build'}
+        <Button
+          size="small"
+          appearance={stale ? 'primary' : 'subtle'}
+          disabled={doImport.isPending}
+          onClick={() => doImport.mutate()}
+          title={stale ? "This row was edited since it was last synced to Design & Build" : undefined}
+        >
+          {doImport.isPending ? 'Syncing…' : stale ? 'Update Design & Build' : 'Import to Design & Build'}
         </Button>
       )}
       <Dialog
@@ -1338,7 +1438,7 @@ function FlowImportButton({
       >
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>{error ? 'Import failed' : 'Imported to Design & Build'}</DialogTitle>
+            <DialogTitle>{error ? 'Sync failed' : 'Synced to Design & Build'}</DialogTitle>
             <DialogContent>
               {error && <Text block>{error}</Text>}
               {warnings && warnings.length === 0 && <Text block>Everything resolved cleanly - no follow-up needed.</Text>}
