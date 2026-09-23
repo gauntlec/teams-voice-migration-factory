@@ -840,6 +840,9 @@ export function planCallQueueRow(
   // instance ids not already associated live, instead of re-emitting every
   // pass regardless.
   const linkedInstanceIds = row.resource_accounts.map((id) => raObjectIds.get(id)).filter((id): id is string => !!id);
+  // Every still-linked resource account resolving is what makes the removal
+  // diff below trustworthy - see the comment there.
+  const allLinkedResolved = linkedInstanceIds.length === row.resource_accounts.length;
   const alreadyAssociated = new Set((live?.applicationInstanceIds ?? []).map((id) => id.toLowerCase()));
   const unassociatedInstanceIds = linkedInstanceIds.filter((id) => !alreadyAssociated.has(id.toLowerCase()));
   if (live?.identity && unassociatedInstanceIds.length > 0) {
@@ -849,6 +852,25 @@ export function planCallQueueRow(
       objectType: 'call_queue',
       objectId: row.id,
     });
+  }
+  // A resource account unlinked in Design & Build keeps its live
+  // association forever otherwise (confirmed bug: the diff above only ever
+  // adds). Only emitted when every still-linked resource account resolved
+  // this pass - if one didn't (not yet licensed, sync lag), skip removal
+  // entirely rather than risk tearing down a still-wanted association based
+  // on incomplete data; callQueueRowWarnings' existing unresolved-RA warning
+  // already explains why nothing happened.
+  if (allLinkedResolved) {
+    const linkedInstanceIdSet = new Set(linkedInstanceIds.map((id) => id.toLowerCase()));
+    const removedInstanceIds = (live?.applicationInstanceIds ?? []).filter((id) => !linkedInstanceIdSet.has(id.toLowerCase()));
+    if (removedInstanceIds.length > 0) {
+      calls.push({
+        cmdlet: 'Remove-CsOnlineApplicationInstanceAssociation',
+        parameters: { Identities: removedInstanceIds },
+        objectType: 'call_queue',
+        objectId: row.id,
+      });
+    }
   }
 
   return calls;
@@ -1577,6 +1599,9 @@ export function planAutoAttendantRow(
   // emits instance ids not already associated live, instead of re-emitting
   // every pass regardless.
   const linkedInstanceIds = row.resource_accounts.map((id) => raObjectIds.get(id)).filter((id): id is string => !!id);
+  // Every still-linked resource account resolving is what makes the removal
+  // diff below trustworthy - see the comment there.
+  const allLinkedResolved = linkedInstanceIds.length === row.resource_accounts.length;
   const alreadyAssociated = new Set((live?.applicationInstanceIds ?? []).map((id) => id.toLowerCase()));
   const unassociatedInstanceIds = linkedInstanceIds.filter((id) => !alreadyAssociated.has(id.toLowerCase()));
   if (live?.identity && unassociatedInstanceIds.length > 0) {
@@ -1586,6 +1611,22 @@ export function planAutoAttendantRow(
       objectType: 'auto_attendant',
       objectId: row.id,
     });
+  }
+  // A resource account unlinked in Design & Build keeps its live
+  // association forever otherwise (confirmed bug: the diff above only ever
+  // adds). Only emitted when every still-linked resource account resolved
+  // this pass - see planCallQueueRow's identical block for why.
+  if (allLinkedResolved) {
+    const linkedInstanceIdSet = new Set(linkedInstanceIds.map((id) => id.toLowerCase()));
+    const removedInstanceIds = (live?.applicationInstanceIds ?? []).filter((id) => !linkedInstanceIdSet.has(id.toLowerCase()));
+    if (removedInstanceIds.length > 0) {
+      calls.push({
+        cmdlet: 'Remove-CsOnlineApplicationInstanceAssociation',
+        parameters: { Identities: removedInstanceIds },
+        objectType: 'auto_attendant',
+        objectId: row.id,
+      });
+    }
   }
 
   return calls;
