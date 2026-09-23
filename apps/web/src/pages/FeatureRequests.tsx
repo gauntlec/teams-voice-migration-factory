@@ -98,6 +98,14 @@ const useStyles = makeStyles({
     display: 'grid',
     ...shorthands.gap('6px'),
     cursor: 'grab',
+    // Mirrors apps/web/src/pages/BugReports.tsx's own card style - see the
+    // comment there. columnBody is a column-direction flex list, and
+    // Fluent's Card ships its own `overflow: hidden`, so once a column's
+    // cards exceed the column's available height, flexbox was silently
+    // squashing every card down (its automatic min-height resolves to 0
+    // with non-visible overflow) instead of leaving them at their natural
+    // size and letting columnBody's own overflowY:auto scroll.
+    flexShrink: 0,
   },
   cardOpen: {
     display: 'grid',

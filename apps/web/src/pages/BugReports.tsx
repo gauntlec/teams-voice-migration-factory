@@ -98,6 +98,18 @@ const useStyles = makeStyles({
     display: 'grid',
     ...shorthands.gap('6px'),
     cursor: 'grab',
+    // columnBody is a column-direction flex list, and Fluent's Card ships
+    // its own `overflow: hidden` on the root - per the flexbox spec, a
+    // flex item with non-visible overflow gets an automatic min-height of
+    // 0 instead of one based on its content, so once a column's cards
+    // exceed the column's available height, flexbox silently squashed
+    // every card down to whatever height fit rather than leaving them at
+    // their natural size and letting columnBody's own overflowY:auto
+    // scroll - the second half of a wrapped title (or the note/footer
+    // below it) was getting sheared off with no ellipsis, not just
+    // visually truncated. flexShrink:0 makes cards report their real
+    // content height instead.
+    flexShrink: 0,
   },
   cardOpen: {
     display: 'grid',
