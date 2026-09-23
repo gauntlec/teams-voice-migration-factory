@@ -83,6 +83,13 @@ const useStyles = makeStyles({
     display: 'inline-block',
     marginLeft: '6px',
   },
+  // Run History's version sits below the summary badges (a block element
+  // breaks the line already) rather than beside inline text, so it wants
+  // vertical breathing room instead of autoIncludedTag's horizontal gap.
+  autoIncludedNote: {
+    display: 'inline-block',
+    marginTop: '4px',
+  },
 });
 
 interface Connection {
@@ -457,8 +464,8 @@ export function DeploymentSiteWorkspace() {
                           {autoIncludedRowIds.has(r.rowId) && (
                             <Badge
                               className={cs.autoIncludedTag}
-                              appearance="tint"
-                              color="informative"
+                              appearance="filled"
+                              color="brand"
                               title="Not selected directly - included automatically because a selected Call Queue/Auto Attendant references it."
                             >
                               included automatically
@@ -530,14 +537,14 @@ export function DeploymentSiteWorkspace() {
                         '—'
                       )}
                       {(d.scope?.autoIncludedRowIds?.length ?? 0) > 0 && (
-                        <Text
-                          size={200}
-                          block
-                          className={s.muted}
+                        <Badge
+                          className={cs.autoIncludedNote}
+                          appearance="filled"
+                          color="brand"
                           title="Call Queue/Auto Attendant rows in this run referenced Users that weren't selected directly - their own config was pulled in and deployed first."
                         >
                           +{d.scope!.autoIncludedRowIds!.length} row{d.scope!.autoIncludedRowIds!.length === 1 ? '' : 's'} included automatically
-                        </Text>
+                        </Badge>
                       )}
                     </TableCell>
                     <TableCell>
