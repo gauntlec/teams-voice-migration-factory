@@ -940,6 +940,104 @@ export function collectAutoAttendantUserUpns(
   return out;
 }
 
+/** One AA/CQ transfer target - see collectAutoAttendantVoiceAppRefs. */
+export interface AutoAttendantVoiceAppRef {
+  kind: 'auto_attendant' | 'call_queue';
+  buildId: string;
+}
+
+function collectVoiceAppRefsFromCallFlow(cf: AutoAttendantCallFlow | null | undefined, out: AutoAttendantVoiceAppRef[]) {
+  for (const opt of cf?.menu.options ?? []) {
+    const target = opt.target;
+    if (opt.action === 'TransferCallToTarget' && target && (target.kind === 'auto_attendant' || target.kind === 'call_queue') && target.buildId) {
+      out.push({ kind: target.kind, buildId: target.buildId });
+    }
+  }
+}
+
+/**
+ * Every same-site Auto Attendant/Call Queue a row's -Operator or menu
+ * options transfer to (AutoAttendantCallableEntity.buildId) - used by
+ * orderAutoAttendantRowsByDependency to sequence a deployment run so a
+ * target deploys before the row that references it, the same way
+ * collectAutoAttendantUserUpns collects 'user'-kind targets for identity
+ * resolution.
+ */
+export function collectAutoAttendantVoiceAppRefs(
+  row: Pick<BuildAutoAttendantRow, 'operator' | 'default_call_flow' | 'after_hours_call_flow' | 'holiday_call_flows'>,
+): AutoAttendantVoiceAppRef[] {
+  const out: AutoAttendantVoiceAppRef[] = [];
+  if (row.operator && (row.operator.kind === 'auto_attendant' || row.operator.kind === 'call_queue') && row.operator.buildId) {
+    out.push({ kind: row.operator.kind, buildId: row.operator.buildId });
+  }
+  collectVoiceAppRefsFromCallFlow(row.default_call_flow, out);
+  collectVoiceAppRefsFromCallFlow(row.after_hours_call_flow, out);
+  for (const h of row.holiday_call_flows) collectVoiceAppRefsFromCallFlow(h.callFlow, out);
+  return out;
+}
+
+/**
+ * Orders a batch of Auto Attendant rows being deployed together so a row
+ * that transfers to another Auto Attendant IN THE SAME BATCH deploys after
+ * its target - otherwise the target's live Identity may not exist yet when
+ * this row is planned, and the transfer silently stays unresolved for the
+ * rest of the run (flagged by autoAttendantRowWarnings, not fixed until a
+ * later Discovery sync + a second deployment run). A Call Queue target isn't
+ * ordered here - planCallQueueRow never references another build row, so
+ * call_queues has nothing to topologically sort; the worker's block-level
+ * order (call_queues before auto_attendants) already covers CQ-before-AA.
+ * Stable for any row with no same-batch AA dependency (keeps the original
+ * order); a same-batch cycle (A targets B, B targets A) can't be fully
+ * ordered either way and is left as encountered, same as before this sort
+ * existed.
+ */
+export function orderAutoAttendantRowsByDependency(rows: BuildAutoAttendantRow[]): BuildAutoAttendantRow[] {
+  const dependsOn = new Map<string, Set<string>>();
+  const idSet = new Set(rows.map((r) => r.id));
+  for (const row of rows) {
+    const deps = new Set<string>();
+    for (const ref of collectAutoAttendantVoiceAppRefs(row)) {
+      if (ref.kind === 'auto_attendant' && ref.buildId !== row.id && idSet.has(ref.buildId)) deps.add(ref.buildId);
+    }
+    dependsOn.set(row.id, deps);
+  }
+  const idToRow = new Map(rows.map((r) => [r.id, r]));
+  const visited = new Set<string>();
+  const visiting = new Set<string>();
+  const ordered: BuildAutoAttendantRow[] = [];
+  const visit = (id: string) => {
+    if (visited.has(id) || visiting.has(id)) return; // already placed, or a cycle - leave the rest to unwind as-is
+    visiting.add(id);
+    for (const dep of dependsOn.get(id) ?? []) visit(dep);
+    visiting.delete(id);
+    visited.add(id);
+    const row = idToRow.get(id);
+    if (row) ordered.push(row);
+  };
+  for (const row of rows) visit(row.id);
+  return ordered;
+}
+
+/**
+ * Given the Call Queue/Auto Attendant rows selected for a deployment run and
+ * this site's build_users rows, returns the build_users row ids that must
+ * also be included so a referenced agent/-Operator/menu-option target's own
+ * Enterprise Voice/number/policy config deploys before the queue/attendant
+ * that relies on it, instead of the operator having to notice and select it
+ * separately. Matching is by UPN, case-insensitive.
+ */
+export function collectDependencyUserRowIds(
+  selectedCallQueues: Pick<BuildCallQueueRow, 'agents'>[],
+  selectedAutoAttendants: Pick<BuildAutoAttendantRow, 'operator' | 'default_call_flow' | 'after_hours_call_flow' | 'holiday_call_flows'>[],
+  siteUsers: { id: string; upn: string }[],
+): string[] {
+  const upns = new Set<string>();
+  for (const cq of selectedCallQueues) for (const upn of cq.agents ?? []) upns.add(upn.toLowerCase());
+  for (const upn of collectAutoAttendantUserUpns(selectedAutoAttendants)) upns.add(upn.toLowerCase());
+  if (upns.size === 0) return [];
+  return siteUsers.filter((u) => upns.has(u.upn.toLowerCase())).map((u) => u.id);
+}
+
 export function autoAttendantRowWarnings(
   row: BuildAutoAttendantRow,
   crossRef: AutoAttendantCrossRef,

@@ -34,6 +34,55 @@ the same way the resource-account `deferred` gate below overrides both
 modes: every cmdlet is forced to `whatif` before it reaches the executor,
 regardless of what mode was requested or who requested it.
 
+## Dependency ordering within a run
+
+`apps/worker/src/main.ts`'s `handleDeploymentRun` always processes sheets in
+this fixed order, regardless of the order `scope.sheets`/`scope.rowIds` were
+given in: **users/caps -> resource accounts -> call queues -> auto
+attendants**. Within that:
+
+- **A Call Queue's agents / an Auto Attendant's -Operator or menu-option
+  targets, and their own build_users row.** If an operator selects specific
+  Call Queue/Auto Attendant rows for a run (via `rowIds`) without separately
+  selecting the Build Users row(s) those rows reference, `DeploymentService.
+  expandScopeWithDependencies` silently adds those build_users row ids (and
+  the `users` sheet, if it wasn't already included) to the run before it's
+  queued - so the referenced person's own Enterprise Voice/number/policy
+  config deploys first, in the same run, rather than the operator having to
+  notice the dependency and select it themselves. A whole-site run (no
+  `rowIds` filter) already covers every sheet in full and needs no expansion.
+  Purely additive: it never removes or reorders what was already selected.
+- **A Call Queue created in this run, targeted by an Auto Attendant deployed
+  later in the same run** (a menu option or -Operator transferring to that
+  queue). Discovery's `tenant_objects` snapshot - what `AutoAttendantCrossRef`
+  normally resolves same-site AA/CQ targets against - only updates on its own
+  periodic sync, so a queue this run just created via `New-CsCallQueue` has no
+  entry there yet. `refreshCrossRefEntry` closes that gap with one targeted
+  live `Get-CsCallQueue -NameFilter <name>` lookup immediately after a queue
+  is newly created (never for an existing one being updated - no lookup
+  needed, its identity is already known), so it resolves as a valid target for
+  the rest of the run.
+- **One Auto Attendant created in this run, targeted by another Auto
+  Attendant in the same batch** (a nested menu, e.g. "Sales" transferring
+  back to "Reception"). `orderAutoAttendantRowsByDependency` topologically
+  sorts the batch so a row deploys after any same-batch Auto Attendant it
+  targets, and the same `refreshCrossRefEntry` lookup (via
+  `Get-CsAutoAttendant -NameFilter`) runs after each newly-created one so a
+  later row in the batch can resolve it. A same-batch cycle (A transfers to
+  B, B transfers to A) can't be fully ordered either way and is left as
+  encountered - exactly as before this ordering existed, just no worse.
+
+None of this is needed for a Call Queue's own overflow/timeout/no-agent
+targets - those are plain PSTN numbers/SIP addresses
+(`normalizePstnTarget`), never a same-site AA/CQ `buildId` reference, so
+call_queues has nothing to topologically sort against itself.
+
+Every refresh above is read-only and best-effort: a lookup failure just
+leaves that one target unresolved for the rest of the run (flagged by
+`autoAttendantRowWarnings`, same as before this existed) rather than failing
+the deployment - it's fixed the normal way on the next Discovery sync + a
+follow-up run either way.
+
 ## Users & Common Area Phones
 
 Planned by `apps/worker/src/planner.ts` `planIdentityRow` (users and CAPs plan

@@ -9,6 +9,7 @@ import {
   CALL_QUEUE_TIMEOUT_ACTIONS,
   callQueueRowWarnings,
   collectAutoAttendantUserUpns,
+  collectDependencyUserRowIds,
   decodeCallQueueEnum,
   identityRowWarnings,
   liveAutoAttendantToStructured,
@@ -48,6 +49,7 @@ import { FilesService } from '../files/files.service';
 import { DeploymentDocumentService } from './deployment-document.service';
 
 type Scoped = ReturnType<typeof tenantDb>;
+type SheetName = 'users' | 'caps' | 'resource_accounts' | 'call_queues' | 'auto_attendants';
 
 /** Last-10-digits comparison key, matching the same check ImportUsersDialog and
  * SiteWorkspace's "Requested +N" badge use client-side - kept in sync by hand
@@ -354,6 +356,62 @@ export class DeploymentService {
   /* ============================== preview =============================== */
 
   /**
+   * Silently pulls in any build_users row a selected Call Queue's agents or
+   * a selected Auto Attendant's -Operator/menu-option targets reference, so
+   * that user's own Enterprise Voice/number/policy config deploys - in this
+   * same run, before the queue/attendant that relies on it - without the
+   * operator having to notice the dependency and select it separately. Only
+   * applies when `rowIds` is a specific subset: a whole-site run (no rowIds
+   * filter) already deploys every build_users row for any included sheet, so
+   * there's nothing to add. Used by both previewChanges (so "Planned
+   * changes" shows exactly what a real run would do) and createDeployment
+   * (so it actually does). See collectDependencyUserRowIds.
+   */
+  private async expandScopeWithDependencies(
+    s: Scoped,
+    siteId: string,
+    sheets: SheetName[],
+    rowIds: string[] | undefined,
+  ): Promise<{ sheets: SheetName[]; rowIds: string[] | undefined }> {
+    if (!rowIds?.length) return { sheets, rowIds };
+    const needsCq = sheets.includes('call_queues');
+    const needsAa = sheets.includes('auto_attendants');
+    if (!needsCq && !needsAa) return { sheets, rowIds };
+
+    const [cqRows, aaRows, siteUsers] = await Promise.all([
+      needsCq
+        ? s.selectFrom('build_call_queues').select('agents').where('site_id', '=', siteId).where('id', 'in', rowIds).execute()
+        : Promise.resolve([]),
+      needsAa
+        ? s
+            .selectFrom('build_auto_attendants')
+            .select(['operator', 'default_call_flow', 'after_hours_call_flow', 'holiday_call_flows'])
+            .where('site_id', '=', siteId)
+            .where('id', 'in', rowIds)
+            .execute()
+        : Promise.resolve([]),
+      s.selectFrom('build_users').select(['id', 'upn']).where('site_id', '=', siteId).where('hidden', '=', false).execute(),
+    ]);
+
+    const depIds = collectDependencyUserRowIds(
+      cqRows.map((r) => ({ agents: (r.agents as string[] | null) ?? [] })),
+      aaRows.map((r) => ({
+        operator: (r.operator as AutoAttendantCallableEntity) ?? null,
+        default_call_flow: (r.default_call_flow as AutoAttendantCallFlow) ?? null,
+        after_hours_call_flow: (r.after_hours_call_flow as AutoAttendantCallFlow) ?? null,
+        holiday_call_flows: (r.holiday_call_flows as AutoAttendantHolidayCallFlow[]) ?? [],
+      })),
+      siteUsers,
+    );
+    const missing = depIds.filter((id) => !rowIds.includes(id));
+    if (missing.length === 0) return { sheets, rowIds };
+    return {
+      sheets: sheets.includes('users') ? sheets : [...sheets, 'users'],
+      rowIds: [...rowIds, ...missing],
+    };
+  }
+
+  /**
    * Read-only "what would this deploy right now" preview: reuses
    * planIdentityRow/planResourceAccountRow directly against the DB, with no
    * connection and no worker/queue involvement - see apps/worker/src/main.ts's
@@ -362,16 +420,17 @@ export class DeploymentService {
   async previewChanges(t: TenantContext, query: DeploymentPreviewQuery): Promise<DeploymentPreviewRow[]> {
     assertSiteInScope(t, query.siteId);
     const s = tenantDb(this.db, t.schema);
+    const { sheets, rowIds } = await this.expandScopeWithDependencies(s, query.siteId, query.sheets, query.rowIds);
     const out: DeploymentPreviewRow[] = [];
 
-    if (query.sheets.includes('users') || query.sheets.includes('caps')) {
+    if (sheets.includes('users') || sheets.includes('caps')) {
       for (const [sheet, table, objectType] of [
         ['users', 'build_users', 'user'],
         ['caps', 'build_caps', 'cap'],
       ] as const) {
-        if (!query.sheets.includes(sheet)) continue;
+        if (!sheets.includes(sheet)) continue;
         let q = s.selectFrom(table).selectAll().where('site_id', '=', query.siteId).where('hidden', '=', false);
-        if (query.rowIds?.length) q = q.where('id', 'in', query.rowIds);
+        if (rowIds?.length) q = q.where('id', 'in', rowIds);
         const rows = await q.execute();
         const [liveNames, liveState] = await Promise.all([
           resolveLivePolicyNames(
@@ -411,9 +470,9 @@ export class DeploymentService {
       }
     }
 
-    if (query.sheets.includes('resource_accounts')) {
+    if (sheets.includes('resource_accounts')) {
       let q = s.selectFrom('build_resource_accounts').selectAll().where('site_id', '=', query.siteId);
-      if (query.rowIds?.length) q = q.where('id', 'in', query.rowIds);
+      if (rowIds?.length) q = q.where('id', 'in', rowIds);
       const rows = await q.execute();
       const [liveNames, liveState] = await Promise.all([
         resolveLivePolicyNames(s, rows.map((r) => r.voice_routing_policy_id)),
@@ -448,9 +507,9 @@ export class DeploymentService {
       }
     }
 
-    if (query.sheets.includes('call_queues')) {
+    if (sheets.includes('call_queues')) {
       let q = s.selectFrom('build_call_queues').selectAll().where('site_id', '=', query.siteId);
-      if (query.rowIds?.length) q = q.where('id', 'in', query.rowIds);
+      if (rowIds?.length) q = q.where('id', 'in', rowIds);
       const rows = await q.execute();
 
       // A queue's agents and its linked resource accounts are both stored
@@ -508,9 +567,9 @@ export class DeploymentService {
       }
     }
 
-    if (query.sheets.includes('auto_attendants')) {
+    if (sheets.includes('auto_attendants')) {
       let q = s.selectFrom('build_auto_attendants').selectAll().where('site_id', '=', query.siteId);
-      if (query.rowIds?.length) q = q.where('id', 'in', query.rowIds);
+      if (rowIds?.length) q = q.where('id', 'in', rowIds);
       const rows = await q.execute();
 
       // A row's linked resource accounts resolve the same way a call
@@ -760,12 +819,16 @@ export class DeploymentService {
       throw new ForbiddenException('Connection is not active - sign in to the customer tenant first');
     }
 
-    const dep = await tenantDb(this.db, t.schema)
+    const s = tenantDb(this.db, t.schema);
+    const { sheets, rowIds } = await this.expandScopeWithDependencies(s, input.scope.siteId, input.scope.sheets, input.scope.rowIds);
+    const scope = { ...input.scope, sheets, rowIds };
+
+    const dep = await s
       .insertInto('deployments')
       .values({
         connection_id: conn.id,
         mode: input.mode,
-        scope: input.scope,
+        scope,
         status: 'queued',
         created_by: user.id,
         summary: {},
@@ -780,7 +843,7 @@ export class DeploymentService {
       connectionId: conn.id,
       deploymentId: dep.id,
       mode: input.mode,
-      scope: input.scope,
+      scope,
       operatorUserId: user.id,
     });
 
@@ -788,7 +851,7 @@ export class DeploymentService {
       actor: { id: user.id, email: user.email },
       targetType: 'deployment',
       targetId: dep.id,
-      detail: { mode: input.mode, scope: input.scope },
+      detail: { mode: input.mode, scope },
     });
     await this.audit.platform('deployment.queued', {
       actor: { id: user.id, email: user.email },

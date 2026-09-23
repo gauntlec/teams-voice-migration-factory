@@ -12,6 +12,7 @@ import {
   collectAutoAttendantUserUpns,
   decodeCallQueueEnum,
   liveAutoAttendantToStructured,
+  orderAutoAttendantRowsByDependency,
   planAutoAttendantRow,
   planCallQueueRow,
   planIdentityRow,
@@ -616,19 +617,65 @@ async function handleDeploymentRun(job: Job) {
    * A `deferred` call (e.g. New-CsOnlineApplicationInstance) always needs a
    * manual licensing step a Teams Administrator can't do - it must never run
    * live, in either mode. Render it to the exported script and record it as
-   * 'whatif' regardless of `mode`.
+   * 'whatif' regardless of `mode`. Returns the cmdlet's result so callers
+   * (the call_queues/auto_attendants blocks below) can tell whether a
+   * New-CsCallQueue/New-CsAutoAttendant genuinely just created something
+   * live, worth a crossRef refresh - see refreshCrossRefEntry.
    */
   const runCall = async (call: CmdletInvocation) => {
     if (call.deferred) {
-      await record(call, { result: 'whatif', before: {}, after: {}, message: 'Deferred - needs manual licensing before rerunning.' });
-      return;
+      const res = { result: 'whatif' as const, before: {}, after: {}, message: 'Deferred - needs manual licensing before rerunning.' };
+      await record(call, res);
+      return res.result;
     }
     if (teamsReadOnly) {
-      await record(call, { result: 'whatif', before: {}, after: {}, message: 'Tenant is read-only - cmdlet not sent to Microsoft Teams.' });
-      return;
+      const res = { result: 'whatif' as const, before: {}, after: {}, message: 'Tenant is read-only - cmdlet not sent to Microsoft Teams.' };
+      await record(call, res);
+      return res.result;
     }
-    await record(call, await exec.invoke(call, { whatIf }));
+    const res = await exec.invoke(call, { whatIf });
+    await record(call, res);
+    return res.result;
   };
+
+  /**
+   * Discovery's tenant_objects snapshot (what buildAutoAttendantCrossRef
+   * reads) only updates on its own periodic sync - a Call Queue/Auto
+   * Attendant this run just created via New-CsCallQueue/New-CsAutoAttendant
+   * has no entry there yet. Without this, a later step in the SAME run that
+   * targets it by name (an Auto Attendant transferring to a Call Queue it
+   * just created, or one Auto Attendant transferring to another created
+   * earlier in this same batch) would see it as unresolved and silently skip
+   * the target - fixed the same way as before, just one Discovery sync +
+   * one more deployment run later. One targeted live lookup closes that gap
+   * immediately. Best-effort: a lookup failure here just leaves the object
+   * unresolved for the rest of THIS run, exactly as if this refresh didn't
+   * exist - it never fails the deployment.
+   */
+  const refreshCrossRefEntry = async (crossRef: AutoAttendantCrossRef, kind: 'call_queue' | 'auto_attendant', buildId: string, name: string) => {
+    try {
+      const recs = await exec.query(
+        kind === 'call_queue' ? 'Get-CsCallQueue' : 'Get-CsAutoAttendant',
+        { NameFilter: name },
+        { select: ['Identity', 'Name'] },
+      );
+      const hit = (recs as Record<string, unknown>[]).find((r) => typeof r.Name === 'string' && r.Name.toLowerCase() === name.toLowerCase());
+      const identity = hit && typeof hit.Identity === 'string' ? hit.Identity : undefined;
+      if (identity) crossRef.set(`${kind}:${buildId}`, identity);
+    } catch {
+      // best-effort - see doc comment above
+    }
+  };
+
+  // Built once, up front, whenever either sheet that can reference a
+  // same-site AA/CQ target is in scope - shared by the call_queues block
+  // (refreshed after each newly-created queue) and the auto_attendants block
+  // (refreshed after each newly-created attendant, and reused instead of
+  // rebuilt so it keeps every refresh made earlier in this same run).
+  const crossRef: AutoAttendantCrossRef | undefined =
+    scope.sheets.includes('call_queues') || scope.sheets.includes('auto_attendants')
+      ? await buildAutoAttendantCrossRef(scoped, scope.siteId)
+      : undefined;
 
   if (scope.sheets.includes('users') || scope.sheets.includes('caps')) {
     for (const [sheet, table, objectType] of [
@@ -748,7 +795,15 @@ async function handleDeploymentRun(job: Job) {
         raObjectIds,
         liveQueues.get(row.name.toLowerCase()),
       );
-      for (const call of calls) await runCall(call);
+      let created = false;
+      for (const call of calls) {
+        const result = await runCall(call);
+        if (call.cmdlet === 'New-CsCallQueue' && result === 'applied') created = true;
+      }
+      // See refreshCrossRefEntry - lets an Auto Attendant deployed later in
+      // THIS run transfer to a queue this run just created, instead of
+      // waiting for a Discovery sync.
+      if (created && crossRef) await refreshCrossRefEntry(crossRef, 'call_queue', row.id, row.name);
     }
   }
 
@@ -760,21 +815,21 @@ async function handleDeploymentRun(job: Job) {
     // the call-queue resolution block above - an AA can have several
     // resource accounts, or none yet, exactly like a Call Queue.
     const raIds = [...new Set(rows.flatMap((r) => (r.resource_accounts as string[] | null) ?? []))];
-    const [ras, crossRef] = await Promise.all([
-      raIds.length
-        ? scoped.selectFrom('build_resource_accounts').select(['id', 'upn']).where('id', 'in', raIds).execute()
-        : Promise.resolve([]),
-      buildAutoAttendantCrossRef(scoped, scope.siteId),
-    ]);
+    const ras = raIds.length
+      ? await scoped.selectFrom('build_resource_accounts').select(['id', 'upn']).where('id', 'in', raIds).execute()
+      : [];
     const liveIdentity = await resolveLiveIdentityState(scoped, ras.map((r) => r.upn));
     const raObjectIds = new Map<string, string>();
     for (const ra of ras) {
       const oid = liveIdentity.get(ra.upn.toLowerCase())?.objectId;
       if (oid) raObjectIds.set(ra.id, oid);
     }
-    const aaDeep = await resolveAutoAttendantDeepContext(scoped, crossRef);
+    // crossRef was built once, up front, and possibly already refreshed by
+    // the call_queues block above - reused rather than rebuilt so this batch
+    // sees every same-run creation so far, not just Discovery's last sync.
+    const aaDeep = await resolveAutoAttendantDeepContext(scoped, crossRef!);
     const liveAutoAttendants = await resolveLiveAutoAttendantState(scoped, rows.map((r) => r.name), aaDeep);
-    const planRows: BuildAutoAttendantRow[] = rows.map((row) => ({
+    const rawPlanRows: BuildAutoAttendantRow[] = rows.map((row) => ({
       id: row.id,
       name: row.name,
       language_id: row.language_id,
@@ -788,6 +843,10 @@ async function handleDeploymentRun(job: Job) {
       schedule: (row.schedule as AutoAttendantSchedule) ?? null,
       resource_accounts: (row.resource_accounts as string[] | null) ?? [],
     }));
+    // A row that transfers to another Auto Attendant IN THIS SAME BATCH
+    // deploys after its target, so the target's live Identity exists by the
+    // time this row is planned - see orderAutoAttendantRowsByDependency.
+    const planRows = orderAutoAttendantRowsByDependency(rawPlanRows);
     // 'user'-kind callable entities (operator / menu-option transfer
     // targets) need their own UPN -> live Entra Object ID resolution -
     // see buildCallableEntity's 'user' case.
@@ -795,8 +854,16 @@ async function handleDeploymentRun(job: Job) {
     const userObjectIds = new Map<string, string>();
     for (const [upn, v] of userLiveIdentity) if (v.objectId) userObjectIds.set(upn, v.objectId);
     for (const planRow of planRows) {
-      const calls = planAutoAttendantRow(planRow, crossRef, raObjectIds, userObjectIds, liveAutoAttendants.get(planRow.name.toLowerCase()));
-      for (const call of calls) await runCall(call);
+      const calls = planAutoAttendantRow(planRow, crossRef!, raObjectIds, userObjectIds, liveAutoAttendants.get(planRow.name.toLowerCase()));
+      let created = false;
+      for (const call of calls) {
+        const result = await runCall(call);
+        if (call.cmdlet === 'New-CsAutoAttendant' && result === 'applied') created = true;
+      }
+      // See refreshCrossRefEntry - lets a later row in this same batch (or a
+      // future sheet, though auto_attendants already runs last) transfer to
+      // the Auto Attendant this run just created.
+      if (created && crossRef) await refreshCrossRefEntry(crossRef, 'auto_attendant', planRow.id, planRow.name);
     }
   }
 
