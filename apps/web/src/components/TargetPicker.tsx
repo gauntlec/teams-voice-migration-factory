@@ -35,6 +35,7 @@ export function TargetPicker({
   kinds = DEFAULT_KINDS,
   allowNone,
   tenantId,
+  siteId,
   teamChoices,
 }: {
   value: WizardTarget | undefined;
@@ -43,6 +44,8 @@ export function TargetPicker({
   allowNone?: boolean;
   /** Enables live-matching against synced tenant users for kind 'person'. */
   tenantId?: string;
+  /** Also suggests this site's own Data Collection Users tab entries, not just the live tenant sync. */
+  siteId?: string;
   /** This site's existing Call Queue/Auto Attendant names, suggested for kind 'team'. */
   teamChoices?: Choice[];
 }) {
@@ -81,6 +84,7 @@ export function TargetPicker({
         <Field label="Name or email">
           <UpnAutocomplete
             tenantId={tenantId}
+            siteId={siteId}
             value={value?.label ?? ''}
             onChange={(v) => onChange({ kind: 'person', label: v })}
             style={{ minWidth: 220 }}

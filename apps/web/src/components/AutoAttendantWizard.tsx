@@ -110,12 +110,14 @@ function CallFlowEditor({
   onChange,
   allowVoicemail = true,
   tenantId,
+  siteId,
   teamChoices,
 }: {
   value: WizardCallFlow;
   onChange: (v: WizardCallFlow) => void;
   allowVoicemail?: boolean;
   tenantId: string;
+  siteId: string;
   teamChoices: Choice[];
 }) {
   const options = value.options ?? [];
@@ -158,6 +160,7 @@ function CallFlowEditor({
                   value={opt.target}
                   onChange={(t) => updateOption(i, { ...opt, target: t ?? { kind: 'person', label: '' } })}
                   tenantId={tenantId}
+                  siteId={siteId}
                   teamChoices={teamChoices}
                 />
                 <Button icon={<DeleteRegular />} appearance="subtle" aria-label="Remove option" onClick={() => removeOption(i)} />
@@ -175,6 +178,7 @@ function CallFlowEditor({
           onChange={(t) => onChange({ ...value, target: t })}
           kinds={['person', 'team', 'voicemail', 'external', 'operator']}
           tenantId={tenantId}
+          siteId={siteId}
           teamChoices={teamChoices}
         />
       )}
@@ -354,6 +358,7 @@ export function AutoAttendantWizard({
           value={answers.businessFlow}
           onChange={(v) => setAnswers((a) => ({ ...a, businessFlow: v }))}
           tenantId={tenantId}
+          siteId={siteId}
           teamChoices={teamChoices}
         />
       ),
@@ -368,6 +373,7 @@ export function AutoAttendantWizard({
                 value={answers.afterHoursFlow ?? { mode: 'voicemail' }}
                 onChange={(v) => setAnswers((a) => ({ ...a, afterHoursFlow: v }))}
                 tenantId={tenantId}
+                siteId={siteId}
                 teamChoices={teamChoices}
               />
             ),
@@ -388,6 +394,7 @@ export function AutoAttendantWizard({
             kinds={['person', 'external']}
             allowNone
             tenantId={tenantId}
+            siteId={siteId}
           />
         </>
       ),
@@ -451,6 +458,7 @@ export function AutoAttendantWizard({
                     value={h.flow}
                     onChange={(v) => setAnswers((a) => ({ ...a, holidays: (a.holidays ?? []).map((x, idx) => (idx === i ? { ...x, flow: v } : x)) }))}
                     tenantId={tenantId}
+                    siteId={siteId}
                     teamChoices={teamChoices}
                   />
                 </Card>

@@ -1251,19 +1251,34 @@ export class BuildService {
     const siteId = flow.site_id;
 
     // Best-effort free-text-name -> UPN matching against the tenant's live
-    // synced users (tenant_users - the same source the wizard's own
-    // UpnAutocomplete field suggests from, apps/web/src/components/UpnAutocomplete.tsx)
-    // - a single case-insensitive match on UPN or display name resolves.
-    // Anything ambiguous or unmatched is carried through as typed rather
-    // than dropped (a typed-but-unmatched name used to vanish entirely from
-    // the created row - confirmed live) and listed in the returned warnings
-    // so it's easy to find and fix.
-    const people = await s.selectFrom('tenant_users').select(['upn', 'display_name']).where('removed_at', 'is', null).execute();
+    // synced users (tenant_users) or - failing that - this site's own Data
+    // Collection Users tab (discovery_users), the same two sources the
+    // wizard's own UpnAutocomplete field suggests from
+    // (apps/web/src/components/UpnAutocomplete.tsx) - a single
+    // case-insensitive match on UPN or display name resolves. A
+    // discovery_users match already linked to a live user (tenant_user_id,
+    // set by "Link to tenant") resolves to that user's real UPN; otherwise
+    // it resolves to the UPN the customer typed into Data Collection
+    // themselves - not yet confirmed live, but a deliberate answer, not a
+    // guess. Anything matching neither source is carried through as typed
+    // rather than dropped (a typed-but-unmatched name used to vanish
+    // entirely from the created row - confirmed live) and listed in the
+    // returned warnings so it's easy to find and fix.
+    const [tenantUsers, siteUsers] = await Promise.all([
+      s.selectFrom('tenant_users').select(['id', 'upn', 'display_name']).where('removed_at', 'is', null).execute(),
+      s.selectFrom('discovery_users').select(['upn', 'display_name', 'tenant_user_id']).where('site_id', '=', siteId).execute(),
+    ]);
+    const tenantUserUpnById = new Map(tenantUsers.map((u) => [u.id, u.upn]));
     const resolvePerson = (label: string): string | undefined => {
       const needle = label.trim().toLowerCase();
       if (!needle) return undefined;
-      const matches = people.filter((p) => p.upn.toLowerCase() === needle || (p.display_name ?? '').toLowerCase() === needle);
-      return matches.length === 1 ? matches[0].upn : undefined;
+      const liveMatches = tenantUsers.filter((p) => p.upn.toLowerCase() === needle || (p.display_name ?? '').toLowerCase() === needle);
+      if (liveMatches.length === 1) return liveMatches[0].upn;
+      if (liveMatches.length > 1) return undefined;
+      const collectedMatches = siteUsers.filter((p) => p.upn.toLowerCase() === needle || (p.display_name ?? '').toLowerCase() === needle);
+      if (collectedMatches.length !== 1) return undefined;
+      const match = collectedMatches[0];
+      return (match.tenant_user_id && tenantUserUpnById.get(match.tenant_user_id)) || match.upn;
     };
 
     // Same idea for "a department/team" - an exact match against this

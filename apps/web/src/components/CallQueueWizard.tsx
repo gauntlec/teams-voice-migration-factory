@@ -68,12 +68,14 @@ function ActionAnswerEditor({
   value,
   onChange,
   tenantId,
+  siteId,
 }: {
   actions: readonly string[];
   labels: Record<string, string>;
   value: { action: string; forwardTo?: string };
   onChange: (v: { action: string; forwardTo?: string }) => void;
   tenantId: string;
+  siteId: string;
 }) {
   return (
     <div style={{ display: 'flex', gap: 8, alignItems: 'end', flexWrap: 'wrap' }}>
@@ -93,6 +95,7 @@ function ActionAnswerEditor({
         <Field label="Send it to (name, department, or number)">
           <UpnAutocomplete
             tenantId={tenantId}
+            siteId={siteId}
             value={value.forwardTo ?? ''}
             onChange={(v) => onChange({ ...value, forwardTo: v })}
             style={{ minWidth: 220 }}
@@ -211,7 +214,14 @@ export function CallQueueWizard({
           <div style={{ display: 'grid', gap: 6 }}>
             {answers.agents.map((a, i) => (
               <div key={i} style={{ display: 'flex', gap: 6 }}>
-                <UpnAutocomplete tenantId={tenantId} value={a} onChange={(v) => setAgent(i, v)} placeholder="jane.doe@contoso.com" style={{ flex: 1 }} />
+                <UpnAutocomplete
+                  tenantId={tenantId}
+                  siteId={siteId}
+                  value={a}
+                  onChange={(v) => setAgent(i, v)}
+                  placeholder="jane.doe@contoso.com"
+                  style={{ flex: 1 }}
+                />
                 <Button
                   icon={<DeleteRegular />}
                   appearance="subtle"
@@ -278,6 +288,7 @@ export function CallQueueWizard({
             value={answers.overflow}
             onChange={(v) => setAnswers((a) => ({ ...a, overflow: v as CallQueueWizardAnswers['overflow'] }))}
             tenantId={tenantId}
+            siteId={siteId}
           />
         </>
       ),
@@ -302,6 +313,7 @@ export function CallQueueWizard({
             value={answers.timeout}
             onChange={(v) => setAnswers((a) => ({ ...a, timeout: v as CallQueueWizardAnswers['timeout'] }))}
             tenantId={tenantId}
+            siteId={siteId}
           />
         </>
       ),
@@ -318,6 +330,7 @@ export function CallQueueWizard({
             value={answers.noAgents}
             onChange={(v) => setAnswers((a) => ({ ...a, noAgents: v as CallQueueWizardAnswers['noAgents'] }))}
             tenantId={tenantId}
+            siteId={siteId}
           />
           <Field label="Should this apply to calls already waiting too, or just new calls?">
             <RadioGroup
