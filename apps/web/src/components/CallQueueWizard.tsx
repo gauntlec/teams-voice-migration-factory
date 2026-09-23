@@ -366,7 +366,16 @@ export function CallQueueWizard({
       open={open}
       onOpenChange={(o) => {
         onOpenChange(o);
-        if (!o) setError(null);
+        if (!o) {
+          // Reset on Cancel too, not just on a successful save - the dialog
+          // stays mounted (WizardTiles just toggles `open`), so leftover
+          // text/answers from an abandoned attempt would otherwise still be
+          // there next time this tile is opened.
+          setError(null);
+          setName('');
+          setAnswers(DEFAULT_ANSWERS);
+          setResourceAccountId('');
+        }
       }}
       title="New Call Queue"
       steps={steps}
