@@ -1,0 +1,206 @@
+import type { AutoAttendantCallableEntity, AutoAttendantCallFlow, AutoAttendantMenuOption, AutoAttendantSchedule } from './deployment';
+import type { BuildAutoAttendantCreateInput, BuildCallQueueCreateInput } from './dto';
+import type { AutoAttendantWizardAnswers, CallQueueWizardAnswers, WizardCallFlow, WizardMenuOption, WizardTarget, WizardWeeklyHours } from './wizard';
+
+/**
+ * Converts the AA/CQ creation wizard's plain-language capture into a real,
+ * deployable `build_auto_attendants`/`build_call_queues` row - the "Import
+ * to Design & Build" action (Data Collection's Call flows tab). Pure and
+ * DB-free by design: anything that needs a live lookup (matching a
+ * free-text person's name to a synced user) is injected by the caller via
+ * `resolvePerson`/`resolveAgent`, so this module stays testable and has no
+ * knowledge of tenantDb.
+ *
+ * Unresolved targets are deliberately left unset rather than guessed - the
+ * same "omit, don't guess" rule `buildCallableEntity` (deployment.ts) and
+ * `autoAttendantRowWarnings` already enforce for hand-built rows. Every gap
+ * left here is also listed in the returned `warnings` so the importing
+ * engineer sees it immediately, instead of only discovering it the next
+ * time someone runs a deployment preview.
+ */
+
+const DTMF_BY_DIGIT: Record<string, AutoAttendantMenuOption['dtmf']> = {
+  '0': 'Tone0',
+  '1': 'Tone1',
+  '2': 'Tone2',
+  '3': 'Tone3',
+  '4': 'Tone4',
+  '5': 'Tone5',
+  '6': 'Tone6',
+  '7': 'Tone7',
+  '8': 'Tone8',
+  '9': 'Tone9',
+};
+
+const STANDARD_9_TO_5: WizardWeeklyHours = {
+  monday: [{ start: '09:00', end: '17:00' }],
+  tuesday: [{ start: '09:00', end: '17:00' }],
+  wednesday: [{ start: '09:00', end: '17:00' }],
+  thursday: [{ start: '09:00', end: '17:00' }],
+  friday: [{ start: '09:00', end: '17:00' }],
+  saturday: [],
+  sunday: [],
+};
+
+function convertTarget(
+  t: WizardTarget | undefined,
+  resolvePerson: (label: string) => string | undefined,
+  warnings: string[],
+  where: string,
+): AutoAttendantCallableEntity | undefined {
+  if (!t) return undefined;
+  switch (t.kind) {
+    case 'person': {
+      const upn = t.label ? resolvePerson(t.label) : undefined;
+      if (!upn) warnings.push(`${where}: couldn't match "${t.label ?? '(no name entered)'}" to a synced user - set the right person after import.`);
+      return { kind: 'user', upn };
+    }
+    case 'team':
+      warnings.push(`${where}: routes to "${t.label ?? 'a department'}" - link it to the right Auto Attendant or Call Queue after import.`);
+      return { kind: 'call_queue' };
+    case 'message':
+      warnings.push(`${where}: playing a recorded message isn't supported for a menu option yet - configure this destination manually after import.`);
+      return undefined;
+    case 'voicemail':
+      warnings.push(`${where}: routes to Voicemail, which Teams can't deploy directly - it will disconnect the call until this is changed after import.`);
+      return { kind: 'voicemail' };
+    case 'external':
+      if (!t.label) {
+        warnings.push(`${where}: no outside number was entered.`);
+        return undefined;
+      }
+      return { kind: 'external', number: t.label };
+    case 'operator':
+      // Handled by the caller (menu options: action becomes TransferCallToOperator with no target object). Meaningless at the AA's own -Operator field.
+      return undefined;
+  }
+}
+
+function convertMenuOption(
+  opt: WizardMenuOption,
+  resolvePerson: (label: string) => string | undefined,
+  warnings: string[],
+  flowLabel: string,
+): AutoAttendantMenuOption {
+  const dtmf = DTMF_BY_DIGIT[opt.key] ?? 'Automatic';
+  if (opt.target.kind === 'operator') return { dtmf, action: 'TransferCallToOperator' };
+  const target = convertTarget(opt.target, resolvePerson, warnings, `${flowLabel}, option "${opt.label}"`);
+  return target ? { dtmf, action: 'TransferCallToTarget', target } : { dtmf, action: 'DisconnectCall' };
+}
+
+function convertCallFlow(
+  cf: WizardCallFlow,
+  resolvePerson: (label: string) => string | undefined,
+  warnings: string[],
+  label: string,
+): AutoAttendantCallFlow {
+  const greetings = cf.greeting ? [{ type: 'Text' as const, text: cf.greeting }] : [];
+  if (cf.mode === 'menu') {
+    const options = (cf.options ?? []).map((o) => convertMenuOption(o, resolvePerson, warnings, label));
+    if (!options.length) warnings.push(`${label}: no menu options were added, so callers will hear the greeting and then be disconnected.`);
+    return { greetings, menu: { enableDialByName: cf.allowDialByName, options } };
+  }
+  // 'direct' and 'voicemail' both collapse to a single catch-all menu option
+  // (DTMF 'Automatic', Teams' own sentinel for "no key pressed") - the
+  // existing deploy machinery has no separate "redirect with no menu"
+  // shape, this is how a plain forward is already represented.
+  if (cf.mode === 'voicemail') {
+    warnings.push(`${label}: routes straight to Voicemail, which Teams can't deploy directly - it will disconnect the call until this is changed after import.`);
+    return { greetings, menu: { options: [{ dtmf: 'Automatic', action: 'TransferCallToTarget', target: { kind: 'voicemail' } }] } };
+  }
+  const target = convertTarget(cf.target, resolvePerson, warnings, label);
+  if (!target) warnings.push(`${label}: no destination was chosen - calls will be disconnected until this is set.`);
+  return {
+    greetings,
+    menu: { options: [target ? { dtmf: 'Automatic', action: 'TransferCallToTarget', target } : { dtmf: 'Automatic', action: 'DisconnectCall' }] },
+  };
+}
+
+export function convertAutoAttendantWizard(
+  answers: AutoAttendantWizardAnswers,
+  opts: { siteId: string; name: string; resolvePerson?: (label: string) => string | undefined },
+): { value: BuildAutoAttendantCreateInput; warnings: string[] } {
+  const warnings: string[] = [];
+  const resolvePerson = opts.resolvePerson ?? (() => undefined);
+
+  const default_call_flow = convertCallFlow(answers.businessFlow, resolvePerson, warnings, 'Business hours');
+
+  let after_hours_call_flow: AutoAttendantCallFlow | null = null;
+  let schedule: AutoAttendantSchedule | null = null;
+  if (answers.hoursType !== 'always' && answers.afterHoursFlow) {
+    after_hours_call_flow = convertCallFlow(answers.afterHoursFlow, resolvePerson, warnings, 'After hours');
+    // The schedule marks BUSINESS hours; `complement: true` fires the
+    // after-hours flow outside them - see autoAttendantScheduleSchema's
+    // own comment in dto.ts.
+    const weekly = answers.hoursType === 'custom' && answers.customHours ? answers.customHours : STANDARD_9_TO_5;
+    schedule = { type: 'weekly', weekly: { ...weekly, complement: true } };
+  }
+
+  const holiday_call_flows = answers.holidaysEnabled
+    ? (answers.holidays ?? []).map((h) => ({
+        name: h.name,
+        callFlow: convertCallFlow(h.flow, resolvePerson, warnings, `Holiday "${h.name}"`),
+        schedule: { type: 'fixed' as const, fixed: { ranges: [{ start: h.dateRange.start, end: h.dateRange.end }] } },
+      }))
+    : [];
+
+  const operator = answers.operator ? (convertTarget(answers.operator, resolvePerson, warnings, 'Operator') ?? null) : null;
+
+  return {
+    value: {
+      site_id: opts.siteId,
+      name: opts.name,
+      language_id: answers.languageId,
+      time_zone_id: answers.timeZoneId,
+      voice_response_enabled: false,
+      operator,
+      default_call_flow,
+      after_hours_call_flow,
+      holiday_call_flows,
+      schedule,
+    },
+    warnings,
+  };
+}
+
+export function convertCallQueueWizard(
+  answers: CallQueueWizardAnswers,
+  opts: { siteId: string; name: string; resolveAgent?: (label: string) => string | undefined },
+): { value: BuildCallQueueCreateInput; warnings: string[] } {
+  const warnings: string[] = [];
+  const resolveAgent = opts.resolveAgent ?? (() => undefined);
+
+  const agents: string[] = [];
+  for (const a of answers.agents) {
+    const upn = resolveAgent(a);
+    if (upn) agents.push(upn);
+    else warnings.push(`Agent "${a}" couldn't be matched to a synced user - add them manually after import.`);
+  }
+
+  // Shaped to match buildCallQueueWritable's callQueueActionSchema exactly
+  // (target: string | undefined, never null) - deployment.ts's own
+  // CallQueueActionSettings allows `null` for a resolved-but-empty target,
+  // which the create DTO doesn't accept.
+  const actionSettings = (a: { action: string; forwardTo?: string }, label: string, threshold?: number) => {
+    if (a.action === 'Forward' && !a.forwardTo) warnings.push(`${label}: "Forward" was chosen but no destination was entered - set one after import.`);
+    return { action: a.action, ...(threshold !== undefined ? { threshold } : {}), target: a.action === 'Forward' ? a.forwardTo : undefined };
+  };
+
+  return {
+    value: {
+      site_id: opts.siteId,
+      name: opts.name,
+      routing_method: answers.routingMethod,
+      agent_alert_time: answers.agentAlertTime,
+      presence_based_routing: answers.presenceBasedRouting,
+      agents,
+      overflow: actionSettings(answers.overflow, 'When too many calls are waiting', answers.overflowThreshold),
+      timeout: actionSettings(answers.timeout, 'When someone waits too long', answers.timeoutThreshold),
+      // No live NoAgentThreshold exists in Teams' own model - see CallQueueLiveState's comment in deployment.ts.
+      no_agent_action: actionSettings(answers.noAgents, 'When nobody is available'),
+      no_agent_apply_to: answers.noAgentsApplyTo,
+      language_id: answers.languageId,
+    },
+    warnings,
+  };
+}

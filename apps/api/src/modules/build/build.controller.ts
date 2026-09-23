@@ -320,6 +320,14 @@ export class BuildController {
     return this.svc.deleteAutoAttendant(t, user, id);
   }
 
+  /* wizard import - Data Collection's Call flows tab, "Import to Design & Build" */
+
+  @Post('flows/:id/import')
+  @RequirePermission('build:write')
+  importFlowWizard(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string) {
+    return this.svc.importFlowWizard(t, user, id);
+  }
+
   /* validate */
 
   @Post('validate')

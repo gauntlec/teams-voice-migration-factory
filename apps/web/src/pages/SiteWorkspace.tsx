@@ -56,6 +56,7 @@ import { DataTable } from '../components/DataTable';
 import { ImportUsersDialog } from '../components/ImportUsersDialog';
 import { Page } from '../components/Page';
 import { NetworkDiagram, type NetworkRow } from '../components/NetworkDiagram';
+import { WizardTiles } from '../components/WizardTiles';
 import {
   BulkEditDialog,
   LoadError,
@@ -202,6 +203,20 @@ export function SiteWorkspace() {
     [avail.data],
   );
 
+  // This site's resource accounts, for the AA/CQ wizard's "which phone
+  // identity will answer this" picker - a light, separate query from the
+  // Resource accounts tab's own paginated list, since the wizard needs
+  // every row up front rather than one page at a time.
+  const siteResourceAccounts = useQuery({
+    queryKey: ['site-ras-lite', tid, siteId],
+    enabled: !!tid && !!siteId,
+    queryFn: () => api<Paginated<{ id: string; name: string }>>(`${base}/resource-accounts?siteId=${siteId}&limit=200`),
+  });
+  const resourceAccountChoices: Choice[] = useMemo(
+    () => (siteResourceAccounts.data?.items ?? []).map((r) => ({ value: r.id, label: r.name })),
+    [siteResourceAccounts.data],
+  );
+
   // Every number's owning site, tenant-wide - so the import preview can tell
   // "this belongs to a different site" apart from "not in inventory anywhere".
   // Only fetched once the import dialog is actually open.
@@ -314,6 +329,15 @@ export function SiteWorkspace() {
           </Badge>
         )}
       </div>
+
+      {!locked && (
+        <WizardTiles
+          base={base}
+          siteId={siteId}
+          resourceAccountChoices={resourceAccountChoices}
+          onCreated={() => qc.invalidateQueries({ queryKey: ['flows', tid, siteId] })}
+        />
+      )}
 
       <BulkEditDialog
         open={bulkOpen !== null}
@@ -684,15 +708,23 @@ export function SiteWorkspace() {
       {tab === 'flows' && (
         <PagedSection
           title="Call flows"
-          hint="Free-text notes on existing routing. Structured AA/CQ config lives under Resource accounts."
+          hint="Free-text notes on existing routing, or captured via the guided wizards above. Structured AA/CQ config lives under Resource accounts and Design & Build."
           endpoint={`${base}/flows`}
           queryKey={['flows', tid, siteId]}
           params={{ siteId }}
           fixed={{ site_id: siteId }}
           readOnly={locked}
+          extraRowAction={(r) =>
+            !locked && tid ? <FlowImportButton flow={r} tid={tid} siteId={siteId} onChanged={() => qc.invalidateQueries({ queryKey: ['flows', tid, siteId] })} /> : null
+          }
           columns={[
             { key: 'kind', label: 'Kind' },
             { key: 'name', label: 'Name' },
+            {
+              key: 'wizard_answers',
+              label: 'Source',
+              render: (r) => (r.wizard_answers ? <Badge appearance="tint" color="brand">Wizard</Badge> : <Badge appearance="outline">Manual</Badge>),
+            },
             {
               key: 'description',
               label: 'Description',
@@ -1227,6 +1259,97 @@ function RaNumbersButton({
               <DialogTrigger disableButtonEnhancement>
                 <Button appearance="secondary">Close</Button>
               </DialogTrigger>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+    </>
+  );
+}
+
+/* ------------------------ Call flows wizard import ------------------------ */
+
+/**
+ * "Import to Design & Build" - the row action on a wizard-captured Call
+ * flows row. Converts the capture into a real build_auto_attendants/
+ * build_call_queues row via BuildService.importFlowWizard, then shows
+ * whatever it couldn't resolve (an unmatched agent name, an unlinked
+ * department) so the engineer knows exactly what to fix. Once imported, the
+ * row instead links straight into Design & Build for that review.
+ */
+function FlowImportButton({
+  flow,
+  tid,
+  siteId,
+  onChanged,
+}: {
+  flow: Row & { wizard_answers?: unknown; imported_at?: string | null };
+  tid: string;
+  siteId: string;
+  onChanged: () => void;
+}) {
+  const [warnings, setWarnings] = useState<string[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const doImport = useMutation({
+    mutationFn: () => api<{ warnings: string[] }>(`/t/${tid}/build/flows/${flow.id}/import`, { method: 'POST' }),
+    onSuccess: (r) => {
+      setError(null);
+      setWarnings(r.warnings ?? []);
+      onChanged();
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Import failed'),
+  });
+
+  if (!flow.wizard_answers) return null;
+  if (flow.imported_at) {
+    return (
+      <Link to={`/build/sites/${siteId}`}>
+        <Button size="small" appearance="subtle">
+          Imported →
+        </Button>
+      </Link>
+    );
+  }
+  return (
+    <>
+      <Button size="small" appearance="subtle" disabled={doImport.isPending} onClick={() => doImport.mutate()}>
+        {doImport.isPending ? 'Importing…' : 'Import to Design & Build'}
+      </Button>
+      <Dialog
+        open={warnings !== null || !!error}
+        onOpenChange={(_, d) => {
+          if (!d.open) {
+            setWarnings(null);
+            setError(null);
+          }
+        }}
+      >
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>{error ? 'Import failed' : 'Imported to Design & Build'}</DialogTitle>
+            <DialogContent>
+              {error && <Text block>{error}</Text>}
+              {warnings && warnings.length === 0 && <Text block>Everything resolved cleanly - no follow-up needed.</Text>}
+              {warnings && warnings.length > 0 && (
+                <div style={{ display: 'grid', gap: 4 }}>
+                  <Text block>This needs a quick check in Design & Build:</Text>
+                  {warnings.map((w, i) => (
+                    <Text key={i} size={200} block>
+                      · {w}
+                    </Text>
+                  ))}
+                </div>
+              )}
+            </DialogContent>
+            <DialogActions>
+              <DialogTrigger disableButtonEnhancement>
+                <Button appearance="secondary">Close</Button>
+              </DialogTrigger>
+              {!error && (
+                <Link to={`/build/sites/${siteId}`}>
+                  <Button appearance="primary">Open in Design & Build</Button>
+                </Link>
+              )}
             </DialogActions>
           </DialogBody>
         </DialogSurface>

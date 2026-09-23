@@ -6,6 +6,8 @@ import {
   CALL_QUEUE_OVERFLOW_ACTIONS,
   CALL_QUEUE_ROUTING_METHODS,
   CALL_QUEUE_TIMEOUT_ACTIONS,
+  convertAutoAttendantWizard,
+  convertCallQueueWizard,
   decodeCallQueueEnum,
   liveAutoAttendantToStructured,
   POLICY_KIND_TO_TENANT_TYPE,
@@ -13,6 +15,7 @@ import {
   renderCommand,
   RESOURCE_ACCOUNT_APPLICATION_IDS,
   type AutoAttendantCallableEntity,
+  type AutoAttendantWizardAnswers,
   type BuildAutoAttendantCreateInput,
   type BuildAutoAttendantPatchInput,
   type BuildBulkPatchInput,
@@ -32,6 +35,7 @@ import {
   type BuildTemplatePatchInput,
   type BuildValidateResult,
   type CallingPolicySiteMapSetInput,
+  type CallQueueWizardAnswers,
   type DiscoverySiteOverview,
   type LiveCallableEntityRef,
   type NumberHolderType,
@@ -1225,6 +1229,103 @@ export class BuildService {
       targetId: id,
     });
     return { ok: true };
+  }
+
+  /* ==================== import wizard capture into Design & Build =================== */
+
+  /**
+   * "Import to Design & Build" (Data Collection's Call flows tab). Converts
+   * the AA/CQ creation wizard's plain-language capture
+   * (discovery_flows.wizard_answers) into a real build_auto_attendants/
+   * build_call_queues row via the same create/update methods the
+   * hand-entry editors already use above - no separate insert logic - then
+   * stamps the link back onto the discovery_flows row so re-importing is a
+   * no-op the UI can detect (imported_at set).
+   */
+  async importFlowWizard(t: TenantContext, u: AuthedUser, flowId: string) {
+    const s = this.s(t);
+    const flow = await s.selectFrom('discovery_flows').selectAll().where('id', '=', flowId).executeTakeFirst();
+    if (!flow) throw new NotFoundException('flow not found');
+    if (!flow.wizard_answers) throw new BadRequestException('This call flow has no wizard capture to import.');
+    if (flow.imported_at) throw new BadRequestException('This call flow has already been imported.');
+    if (!flow.site_id) throw new BadRequestException('This call flow has no site.');
+    const siteId = flow.site_id;
+
+    // Best-effort free-text-name -> UPN matching against this site's synced
+    // users - a single case-insensitive match on UPN or display name
+    // resolves; anything ambiguous or unmatched is left unresolved, and
+    // wizard-convert.ts lists it in the returned warnings instead of
+    // guessing.
+    const people = await s.selectFrom('discovery_users').select(['upn', 'display_name']).where('site_id', '=', siteId).execute();
+    const resolvePerson = (label: string): string | undefined => {
+      const needle = label.trim().toLowerCase();
+      if (!needle) return undefined;
+      const matches = people.filter((p) => p.upn.toLowerCase() === needle || (p.display_name ?? '').toLowerCase() === needle);
+      return matches.length === 1 ? matches[0].upn : undefined;
+    };
+
+    let warnings: string[];
+    let created: { id: string };
+    if (flow.kind === 'auto_attendant') {
+      const { value, warnings: w } = convertAutoAttendantWizard(flow.wizard_answers as AutoAttendantWizardAnswers, {
+        siteId,
+        name: flow.name,
+        resolvePerson,
+      });
+      warnings = w;
+      created = await this.createAutoAttendant(t, u, value);
+    } else if (flow.kind === 'call_queue') {
+      const { value, warnings: w } = convertCallQueueWizard(flow.wizard_answers as CallQueueWizardAnswers, {
+        siteId,
+        name: flow.name,
+        resolveAgent: resolvePerson,
+      });
+      warnings = w;
+      created = await this.createCallQueue(t, u, value);
+    } else {
+      throw new BadRequestException(`Call flows of kind "${flow.kind}" can't be imported.`);
+    }
+
+    // If the wizard also named a phone identity (discovery_resource_accounts),
+    // link it once Populate has already turned it into a
+    // build_resource_accounts row - the same discovery_resource_account_id
+    // correlation populateResourceAccounts itself relies on. Not an error
+    // if it hasn't been populated yet, just a warning.
+    if (flow.resource_account_id) {
+      const ra = await s
+        .selectFrom('build_resource_accounts')
+        .select('id')
+        .where('site_id', '=', siteId)
+        .where('discovery_resource_account_id', '=', flow.resource_account_id)
+        .executeTakeFirst();
+      if (ra) {
+        if (flow.kind === 'auto_attendant') await this.updateAutoAttendant(t, u, created.id, { resource_accounts: [ra.id] });
+        else await this.updateCallQueue(t, u, created.id, { resource_accounts: [ra.id] });
+      } else {
+        warnings.push("The chosen resource account hasn't been populated into Design & Build yet - link it manually once it has (Resource accounts → Populate).");
+      }
+    }
+
+    const updatedFlow = await s
+      .updateTable('discovery_flows')
+      .set({
+        imported_at: new Date().toISOString(),
+        build_auto_attendant_id: flow.kind === 'auto_attendant' ? created.id : null,
+        build_call_queue_id: flow.kind === 'call_queue' ? created.id : null,
+        updated_at: new Date().toISOString(),
+      })
+      .where('id', '=', flowId)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    await this.audit.tenant(t.schema, 'build.flow_wizard_imported', {
+      actor: actorOf(u),
+      targetType: flow.kind === 'auto_attendant' ? 'build_auto_attendant' : 'build_call_queue',
+      targetId: created.id,
+      detail: { flowId, warnings: warnings.length },
+    });
+
+    return { row: created, flow: updatedFlow, warnings };
   }
 
   /** Well-known Microsoft ApplicationId for this account's kind - what New-CsOnlineApplicationInstance needs. */

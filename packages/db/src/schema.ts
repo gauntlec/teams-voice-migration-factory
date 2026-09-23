@@ -213,6 +213,17 @@ export interface DiscoveryFlowsTable {
   name: string;
   description: string | null;
   diagram_attachment_id: string | null;
+  /** Structured, plain-language capture from the AA/CQ creation wizard - null means this row was created the old freeform way. */
+  wizard_answers: Json<import('@tvmf/shared').AutoAttendantWizardAnswers | import('@tvmf/shared').CallQueueWizardAnswers> | null;
+  wizard_version: number | null;
+  /** FK -> discovery_resource_accounts.id (ON DELETE SET NULL) - which phone identity will answer this, if already known. */
+  resource_account_id: string | null;
+  /** Set once "Import to Design & Build" has run for this row. */
+  imported_at: Ts | null;
+  /** FK -> build_auto_attendants.id (ON DELETE SET NULL) - the row the wizard capture was imported into. */
+  build_auto_attendant_id: string | null;
+  /** FK -> build_call_queues.id (ON DELETE SET NULL) - the row the wizard capture was imported into. */
+  build_call_queue_id: string | null;
   created_at: Ts;
   updated_at: Ts;
 }

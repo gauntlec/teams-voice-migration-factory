@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ROLES } from './rbac';
+import { autoAttendantWizardAnswersSchema, callQueueWizardAnswersSchema } from './wizard';
 import {
   AA_CALLABLE_ENTITY_KINDS,
   AA_DIRECTORY_SEARCH_METHODS,
@@ -450,6 +451,23 @@ export const discoveryFlowSchema = z
     kind: z.enum(FLOW_KINDS),
     name: str(200).min(1),
     description: optStr(8000),
+    /**
+     * The AA/CQ creation wizard's structured capture (see wizard.ts) - set
+     * once, by the wizard's own "Save" step, never hand-edited. Absent/null
+     * means this row was created the old freeform way (Source: Manual in
+     * the Call flows tab). Not cross-checked against `kind` here (a
+     * mismatch can't happen from the wizard's own UI, which always POSTs
+     * both together) - same "trust the client that built the payload"
+     * tradeoff `callQueueActionSchema`'s `target` already makes.
+     */
+    wizard_answers: z.union([autoAttendantWizardAnswersSchema, callQueueWizardAnswersSchema]).optional(),
+    wizard_version: z.number().int().min(1).optional(),
+    // Inlined rather than using the `refId`/`blankToNull` helpers below -
+    // both are `const`s declared later in this file, and this schema is
+    // built (and so evaluated) earlier, so referencing them here would hit
+    // the temporal dead zone at module load.
+    /** discovery_resource_accounts.id - which phone identity will answer this, if already known. */
+    resource_account_id: z.preprocess((v) => (v === '' ? null : v), z.string().uuid().nullable().optional()),
   })
   .strict();
 export type DiscoveryFlowInput = z.infer<typeof discoveryFlowSchema>;
