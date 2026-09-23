@@ -3,6 +3,7 @@ import { Pool } from 'pg';
 import type { DB } from './schema';
 
 export * from './schema';
+export * from './live-state';
 export { migratePlatform, provisionTenant, migrateAllTenants } from './migrate';
 
 export interface DbHandle {

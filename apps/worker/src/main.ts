@@ -2,19 +2,21 @@ import 'dotenv/config';
 import { Worker, type Job } from 'bullmq';
 import IORedis from 'ioredis';
 import { sql } from 'kysely';
-import { createDb, platformDb, tenantDb } from '@tvmf/db';
+import {
+  buildAutoAttendantCrossRef,
+  createDb,
+  platformDb,
+  resolveAutoAttendantDeepContext,
+  resolveLiveAutoAttendantState,
+  resolveLiveCallQueueState,
+  resolveLiveIdentityState,
+  resolveLivePolicyNames,
+  tenantDb,
+} from '@tvmf/db';
 import { buildColorRamp, type Branding, type DiscoverySiteOverview, type PortDocumentItemSummary } from '@tvmf/shared';
 import {
-  CALL_QUEUE_NO_AGENT_ACTIONS,
-  CALL_QUEUE_NO_AGENT_APPLY_TO,
-  CALL_QUEUE_OVERFLOW_ACTIONS,
-  CALL_QUEUE_ROUTING_METHODS,
-  CALL_QUEUE_TIMEOUT_ACTIONS,
   collectAutoAttendantUserUpns,
   collectCallQueueTargetUpns,
-  decodeCallQueueEnum,
-  extractLiveCallTargetId,
-  liveAutoAttendantToStructured,
   orderAutoAttendantRowsByDependency,
   planAutoAttendantRow,
   planCallQueueRow,
@@ -34,8 +36,6 @@ import {
   type CallQueueLiveState,
   type CmdletInvocation,
   type DeploymentCompletedContext,
-  type LiveCallableEntityRef,
-  type LiveIdentityState,
   type PickupGroupSettings,
 } from '@tvmf/shared';
 import { SimulatedTeamsExecutor, type TeamsExecutor } from './teams/executor';
@@ -305,207 +305,6 @@ async function handleConnectionStart(job: Job) {
     await expireConnection(schema, connectionId, (err as Error).message);
     throw err;
   }
-}
-
-/**
- * Batch-resolves tenant_policies ids (build_users/build_caps.policy_ids,
- * build_resource_accounts.voice_routing_policy_id) to their *current* live
- * name, so a deployment always grants whatever the tenant calls that policy
- * right now - not a stale copy from whenever the engineer last saved the
- * row in Design & Build (see BuildService.resolvePolicyIds, which is what
- * keeps `policies.<key>` roughly in sync, but only as of the last write).
- * A removed/unresolvable id is simply absent from the returned map; callers
- * fall back to the row's stored name.
- */
-async function resolveLivePolicyNames(scoped: ReturnType<typeof tenantDb>, ids: (string | null | undefined)[]) {
-  const wanted = [...new Set(ids.filter((id): id is string => !!id))];
-  const out = new Map<string, string>();
-  if (wanted.length === 0) return out;
-  const rows = await scoped
-    .selectFrom('tenant_policies')
-    .select(['id', 'name'])
-    .where('id', 'in', wanted)
-    .where('removed_at', 'is', null)
-    .execute();
-  for (const r of rows) out.set(r.id, r.name);
-  return out;
-}
-
-/**
- * Batch-fetches what Discovery's live-tenant snapshot (tenant_users) knows
- * about a set of UPNs, keyed by lowercased UPN, so a deployment only issues
- * a cmdlet when it would actually change something - see the identical
- * apps/api/src/modules/deployment/deployment.service.ts helper this mirrors
- * (kept a separate copy - api and worker don't share a DB-access layer
- * beyond @tvmf/db's Kysely types), which the preview endpoint uses so an
- * engineer reviewing "planned changes" sees exactly what a real run would do.
- */
-async function resolveLiveIdentityState(scoped: ReturnType<typeof tenantDb>, upns: string[]) {
-  const wanted = [...new Set(upns.map((u) => u.toLowerCase()))];
-  const out = new Map<string, LiveIdentityState>();
-  if (wanted.length === 0) return out;
-  const rows = await scoped
-    .selectFrom('tenant_users')
-    .select([
-      'upn',
-      'enterprise_voice_enabled',
-      'line_uri',
-      'policies',
-      'entra_id',
-      'voicemail_enabled',
-      'voicemail_prompt_language',
-    ])
-    .where('removed_at', 'is', null)
-    .where(sql`lower(upn)`, 'in', wanted)
-    .execute();
-  for (const r of rows) {
-    out.set(r.upn.toLowerCase(), {
-      enterpriseVoiceEnabled: r.enterprise_voice_enabled,
-      lineUri: r.line_uri,
-      policies: (r.policies as Record<string, string | null>) ?? {},
-      // See the identical apps/api/.../deployment.service.ts helper's comment:
-      // entra_id (not object_id, our own internal tenant_objects.id) is the
-      // real Entra GUID Set-CsCallQueue -Users etc. expect.
-      objectId: r.entra_id ?? undefined,
-      // null (never targeted-checked) becomes undefined so planIdentityRow's
-      // fallback-to-always-emit applies, same as an unmatched UPN.
-      voicemailEnabled: r.voicemail_enabled ?? undefined,
-      voicemailPromptLanguage: r.voicemail_prompt_language,
-    });
-  }
-  return out;
-}
-
-/** Mirrors the identical apps/api/.../deployment.service.ts helper - see that copy for why it's duplicated. */
-async function resolveLiveCallQueueState(scoped: ReturnType<typeof tenantDb>, names: string[]) {
-  const wanted = [...new Set(names.map((n) => n.toLowerCase()).filter(Boolean))];
-  const out = new Map<string, CallQueueLiveState>();
-  if (wanted.length === 0) return out;
-  const rows = await scoped
-    .selectFrom('tenant_objects')
-    .select(['display_name', 'data'])
-    .where('object_type', '=', 'call_queue')
-    .where('removed_at', 'is', null)
-    .where(sql`lower(display_name)`, 'in', wanted)
-    .execute();
-  for (const r of rows) {
-    if (!r.display_name) continue;
-    const d = r.data as Record<string, unknown>;
-    const agents = Array.isArray(d.Agents)
-      ? (d.Agents as Record<string, unknown>[])
-          .map((a) => (typeof a?.ObjectId === 'string' ? a.ObjectId : null))
-          .filter((v): v is string => !!v)
-      : [];
-    out.set(r.display_name.toLowerCase(), {
-      identity: String(d.Identity ?? ''),
-      routingMethod: decodeCallQueueEnum(d.RoutingMethod, CALL_QUEUE_ROUTING_METHODS),
-      agentAlertTime: typeof d.AgentAlertTime === 'number' ? d.AgentAlertTime : undefined,
-      presenceBasedRouting: typeof d.PresenceBasedRouting === 'boolean' ? d.PresenceBasedRouting : undefined,
-      agentObjectIds: agents,
-      overflowAction: decodeCallQueueEnum(d.OverflowAction, CALL_QUEUE_OVERFLOW_ACTIONS),
-      overflowThreshold: typeof d.OverflowThreshold === 'number' ? d.OverflowThreshold : undefined,
-      overflowActionTarget: extractLiveCallTargetId(d.OverflowActionTarget),
-      timeoutAction: decodeCallQueueEnum(d.TimeoutAction, CALL_QUEUE_TIMEOUT_ACTIONS),
-      timeoutThreshold: typeof d.TimeoutThreshold === 'number' ? d.TimeoutThreshold : undefined,
-      timeoutActionTarget: extractLiveCallTargetId(d.TimeoutActionTarget),
-      noAgentAction: decodeCallQueueEnum(d.NoAgentAction, CALL_QUEUE_NO_AGENT_ACTIONS),
-      noAgentActionTarget: extractLiveCallTargetId(d.NoAgentActionTarget),
-      noAgentApplyTo: decodeCallQueueEnum(d.NoAgentApplyTo, CALL_QUEUE_NO_AGENT_APPLY_TO),
-      languageId: typeof d.LanguageId === 'string' ? d.LanguageId : undefined,
-      applicationInstanceIds: Array.isArray(d.ApplicationInstances)
-        ? (d.ApplicationInstances as unknown[]).filter((v): v is string => typeof v === 'string')
-        : undefined,
-    });
-  }
-  return out;
-}
-
-/** Mirrors the identical apps/api/.../deployment.service.ts helper - see that copy for why it's duplicated. */
-async function resolveLiveAutoAttendantState(
-  scoped: ReturnType<typeof tenantDb>,
-  names: string[],
-  deep?: { scheduleByKey: Map<string, Record<string, unknown>>; resolveTarget: (ref: LiveCallableEntityRef | undefined) => AutoAttendantCallableEntity | undefined },
-): Promise<Map<string, AutoAttendantLiveState>> {
-  const wanted = [...new Set(names.map((n) => n.toLowerCase()).filter(Boolean))];
-  const out = new Map<string, AutoAttendantLiveState>();
-  if (wanted.length === 0) return out;
-  const rows = await scoped
-    .selectFrom('tenant_objects')
-    .select(['display_name', 'data'])
-    .where('object_type', '=', 'auto_attendant')
-    .where('removed_at', 'is', null)
-    .where(sql`lower(display_name)`, 'in', wanted)
-    .execute();
-  for (const r of rows) {
-    if (!r.display_name) continue;
-    const d = r.data as Record<string, unknown>;
-    out.set(r.display_name.toLowerCase(), {
-      identity: String(d.Identity ?? ''),
-      languageId: typeof d.LanguageId === 'string' ? d.LanguageId : undefined,
-      timeZoneId: typeof d.TimeZoneId === 'string' ? d.TimeZoneId : undefined,
-      voiceId: typeof d.VoiceId === 'string' ? d.VoiceId : undefined,
-      // Get-CsAutoAttendant's own property is VoiceResponseEnabled, not the
-      // New/Set-CsAutoAttendant *write* parameter name EnableVoiceResponse -
-      // see aa-live-parse.ts's liveAutoAttendantToStructured for the same fix.
-      enableVoiceResponse: typeof d.VoiceResponseEnabled === 'boolean' ? d.VoiceResponseEnabled : undefined,
-      applicationInstanceIds: Array.isArray(d.ApplicationInstances)
-        ? (d.ApplicationInstances as unknown[]).filter((v): v is string => typeof v === 'string')
-        : undefined,
-      structured: deep ? liveAutoAttendantToStructured(d, deep.scheduleByKey, deep.resolveTarget) : undefined,
-    });
-  }
-  return out;
-}
-
-/** Mirrors the identical apps/api/.../deployment.service.ts helper - see that copy for why it's duplicated. */
-async function resolveAutoAttendantDeepContext(scoped: ReturnType<typeof tenantDb>, crossRef: AutoAttendantCrossRef) {
-  const [scheduleRows, userRows] = await Promise.all([
-    scoped.selectFrom('tenant_objects').select(['object_key', 'data']).where('object_type', '=', 'schedule').where('removed_at', 'is', null).execute(),
-    scoped.selectFrom('tenant_users').select(['entra_id', 'upn']).where('entra_id', 'is not', null).execute(),
-  ]);
-  const scheduleByKey = new Map(scheduleRows.map((r) => [r.object_key, r.data as Record<string, unknown>]));
-  const upnByEntraId = new Map(userRows.map((r) => [r.entra_id!.toLowerCase(), r.upn]));
-  const liveIdToBuild = new Map<string, { kind: 'auto_attendant' | 'call_queue'; buildId: string }>();
-  for (const [key, identity] of crossRef) {
-    const sep = key.indexOf(':');
-    liveIdToBuild.set(identity.toLowerCase(), { kind: key.slice(0, sep) as 'auto_attendant' | 'call_queue', buildId: key.slice(sep + 1) });
-  }
-  const resolveTarget = (ref: LiveCallableEntityRef | undefined): AutoAttendantCallableEntity | undefined => {
-    if (!ref) return undefined;
-    if (ref.kind === 'external' && ref.number) return { kind: 'external', number: ref.number };
-    if (ref.kind === 'user' && ref.liveId) {
-      const upn = upnByEntraId.get(ref.liveId.toLowerCase());
-      return upn ? { kind: 'user', upn } : undefined;
-    }
-    if (ref.kind === 'voice_app' && ref.liveId) {
-      const hit = liveIdToBuild.get(ref.liveId.toLowerCase());
-      return hit ? { kind: hit.kind, buildId: hit.buildId } : undefined;
-    }
-    return undefined;
-  };
-  return { scheduleByKey, resolveTarget };
-}
-
-/** Mirrors the identical apps/api/.../deployment.service.ts helper - see that copy for why it's duplicated. */
-async function buildAutoAttendantCrossRef(scoped: ReturnType<typeof tenantDb>, siteId: string): Promise<AutoAttendantCrossRef> {
-  const [aaRows, cqRows] = await Promise.all([
-    scoped.selectFrom('build_auto_attendants').select(['id', 'name']).where('site_id', '=', siteId).execute(),
-    scoped.selectFrom('build_call_queues').select(['id', 'name']).where('site_id', '=', siteId).execute(),
-  ]);
-  const [liveAa, liveCq] = await Promise.all([
-    resolveLiveAutoAttendantState(scoped, aaRows.map((r) => r.name)),
-    resolveLiveCallQueueState(scoped, cqRows.map((r) => r.name)),
-  ]);
-  const crossRef: AutoAttendantCrossRef = new Map();
-  for (const row of aaRows) {
-    const live = liveAa.get(row.name.toLowerCase());
-    if (live?.identity) crossRef.set(`auto_attendant:${row.id}`, live.identity);
-  }
-  for (const row of cqRows) {
-    const live = liveCq.get(row.name.toLowerCase());
-    if (live?.identity) crossRef.set(`call_queue:${row.id}`, live.identity);
-  }
-  return crossRef;
 }
 
 async function handleDeploymentRun(job: Job) {
