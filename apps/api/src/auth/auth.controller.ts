@@ -8,6 +8,7 @@ import {
   Req,
   Res,
   UnauthorizedException,
+  UseGuards,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { loginSchema, passwordChangeSchema, totpEnrolConfirmSchema } from '@tvmf/shared';
@@ -16,6 +17,7 @@ import type { AppRequest } from '../common/request';
 import { ZodBody } from '../common/zod.pipe';
 import { AuthService } from './auth.service';
 import { AllowEnrol, AllowPwReset, CurrentUser, Public } from './auth.decorators';
+import { LoginRateLimitGuard } from './login-rate-limit.guard';
 import type { AuthedUser } from '../common/request';
 
 @Controller('auth')
@@ -54,6 +56,7 @@ export class AuthController {
   }
 
   @Public()
+  @UseGuards(LoginRateLimitGuard)
   @Post('login')
   async login(
     @Body(new ZodBody(loginSchema)) body: { email: string; password: string; totp?: string },

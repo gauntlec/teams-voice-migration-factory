@@ -38,9 +38,20 @@
   and TOTP failures share one counter - a bad TOTP counts the same as a bad
   password, so a stolen/reused password alone cannot be used to grind MFA
   (`AuthService.login`/`confirmTotpEnrol`, `apps/api/src/auth/auth.service.ts`).
+  This counter lives in `platform.users` (Postgres), so it's already correct
+  across any number of API replicas - never in-memory.
   A limited "enrol" token (issued on first login before TOTP is set up, 10 min
   TTL) cannot re-arm an already-confirmed account even if it leaks -
   `AuthController.totpStart` refuses it once `totp_enrolled` is true.
+- Rate limiting: `POST /auth/login` is also throttled per source IP (20
+  requests/min, Redis-backed via `rate-limiter-flexible`,
+  `apps/api/src/auth/login-rate-limit.guard.ts` - reuses the ioredis
+  connection BullMQ already holds open) on top of the per-account lockout
+  above. The lockout alone only trips once a specific account has been
+  guessed at; this catches an attacker spraying many different emails from
+  one IP before any single account's counter would fire. Already correct
+  for multi-instance since the counter lives in Redis, not per-process
+  memory.
 
 ## Secrets & crypto
 
@@ -90,7 +101,6 @@
 
 ## Known gaps in this scaffold (track as follow-ups)
 
-- Rate limiting is basic (in-memory); move to Redis-backed for multi-instance.
 - No secret-manager integration yet (env only).
 
 ## Customer tenant sessions (Discovery / Deployment)
