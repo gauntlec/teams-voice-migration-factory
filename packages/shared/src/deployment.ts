@@ -647,9 +647,14 @@ export function decodeCallQueueEnum(v: unknown, values: readonly string[]): stri
  * Entra object id - planCallQueueRow silently skips these (a typo'd UPN or a
  * resource account not yet licensed shouldn't block the rest of the queue's
  * config from deploying), so this is the only place that gap is visible.
+ * Also flags a SharedVoicemail action with no language_id - planCallQueueRow
+ * (see needsLanguage below) silently omits the LanguageId cmdlet parameter
+ * in that case rather than guessing one, which Teams then rejects at deploy
+ * time; surfacing it here means the gap is visible in the preview instead of
+ * as a failed cmdlet.
  */
 export function callQueueRowWarnings(
-  row: Pick<BuildCallQueueRow, 'agents' | 'resource_accounts'>,
+  row: Pick<BuildCallQueueRow, 'agents' | 'resource_accounts' | 'overflow' | 'timeout' | 'no_agent_action' | 'language_id'>,
   agentObjectIds: Map<string, string>,
   raObjectIds: Map<string, string>,
 ): string[] {
@@ -665,6 +670,13 @@ export function callQueueRowWarnings(
     warnings.push(
       `${unresolvedRas.length} linked resource account(s) have no live Application Instance yet (New-CsOnlineApplicationInstance not run), so this queue won't get a phone number until that's done.`,
     );
+  }
+  const needsLanguage =
+    row.overflow?.action === 'SharedVoicemail' ||
+    row.timeout?.action === 'SharedVoicemail' ||
+    row.no_agent_action?.action === 'SharedVoicemail';
+  if (needsLanguage && !row.language_id) {
+    warnings.push('A SharedVoicemail action is configured but no language is set, so this queue will fail to deploy until one is chosen.');
   }
   return warnings;
 }

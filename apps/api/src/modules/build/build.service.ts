@@ -1035,6 +1035,7 @@ export class BuildService {
         return upnByObjectId.get(o.Id.toLowerCase()) ?? o.Id;
       };
       const patch: Record<string, unknown> = {
+        language_id: typeof live.LanguageId === 'string' ? live.LanguageId : null,
         routing_method: decodeCallQueueEnum(live.RoutingMethod, CALL_QUEUE_ROUTING_METHODS) ?? 'Attendant',
         agent_alert_time: typeof live.AgentAlertTime === 'number' ? live.AgentAlertTime : 30,
         presence_based_routing: typeof live.PresenceBasedRouting === 'boolean' ? live.PresenceBasedRouting : true,

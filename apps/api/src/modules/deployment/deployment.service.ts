@@ -569,7 +569,7 @@ export class DeploymentService {
         };
         const live: CallQueueLiveState | undefined = liveQueues.get(row.name.toLowerCase());
         const calls = planCallQueueRow(planRow, agentObjectIds, raObjectIds, live);
-        const warnings = callQueueRowWarnings({ agents, resource_accounts: resourceAccounts }, agentObjectIds, raObjectIds);
+        const warnings = callQueueRowWarnings(planRow, agentObjectIds, raObjectIds);
         if (calls.length === 0 && warnings.length === 0) continue;
         out.push({
           rowId: row.id,
