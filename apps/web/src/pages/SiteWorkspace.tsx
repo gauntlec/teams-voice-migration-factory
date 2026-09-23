@@ -1301,20 +1301,24 @@ function FlowImportButton({
   });
 
   if (!flow.wizard_answers) return null;
-  if (flow.imported_at) {
-    return (
-      <Link to={`/build/sites/${siteId}`}>
-        <Button size="small" appearance="subtle">
-          Imported →
-        </Button>
-      </Link>
-    );
-  }
+  // The trigger swaps to "Imported →" the moment the row list refetches
+  // (onChanged, called from the same onSuccess that also opens the
+  // warnings dialog below) - keep the dialog itself unconditional so that
+  // refetch doesn't unmount it out from under a warnings dialog that just
+  // opened. Confirmed live: without this, the dialog never appeared at all.
   return (
     <>
-      <Button size="small" appearance="subtle" disabled={doImport.isPending} onClick={() => doImport.mutate()}>
-        {doImport.isPending ? 'Importing…' : 'Import to Design & Build'}
-      </Button>
+      {flow.imported_at ? (
+        <Link to={`/build/sites/${siteId}`}>
+          <Button size="small" appearance="subtle">
+            Imported →
+          </Button>
+        </Link>
+      ) : (
+        <Button size="small" appearance="subtle" disabled={doImport.isPending} onClick={() => doImport.mutate()}>
+          {doImport.isPending ? 'Importing…' : 'Import to Design & Build'}
+        </Button>
+      )}
       <Dialog
         open={warnings !== null || !!error}
         onOpenChange={(_, d) => {
