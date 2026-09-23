@@ -10,6 +10,7 @@ import {
   CALL_QUEUE_ROUTING_METHODS,
   CALL_QUEUE_TIMEOUT_ACTIONS,
   collectAutoAttendantUserUpns,
+  collectCallQueueTargetUpns,
   decodeCallQueueEnum,
   liveAutoAttendantToStructured,
   orderAutoAttendantRowsByDependency,
@@ -763,7 +764,14 @@ async function handleDeploymentRun(job: Job) {
     const ras = raIds.length
       ? await scoped.selectFrom('build_resource_accounts').select(['id', 'upn']).where('id', 'in', raIds).execute()
       : [];
-    const allUpns = [...rows.flatMap((r) => (r.agents as string[] | null) ?? []), ...ras.map((r) => r.upn)];
+    const cqTargetUpns = collectCallQueueTargetUpns(
+      rows.map((r) => ({
+        overflow: (r.overflow as CallQueueActionSettings | null) ?? null,
+        timeout: (r.timeout as CallQueueActionSettings | null) ?? null,
+        no_agent_action: (r.no_agent_action as CallQueueActionSettings | null) ?? null,
+      })),
+    );
+    const allUpns = [...rows.flatMap((r) => (r.agents as string[] | null) ?? []), ...ras.map((r) => r.upn), ...cqTargetUpns];
     const [liveIdentity, liveQueues] = await Promise.all([
       resolveLiveIdentityState(scoped, allUpns),
       resolveLiveCallQueueState(scoped, rows.map((r) => r.name)),

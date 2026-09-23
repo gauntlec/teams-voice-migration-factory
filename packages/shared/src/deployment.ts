@@ -643,6 +643,32 @@ export function decodeCallQueueEnum(v: unknown, values: readonly string[]): stri
 }
 
 /**
+ * Every UPN a Call Queue's Forward action targets (Overflow/Timeout/
+ * NoAgent) across a batch of rows - the Design & Build editor's target
+ * field is a freeform UpnAutocomplete (it also accepts a raw phone number
+ * or an existing GUID), so a person target is stored as their plain UPN.
+ * planCallQueueRow/callQueueRowWarnings need each one resolved to its live
+ * Entra Object ID first (Set-CsCallQueue's …ActionTarget takes a GUID or a
+ * 'tel:' number, never a bare UPN), so the caller collects them up front
+ * the same way it already does for agent UPNs and
+ * collectAutoAttendantUserUpns does for Auto Attendant 'user'-kind targets,
+ * before calling resolveLiveIdentityState. Only 'Forward' is collected -
+ * SharedVoicemail's target is an M365 group GUID, a different identity
+ * space entirely, and the other actions don't use target at all.
+ */
+export function collectCallQueueTargetUpns(
+  rows: Pick<BuildCallQueueRow, 'overflow' | 'timeout' | 'no_agent_action'>[],
+): string[] {
+  const out: string[] = [];
+  for (const row of rows) {
+    if (row.overflow?.action === 'Forward' && row.overflow.target) out.push(row.overflow.target);
+    if (row.timeout?.action === 'Forward' && row.timeout.target) out.push(row.timeout.target);
+    if (row.no_agent_action?.action === 'Forward' && row.no_agent_action.target) out.push(row.no_agent_action.target);
+  }
+  return out;
+}
+
+/**
  * Flags agent UPNs / linked resource accounts that don't resolve to a live
  * Entra object id - planCallQueueRow silently skips these (a typo'd UPN or a
  * resource account not yet licensed shouldn't block the rest of the queue's
@@ -678,6 +704,20 @@ export function callQueueRowWarnings(
   if (needsLanguage && !row.language_id) {
     warnings.push('A SharedVoicemail action is configured but no language is set, so this queue will fail to deploy until one is chosen.');
   }
+  // A Forward target that isn't a raw number/GUID must resolve as a live
+  // UPN (see collectCallQueueTargetUpns/planCallQueueRow) - otherwise it's
+  // about to get 'tel:'-prefixed and rejected by Set-CsCallQueue.
+  const checkForwardTarget = (settings: CallQueueActionSettings | null | undefined, where: string) => {
+    const target = settings?.target?.trim();
+    if (settings?.action !== 'Forward' || !target) return;
+    if (/^tel:/i.test(target) || GUID_RE.test(target)) return;
+    if (!agentObjectIds.has(target.toLowerCase())) {
+      warnings.push(`${where} forwards to "${target}", which doesn't resolve to a live Entra identity yet, so it won't deploy correctly.`);
+    }
+  };
+  checkForwardTarget(row.overflow, 'Overflow');
+  checkForwardTarget(row.timeout, 'Timeout');
+  checkForwardTarget(row.no_agent_action, 'No-agent');
   return warnings;
 }
 
@@ -705,6 +745,25 @@ export function planCallQueueRow(
     row.timeout?.action === 'SharedVoicemail' ||
     row.no_agent_action?.action === 'SharedVoicemail';
 
+  // A Forward target picked via the Design & Build editor's freeform
+  // UpnAutocomplete field is stored as the person's plain UPN, not their
+  // Entra Object ID - resolve it the same way -Users does before falling
+  // back to normalizePstnTarget, which only knows how to pass a raw GUID/
+  // number through unchanged and would otherwise 'tel:'-prefix a UPN,
+  // producing a target Set-CsCallQueue rejects (confirmed bug).
+  const resolveActionTarget = (settings: CallQueueActionSettings | null | undefined): string | undefined => {
+    const target = settings?.target?.trim();
+    if (!target) return undefined;
+    if (settings?.action === 'Forward') {
+      const resolved = agentObjectIds.get(target.toLowerCase());
+      if (resolved) return resolved;
+    }
+    return normalizePstnTarget(target);
+  };
+  const overflowTarget = resolveActionTarget(row.overflow);
+  const timeoutTarget = resolveActionTarget(row.timeout);
+  const noAgentTarget = resolveActionTarget(row.no_agent_action);
+
   const parameters: Record<string, unknown> = {
     Name: row.name,
     RoutingMethod: row.routing_method,
@@ -714,12 +773,12 @@ export function planCallQueueRow(
     ...(needsLanguage && row.language_id ? { LanguageId: row.language_id } : {}),
     ...(row.overflow?.action ? { OverflowAction: row.overflow.action } : {}),
     ...(row.overflow?.threshold != null ? { OverflowThreshold: row.overflow.threshold } : {}),
-    ...(row.overflow?.target ? { OverflowActionTarget: normalizePstnTarget(row.overflow.target) } : {}),
+    ...(overflowTarget ? { OverflowActionTarget: overflowTarget } : {}),
     ...(row.timeout?.action ? { TimeoutAction: row.timeout.action } : {}),
     ...(row.timeout?.threshold != null ? { TimeoutThreshold: row.timeout.threshold } : {}),
-    ...(row.timeout?.target ? { TimeoutActionTarget: normalizePstnTarget(row.timeout.target) } : {}),
+    ...(timeoutTarget ? { TimeoutActionTarget: timeoutTarget } : {}),
     ...(row.no_agent_action?.action ? { NoAgentAction: row.no_agent_action.action } : {}),
-    ...(row.no_agent_action?.target ? { NoAgentActionTarget: normalizePstnTarget(row.no_agent_action.target) } : {}),
+    ...(noAgentTarget ? { NoAgentActionTarget: noAgentTarget } : {}),
     ...(row.no_agent_apply_to ? { NoAgentApplyTo: row.no_agent_apply_to } : {}),
   };
 
