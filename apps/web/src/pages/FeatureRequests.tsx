@@ -106,6 +106,11 @@ const useStyles = makeStyles({
     // with non-visible overflow) instead of leaving them at their natural
     // size and letting columnBody's own overflowY:auto scroll.
     flexShrink: 0,
+    // Width/style are fixed here; the actual hue is set per-card via an
+    // inline `borderColor` (FEATURE_STATUS_COLOR) since it's data-driven,
+    // not a fixed variant makeStyles can enumerate as its own class.
+    ...shorthands.borderWidth('1.5px'),
+    ...shorthands.borderStyle('solid'),
   },
   cardOpen: {
     display: 'grid',
@@ -117,6 +122,30 @@ const useStyles = makeStyles({
     ':hover': { backgroundColor: tokens.colorNeutralBackground1Hover },
   },
   cardTitle: { fontWeight: tokens.fontWeightSemibold, fontSize: tokens.fontSizeBase300, lineHeight: '1.3' },
+  // Replaces a plain Badge for the "area" tag - Badge's `color` prop is
+  // limited to 8 fixed semantic tokens (brand/danger/informative/etc), not
+  // enough to give all 10 FEATURE_AREAS their own distinct hue, so this is
+  // styled directly with AREA_COLOR's own fg/bg/border set inline per row.
+  // Mirrors apps/web/src/pages/BugReports.tsx's own areaTag/columnDot.
+  areaTag: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    fontSize: tokens.fontSizeBase200,
+    fontWeight: tokens.fontWeightMedium,
+    lineHeight: '16px',
+    ...shorthands.padding('1px', '7px'),
+    ...shorthands.borderRadius(tokens.borderRadiusCircular),
+    ...shorthands.border('1px', 'solid', 'transparent'),
+  },
+  columnDot: {
+    display: 'inline-block',
+    width: '8px',
+    height: '8px',
+    ...shorthands.borderRadius(tokens.borderRadiusCircular),
+    marginRight: '8px',
+    flexShrink: 0,
+  },
+  columnTitle: { display: 'flex', alignItems: 'center' },
   noteClamp: {
     color: tokens.colorNeutralForeground3,
     fontSize: tokens.fontSizeBase200,
@@ -159,6 +188,43 @@ const PRIORITY_COLOR: Record<FeaturePriority, 'danger' | 'warning' | 'informativ
   high: 'warning',
   medium: 'informative',
   low: 'subtle',
+};
+
+/**
+ * A card's border color, by status - roughly progressive (grey "just
+ * arrived" -> blue "under review" -> purple "scheduled" -> amber "being
+ * built" -> green "shipped"), with declined pulled aside in its own muted
+ * hue since it's not "further along" the same line. Mirrors
+ * apps/web/src/pages/BugReports.tsx's own BUG_STATUS_COLOR - same idea,
+ * that board's own status set.
+ */
+const FEATURE_STATUS_COLOR: Record<FeatureStatus, string> = {
+  new: tokens.colorPaletteSteelBorderActive,
+  under_review: tokens.colorPaletteCornflowerBorderActive,
+  scheduled: tokens.colorPaletteGrapeBorderActive,
+  in_development: tokens.colorPaletteMarigoldBorderActive,
+  deployed: tokens.colorPaletteGreenBorderActive,
+  declined: tokens.colorPaletteBeigeBorderActive,
+};
+
+/**
+ * The "area" tag's fg/bg/border, by platform area - FEATURE_AREAS is shared
+ * between this board and BugReports.tsx, and this exact map is duplicated
+ * there (no shared component between the two boards - see the flexShrink
+ * comment on `card` above), so an area reads as the same color on either
+ * board.
+ */
+const AREA_COLOR: Record<FeatureArea, { fg: string; bg: string; border: string }> = {
+  'Data Collection': { fg: tokens.colorPaletteBlueForeground2, bg: tokens.colorPaletteBlueBackground2, border: tokens.colorPaletteBlueBorderActive },
+  Discovery: { fg: tokens.colorPaletteTealForeground2, bg: tokens.colorPaletteTealBackground2, border: tokens.colorPaletteTealBorderActive },
+  'Design & Build': { fg: tokens.colorPalettePurpleForeground2, bg: tokens.colorPalettePurpleBackground2, border: tokens.colorPalettePurpleBorderActive },
+  Deployment: { fg: tokens.colorPalettePumpkinForeground2, bg: tokens.colorPalettePumpkinBackground2, border: tokens.colorPalettePumpkinBorderActive },
+  'Service Handover': { fg: tokens.colorPaletteLavenderForeground2, bg: tokens.colorPaletteLavenderBackground2, border: tokens.colorPaletteLavenderBorderActive },
+  'Users & Access': { fg: tokens.colorPalettePinkForeground2, bg: tokens.colorPalettePinkBackground2, border: tokens.colorPalettePinkBorderActive },
+  'Email & Notifications': { fg: tokens.colorPaletteGoldForeground2, bg: tokens.colorPaletteGoldBackground2, border: tokens.colorPaletteGoldBorderActive },
+  'Reporting & Exports': { fg: tokens.colorPaletteForestForeground2, bg: tokens.colorPaletteForestBackground2, border: tokens.colorPaletteForestBorderActive },
+  'Platform & Infrastructure': { fg: tokens.colorPaletteMinkForeground2, bg: tokens.colorPaletteMinkBackground2, border: tokens.colorPaletteMinkBorderActive },
+  Other: { fg: tokens.colorPalettePlatinumForeground2, bg: tokens.colorPalettePlatinumBackground2, border: tokens.colorPalettePlatinumBorderActive },
 };
 
 function buildClaudePrompt(f: FeatureRequest): string {
@@ -549,12 +615,18 @@ function DetailDialog({
                 <Badge appearance="tint" color={PRIORITY_COLOR[f.priority]} size="small">
                   {FEATURE_PRIORITY_LABELS[f.priority]}
                 </Badge>
-                <Badge appearance="outline" color="informative" size="small">
+                <span
+                  className={s.areaTag}
+                  style={{ color: AREA_COLOR[f.area].fg, backgroundColor: AREA_COLOR[f.area].bg, borderColor: AREA_COLOR[f.area].border }}
+                >
                   {f.area}
-                </Badge>
-                <Badge appearance="outline" size="small">
+                </span>
+                <span
+                  className={s.areaTag}
+                  style={{ color: FEATURE_STATUS_COLOR[f.status], backgroundColor: 'transparent', borderColor: FEATURE_STATUS_COLOR[f.status] }}
+                >
                   {FEATURE_STATUS_LABELS[f.status]}
-                </Badge>
+                </span>
               </div>
               <DetailRow
                 label="Requested by"
@@ -639,6 +711,7 @@ function RequestCard({
   return (
     <Card
       className={s.card}
+      style={{ borderColor: FEATURE_STATUS_COLOR[f.status] }}
       draggable={canManage}
       onDragStart={(e) => {
         e.dataTransfer.setData('text/plain', f.id);
@@ -663,9 +736,12 @@ function RequestCard({
           <Badge appearance="tint" color={PRIORITY_COLOR[f.priority]} size="small">
             {FEATURE_PRIORITY_LABELS[f.priority]}
           </Badge>
-          <Badge appearance="outline" color="informative" size="small">
+          <span
+            className={s.areaTag}
+            style={{ color: AREA_COLOR[f.area].fg, backgroundColor: AREA_COLOR[f.area].bg, borderColor: AREA_COLOR[f.area].border }}
+          >
             {f.area}
-          </Badge>
+          </span>
         </div>
         {f.decision_note && <div className={s.noteClamp}>Note: {f.decision_note}</div>}
       </div>
@@ -814,7 +890,10 @@ export function FeatureRequests() {
                 }}
               >
                 <div className={s.columnHead}>
-                  <span>{FEATURE_STATUS_LABELS[st]}</span>
+                  <span className={s.columnTitle}>
+                    <span className={s.columnDot} style={{ backgroundColor: FEATURE_STATUS_COLOR[st] }} />
+                    {FEATURE_STATUS_LABELS[st]}
+                  </span>
                   <Badge appearance="tint" color="informative" size="small">
                     {items.length}
                   </Badge>

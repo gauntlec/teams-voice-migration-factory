@@ -110,6 +110,11 @@ const useStyles = makeStyles({
     // visually truncated. flexShrink:0 makes cards report their real
     // content height instead.
     flexShrink: 0,
+    // Width/style are fixed here; the actual hue is set per-card via an
+    // inline `borderColor` (BUG_STATUS_COLOR) since it's data-driven, not a
+    // fixed variant makeStyles can enumerate as its own class.
+    ...shorthands.borderWidth('1.5px'),
+    ...shorthands.borderStyle('solid'),
   },
   cardOpen: {
     display: 'grid',
@@ -121,6 +126,32 @@ const useStyles = makeStyles({
     ':hover': { backgroundColor: tokens.colorNeutralBackground1Hover },
   },
   cardTitle: { fontWeight: tokens.fontWeightSemibold, fontSize: tokens.fontSizeBase300, lineHeight: '1.3' },
+  // Replaces a plain Badge for the "area" tag - Badge's `color` prop is
+  // limited to 8 fixed semantic tokens (brand/danger/informative/etc), not
+  // enough to give all 10 FEATURE_AREAS their own distinct hue, so this is
+  // styled directly with AREA_COLOR's own fg/bg/border set inline per row.
+  areaTag: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    fontSize: tokens.fontSizeBase200,
+    fontWeight: tokens.fontWeightMedium,
+    lineHeight: '16px',
+    ...shorthands.padding('1px', '7px'),
+    ...shorthands.borderRadius(tokens.borderRadiusCircular),
+    ...shorthands.border('1px', 'solid', 'transparent'),
+  },
+  // The small dot in front of each column title - the same hue as that
+  // status's card border, so the color coding has a visible legend instead
+  // of the viewer having to guess what each border color means.
+  columnDot: {
+    display: 'inline-block',
+    width: '8px',
+    height: '8px',
+    ...shorthands.borderRadius(tokens.borderRadiusCircular),
+    marginRight: '8px',
+    flexShrink: 0,
+  },
+  columnTitle: { display: 'flex', alignItems: 'center' },
   noteClamp: {
     color: tokens.colorNeutralForeground3,
     fontSize: tokens.fontSizeBase200,
@@ -155,6 +186,44 @@ const SEVERITY_COLOR: Record<BugSeverity, 'danger' | 'warning' | 'informative' |
   high: 'warning',
   medium: 'informative',
   low: 'subtle',
+};
+
+/**
+ * A card's border color, by status - roughly progressive (grey "just
+ * arrived" -> blue "acknowledged" -> amber "being worked" -> green
+ * "shipped"), with duplicate/won't-fix pulled aside in their own hues since
+ * they're not really "further along" the same line. Mirrors
+ * apps/web/src/pages/FeatureRequests.tsx's own FEATURE_STATUS_COLOR - same
+ * idea, that board's own status set.
+ */
+const BUG_STATUS_COLOR: Record<BugStatus, string> = {
+  new: tokens.colorPaletteSteelBorderActive,
+  confirmed: tokens.colorPaletteCornflowerBorderActive,
+  in_progress: tokens.colorPaletteMarigoldBorderActive,
+  fixed: tokens.colorPaletteSeafoamBorderActive,
+  deployed: tokens.colorPaletteGreenBorderActive,
+  wont_fix: tokens.colorPaletteBeigeBorderActive,
+  duplicate: tokens.colorPaletteGrapeBorderActive,
+};
+
+/**
+ * The "area" tag's fg/bg/border, by platform area - FEATURE_AREAS is shared
+ * between this board and FeatureRequests.tsx, and this exact map is
+ * duplicated there (no shared component between the two boards - see the
+ * flexShrink comment on `card` above), so an area reads as the same color
+ * on either board.
+ */
+const AREA_COLOR: Record<FeatureArea, { fg: string; bg: string; border: string }> = {
+  'Data Collection': { fg: tokens.colorPaletteBlueForeground2, bg: tokens.colorPaletteBlueBackground2, border: tokens.colorPaletteBlueBorderActive },
+  Discovery: { fg: tokens.colorPaletteTealForeground2, bg: tokens.colorPaletteTealBackground2, border: tokens.colorPaletteTealBorderActive },
+  'Design & Build': { fg: tokens.colorPalettePurpleForeground2, bg: tokens.colorPalettePurpleBackground2, border: tokens.colorPalettePurpleBorderActive },
+  Deployment: { fg: tokens.colorPalettePumpkinForeground2, bg: tokens.colorPalettePumpkinBackground2, border: tokens.colorPalettePumpkinBorderActive },
+  'Service Handover': { fg: tokens.colorPaletteLavenderForeground2, bg: tokens.colorPaletteLavenderBackground2, border: tokens.colorPaletteLavenderBorderActive },
+  'Users & Access': { fg: tokens.colorPalettePinkForeground2, bg: tokens.colorPalettePinkBackground2, border: tokens.colorPalettePinkBorderActive },
+  'Email & Notifications': { fg: tokens.colorPaletteGoldForeground2, bg: tokens.colorPaletteGoldBackground2, border: tokens.colorPaletteGoldBorderActive },
+  'Reporting & Exports': { fg: tokens.colorPaletteForestForeground2, bg: tokens.colorPaletteForestBackground2, border: tokens.colorPaletteForestBorderActive },
+  'Platform & Infrastructure': { fg: tokens.colorPaletteMinkForeground2, bg: tokens.colorPaletteMinkBackground2, border: tokens.colorPaletteMinkBorderActive },
+  Other: { fg: tokens.colorPalettePlatinumForeground2, bg: tokens.colorPalettePlatinumBackground2, border: tokens.colorPalettePlatinumBorderActive },
 };
 
 function buildClaudePrompt(b: BugReport): string {
@@ -477,12 +546,18 @@ function DetailDialog({
                 <Badge appearance="tint" color={SEVERITY_COLOR[b.severity]} size="small">
                   {BUG_SEVERITY_LABELS[b.severity]}
                 </Badge>
-                <Badge appearance="outline" color="informative" size="small">
+                <span
+                  className={s.areaTag}
+                  style={{ color: AREA_COLOR[b.area].fg, backgroundColor: AREA_COLOR[b.area].bg, borderColor: AREA_COLOR[b.area].border }}
+                >
                   {b.area}
-                </Badge>
-                <Badge appearance="outline" size="small">
+                </span>
+                <span
+                  className={s.areaTag}
+                  style={{ color: BUG_STATUS_COLOR[b.status], backgroundColor: 'transparent', borderColor: BUG_STATUS_COLOR[b.status] }}
+                >
                   {BUG_STATUS_LABELS[b.status]}
-                </Badge>
+                </span>
               </div>
               <DetailRow
                 label="Reported by"
@@ -562,6 +637,7 @@ function BugCard({
   return (
     <Card
       className={s.card}
+      style={{ borderColor: BUG_STATUS_COLOR[b.status] }}
       draggable={canManage}
       onDragStart={(e) => {
         e.dataTransfer.setData('text/plain', b.id);
@@ -586,9 +662,12 @@ function BugCard({
           <Badge appearance="tint" color={SEVERITY_COLOR[b.severity]} size="small">
             {BUG_SEVERITY_LABELS[b.severity]}
           </Badge>
-          <Badge appearance="outline" color="informative" size="small">
+          <span
+            className={s.areaTag}
+            style={{ color: AREA_COLOR[b.area].fg, backgroundColor: AREA_COLOR[b.area].bg, borderColor: AREA_COLOR[b.area].border }}
+          >
             {b.area}
-          </Badge>
+          </span>
         </div>
         {b.resolution_note && <div className={s.noteClamp}>Note: {b.resolution_note}</div>}
       </div>
@@ -737,7 +816,10 @@ export function BugReports() {
                 }}
               >
                 <div className={s.columnHead}>
-                  <span>{BUG_STATUS_LABELS[st]}</span>
+                  <span className={s.columnTitle}>
+                    <span className={s.columnDot} style={{ backgroundColor: BUG_STATUS_COLOR[st] }} />
+                    {BUG_STATUS_LABELS[st]}
+                  </span>
                   <Badge appearance="tint" color="informative" size="small">
                     {items.length}
                   </Badge>
