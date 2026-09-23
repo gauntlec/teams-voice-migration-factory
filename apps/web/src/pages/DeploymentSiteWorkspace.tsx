@@ -218,6 +218,23 @@ export function DeploymentSiteWorkspace() {
     return sheets;
   };
 
+  // Only meaningful once something is selected - previews with exactly that
+  // rowIds subset, so `autoIncluded` reflects "if this selection deploys
+  // right now, these extra rows get pulled in" - the same expansion
+  // DeploymentService.expandScopeWithDependencies applies when a real run
+  // goes out. `preview` above never restricts rowIds (it always shows the
+  // whole site), so on its own it can never produce this signal.
+  const selectedRowIdsList = [...selectedRowIds].sort();
+  const dependencyPreview = useQuery({
+    queryKey: ['deployment-dependency-preview', tid, siteId, selectedRowIdsList.join(',')],
+    enabled: !!tid && !!siteId && selectedRowIdsList.length > 0,
+    queryFn: () =>
+      api<DeploymentPreviewRow[]>(
+        `${base}/preview?siteId=${siteId}&sheets=${sheetsFor(selectedRowIds).join(',')}&rowIds=${selectedRowIdsList.join(',')}`,
+      ),
+  });
+  const autoIncludedRowIds = new Set((dependencyPreview.data ?? []).filter((r) => r.autoIncluded).map((r) => r.rowId));
+
   const run = useMutation({
     mutationFn: ({ mode, everyone }: { mode: 'dry_run' | 'execute'; everyone: boolean }) =>
       api(base, {
@@ -437,7 +454,7 @@ export function DeploymentSiteWorkspace() {
                         </TableCell>
                         <TableCell>
                           {r.upn}
-                          {r.autoIncluded && (
+                          {autoIncludedRowIds.has(r.rowId) && (
                             <Badge
                               className={cs.autoIncludedTag}
                               appearance="tint"
