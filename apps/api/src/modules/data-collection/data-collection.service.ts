@@ -560,6 +560,12 @@ export class DataCollectionService {
         kind: input.kind,
         name: input.name,
         description: input.description || null,
+        // The AA/CQ creation wizard's own POST (wizard.ts) - a plain
+        // "Add" from the Call flows tab never sends these, so they stay
+        // null (Source: Manual in the UI).
+        wizard_answers: input.wizard_answers ?? null,
+        wizard_version: input.wizard_version ?? null,
+        resource_account_id: input.resource_account_id ?? null,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
