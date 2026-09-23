@@ -611,10 +611,16 @@ export interface CallQueueLiveState {
   agentObjectIds?: string[];
   overflowAction?: string;
   overflowThreshold?: number;
+  /** Unwrapped via extractLiveCallTargetId - a raw GUID or 'tel:' number, directly comparable to resolveActionTarget's own output. */
+  overflowActionTarget?: string;
   timeoutAction?: string;
   timeoutThreshold?: number;
+  timeoutActionTarget?: string;
   /** No live NoAgentThreshold exists - "no agents" fires purely on zero agents opted in, not a numeric threshold. */
   noAgentAction?: string;
+  noAgentActionTarget?: string;
+  noAgentApplyTo?: string;
+  languageId?: string;
   /**
    * From the live tenant_objects call_queue record's ApplicationInstances -
    * confirmed live across several real tenants this session (populates with
@@ -624,6 +630,20 @@ export interface CallQueueLiveState {
    * reliably expose" this. That was wrong; the diffing below relies on it.
    */
   applicationInstanceIds?: string[];
+}
+
+/**
+ * Get-CsCallQueue's Overflow/Timeout/NoAgentActionTarget each serialize as
+ * an object ({ Id: string, ... }), not a plain string - same shape
+ * populateStructuredFromLive's own targetOf closure
+ * (apps/api/.../build.service.ts) already unwraps for the Populate path.
+ * resolveLiveCallQueueState (duplicated in api and worker) needs the same
+ * unwrap so planCallQueueRow's live-diff can compare it directly against
+ * resolveActionTarget's own GUID/'tel:' output.
+ */
+export function extractLiveCallTargetId(raw: unknown): string | undefined {
+  const o = raw as Record<string, unknown> | null;
+  return o && typeof o.Id === 'string' ? o.Id : undefined;
 }
 
 /**
@@ -793,9 +813,14 @@ export function planCallQueueRow(
       live.presenceBasedRouting !== row.presence_based_routing ||
       (live.overflowAction ?? undefined) !== (row.overflow?.action ?? undefined) ||
       (live.overflowThreshold ?? undefined) !== (row.overflow?.threshold ?? undefined) ||
+      (live.overflowActionTarget ?? undefined) !== (overflowTarget ?? undefined) ||
       (live.timeoutAction ?? undefined) !== (row.timeout?.action ?? undefined) ||
       (live.timeoutThreshold ?? undefined) !== (row.timeout?.threshold ?? undefined) ||
+      (live.timeoutActionTarget ?? undefined) !== (timeoutTarget ?? undefined) ||
       (live.noAgentAction ?? undefined) !== (row.no_agent_action?.action ?? undefined) ||
+      (live.noAgentActionTarget ?? undefined) !== (noAgentTarget ?? undefined) ||
+      (live.noAgentApplyTo ?? undefined) !== (row.no_agent_apply_to ?? undefined) ||
+      (needsLanguage && (live.languageId ?? undefined) !== (row.language_id ?? undefined)) ||
       JSON.stringify(sortedUsers) !== JSON.stringify(sortedLive);
     if (changed) {
       calls.push({

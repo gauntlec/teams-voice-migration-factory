@@ -6,12 +6,14 @@ import { createDb, platformDb, tenantDb } from '@tvmf/db';
 import { buildColorRamp, type Branding, type DiscoverySiteOverview, type PortDocumentItemSummary } from '@tvmf/shared';
 import {
   CALL_QUEUE_NO_AGENT_ACTIONS,
+  CALL_QUEUE_NO_AGENT_APPLY_TO,
   CALL_QUEUE_OVERFLOW_ACTIONS,
   CALL_QUEUE_ROUTING_METHODS,
   CALL_QUEUE_TIMEOUT_ACTIONS,
   collectAutoAttendantUserUpns,
   collectCallQueueTargetUpns,
   decodeCallQueueEnum,
+  extractLiveCallTargetId,
   liveAutoAttendantToStructured,
   orderAutoAttendantRowsByDependency,
   planAutoAttendantRow,
@@ -402,9 +404,14 @@ async function resolveLiveCallQueueState(scoped: ReturnType<typeof tenantDb>, na
       agentObjectIds: agents,
       overflowAction: decodeCallQueueEnum(d.OverflowAction, CALL_QUEUE_OVERFLOW_ACTIONS),
       overflowThreshold: typeof d.OverflowThreshold === 'number' ? d.OverflowThreshold : undefined,
+      overflowActionTarget: extractLiveCallTargetId(d.OverflowActionTarget),
       timeoutAction: decodeCallQueueEnum(d.TimeoutAction, CALL_QUEUE_TIMEOUT_ACTIONS),
       timeoutThreshold: typeof d.TimeoutThreshold === 'number' ? d.TimeoutThreshold : undefined,
+      timeoutActionTarget: extractLiveCallTargetId(d.TimeoutActionTarget),
       noAgentAction: decodeCallQueueEnum(d.NoAgentAction, CALL_QUEUE_NO_AGENT_ACTIONS),
+      noAgentActionTarget: extractLiveCallTargetId(d.NoAgentActionTarget),
+      noAgentApplyTo: decodeCallQueueEnum(d.NoAgentApplyTo, CALL_QUEUE_NO_AGENT_APPLY_TO),
+      languageId: typeof d.LanguageId === 'string' ? d.LanguageId : undefined,
       applicationInstanceIds: Array.isArray(d.ApplicationInstances)
         ? (d.ApplicationInstances as unknown[]).filter((v): v is string => typeof v === 'string')
         : undefined,

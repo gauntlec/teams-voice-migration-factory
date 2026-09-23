@@ -4,6 +4,7 @@ import { tenantDb } from '@tvmf/db';
 import {
   autoAttendantRowWarnings,
   CALL_QUEUE_NO_AGENT_ACTIONS,
+  CALL_QUEUE_NO_AGENT_APPLY_TO,
   CALL_QUEUE_OVERFLOW_ACTIONS,
   CALL_QUEUE_ROUTING_METHODS,
   CALL_QUEUE_TIMEOUT_ACTIONS,
@@ -12,6 +13,7 @@ import {
   collectCallQueueTargetUpns,
   collectDependencyUserRowIds,
   decodeCallQueueEnum,
+  extractLiveCallTargetId,
   identityRowWarnings,
   liveAutoAttendantToStructured,
   planAutoAttendantRow,
@@ -165,9 +167,14 @@ async function resolveLiveCallQueueState(scoped: Scoped, names: string[]) {
       agentObjectIds: agents,
       overflowAction: decodeCallQueueEnum(d.OverflowAction, CALL_QUEUE_OVERFLOW_ACTIONS),
       overflowThreshold: typeof d.OverflowThreshold === 'number' ? d.OverflowThreshold : undefined,
+      overflowActionTarget: extractLiveCallTargetId(d.OverflowActionTarget),
       timeoutAction: decodeCallQueueEnum(d.TimeoutAction, CALL_QUEUE_TIMEOUT_ACTIONS),
       timeoutThreshold: typeof d.TimeoutThreshold === 'number' ? d.TimeoutThreshold : undefined,
+      timeoutActionTarget: extractLiveCallTargetId(d.TimeoutActionTarget),
       noAgentAction: decodeCallQueueEnum(d.NoAgentAction, CALL_QUEUE_NO_AGENT_ACTIONS),
+      noAgentActionTarget: extractLiveCallTargetId(d.NoAgentActionTarget),
+      noAgentApplyTo: decodeCallQueueEnum(d.NoAgentApplyTo, CALL_QUEUE_NO_AGENT_APPLY_TO),
+      languageId: typeof d.LanguageId === 'string' ? d.LanguageId : undefined,
       applicationInstanceIds: Array.isArray(d.ApplicationInstances)
         ? (d.ApplicationInstances as unknown[]).filter((v): v is string => typeof v === 'string')
         : undefined,
