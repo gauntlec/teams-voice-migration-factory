@@ -1024,7 +1024,14 @@ export class BuildService {
       const targetOf = (t: unknown): string | null => {
         const o = t as Record<string, unknown> | null;
         if (!o || typeof o.Id !== 'string') return null;
-        if (o.Id.startsWith('tel:')) return null;
+        // A PSTN target's Id already comes back tel:-prefixed (e.g.
+        // 'tel:+442071234567') - the exact shape normalizePstnTarget
+        // (packages/shared/src/deployment.ts) and the AA path's own
+        // parseLiveCallTarget (packages/shared/src/aa-live-parse.ts) both
+        // expect, so it's returned as-is rather than dropped. Confirmed
+        // live: a Forward-to-number Call Queue lost its destination on
+        // every populate-from-live before this fix.
+        if (o.Id.startsWith('tel:')) return o.Id;
         return upnByObjectId.get(o.Id.toLowerCase()) ?? o.Id;
       };
       const patch: Record<string, unknown> = {
