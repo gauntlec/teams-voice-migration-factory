@@ -18,6 +18,7 @@ import {
   Text,
   makeStyles,
   shorthands,
+  tokens,
 } from '@fluentui/react-components';
 import { ArrowLeftRegular, WarningRegular } from '@fluentui/react-icons';
 import type { DeploymentPreviewRow, DeploymentSiteRollup, FileRow } from '@tvmf/shared';
@@ -31,6 +32,25 @@ const useStyles = makeStyles({
   row: { display: 'flex', ...shorthands.gap('8px'), flexWrap: 'wrap', alignItems: 'center' },
   mono: { fontFamily: 'ui-monospace, monospace' },
   commands: { fontFamily: 'ui-monospace, monospace', fontSize: '12px', whiteSpace: 'pre-wrap', margin: 0 },
+  // A Fluent `Badge` is a fixed-height pill meant for a short single-line
+  // label - forcing one to wrap a full warning sentence (as this used to)
+  // gave it more text than its fixed height has room for, so the wrapped
+  // line(s) overflowed on top of whatever sat below it instead of pushing it
+  // down, reading as garbled/overlapping text. This is a plain flex row
+  // instead, which grows with its content like any other block element.
+  warningRow: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    ...shorthands.gap('4px'),
+    ...shorthands.borderRadius('4px'),
+    ...shorthands.padding('2px', '6px'),
+    marginTop: '4px',
+    color: tokens.colorPaletteYellowForeground1,
+    backgroundColor: tokens.colorPaletteYellowBackground2,
+    fontSize: '12px',
+    lineHeight: '16px',
+  },
+  warningIcon: { flexShrink: 0, marginTop: '2px' },
 });
 
 interface Connection {
@@ -329,15 +349,10 @@ export function DeploymentSiteWorkspace() {
                     <TableCell>
                       {r.renderedCommands.length > 0 && <pre className={cs.commands}>{r.renderedCommands.join('\n')}</pre>}
                       {r.warnings.map((w) => (
-                        <Badge
-                          key={w}
-                          appearance="tint"
-                          color="warning"
-                          icon={<WarningRegular />}
-                          style={{ display: 'block', whiteSpace: 'normal', textAlign: 'left', marginTop: 4 }}
-                        >
-                          {w}
-                        </Badge>
+                        <div key={w} className={cs.warningRow}>
+                          <WarningRegular className={cs.warningIcon} />
+                          <span>{w}</span>
+                        </div>
                       ))}
                     </TableCell>
                   </TableRow>
