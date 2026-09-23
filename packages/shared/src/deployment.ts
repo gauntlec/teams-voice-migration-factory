@@ -903,6 +903,8 @@ export interface AutoAttendantCallableEntity {
   upn?: string;
   /** tel: number or raw digits - only for kind 'external'. */
   number?: string;
+  /** M365 group Object ID - only for kind 'shared_voicemail'. */
+  groupId?: string;
 }
 
 /** New-CsAutoAttendantPrompt - a greeting or menu prompt. Mirrors dto.ts's autoAttendantPromptSchema. */
@@ -1186,16 +1188,17 @@ export function autoAttendantRowWarnings(
       if (!entity.upn) unresolved.push(`${where} has no UPN set for its user target`);
       else if (!userObjectIds.has(entity.upn.toLowerCase())) unresolved.push(`${where} targets a user (${entity.upn}) that doesn't resolve to a live Entra identity yet`);
     }
-    // buildCallableEntity always returns undefined for these two kinds (see
-    // its own comments) - Microsoft's cmdlet has no plain Voicemail -Type at
-    // all, and SharedVoicemail has no data field to supply its M365 group
-    // identity yet. Both silently fall back to DisconnectCall with no
-    // warning until now - confirmed live this session.
+    // Plain Voicemail has no deployable cmdlet form at all (Microsoft's own
+    // -Type enum has no "Voicemail" entry) and buildCallableEntity always
+    // returns undefined for it, falling back to DisconnectCall - warn every
+    // time, there's no fixing this one from data. Shared Voicemail now
+    // deploys correctly once groupId is set (see buildCallableEntity); only
+    // warn while it's still missing.
     if (entity.kind === 'voicemail') {
       unresolved.push(`${where} targets plain Voicemail, which has no deployable cmdlet form - it will disconnect the call instead of deploying`);
     }
-    if (entity.kind === 'shared_voicemail') {
-      unresolved.push(`${where} targets Shared Voicemail, but its M365 group identity can't be supplied yet - it will disconnect the call instead of deploying`);
+    if (entity.kind === 'shared_voicemail' && !entity.groupId) {
+      unresolved.push(`${where} targets Shared Voicemail, but its M365 group ID isn't set yet - it will disconnect the call instead of deploying`);
     }
   };
   check(row.operator ?? undefined, 'Operator');
@@ -1272,11 +1275,16 @@ function buildCallableEntity(ctx: AaBuildCtx, entity: AutoAttendantCallableEntit
       // instead of sending an invalid enum value.
       return undefined;
     case 'shared_voicemail':
-      // SharedVoicemail's -Identity must be an M365 group GUID (Find-CsGroup
-      // per Microsoft Learn's own example) - AutoAttendantCallableEntity has
-      // no field to supply one today, so this can't be rendered correctly
-      // either. Same fallback until that field exists.
-      return undefined;
+      // SharedVoicemail's -Identity is the M365 group's Object ID (Find-
+      // CsGroup per Microsoft Learn's own example) - the Design & Build
+      // editor now has a groupId field for it (a raw GUID; no Find-CsGroup
+      // search yet, matching the bug's own accepted scope). Falls back to
+      // the same "skip, don't guess" behavior as every other unresolved
+      // target when it isn't set yet.
+      type = 'SharedVoicemail';
+      identity = entity.groupId;
+      if (!identity) return undefined;
+      break;
   }
   const varName = nextAaVar(ctx, 'ce');
   ctx.steps.push({ assignTo: varName, cmdlet: 'New-CsAutoAttendantCallableEntity', parameters: { Type: type, ...(identity ? { Identity: identity } : {}) } });

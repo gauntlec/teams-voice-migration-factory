@@ -1126,6 +1126,8 @@ const autoAttendantCallableEntitySchema = z
     buildId: refId,
     upn: optStr(200),
     number: optStr(64),
+    /** M365 group Object ID - only for kind 'shared_voicemail' (New-CsAutoAttendantCallableEntity -Type SharedVoicemail -Identity). A raw GUID, no Find-CsGroup search yet. */
+    groupId: refId,
   })
   .strict();
 

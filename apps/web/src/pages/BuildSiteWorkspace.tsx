@@ -2253,6 +2253,16 @@ function CallableEntityEditor({
           />
         </Field>
       )}
+      {kind === 'shared_voicemail' && (
+        <Field label="M365 group Object ID">
+          <Input
+            value={value?.groupId ?? ''}
+            onChange={(_, d) => onChange({ kind: 'shared_voicemail', groupId: d.value })}
+            placeholder="00000000-0000-0000-0000-000000000000"
+            style={{ minWidth: 260 }}
+          />
+        </Field>
+      )}
     </div>
   );
 }

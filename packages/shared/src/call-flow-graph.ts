@@ -270,7 +270,9 @@ export function buildAutoAttendantFlowGraphFromDesign(
       case 'voicemail':
         return b.ensureNode({ id: 'voicemail', kind: 'voicemail', label: 'Voicemail' });
       case 'shared_voicemail':
-        return b.ensureNode({ id: 'shared_voicemail', kind: 'shared_voicemail', label: 'Shared voicemail' });
+        return entity.groupId
+          ? b.ensureNode({ id: `group:${entity.groupId}`, kind: 'shared_voicemail', label: 'Shared voicemail (group)', sublabel: entity.groupId })
+          : b.ensureNode({ id: 'shared_voicemail', kind: 'shared_voicemail', label: 'Shared voicemail' });
     }
   };
 
