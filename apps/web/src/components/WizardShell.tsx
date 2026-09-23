@@ -81,6 +81,22 @@ export function WizardShell({
         <DialogBody>
           <DialogTitle>{title}</DialogTitle>
           <DialogContent>
+            {/* A step count alone ("Step 3 of 7") answers "where am I" but
+                not "how much further" at a glance - this segmented bar is
+                the same information as a quick visual read. */}
+            <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+              {steps.map((s, i) => (
+                <div
+                  key={s.key}
+                  style={{
+                    height: 4,
+                    flex: 1,
+                    borderRadius: 2,
+                    backgroundColor: i <= index ? tokens.colorBrandBackground : tokens.colorNeutralStroke2,
+                  }}
+                />
+              ))}
+            </div>
             <Text size={200} block style={{ color: tokens.colorNeutralForeground3, marginBottom: 12 }}>
               Step {index + 1} of {steps.length} · {step.title}
             </Text>

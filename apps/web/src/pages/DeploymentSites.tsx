@@ -17,7 +17,7 @@ import {
   makeStyles,
   shorthands,
 } from '@fluentui/react-components';
-import { ArrowRightRegular, ChevronLeftRegular, ChevronRightRegular } from '@fluentui/react-icons';
+import { ArrowRightRegular, ChevronDownRegular, ChevronLeftRegular, ChevronRightRegular, ChevronUpRegular } from '@fluentui/react-icons';
 import type { DeploymentSiteRollup } from '@tvmf/shared';
 import { api } from '../api';
 import { useAuth } from '../auth';
@@ -95,6 +95,12 @@ export function DeploymentSites() {
     connPageClamped * CONNECTIONS_PAGE_SIZE,
   );
   const [search, setSearch] = useState('');
+  // Collapsed by default - session history is rarely what a visit to this
+  // page is for, and used to sit above the Sites list (the thing almost
+  // every visit *is* for) as a 5-row table with its own pager. See
+  // `latestConn` below for the compact status line shown instead.
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const latestConn = connections.data?.[0];
 
   if (!activeTenantId) return <NoTenant />;
   if (q.isLoading) return <Spinner label="Loading Deployment…" />;
@@ -127,80 +133,117 @@ export function DeploymentSites() {
           <Spinner size="tiny" />
         ) : (
           <>
-            {can('deployment:connect') && (
-              <div className={cs.row} style={{ marginBottom: 8 }}>
-                <Button appearance="primary" onClick={() => connect.mutate()} disabled={connect.isPending}>
+            <div className={cs.row} style={{ marginBottom: 4 }}>
+              {activeConn ? (
+                <Badge appearance="tint" color="success">
+                  Connected as {activeConn.upn ?? 'unknown'}
+                </Badge>
+              ) : latestConn?.status === 'pending' ? (
+                <Badge appearance="tint" color="informative">
+                  Sign-in pending
+                </Badge>
+              ) : (
+                <Badge appearance="tint" color="subtle">
+                  Not connected
+                </Badge>
+              )}
+              {latestConn?.status === 'pending' && latestConn.user_code && (
+                <Text size={200}>
+                  <span className={cs.mono}>{latestConn.user_code}</span>{' '}
+                  {latestConn.verification_uri && (
+                    <Link href={latestConn.verification_uri} target="_blank" rel="noreferrer">
+                      open sign-in
+                    </Link>
+                  )}
+                </Text>
+              )}
+              {can('deployment:connect') && (
+                <Button size="small" appearance="primary" onClick={() => connect.mutate()} disabled={connect.isPending}>
                   Connect to customer tenant
                 </Button>
-                <Text size={200}>
-                  Starts a device-code sign-in you complete in your browser. One connection covers every site below.
-                </Text>
-              </div>
-            )}
+              )}
+            </div>
+            <Text size={200} className={s.muted}>
+              {activeConn
+                ? 'One connection covers every site below.'
+                : 'Starts a device-code sign-in you complete in your browser. Planned changes can be previewed without a connection - only What-If/Execute runs need one.'}
+            </Text>
+
             {connections.data && connections.data.length > 0 && (
-              <DataTable size="small" minWidth={720}>
-                <TableHeader>
-                  <TableRow>
-                    <TableHeaderCell>Started</TableHeaderCell>
-                    <TableHeaderCell>Status</TableHeaderCell>
-                    <TableHeaderCell>Device code</TableHeaderCell>
-                    <TableHeaderCell>Signed in as</TableHeaderCell>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {pagedConnections.map((c) => (
-                    <TableRow key={c.id}>
-                      <TableCell>{new Date(c.started_at).toLocaleString()}</TableCell>
-                      <TableCell>
-                        <Badge appearance="tint" color={c.status === 'active' ? 'success' : 'informative'}>
-                          {c.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {c.status === 'pending' && c.user_code ? (
-                          <span>
-                            <span className={cs.mono}>{c.user_code}</span>{' '}
-                            {c.verification_uri && (
-                              <Link href={c.verification_uri} target="_blank" rel="noreferrer">
-                                open sign-in
-                              </Link>
-                            )}
-                          </span>
-                        ) : (
-                          '—'
-                        )}
-                      </TableCell>
-                      <TableCell>{c.upn ?? '—'}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </DataTable>
-            )}
-            {connPages > 1 && (
-              <div className={cs.pager}>
-                <Text size={200} className={s.muted}>
-                  Page {connPageClamped} of {connPages} · {connTotal} total
-                </Text>
+              <>
                 <Button
+                  appearance="transparent"
                   size="small"
-                  appearance="subtle"
-                  icon={<ChevronLeftRegular />}
-                  disabled={connPageClamped <= 1}
-                  onClick={() => setConnPage((p) => Math.max(1, p - 1))}
-                />
-                <Button
-                  size="small"
-                  appearance="subtle"
-                  icon={<ChevronRightRegular />}
-                  disabled={connPageClamped >= connPages}
-                  onClick={() => setConnPage((p) => Math.min(connPages, p + 1))}
-                />
-              </div>
-            )}
-            {!activeConn && (
-              <Text size={200} className={s.muted}>
-                Planned changes can be previewed without a connection - only What-If/Execute runs need one.
-              </Text>
+                  icon={historyOpen ? <ChevronUpRegular /> : <ChevronDownRegular />}
+                  iconPosition="after"
+                  onClick={() => setHistoryOpen((o) => !o)}
+                  style={{ marginTop: 8, paddingLeft: 0, justifyContent: 'flex-start' }}
+                >
+                  {historyOpen ? 'Hide' : 'View'} connection history ({connTotal})
+                </Button>
+                {historyOpen && (
+                  <>
+                    <DataTable size="small" minWidth={720}>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHeaderCell>Started</TableHeaderCell>
+                          <TableHeaderCell>Status</TableHeaderCell>
+                          <TableHeaderCell>Device code</TableHeaderCell>
+                          <TableHeaderCell>Signed in as</TableHeaderCell>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {pagedConnections.map((c) => (
+                          <TableRow key={c.id}>
+                            <TableCell>{new Date(c.started_at).toLocaleString()}</TableCell>
+                            <TableCell>
+                              <Badge appearance="tint" color={c.status === 'active' ? 'success' : 'informative'}>
+                                {c.status}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              {c.status === 'pending' && c.user_code ? (
+                                <span>
+                                  <span className={cs.mono}>{c.user_code}</span>{' '}
+                                  {c.verification_uri && (
+                                    <Link href={c.verification_uri} target="_blank" rel="noreferrer">
+                                      open sign-in
+                                    </Link>
+                                  )}
+                                </span>
+                              ) : (
+                                '—'
+                              )}
+                            </TableCell>
+                            <TableCell>{c.upn ?? '—'}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </DataTable>
+                    {connPages > 1 && (
+                      <div className={cs.pager}>
+                        <Text size={200} className={s.muted}>
+                          Page {connPageClamped} of {connPages} · {connTotal} total
+                        </Text>
+                        <Button
+                          size="small"
+                          appearance="subtle"
+                          icon={<ChevronLeftRegular />}
+                          disabled={connPageClamped <= 1}
+                          onClick={() => setConnPage((p) => Math.max(1, p - 1))}
+                        />
+                        <Button
+                          size="small"
+                          appearance="subtle"
+                          icon={<ChevronRightRegular />}
+                          disabled={connPageClamped >= connPages}
+                          onClick={() => setConnPage((p) => Math.min(connPages, p + 1))}
+                        />
+                      </div>
+                    )}
+                  </>
+                )}
+              </>
             )}
           </>
         )}

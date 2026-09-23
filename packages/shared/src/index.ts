@@ -395,6 +395,14 @@ export interface DeploymentPreviewRow {
    * so it must never be dropped from the preview just because calls is empty.
    */
   warnings: string[];
+  /**
+   * True when this row wasn't in the caller's own `rowIds` selection but was
+   * pulled in by DeploymentService.expandScopeWithDependencies - a Call
+   * Queue/Auto Attendant's agent or target UPN that matches one of this
+   * site's own build_users rows. Surfaced so the operator can see a
+   * dependency was added automatically instead of it being invisible.
+   */
+  autoIncluded?: boolean;
 }
 
 /** A row from the general-purpose per-tenant file store (see FilesTable). */

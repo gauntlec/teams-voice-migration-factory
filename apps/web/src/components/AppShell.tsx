@@ -62,6 +62,15 @@ const useStyles = makeStyles({
     textTransform: 'uppercase',
     letterSpacing: '.04em',
   },
+  // Sits between navSectionLabel's siblings within Administration - lighter
+  // weight and no uppercase, so the section still reads as one "Administration"
+  // area at a glance, just split into its actual purposes (tenancy vs.
+  // observability vs. feedback) instead of one flat 8-item list.
+  navGroupLabel: {
+    ...shorthands.padding('10px', '16px', '2px'),
+    color: tokens.colorNeutralForeground3,
+    fontSize: tokens.fontSizeBase100,
+  },
   navItem: {
     display: 'flex',
     alignItems: 'center',
@@ -97,15 +106,36 @@ const MAIN: NavDef[] = [
   { to: '/files', label: 'Files', icon: <DocumentFolder24Regular />, permission: 'files:read' },
 ];
 
-const ADMIN: NavDef[] = [
-  { to: '/admin/users', label: 'Users', icon: <People24Regular />, permission: 'user:read' },
-  { to: '/admin/tenants', label: 'Customers', icon: <BuildingMultiple24Regular />, permission: 'tenant:create' },
-  { to: '/admin/msps', label: 'MSPs', icon: <BuildingMultiple24Regular />, permission: 'msp:read' },
-  { to: '/admin/sites', label: 'Sites', icon: <Location24Regular />, permission: 'discovery:sites:manage' },
-  { to: '/admin/email', label: 'Email log', icon: <Mail24Regular />, permission: 'audit:read:platform' },
-  { to: '/admin/audit', label: 'Platform Audit', icon: <History24Regular />, permission: 'audit:read:platform' },
-  { to: '/feature-requests', label: 'Feature requests', icon: <Lightbulb24Regular />, permission: 'feature:read' },
-  { to: '/bug-reports', label: 'Bug reports', icon: <Bug24Regular />, permission: 'bug:read' },
+/**
+ * Split into sub-groups by purpose rather than one flat 8-item list - tenancy
+ * management, platform observability and user feedback are different jobs
+ * that happened to share one "Administration" label with no visual
+ * separation beyond it.
+ */
+const ADMIN_GROUPS: { label: string; items: NavDef[] }[] = [
+  {
+    label: 'Tenancy',
+    items: [
+      { to: '/admin/users', label: 'Users', icon: <People24Regular />, permission: 'user:read' },
+      { to: '/admin/tenants', label: 'Customers', icon: <BuildingMultiple24Regular />, permission: 'tenant:create' },
+      { to: '/admin/msps', label: 'MSPs', icon: <BuildingMultiple24Regular />, permission: 'msp:read' },
+      { to: '/admin/sites', label: 'Sites', icon: <Location24Regular />, permission: 'discovery:sites:manage' },
+    ],
+  },
+  {
+    label: 'Observability',
+    items: [
+      { to: '/admin/email', label: 'Email log', icon: <Mail24Regular />, permission: 'audit:read:platform' },
+      { to: '/admin/audit', label: 'Platform Audit', icon: <History24Regular />, permission: 'audit:read:platform' },
+    ],
+  },
+  {
+    label: 'Feedback',
+    items: [
+      { to: '/feature-requests', label: 'Feature requests', icon: <Lightbulb24Regular />, permission: 'feature:read' },
+      { to: '/bug-reports', label: 'Bug reports', icon: <Bug24Regular />, permission: 'bug:read' },
+    ],
+  },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -127,7 +157,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   if (!me) return null;
 
   const activeTenant = tenants.find((t) => t.id === activeTenantId) ?? tenants[0];
-  const adminItems = ADMIN.filter((i) => !i.permission || can(i.permission));
+  const visibleAdminGroups = ADMIN_GROUPS.map((g) => ({
+    ...g,
+    items: g.items.filter((i) => !i.permission || can(i.permission)),
+  })).filter((g) => g.items.length > 0);
   // Staff (ENGINEER/PROJECT_MANAGER) see their own MSP's branding, not the
   // customer tenant's - see BrandTheme.tsx. Switching the customer dropdown
   // below must not change this.
@@ -226,10 +259,15 @@ export function AppShell({ children }: { children: ReactNode }) {
         <nav className={s.nav}>
           <div className={s.navSectionLabel}>Migration</div>
           {renderNav(MAIN)}
-          {adminItems.length > 0 && (
+          {visibleAdminGroups.length > 0 && (
             <>
               <div className={s.navSectionLabel}>Administration</div>
-              {renderNav(ADMIN)}
+              {visibleAdminGroups.map((g) => (
+                <div key={g.label}>
+                  <div className={s.navGroupLabel}>{g.label}</div>
+                  {renderNav(g.items)}
+                </div>
+              ))}
             </>
           )}
         </nav>

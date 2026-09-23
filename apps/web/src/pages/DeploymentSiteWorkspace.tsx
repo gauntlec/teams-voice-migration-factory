@@ -6,6 +6,13 @@ import {
   Button,
   Card,
   Checkbox,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
+  DialogTrigger,
   Link,
   Spinner,
   Tab,
@@ -51,6 +58,31 @@ const useStyles = makeStyles({
     lineHeight: '16px',
   },
   warningIcon: { flexShrink: 0, marginTop: '2px' },
+  // Same amber treatment as warningRow, but full-width and a touch roomier -
+  // this is the "you're about to act on the whole site" notice, not a
+  // per-row data problem, so it sits above the table rather than inside a cell.
+  wholeSiteBanner: {
+    display: 'flex',
+    alignItems: 'center',
+    ...shorthands.gap('8px'),
+    ...shorthands.borderRadius('4px'),
+    ...shorthands.padding('8px', '12px'),
+    color: tokens.colorPaletteYellowForeground1,
+    backgroundColor: tokens.colorPaletteYellowBackground2,
+    ...shorthands.border('1px', 'solid', tokens.colorPaletteYellowBorder1),
+  },
+  groupHeaderCell: {
+    backgroundColor: tokens.colorNeutralBackground3,
+    color: tokens.colorBrandForeground1,
+    fontWeight: tokens.fontWeightSemibold,
+    fontSize: tokens.fontSizeBase200,
+    textTransform: 'uppercase',
+    letterSpacing: '.02em',
+  },
+  autoIncludedTag: {
+    display: 'inline-block',
+    marginLeft: '6px',
+  },
 });
 
 interface Connection {
@@ -65,7 +97,7 @@ interface Deployment {
   id: string;
   mode: string;
   status: string;
-  scope: { siteId?: string } | null;
+  scope: { siteId?: string; autoIncludedRowIds?: string[] } | null;
   summary: Record<string, number>;
   created_at: string;
 }
@@ -110,6 +142,9 @@ const OBJECT_TYPE_LABEL: Record<DeploymentPreviewRow['objectType'], string> = {
   auto_attendant: 'Auto Attendant',
 };
 
+/** Display/group order for the Planned changes table - matches the worker's own deployment order (users/caps first, auto attendants last), so the grouping doubles as a hint at what runs before what. */
+const GROUP_ORDER: DeploymentPreviewRow['objectType'][] = ['user', 'cap', 'resource_account', 'call_queue', 'auto_attendant'];
+
 export function DeploymentSiteWorkspace() {
   const cs = useStyles();
   const s = useRecordStyles();
@@ -124,6 +159,10 @@ export function DeploymentSiteWorkspace() {
   const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(new Set());
   const [selectedDeployment, setSelectedDeployment] = useState<string | null>(null);
   const [generatedFile, setGeneratedFile] = useState<FileRow | null>(null);
+  // Only the live-execute path gets a confirm gate - a What-If run never
+  // touches the tenant, so accidentally running it on the whole site instead
+  // of a selection has no real consequence beyond a bigger preview.
+  const [confirmWholeSiteDeploy, setConfirmWholeSiteDeploy] = useState(false);
 
   const rollup = useQuery({
     queryKey: ['deployment-summary', tid],
@@ -285,7 +324,10 @@ export function DeploymentSiteWorkspace() {
                 appearance="primary"
                 disabled={!activeConn || !canExecute || teamsReadOnly || run.isPending}
                 title={teamsReadOnly ? 'This customer tenant is read-only - live changes are disabled.' : undefined}
-                onClick={() => run.mutate({ mode: 'execute', everyone: selectedRowIds.size === 0 })}
+                onClick={() => {
+                  if (selectedRowIds.size === 0) setConfirmWholeSiteDeploy(true);
+                  else run.mutate({ mode: 'execute', everyone: false });
+                }}
               >
                 {selectedRowIds.size > 0 ? `Deploy selected (${selectedRowIds.size})` : 'Deploy everything'}
               </Button>
@@ -299,8 +341,48 @@ export function DeploymentSiteWorkspace() {
             settings are only checked against live Teams data for a UPN after a targeted "Validate against tenant"
             check has run for it — until then that command always re-runs when a target is set. What-If mode runs
             every check but sends nothing to Microsoft Teams — cmdlets are rendered to a script instead. Select rows
-            below to act on just those; with nothing selected, buttons act on the whole site.
+            below to act on just those.
           </Text>
+          {selectedRowIds.size === 0 && rows.length > 0 && (
+            <div className={cs.wholeSiteBanner}>
+              <WarningRegular />
+              <Text size={200}>
+                Nothing selected — What-If/Deploy will act on <b>all {rows.length} rows</b> (the whole site).
+              </Text>
+            </div>
+          )}
+          <Dialog open={confirmWholeSiteDeploy} onOpenChange={(_, d) => setConfirmWholeSiteDeploy(d.open)}>
+            <DialogSurface>
+              <DialogBody>
+                <DialogTitle>Deploy the whole site?</DialogTitle>
+                <DialogContent>
+                  <Text block>
+                    Nothing is selected, so this will run every planned change below live — <b>all {rows.length} rows</b>{' '}
+                    across users, common area phones, resource accounts, call queues and auto attendants for{' '}
+                    {site.name || site.sitecode}.
+                  </Text>
+                  <Text block style={{ marginTop: 8 }}>
+                    Select specific rows first if you meant to deploy only some of them.
+                  </Text>
+                </DialogContent>
+                <DialogActions>
+                  <DialogTrigger disableButtonEnhancement>
+                    <Button appearance="secondary">Cancel</Button>
+                  </DialogTrigger>
+                  <Button
+                    appearance="primary"
+                    disabled={run.isPending}
+                    onClick={() => {
+                      run.mutate({ mode: 'execute', everyone: true });
+                      setConfirmWholeSiteDeploy(false);
+                    }}
+                  >
+                    Deploy all {rows.length} rows
+                  </Button>
+                </DialogActions>
+              </DialogBody>
+            </DialogSurface>
+          </Dialog>
           {generateDoc.isError && (
             <Text size={200} style={{ color: 'var(--colorPaletteRedForeground1)' }}>
               {generateDoc.error instanceof ApiError ? generateDoc.error.message : 'Could not generate the document'}
@@ -339,24 +421,47 @@ export function DeploymentSiteWorkspace() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((r) => (
-                  <TableRow key={r.rowId}>
-                    <TableCell>
-                      <Checkbox checked={selectedRowIds.has(r.rowId)} onChange={() => toggleRow(r.rowId)} />
-                    </TableCell>
-                    <TableCell>{r.upn}</TableCell>
-                    <TableCell>{OBJECT_TYPE_LABEL[r.objectType]}</TableCell>
-                    <TableCell>
-                      {r.renderedCommands.length > 0 && <pre className={cs.commands}>{r.renderedCommands.join('\n')}</pre>}
-                      {r.warnings.map((w) => (
-                        <div key={w} className={cs.warningRow}>
-                          <WarningRegular className={cs.warningIcon} />
-                          <span>{w}</span>
-                        </div>
-                      ))}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {GROUP_ORDER.flatMap((type) => {
+                  const group = rows.filter((r) => r.objectType === type);
+                  if (group.length === 0) return [];
+                  return [
+                    <TableRow key={`group-${type}`}>
+                      <TableCell colSpan={4} className={cs.groupHeaderCell}>
+                        {OBJECT_TYPE_LABEL[type]} · {group.length}
+                      </TableCell>
+                    </TableRow>,
+                    ...group.map((r) => (
+                      <TableRow key={r.rowId}>
+                        <TableCell>
+                          <Checkbox checked={selectedRowIds.has(r.rowId)} onChange={() => toggleRow(r.rowId)} />
+                        </TableCell>
+                        <TableCell>
+                          {r.upn}
+                          {r.autoIncluded && (
+                            <Badge
+                              className={cs.autoIncludedTag}
+                              appearance="tint"
+                              color="informative"
+                              title="Not selected directly - included automatically because a selected Call Queue/Auto Attendant references it."
+                            >
+                              included automatically
+                            </Badge>
+                          )}
+                        </TableCell>
+                        <TableCell>{OBJECT_TYPE_LABEL[r.objectType]}</TableCell>
+                        <TableCell>
+                          {r.renderedCommands.length > 0 && <pre className={cs.commands}>{r.renderedCommands.join('\n')}</pre>}
+                          {r.warnings.map((w) => (
+                            <div key={w} className={cs.warningRow}>
+                              <WarningRegular className={cs.warningIcon} />
+                              <span>{w}</span>
+                            </div>
+                          ))}
+                        </TableCell>
+                      </TableRow>
+                    )),
+                  ];
+                })}
               </TableBody>
             </DataTable>
           )}
@@ -406,6 +511,16 @@ export function DeploymentSiteWorkspace() {
                         </div>
                       ) : (
                         '—'
+                      )}
+                      {(d.scope?.autoIncludedRowIds?.length ?? 0) > 0 && (
+                        <Text
+                          size={200}
+                          block
+                          className={s.muted}
+                          title="Call Queue/Auto Attendant rows in this run referenced Users that weren't selected directly - their own config was pulled in and deployed first."
+                        >
+                          +{d.scope!.autoIncludedRowIds!.length} row{d.scope!.autoIncludedRowIds!.length === 1 ? '' : 's'} included automatically
+                        </Text>
                       )}
                     </TableCell>
                     <TableCell>

@@ -372,11 +372,11 @@ export class DeploymentService {
     siteId: string,
     sheets: SheetName[],
     rowIds: string[] | undefined,
-  ): Promise<{ sheets: SheetName[]; rowIds: string[] | undefined }> {
-    if (!rowIds?.length) return { sheets, rowIds };
+  ): Promise<{ sheets: SheetName[]; rowIds: string[] | undefined; autoIncludedRowIds: string[] }> {
+    if (!rowIds?.length) return { sheets, rowIds, autoIncludedRowIds: [] };
     const needsCq = sheets.includes('call_queues');
     const needsAa = sheets.includes('auto_attendants');
-    if (!needsCq && !needsAa) return { sheets, rowIds };
+    if (!needsCq && !needsAa) return { sheets, rowIds, autoIncludedRowIds: [] };
 
     const [cqRows, aaRows, siteUsers] = await Promise.all([
       needsCq
@@ -404,10 +404,11 @@ export class DeploymentService {
       siteUsers,
     );
     const missing = depIds.filter((id) => !rowIds.includes(id));
-    if (missing.length === 0) return { sheets, rowIds };
+    if (missing.length === 0) return { sheets, rowIds, autoIncludedRowIds: [] };
     return {
       sheets: sheets.includes('users') ? sheets : [...sheets, 'users'],
       rowIds: [...rowIds, ...missing],
+      autoIncludedRowIds: missing,
     };
   }
 
@@ -420,7 +421,13 @@ export class DeploymentService {
   async previewChanges(t: TenantContext, query: DeploymentPreviewQuery): Promise<DeploymentPreviewRow[]> {
     assertSiteInScope(t, query.siteId);
     const s = tenantDb(this.db, t.schema);
-    const { sheets, rowIds } = await this.expandScopeWithDependencies(s, query.siteId, query.sheets, query.rowIds);
+    const { sheets, rowIds, autoIncludedRowIds } = await this.expandScopeWithDependencies(
+      s,
+      query.siteId,
+      query.sheets,
+      query.rowIds,
+    );
+    const autoIncluded = new Set(autoIncludedRowIds);
     const out: DeploymentPreviewRow[] = [];
 
     if (sheets.includes('users') || sheets.includes('caps')) {
@@ -465,7 +472,15 @@ export class DeploymentService {
           );
           const warnings = identityRowWarnings({ e164: row.e164, number_type: row.number_type, policies });
           if (calls.length === 0 && warnings.length === 0) continue;
-          out.push({ rowId: row.id, objectType, upn: row.upn, calls, renderedCommands: calls.map(renderCommand), warnings });
+          out.push({
+            rowId: row.id,
+            objectType,
+            upn: row.upn,
+            calls,
+            renderedCommands: calls.map(renderCommand),
+            warnings,
+            autoIncluded: autoIncluded.has(row.id),
+          });
         }
       }
     }
@@ -820,8 +835,18 @@ export class DeploymentService {
     }
 
     const s = tenantDb(this.db, t.schema);
-    const { sheets, rowIds } = await this.expandScopeWithDependencies(s, input.scope.siteId, input.scope.sheets, input.scope.rowIds);
-    const scope = { ...input.scope, sheets, rowIds };
+    const { sheets, rowIds, autoIncludedRowIds } = await this.expandScopeWithDependencies(
+      s,
+      input.scope.siteId,
+      input.scope.sheets,
+      input.scope.rowIds,
+    );
+    // autoIncludedRowIds isn't part of createDeploymentSchema (the client
+    // never sends it) - stashed onto the stored/queued scope purely so Run
+    // History can show "+N rows included automatically" for this run. The
+    // `deployments.scope` column is untyped jsonb, and this object is never
+    // re-validated against the request schema, so the extra key is safe.
+    const scope = { ...input.scope, sheets, rowIds, autoIncludedRowIds };
 
     const dep = await s
       .insertInto('deployments')
