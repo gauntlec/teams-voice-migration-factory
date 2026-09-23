@@ -7,17 +7,25 @@ import type { AutoAttendantWizardAnswers, CallQueueWizardAnswers, WizardCallFlow
  * deployable `build_auto_attendants`/`build_call_queues` row - the "Import
  * to Design & Build" action (Data Collection's Call flows tab). Pure and
  * DB-free by design: anything that needs a live lookup (matching a
- * free-text person's name to a synced user) is injected by the caller via
- * `resolvePerson`/`resolveAgent`, so this module stays testable and has no
- * knowledge of tenantDb.
+ * free-text person's name to a synced user, or a department name to an
+ * already-built Call Queue/Auto Attendant) is injected by the caller via
+ * `WizardResolvers`, so this module stays testable and has no knowledge of
+ * tenantDb.
  *
- * Unresolved targets are deliberately left unset rather than guessed - the
- * same "omit, don't guess" rule `buildCallableEntity` (deployment.ts) and
- * `autoAttendantRowWarnings` already enforce for hand-built rows. Every gap
- * left here is also listed in the returned `warnings` so the importing
- * engineer sees it immediately, instead of only discovering it the next
- * time someone runs a deployment preview.
+ * A person or department that doesn't match anything synced is never
+ * dropped - it's carried through as typed (the wizard's whole point is to
+ * let an engineer add someone who isn't synced yet), and flagged in the
+ * returned `warnings` so it's easy to find and confirm/fix after import.
+ * Only a genuinely empty/unset answer produces no destination.
  */
+
+export interface WizardResolvers {
+  /** Exact match against a synced tenant user (by UPN or display name) - returns their canonical UPN, or undefined if nothing matches. */
+  resolvePerson: (label: string) => string | undefined;
+  /** Exact match against this site's existing build_call_queues/build_auto_attendants (by name) - returns its kind + id, or undefined if nothing matches. */
+  resolveTeam: (label: string) => { kind: 'call_queue' | 'auto_attendant'; buildId: string } | undefined;
+}
+const NO_RESOLVERS: WizardResolvers = { resolvePerson: () => undefined, resolveTeam: () => undefined };
 
 const DTMF_BY_DIGIT: Record<string, AutoAttendantMenuOption['dtmf']> = {
   '0': 'Tone0',
@@ -42,22 +50,26 @@ const STANDARD_9_TO_5: WizardWeeklyHours = {
   sunday: [],
 };
 
-function convertTarget(
-  t: WizardTarget | undefined,
-  resolvePerson: (label: string) => string | undefined,
-  warnings: string[],
-  where: string,
-): AutoAttendantCallableEntity | undefined {
+function convertTarget(t: WizardTarget | undefined, resolvers: WizardResolvers, warnings: string[], where: string): AutoAttendantCallableEntity | undefined {
   if (!t) return undefined;
   switch (t.kind) {
     case 'person': {
-      const upn = t.label ? resolvePerson(t.label) : undefined;
-      if (!upn) warnings.push(`${where}: couldn't match "${t.label ?? '(no name entered)'}" to a synced user - set the right person after import.`);
-      return { kind: 'user', upn };
+      const label = (t.label ?? '').trim();
+      if (!label) {
+        warnings.push(`${where}: no name or email was entered.`);
+        return { kind: 'user', upn: undefined };
+      }
+      const upn = resolvers.resolvePerson(label);
+      if (!upn) warnings.push(`${where}: "${label}" doesn't match a synced user yet - carried through as typed, confirm it's a valid UPN/email after import.`);
+      return { kind: 'user', upn: upn ?? label };
     }
-    case 'team':
-      warnings.push(`${where}: routes to "${t.label ?? 'a department'}" - link it to the right Auto Attendant or Call Queue after import.`);
+    case 'team': {
+      const label = (t.label ?? '').trim();
+      const match = label ? resolvers.resolveTeam(label) : undefined;
+      if (match) return { kind: match.kind, buildId: match.buildId };
+      warnings.push(`${where}: routes to "${label || 'a department'}" - link it to the right Auto Attendant or Call Queue after import.`);
       return { kind: 'call_queue' };
+    }
     case 'message':
       warnings.push(`${where}: playing a recorded message isn't supported for a menu option yet - configure this destination manually after import.`);
       return undefined;
@@ -76,27 +88,17 @@ function convertTarget(
   }
 }
 
-function convertMenuOption(
-  opt: WizardMenuOption,
-  resolvePerson: (label: string) => string | undefined,
-  warnings: string[],
-  flowLabel: string,
-): AutoAttendantMenuOption {
+function convertMenuOption(opt: WizardMenuOption, resolvers: WizardResolvers, warnings: string[], flowLabel: string): AutoAttendantMenuOption {
   const dtmf = DTMF_BY_DIGIT[opt.key] ?? 'Automatic';
   if (opt.target.kind === 'operator') return { dtmf, action: 'TransferCallToOperator' };
-  const target = convertTarget(opt.target, resolvePerson, warnings, `${flowLabel}, option "${opt.label}"`);
+  const target = convertTarget(opt.target, resolvers, warnings, `${flowLabel}, option "${opt.label}"`);
   return target ? { dtmf, action: 'TransferCallToTarget', target } : { dtmf, action: 'DisconnectCall' };
 }
 
-function convertCallFlow(
-  cf: WizardCallFlow,
-  resolvePerson: (label: string) => string | undefined,
-  warnings: string[],
-  label: string,
-): AutoAttendantCallFlow {
+function convertCallFlow(cf: WizardCallFlow, resolvers: WizardResolvers, warnings: string[], label: string): AutoAttendantCallFlow {
   const greetings = cf.greeting ? [{ type: 'Text' as const, text: cf.greeting }] : [];
   if (cf.mode === 'menu') {
-    const options = (cf.options ?? []).map((o) => convertMenuOption(o, resolvePerson, warnings, label));
+    const options = (cf.options ?? []).map((o) => convertMenuOption(o, resolvers, warnings, label));
     if (!options.length) warnings.push(`${label}: no menu options were added, so callers will hear the greeting and then be disconnected.`);
     return { greetings, menu: { enableDialByName: cf.allowDialByName, options } };
   }
@@ -108,7 +110,7 @@ function convertCallFlow(
     warnings.push(`${label}: routes straight to Voicemail, which Teams can't deploy directly - it will disconnect the call until this is changed after import.`);
     return { greetings, menu: { options: [{ dtmf: 'Automatic', action: 'TransferCallToTarget', target: { kind: 'voicemail' } }] } };
   }
-  const target = convertTarget(cf.target, resolvePerson, warnings, label);
+  const target = convertTarget(cf.target, resolvers, warnings, label);
   if (!target) warnings.push(`${label}: no destination was chosen - calls will be disconnected until this is set.`);
   return {
     greetings,
@@ -118,17 +120,17 @@ function convertCallFlow(
 
 export function convertAutoAttendantWizard(
   answers: AutoAttendantWizardAnswers,
-  opts: { siteId: string; name: string; resolvePerson?: (label: string) => string | undefined },
+  opts: { siteId: string; name: string; resolvers?: WizardResolvers },
 ): { value: BuildAutoAttendantCreateInput; warnings: string[] } {
   const warnings: string[] = [];
-  const resolvePerson = opts.resolvePerson ?? (() => undefined);
+  const resolvers = opts.resolvers ?? NO_RESOLVERS;
 
-  const default_call_flow = convertCallFlow(answers.businessFlow, resolvePerson, warnings, 'Business hours');
+  const default_call_flow = convertCallFlow(answers.businessFlow, resolvers, warnings, 'Business hours');
 
   let after_hours_call_flow: AutoAttendantCallFlow | null = null;
   let schedule: AutoAttendantSchedule | null = null;
   if (answers.hoursType !== 'always' && answers.afterHoursFlow) {
-    after_hours_call_flow = convertCallFlow(answers.afterHoursFlow, resolvePerson, warnings, 'After hours');
+    after_hours_call_flow = convertCallFlow(answers.afterHoursFlow, resolvers, warnings, 'After hours');
     // The schedule marks BUSINESS hours; `complement: true` fires the
     // after-hours flow outside them - see autoAttendantScheduleSchema's
     // own comment in dto.ts.
@@ -139,12 +141,12 @@ export function convertAutoAttendantWizard(
   const holiday_call_flows = answers.holidaysEnabled
     ? (answers.holidays ?? []).map((h) => ({
         name: h.name,
-        callFlow: convertCallFlow(h.flow, resolvePerson, warnings, `Holiday "${h.name}"`),
+        callFlow: convertCallFlow(h.flow, resolvers, warnings, `Holiday "${h.name}"`),
         schedule: { type: 'fixed' as const, fixed: { ranges: [{ start: h.dateRange.start, end: h.dateRange.end }] } },
       }))
     : [];
 
-  const operator = answers.operator ? (convertTarget(answers.operator, resolvePerson, warnings, 'Operator') ?? null) : null;
+  const operator = answers.operator ? (convertTarget(answers.operator, resolvers, warnings, 'Operator') ?? null) : null;
 
   return {
     value: {
@@ -165,16 +167,25 @@ export function convertAutoAttendantWizard(
 
 export function convertCallQueueWizard(
   answers: CallQueueWizardAnswers,
-  opts: { siteId: string; name: string; resolveAgent?: (label: string) => string | undefined },
+  opts: { siteId: string; name: string; resolvers?: WizardResolvers },
 ): { value: BuildCallQueueCreateInput; warnings: string[] } {
   const warnings: string[] = [];
-  const resolveAgent = opts.resolveAgent ?? (() => undefined);
+  const resolvers = opts.resolvers ?? NO_RESOLVERS;
 
+  // Every non-blank name the customer typed ends up in `agents` - matched
+  // to their canonical UPN when possible, carried through as typed
+  // otherwise, never silently dropped (a typed-but-unmatched name used to
+  // vanish from the created queue entirely - confirmed live this session).
   const agents: string[] = [];
   for (const a of answers.agents) {
-    const upn = resolveAgent(a);
+    const label = a.trim();
+    if (!label) continue;
+    const upn = resolvers.resolvePerson(label);
     if (upn) agents.push(upn);
-    else warnings.push(`Agent "${a}" couldn't be matched to a synced user - add them manually after import.`);
+    else {
+      agents.push(label);
+      warnings.push(`Agent "${label}" doesn't match a synced user yet - carried through as typed, confirm it's a valid UPN/email after import.`);
+    }
   }
 
   // Shaped to match buildCallQueueWritable's callQueueActionSchema exactly

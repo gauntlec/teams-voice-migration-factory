@@ -333,6 +333,7 @@ export function SiteWorkspace() {
       {!locked && (
         <WizardTiles
           base={base}
+          tenantId={tid}
           siteId={siteId}
           resourceAccountChoices={resourceAccountChoices}
           onCreated={() => qc.invalidateQueries({ queryKey: ['flows', tid, siteId] })}
@@ -715,7 +716,14 @@ export function SiteWorkspace() {
           fixed={{ site_id: siteId }}
           readOnly={locked}
           extraRowAction={(r) =>
-            !locked && tid ? <FlowImportButton flow={r} tid={tid} siteId={siteId} onChanged={() => qc.invalidateQueries({ queryKey: ['flows', tid, siteId] })} /> : null
+            // "Import to Design & Build" is engineer/admin-only work - the
+            // API already blocks it (RequirePermission('build:write'), which
+            // only SUPER_ADMIN/ENGINEER hold), but the button itself must
+            // not even appear for a PROJECT_MANAGER/CUSTOMER viewing this
+            // same Call flows tab, or it just looks broken when they click it.
+            !locked && tid && can('build:write') ? (
+              <FlowImportButton flow={r} tid={tid} siteId={siteId} onChanged={() => qc.invalidateQueries({ queryKey: ['flows', tid, siteId] })} />
+            ) : null
           }
           columns={[
             { key: 'kind', label: 'Kind' },

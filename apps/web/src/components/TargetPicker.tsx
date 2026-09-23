@@ -1,5 +1,7 @@
-import { Dropdown, Field, Input, Option, Textarea } from '@fluentui/react-components';
+import { Combobox, Dropdown, Field, Input, Option, Textarea } from '@fluentui/react-components';
 import type { WizardTarget } from '@tvmf/shared';
+import { UpnAutocomplete } from './UpnAutocomplete';
+import type { Choice } from './records';
 
 const TARGET_KIND_LABELS: Record<WizardTarget['kind'], string> = {
   person: 'A person',
@@ -19,17 +21,30 @@ const DEFAULT_KINDS: WizardTarget['kind'][] = ['person', 'team', 'message', 'voi
  * step's underlying cmdlet can't support every kind (e.g. an operator can't
  * itself point at "the operator"). `allowNone` adds a "— none —" choice for
  * optional targets (the AA's own Operator field).
+ *
+ * "A person"/"A department" both suggest from what's already synced
+ * (`UpnAutocomplete`'s live tenant-user search; `teamChoices`, this site's
+ * existing Call Queues/Auto Attendants) while staying freeform, so a name
+ * that isn't synced yet can still be typed and carried through - see
+ * wizard-convert.ts's own resolvePerson/resolveTeam, which the import step
+ * matches these same labels against.
  */
 export function TargetPicker({
   value,
   onChange,
   kinds = DEFAULT_KINDS,
   allowNone,
+  tenantId,
+  teamChoices,
 }: {
   value: WizardTarget | undefined;
   onChange: (v: WizardTarget | undefined) => void;
   kinds?: WizardTarget['kind'][];
   allowNone?: boolean;
+  /** Enables live-matching against synced tenant users for kind 'person'. */
+  tenantId?: string;
+  /** This site's existing Call Queue/Auto Attendant names, suggested for kind 'team'. */
+  teamChoices?: Choice[];
 }) {
   const kind = value?.kind ?? '';
   const needsLabel = kind === 'person' || kind === 'team' || kind === 'message' || kind === 'external';
@@ -54,13 +69,38 @@ export function TargetPicker({
           ))}
         </Dropdown>
       </Field>
-      {needsLabel && kind === 'message' ? (
+      {kind === 'message' ? (
         <Field label="What should we say?">
           <Textarea
             value={value?.label ?? ''}
             onChange={(_, d) => onChange({ kind: 'message', label: d.value })}
             style={{ minWidth: 260 }}
           />
+        </Field>
+      ) : kind === 'person' && tenantId ? (
+        <Field label="Name or email">
+          <UpnAutocomplete
+            tenantId={tenantId}
+            value={value?.label ?? ''}
+            onChange={(v) => onChange({ kind: 'person', label: v })}
+            style={{ minWidth: 220 }}
+          />
+        </Field>
+      ) : kind === 'team' && teamChoices?.length ? (
+        <Field label="Department / team name">
+          <Combobox
+            freeform
+            value={value?.label ?? ''}
+            style={{ minWidth: 220 }}
+            onChange={(e) => onChange({ kind: 'team', label: e.target.value })}
+            onOptionSelect={(_, d) => onChange({ kind: 'team', label: d.optionText ?? d.optionValue ?? '' })}
+          >
+            {teamChoices.map((c) => (
+              <Option key={c.value} value={c.value} text={c.label}>
+                {c.label}
+              </Option>
+            ))}
+          </Combobox>
         </Field>
       ) : needsLabel ? (
         <Field label={kind === 'person' ? 'Name or email' : kind === 'team' ? 'Department / team name' : 'Phone number'}>

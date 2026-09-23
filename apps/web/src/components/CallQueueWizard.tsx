@@ -13,6 +13,7 @@ import {
 } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { type Choice } from './records';
+import { UpnAutocomplete } from './UpnAutocomplete';
 import { WizardShell, type WizardStep } from './WizardShell';
 
 const LANGUAGE_CHOICES: Choice[] = AA_SUPPORTED_LANGUAGES.map((l) => ({ value: l.code, label: l.label }));
@@ -66,11 +67,13 @@ function ActionAnswerEditor({
   labels,
   value,
   onChange,
+  tenantId,
 }: {
   actions: readonly string[];
   labels: Record<string, string>;
   value: { action: string; forwardTo?: string };
   onChange: (v: { action: string; forwardTo?: string }) => void;
+  tenantId: string;
 }) {
   return (
     <div style={{ display: 'flex', gap: 8, alignItems: 'end', flexWrap: 'wrap' }}>
@@ -88,7 +91,12 @@ function ActionAnswerEditor({
       </Dropdown>
       {value.action === 'Forward' && (
         <Field label="Send it to (name, department, or number)">
-          <Input value={value.forwardTo ?? ''} onChange={(_, d) => onChange({ ...value, forwardTo: d.value })} style={{ minWidth: 220 }} />
+          <UpnAutocomplete
+            tenantId={tenantId}
+            value={value.forwardTo ?? ''}
+            onChange={(v) => onChange({ ...value, forwardTo: v })}
+            style={{ minWidth: 220 }}
+          />
         </Field>
       )}
     </div>
@@ -113,6 +121,7 @@ export function CallQueueWizard({
   open,
   onOpenChange,
   base,
+  tenantId,
   siteId,
   resourceAccountChoices,
   onCreated,
@@ -120,6 +129,7 @@ export function CallQueueWizard({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   base: string;
+  tenantId: string;
   siteId: string;
   resourceAccountChoices: Choice[];
   onCreated: () => void;
@@ -190,7 +200,7 @@ export function CallQueueWizard({
           <div style={{ display: 'grid', gap: 6 }}>
             {answers.agents.map((a, i) => (
               <div key={i} style={{ display: 'flex', gap: 6 }}>
-                <Input value={a} placeholder="jane.doe@contoso.com" onChange={(_, d) => setAgent(i, d.value)} style={{ flex: 1 }} />
+                <UpnAutocomplete tenantId={tenantId} value={a} onChange={(v) => setAgent(i, v)} placeholder="jane.doe@contoso.com" style={{ flex: 1 }} />
                 <Button
                   icon={<DeleteRegular />}
                   appearance="subtle"
@@ -256,6 +266,7 @@ export function CallQueueWizard({
             labels={OVERFLOW_LABELS}
             value={answers.overflow}
             onChange={(v) => setAnswers((a) => ({ ...a, overflow: v as CallQueueWizardAnswers['overflow'] }))}
+            tenantId={tenantId}
           />
         </>
       ),
@@ -279,6 +290,7 @@ export function CallQueueWizard({
             labels={TIMEOUT_LABELS}
             value={answers.timeout}
             onChange={(v) => setAnswers((a) => ({ ...a, timeout: v as CallQueueWizardAnswers['timeout'] }))}
+            tenantId={tenantId}
           />
         </>
       ),
@@ -294,6 +306,7 @@ export function CallQueueWizard({
             labels={NO_AGENT_LABELS}
             value={answers.noAgents}
             onChange={(v) => setAnswers((a) => ({ ...a, noAgents: v as CallQueueWizardAnswers['noAgents'] }))}
+            tenantId={tenantId}
           />
           <Field label="Should this apply to calls already waiting too, or just new calls?">
             <RadioGroup

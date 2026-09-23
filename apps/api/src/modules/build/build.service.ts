@@ -1251,12 +1251,15 @@ export class BuildService {
     if (!flow.site_id) throw new BadRequestException('This call flow has no site.');
     const siteId = flow.site_id;
 
-    // Best-effort free-text-name -> UPN matching against this site's synced
-    // users - a single case-insensitive match on UPN or display name
-    // resolves; anything ambiguous or unmatched is left unresolved, and
-    // wizard-convert.ts lists it in the returned warnings instead of
-    // guessing.
-    const people = await s.selectFrom('discovery_users').select(['upn', 'display_name']).where('site_id', '=', siteId).execute();
+    // Best-effort free-text-name -> UPN matching against the tenant's live
+    // synced users (tenant_users - the same source the wizard's own
+    // UpnAutocomplete field suggests from, apps/web/src/components/UpnAutocomplete.tsx)
+    // - a single case-insensitive match on UPN or display name resolves.
+    // Anything ambiguous or unmatched is carried through as typed rather
+    // than dropped (a typed-but-unmatched name used to vanish entirely from
+    // the created row - confirmed live) and listed in the returned warnings
+    // so it's easy to find and fix.
+    const people = await s.selectFrom('tenant_users').select(['upn', 'display_name']).where('removed_at', 'is', null).execute();
     const resolvePerson = (label: string): string | undefined => {
       const needle = label.trim().toLowerCase();
       if (!needle) return undefined;
@@ -1264,22 +1267,34 @@ export class BuildService {
       return matches.length === 1 ? matches[0].upn : undefined;
     };
 
+    // Same idea for "a department/team" - an exact match against this
+    // site's own already-built Call Queues/Auto Attendants links it for
+    // real (New-CsAutoAttendantCallableEntity -Type ApplicationEndpoint)
+    // instead of always leaving it unresolved.
+    const [existingCqs, existingAas] = await Promise.all([
+      s.selectFrom('build_call_queues').select(['id', 'name']).where('site_id', '=', siteId).execute(),
+      s.selectFrom('build_auto_attendants').select(['id', 'name']).where('site_id', '=', siteId).execute(),
+    ]);
+    const resolveTeam = (label: string): { kind: 'call_queue' | 'auto_attendant'; buildId: string } | undefined => {
+      const needle = label.trim().toLowerCase();
+      if (!needle) return undefined;
+      const cq = existingCqs.find((c) => c.name.toLowerCase() === needle);
+      if (cq) return { kind: 'call_queue', buildId: cq.id };
+      const aa = existingAas.find((a) => a.name.toLowerCase() === needle);
+      if (aa) return { kind: 'auto_attendant', buildId: aa.id };
+      return undefined;
+    };
+
+    const resolvers = { resolvePerson, resolveTeam };
+
     let warnings: string[];
     let created: { id: string };
     if (flow.kind === 'auto_attendant') {
-      const { value, warnings: w } = convertAutoAttendantWizard(flow.wizard_answers as AutoAttendantWizardAnswers, {
-        siteId,
-        name: flow.name,
-        resolvePerson,
-      });
+      const { value, warnings: w } = convertAutoAttendantWizard(flow.wizard_answers as AutoAttendantWizardAnswers, { siteId, name: flow.name, resolvers });
       warnings = w;
       created = await this.createAutoAttendant(t, u, value);
     } else if (flow.kind === 'call_queue') {
-      const { value, warnings: w } = convertCallQueueWizard(flow.wizard_answers as CallQueueWizardAnswers, {
-        siteId,
-        name: flow.name,
-        resolveAgent: resolvePerson,
-      });
+      const { value, warnings: w } = convertCallQueueWizard(flow.wizard_answers as CallQueueWizardAnswers, { siteId, name: flow.name, resolvers });
       warnings = w;
       created = await this.createCallQueue(t, u, value);
     } else {

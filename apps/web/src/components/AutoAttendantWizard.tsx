@@ -109,10 +109,14 @@ function CallFlowEditor({
   value,
   onChange,
   allowVoicemail = true,
+  tenantId,
+  teamChoices,
 }: {
   value: WizardCallFlow;
   onChange: (v: WizardCallFlow) => void;
   allowVoicemail?: boolean;
+  tenantId: string;
+  teamChoices: Choice[];
 }) {
   const options = value.options ?? [];
   const updateOption = (i: number, next: WizardMenuOption) => onChange({ ...value, options: options.map((o, idx) => (idx === i ? next : o)) });
@@ -150,7 +154,12 @@ function CallFlowEditor({
                 <Field label="Option name">
                   <Input value={opt.label} placeholder="Sales" onChange={(_, d) => updateOption(i, { ...opt, label: d.value })} />
                 </Field>
-                <TargetPicker value={opt.target} onChange={(t) => updateOption(i, { ...opt, target: t ?? { kind: 'person', label: '' } })} />
+                <TargetPicker
+                  value={opt.target}
+                  onChange={(t) => updateOption(i, { ...opt, target: t ?? { kind: 'person', label: '' } })}
+                  tenantId={tenantId}
+                  teamChoices={teamChoices}
+                />
                 <Button icon={<DeleteRegular />} appearance="subtle" aria-label="Remove option" onClick={() => removeOption(i)} />
               </div>
             </Card>
@@ -161,7 +170,13 @@ function CallFlowEditor({
         </div>
       )}
       {value.mode === 'direct' && (
-        <TargetPicker value={value.target} onChange={(t) => onChange({ ...value, target: t })} kinds={['person', 'team', 'voicemail', 'external', 'operator']} />
+        <TargetPicker
+          value={value.target}
+          onChange={(t) => onChange({ ...value, target: t })}
+          kinds={['person', 'team', 'voicemail', 'external', 'operator']}
+          tenantId={tenantId}
+          teamChoices={teamChoices}
+        />
       )}
     </div>
   );
@@ -217,15 +232,19 @@ export function AutoAttendantWizard({
   open,
   onOpenChange,
   base,
+  tenantId,
   siteId,
   resourceAccountChoices,
+  teamChoices,
   onCreated,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   base: string;
+  tenantId: string;
   siteId: string;
   resourceAccountChoices: Choice[];
+  teamChoices: Choice[];
   onCreated: () => void;
 }) {
   const [name, setName] = useState('');
@@ -319,7 +338,14 @@ export function AutoAttendantWizard({
     {
       key: 'business',
       title: 'During business hours',
-      content: <CallFlowEditor value={answers.businessFlow} onChange={(v) => setAnswers((a) => ({ ...a, businessFlow: v }))} />,
+      content: (
+        <CallFlowEditor
+          value={answers.businessFlow}
+          onChange={(v) => setAnswers((a) => ({ ...a, businessFlow: v }))}
+          tenantId={tenantId}
+          teamChoices={teamChoices}
+        />
+      ),
     },
     ...(answers.hoursType !== 'always'
       ? [
@@ -330,6 +356,8 @@ export function AutoAttendantWizard({
               <CallFlowEditor
                 value={answers.afterHoursFlow ?? { mode: 'voicemail' }}
                 onChange={(v) => setAnswers((a) => ({ ...a, afterHoursFlow: v }))}
+                tenantId={tenantId}
+                teamChoices={teamChoices}
               />
             ),
           },
@@ -348,6 +376,7 @@ export function AutoAttendantWizard({
             onChange={(t) => setAnswers((a) => ({ ...a, operator: t }))}
             kinds={['person', 'external']}
             allowNone
+            tenantId={tenantId}
           />
         </>
       ),
@@ -410,6 +439,8 @@ export function AutoAttendantWizard({
                   <CallFlowEditor
                     value={h.flow}
                     onChange={(v) => setAnswers((a) => ({ ...a, holidays: (a.holidays ?? []).map((x, idx) => (idx === i ? { ...x, flow: v } : x)) }))}
+                    tenantId={tenantId}
+                    teamChoices={teamChoices}
                   />
                 </Card>
               ))}
