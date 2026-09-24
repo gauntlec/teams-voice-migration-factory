@@ -1269,7 +1269,7 @@ function policyColumns(): ColumnDef[] {
 // directly instead - see planIdentityRow, packages/shared/src/deployment.ts).
 // Greying these out here stops that mistake before it's saved, rather than
 // only warning about it after (identityRowWarnings).
-const disabledForSharedCalling = (values: Record<string, string>) => !!values['policies.shared_calling_policy'];
+const disabledForSharedCalling = (values: Record<string, string>) => !!values['policy_ids.shared_calling_policy'];
 
 function identityFields(policyFields: FieldDef[], numberChoicesFor: (row: Row | null) => Choice[]): FieldDef[] {
   return [
