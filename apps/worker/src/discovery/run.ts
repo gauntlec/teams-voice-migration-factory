@@ -21,7 +21,7 @@ import {
 } from './cmdlets';
 
 type Rec = Record<string, unknown>;
-type Scoped = ReturnType<typeof tenantDb>;
+export type Scoped = ReturnType<typeof tenantDb>;
 
 const emptyProgress = (): TenantDiscoveryProgress => ({
   step: null,
@@ -270,6 +270,16 @@ export async function handleTenantDiscoveryRun(
     }
     if (succeededTypes.has('resource_account')) {
       await linkRequestedResourceAccounts(s);
+    }
+  }
+
+  if (exec.graphAlive) {
+    try {
+      await syncTenantGroups(s, exec);
+    } catch {
+      // best-effort - Graph is a secondary, optional session on this
+      // connection; a failure here must never fail the primary Teams
+      // discovery run or mark connections.status expired.
     }
   }
 
@@ -941,6 +951,36 @@ async function syncVoicemailSettings(s: Scoped, exec: TeamsExecutor, objectId: s
   } catch {
     // best-effort - see docstring
   }
+}
+
+/**
+ * Refreshes the M365 group cache (`tenant_groups`) from the tenant's live
+ * Graph data, for the Shared Voicemail `groupId` lookup - shared by both a
+ * fresh Graph sign-in (`handleGraphConnect`, apps/worker/src/main.ts) and,
+ * per this run, every subsequent discovery sync on a connection that still
+ * has an alive Graph sub-session (`exec.graphAlive`), so the cache stays
+ * current without requiring the engineer to re-sign-in to Graph each time.
+ */
+export async function syncTenantGroups(s: Scoped, exec: TeamsExecutor): Promise<number> {
+  const groups = await exec.graphList('/groups?$select=id,displayName,mail');
+  let synced = 0;
+  for (const g of groups) {
+    const group = g as { id?: string; displayName?: string; mail?: string | null };
+    if (!group.id || !group.displayName) continue;
+    const values = {
+      object_id: group.id,
+      display_name: group.displayName,
+      mail: group.mail ?? null,
+      synced_at: new Date().toISOString(),
+    };
+    await s
+      .insertInto('tenant_groups')
+      .values(values)
+      .onConflict((oc) => oc.column('object_id').doUpdateSet(values))
+      .execute();
+    synced++;
+  }
+  return synced;
 }
 
 /**

@@ -42,7 +42,7 @@ import {
 } from '@tvmf/shared';
 import { SimulatedTeamsExecutor, type TeamsExecutor } from './teams/executor';
 import { PwshTeamsExecutor } from './teams/pwsh-executor';
-import { handleTenantDiscoveryRun } from './discovery/run';
+import { handleTenantDiscoveryRun, syncTenantGroups } from './discovery/run';
 import { renderEmail } from './mail/templates';
 import type { EmailBranding } from './mail/layout';
 import { mailerConfigured, sendMail } from './mail/mailer';
@@ -315,9 +315,13 @@ async function handleConnectionStart(job: Job) {
  * groups by name for the Shared Voicemail `groupId` field. Reuses the same
  * live `TeamsExecutor` already sitting in `executors` for this connection
  * (no separate map, no separate process) - once signed in, pulls the
- * tenant's entire group list once and caches it in `tenant_groups`, so
- * searching afterward is a normal DB read, not a live round trip per
- * keystroke.
+ * tenant's entire group list and caches it in `tenant_groups` via
+ * `syncTenantGroups`, so searching afterward is a normal DB read, not a
+ * live round trip per keystroke. The same helper is called again by every
+ * subsequent discovery run on this connection (see
+ * `discovery/run.ts::handleTenantDiscoveryRun`) for as long as this Graph
+ * sub-session stays alive, so the cache doesn't just freeze at this first
+ * sign-in.
  */
 async function handleGraphConnect(job: Job) {
   const { schema, connectionId } = job.data as { schema: string; connectionId: string };
@@ -346,17 +350,7 @@ async function handleGraphConnect(job: Job) {
       .execute();
 
     const signIn = await exec.awaitGraphSignIn();
-    const groups = await exec.graphList('/groups?$select=id,displayName,mail');
-    for (const g of groups) {
-      const group = g as { id?: string; displayName?: string; mail?: string | null };
-      if (!group.id || !group.displayName) continue;
-      const values = { object_id: group.id, display_name: group.displayName, mail: group.mail ?? null, synced_at: new Date().toISOString() };
-      await scoped
-        .insertInto('tenant_groups')
-        .values(values)
-        .onConflict((oc) => oc.column('object_id').doUpdateSet(values))
-        .execute();
-    }
+    const syncedCount = await syncTenantGroups(scoped, exec);
 
     await scoped
       .updateTable('connections')
@@ -364,7 +358,7 @@ async function handleGraphConnect(job: Job) {
       .where('id', '=', connectionId)
       .execute();
     // eslint-disable-next-line no-console
-    console.log(`[connection ${connectionId}] graph active as ${signIn.upn} (${groups.length} group(s) synced)`);
+    console.log(`[connection ${connectionId}] graph active as ${signIn.upn} (${syncedCount} group(s) synced)`);
   } catch (err) {
     await scoped
       .updateTable('connections')

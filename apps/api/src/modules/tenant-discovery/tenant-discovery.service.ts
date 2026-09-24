@@ -735,9 +735,12 @@ export class TenantDiscoveryService {
   /* ================================ groups ================================ */
 
   /**
-   * Search this tenant's cached M365 groups (`tenant_groups`, populated once
-   * per Graph sign-in - see `connectGraph`/the worker's `handleGraphConnect`).
-   * A normal fast DB read, not a live round trip - drives GroupAutocomplete.
+   * Search this tenant's cached M365 groups (`tenant_groups`, populated on
+   * Graph sign-in - see `connectGraph`/the worker's `handleGraphConnect` -
+   * and kept fresh by every subsequent discovery run on that connection
+   * while the Graph sub-session stays alive, see the worker's
+   * `syncTenantGroups`/`handleTenantDiscoveryRun`). A normal fast DB read,
+   * not a live round trip - drives GroupAutocomplete.
    */
   async listGroups(t: TenantContext, q: { q?: string; limit: number }): Promise<Paginated<unknown>> {
     let base = this.s(t).selectFrom('tenant_groups').selectAll();
