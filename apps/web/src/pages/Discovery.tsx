@@ -144,9 +144,57 @@ const useStyles = makeStyles({
   },
   scopeStep: { display: 'flex', alignItems: 'center', ...shorthands.gap('2px') },
   scopeTypes: { display: 'flex', flexWrap: 'wrap', ...shorthands.gap('2px', '14px'), paddingLeft: '28px' },
-  diff: { display: 'grid', gridTemplateColumns: '1fr 1fr', ...shorthands.gap('10px') },
-  diffCol: { display: 'grid', ...shorthands.gap('4px'), minWidth: 0 },
+  diffFields: {
+    display: 'grid',
+    ...shorthands.gap('2px'),
+    maxHeight: '60vh',
+    overflowY: 'auto',
+    ...shorthands.padding('10px', '12px'),
+    backgroundColor: tokens.colorNeutralBackground3,
+    ...shorthands.borderRadius(tokens.borderRadiusMedium),
+  },
+  diffField: {
+    display: 'flex',
+    alignItems: 'baseline',
+    flexWrap: 'wrap',
+    ...shorthands.gap('6px'),
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize: tokens.fontSizeBase200,
+    wordBreak: 'break-word',
+  },
+  diffKey: { color: tokens.colorNeutralForeground2, fontWeight: tokens.fontWeightSemibold, flexShrink: 0 },
+  diffSame: { color: tokens.colorNeutralForeground3 },
+  diffAdded: { color: tokens.colorPaletteGreenForeground2 },
+  diffRemoved: { color: tokens.colorPaletteRedForeground1, textDecorationLine: 'line-through' },
 });
+
+type FieldDiffKind = 'added' | 'removed' | 'changed' | 'same';
+interface FieldDiffRow {
+  key: string;
+  before: unknown;
+  after: unknown;
+  kind: FieldDiffKind;
+}
+
+/** Per-field before/after comparison, used to colour a version's diff green (new/changed) or red (removed). */
+function diffFields(before: Record<string, unknown>, after: Record<string, unknown>): FieldDiffRow[] {
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  return [...keys].sort().map((key) => {
+    const hasBefore = key in before;
+    const hasAfter = key in after;
+    const b = before[key];
+    const a = after[key];
+    let kind: FieldDiffKind;
+    if (!hasBefore && hasAfter) kind = 'added';
+    else if (hasBefore && !hasAfter) kind = 'removed';
+    else if (JSON.stringify(b) !== JSON.stringify(a)) kind = 'changed';
+    else kind = 'same';
+    return { key, before: b, after: a, kind };
+  });
+}
+
+const showFieldValue = (v: unknown): string =>
+  v === undefined || v === null || v === '' ? '—' : typeof v === 'string' ? v : JSON.stringify(v);
 
 const fmt = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString() : '—');
 
@@ -172,11 +220,10 @@ function ChangeBadge({ kind }: { kind: TenantObjectChangeKind }) {
   );
 }
 
-/** Before / after JSON for one recorded change. */
+/** Before / after diff for one recorded change - green for new/changed values, red for removed ones. */
 function DiffDialog({ version, onClose }: { version: TenantObjectVersion; onClose: () => void }) {
   const s = useStyles();
-  const before = version.before ? JSON.stringify(version.before, null, 2) : null;
-  const after = version.after ? JSON.stringify(version.after, null, 2) : null;
+  const rows = useMemo(() => diffFields(version.before ?? {}, version.after ?? {}), [version]);
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
       <DialogSurface style={{ maxWidth: 980, width: '94vw' }}>
@@ -191,20 +238,32 @@ function DiffDialog({ version, onClose }: { version: TenantObjectVersion; onClos
                 <> · changed: {version.changed_fields.join(', ')}</>
               )}
             </Text>
-            <div className={s.diff}>
-              <div className={s.diffCol}>
-                <Text size={200} weight="semibold">
-                  Before
-                </Text>
-                <pre className={s.json}>{before ?? '(new — did not exist)'}</pre>
+            {rows.length === 0 ? (
+              <Text size={200} className={s.muted}>
+                No fields recorded for this change.
+              </Text>
+            ) : (
+              <div className={s.diffFields}>
+                {rows.map((r) => (
+                  <div key={r.key} className={s.diffField}>
+                    <span className={s.diffKey}>{r.key}</span>
+                    {r.kind === 'changed' ? (
+                      <>
+                        <span className={s.diffRemoved}>{showFieldValue(r.before)}</span>
+                        <span className={s.muted}>→</span>
+                        <span className={s.diffAdded}>{showFieldValue(r.after)}</span>
+                      </>
+                    ) : r.kind === 'added' ? (
+                      <span className={s.diffAdded}>{showFieldValue(r.after)}</span>
+                    ) : r.kind === 'removed' ? (
+                      <span className={s.diffRemoved}>{showFieldValue(r.before)}</span>
+                    ) : (
+                      <span className={s.diffSame}>{showFieldValue(r.after)}</span>
+                    )}
+                  </div>
+                ))}
               </div>
-              <div className={s.diffCol}>
-                <Text size={200} weight="semibold">
-                  After
-                </Text>
-                <pre className={s.json}>{after ?? '(removed from the tenant)'}</pre>
-              </div>
-            </div>
+            )}
           </DialogContent>
           <DialogActions>
             <Button appearance="secondary" onClick={onClose}>
