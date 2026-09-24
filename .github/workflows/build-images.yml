@@ -47,6 +47,11 @@ jobs:
 
       - run: npm install
 
+      # apps/api|worker|web import @tvmf/shared and @tvmf/db by their built
+      # dist/ output (package.json "main"/"types"), not src/ - typecheck
+      # fails with "Cannot find module" on every consumer without this.
+      - run: npm run build:packages
+
       - run: npm run typecheck --workspaces --if-present
 
       - run: npm run test --workspaces --if-present
