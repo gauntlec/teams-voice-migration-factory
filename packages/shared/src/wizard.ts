@@ -25,9 +25,9 @@ const str = (max: number) => z.string().trim().max(max);
 export const wizardTargetSchema = z
   .object({
     kind: z.enum(['person', 'team', 'message', 'voicemail', 'external', 'operator', 'call_queue']),
-    /** Free text: a person's name/email, a department/queue name, a message to play, or an outside phone number - whichever `kind` calls for. Unused for 'voicemail'/'operator'. For 'call_queue' this is just the created queue's name for display - `flowId` is what actually resolves it. */
+    /** Free text: a person's name/email, a department/queue name, a message to play, or an outside phone number - whichever `kind` calls for. Unused for 'voicemail'/'operator'. When `flowId` is set (kind 'call_queue', or 'team' picked from a planned suggestion) this is just that capture's name for display - `flowId` is what actually resolves it. */
     label: str(200).optional(),
-    /** kind === 'call_queue' only - the discovery_flows row this points at, always set once the "Set up a new call queue" nested wizard flow completes (see TargetPicker.tsx). */
+    /** The discovery_flows row this points at, when the target was picked by id rather than typed/matched by name - always set for kind 'call_queue' (the "Set up a new call queue" nested wizard flow), optionally set for kind 'team' when picked from the picker's "planned" suggestions (see TargetPicker.tsx). */
     flowId: z.string().uuid().optional(),
   })
   .strict();

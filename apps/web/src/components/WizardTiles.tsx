@@ -6,6 +6,7 @@ import { api } from '../api';
 import { AutoAttendantWizard } from './AutoAttendantWizard';
 import { CallQueueWizard } from './CallQueueWizard';
 import type { Choice } from './records';
+import type { TeamChoice } from './TargetPicker';
 
 const useStyles = makeStyles({
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', ...shorthands.gap('12px') },
@@ -19,14 +20,18 @@ interface WizardTileDef {
 }
 
 /**
- * "A department/team" suggestions - this site's own already-built Call
- * Queues/Auto Attendants, so the wizard's "where should this go?" picker
- * can match (and, at import, actually link to) something that already
- * exists instead of always leaving it as a free-text guess. Exported so
- * SiteWorkspace.tsx's "edit a wizard-captured row" flow (outside this tile
- * grid) can reuse the exact same query/cache instead of duplicating it.
+ * "A department/team" suggestions for the wizard's "where should this go?"
+ * picker: this site's own already-built Call Queues/Auto Attendants (so it
+ * can match, and at import actually link to, something real instead of
+ * always leaving it as a free-text guess) plus this site's *planned*
+ * captures - Call flows rows already made via either wizard but not yet
+ * imported to Design & Build. A planned pick carries `flowId`, resolved by
+ * id rather than name-matching, so it stays correct even if the capture is
+ * later renamed. Exported so SiteWorkspace.tsx's "edit a wizard-captured
+ * row" flow (outside this tile grid) can reuse the exact same query/cache
+ * instead of duplicating it.
  */
-export function useTeamChoices(tenantId: string, siteId: string): Choice[] {
+export function useTeamChoices(tenantId: string, siteId: string): TeamChoice[] {
   const cqs = useQuery({
     queryKey: ['wizard-team-cqs', tenantId, siteId],
     enabled: !!tenantId && !!siteId,
@@ -37,10 +42,21 @@ export function useTeamChoices(tenantId: string, siteId: string): Choice[] {
     enabled: !!tenantId && !!siteId,
     queryFn: () => api<Paginated<{ id: string; name: string }>>(`/t/${tenantId}/build/auto-attendants?siteId=${siteId}&limit=500`),
   });
-  return useMemo(
-    () => [...(cqs.data?.items ?? []), ...(aas.data?.items ?? [])].map((r) => ({ value: r.name, label: r.name })),
-    [cqs.data, aas.data],
-  );
+  const planned = useQuery({
+    queryKey: ['wizard-team-planned-flows', tenantId, siteId],
+    enabled: !!tenantId && !!siteId,
+    queryFn: () =>
+      api<Paginated<{ id: string; name: string; kind: string; wizard_answers: unknown; imported_at: string | null }>>(
+        `/t/${tenantId}/discovery/flows?siteId=${siteId}&limit=500`,
+      ),
+  });
+  return useMemo(() => {
+    const built: TeamChoice[] = [...(cqs.data?.items ?? []), ...(aas.data?.items ?? [])].map((r) => ({ value: r.name, label: r.name }));
+    const plannedChoices: TeamChoice[] = (planned.data?.items ?? [])
+      .filter((f) => (f.kind === 'call_queue' || f.kind === 'auto_attendant') && f.wizard_answers != null && f.imported_at == null)
+      .map((f) => ({ value: f.id, label: f.name, flowId: f.id }));
+    return [...built, ...plannedChoices];
+  }, [cqs.data, aas.data, planned.data]);
 }
 
 /**

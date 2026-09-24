@@ -28,7 +28,7 @@ import {
 } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { type Choice } from './records';
-import { TargetPicker } from './TargetPicker';
+import { TargetPicker, type TeamChoice } from './TargetPicker';
 import { WizardShell, type WizardStep } from './WizardShell';
 
 const AA_LANGUAGE_CHOICES: Choice[] = AA_SUPPORTED_LANGUAGES.map((l) => ({ value: l.code, label: l.label }));
@@ -121,7 +121,7 @@ function CallFlowEditor({
   base: string;
   tenantId: string;
   siteId: string;
-  teamChoices: Choice[];
+  teamChoices: TeamChoice[];
   onFlowCreated: () => void;
 }) {
   const options = value.options ?? [];
@@ -267,7 +267,7 @@ export function AutoAttendantWizard({
   tenantId: string;
   siteId: string;
   resourceAccountChoices: Choice[];
-  teamChoices: Choice[];
+  teamChoices: TeamChoice[];
   onCreated: () => void;
   /** Editing an already-saved wizard capture instead of creating a new one - PATCHes the existing flow row and shows "Save changes" instead of "Create". Render with `key={editing.id}` so each row gets its own fresh state. */
   editing?: AutoAttendantWizardEditing;

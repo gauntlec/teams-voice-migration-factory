@@ -5,6 +5,11 @@ import { CallQueueWizard } from './CallQueueWizard';
 import { UpnAutocomplete } from './UpnAutocomplete';
 import type { Choice } from './records';
 
+/** A `Choice` for the "team" destination picker - `flowId` is set when this points at a not-yet-imported planned capture (linked by id, see wizard-convert.ts's resolveFlow) rather than an already-built row (matched later by name). Defined here (not WizardTiles.tsx, which imports AutoAttendantWizard which imports this file) to avoid a module cycle. */
+export interface TeamChoice extends Choice {
+  flowId?: string;
+}
+
 const TARGET_KIND_LABELS: Record<WizardTarget['kind'], string> = {
   person: 'A person',
   team: 'A department / team',
@@ -63,7 +68,7 @@ export function TargetPicker({
   /** Also suggests this site's own Data Collection Users tab entries, not just the live tenant sync. */
   siteId?: string;
   /** This site's existing Call Queue/Auto Attendant names, suggested for kind 'team'. */
-  teamChoices?: Choice[];
+  teamChoices?: TeamChoice[];
   /** Called after the nested "Set up a new call queue" wizard creates a row, so the caller can refresh its own Call flows list the same way the top-level wizard tiles already do. */
   onFlowCreated?: () => void;
 }) {
@@ -130,11 +135,15 @@ export function TargetPicker({
             value={value?.label ?? ''}
             style={{ minWidth: 220 }}
             onChange={(e) => onChange({ kind: 'team', label: e.target.value })}
-            onOptionSelect={(_, d) => onChange({ kind: 'team', label: d.optionText ?? d.optionValue ?? '' })}
+            onOptionSelect={(_, d) => {
+              const picked = teamChoices.find((c) => c.value === d.optionValue);
+              onChange({ kind: 'team', label: picked?.label ?? d.optionText ?? d.optionValue ?? '', flowId: picked?.flowId });
+            }}
           >
             {teamChoices.map((c) => (
               <Option key={c.value} value={c.value} text={c.label}>
                 {c.label}
+                {c.flowId ? ' (planned)' : ''}
               </Option>
             ))}
           </Combobox>

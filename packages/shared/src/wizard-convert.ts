@@ -67,9 +67,16 @@ function convertTarget(t: WizardTarget | undefined, resolvers: WizardResolvers, 
     }
     case 'team': {
       const label = (t.label ?? '').trim();
-      const match = label ? resolvers.resolveTeam(label) : undefined;
+      // A pick from the picker's "planned" suggestions carries flowId, a
+      // hard link resolved by id (immune to renames); a typed/freeform name
+      // falls back to the existing name-match against already-built rows.
+      const match = t.flowId ? resolvers.resolveFlow(t.flowId) : label ? resolvers.resolveTeam(label) : undefined;
       if (match) return { kind: match.kind, buildId: match.buildId };
-      warnings.push(`${where}: routes to "${label || 'a department'}" - link it to the right Auto Attendant or Call Queue after import.`);
+      warnings.push(
+        t.flowId
+          ? `${where}: routes to "${label || 'a planned capture'}", which hasn't been imported to Design & Build yet - import it, then re-import this Auto Attendant to link it.`
+          : `${where}: routes to "${label || 'a department'}" - link it to the right Auto Attendant or Call Queue after import.`,
+      );
       return { kind: 'call_queue' };
     }
     case 'message':
