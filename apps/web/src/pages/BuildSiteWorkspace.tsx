@@ -2139,7 +2139,12 @@ function CallQueueSettingsDialog({
                           style={{ width: 120 }}
                         />
                       </Field>
-                      {(overflowAction === 'Forward' || overflowAction === 'SharedVoicemail') && (
+                      {overflowAction === 'SharedVoicemail' && (
+                        <Field label="Target (M365 group)">
+                          <GroupAutocomplete tenantId={tenantId} value={overflowTarget} onChange={setOverflowTarget} style={{ minWidth: 220 }} />
+                        </Field>
+                      )}
+                      {overflowAction === 'Forward' && (
                         <Field label="Target">
                           <UpnAutocomplete tenantId={tenantId} value={overflowTarget} onChange={setOverflowTarget} style={{ minWidth: 220 }} />
                         </Field>
@@ -2163,7 +2168,12 @@ function CallQueueSettingsDialog({
                           style={{ width: 120 }}
                         />
                       </Field>
-                      {(timeoutAction === 'Forward' || timeoutAction === 'SharedVoicemail') && (
+                      {timeoutAction === 'SharedVoicemail' && (
+                        <Field label="Target (M365 group)">
+                          <GroupAutocomplete tenantId={tenantId} value={timeoutTarget} onChange={setTimeoutTarget} style={{ minWidth: 220 }} />
+                        </Field>
+                      )}
+                      {timeoutAction === 'Forward' && (
                         <Field label="Target">
                           <UpnAutocomplete tenantId={tenantId} value={timeoutTarget} onChange={setTimeoutTarget} style={{ minWidth: 220 }} />
                         </Field>
@@ -2177,7 +2187,12 @@ function CallQueueSettingsDialog({
                 <Text weight="semibold">No agents (zero opted in)</Text>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end', marginTop: 6 }}>
                   {actionDropdown('Action', noAgentAction, setNoAgentAction, CALL_QUEUE_NO_AGENT_ACTIONS)}
-                  {(noAgentAction === 'Forward' || noAgentAction === 'SharedVoicemail') && (
+                  {noAgentAction === 'SharedVoicemail' && (
+                    <Field label="Target (M365 group)">
+                      <GroupAutocomplete tenantId={tenantId} value={noAgentTarget} onChange={setNoAgentTarget} style={{ minWidth: 220 }} />
+                    </Field>
+                  )}
+                  {noAgentAction === 'Forward' && (
                     <Field label="Target">
                       <UpnAutocomplete tenantId={tenantId} value={noAgentTarget} onChange={setNoAgentTarget} style={{ minWidth: 220 }} />
                     </Field>
