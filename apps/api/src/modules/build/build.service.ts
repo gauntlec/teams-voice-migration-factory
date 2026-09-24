@@ -29,6 +29,8 @@ import {
   type BuildResourceAccountCreateInput,
   type BuildResourceAccountPatchInput,
   type BuildRowValidation,
+  type BuildSharedCallingPolicyCreateInput,
+  type BuildSharedCallingPolicyPatchInput,
   type BuildSiteRollup,
   type BuildTemplateApplyInput,
   type BuildTemplateCreateInput,
@@ -773,6 +775,79 @@ export class BuildService {
       detail: { fields: Object.keys(patch) },
     });
     return row;
+  }
+
+  /* shared calling policies */
+
+  async listSharedCallingPolicies(t: TenantContext, q: BuildListQuery) {
+    const s = this.s(t);
+    let base = s.selectFrom('build_shared_calling_policies').where('site_id', '=', q.siteId);
+    if (q.q) base = base.where('name', 'ilike', `%${q.q}%`);
+    const [{ n }] = await base.select((eb) => eb.fn.countAll<number>().as('n')).execute();
+    const rows = await base
+      .selectAll()
+      .orderBy('name')
+      .limit(q.limit)
+      .offset((q.page - 1) * q.limit)
+      .execute();
+    return { items: rows, total: Number(n), page: q.page, limit: q.limit } satisfies Paginated<unknown>;
+  }
+
+  async getSharedCallingPolicy(t: TenantContext, id: string) {
+    const row = await this.s(t).selectFrom('build_shared_calling_policies').selectAll().where('id', '=', id).executeTakeFirst();
+    if (!row) throw new NotFoundException('row not found');
+    return row;
+  }
+
+  async createSharedCallingPolicy(t: TenantContext, u: AuthedUser, body: BuildSharedCallingPolicyCreateInput) {
+    const row = await this.s(t)
+      .insertInto('build_shared_calling_policies')
+      .values({
+        site_id: body.site_id,
+        name: body.name,
+        resource_account_id: body.resource_account_id ?? null,
+        emergency_numbers: JSON.stringify(body.emergency_numbers ?? []),
+        description: body.description ?? null,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    await this.audit.tenant(t.schema, 'build.shared_calling_policy_created', {
+      actor: actorOf(u),
+      targetType: 'build_shared_calling_policy',
+      targetId: row.id,
+    });
+    return row;
+  }
+
+  async updateSharedCallingPolicy(t: TenantContext, u: AuthedUser, id: string, body: BuildSharedCallingPolicyPatchInput) {
+    const { emergency_numbers, ...rest } = body;
+    const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
+    if (emergency_numbers !== undefined) patch.emergency_numbers = JSON.stringify(emergency_numbers);
+    const row = await this.s(t)
+      .updateTable('build_shared_calling_policies')
+      .set(patch as never)
+      .where('id', '=', id)
+      .returningAll()
+      .executeTakeFirst();
+    if (!row) throw new NotFoundException('row not found');
+    await this.audit.tenant(t.schema, 'build.shared_calling_policy_updated', {
+      actor: actorOf(u),
+      targetType: 'build_shared_calling_policy',
+      targetId: id,
+      detail: { fields: Object.keys(patch) },
+    });
+    return row;
+  }
+
+  async deleteSharedCallingPolicy(t: TenantContext, u: AuthedUser, id: string) {
+    const row = await this.s(t).deleteFrom('build_shared_calling_policies').where('id', '=', id).returningAll().executeTakeFirst();
+    if (!row) throw new NotFoundException('row not found');
+    await this.audit.tenant(t.schema, 'build.shared_calling_policy_deleted', {
+      actor: actorOf(u),
+      targetType: 'build_shared_calling_policy',
+      targetId: id,
+    });
+    return { ok: true };
   }
 
   /**

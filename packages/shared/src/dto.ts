@@ -195,7 +195,7 @@ export const createDeploymentSchema = z.object({
       // request naming it ran to completion doing nothing for that sheet
       // while reporting success - confirmed this session. Matches
       // deploymentPreviewQuerySchema's own already-correct exclusion below.
-      sheets: z.array(z.enum(['users', 'caps', 'resource_accounts', 'auto_attendants', 'call_queues'])).min(1),
+      sheets: z.array(z.enum(['users', 'caps', 'resource_accounts', 'shared_calling_policies', 'auto_attendants', 'call_queues'])).min(1),
       waves: z.array(z.string()).optional(),
       rowIds: z.array(z.string().uuid()).optional(),
     })
@@ -222,7 +222,7 @@ const queryArray = <T extends z.ZodTypeAny>(arraySchema: T) =>
  */
 export const deploymentPreviewQuerySchema = z.object({
   siteId: z.string().uuid(),
-  sheets: queryArray(z.array(z.enum(['users', 'caps', 'resource_accounts', 'call_queues', 'auto_attendants'])).min(1)).default([
+  sheets: queryArray(z.array(z.enum(['users', 'caps', 'resource_accounts', 'shared_calling_policies', 'call_queues', 'auto_attendants'])).min(1)).default([
     'users',
     'caps',
     'resource_accounts',
@@ -1045,6 +1045,30 @@ export const buildResourceAccountPatchSchema = z
   })
   .strict();
 export type BuildResourceAccountPatchInput = z.infer<typeof buildResourceAccountPatchSchema>;
+
+/** New-/Set-CsTeamsSharedCallingRoutingPolicy's own writable fields - see 0031_shared_calling_policies.sql. */
+const buildSharedCallingPolicyWritable = {
+  resource_account_id: refId,
+  emergency_numbers: z.array(str(64)).max(20).optional(),
+  description: optStr(500),
+};
+
+export const buildSharedCallingPolicyCreateSchema = z
+  .object({
+    site_id: z.string().uuid(),
+    name: str(160).min(1),
+    ...buildSharedCallingPolicyWritable,
+  })
+  .strict();
+export type BuildSharedCallingPolicyCreateInput = z.infer<typeof buildSharedCallingPolicyCreateSchema>;
+
+export const buildSharedCallingPolicyPatchSchema = z
+  .object({
+    name: optStr(160),
+    ...buildSharedCallingPolicyWritable,
+  })
+  .strict();
+export type BuildSharedCallingPolicyPatchInput = z.infer<typeof buildSharedCallingPolicyPatchSchema>;
 
 /**
  * build_call_queues' overflow/timeout jsonb - Set-CsCallQueue's

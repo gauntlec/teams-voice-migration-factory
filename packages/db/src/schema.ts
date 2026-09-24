@@ -542,6 +542,23 @@ export interface BuildResourceAccountsTable {
   updated_at: Ts;
 }
 
+/** Set-CsTeamsSharedCallingRoutingPolicy-shaped row - see 0031_shared_calling_policies.sql for the cmdlet mapping. */
+export interface BuildSharedCallingPoliciesTable {
+  id: Generated<string>;
+  /** FK -> discovery_sites.id (ON DELETE CASCADE). Build rows are always site-scoped. */
+  site_id: string;
+  /** New-/Set-CsTeamsSharedCallingRoutingPolicy -Identity. */
+  name: string;
+  /** FK -> build_resource_accounts.id (ON DELETE SET NULL) - -ResourceAccount, resolved to its live Identity at deploy time. */
+  resource_account_id: string | null;
+  /** -EmergencyNumbers - array of plain PSTN number strings. */
+  emergency_numbers: Json;
+  /** -Description. */
+  description: string | null;
+  created_at: Ts;
+  updated_at: Ts;
+}
+
 export interface BuildAutoAttendantsTable {
   id: Generated<string>;
   /** FK -> discovery_sites.id (ON DELETE CASCADE). Build rows are always site-scoped. */
@@ -893,6 +910,7 @@ export interface DB {
   build_templates: BuildTemplatesTable;
   calling_policy_site_map: CallingPolicySiteMapTable;
   build_resource_accounts: BuildResourceAccountsTable;
+  build_shared_calling_policies: BuildSharedCallingPoliciesTable;
   build_auto_attendants: BuildAutoAttendantsTable;
   build_call_queues: BuildCallQueuesTable;
   build_m365_groups: BuildM365GroupsTable;

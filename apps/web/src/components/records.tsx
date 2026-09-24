@@ -70,7 +70,7 @@ export type Choice = { value: string; label: string };
 export interface FieldDef {
   key: string;
   label: string;
-  type?: 'text' | 'textarea' | 'number' | 'select' | 'boolean' | 'ref' | 'radio';
+  type?: 'text' | 'textarea' | 'number' | 'select' | 'boolean' | 'ref' | 'radio' | 'string-array';
   options?: readonly string[];
   choices?: Choice[] | ((row: Row | null) => Choice[]);
   required?: boolean;
@@ -136,7 +136,12 @@ export function buildPayload(fields: FieldDef[], values: Record<string, string>)
           ? v === 'true'
           : f.type === 'ref'
             ? v || null
-            : v;
+            : f.type === 'string-array'
+              ? v
+                  .split('\n')
+                  .map((line) => line.trim())
+                  .filter(Boolean)
+              : v;
     const dot = f.key.indexOf('.');
     if (dot === -1) {
       payload[f.key] = parsed;
@@ -433,6 +438,7 @@ export function RecordDialog({
             dot === -1 ? r[f.key] : (r[f.key.slice(0, dot)] as Record<string, unknown> | null | undefined)?.[f.key.slice(dot + 1)];
           if (f.type === 'boolean')
             return [f.key, v === true ? 'true' : v === false ? 'false' : (f.default ?? 'false')];
+          if (f.type === 'string-array') return [f.key, Array.isArray(v) ? v.join('\n') : ''];
           return [f.key, v == null ? '' : String(v)];
         }),
       ),
@@ -487,11 +493,12 @@ export function RecordDialog({
                         <Radio key={o} value={o} label={o} />
                       ))}
                     </RadioGroup>
-                  ) : f.type === 'textarea' ? (
+                  ) : f.type === 'textarea' || f.type === 'string-array' ? (
                     <Textarea
                       value={values[f.key] ?? ''}
                       resize="vertical"
                       disabled={disabled}
+                      placeholder={f.type === 'string-array' ? f.placeholder : undefined}
                       onChange={(_, d) => setValues((v) => ({ ...v, [f.key]: d.value }))}
                     />
                   ) : f.type === 'select' || f.type === 'ref' ? (

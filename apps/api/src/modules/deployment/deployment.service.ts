@@ -7,6 +7,7 @@ import {
   resolveLiveCallQueueState,
   resolveLiveIdentityState,
   resolveLivePolicyNames,
+  resolveLiveSharedCallingPolicyState,
   tenantDb,
   type Scoped,
 } from '@tvmf/db';
@@ -21,8 +22,10 @@ import {
   planCallQueueRow,
   planIdentityRow,
   planResourceAccountRow,
+  planSharedCallingPolicyRow,
   renderCommand,
   resourceAccountRowWarnings,
+  sharedCallingPolicyRowWarnings,
   type AutoAttendantCallableEntity,
   type AutoAttendantCallFlow,
   type AutoAttendantCrossRef,
@@ -50,7 +53,7 @@ import { assertSiteInScope } from '../data-collection/site-scope';
 import { FilesService } from '../files/files.service';
 import { DeploymentDocumentService } from './deployment-document.service';
 
-type SheetName = 'users' | 'caps' | 'resource_accounts' | 'call_queues' | 'auto_attendants';
+type SheetName = 'users' | 'caps' | 'resource_accounts' | 'shared_calling_policies' | 'call_queues' | 'auto_attendants';
 
 /** Last-10-digits comparison key, matching the same check ImportUsersDialog and
  * SiteWorkspace's "Requested +N" badge use client-side - kept in sync by hand
@@ -284,6 +287,44 @@ export class DeploymentService {
           rowId: row.id,
           objectType: 'resource_account',
           upn: row.upn,
+          calls,
+          renderedCommands: calls.map(renderCommand),
+          warnings,
+        });
+      }
+    }
+
+    if (sheets.includes('shared_calling_policies')) {
+      let q = s.selectFrom('build_shared_calling_policies').selectAll().where('site_id', '=', query.siteId);
+      if (rowIds?.length) q = q.where('id', 'in', rowIds);
+      const rows = await q.execute();
+
+      const raIds = [...new Set(rows.map((r) => r.resource_account_id).filter((id): id is string => !!id))];
+      const ras = raIds.length
+        ? await s.selectFrom('build_resource_accounts').select(['id', 'upn']).where('id', 'in', raIds).execute()
+        : [];
+      const raIdentity = await resolveLiveIdentityState(s, ras.map((r) => r.upn));
+      const raObjectIds = new Map<string, string>();
+      for (const ra of ras) {
+        const oid = raIdentity.get(ra.upn.toLowerCase())?.objectId;
+        if (oid) raObjectIds.set(ra.id, oid);
+      }
+      const live = await resolveLiveSharedCallingPolicyState(s, rows.map((r) => r.name));
+      for (const row of rows) {
+        const planRow = {
+          id: row.id,
+          name: row.name,
+          resource_account_id: row.resource_account_id,
+          emergency_numbers: (row.emergency_numbers as string[] | null) ?? [],
+          description: row.description,
+        };
+        const calls = planSharedCallingPolicyRow(planRow, raObjectIds, live.get(row.name.toLowerCase()));
+        const warnings = sharedCallingPolicyRowWarnings(planRow, raObjectIds);
+        if (calls.length === 0 && warnings.length === 0) continue;
+        out.push({
+          rowId: row.id,
+          objectType: 'shared_calling_policy',
+          upn: row.name,
           calls,
           renderedCommands: calls.map(renderCommand),
           warnings,

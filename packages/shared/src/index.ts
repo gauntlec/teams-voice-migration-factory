@@ -383,7 +383,7 @@ export interface DeploymentSiteRollup {
  */
 export interface DeploymentPreviewRow {
   rowId: string;
-  objectType: 'user' | 'cap' | 'resource_account' | 'call_queue' | 'auto_attendant';
+  objectType: 'user' | 'cap' | 'resource_account' | 'call_queue' | 'auto_attendant' | 'shared_calling_policy';
   upn: string;
   calls: CmdletInvocation[];
   renderedCommands: string[];

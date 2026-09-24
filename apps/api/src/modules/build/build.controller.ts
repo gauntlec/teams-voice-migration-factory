@@ -16,6 +16,8 @@ import {
   buildResourceAccountCreateSchema,
   buildResourceAccountPatchSchema,
   buildResourceAccountRequestSchema,
+  buildSharedCallingPolicyCreateSchema,
+  buildSharedCallingPolicyPatchSchema,
   buildTemplateApplySchema,
   buildTemplateCreateSchema,
   buildTemplateListQuerySchema,
@@ -38,6 +40,8 @@ import {
   type BuildResourceAccountCreateInput,
   type BuildResourceAccountPatchInput,
   type BuildResourceAccountRequestInput,
+  type BuildSharedCallingPolicyCreateInput,
+  type BuildSharedCallingPolicyPatchInput,
   type BuildTemplateApplyInput,
   type BuildTemplateCreateInput,
   type BuildTemplateListQuery,
@@ -244,6 +248,43 @@ export class BuildController {
     @Body(new ZodBody(buildResourceAccountRequestSchema)) body: BuildResourceAccountRequestInput,
   ) {
     return this.svc.generateResourceAccountRequestDocument(t, user, body.site_id, body.rowIds);
+  }
+
+  /* shared calling policies */
+
+  @Get('shared-calling-policies')
+  @RequirePermission('build:read')
+  listSharedCallingPolicies(@TenantCtx() t: TenantContext, @Query(new ZodBody(buildListQuerySchema)) q: BuildListQuery) {
+    return this.svc.listSharedCallingPolicies(t, q);
+  }
+  @Get('shared-calling-policies/:id')
+  @RequirePermission('build:read')
+  getSharedCallingPolicy(@TenantCtx() t: TenantContext, @Param('id') id: string) {
+    return this.svc.getSharedCallingPolicy(t, id);
+  }
+  @Post('shared-calling-policies')
+  @RequirePermission('build:write')
+  createSharedCallingPolicy(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(buildSharedCallingPolicyCreateSchema)) body: BuildSharedCallingPolicyCreateInput,
+  ) {
+    return this.svc.createSharedCallingPolicy(t, user, body);
+  }
+  @Patch('shared-calling-policies/:id')
+  @RequirePermission('build:write')
+  updateSharedCallingPolicy(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Param('id') id: string,
+    @Body(new ZodBody(buildSharedCallingPolicyPatchSchema)) body: BuildSharedCallingPolicyPatchInput,
+  ) {
+    return this.svc.updateSharedCallingPolicy(t, user, id, body);
+  }
+  @Delete('shared-calling-policies/:id')
+  @RequirePermission('build:write')
+  deleteSharedCallingPolicy(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string) {
+    return this.svc.deleteSharedCallingPolicy(t, user, id);
   }
 
   /* call queues */

@@ -147,10 +147,11 @@ const OBJECT_TYPE_LABEL: Record<DeploymentPreviewRow['objectType'], string> = {
   resource_account: 'Resource Account',
   call_queue: 'Call Queue',
   auto_attendant: 'Auto Attendant',
+  shared_calling_policy: 'Shared Calling Policy',
 };
 
 /** Display/group order for the Planned changes table - matches the worker's own deployment order (users/caps first, auto attendants last), so the grouping doubles as a hint at what runs before what. */
-const GROUP_ORDER: DeploymentPreviewRow['objectType'][] = ['user', 'cap', 'resource_account', 'call_queue', 'auto_attendant'];
+const GROUP_ORDER: DeploymentPreviewRow['objectType'][] = ['user', 'cap', 'resource_account', 'shared_calling_policy', 'call_queue', 'auto_attendant'];
 
 export function DeploymentSiteWorkspace() {
   const cs = useStyles();

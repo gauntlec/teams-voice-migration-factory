@@ -166,7 +166,9 @@ export function BuildSiteWorkspace() {
   const { siteId = '' } = useParams();
   const { activeTenantId, can } = useAuth();
   const qc = useQueryClient();
-  const [tab, setTab] = useState<'users' | 'caps' | 'resource-accounts' | 'call-queues' | 'auto-attendants'>('users');
+  const [tab, setTab] = useState<
+    'users' | 'caps' | 'resource-accounts' | 'shared-calling-policies' | 'call-queues' | 'auto-attendants'
+  >('users');
 
   const tid = activeTenantId;
   const base = `/t/${tid}/build`;
@@ -207,6 +209,17 @@ export function BuildSiteWorkspace() {
     );
     return [...cur, ...rest];
   };
+
+  // This site's resource accounts, for the Shared calling tab's -ResourceAccount picker.
+  const sharedCallingRaQ = useQuery({
+    queryKey: ['resource-accounts', tid, siteId, 'shared-calling'],
+    enabled: !!tid,
+    queryFn: () => api<Paginated<Row>>(`${base}/resource-accounts?siteId=${siteId}&limit=500`),
+  });
+  const resourceAccountChoices: Choice[] = useMemo(
+    () => (sharedCallingRaQ.data?.items ?? []).map((r) => ({ value: r.id, label: String(r.display_name ?? r.upn) })),
+    [sharedCallingRaQ.data],
+  );
 
   // Every target policy is a live-tenant-name picker, not free text - sourced
   // from what Discovery actually found. Fetched in pages (the endpoint caps
@@ -565,6 +578,7 @@ export function BuildSiteWorkspace() {
         <Tab value="users">Users</Tab>
         <Tab value="caps">Common area phones</Tab>
         <Tab value="resource-accounts">Resource accounts</Tab>
+        <Tab value="shared-calling-policies">Shared calling</Tab>
         <Tab value="call-queues">Call queues</Tab>
         <Tab value="auto-attendants">Auto attendants</Tab>
       </TabList>
@@ -800,6 +814,50 @@ export function BuildSiteWorkspace() {
             detects it automatically and moves the row to "created &amp; licensed" - no manual
             step needed. The toggle in the edit dialog is a fallback for when the account was
             already created before a formal request, or you want to unblock a row immediately.
+          </Text>
+        </Card>
+      )}
+
+      {tab === 'shared-calling-policies' && (
+        <PagedSection
+          title="Shared calling policies"
+          hint="Manage the TeamsSharedCallingRoutingPolicy objects themselves - name, resource account (used as outbound/callback caller ID), and emergency callback numbers. Grant an existing policy to a user on the Users/CAPs tab's Policies field."
+          endpoint={`${base}/shared-calling-policies`}
+          queryKey={['shared-calling-policies', tid, siteId]}
+          params={{ siteId }}
+          fixed={{ site_id: siteId }}
+          readOnly={!canWrite}
+          emptyText="No Shared Calling policies yet."
+          columns={[
+            { key: 'name', label: 'Name' },
+            {
+              key: 'resource_account_id',
+              label: 'Resource account',
+              render: (r) => resourceAccountChoices.find((c) => c.value === r.resource_account_id)?.label ?? '—',
+            },
+            {
+              key: 'emergency_numbers',
+              label: 'Emergency numbers',
+              render: (r) => ((r.emergency_numbers as string[] | null)?.length ?? 0) + ' set',
+            },
+          ]}
+          fields={[
+            { key: 'name', label: 'Name', required: true },
+            { key: 'resource_account_id', label: 'Resource account', type: 'ref', choices: resourceAccountChoices },
+            { key: 'emergency_numbers', label: 'Emergency numbers (one per line)', type: 'string-array', full: true, placeholder: '+14255556677' },
+            { key: 'description', label: 'Description' },
+          ]}
+        />
+      )}
+      {tab === 'shared-calling-policies' && (
+        <Card className={s.card}>
+          <Text size={200} className={s.muted}>
+            Per Microsoft's Shared Calling setup guide, a user granted a Shared Calling policy
+            must not also have a phone number assigned - Design & Build already enforces this on
+            the Users/CAPs tabs by disabling the Number fields once a Shared Calling Policy is
+            set there. The linked resource account's phone number must have an emergency location
+            assigned (see the Resource accounts tab's "Emergency location ID" field), and the
+            emergency numbers here must be the same number type/country as it.
           </Text>
         </Card>
       )}
@@ -1206,12 +1264,19 @@ function policyColumns(): ColumnDef[] {
   }));
 }
 
+// Per Microsoft's Shared Calling setup guide: a Shared Calling user must not
+// also have a phone number assigned (they get EnterpriseVoiceEnabled set
+// directly instead - see planIdentityRow, packages/shared/src/deployment.ts).
+// Greying these out here stops that mistake before it's saved, rather than
+// only warning about it after (identityRowWarnings).
+const disabledForSharedCalling = (values: Record<string, string>) => !!values['policies.shared_calling_policy'];
+
 function identityFields(policyFields: FieldDef[], numberChoicesFor: (row: Row | null) => Choice[]): FieldDef[] {
   return [
     { key: 'upn', label: 'UPN', required: true, placeholder: 'user@customer.com' },
-    { key: 'phone_number_id', label: 'Phone number', type: 'ref', choices: numberChoicesFor },
-    { key: 'did', label: 'DID (if not yet in inventory)' },
-    { key: 'number_type', label: 'Number type', type: 'select', options: NUMBER_TYPES },
+    { key: 'phone_number_id', label: 'Phone number', type: 'ref', choices: numberChoicesFor, disabledWhen: disabledForSharedCalling },
+    { key: 'did', label: 'DID (if not yet in inventory)', disabledWhen: disabledForSharedCalling },
+    { key: 'number_type', label: 'Number type', type: 'select', options: NUMBER_TYPES, disabledWhen: disabledForSharedCalling },
     { key: 'revoke_ev', label: 'Revoke Enterprise Voice', type: 'boolean' },
     { key: 'migration_wave', label: 'Migration wave' },
     // The actual Set-CsOnlineVoicemailUserSettings target - separate from

@@ -53,6 +53,7 @@ const OBJECT_TYPE_LABEL: Record<DeploymentPreviewRow['objectType'], string> = {
   resource_account: 'Resource Account',
   call_queue: 'Call Queue',
   auto_attendant: 'Auto Attendant',
+  shared_calling_policy: 'Shared Calling Policy',
 };
 
 export interface DeploymentDocumentInput {

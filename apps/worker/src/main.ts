@@ -11,6 +11,7 @@ import {
   resolveLiveCallQueueState,
   resolveLiveIdentityState,
   resolveLivePolicyNames,
+  resolveLiveSharedCallingPolicyState,
   tenantDb,
 } from '@tvmf/db';
 import { buildColorRamp, type Branding, type DiscoverySiteOverview, type PortDocumentItemSummary } from '@tvmf/shared';
@@ -22,6 +23,7 @@ import {
   planCallQueueRow,
   planIdentityRow,
   planResourceAccountRow,
+  planSharedCallingPolicyRow,
   renderCommand,
   type AutoAttendantCallableEntity,
   type AutoAttendantCallFlow,
@@ -557,6 +559,37 @@ async function handleDeploymentRun(job: Job) {
           application_id: row.application_id,
         },
         liveState.get(row.upn.toLowerCase()),
+      );
+      for (const call of calls) await runCall(call);
+    }
+  }
+
+  if (scope.sheets.includes('shared_calling_policies')) {
+    let q = scoped.selectFrom('build_shared_calling_policies').selectAll().where('site_id', '=', scope.siteId);
+    if (scope.rowIds?.length) q = q.where('id', 'in', scope.rowIds);
+    const rows = await q.execute();
+    const raIds = [...new Set(rows.map((r) => r.resource_account_id).filter((id): id is string => !!id))];
+    const ras = raIds.length
+      ? await scoped.selectFrom('build_resource_accounts').select(['id', 'upn']).where('id', 'in', raIds).execute()
+      : [];
+    const raIdentity = await resolveLiveIdentityState(scoped, ras.map((r) => r.upn));
+    const raObjectIds = new Map<string, string>();
+    for (const ra of ras) {
+      const oid = raIdentity.get(ra.upn.toLowerCase())?.objectId;
+      if (oid) raObjectIds.set(ra.id, oid);
+    }
+    const live = await resolveLiveSharedCallingPolicyState(scoped, rows.map((r) => r.name));
+    for (const row of rows) {
+      const calls = planSharedCallingPolicyRow(
+        {
+          id: row.id,
+          name: row.name,
+          resource_account_id: row.resource_account_id,
+          emergency_numbers: (row.emergency_numbers as string[] | null) ?? [],
+          description: row.description,
+        },
+        raObjectIds,
+        live.get(row.name.toLowerCase()),
       );
       for (const call of calls) await runCall(call);
     }

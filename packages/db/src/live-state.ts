@@ -14,6 +14,7 @@ import {
   type CallQueueLiveState,
   type LiveCallableEntityRef,
   type LiveIdentityState,
+  type SharedCallingPolicyLiveState,
 } from '@tvmf/shared';
 import type { DB } from './schema';
 
@@ -43,6 +44,37 @@ export async function resolveLivePolicyNames(scoped: Scoped, ids: (string | null
     .where('removed_at', 'is', null)
     .execute();
   for (const r of rows) out.set(r.id, r.name);
+  return out;
+}
+
+/**
+ * What Discovery's live-tenant snapshot (tenant_policies, policy_type
+ * 'TeamsSharedCallingRoutingPolicy') knows about a Shared Calling policy,
+ * matched by lowercased name - the generic TENANT_POLICY_TYPES sweep
+ * (Get-Cs<type> for every entry, apps/worker/src/discovery/cmdlets.ts)
+ * already captures the full raw Get-CsTeamsSharedCallingRoutingPolicy
+ * object here, so no separate live-capture step was needed for this.
+ */
+export async function resolveLiveSharedCallingPolicyState(scoped: Scoped, names: string[]) {
+  const wanted = [...new Set(names.map((n) => n.toLowerCase()).filter(Boolean))];
+  const out = new Map<string, SharedCallingPolicyLiveState>();
+  if (wanted.length === 0) return out;
+  const rows = await scoped
+    .selectFrom('tenant_policies')
+    .select(['name', 'data'])
+    .where('policy_type', '=', 'TeamsSharedCallingRoutingPolicy')
+    .where('removed_at', 'is', null)
+    .where(sql`lower(name)`, 'in', wanted)
+    .execute();
+  for (const r of rows) {
+    const d = r.data as Record<string, unknown>;
+    out.set(r.name.toLowerCase(), {
+      identity: r.name,
+      resourceAccount: typeof d.ResourceAccount === 'string' ? d.ResourceAccount : undefined,
+      emergencyNumbers: Array.isArray(d.EmergencyNumbers) ? (d.EmergencyNumbers as unknown[]).filter((v): v is string => typeof v === 'string') : undefined,
+      description: typeof d.Description === 'string' ? d.Description : undefined,
+    });
+  }
   return out;
 }
 

@@ -553,6 +553,87 @@ export function planResourceAccountRow(row: BuildResourceAccountRow, live?: Live
   return calls;
 }
 
+/* ========================================================================
+ * Shared Calling routing policies - New-/Set-CsTeamsSharedCallingRoutingPolicy.
+ * Confirmed against Microsoft Learn 2026-09-23: -Identity (name),
+ * -ResourceAccount (an existing resource account's Identity/ObjectId, used
+ * as outbound/callback caller ID), -EmergencyNumbers (array of PSTN numbers
+ * reserved for emergency callback), -Description. A Shared Calling *user*
+ * is granted an existing policy by name (POLICY_KINDS' shared_calling_policy
+ * -> Grant-CsTeamsSharedCallingRoutingPolicy, already handled by
+ * planIdentityRow) - this section is the separate, missing piece: managing
+ * the policy OBJECT itself.
+ * ======================================================================== */
+
+export interface BuildSharedCallingPolicyRow {
+  id: string;
+  name: string;
+  /** build_resource_accounts.id - resolved to its live Entra Object ID via raObjectIds before planning, same map planCallQueueRow/planAutoAttendantRow already use for a linked resource account. */
+  resource_account_id: string | null;
+  emergency_numbers: string[];
+  description: string | null;
+}
+
+/**
+ * What Discovery's live-tenant snapshot (tenant_policies, policy_type
+ * 'TeamsSharedCallingRoutingPolicy') knows about a policy, matched by
+ * lowercased Identity/name - no separate live capture needed, Discovery's
+ * existing generic TENANT_POLICY_TYPES sweep (Get-Cs<type> for every entry,
+ * apps/worker/src/discovery/cmdlets.ts) already stores the full raw object
+ * under tenant_policies.data.
+ */
+export interface SharedCallingPolicyLiveState {
+  identity: string;
+  resourceAccount?: string;
+  emergencyNumbers?: string[];
+  description?: string;
+}
+
+/** Missing resource account is the only "silently produces an undeployable row" gap here - Microsoft Learn documents -ResourceAccount as required. */
+export function sharedCallingPolicyRowWarnings(row: Pick<BuildSharedCallingPolicyRow, 'resource_account_id'>, raObjectIds: Map<string, string>): string[] {
+  if (!row.resource_account_id) {
+    return ['No resource account set - New-CsTeamsSharedCallingRoutingPolicy requires one, so this policy will not deploy.'];
+  }
+  if (!raObjectIds.has(row.resource_account_id)) {
+    return ['Linked resource account has no live Application Instance yet, so this policy cannot deploy until that resolves.'];
+  }
+  return [];
+}
+
+/**
+ * New- when the policy doesn't exist live yet, Set- when it does and
+ * something differs. Skips entirely (no calls) when the resource account
+ * hasn't resolved live - same "don't guess, don't send a cmdlet certain to
+ * fail" rule as every other row here.
+ */
+export function planSharedCallingPolicyRow(
+  row: BuildSharedCallingPolicyRow,
+  raObjectIds: Map<string, string>,
+  live?: SharedCallingPolicyLiveState,
+): CmdletInvocation[] {
+  const resourceAccount = row.resource_account_id ? raObjectIds.get(row.resource_account_id) : undefined;
+  if (!resourceAccount) return [];
+
+  const sortedNumbers = [...row.emergency_numbers].sort();
+  const parameters: Record<string, unknown> = {
+    Identity: row.name,
+    ResourceAccount: resourceAccount,
+    ...(row.emergency_numbers.length ? { EmergencyNumbers: row.emergency_numbers } : {}),
+    ...(row.description ? { Description: row.description } : {}),
+  };
+
+  if (!live) {
+    return [{ cmdlet: 'New-CsTeamsSharedCallingRoutingPolicy', parameters, objectType: 'shared_calling_policy', objectId: row.id }];
+  }
+  const sortedLive = [...(live.emergencyNumbers ?? [])].sort();
+  const changed =
+    (live.resourceAccount ?? undefined) !== resourceAccount ||
+    JSON.stringify(sortedNumbers) !== JSON.stringify(sortedLive) ||
+    (live.description ?? undefined) !== (row.description ?? undefined);
+  if (!changed) return [];
+  return [{ cmdlet: 'Set-CsTeamsSharedCallingRoutingPolicy', parameters, objectType: 'shared_calling_policy', objectId: row.id }];
+}
+
 type CallQueueRoutingMethod = (typeof CALL_QUEUE_ROUTING_METHODS)[number];
 
 const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
