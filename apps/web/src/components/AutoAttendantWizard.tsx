@@ -28,6 +28,7 @@ import {
 } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { type Choice } from './records';
+import { ResourceAccountCreateDialog } from './ResourceAccountCreateDialog';
 import { TargetPicker, type TeamChoice } from './TargetPicker';
 import { WizardShell, type WizardStep } from './WizardShell';
 
@@ -275,6 +276,7 @@ export function AutoAttendantWizard({
   const [name, setName] = useState(editing?.name ?? '');
   const [answers, setAnswers] = useState<AutoAttendantWizardAnswers>(editing?.answers ?? DEFAULT_ANSWERS);
   const [resourceAccountId, setResourceAccountId] = useState(editing?.resourceAccountId ?? '');
+  const [raDialogOpen, setRaDialogOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const save = useMutation({
@@ -521,19 +523,36 @@ export function AutoAttendantWizard({
             )}
           </div>
           <Field label="Which phone number/identity will answer this? (optional - can be set later)">
-            <Dropdown
-              value={resourceAccountChoices.find((c) => c.value === resourceAccountId)?.label ?? '— not yet known —'}
-              selectedOptions={resourceAccountId ? [resourceAccountId] : []}
-              onOptionSelect={(_, d) => setResourceAccountId(d.optionValue ?? '')}
-            >
-              <Option value="">— not yet known —</Option>
-              {resourceAccountChoices.map((c) => (
-                <Option key={c.value} value={c.value}>
-                  {c.label}
-                </Option>
-              ))}
-            </Dropdown>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'end' }}>
+              <Dropdown
+                value={resourceAccountChoices.find((c) => c.value === resourceAccountId)?.label ?? '— not yet known —'}
+                selectedOptions={resourceAccountId ? [resourceAccountId] : []}
+                onOptionSelect={(_, d) => setResourceAccountId(d.optionValue ?? '')}
+                style={{ minWidth: 220 }}
+              >
+                <Option value="">— not yet known —</Option>
+                {resourceAccountChoices.map((c) => (
+                  <Option key={c.value} value={c.value}>
+                    {c.label}
+                  </Option>
+                ))}
+              </Dropdown>
+              <Button size="small" onClick={() => setRaDialogOpen(true)}>
+                Set up a new resource account
+              </Button>
+            </div>
           </Field>
+          <ResourceAccountCreateDialog
+            open={raDialogOpen}
+            onOpenChange={setRaDialogOpen}
+            base={base}
+            tenantId={tenantId}
+            siteId={siteId}
+            kind="auto_attendant"
+            onCreated={(row) => {
+              if (row) setResourceAccountId(row.id);
+            }}
+          />
         </>
       ),
     },
