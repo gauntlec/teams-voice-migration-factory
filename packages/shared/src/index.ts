@@ -284,6 +284,19 @@ export interface TenantEndpoint {
   enabled: boolean | null;
 }
 
+/**
+ * A row of the M365 group cache (`tenant_groups`), synced from Microsoft
+ * Graph on the optional second sign-in and kept fresh by discovery runs -
+ * drives `GroupAutocomplete`'s Shared Voicemail groupId picker and the
+ * Discovery page's "M365 groups" tab.
+ */
+export interface TenantGroupSummary {
+  object_id: string;
+  display_name: string;
+  mail: string | null;
+  synced_at: string;
+}
+
 /** `GET .../tenant-discovery/summary` */
 export interface TenantDiscoverySummary {
   tenant: { id: string | null; displayName: string | null; domains: string[] } | null;
@@ -296,6 +309,8 @@ export interface TenantDiscoverySummary {
   canManageConnections: boolean;
   counts: Partial<Record<import('./domain').TenantObjectType, number>>;
   linkedDiscoveryUsers: number;
+  /** rows in `tenant_groups` - see `TenantGroupSummary` */
+  groupsCount: number;
   /** per-customer Discovery settings */
   settings: { filterUsers: boolean; notifyOnComplete: boolean };
 }

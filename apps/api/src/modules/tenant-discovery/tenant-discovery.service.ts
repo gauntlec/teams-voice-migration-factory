@@ -14,6 +14,8 @@ import {
   type TenantConnectionInfo,
   type TenantDiscoverySummary,
   type TenantEndpoint,
+  type TenantGroupsQuery,
+  type TenantGroupSummary,
   type TenantObjectType,
   type TenantObjectVersion,
   type TenantObjectsQuery,
@@ -617,6 +619,10 @@ export class TenantDiscoveryService {
       .select((eb) => eb.fn.countAll<number>().as('n'))
       .where('tenant_user_id', 'is not', null)
       .executeTakeFirst();
+    const groupsCount = await s
+      .selectFrom('tenant_groups')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .executeTakeFirst();
     const cfg = await s
       .selectFrom('tenant_discovery_config')
       .select(['filter_users', 'notify_on_complete'])
@@ -643,6 +649,7 @@ export class TenantDiscoveryService {
       canManageConnections: isAdmin,
       counts,
       linkedDiscoveryUsers: Number(linked?.n ?? 0),
+      groupsCount: Number(groupsCount?.n ?? 0),
       settings: {
         filterUsers: cfg?.filter_users ?? true,
         notifyOnComplete: cfg?.notify_on_complete ?? true,
@@ -735,23 +742,30 @@ export class TenantDiscoveryService {
   /* ================================ groups ================================ */
 
   /**
-   * Search this tenant's cached M365 groups (`tenant_groups`, populated on
-   * Graph sign-in - see `connectGraph`/the worker's `handleGraphConnect` -
-   * and kept fresh by every subsequent discovery run on that connection
-   * while the Graph sub-session stays alive, see the worker's
-   * `syncTenantGroups`/`handleTenantDiscoveryRun`). A normal fast DB read,
-   * not a live round trip - drives GroupAutocomplete.
+   * Search/browse this tenant's cached M365 groups (`tenant_groups`,
+   * populated on Graph sign-in - see `connectGraph`/the worker's
+   * `handleGraphConnect` - and kept fresh by every subsequent discovery run
+   * on that connection while the Graph sub-session stays alive, see the
+   * worker's `syncTenantGroups`/`handleTenantDiscoveryRun`). A normal fast
+   * DB read, not a live round trip - drives both `GroupAutocomplete`'s
+   * typeahead and Discovery's paginated "M365 groups" tab.
    */
-  async listGroups(t: TenantContext, q: { q?: string; limit: number }): Promise<Paginated<unknown>> {
-    let base = this.s(t).selectFrom('tenant_groups').selectAll();
+  async listGroups(t: TenantContext, q: TenantGroupsQuery): Promise<Paginated<TenantGroupSummary>> {
+    let base = this.s(t).selectFrom('tenant_groups');
     if (q.q) {
       const like = `%${q.q}%`;
       base = base.where((eb) =>
         eb.or([eb('display_name', 'ilike', like), eb('mail', 'ilike', like), eb('object_id', 'ilike', like)]),
       );
     }
-    const items = await base.orderBy('display_name').limit(q.limit).execute();
-    return { items, total: items.length, page: 1, limit: q.limit };
+    const [{ n }] = await base.select((eb) => eb.fn.countAll<number>().as('n')).execute();
+    const items = await base
+      .selectAll()
+      .orderBy('display_name')
+      .limit(q.limit)
+      .offset((q.page - 1) * q.limit)
+      .execute();
+    return { items, total: Number(n), page: q.page, limit: q.limit };
   }
 
   /** Exact (case-insensitive) UPN match against the latest snapshot - drives autofill. */

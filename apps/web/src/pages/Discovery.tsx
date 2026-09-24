@@ -70,6 +70,7 @@ import {
   type TenantPolicySummary,
   type TenantPolicyType,
   type TenantUserSummary,
+  type TenantGroupSummary,
 } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { useAuth } from '../auth';
@@ -1977,7 +1978,8 @@ type TabKey =
   | 'voice_routing'
   | 'emergency'
   | 'voice_apps'
-  | 'devices';
+  | 'devices'
+  | 'groups';
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'overview', label: 'Overview' },
   { key: 'changes', label: 'Changes' },
@@ -1989,6 +1991,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'emergency', label: 'Emergency' },
   { key: 'voice_apps', label: 'Voice apps' },
   { key: 'devices', label: 'Devices' },
+  { key: 'groups', label: 'M365 groups' },
 ];
 
 /** The "what changed in this sync" log, with a run picker and type filter. */
@@ -2221,6 +2224,12 @@ export function Discovery() {
                 Linked to Data Collection
               </Text>
             </Card>
+            <Card className={s.stat}>
+              <span className={s.statN}>{(sm?.groupsCount ?? 0).toLocaleString()}</span>
+              <Text size={200} className={s.muted}>
+                M365 groups
+              </Text>
+            </Card>
           </div>
           <PurgeCard
             base={base}
@@ -2286,7 +2295,90 @@ export function Discovery() {
       )}
 
       {tab === 'devices' && <EndpointsTable base={base} />}
+
+      {tab === 'groups' && <GroupsTable base={base} />}
     </Page>
+  );
+}
+
+/**
+ * The M365 group cache (`tenant_groups`) - populated by the optional
+ * Microsoft Graph sign-in on the Discovery connect card and kept fresh by
+ * regular discovery runs (see `syncTenantGroups`,
+ * apps/worker/src/discovery/run.ts). A plain browsable/searchable list of
+ * what's available to `GroupAutocomplete`'s Shared Voicemail groupId
+ * picker - not a `tenant_objects` type, so no change history here.
+ */
+function GroupsTable({ base }: { base: string }) {
+  const s = useStyles();
+  const [qInput, setQInput] = useState('');
+  const q = useDebounced(qInput);
+  const [page, setPage] = useState(1);
+  const limit = 50;
+  useEffect(() => setPage(1), [q]);
+
+  const list = useQuery({
+    queryKey: ['tdisc', 'groups', base, q, page],
+    queryFn: () =>
+      api<Paginated<TenantGroupSummary>>(
+        `${base}/groups?page=${page}&limit=${limit}${q ? `&q=${encodeURIComponent(q)}` : ''}`,
+      ),
+    placeholderData: keepPreviousData,
+  });
+  const items = list.data?.items ?? [];
+  const total = list.data?.total ?? 0;
+  const pages = Math.max(1, Math.ceil(total / limit));
+
+  return (
+    <Card className={s.card}>
+      <div className={s.toolbar}>
+        <Text weight="semibold">
+          M365 groups <span className={s.muted}>({total.toLocaleString()})</span>
+        </Text>
+        <SearchBox
+          size="small"
+          placeholder="Search name, mail, object ID…"
+          value={qInput}
+          onChange={(_, d) => setQInput(d.value)}
+          style={{ minWidth: 260 }}
+        />
+      </div>
+      {list.isLoading ? (
+        <Spinner size="tiny" />
+      ) : list.isError ? (
+        <LoadError message={(list.error as Error).message} />
+      ) : items.length === 0 ? (
+        <Text size={200} className={s.muted}>
+          {q
+            ? 'No matches.'
+            : 'Nothing discovered yet - connect Microsoft Graph on the Discovery connect card, or run a discovery once it is connected.'}
+        </Text>
+      ) : (
+        <>
+          <DataTable size="small" minWidth={720}>
+            <TableHeader>
+              <TableRow>
+                <TableHeaderCell>Display name</TableHeaderCell>
+                <TableHeaderCell>Mail</TableHeaderCell>
+                <TableHeaderCell>Object ID</TableHeaderCell>
+                <TableHeaderCell>Last synced</TableHeaderCell>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.map((g) => (
+                <TableRow key={g.object_id}>
+                  <TableCell title={g.display_name}>{g.display_name}</TableCell>
+                  <TableCell>{g.mail ?? '—'}</TableCell>
+                  <TableCell title={g.object_id}>{g.object_id}</TableCell>
+                  <TableCell>{fmt(g.synced_at)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </DataTable>
+          <Pager page={page} pages={pages} total={total} onPage={setPage} />
+        </>
+      )}
+    </Card>
   );
 }
 

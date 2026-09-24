@@ -799,10 +799,15 @@ export const tenantObjectsQuerySchema = z.object({
 });
 export type TenantObjectsQuery = z.infer<typeof tenantObjectsQuerySchema>;
 
-/** Query string for `GET .../tenant-discovery/groups` - M365 group search, drives GroupAutocomplete's Shared Voicemail groupId picker. */
+/**
+ * Query string for `GET .../tenant-discovery/groups` - drives both
+ * GroupAutocomplete's Shared Voicemail groupId typeahead (small `limit`,
+ * `page` defaulted) and Discovery's paginated "M365 groups" tab.
+ */
 export const tenantGroupsQuerySchema = z.object({
   q: z.string().trim().max(160).optional(),
-  limit: z.coerce.number().int().min(1).max(50).default(8),
+  page: z.coerce.number().int().min(1).max(100000).default(1),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
 });
 export type TenantGroupsQuery = z.infer<typeof tenantGroupsQuerySchema>;
 

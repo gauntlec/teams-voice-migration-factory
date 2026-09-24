@@ -1,15 +1,9 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Combobox, Option } from '@fluentui/react-components';
-import type { Paginated } from '@tvmf/shared';
+import type { Paginated, TenantGroupSummary } from '@tvmf/shared';
 import { api } from '../api';
 import { useDebounced } from '../hooks/useDebounced';
-
-interface TenantGroupHit {
-  object_id: string;
-  display_name: string;
-  mail: string | null;
-}
 
 /**
  * Type-ahead M365 group field for the Shared Voicemail `groupId` target -
@@ -41,7 +35,7 @@ export function GroupAutocomplete({
     queryKey: ['group-autocomplete', tenantId, term],
     enabled: term.length >= 2,
     queryFn: () =>
-      api<Paginated<TenantGroupHit>>(`/t/${tenantId}/tenant-discovery/groups?q=${encodeURIComponent(term)}&limit=8`),
+      api<Paginated<TenantGroupSummary>>(`/t/${tenantId}/tenant-discovery/groups?q=${encodeURIComponent(term)}&limit=8`),
   });
   const options = useMemo(() => search.data?.items ?? [], [search.data]);
 
