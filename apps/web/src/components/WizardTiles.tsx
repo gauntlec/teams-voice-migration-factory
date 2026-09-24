@@ -47,7 +47,7 @@ export function useTeamChoices(tenantId: string, siteId: string): TeamChoice[] {
     enabled: !!tenantId && !!siteId,
     queryFn: () =>
       api<Paginated<{ id: string; name: string; kind: string; wizard_answers: unknown; imported_at: string | null }>>(
-        `/t/${tenantId}/discovery/flows?siteId=${siteId}&limit=500`,
+        `/t/${tenantId}/discovery/flows?siteId=${siteId}&limit=200`,
       ),
   });
   return useMemo(() => {
