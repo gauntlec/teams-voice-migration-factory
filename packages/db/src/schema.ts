@@ -843,7 +843,8 @@ export interface HandoverPacksTable {
   generated_by: string;
   generated_at: string | null;
   source: Json;
-  file: Buffer | null;
+  /** FK -> files.id (ON DELETE SET NULL) - the generated .docx, category 'handover_pack'. */
+  file_id: string | null;
   created_at: Ts;
 }
 
@@ -866,7 +867,7 @@ export interface HandoverSectionsTable {
  */
 export interface FilesTable {
   id: Generated<string>;
-  category: 'deployment_change_document' | 'number_port_document' | 'resource_account_request';
+  category: 'deployment_change_document' | 'number_port_document' | 'resource_account_request' | 'handover_pack';
   source_type: string;
   source_id: string;
   site_id: string | null;
