@@ -144,57 +144,63 @@ const useStyles = makeStyles({
   },
   scopeStep: { display: 'flex', alignItems: 'center', ...shorthands.gap('2px') },
   scopeTypes: { display: 'flex', flexWrap: 'wrap', ...shorthands.gap('2px', '14px'), paddingLeft: '28px' },
-  diffFields: {
-    display: 'grid',
-    ...shorthands.gap('2px'),
-    maxHeight: '60vh',
-    overflowY: 'auto',
-    ...shorthands.padding('10px', '12px'),
-    backgroundColor: tokens.colorNeutralBackground3,
-    ...shorthands.borderRadius(tokens.borderRadiusMedium),
-  },
-  diffField: {
-    display: 'flex',
-    alignItems: 'baseline',
-    flexWrap: 'wrap',
-    ...shorthands.gap('6px'),
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-    fontSize: tokens.fontSizeBase200,
-    wordBreak: 'break-word',
-  },
-  diffKey: { color: tokens.colorNeutralForeground2, fontWeight: tokens.fontWeightSemibold, flexShrink: 0 },
-  diffSame: { color: tokens.colorNeutralForeground3 },
-  diffAdded: { color: tokens.colorPaletteGreenForeground2 },
-  diffRemoved: { color: tokens.colorPaletteRedForeground1, textDecorationLine: 'line-through' },
+  diff: { display: 'grid', gridTemplateColumns: '1fr 1fr', ...shorthands.gap('10px') },
+  diffCol: { display: 'grid', ...shorthands.gap('4px'), minWidth: 0 },
+  diffLineSame: { color: tokens.colorNeutralForeground1 },
+  diffLineAdded: { color: tokens.colorPaletteGreenForeground2, backgroundColor: tokens.colorPaletteGreenBackground1 },
+  diffLineRemoved: { color: tokens.colorPaletteRedForeground1, backgroundColor: tokens.colorPaletteRedBackground1 },
 });
 
-type FieldDiffKind = 'added' | 'removed' | 'changed' | 'same';
-interface FieldDiffRow {
-  key: string;
-  before: unknown;
-  after: unknown;
-  kind: FieldDiffKind;
+type DiffLine = { text: string; kind: 'same' | 'added' | 'removed' };
+
+/** Line-level (LCS) diff between two pretty-printed JSON blocks, so the actual nested JSON can be shown with just the changed lines highlighted. */
+function diffLines(beforeText: string, afterText: string): DiffLine[] {
+  const a = beforeText.split('\n');
+  const b = afterText.split('\n');
+  const n = a.length;
+  const m = b.length;
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const out: DiffLine[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) {
+      out.push({ text: a[i], kind: 'same' });
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      out.push({ text: a[i], kind: 'removed' });
+      i++;
+    } else {
+      out.push({ text: b[j], kind: 'added' });
+      j++;
+    }
+  }
+  while (i < n) {
+    out.push({ text: a[i], kind: 'removed' });
+    i++;
+  }
+  while (j < m) {
+    out.push({ text: b[j], kind: 'added' });
+    j++;
+  }
+  return out;
 }
 
-/** Per-field before/after comparison, used to colour a version's diff green (new/changed) or red (removed). */
-function diffFields(before: Record<string, unknown>, after: Record<string, unknown>): FieldDiffRow[] {
-  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
-  return [...keys].sort().map((key) => {
-    const hasBefore = key in before;
-    const hasAfter = key in after;
-    const b = before[key];
-    const a = after[key];
-    let kind: FieldDiffKind;
-    if (!hasBefore && hasAfter) kind = 'added';
-    else if (hasBefore && !hasAfter) kind = 'removed';
-    else if (JSON.stringify(b) !== JSON.stringify(a)) kind = 'changed';
-    else kind = 'same';
-    return { key, before: b, after: a, kind };
-  });
+/** Splits a before/after line diff into what each dialog column should render (Before: same + removed, After: same + added). */
+function splitDiffLines(beforeText: string | null, afterText: string | null): { before: DiffLine[]; after: DiffLine[] } {
+  if (beforeText === null || afterText === null) return { before: [], after: [] };
+  const lines = diffLines(beforeText, afterText);
+  return {
+    before: lines.filter((l) => l.kind !== 'added'),
+    after: lines.filter((l) => l.kind !== 'removed'),
+  };
 }
-
-const showFieldValue = (v: unknown): string =>
-  v === undefined || v === null || v === '' ? '—' : typeof v === 'string' ? v : JSON.stringify(v);
 
 const fmt = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString() : '—');
 
@@ -220,10 +226,17 @@ function ChangeBadge({ kind }: { kind: TenantObjectChangeKind }) {
   );
 }
 
-/** Before / after diff for one recorded change - green for new/changed values, red for removed ones. */
+/** Before / after JSON for one recorded change - green for new/changed lines, red for removed ones. */
 function DiffDialog({ version, onClose }: { version: TenantObjectVersion; onClose: () => void }) {
   const s = useStyles();
-  const rows = useMemo(() => diffFields(version.before ?? {}, version.after ?? {}), [version]);
+  const beforeText = version.before ? JSON.stringify(version.before, null, 2) : null;
+  const afterText = version.after ? JSON.stringify(version.after, null, 2) : null;
+  const { before: beforeLines, after: afterLines } = useMemo(
+    () => splitDiffLines(beforeText, afterText),
+    [beforeText, afterText],
+  );
+  const lineClass = (kind: DiffLine['kind']) =>
+    kind === 'added' ? s.diffLineAdded : kind === 'removed' ? s.diffLineRemoved : s.diffLineSame;
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
       <DialogSurface style={{ maxWidth: 980, width: '94vw' }}>
@@ -238,32 +251,52 @@ function DiffDialog({ version, onClose }: { version: TenantObjectVersion; onClos
                 <> · changed: {version.changed_fields.join(', ')}</>
               )}
             </Text>
-            {rows.length === 0 ? (
-              <Text size={200} className={s.muted}>
-                No fields recorded for this change.
-              </Text>
-            ) : (
-              <div className={s.diffFields}>
-                {rows.map((r) => (
-                  <div key={r.key} className={s.diffField}>
-                    <span className={s.diffKey}>{r.key}</span>
-                    {r.kind === 'changed' ? (
-                      <>
-                        <span className={s.diffRemoved}>{showFieldValue(r.before)}</span>
-                        <span className={s.muted}>→</span>
-                        <span className={s.diffAdded}>{showFieldValue(r.after)}</span>
-                      </>
-                    ) : r.kind === 'added' ? (
-                      <span className={s.diffAdded}>{showFieldValue(r.after)}</span>
-                    ) : r.kind === 'removed' ? (
-                      <span className={s.diffRemoved}>{showFieldValue(r.before)}</span>
-                    ) : (
-                      <span className={s.diffSame}>{showFieldValue(r.after)}</span>
-                    )}
-                  </div>
-                ))}
+            <div className={s.diff}>
+              <div className={s.diffCol}>
+                <Text size={200} weight="semibold">
+                  Before
+                </Text>
+                <div className={s.json}>
+                  {beforeText === null ? (
+                    <span className={s.muted}>(new — did not exist)</span>
+                  ) : afterText === null ? (
+                    beforeText.split('\n').map((line, i) => (
+                      <div key={i} className={s.diffLineRemoved}>
+                        {line || ' '}
+                      </div>
+                    ))
+                  ) : (
+                    beforeLines.map((l, i) => (
+                      <div key={i} className={lineClass(l.kind)}>
+                        {l.text || ' '}
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
-            )}
+              <div className={s.diffCol}>
+                <Text size={200} weight="semibold">
+                  After
+                </Text>
+                <div className={s.json}>
+                  {afterText === null ? (
+                    <span className={s.muted}>(removed from the tenant)</span>
+                  ) : beforeText === null ? (
+                    afterText.split('\n').map((line, i) => (
+                      <div key={i} className={s.diffLineAdded}>
+                        {line || ' '}
+                      </div>
+                    ))
+                  ) : (
+                    afterLines.map((l, i) => (
+                      <div key={i} className={lineClass(l.kind)}>
+                        {l.text || ' '}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
           </DialogContent>
           <DialogActions>
             <Button appearance="secondary" onClick={onClose}>
