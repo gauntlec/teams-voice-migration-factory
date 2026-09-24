@@ -28,19 +28,36 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
   && apt-get install -y --no-install-recommends nodejs \
   && apt-get purge -y gnupg && apt-get autoremove -y \
   && rm -rf /var/lib/apt/lists/*
-# No -RequiredVersion pin - always grabs whatever's newest on PSGallery.
-# CACHE_BUST forces this layer to actually re-run that install on every CI
-# build (build-images.yml passes a fresh value each time) instead of reusing
-# Docker's cached layer indefinitely, which would otherwise freeze the module
-# at whatever version happened to be cached the first time this line built.
+# Pinned so production always installs the exact, already-verified-working
+# module version (day-one pin = whatever was running live when this was
+# introduced) instead of silently grabbing whatever's newest on PSGallery on
+# every deploy. Bump only via a manual PR after checking the weekly
+# :candidate build below - see docs/SECURITY.md.
+#
+# Either ARG can be left blank to fall back to "install whatever's newest" -
+# only the weekly candidate build (build-images.yml) does that, deliberately,
+# so upstream breakage surfaces on a non-production :candidate tag before
+# anyone considers bumping the pin.
+ARG TEAMS_MODULE_VERSION=8.0.0
+ARG GRAPH_MODULE_VERSION=2.40.0
+# Only needed to force a real reinstall for the unpinned candidate build -
+# the pinned production path is deterministic (same version every time) and
+# doesn't need its cache busted.
 ARG CACHE_BUST=0
 RUN pwsh -NoLogo -NonInteractive -Command \
     "Write-Output 'cache bust: ${CACHE_BUST}'; \
      Set-PSRepository -Name PSGallery -InstallationPolicy Trusted; \
-     Install-Module -Name MicrosoftTeams -Scope AllUsers -Force -AcceptLicense; \
-     Install-Module -Name Microsoft.Graph.Authentication -Scope AllUsers -Force -AcceptLicense; \
+     \$teamsArgs = @{ Name = 'MicrosoftTeams'; Scope = 'AllUsers'; Force = \$true; AcceptLicense = \$true }; \
+     if ('${TEAMS_MODULE_VERSION}') { \$teamsArgs.RequiredVersion = '${TEAMS_MODULE_VERSION}' }; \
+     Install-Module @teamsArgs; \
+     \$graphArgs = @{ Name = 'Microsoft.Graph.Authentication'; Scope = 'AllUsers'; Force = \$true; AcceptLicense = \$true }; \
+     if ('${GRAPH_MODULE_VERSION}') { \$graphArgs.RequiredVersion = '${GRAPH_MODULE_VERSION}' }; \
+     Install-Module @graphArgs; \
      Import-Module MicrosoftTeams; Import-Module Microsoft.Graph.Authentication; \
      (Get-Module MicrosoftTeams).Version.ToString(); (Get-Module Microsoft.Graph.Authentication).Version.ToString()"
+# Visible without shelling in (docker inspect, or the Dockge UI's image tab).
+LABEL com.voxshift.microsoftteams-version="${TEAMS_MODULE_VERSION}" \
+      com.voxshift.graph-authentication-version="${GRAPH_MODULE_VERSION}"
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./package.json

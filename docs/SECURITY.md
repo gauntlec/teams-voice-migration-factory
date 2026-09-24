@@ -103,6 +103,28 @@
 
 - No secret-manager integration yet (env only).
 
+## Worker PowerShell module version pinning
+
+- `apps/worker/Dockerfile` pins `MicrosoftTeams` and
+  `Microsoft.Graph.Authentication` via `-RequiredVersion` (build args
+  `TEAMS_MODULE_VERSION`/`GRAPH_MODULE_VERSION`, defaulted in the Dockerfile).
+  Production (`build-images.yml`'s push-triggered `build` job) always
+  installs exactly those pinned versions - deterministic, and the layer is
+  now cache-stable (no `CACHE_BUST`), unlike before this pin existed, when
+  every push silently installed whatever was newest on PSGallery.
+- **Bumping the pin**: a weekly, worker-only `build-candidate` job (the same
+  `schedule` trigger that used to rebuild production) builds an *unpinned*
+  image to `ghcr.io/.../tvmf-worker:candidate` - never `:latest`, never
+  pulled by Dockge/production. If a new PSGallery release has landed and
+  looks safe (check `docker run --rm ghcr.io/.../tvmf-worker:candidate pwsh
+  -c "(Get-Module -ListAvailable MicrosoftTeams).Version"` and a manual
+  smoke test against a non-production tenant if possible), bump
+  `TEAMS_MODULE_VERSION`/`GRAPH_MODULE_VERSION` in the Dockerfile via a
+  normal PR - that's what actually changes what `:latest` installs next.
+  The pinned versions are also visible on the running image without
+  shelling in, via `docker inspect` (`com.voxshift.microsoftteams-version` /
+  `com.voxshift.graph-authentication-version` labels).
+
 ## Customer tenant sessions (Discovery / Deployment)
 
 - The worker runs `Connect-MicrosoftTeams -UseDeviceAuthentication` in a `pwsh`

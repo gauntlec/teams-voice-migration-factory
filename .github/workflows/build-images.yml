@@ -11,10 +11,16 @@ on:
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
   workflow_dispatch:
-  # Rebuild weekly even with zero code changes, so the worker image's
-  # MicrosoftTeams PowerShell module (installed with no version pin) never
-  # goes stale for more than a week during a quiet period.
+  # Weekly, unpinned worker-only build to a non-production :candidate tag -
+  # surfaces a breaking MicrosoftTeams/Microsoft.Graph.Authentication
+  # PSGallery release before anyone considers bumping the Dockerfile's pin.
+  # Never touches :latest/production - see the build-candidate job below.
   schedule:
     - cron: '0 6 * * 1'
 
@@ -23,7 +29,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Typecheck every package + run packages/shared's unit tests before any
+  # image build - a broken cmdlet planner (the code that decides what
+  # Set-Cs*/New-Cs* runs against a real customer tenant) used to be able to
+  # ship straight to GHCR/production with nothing catching it. Runs on PRs
+  # too (not just push to main) so a broken change is visible before merge.
+  verify:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm install
+
+      - run: npm run typecheck --workspaces --if-present
+
+      - run: npm run test --workspaces --if-present
+
   build:
+    needs: verify
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -70,8 +100,53 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
-          # Only the worker Dockerfile declares this ARG (busts the
-          # Install-Module layer so it always re-fetches latest from
-          # PSGallery) - harmless no-op for api/web, which don't consume it.
+          # Deliberately no build-args here: the worker Dockerfile's
+          # TEAMS_MODULE_VERSION/GRAPH_MODULE_VERSION ARGs default to the
+          # pinned versions, and with no CACHE_BUST that install layer is
+          # now fully cache-stable (same pinned version every time).
+
+  # Weekly only - see the `on.schedule` comment above. Builds just the
+  # worker image, unpinned, to ghcr.io/.../tvmf-worker:candidate (never
+  # :latest, never pushed to production by Dockge). Deliberately does not
+  # depend on / block the `build` job above.
+  build-candidate:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/tvmf-worker
+          tags: |
+            type=raw,value=candidate
+
+      - name: Build candidate (unpinned) - does not push to :latest
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/worker/Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=worker-candidate
+          cache-to: type=gha,mode=max,scope=worker-candidate
           build-args: |
+            TEAMS_MODULE_VERSION=
+            GRAPH_MODULE_VERSION=
             CACHE_BUST=${{ github.run_id }}
