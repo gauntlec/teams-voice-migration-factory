@@ -72,6 +72,7 @@ import { api, apiDownload, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { CallFlowDiagram } from '../components/CallFlowDiagram';
 import { Page } from '../components/Page';
+import { GroupAutocomplete } from '../components/GroupAutocomplete';
 import { UpnAutocomplete } from '../components/UpnAutocomplete';
 import {
   BulkEditDialog,
@@ -2319,11 +2320,11 @@ function CallableEntityEditor({
         </Field>
       )}
       {kind === 'shared_voicemail' && (
-        <Field label="M365 group Object ID">
-          <Input
+        <Field label="M365 group">
+          <GroupAutocomplete
+            tenantId={tenantId}
             value={value?.groupId ?? ''}
-            onChange={(_, d) => onChange({ kind: 'shared_voicemail', groupId: d.value })}
-            placeholder="00000000-0000-0000-0000-000000000000"
+            onChange={(v) => onChange({ kind: 'shared_voicemail', groupId: v })}
             style={{ minWidth: 260 }}
           />
         </Field>

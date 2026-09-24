@@ -671,7 +671,26 @@ export interface ConnectionsTable {
   started_at: Ts;
   expires_at: string | null;
   closed_at: string | null;
+  /** Optional second device-code sign-in, to Microsoft Graph (read-only Group.Read.All) - lets an engineer search M365 groups instead of typing a raw Object ID. Independent of `status` above; a Teams session can be `active` with `graph_status` still `none`. */
+  graph_status: ColumnType<
+    'none' | 'pending' | 'active' | 'failed',
+    'none' | 'pending' | 'active' | 'failed' | undefined,
+    'none' | 'pending' | 'active' | 'failed'
+  >;
+  graph_user_code: string | null;
+  graph_verification_uri: string | null;
+  graph_upn: string | null;
+  graph_expires_at: string | null;
   /* deliberately NO token columns - see docs/SECURITY.md */
+}
+
+/** This tenant's M365 groups, cached from a single full Graph sweep (`/groups`) on Graph sign-in - not a general Entra ID inventory, just enough (id/name/mail) to search for the Shared Voicemail groupId field instead of typing a raw GUID. */
+export interface TenantGroupsTable {
+  id: Generated<string>;
+  object_id: string;
+  display_name: string;
+  mail: string | null;
+  synced_at: Ts;
 }
 
 /* ------------- Discovery: live customer-tenant inventory (docs/DISCOVERY.md) ------------- */
@@ -915,6 +934,7 @@ export interface DB {
   build_call_queues: BuildCallQueuesTable;
   build_m365_groups: BuildM365GroupsTable;
   connections: ConnectionsTable;
+  tenant_groups: TenantGroupsTable;
   tenant_discovery_runs: TenantDiscoveryRunsTable;
   tenant_objects: TenantObjectsTable;
   tenant_object_versions: TenantObjectVersionsTable;

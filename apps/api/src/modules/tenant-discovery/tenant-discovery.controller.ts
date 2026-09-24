@@ -4,12 +4,14 @@ import {
   startConnectionSchema,
   tenantDiscoverySettingsSchema,
   tenantDiscoveryStartSchema,
+  tenantGroupsQuerySchema,
   tenantObjectsQuerySchema,
   tenantResourceAccountsImportSchema,
   tenantUserLookupSchema,
   tenantUsersImportSchema,
   type TenantDiscoverySettingsInput,
   type TenantDiscoveryStartInput,
+  type TenantGroupsQuery,
   type TenantObjectsQuery,
   type TenantResourceAccountsImportInput,
   type TenantUserLookupQuery,
@@ -58,6 +60,27 @@ export class TenantDiscoveryController {
     @CurrentUser() user: AuthedUser,
   ) {
     return this.svc.getConnection(t, id, user);
+  }
+
+  /** Add the optional Microsoft Graph sign-in (read-only, M365 group lookup) to this session. */
+  @Post('connections/:id/graph')
+  @RequirePermission('tenantdiscovery:run')
+  connectGraph(
+    @TenantCtx() t: TenantContext,
+    @Param('id') id: string,
+    @CurrentUser() user: AuthedUser,
+  ) {
+    return this.svc.connectGraph(t, id, user);
+  }
+
+  /** M365 group search (Shared Voicemail's groupId field) against the cache populated by the Graph sign-in. */
+  @Get('groups')
+  @RequirePermission('tenantdiscovery:read')
+  listGroups(
+    @TenantCtx() t: TenantContext,
+    @Query(new ZodBody(tenantGroupsQuerySchema)) q: TenantGroupsQuery,
+  ) {
+    return this.svc.listGroups(t, q);
   }
 
   /** Shared phone endpoints (Common Area Phones + phone-enabled resource accounts). */

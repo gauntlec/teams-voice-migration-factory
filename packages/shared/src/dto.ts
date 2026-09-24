@@ -799,6 +799,13 @@ export const tenantObjectsQuerySchema = z.object({
 });
 export type TenantObjectsQuery = z.infer<typeof tenantObjectsQuerySchema>;
 
+/** Query string for `GET .../tenant-discovery/groups` - M365 group search, drives GroupAutocomplete's Shared Voicemail groupId picker. */
+export const tenantGroupsQuerySchema = z.object({
+  q: z.string().trim().max(160).optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(8),
+});
+export type TenantGroupsQuery = z.infer<typeof tenantGroupsQuerySchema>;
+
 /** Exact-UPN lookup used by the Data Collection add-user autofill. */
 export const tenantUserLookupSchema = z.object({
   upn: z.string().trim().min(3).max(320),

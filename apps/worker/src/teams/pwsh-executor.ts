@@ -54,6 +54,10 @@ export class PwshTeamsExecutor implements TeamsExecutor {
   private disposed = false;
   lastUsedAt = Date.now();
 
+  private graphPrompt: { resolve: (p: DeviceCodePrompt) => void; reject: (e: Error) => void } | null = null;
+  private graphSignIn: Promise<{ upn: string }> | null = null;
+  private graphSignedIn = false;
+
   constructor(private readonly opts: { signInTimeoutMs?: number; commandTimeoutMs?: number } = {}) {}
 
   /**
@@ -63,6 +67,10 @@ export class PwshTeamsExecutor implements TeamsExecutor {
    */
   get alive(): boolean {
     return this.signedIn && !!this.child && !this.disposed;
+  }
+
+  get graphAlive(): boolean {
+    return this.graphSignedIn && !!this.child && !this.disposed;
   }
 
   /* ------------------------------ process ------------------------------ */
@@ -106,7 +114,10 @@ export class PwshTeamsExecutor implements TeamsExecutor {
       this.pending.clear();
       this.devicePrompt?.reject(err);
       this.devicePrompt = null;
+      this.graphPrompt?.reject(err);
+      this.graphPrompt = null;
       this.signedIn = false;
+      this.graphSignedIn = false;
       this.child = null;
     };
     child.on('error', (e) => fail(new Error(`could not start pwsh: ${e.message}`)));
@@ -129,14 +140,21 @@ export class PwshTeamsExecutor implements TeamsExecutor {
     if (this.buf) this.matchDevicePrompt(this.buf);
   }
 
-  /** The device-code prompt while Connect-MicrosoftTeams is blocking. */
+  /**
+   * The device-code prompt while Connect-MicrosoftTeams (or Connect-MgGraph)
+   * is blocking. Only one sign-in is ever in flight at a time - Graph always
+   * runs after Teams is already connected - so this is one shared slot: the
+   * Graph prompt takes priority when both are somehow set.
+   */
   private matchDevicePrompt(line: string): boolean {
-    if (!this.devicePrompt) return false;
+    const graph = !!this.graphPrompt;
+    const slot = this.graphPrompt ?? this.devicePrompt;
+    if (!slot) return false;
     const m = /open the page (\S+) and enter the code ([A-Z0-9-]{6,})/i.exec(line);
     if (!m) return false;
-    const p = this.devicePrompt;
-    this.devicePrompt = null;
-    p.resolve({
+    if (graph) this.graphPrompt = null;
+    else this.devicePrompt = null;
+    slot.resolve({
       userCode: m[2],
       verificationUri: m[1].replace(/[.,]$/, ''),
       expiresAt: new Date(Date.now() + 15 * 60_000),
@@ -243,6 +261,74 @@ try {
     return this.signIn;
   }
 
+  /* ------------------------- Microsoft Graph (groups) ------------------------- */
+
+  /**
+   * Second device-code sign-in, for Microsoft Graph, so Design & Build can
+   * search M365 groups by name for the Shared Voicemail `groupId` field.
+   * Uses the Microsoft Graph PowerShell first-party app and the delegated,
+   * read-only `Group.Read.All` scope; the token stays inside this process
+   * exactly like the Teams one. Requires `Connect-MicrosoftTeams` to have
+   * completed already (one shared prompt slot, see `matchDevicePrompt`).
+   */
+  async beginGraphDeviceCode(): Promise<DeviceCodePrompt> {
+    if (!this.signedIn) throw new Error('not connected');
+    this.ensureChild();
+    const prompt = new Promise<DeviceCodePrompt>((resolve, reject) => {
+      this.graphPrompt = { resolve, reject };
+    });
+    this.graphSignIn = this.exec(
+      `Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
+try {
+  Connect-MgGraph -UseDeviceAuthentication -NoWelcome -Scopes 'Group.Read.All' -ErrorAction Stop
+  $acct = (Get-MgContext).Account
+  Write-Output ('__GSIGNIN__' + (@{ upn = [string]$acct } | ConvertTo-Json -Compress))
+} catch { Write-Output ('__GSIGNINERR__' + $_.Exception.Message) }`,
+      this.opts.signInTimeoutMs ?? 16 * 60_000,
+    ).then((out) => {
+      const ok = out.split('\n').find((l) => l.startsWith('__GSIGNIN__'));
+      if (!ok) {
+        const err = out.split('\n').find((l) => l.startsWith('__GSIGNINERR__'));
+        throw new Error(err ? err.slice('__GSIGNINERR__'.length) : 'Graph sign-in did not complete');
+      }
+      const j = JSON.parse(ok.slice('__GSIGNIN__'.length)) as { upn: string | null };
+      this.graphSignedIn = true;
+      return { upn: j.upn ?? 'unknown' };
+    });
+    this.graphSignIn.catch((e) => this.graphPrompt?.reject(e as Error));
+    return prompt;
+  }
+
+  awaitGraphSignIn(): Promise<{ upn: string }> {
+    if (!this.graphSignIn) return Promise.reject(new Error('beginGraphDeviceCode() not called'));
+    return this.graphSignIn;
+  }
+
+  /** GET a Graph collection, following `@odata.nextLink`. Returns the merged `value` arrays. */
+  async graphList(path: string): Promise<unknown[]> {
+    if (!this.graphSignedIn) throw new Error('Graph not connected');
+    const clean = `/${String(path).replace(/^\/+/, '')}`;
+    const out = await this.exec(
+      `try {
+  $all = @(); $u = 'https://graph.microsoft.com/v1.0${clean}'
+  while ($u) {
+    $resp = Invoke-MgGraphRequest -Method GET -Uri $u -OutputType PSObject -ErrorAction Stop
+    if ($resp.value) { $all += $resp.value } else { $all += $resp }
+    $u = $resp.'@odata.nextLink'
+  }
+  Write-Output ('__JSON__' + (ConvertTo-Json -InputObject $all -Depth 6 -Compress))
+} catch { Write-Output ('__ERR__' + $_.Exception.Message) }`,
+    );
+    for (const line of out.split('\n')) {
+      if (line.startsWith('__JSON__')) {
+        const parsed = JSON.parse(line.slice('__JSON__'.length)) as unknown;
+        return parsed == null ? [] : Array.isArray(parsed) ? parsed : [parsed];
+      }
+      if (line.startsWith('__ERR__')) throw new Error(line.slice('__ERR__'.length));
+    }
+    return [];
+  }
+
   /**
    * Run a read cmdlet and return its records as JSON. `params` are rendered as
    * `-Name value`. `opts.select` narrows the object (big pulls stay small),
@@ -337,11 +423,12 @@ try {
     if (this.disposed) return;
     this.disposed = true;
     this.signedIn = false;
+    this.graphSignedIn = false;
     const child = this.child;
     this.child = null;
     if (child) {
       try {
-        child.stdin.write('Disconnect-MicrosoftTeams -ErrorAction SilentlyContinue\nexit\n');
+        child.stdin.write('Disconnect-MicrosoftTeams -ErrorAction SilentlyContinue\nDisconnect-MgGraph -ErrorAction SilentlyContinue\nexit\n');
       } catch {
         /* ignore */
       }

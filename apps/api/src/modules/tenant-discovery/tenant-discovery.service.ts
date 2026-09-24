@@ -105,6 +105,44 @@ export class TenantDiscoveryService {
   }
 
   /**
+   * Optional second sign-in on an already-active connection, to Microsoft
+   * Graph (`Group.Read.All`, read-only) - lets Design & Build search M365
+   * groups by name for the Shared Voicemail `groupId` field instead of an
+   * engineer typing a raw Object ID. Same ownership rule as `getConnection`;
+   * the primary Teams sign-in must already be `active`.
+   */
+  async connectGraph(t: TenantContext, id: string, user: AuthedUser) {
+    const conn = await this.getConnection(t, id, user);
+    if (conn.status !== 'active') {
+      throw new ForbiddenException('Connection is not active - sign in to the customer tenant first');
+    }
+    await this.s(t)
+      .updateTable('connections')
+      .set({
+        graph_status: 'pending',
+        graph_user_code: null,
+        graph_verification_uri: null,
+        graph_upn: null,
+        graph_expires_at: null,
+      })
+      .where('id', '=', id)
+      .execute();
+    await this.queue.add('graph.connect', {
+      kind: 'graph.connect',
+      tenantId: t.id,
+      schema: t.schema,
+      connectionId: id,
+      operatorUserId: user.id,
+    });
+    await this.audit.tenant(t.schema, 'tenant_discovery.graph_connect_started', {
+      actor: actorOf(user),
+      targetType: 'connection',
+      targetId: id,
+    });
+    return this.getConnection(t, id, user);
+  }
+
+  /**
    * SUPER_ADMIN: every recent session for this customer, with its owner.
    * Everyone else: only their own.
    */
@@ -692,6 +730,25 @@ export class TenantDiscoveryService {
       .offset((q.page - 1) * q.limit)
       .execute();
     return { items, total: Number(n), page: q.page, limit: q.limit };
+  }
+
+  /* ================================ groups ================================ */
+
+  /**
+   * Search this tenant's cached M365 groups (`tenant_groups`, populated once
+   * per Graph sign-in - see `connectGraph`/the worker's `handleGraphConnect`).
+   * A normal fast DB read, not a live round trip - drives GroupAutocomplete.
+   */
+  async listGroups(t: TenantContext, q: { q?: string; limit: number }): Promise<Paginated<unknown>> {
+    let base = this.s(t).selectFrom('tenant_groups').selectAll();
+    if (q.q) {
+      const like = `%${q.q}%`;
+      base = base.where((eb) =>
+        eb.or([eb('display_name', 'ilike', like), eb('mail', 'ilike', like), eb('object_id', 'ilike', like)]),
+      );
+    }
+    const items = await base.orderBy('display_name').limit(q.limit).execute();
+    return { items, total: items.length, page: 1, limit: q.limit };
   }
 
   /** Exact (case-insensitive) UPN match against the latest snapshot - drives autofill. */

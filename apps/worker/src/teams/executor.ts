@@ -61,6 +61,21 @@ export interface TeamsExecutor {
   readonly alive: boolean;
   /** epoch ms of the last command - lets main.ts expire idle sessions. */
   lastUsedAt: number;
+
+  /**
+   * Optional second device-code sign-in, to Microsoft Graph
+   * (`Group.Read.All`, read-only) - lets Design & Build search M365 groups
+   * by name for the Shared Voicemail `groupId` field instead of an engineer
+   * typing a raw Object ID. Runs in the same process as the Teams session;
+   * still no stored tokens. Requires `beginDeviceCode`/`awaitSignIn` to have
+   * completed already.
+   */
+  beginGraphDeviceCode(): Promise<DeviceCodePrompt>;
+  awaitGraphSignIn(): Promise<{ upn: string }>;
+  /** GET a Graph collection, following `@odata.nextLink`; returns the merged `value`. */
+  graphList(path: string): Promise<unknown[]>;
+  /** True once the Graph sign-in is complete and usable. */
+  readonly graphAlive: boolean;
 }
 
 /* ------------------------------ simulated ------------------------------ */
@@ -186,12 +201,45 @@ const SIM_DATA: Record<string, unknown[]> = {
   'Get-CsOnlineSchedule': [{ Id: 'sch-0001', Name: 'Business Hours', Type: 'WeeklyRecurrence' }],
 };
 
+/** Fake M365 groups for the simulated Graph sign-in (Group.Read.All). */
+const SIM_GROUPS = [
+  { id: 'b2b2b2b2-0000-0000-0000-000000000001', displayName: 'Sales Voicemail', mail: 'sales-vm@customer.example' },
+  { id: 'b2b2b2b2-0000-0000-0000-000000000002', displayName: 'Support Voicemail', mail: 'support-vm@customer.example' },
+  { id: 'b2b2b2b2-0000-0000-0000-000000000003', displayName: 'Facilities', mail: 'facilities@customer.example' },
+];
+
 export class SimulatedTeamsExecutor implements TeamsExecutor {
   private signedIn = false;
+  private graphSignedIn = false;
   lastUsedAt = Date.now();
 
   get alive(): boolean {
     return this.signedIn;
+  }
+
+  get graphAlive(): boolean {
+    return this.graphSignedIn;
+  }
+
+  async beginGraphDeviceCode(): Promise<DeviceCodePrompt> {
+    if (!this.signedIn) throw new Error('not connected');
+    return {
+      userCode: 'SIMULATED-GRAPH-CODE',
+      verificationUri: 'https://microsoft.com/devicelogin',
+      expiresAt: new Date(Date.now() + 15 * 60_000),
+    };
+  }
+
+  async awaitGraphSignIn(): Promise<{ upn: string }> {
+    await new Promise((r) => setTimeout(r, 1500));
+    this.graphSignedIn = true;
+    return { upn: 'engineer@customer.example' };
+  }
+
+  async graphList(path: string): Promise<unknown[]> {
+    if (!this.graphSignedIn) throw new Error('Graph not connected');
+    if (path.replace(/^\/+/, '').startsWith('groups')) return SIM_GROUPS;
+    return [];
   }
 
   async beginDeviceCode(_tenantDomain: string | null = null): Promise<DeviceCodePrompt> {
@@ -242,5 +290,6 @@ export class SimulatedTeamsExecutor implements TeamsExecutor {
 
   async dispose(): Promise<void> {
     this.signedIn = false;
+    this.graphSignedIn = false;
   }
 }

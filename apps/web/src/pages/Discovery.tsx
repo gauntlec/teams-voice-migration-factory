@@ -340,6 +340,11 @@ interface Connection {
   upn: string | null;
   expires_at: string | null;
   started_at: string;
+  /** Optional second sign-in, to Microsoft Graph (read-only Group.Read.All) - for M365 group lookup (Shared Voicemail's groupId field). */
+  graph_status: 'none' | 'pending' | 'active' | 'failed';
+  graph_user_code: string | null;
+  graph_verification_uri: string | null;
+  graph_upn: string | null;
 }
 
 /** Steps that carry more than one object type - only these get an expander. */
@@ -513,7 +518,8 @@ function ConnectCard({
     queryKey: ['tdisc', 'conn', base, focusedId],
     enabled: !!focusedId,
     queryFn: () => api<Connection>(`${base}/connections/${focusedId}`),
-    refetchInterval: (q) => (q.state.data?.status === 'pending' ? 3000 : false),
+    refetchInterval: (q) =>
+      q.state.data?.status === 'pending' || q.state.data?.graph_status === 'pending' ? 3000 : false,
   });
 
   const start = useMutation({
@@ -525,6 +531,16 @@ function ConnectCard({
       onChanged();
     },
     onError: (e) => setErr(e instanceof ApiError ? e.message : 'Could not start the connection'),
+  });
+
+  const graphConnect = useMutation({
+    mutationFn: () =>
+      api<Connection>(`${base}/connections/${focusedId}/graph`, { method: 'POST', body: JSON.stringify({}) }),
+    onSuccess: () => {
+      setErr(null);
+      onChanged();
+    },
+    onError: (e) => setErr(e instanceof ApiError ? e.message : 'Could not start the group-lookup sign-in'),
   });
 
   const c = conn.data;
@@ -703,6 +719,65 @@ function ConnectCard({
               <b>{focusedMeta?.owner?.name ?? focusedMeta?.owner?.email ?? 'another engineer'}</b>’s
               session. This is recorded in the audit log.
             </Text>
+          )}
+
+          {/* Optional 2nd sign-in, to Microsoft Graph (read-only Group.Read.All) -
+              lets Design & Build search M365 groups instead of typing a raw
+              Object ID into the Shared Voicemail groupId field. */}
+          {!focusedForeign && (
+            <div className={s.sessionPanel} style={{ background: 'transparent' }}>
+              {c.graph_status === 'active' ? (
+                <div className={s.row}>
+                  <Badge appearance="tint" color="success">
+                    Group lookup
+                  </Badge>
+                  <Text size={200}>
+                    connected{c.graph_upn ? ` as ${c.graph_upn}` : ''} — M365 groups can now be searched
+                    by name when setting a Shared Voicemail target
+                  </Text>
+                </div>
+              ) : c.graph_status === 'pending' ? (
+                c.graph_user_code ? (
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    <Text size={200}>
+                      Second sign-in for group lookup — open{' '}
+                      <Link
+                        href={c.graph_verification_uri ?? 'https://microsoft.com/devicelogin'}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {c.graph_verification_uri ?? 'https://microsoft.com/devicelogin'}
+                      </Link>{' '}
+                      and enter:
+                    </Text>
+                    <div className={s.row}>
+                      <span className={s.code}>{c.graph_user_code}</span>
+                      <CopyButton text={c.graph_user_code} label="Copy code" />
+                      <Spinner size="tiny" label="Waiting…" />
+                    </div>
+                  </div>
+                ) : (
+                  <Spinner size="tiny" label="Requesting a device code…" />
+                )
+              ) : (
+                <div className={s.row}>
+                  <Text size={200} className={s.muted}>
+                    {c.graph_status === 'failed'
+                      ? 'Group-lookup sign-in failed — a Global Admin may need to approve Microsoft Graph PowerShell. '
+                      : 'M365 groups (Shared Voicemail targets) are typed by Object ID until this is connected. '}
+                  </Text>
+                  <Button
+                    size="small"
+                    appearance="subtle"
+                    icon={<PlugConnectedRegular />}
+                    disabled={!canRun || graphConnect.isPending}
+                    onClick={() => graphConnect.mutate()}
+                  >
+                    {c.graph_status === 'failed' ? 'Retry group lookup' : 'Add group lookup'}
+                  </Button>
+                </div>
+              )}
+            </div>
           )}
 
           {scopeOpen && (

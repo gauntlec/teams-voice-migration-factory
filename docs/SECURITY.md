@@ -120,10 +120,20 @@
 - Discovery is read-only (`Get-Cs*` only) and stores configuration, never
   credentials. What it stores per customer is listed in `docs/DISCOVERY.md`.
 - `TEAMS_EXECUTOR=simulated` (dev/demo) never talks to Microsoft at all.
-- **No Graph.** Discovery uses only the MicrosoftTeams PowerShell module over the
-  engineer's one device-code sign-in. (A short-lived second Graph sign-in for the
-  Teams device inventory was added and reverted — the Graph device API was
-  retired by Microsoft with no replacement.)
+- **Optional second sign-in, to Microsoft Graph.** Discovery's primary sign-in
+  is MicrosoftTeams-only; an engineer can *additionally* connect the same
+  session to Microsoft Graph, read-only (`Group.Read.All`), from the Discovery
+  page's "Connect to customer tenant" card, to search M365 groups by name for
+  the Shared Voicemail `groupId` field instead of typing a raw Object ID. Same
+  governance as the Teams sign-in: Microsoft's first-party Graph PowerShell
+  app, no Voxshift app registration, token lives only in the same worker
+  process (`connections.graph_*` columns carry no tokens, same rule as
+  above). A one-time full group list (`/groups`) is cached in `tenant_groups`
+  (id/name/mail only) so search is a fast DB read afterward, not a live call
+  per keystroke. (An earlier, unrelated use of this same mechanism - a
+  short-lived second Graph sign-in for the Teams device inventory - was added
+  and reverted, only because that specific Graph endpoint was retired by
+  Microsoft; the sign-in mechanism itself is unchanged from that attempt.)
 - **Session ownership.** A `connections` row is bound to the engineer who
   established it (`started_by`). Only that engineer, or a `SUPER_ADMIN`, may
   *use* it — enforced in `TenantDiscoveryService.startRun` and

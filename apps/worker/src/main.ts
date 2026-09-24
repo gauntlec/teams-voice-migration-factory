@@ -309,6 +309,73 @@ async function handleConnectionStart(job: Job) {
   }
 }
 
+/**
+ * Optional second sign-in on an already-active connection, to Microsoft
+ * Graph (`Group.Read.All`, read-only) - lets Design & Build search M365
+ * groups by name for the Shared Voicemail `groupId` field. Reuses the same
+ * live `TeamsExecutor` already sitting in `executors` for this connection
+ * (no separate map, no separate process) - once signed in, pulls the
+ * tenant's entire group list once and caches it in `tenant_groups`, so
+ * searching afterward is a normal DB read, not a live round trip per
+ * keystroke.
+ */
+async function handleGraphConnect(job: Job) {
+  const { schema, connectionId } = job.data as { schema: string; connectionId: string };
+  const scoped = tenantDb(db, schema);
+  const exec = executors.get(connectionId);
+  if (!exec) {
+    await scoped
+      .updateTable('connections')
+      .set({ graph_status: 'failed' })
+      .where('id', '=', connectionId)
+      .execute()
+      .catch(() => undefined);
+    throw new Error('the tenant connection is no longer available on the worker - sign in again');
+  }
+  try {
+    const prompt = await exec.beginGraphDeviceCode();
+    await scoped
+      .updateTable('connections')
+      .set({
+        graph_status: 'pending',
+        graph_user_code: prompt.userCode,
+        graph_verification_uri: prompt.verificationUri,
+        graph_expires_at: prompt.expiresAt.toISOString(),
+      })
+      .where('id', '=', connectionId)
+      .execute();
+
+    const signIn = await exec.awaitGraphSignIn();
+    const groups = await exec.graphList('/groups?$select=id,displayName,mail');
+    for (const g of groups) {
+      const group = g as { id?: string; displayName?: string; mail?: string | null };
+      if (!group.id || !group.displayName) continue;
+      const values = { object_id: group.id, display_name: group.displayName, mail: group.mail ?? null, synced_at: new Date().toISOString() };
+      await scoped
+        .insertInto('tenant_groups')
+        .values(values)
+        .onConflict((oc) => oc.column('object_id').doUpdateSet(values))
+        .execute();
+    }
+
+    await scoped
+      .updateTable('connections')
+      .set({ graph_status: 'active', graph_upn: signIn.upn, graph_user_code: null })
+      .where('id', '=', connectionId)
+      .execute();
+    // eslint-disable-next-line no-console
+    console.log(`[connection ${connectionId}] graph active as ${signIn.upn} (${groups.length} group(s) synced)`);
+  } catch (err) {
+    await scoped
+      .updateTable('connections')
+      .set({ graph_status: 'failed', graph_user_code: null })
+      .where('id', '=', connectionId)
+      .execute()
+      .catch(() => undefined);
+    throw err;
+  }
+}
+
 async function handleDeploymentRun(job: Job) {
   const { schema, deploymentId, connectionId, mode, scope, operatorUserId, tenantId } = job.data as {
     schema: string;
@@ -938,6 +1005,8 @@ const worker = new Worker(
     switch (job.name) {
       case 'connection.start':
         return handleConnectionStart(job);
+      case 'graph.connect':
+        return handleGraphConnect(job);
       case 'deployment.run':
         return handleDeploymentRun(job);
       case 'tenant_discovery.run':
