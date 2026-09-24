@@ -109,16 +109,20 @@ function CallFlowEditor({
   value,
   onChange,
   allowVoicemail = true,
+  base,
   tenantId,
   siteId,
   teamChoices,
+  onFlowCreated,
 }: {
   value: WizardCallFlow;
   onChange: (v: WizardCallFlow) => void;
   allowVoicemail?: boolean;
+  base: string;
   tenantId: string;
   siteId: string;
   teamChoices: Choice[];
+  onFlowCreated: () => void;
 }) {
   const options = value.options ?? [];
   const updateOption = (i: number, next: WizardMenuOption) => onChange({ ...value, options: options.map((o, idx) => (idx === i ? next : o)) });
@@ -159,9 +163,11 @@ function CallFlowEditor({
                 <TargetPicker
                   value={opt.target}
                   onChange={(t) => updateOption(i, { ...opt, target: t ?? { kind: 'person', label: '' } })}
+                  base={base}
                   tenantId={tenantId}
                   siteId={siteId}
                   teamChoices={teamChoices}
+                  onFlowCreated={onFlowCreated}
                 />
                 <Button icon={<DeleteRegular />} appearance="subtle" aria-label="Remove option" onClick={() => removeOption(i)} />
               </div>
@@ -176,10 +182,12 @@ function CallFlowEditor({
         <TargetPicker
           value={value.target}
           onChange={(t) => onChange({ ...value, target: t })}
-          kinds={['person', 'team', 'voicemail', 'external', 'operator']}
+          kinds={['person', 'team', 'voicemail', 'external', 'operator', 'call_queue']}
+          base={base}
           tenantId={tenantId}
           siteId={siteId}
           teamChoices={teamChoices}
+          onFlowCreated={onFlowCreated}
         />
       )}
     </div>
@@ -201,6 +209,8 @@ const targetSummary = (t: WizardTarget | undefined): string => {
       return `outside number "${t.label || '(none entered)'}"`;
     case 'operator':
       return 'the operator';
+    case 'call_queue':
+      return t.flowId ? `call queue "${t.label}"` : 'a call queue (setup not finished)';
   }
 };
 
@@ -357,9 +367,11 @@ export function AutoAttendantWizard({
         <CallFlowEditor
           value={answers.businessFlow}
           onChange={(v) => setAnswers((a) => ({ ...a, businessFlow: v }))}
+          base={base}
           tenantId={tenantId}
           siteId={siteId}
           teamChoices={teamChoices}
+          onFlowCreated={onCreated}
         />
       ),
     },
@@ -372,9 +384,11 @@ export function AutoAttendantWizard({
               <CallFlowEditor
                 value={answers.afterHoursFlow ?? { mode: 'voicemail' }}
                 onChange={(v) => setAnswers((a) => ({ ...a, afterHoursFlow: v }))}
+                base={base}
                 tenantId={tenantId}
                 siteId={siteId}
                 teamChoices={teamChoices}
+                onFlowCreated={onCreated}
               />
             ),
           },
@@ -457,9 +471,11 @@ export function AutoAttendantWizard({
                   <CallFlowEditor
                     value={h.flow}
                     onChange={(v) => setAnswers((a) => ({ ...a, holidays: (a.holidays ?? []).map((x, idx) => (idx === i ? { ...x, flow: v } : x)) }))}
+                    base={base}
                     tenantId={tenantId}
                     siteId={siteId}
                     teamChoices={teamChoices}
+                    onFlowCreated={onCreated}
                   />
                 </Card>
               ))}

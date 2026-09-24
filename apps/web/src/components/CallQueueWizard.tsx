@@ -144,7 +144,8 @@ export function CallQueueWizard({
   tenantId: string;
   siteId: string;
   resourceAccountChoices: Choice[];
-  onCreated: () => void;
+  /** Called after a successful save. Receives the saved discovery_flows row when the caller needs it (e.g. TargetPicker's nested "Set up a new call queue" flow linking the new row as a target) - existing zero-arg callers are unaffected. */
+  onCreated: (row?: { id: string; name: string }) => void;
   /** Editing an already-saved wizard capture instead of creating a new one - PATCHes the existing flow row and shows "Save changes" instead of "Create". Render with `key={editing.id}` so each row gets its own fresh state. */
   editing?: CallQueueWizardEditing;
 }) {
@@ -163,16 +164,18 @@ export function CallQueueWizard({
         wizard_version: 1,
         resource_account_id: resourceAccountId || null,
       });
-      return editing ? api(`${base}/flows/${editing.id}`, { method: 'PATCH', body }) : api(`${base}/flows`, { method: 'POST', body });
+      return editing
+        ? api<{ id: string; name: string }>(`${base}/flows/${editing.id}`, { method: 'PATCH', body })
+        : api<{ id: string; name: string }>(`${base}/flows`, { method: 'POST', body });
     },
-    onSuccess: () => {
+    onSuccess: (row) => {
       onOpenChange(false);
       if (!editing) {
         setName('');
         setAnswers(DEFAULT_ANSWERS);
         setResourceAccountId('');
       }
-      onCreated();
+      onCreated(row);
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Save failed'),
   });

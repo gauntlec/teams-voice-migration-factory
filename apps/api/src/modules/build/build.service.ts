@@ -1382,7 +1382,24 @@ export class BuildService {
       return undefined;
     };
 
-    const resolvers = { resolvePerson, resolveTeam };
+    // A target set via "Set up a new call queue" (TargetPicker.tsx) carries
+    // the discovery_flows id it was created as directly, rather than a name
+    // to match - a hard link, immune to renames, that only resolves once
+    // that capture has itself been imported to Design & Build.
+    const siteFlows = await s
+      .selectFrom('discovery_flows')
+      .select(['id', 'kind', 'build_call_queue_id', 'build_auto_attendant_id'])
+      .where('site_id', '=', siteId)
+      .execute();
+    const siteFlowsById = new Map(siteFlows.map((f) => [f.id, f]));
+    const resolveFlow = (flowId: string): { kind: 'call_queue' | 'auto_attendant'; buildId: string } | undefined => {
+      const f = siteFlowsById.get(flowId);
+      if (f?.kind === 'call_queue' && f.build_call_queue_id) return { kind: 'call_queue', buildId: f.build_call_queue_id };
+      if (f?.kind === 'auto_attendant' && f.build_auto_attendant_id) return { kind: 'auto_attendant', buildId: f.build_auto_attendant_id };
+      return undefined;
+    };
+
+    const resolvers = { resolvePerson, resolveTeam, resolveFlow };
 
     // A second "Import" click after the wizard capture has been edited
     // (see FlowImportButton's "Update Design & Build" state) re-syncs the

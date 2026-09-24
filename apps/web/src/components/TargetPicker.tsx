@@ -1,5 +1,7 @@
-import { Combobox, Dropdown, Field, Input, Option, Textarea } from '@fluentui/react-components';
+import { useState } from 'react';
+import { Combobox, Dropdown, Field, Input, Option, Text, Textarea } from '@fluentui/react-components';
 import type { WizardTarget } from '@tvmf/shared';
+import { CallQueueWizard } from './CallQueueWizard';
 import { UpnAutocomplete } from './UpnAutocomplete';
 import type { Choice } from './records';
 
@@ -10,9 +12,10 @@ const TARGET_KIND_LABELS: Record<WizardTarget['kind'], string> = {
   voicemail: 'Voicemail',
   external: 'An outside phone number',
   operator: 'Talk to the operator',
+  call_queue: 'Set up a new call queue',
 };
 
-const DEFAULT_KINDS: WizardTarget['kind'][] = ['person', 'team', 'message', 'voicemail', 'external', 'operator'];
+const DEFAULT_KINDS: WizardTarget['kind'][] = ['person', 'team', 'message', 'voicemail', 'external', 'operator', 'call_queue'];
 
 /**
  * "Where should this call go?" - the AA/CQ creation wizard's one routing
@@ -28,29 +31,49 @@ const DEFAULT_KINDS: WizardTarget['kind'][] = ['person', 'team', 'message', 'voi
  * that isn't synced yet can still be typed and carried through - see
  * wizard-convert.ts's own resolvePerson/resolveTeam, which the import step
  * matches these same labels against.
+ *
+ * "Set up a new call queue" is different: it doesn't accept typed text at
+ * all. Picking it opens the Call Queue wizard nested on top of this one;
+ * completing it creates a real discovery_flows row and links this target to
+ * it by id (`flowId`), which wizard-convert.ts's resolveFlow resolves
+ * directly - no name-matching involved. Cancelling the nested wizard
+ * reverts the target to whatever it was before, so a destination is never
+ * left half-set. Only offered when `base`/`tenantId`/`siteId` are all
+ * available, since - unlike every other kind - it has no freeform fallback.
  */
 export function TargetPicker({
   value,
   onChange,
   kinds = DEFAULT_KINDS,
   allowNone,
+  base,
   tenantId,
   siteId,
   teamChoices,
+  onFlowCreated,
 }: {
   value: WizardTarget | undefined;
   onChange: (v: WizardTarget | undefined) => void;
   kinds?: WizardTarget['kind'][];
   allowNone?: boolean;
+  /** Tenant-scoped Data Collection API base (e.g. `/t/:tenantId/discovery`) - needed only for the "Set up a new call queue" kind's nested wizard. */
+  base?: string;
   /** Enables live-matching against synced tenant users for kind 'person'. */
   tenantId?: string;
   /** Also suggests this site's own Data Collection Users tab entries, not just the live tenant sync. */
   siteId?: string;
   /** This site's existing Call Queue/Auto Attendant names, suggested for kind 'team'. */
   teamChoices?: Choice[];
+  /** Called after the nested "Set up a new call queue" wizard creates a row, so the caller can refresh its own Call flows list the same way the top-level wizard tiles already do. */
+  onFlowCreated?: () => void;
 }) {
   const kind = value?.kind ?? '';
   const needsLabel = kind === 'person' || kind === 'team' || kind === 'message' || kind === 'external';
+  const canCreateCallQueue = !!(base && tenantId && siteId);
+  const offeredKinds = kinds.filter((k) => k !== 'call_queue' || canCreateCallQueue);
+
+  const [nestedOpen, setNestedOpen] = useState(false);
+  const [prevValue, setPrevValue] = useState<WizardTarget | undefined>(undefined);
 
   return (
     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end' }}>
@@ -60,19 +83,29 @@ export function TargetPicker({
           selectedOptions={kind ? [kind] : ['']}
           onOptionSelect={(_, d) => {
             const k = (d.optionValue || '') as WizardTarget['kind'] | '';
+            if (k === 'call_queue') {
+              setPrevValue(value);
+              onChange({ kind: 'call_queue' });
+              setNestedOpen(true);
+              return;
+            }
             onChange(k ? { kind: k, label: '' } : undefined);
           }}
           style={{ minWidth: 220 }}
         >
           {allowNone && <Option value="">— none —</Option>}
-          {kinds.map((k) => (
+          {offeredKinds.map((k) => (
             <Option key={k} value={k}>
               {TARGET_KIND_LABELS[k]}
             </Option>
           ))}
         </Dropdown>
       </Field>
-      {kind === 'message' ? (
+      {kind === 'call_queue' ? (
+        <Field label="Call queue">
+          <Text size={200}>{value?.flowId ? `"${value.label}" (created)` : 'Setting up…'}</Text>
+        </Field>
+      ) : kind === 'message' ? (
         <Field label="What should we say?">
           <Textarea
             value={value?.label ?? ''}
@@ -116,6 +149,25 @@ export function TargetPicker({
           />
         </Field>
       ) : null}
+      {canCreateCallQueue && (
+        <CallQueueWizard
+          open={nestedOpen}
+          onOpenChange={(o) => {
+            setNestedOpen(o);
+            if (!o) onChange(prevValue);
+          }}
+          base={base!}
+          tenantId={tenantId!}
+          siteId={siteId!}
+          resourceAccountChoices={[]}
+          onCreated={(row) => {
+            if (row) {
+              onChange({ kind: 'call_queue', label: row.name, flowId: row.id });
+              onFlowCreated?.();
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -24,8 +24,10 @@ export interface WizardResolvers {
   resolvePerson: (label: string) => string | undefined;
   /** Exact match against this site's existing build_call_queues/build_auto_attendants (by name) - returns its kind + id, or undefined if nothing matches. */
   resolveTeam: (label: string) => { kind: 'call_queue' | 'auto_attendant'; buildId: string } | undefined;
+  /** Resolves a specific Call flows capture (set via "Set up a new call queue", not typed) to its already-imported build row - undefined if that capture hasn't been imported yet. */
+  resolveFlow: (flowId: string) => { kind: 'call_queue' | 'auto_attendant'; buildId: string } | undefined;
 }
-const NO_RESOLVERS: WizardResolvers = { resolvePerson: () => undefined, resolveTeam: () => undefined };
+const NO_RESOLVERS: WizardResolvers = { resolvePerson: () => undefined, resolveTeam: () => undefined, resolveFlow: () => undefined };
 
 const DTMF_BY_DIGIT: Record<string, AutoAttendantMenuOption['dtmf']> = {
   '0': 'Tone0',
@@ -85,6 +87,14 @@ function convertTarget(t: WizardTarget | undefined, resolvers: WizardResolvers, 
     case 'operator':
       // Handled by the caller (menu options: action becomes TransferCallToOperator with no target object). Meaningless at the AA's own -Operator field.
       return undefined;
+    case 'call_queue': {
+      const match = t.flowId ? resolvers.resolveFlow(t.flowId) : undefined;
+      if (match) return { kind: match.kind, buildId: match.buildId };
+      warnings.push(
+        `${where}: routes to a call queue${t.label ? ` ("${t.label}")` : ''} created via the wizard, which hasn't been imported to Design & Build yet - import it, then re-import this Auto Attendant to link it.`,
+      );
+      return { kind: 'call_queue' };
+    }
   }
 }
 

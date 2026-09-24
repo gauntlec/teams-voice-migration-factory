@@ -24,9 +24,11 @@ const str = (max: number) => z.string().trim().max(max);
 /** "Where should this call go?" - the wizard's one routing control, plain-language kinds mapped onto AutoAttendantCallableEntity/CallQueueActionSettings by wizard-convert.ts. */
 export const wizardTargetSchema = z
   .object({
-    kind: z.enum(['person', 'team', 'message', 'voicemail', 'external', 'operator']),
-    /** Free text: a person's name/email, a department/queue name, a message to play, or an outside phone number - whichever `kind` calls for. Unused for 'voicemail'/'operator'. */
+    kind: z.enum(['person', 'team', 'message', 'voicemail', 'external', 'operator', 'call_queue']),
+    /** Free text: a person's name/email, a department/queue name, a message to play, or an outside phone number - whichever `kind` calls for. Unused for 'voicemail'/'operator'. For 'call_queue' this is just the created queue's name for display - `flowId` is what actually resolves it. */
     label: str(200).optional(),
+    /** kind === 'call_queue' only - the discovery_flows row this points at, always set once the "Set up a new call queue" nested wizard flow completes (see TargetPicker.tsx). */
+    flowId: z.string().uuid().optional(),
   })
   .strict();
 export type WizardTarget = z.infer<typeof wizardTargetSchema>;
