@@ -83,7 +83,7 @@ function ActionAnswerEditor({
       <Dropdown
         value={labels[value.action]}
         selectedOptions={[value.action]}
-        onOptionSelect={(_, d) => onChange({ ...value, action: d.optionValue ?? value.action })}
+        onOptionSelect={(_, d) => onChange({ action: d.optionValue ?? value.action, forwardTo: undefined })}
         style={{ minWidth: 260 }}
       >
         {actions.map((a) => (
@@ -101,6 +101,23 @@ function ActionAnswerEditor({
             onChange={(v) => onChange({ ...value, forwardTo: v })}
             style={{ minWidth: 220 }}
           />
+        </Field>
+      )}
+      {value.action === 'Voicemail' && (
+        <Field label="Whose voicemail should take the message?">
+          <UpnAutocomplete
+            tenantId={tenantId}
+            siteId={siteId}
+            value={value.forwardTo ?? ''}
+            onChange={(v) => onChange({ ...value, forwardTo: v })}
+            placeholder="jane.doe@contoso.com"
+            style={{ minWidth: 220 }}
+          />
+        </Field>
+      )}
+      {value.action === 'SharedVoicemail' && (
+        <Field label="Which shared mailbox or Microsoft 365 group?" hint="Your engineer will link the exact group.">
+          <Input value={value.forwardTo ?? ''} onChange={(_, d) => onChange({ ...value, forwardTo: d.value })} placeholder="Support team" style={{ minWidth: 220 }} />
         </Field>
       )}
     </div>

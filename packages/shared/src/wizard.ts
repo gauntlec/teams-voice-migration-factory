@@ -104,7 +104,7 @@ const callQueueActionAnswerSchema = (actions: readonly [string, ...string[]]) =>
   z
     .object({
       action: z.enum(actions),
-      /** action === 'Forward' only - who/where to send the call, plain text, resolved later. */
+      /** Plain text, resolved at import: Forward = a person or phone number; Voicemail = whose personal voicemail; SharedVoicemail = the Microsoft 365 group/shared mailbox name. */
       forwardTo: str(200).optional(),
     })
     .strict();

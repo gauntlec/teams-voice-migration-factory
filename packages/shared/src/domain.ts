@@ -476,13 +476,14 @@ export const GREETING_TYPES = ['None', 'Text', 'AudioFile'] as const;
 export const AA_CALLABLE_ENTITY_KINDS = ['auto_attendant', 'call_queue', 'user', 'external', 'voicemail', 'shared_voicemail'] as const;
 
 /**
- * New-CsAutoAttendantMenuOption -Action. Microsoft's own example scripts use
- * both "Disconnect" and "DisconnectCall" inconsistently for the same
- * action - DisconnectCall appears in 3 of 4 published examples, used here;
- * re-confirm against Get-CsAutoAttendantMenuOption's own reference page
- * before relying on this for a live deployment.
+ * New-CsAutoAttendantMenuOption -Action (Microsoft Learn). TransferCallToOperator
+ * takes no -CallTarget (it uses the AA's own -Operator); Announcement needs a
+ * -Prompt and returns the caller to the menu. Live Get-CsAutoAttendant data
+ * stores the module's ActionType enum: TransferCallToOperator=0,
+ * DisconnectCall=1, TransferCallToTarget=2, Announcement=3 (read from
+ * MicrosoftTeams 8.0.0's own assembly) - see parseLiveMenuOption.
  */
-export const AA_MENU_OPTION_ACTIONS = ['TransferCallToTarget', 'TransferCallToOperator', 'DisconnectCall'] as const;
+export const AA_MENU_OPTION_ACTIONS = ['TransferCallToTarget', 'TransferCallToOperator', 'Announcement', 'DisconnectCall'] as const;
 
 /** New-CsAutoAttendantMenuOption -DtmfResponse. 'Automatic' is Teams' sentinel for "no key pressed"/the catch-all option (DtmfResponse:100 in the raw live data). */
 export const AA_DTMF_RESPONSES = ['Tone0', 'Tone1', 'Tone2', 'Tone3', 'Tone4', 'Tone5', 'Tone6', 'Tone7', 'Tone8', 'Tone9', 'Automatic'] as const;

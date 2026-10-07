@@ -761,12 +761,47 @@ export function collectCallQueueTargetUpns(
   rows: Pick<BuildCallQueueRow, 'overflow' | 'timeout' | 'no_agent_action'>[],
 ): string[] {
   const out: string[] = [];
+  const add = (s: CallQueueActionSettings | null | undefined) => {
+    if ((s?.action === 'Forward' || s?.action === 'Voicemail') && s.target) out.push(s.target);
+  };
   for (const row of rows) {
-    if (row.overflow?.action === 'Forward' && row.overflow.target) out.push(row.overflow.target);
-    if (row.timeout?.action === 'Forward' && row.timeout.target) out.push(row.timeout.target);
-    if (row.no_agent_action?.action === 'Forward' && row.no_agent_action.target) out.push(row.no_agent_action.target);
+    add(row.overflow);
+    add(row.timeout);
+    add(row.no_agent_action);
   }
   return out;
+}
+
+/**
+ * Set-CsCallQueue's …ActionTarget for one Overflow/Timeout/NoAgent action,
+ * per Microsoft Learn: Forward = a person/voice-app GUID or a 'tel:' number;
+ * Voicemail ("Voicemail (personal)") = the person whose mailbox receives it;
+ * SharedVoicemail = an M365 group/DL GUID. Every other action takes no
+ * target, so none is sent even if a stale one is still stored. Undefined =
+ * no usable target (callQueueRowWarnings explains which).
+ */
+function resolveCallQueueActionTarget(settings: CallQueueActionSettings | null | undefined, userObjectIds: Map<string, string>): string | undefined {
+  const target = settings?.target?.trim();
+  if (!target) return undefined;
+  switch (settings?.action) {
+    case 'Forward':
+      return userObjectIds.get(target.toLowerCase()) ?? normalizePstnTarget(target);
+    case 'Voicemail':
+      return userObjectIds.get(target.toLowerCase()) ?? (GUID_RE.test(target) ? target : undefined);
+    case 'SharedVoicemail':
+      return GUID_RE.test(target) ? target : undefined;
+    default:
+      return undefined;
+  }
+}
+
+/** Teams rounds -TimeoutThreshold to the nearest 15 seconds (Microsoft Learn: 47 -> 45); sending the rounded value keeps the live diff from seeing 47 vs 45 as a change forever. */
+function roundTimeoutThreshold(t: number | undefined): number | undefined {
+  return t == null ? undefined : Math.min(2700, Math.max(0, Math.round(t / 15) * 15));
+}
+
+function sameTarget(a: string | undefined, b: string | undefined): boolean {
+  return (a ?? '').toLowerCase() === (b ?? '').toLowerCase();
 }
 
 /**
@@ -805,20 +840,30 @@ export function callQueueRowWarnings(
   if (needsLanguage && !row.language_id) {
     warnings.push('A SharedVoicemail action is configured but no language is set, so this queue will fail to deploy until one is chosen.');
   }
-  // A Forward target that isn't a raw number/GUID must resolve as a live
-  // UPN (see collectCallQueueTargetUpns/planCallQueueRow) - otherwise it's
-  // about to get 'tel:'-prefixed and rejected by Set-CsCallQueue.
-  const checkForwardTarget = (settings: CallQueueActionSettings | null | undefined, where: string) => {
+  // Each action's target rules - see resolveCallQueueActionTarget.
+  const checkTarget = (settings: CallQueueActionSettings | null | undefined, where: string) => {
     const target = settings?.target?.trim();
-    if (settings?.action !== 'Forward' || !target) return;
-    if (/^tel:/i.test(target) || GUID_RE.test(target)) return;
-    if (!agentObjectIds.has(target.toLowerCase())) {
-      warnings.push(`${where} forwards to "${target}", which doesn't resolve to a live Entra identity yet, so it won't deploy correctly.`);
+    switch (settings?.action) {
+      case 'Forward':
+        if (!target) warnings.push(`${where} forwards calls but has no destination set, so it won't deploy correctly.`);
+        else if (!/^tel:/i.test(target) && !GUID_RE.test(target) && !/^\+?[\d\s()-]+$/.test(target) && !agentObjectIds.has(target.toLowerCase())) {
+          warnings.push(`${where} forwards to "${target}", which doesn't resolve to a live Entra identity yet, so it won't deploy correctly.`);
+        }
+        break;
+      case 'Voicemail':
+        if (!target) warnings.push(`${where} sends calls to personal voicemail but no person is set - choose whose voicemail receives them.`);
+        else if (!GUID_RE.test(target) && !agentObjectIds.has(target.toLowerCase())) {
+          warnings.push(`${where} sends calls to "${target}"'s voicemail, which doesn't resolve to a live Entra identity yet, so it won't deploy correctly.`);
+        }
+        break;
+      case 'SharedVoicemail':
+        if (!target || !GUID_RE.test(target)) warnings.push(`${where} sends calls to shared voicemail but no Microsoft 365 group is selected, so it won't deploy correctly.`);
+        break;
     }
   };
-  checkForwardTarget(row.overflow, 'Overflow');
-  checkForwardTarget(row.timeout, 'Timeout');
-  checkForwardTarget(row.no_agent_action, 'No-agent');
+  checkTarget(row.overflow, 'Overflow');
+  checkTarget(row.timeout, 'Timeout');
+  checkTarget(row.no_agent_action, 'No-agent');
   return warnings;
 }
 
@@ -846,24 +891,14 @@ export function planCallQueueRow(
     row.timeout?.action === 'SharedVoicemail' ||
     row.no_agent_action?.action === 'SharedVoicemail';
 
-  // A Forward target picked via the Design & Build editor's freeform
-  // UpnAutocomplete field is stored as the person's plain UPN, not their
-  // Entra Object ID - resolve it the same way -Users does before falling
-  // back to normalizePstnTarget, which only knows how to pass a raw GUID/
-  // number through unchanged and would otherwise 'tel:'-prefix a UPN,
-  // producing a target Set-CsCallQueue rejects (confirmed bug).
-  const resolveActionTarget = (settings: CallQueueActionSettings | null | undefined): string | undefined => {
-    const target = settings?.target?.trim();
-    if (!target) return undefined;
-    if (settings?.action === 'Forward') {
-      const resolved = agentObjectIds.get(target.toLowerCase());
-      if (resolved) return resolved;
-    }
-    return normalizePstnTarget(target);
-  };
-  const overflowTarget = resolveActionTarget(row.overflow);
-  const timeoutTarget = resolveActionTarget(row.timeout);
-  const noAgentTarget = resolveActionTarget(row.no_agent_action);
+  // A Forward/Voicemail target picked via the Design & Build editor's
+  // UpnAutocomplete is stored as the person's plain UPN, not their Entra
+  // Object ID - resolved the same way -Users is (see
+  // resolveCallQueueActionTarget for every action's rules).
+  const overflowTarget = resolveCallQueueActionTarget(row.overflow, agentObjectIds);
+  const timeoutTarget = resolveCallQueueActionTarget(row.timeout, agentObjectIds);
+  const noAgentTarget = resolveCallQueueActionTarget(row.no_agent_action, agentObjectIds);
+  const timeoutThreshold = roundTimeoutThreshold(row.timeout?.threshold);
 
   const parameters: Record<string, unknown> = {
     Name: row.name,
@@ -876,7 +911,7 @@ export function planCallQueueRow(
     ...(row.overflow?.threshold != null ? { OverflowThreshold: row.overflow.threshold } : {}),
     ...(overflowTarget ? { OverflowActionTarget: overflowTarget } : {}),
     ...(row.timeout?.action ? { TimeoutAction: row.timeout.action } : {}),
-    ...(row.timeout?.threshold != null ? { TimeoutThreshold: row.timeout.threshold } : {}),
+    ...(timeoutThreshold != null ? { TimeoutThreshold: timeoutThreshold } : {}),
     ...(timeoutTarget ? { TimeoutActionTarget: timeoutTarget } : {}),
     ...(row.no_agent_action?.action ? { NoAgentAction: row.no_agent_action.action } : {}),
     ...(noAgentTarget ? { NoAgentActionTarget: noAgentTarget } : {}),
@@ -884,22 +919,25 @@ export function planCallQueueRow(
   };
 
   if (!live) {
-    calls.push({ cmdlet: 'New-CsCallQueue', parameters, objectType: 'call_queue', objectId: row.id });
+    // Every Microsoft Learn New-CsCallQueue example sets music on hold
+    // explicitly (-UseDefaultMusicOnHold or -MusicOnHoldAudioFileId); no
+    // custom hold music is modeled here, so use Teams' default.
+    calls.push({ cmdlet: 'New-CsCallQueue', parameters: { ...parameters, UseDefaultMusicOnHold: true }, objectType: 'call_queue', objectId: row.id });
   } else {
-    const sortedUsers = [...users].sort();
-    const sortedLive = [...(live.agentObjectIds ?? [])].sort();
+    const sortedUsers = users.map((u) => u.toLowerCase()).sort();
+    const sortedLive = (live.agentObjectIds ?? []).map((u) => u.toLowerCase()).sort();
     const changed =
       live.routingMethod !== row.routing_method ||
       live.agentAlertTime !== row.agent_alert_time ||
       live.presenceBasedRouting !== row.presence_based_routing ||
       (live.overflowAction ?? undefined) !== (row.overflow?.action ?? undefined) ||
       (live.overflowThreshold ?? undefined) !== (row.overflow?.threshold ?? undefined) ||
-      (live.overflowActionTarget ?? undefined) !== (overflowTarget ?? undefined) ||
+      !sameTarget(live.overflowActionTarget, overflowTarget) ||
       (live.timeoutAction ?? undefined) !== (row.timeout?.action ?? undefined) ||
-      (live.timeoutThreshold ?? undefined) !== (row.timeout?.threshold ?? undefined) ||
-      (live.timeoutActionTarget ?? undefined) !== (timeoutTarget ?? undefined) ||
+      (live.timeoutThreshold ?? undefined) !== timeoutThreshold ||
+      !sameTarget(live.timeoutActionTarget, timeoutTarget) ||
       (live.noAgentAction ?? undefined) !== (row.no_agent_action?.action ?? undefined) ||
-      (live.noAgentActionTarget ?? undefined) !== (noAgentTarget ?? undefined) ||
+      !sameTarget(live.noAgentActionTarget, noAgentTarget) ||
       (live.noAgentApplyTo ?? undefined) !== (row.no_agent_apply_to ?? undefined) ||
       (needsLanguage && (live.languageId ?? undefined) !== (row.language_id ?? undefined)) ||
       JSON.stringify(sortedUsers) !== JSON.stringify(sortedLive);
@@ -1001,6 +1039,8 @@ export interface AutoAttendantMenuOption {
   dtmf: (typeof AA_DTMF_RESPONSES)[number];
   action: (typeof AA_MENU_OPTION_ACTIONS)[number];
   target?: AutoAttendantCallableEntity;
+  /** -Prompt - only for action 'Announcement' (played, then the caller returns to the menu). */
+  prompt?: AutoAttendantPrompt;
 }
 
 /** New-CsAutoAttendantMenu. Mirrors dto.ts's autoAttendantMenuSchema. */
@@ -1286,12 +1326,23 @@ export function autoAttendantRowWarnings(
   const checkFlow = (cf: AutoAttendantCallFlow | null | undefined, label: string) => {
     for (const opt of cf?.menu.options ?? []) {
       if (opt.action === 'TransferCallToTarget') check(opt.target, `${label} DTMF ${opt.dtmf}`);
+      // TransferCallToOperator routes via the AA's own -Operator (Microsoft
+      // Learn: "the operator defined for the Auto attendant").
+      if (opt.action === 'TransferCallToOperator' && !row.operator) {
+        unresolved.push(`${label} DTMF ${opt.dtmf} transfers to the operator, but this Auto Attendant has no operator set`);
+      }
+      if (opt.action === 'Announcement' && !(opt.prompt?.type === 'Text' && opt.prompt.text)) {
+        unresolved.push(`${label} DTMF ${opt.dtmf} is an announcement with no text - it will disconnect the call instead of deploying`);
+      }
     }
   };
   checkFlow(row.default_call_flow, 'Business hours');
   checkFlow(row.after_hours_call_flow, 'After hours');
   for (const h of row.holiday_call_flows) checkFlow(h.callFlow, h.name);
   if (unresolved.length) warnings.push(...unresolved);
+  // Same "after hours only deploys with both a flow and a schedule" rule as planAutoAttendantRow.
+  if (row.after_hours_call_flow && row.schedule) warnings.push(...scheduleProblems(row.schedule, 'After-hours schedule'));
+  for (const h of row.holiday_call_flows) warnings.push(...scheduleProblems(h.schedule, `Holiday "${h.name}"`));
   return warnings;
 }
 
@@ -1372,15 +1423,27 @@ function buildCallableEntity(ctx: AaBuildCtx, entity: AutoAttendantCallableEntit
   return { $var: varName };
 }
 
-/** New-CsAutoAttendantMenuOption. Drops the -CallTarget (falls back to a bare disconnect-shaped option) rather than guess when a TransferCallToTarget's target didn't resolve - see autoAttendantRowWarnings, which is what actually surfaces that gap. */
+/**
+ * New-CsAutoAttendantMenuOption. Per Microsoft Learn only TransferCallToTarget
+ * takes a -CallTarget and only Announcement takes a -Prompt;
+ * TransferCallToOperator and DisconnectCall take neither (operator routing
+ * uses the AA's own -Operator). A TransferCallToTarget whose target didn't
+ * resolve, or an Announcement with no text, falls back to DisconnectCall
+ * rather than guess - autoAttendantRowWarnings surfaces both.
+ */
 function buildMenuOption(ctx: AaBuildCtx, opt: AutoAttendantMenuOption, crossRef: AutoAttendantCrossRef, userObjectIds: Map<string, string>): VarRef {
-  const callTarget = opt.action === 'TransferCallToTarget' && opt.target ? buildCallableEntity(ctx, opt.target, crossRef, userObjectIds) : undefined;
+  let parameters: Record<string, unknown> = { Action: 'DisconnectCall', DtmfResponse: opt.dtmf };
+  if (opt.action === 'TransferCallToTarget') {
+    const callTarget = opt.target ? buildCallableEntity(ctx, opt.target, crossRef, userObjectIds) : undefined;
+    if (callTarget) parameters = { Action: 'TransferCallToTarget', DtmfResponse: opt.dtmf, CallTarget: callTarget };
+  } else if (opt.action === 'Announcement') {
+    const promptRef = opt.prompt ? buildPrompt(ctx, opt.prompt) : undefined;
+    if (promptRef) parameters = { Action: 'Announcement', DtmfResponse: opt.dtmf, Prompt: promptRef };
+  } else if (opt.action === 'TransferCallToOperator') {
+    parameters = { Action: 'TransferCallToOperator', DtmfResponse: opt.dtmf };
+  }
   const varName = nextAaVar(ctx, 'opt');
-  ctx.steps.push({
-    assignTo: varName,
-    cmdlet: 'New-CsAutoAttendantMenuOption',
-    parameters: { Action: callTarget ? opt.action : 'DisconnectCall', DtmfResponse: opt.dtmf, ...(callTarget ? { CallTarget: callTarget } : {}) },
-  });
+  ctx.steps.push({ assignTo: varName, cmdlet: 'New-CsAutoAttendantMenuOption', parameters });
   return { $var: varName };
 }
 
@@ -1454,6 +1517,124 @@ function buildCallFlow(ctx: AaBuildCtx, cf: AutoAttendantCallFlow, name: string,
   return { $var: varName };
 }
 
+const ISO_BOUND_RE = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?)?(?:Z|[+-]\d{2}:?\d{2})?$/;
+const DMY_BOUND_RE = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?: (\d{1,2}):(\d{2}))?$/;
+
+interface DateTimeBound {
+  y: number;
+  m: number;
+  d: number;
+  hh: number;
+  mm: number;
+  /** 'iso-date' = a bare YYYY-MM-DD (the AA wizard's date picker), whose END bound means "through that day" rather than midnight at its start. */
+  form: 'iso-date' | 'iso-datetime' | 'dmy';
+}
+
+function parseDateTimeBound(raw: string): DateTimeBound | undefined {
+  const v = raw.trim();
+  let m = ISO_BOUND_RE.exec(v);
+  if (m) {
+    const timed = m[4] !== undefined;
+    return { y: +m[1]!, m: +m[2]!, d: +m[3]!, hh: timed ? +m[4]! : 0, mm: timed ? +m[5]! : 0, form: timed ? 'iso-datetime' : 'iso-date' };
+  }
+  m = DMY_BOUND_RE.exec(v);
+  if (m) return { y: +m[3]!, m: +m[2]!, d: +m[1]!, hh: m[4] !== undefined ? +m[4] : 0, mm: m[5] !== undefined ? +m[5] : 0, form: 'dmy' };
+  return undefined;
+}
+
+function boundMs(b: DateTimeBound): number {
+  return Date.UTC(b.y, b.m - 1, b.d, b.hh, b.mm);
+}
+
+function canonicalBound(ms: number): string {
+  const t = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${t.getUTCFullYear()}-${p(t.getUTCMonth() + 1)}-${p(t.getUTCDate())}T${p(t.getUTCHours())}:${p(t.getUTCMinutes())}:00`;
+}
+
+/**
+ * One holiday date range in the canonical stored form: ISO local date-times,
+ * END EXCLUSIVE - the same shape Discovery reads back from a live
+ * Get-CsOnlineSchedule (e.g. 2026-12-25T00:00:00 .. 2026-12-26T00:00:00 for
+ * Christmas Day). Accepts what else gets saved: the AA wizard's bare
+ * YYYY-MM-DD date-picker values (END inclusive - "To 25 Dec" means through
+ * the 25th), an empty end (one day, matching New-CsOnlineDateTimeRange's own
+ * default), and Microsoft's own d/m/yyyy [H:mm] form. Undefined = unparseable.
+ */
+export function normalizeFixedRange(r: { start: string; end: string }): { start: string; end: string } | undefined {
+  const start = parseDateTimeBound(r.start ?? '');
+  if (!start) return undefined;
+  const startMs = boundMs(start);
+  const DAY = 86_400_000;
+  let endMs: number;
+  if (!r.end?.trim()) {
+    endMs = Date.UTC(start.y, start.m - 1, start.d) + DAY;
+  } else {
+    const end = parseDateTimeBound(r.end);
+    if (!end) return undefined;
+    endMs = end.form === 'iso-date' ? boundMs(end) + DAY : boundMs(end);
+  }
+  return { start: canonicalBound(startMs), end: canonicalBound(endMs) };
+}
+
+/** Canonical ISO bound -> New-CsOnlineDateTimeRange's only accepted input form, "d/m/yyyy H:mm" (Microsoft Learn). */
+function renderDmyBound(canonical: string): string {
+  const b = parseDateTimeBound(canonical)!;
+  return `${b.d}/${b.m}/${b.y} ${b.hh}:${String(b.mm).padStart(2, '0')}`;
+}
+
+/** New-CsOnlineTimeRange takes a TimeSpan - an end-of-day bound must be 1.00:00 (Microsoft Learn's own 24-hour example), not 24:00, which TimeSpan can't parse. */
+function renderTimeOfDay(hhmm: string): string {
+  return hhmm === '24:00' ? '1.00:00' : hhmm;
+}
+
+function minutesOfDay(hhmm: string): number | undefined {
+  const m = /^(\d{2}):(\d{2})$/.exec(hhmm);
+  return m ? +m[1]! * 60 + +m[2]! : undefined;
+}
+
+/** Everything about a schedule that would make New-CsOnlineTimeRange/-DateTimeRange/-Schedule reject it - surfaced as preview warnings instead of a failed run. */
+function scheduleProblems(sched: AutoAttendantSchedule, where: string): string[] {
+  const out: string[] = [];
+  if (sched.type === 'fixed') {
+    const ranges = sched.fixed?.ranges ?? [];
+    ranges.forEach((r, i) => {
+      const n = normalizeFixedRange(r);
+      const label = ranges.length > 1 ? `${where} date range ${i + 1}` : `${where} dates`;
+      if (!n) {
+        out.push(`${label} aren't a recognisable date ("${r.start}" - "${r.end}").`);
+        return;
+      }
+      if (n.end <= n.start) out.push(`${label} end on or before they start.`);
+      if (!/:(00|30):00$/.test(n.start) || !/:(00|30):00$/.test(n.end)) out.push(`${label} must start and end on the hour or half hour.`);
+    });
+    return out;
+  }
+  const weekly = sched.weekly;
+  const days = weekly ? WEEKLY_SCHEDULE_PARAMS.flatMap(([day]) => weekly[day].map((r) => ({ day, r }))) : [];
+  if (days.length === 0) out.push(`${where} has no hours set on any day - Teams needs at least one.`);
+  for (const { day, r } of days) {
+    const s = minutesOfDay(r.start);
+    const e = minutesOfDay(r.end);
+    if (s === undefined || e === undefined || e <= s) out.push(`${where}: ${day} ${r.start}-${r.end} isn't a valid time range.`);
+    else if (s % 15 || e % 15) out.push(`${where}: ${day} ${r.start}-${r.end} must use 15-minute steps.`);
+  }
+  return out;
+}
+
+/** Schedules compared after normalizing holiday ranges and -Complement, so a wizard-typed date and the live round-trip of the same range compare equal. */
+function scheduleEqual(a: AutoAttendantSchedule | null, b: AutoAttendantSchedule | null): boolean {
+  const canon = (s: AutoAttendantSchedule | null) => {
+    if (!s) return null;
+    if (s.type === 'fixed') {
+      return { type: 'fixed', ranges: (s.fixed?.ranges ?? []).map((r) => normalizeFixedRange(r) ?? r).sort((x, y) => x.start.localeCompare(y.start)) };
+    }
+    const w = s.weekly;
+    return { type: 'weekly', weekly: w ? { ...w, complement: !!w.complement } : undefined };
+  };
+  return structurallyEqual(canon(a), canon(b));
+}
+
 const WEEKLY_SCHEDULE_PARAMS = [
   ['monday', 'MondayHours'],
   ['tuesday', 'TuesdayHours'],
@@ -1468,10 +1649,14 @@ const WEEKLY_SCHEDULE_PARAMS = [
 function buildSchedule(ctx: AaBuildCtx, sched: AutoAttendantSchedule, name: string): VarRef {
   const varName = nextAaVar(ctx, 'sched');
   if (sched.type === 'fixed' && sched.fixed) {
-    const rangeRefs = sched.fixed.ranges.map((r) => {
+    // An unparseable range is skipped rather than sent - scheduleProblems
+    // already surfaces it as a preview warning.
+    const rangeRefs = sched.fixed.ranges.flatMap((r) => {
+      const n = normalizeFixedRange(r);
+      if (!n) return [];
       const rv = nextAaVar(ctx, 'dtr');
-      ctx.steps.push({ assignTo: rv, cmdlet: 'New-CsOnlineDateTimeRange', parameters: { Start: r.start, End: r.end } });
-      return { $var: rv };
+      ctx.steps.push({ assignTo: rv, cmdlet: 'New-CsOnlineDateTimeRange', parameters: { Start: renderDmyBound(n.start), End: renderDmyBound(n.end) } });
+      return [{ $var: rv }];
     });
     ctx.steps.push({ assignTo: varName, cmdlet: 'New-CsOnlineSchedule', parameters: { Name: name, FixedSchedule: true, DateTimeRanges: rangeRefs } });
   } else {
@@ -1481,7 +1666,7 @@ function buildSchedule(ctx: AaBuildCtx, sched: AutoAttendantSchedule, name: stri
       if (ranges.length) {
         params[param] = ranges.map((r) => {
           const rv = nextAaVar(ctx, 'tr');
-          ctx.steps.push({ assignTo: rv, cmdlet: 'New-CsOnlineTimeRange', parameters: { Start: r.start, End: r.end } });
+          ctx.steps.push({ assignTo: rv, cmdlet: 'New-CsOnlineTimeRange', parameters: { Start: renderTimeOfDay(r.start), End: renderTimeOfDay(r.end) } });
           return { $var: rv };
         });
       }
@@ -1562,7 +1747,7 @@ function autoAttendantMatchesLive(row: BuildAutoAttendantRow, live: AutoAttendan
   const effectiveAfterHours = row.after_hours_call_flow && row.schedule ? row.after_hours_call_flow : null;
   const effectiveAfterHoursSchedule = row.after_hours_call_flow && row.schedule ? row.schedule : null;
   if (!callFlowEqual(effectiveAfterHours, s.afterHoursCallFlow)) return false;
-  if (!structurallyEqual(effectiveAfterHoursSchedule, s.schedule)) return false;
+  if (!scheduleEqual(effectiveAfterHoursSchedule, s.schedule)) return false;
 
   const rowHolidays = sortedHolidays(row.holiday_call_flows);
   const liveHolidays = sortedHolidays(s.holidayCallFlows);
@@ -1573,7 +1758,7 @@ function autoAttendantMatchesLive(row: BuildAutoAttendantRow, live: AutoAttendan
     if (!a || !b) return false;
     if (a.name !== b.name) return false;
     if (!callFlowEqual(a.callFlow, b.callFlow)) return false;
-    if (!structurallyEqual(a.schedule, b.schedule)) return false;
+    if (!scheduleEqual(a.schedule, b.schedule)) return false;
   }
   return true;
 }
@@ -1673,7 +1858,11 @@ export function planAutoAttendantRow(
       assign('DefaultCallFlow', defaultFlowRef);
       assign('CallFlows', otherFlowRefs);
       assign('CallHandlingAssociations', chaRefs);
+      // Removing the operator in Design & Build must clear it live too -
+      // otherwise the live diff never converges. An operator that's set but
+      // didn't resolve leaves the live one untouched (don't guess).
       if (operatorRef) assign('Operator', operatorRef);
+      else if (!row.operator) assign('Operator', null);
       calls.push({
         cmdlet: 'Set-CsAutoAttendant',
         parameters: { Instance: { $var: 'aa' } },

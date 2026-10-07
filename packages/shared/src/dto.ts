@@ -1167,10 +1167,22 @@ const autoAttendantCallableEntitySchema = z
   })
   .strict();
 
-const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
-const timeOfDay = () => z.string().regex(HHMM_RE, 'Use HH:mm, 24-hour');
+// New-CsOnlineTimeRange: weekly ranges must align to 15-minute boundaries
+// (Microsoft Learn). An end of 24:00 means midnight at the end of the day
+// (rendered as the TimeSpan 1.00:00).
+const HHMM_RE = /^([01]\d|2[0-3]):(00|15|30|45)$/;
+const HHMM_END_RE = /^(([01]\d|2[0-3]):(00|15|30|45)|24:00)$/;
+const timeOfDay = () => z.string().regex(HHMM_RE, 'Use HH:mm, 24-hour, in 15-minute steps');
 
-const autoAttendantTimeRangeSchema = z.object({ start: timeOfDay(), end: timeOfDay() }).strict();
+const autoAttendantTimeRangeSchema = z
+  .object({ start: timeOfDay(), end: z.string().regex(HHMM_END_RE, 'Use HH:mm, 24-hour, in 15-minute steps (24:00 = end of day)') })
+  .strict();
+
+// Holiday bounds: ISO date or date-time (the canonical stored form, and the
+// AA wizard's date picker), or Microsoft's own d/m/yyyy [H:mm] - normalized
+// to New-CsOnlineDateTimeRange's input format at deploy time.
+const DATE_BOUND_RE = /^(\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?)?(Z|[+-]\d{2}:?\d{2})?|\d{1,2}\/\d{1,2}\/\d{4}( \d{1,2}:\d{2})?)$/;
+const dateBound = () => z.string().trim().regex(DATE_BOUND_RE, 'Use a date like 2026-12-25 or 2026-12-25T00:00:00');
 
 const autoAttendantPromptSchema = z
   .object({
@@ -1186,6 +1198,8 @@ const autoAttendantMenuOptionSchema = z
     dtmf: z.enum(AA_DTMF_RESPONSES),
     action: z.enum(AA_MENU_OPTION_ACTIONS),
     target: autoAttendantCallableEntitySchema.optional(),
+    /** New-CsAutoAttendantMenuOption -Prompt - only for action 'Announcement'. */
+    prompt: autoAttendantPromptSchema.optional(),
   })
   .strict();
 
@@ -1227,8 +1241,8 @@ const autoAttendantScheduleSchema = z
       .optional(),
     fixed: z
       .object({
-        /** ISO date strings, e.g. a holiday date range. */
-        ranges: z.array(z.object({ start: z.string(), end: z.string() }).strict()).max(10),
+        /** Holiday date ranges - canonical form is ISO date-times with an exclusive end (see normalizeFixedRange in deployment.ts). An empty end means a single day. */
+        ranges: z.array(z.object({ start: dateBound(), end: z.union([dateBound(), z.literal('')]) }).strict()).max(10),
       })
       .strict()
       .optional(),

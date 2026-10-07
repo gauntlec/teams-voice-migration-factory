@@ -236,9 +236,15 @@ export async function resolveLiveAutoAttendantState(
  * built) to resolve a menu option/-Operator that targets a sibling AA/CQ.
  */
 export async function resolveAutoAttendantDeepContext(s: Scoped, crossRef: AutoAttendantCrossRef) {
-  const [scheduleRows, userRows] = await Promise.all([
+  const [scheduleRows, userRows, voiceAppRows] = await Promise.all([
     s.selectFrom('tenant_objects').select(['object_key', 'data']).where('object_type', '=', 'schedule').where('removed_at', 'is', null).execute(),
     s.selectFrom('tenant_users').select(['entra_id', 'upn']).where('entra_id', 'is not', null).execute(),
+    s
+      .selectFrom('tenant_objects')
+      .select(['data'])
+      .where('object_type', 'in', ['auto_attendant', 'call_queue'])
+      .where('removed_at', 'is', null)
+      .execute(),
   ]);
   const scheduleByKey = new Map(scheduleRows.map((r) => [r.object_key, r.data as Record<string, unknown>]));
   const upnByEntraId = new Map(userRows.map((r) => [r.entra_id!.toLowerCase(), r.upn]));
@@ -247,6 +253,17 @@ export async function resolveAutoAttendantDeepContext(s: Scoped, crossRef: AutoA
     const sep = key.indexOf(':');
     liveIdToBuild.set(identity.toLowerCase(), { kind: key.slice(0, sep) as 'auto_attendant' | 'call_queue', buildId: key.slice(sep + 1) });
   }
+  // A transfer to a resource account (ApplicationEndpoint) reaches the AA/CQ
+  // that account is associated with - map it through that AA/CQ's own
+  // ApplicationInstances to the same buildId a direct (ConfigurationEndpoint)
+  // transfer resolves to.
+  const ownerByInstance = new Map<string, string>();
+  for (const r of voiceAppRows) {
+    const d = r.data as Record<string, unknown>;
+    const identity = typeof d.Identity === 'string' ? d.Identity : undefined;
+    if (!identity || !Array.isArray(d.ApplicationInstances)) continue;
+    for (const i of d.ApplicationInstances as unknown[]) if (typeof i === 'string') ownerByInstance.set(i.toLowerCase(), identity.toLowerCase());
+  }
   const resolveTarget = (ref: LiveCallableEntityRef | undefined): AutoAttendantCallableEntity | undefined => {
     if (!ref) return undefined;
     if (ref.kind === 'external' && ref.number) return { kind: 'external', number: ref.number };
@@ -254,8 +271,10 @@ export async function resolveAutoAttendantDeepContext(s: Scoped, crossRef: AutoA
       const upn = upnByEntraId.get(ref.liveId.toLowerCase());
       return upn ? { kind: 'user', upn } : undefined;
     }
-    if (ref.kind === 'voice_app' && ref.liveId) {
-      const hit = liveIdToBuild.get(ref.liveId.toLowerCase());
+    if (ref.kind === 'shared_voicemail' && ref.liveId) return { kind: 'shared_voicemail', groupId: ref.liveId };
+    const appIdentity = ref.kind === 'voice_app' ? ref.liveId?.toLowerCase() : ref.kind === 'resource_account' && ref.liveId ? ownerByInstance.get(ref.liveId.toLowerCase()) : undefined;
+    if (appIdentity) {
+      const hit = liveIdToBuild.get(appIdentity);
       return hit ? { kind: hit.kind, buildId: hit.buildId } : undefined;
     }
     return undefined;

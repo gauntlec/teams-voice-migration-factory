@@ -44,6 +44,7 @@ export type CallFlowNodeKind =
   | 'voicemail'
   | 'shared_voicemail'
   | 'operator'
+  | 'announcement'
   | 'disconnect';
 
 export interface CallFlowNode {
@@ -197,7 +198,11 @@ function designCqActionEdges(b: GraphBuilder, cq: DesignCallQueueInput): void {
     } else if (settings.action === 'SharedVoicemail') {
       b.addEdge(sourceId, b.ensureNode({ id: 'shared_voicemail', kind: 'shared_voicemail', label: 'Shared voicemail' }), label, branch);
     } else if (settings.action === 'Voicemail') {
-      b.addEdge(sourceId, b.ensureNode({ id: 'voicemail', kind: 'voicemail', label: 'Voicemail' }), label, branch);
+      // "Voicemail (personal)" - the target is whose mailbox receives it.
+      const targetId = settings.target
+        ? b.ensureNode({ id: `voicemail:${settings.target.toLowerCase()}`, kind: 'voicemail', label: 'Voicemail', sublabel: settings.target })
+        : b.ensureNode({ id: 'voicemail', kind: 'voicemail', label: 'Voicemail (no person set)' });
+      b.addEdge(sourceId, targetId, label, branch);
     } else if (settings.action === 'Disconnect' || settings.action === 'DisconnectWithBusy') {
       b.addEdge(sourceId, b.ensureNode({ id: 'disconnect', kind: 'disconnect', label: 'Disconnect' }), label, branch);
     }
@@ -285,6 +290,11 @@ export function buildAutoAttendantFlowGraphFromDesign(
     if (opt.action === 'TransferCallToOperator') {
       const targetId = resolveTarget(owner.operator ?? undefined) ?? b.ensureNode({ id: 'operator', kind: 'operator', label: 'Operator (not configured)' });
       b.addEdge(sourceId, targetId, label, branch);
+      return;
+    }
+    if (opt.action === 'Announcement') {
+      const text = opt.prompt?.type === 'Text' ? opt.prompt.text : undefined;
+      b.addEdge(sourceId, b.ensureNode({ id: `${sourceId}:announce:${opt.dtmf}`, kind: 'announcement', label: 'Announcement', sublabel: text ? snippet([text], false) : undefined }), label, branch);
       return;
     }
     if (opt.action === 'TransferCallToTarget') {
@@ -464,6 +474,20 @@ export function buildAutoAttendantFlowGraphFromLive(
   const scheduleByKey = new Map(schedules.map((s) => [s.key, s.data]));
   const visitedAa = new Set<string>();
   const visitedCq = new Set<string>();
+  // A transfer to a resource account (ApplicationEndpoint) reaches whichever
+  // AA/CQ that account is associated with - its ApplicationInstances.
+  const ownerByInstance = new Map<string, string>();
+  for (const o of [...allAutoAttendants, ...allCallQueues]) {
+    const identity = typeof o.data.Identity === 'string' ? o.data.Identity : undefined;
+    const instances = Array.isArray(o.data.ApplicationInstances) ? (o.data.ApplicationInstances as unknown[]) : [];
+    if (identity) for (const i of instances) if (typeof i === 'string') ownerByInstance.set(i.toLowerCase(), identity);
+  }
+  const voiceAppIdentity = (ref: LiveCallableEntityRef | undefined): string | undefined => {
+    if (!ref?.liveId) return undefined;
+    if (ref.kind === 'voice_app') return ref.liveId;
+    if (ref.kind === 'resource_account') return ownerByInstance.get(ref.liveId.toLowerCase());
+    return undefined;
+  };
 
   const resolveTarget = (ref: LiveCallableEntityRef | undefined): string | undefined => {
     if (!ref) return undefined;
@@ -472,13 +496,17 @@ export function buildAutoAttendantFlowGraphFromLive(
       const upn = usersByEntraId?.get(ref.liveId.toLowerCase());
       return b.ensureNode({ id: `user:${ref.liveId}`, kind: 'person', label: upn ?? `User (${ref.liveId.slice(0, 8)}…)` });
     }
-    if (ref.kind === 'voice_app' && ref.liveId) {
-      const key = ref.liveId.toLowerCase();
+    if (ref.kind === 'shared_voicemail' && ref.liveId) {
+      return b.ensureNode({ id: `group:${ref.liveId}`, kind: 'shared_voicemail', label: 'Shared voicemail (group)', sublabel: ref.liveId });
+    }
+    const appIdentity = voiceAppIdentity(ref);
+    if (appIdentity) {
+      const key = appIdentity.toLowerCase();
       const known = nameByIdentity.get(key);
       if (!known) return undefined;
       const aData = known.kind === 'auto_attendant' ? aaByIdentity.get(key)?.data : undefined;
       return b.ensureNode({
-        id: `${known.kind === 'call_queue' ? 'cq' : 'aa'}:${ref.liveId}`,
+        id: `${known.kind === 'call_queue' ? 'cq' : 'aa'}:${appIdentity}`,
         kind: known.kind,
         label: known.name,
         badge: aData && liveHasPhoneNumber(aData) ? FRONT_DOOR_BADGE : undefined,
@@ -487,17 +515,28 @@ export function buildAutoAttendantFlowGraphFromLive(
     return undefined;
   };
 
-  const walkMenuOption = (sourceId: string, opt: LiveMenuOption, branch: CallFlowBranch) => {
+  const walkMenuOption = (sourceId: string, opt: LiveMenuOption, owner: LiveAutoAttendantInput, branch: CallFlowBranch) => {
     const label = dtmfLabel(opt.dtmf);
     if (opt.action === 'DisconnectCall') {
       b.addEdge(sourceId, b.ensureNode({ id: 'disconnect', kind: 'disconnect', label: 'Disconnect' }), label, branch);
       return;
     }
+    if (opt.action === 'TransferCallToOperator') {
+      const targetId = resolveTarget(parseLiveCallTarget(owner.data.Operator)) ?? b.ensureNode({ id: 'operator', kind: 'operator', label: 'Operator (not configured)' });
+      b.addEdge(sourceId, targetId, label, branch);
+      return;
+    }
+    if (opt.action === 'Announcement') {
+      const text = opt.prompt?.type === 'Text' ? opt.prompt.text : undefined;
+      b.addEdge(sourceId, b.ensureNode({ id: `${sourceId}:announce:${opt.dtmf}`, kind: 'announcement', label: 'Announcement', sublabel: text ? snippet([text], false) : undefined }), label, branch);
+      return;
+    }
     const targetId = resolveTarget(opt.target);
     if (!targetId) return;
     b.addEdge(sourceId, targetId, label, branch);
-    if (opt.target?.kind !== 'voice_app' || !opt.target.liveId) return;
-    const key = opt.target.liveId.toLowerCase();
+    const appIdentity = voiceAppIdentity(opt.target);
+    if (!appIdentity) return;
+    const key = appIdentity.toLowerCase();
     const cq = cqByIdentity.get(key);
     if (cq && !visitedCq.has(key)) {
       visitedCq.add(key);
@@ -519,7 +558,7 @@ export function buildAutoAttendantFlowGraphFromLive(
       if (!cf) return;
       const branchId = b.ensureNode({ id: `${rootId}:${branchKey}`, kind: 'auto_attendant', label: branchLabel, sublabel: liveGreeting(cf) });
       b.addEdge(rootId, branchId, branchLabel, branch);
-      for (const opt of cf.menu.options) walkMenuOption(branchId, opt, branch);
+      for (const opt of cf.menu.options) walkMenuOption(branchId, opt, a, branch);
     };
 
     addBranch(parseLiveCallFlow(a.data.DefaultCallFlow), 'business_hours', 'Business hours', 'business_hours');

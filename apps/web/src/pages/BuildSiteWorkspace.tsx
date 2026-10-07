@@ -2128,7 +2128,7 @@ function CallQueueSettingsDialog({
               <div>
                 <Text weight="semibold">Overflow (queue full)</Text>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end', marginTop: 6 }}>
-                  {actionDropdown('Action', overflowAction, setOverflowAction, CALL_QUEUE_OVERFLOW_ACTIONS)}
+                  {actionDropdown('Action', overflowAction, (v) => { setOverflowAction(v); setOverflowTarget(''); }, CALL_QUEUE_OVERFLOW_ACTIONS)}
                   {overflowAction && (
                     <>
                       <Field label="Threshold (0-200 calls)">
@@ -2149,6 +2149,11 @@ function CallQueueSettingsDialog({
                           <UpnAutocomplete tenantId={tenantId} value={overflowTarget} onChange={setOverflowTarget} style={{ minWidth: 220 }} />
                         </Field>
                       )}
+                      {overflowAction === 'Voicemail' && (
+                        <Field label="Whose voicemail">
+                          <UpnAutocomplete tenantId={tenantId} value={overflowTarget} onChange={setOverflowTarget} style={{ minWidth: 220 }} />
+                        </Field>
+                      )}
                     </>
                   )}
                 </div>
@@ -2157,7 +2162,7 @@ function CallQueueSettingsDialog({
               <div>
                 <Text weight="semibold">Timeout (waited too long)</Text>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end', marginTop: 6 }}>
-                  {actionDropdown('Action', timeoutAction, setTimeoutAction, CALL_QUEUE_TIMEOUT_ACTIONS)}
+                  {actionDropdown('Action', timeoutAction, (v) => { setTimeoutAction(v); setTimeoutTarget(''); }, CALL_QUEUE_TIMEOUT_ACTIONS)}
                   {timeoutAction && (
                     <>
                       <Field label="Threshold (0-2700 seconds)">
@@ -2178,6 +2183,11 @@ function CallQueueSettingsDialog({
                           <UpnAutocomplete tenantId={tenantId} value={timeoutTarget} onChange={setTimeoutTarget} style={{ minWidth: 220 }} />
                         </Field>
                       )}
+                      {timeoutAction === 'Voicemail' && (
+                        <Field label="Whose voicemail">
+                          <UpnAutocomplete tenantId={tenantId} value={timeoutTarget} onChange={setTimeoutTarget} style={{ minWidth: 220 }} />
+                        </Field>
+                      )}
                     </>
                   )}
                 </div>
@@ -2186,7 +2196,7 @@ function CallQueueSettingsDialog({
               <div>
                 <Text weight="semibold">No agents (zero opted in)</Text>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end', marginTop: 6 }}>
-                  {actionDropdown('Action', noAgentAction, setNoAgentAction, CALL_QUEUE_NO_AGENT_ACTIONS)}
+                  {actionDropdown('Action', noAgentAction, (v) => { setNoAgentAction(v); setNoAgentTarget(''); }, CALL_QUEUE_NO_AGENT_ACTIONS)}
                   {noAgentAction === 'SharedVoicemail' && (
                     <Field label="Target (M365 group)">
                       <GroupAutocomplete tenantId={tenantId} value={noAgentTarget} onChange={setNoAgentTarget} style={{ minWidth: 220 }} />
@@ -2194,6 +2204,11 @@ function CallQueueSettingsDialog({
                   )}
                   {noAgentAction === 'Forward' && (
                     <Field label="Target">
+                      <UpnAutocomplete tenantId={tenantId} value={noAgentTarget} onChange={setNoAgentTarget} style={{ minWidth: 220 }} />
+                    </Field>
+                  )}
+                  {noAgentAction === 'Voicemail' && (
+                    <Field label="Whose voicemail">
                       <UpnAutocomplete tenantId={tenantId} value={noAgentTarget} onChange={setNoAgentTarget} style={{ minWidth: 220 }} />
                     </Field>
                   )}
@@ -2387,7 +2402,12 @@ function MenuOptionRow({
             selectedOptions={[value.action]}
             onOptionSelect={(_, d) => {
               const action = (d.optionValue ?? 'DisconnectCall') as AutoAttendantMenuOption['action'];
-              onChange({ ...value, action, target: action === 'TransferCallToTarget' ? value.target : undefined });
+              onChange({
+                ...value,
+                action,
+                target: action === 'TransferCallToTarget' ? value.target : undefined,
+                prompt: action === 'Announcement' ? value.prompt : undefined,
+              });
             }}
             style={{ minWidth: 190 }}
           >
@@ -2408,6 +2428,20 @@ function MenuOptionRow({
           aaChoices={aaChoices}
           cqChoices={cqChoices}
         />
+      )}
+      {value.action === 'Announcement' && (
+        <Field label="Announcement (text-to-speech)" hint="Played to the caller, who then returns to this menu.">
+          <Textarea
+            value={value.prompt?.type === 'Text' ? (value.prompt.text ?? '') : ''}
+            onChange={(_, d) => onChange({ ...value, prompt: d.value ? { type: 'Text', text: d.value } : undefined })}
+            rows={2}
+          />
+        </Field>
+      )}
+      {value.action === 'TransferCallToOperator' && (
+        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+          Goes to this Auto Attendant&apos;s operator (set in the Operator section).
+        </Text>
       )}
     </div>
   );

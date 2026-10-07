@@ -1,4 +1,4 @@
-import type { AutoAttendantCallableEntity, AutoAttendantCallFlow, AutoAttendantMenuOption, AutoAttendantSchedule } from './deployment';
+import { normalizeFixedRange, type AutoAttendantCallableEntity, type AutoAttendantCallFlow, type AutoAttendantMenuOption, type AutoAttendantSchedule } from './deployment';
 import type { BuildAutoAttendantCreateInput, BuildCallQueueCreateInput } from './dto';
 import type { AutoAttendantWizardAnswers, CallQueueWizardAnswers, WizardCallFlow, WizardMenuOption, WizardTarget, WizardWeeklyHours } from './wizard';
 
@@ -52,6 +52,24 @@ const STANDARD_9_TO_5: WizardWeeklyHours = {
   sunday: [],
 };
 
+const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * An Auto Attendant's "Voicemail" destination is always a shared mailbox - a
+ * Microsoft 365 group (Microsoft Learn: "the voice mailbox associated with a
+ * Microsoft 365 Group that you specify"); there is no personal-voicemail
+ * option on an AA. The wizard can't search groups, so the engineer picks the
+ * group in Design & Build unless a group id was typed.
+ */
+function sharedVoicemailTarget(label: string | undefined, warnings: string[], where: string): AutoAttendantCallableEntity {
+  const id = (label ?? '').trim();
+  if (GUID_RE.test(id)) return { kind: 'shared_voicemail', groupId: id };
+  warnings.push(
+    `${where}: goes to voicemail${id ? ` ("${id}")` : ''} - in Teams that's a shared voicemail on a Microsoft 365 group. Choose the group in Design & Build, or calls will be disconnected.`,
+  );
+  return { kind: 'shared_voicemail' };
+}
+
 function convertTarget(t: WizardTarget | undefined, resolvers: WizardResolvers, warnings: string[], where: string): AutoAttendantCallableEntity | undefined {
   if (!t) return undefined;
   switch (t.kind) {
@@ -80,11 +98,12 @@ function convertTarget(t: WizardTarget | undefined, resolvers: WizardResolvers, 
       return { kind: 'call_queue' };
     }
     case 'message':
-      warnings.push(`${where}: playing a recorded message isn't supported for a menu option yet - configure this destination manually after import.`);
+      // A menu option plays this as an Announcement (see convertMenuOption) -
+      // anywhere else (a direct redirect, the operator) has no message form.
+      warnings.push(`${where}: playing a message is only possible as a menu option - choose a destination for this after import.`);
       return undefined;
     case 'voicemail':
-      warnings.push(`${where}: routes to Voicemail, which Teams can't deploy directly - it will disconnect the call until this is changed after import.`);
-      return { kind: 'voicemail' };
+      return sharedVoicemailTarget(t.label, warnings, where);
     case 'external':
       if (!t.label) {
         warnings.push(`${where}: no outside number was entered.`);
@@ -108,6 +127,10 @@ function convertTarget(t: WizardTarget | undefined, resolvers: WizardResolvers, 
 function convertMenuOption(opt: WizardMenuOption, resolvers: WizardResolvers, warnings: string[], flowLabel: string): AutoAttendantMenuOption {
   const dtmf = DTMF_BY_DIGIT[opt.key] ?? 'Automatic';
   if (opt.target.kind === 'operator') return { dtmf, action: 'TransferCallToOperator' };
+  // "Play a message" - an Announcement: played, then the caller returns to the menu.
+  if (opt.target.kind === 'message' && opt.target.label?.trim()) {
+    return { dtmf, action: 'Announcement', prompt: { type: 'Text', text: opt.target.label.trim() } };
+  }
   const target = convertTarget(opt.target, resolvers, warnings, `${flowLabel}, option "${opt.label}"`);
   return target ? { dtmf, action: 'TransferCallToTarget', target } : { dtmf, action: 'DisconnectCall' };
 }
@@ -124,8 +147,7 @@ function convertCallFlow(cf: WizardCallFlow, resolvers: WizardResolvers, warning
   // existing deploy machinery has no separate "redirect with no menu"
   // shape, this is how a plain forward is already represented.
   if (cf.mode === 'voicemail') {
-    warnings.push(`${label}: routes straight to Voicemail, which Teams can't deploy directly - it will disconnect the call until this is changed after import.`);
-    return { greetings, menu: { options: [{ dtmf: 'Automatic', action: 'TransferCallToTarget', target: { kind: 'voicemail' } }] } };
+    return { greetings, menu: { options: [{ dtmf: 'Automatic', action: 'TransferCallToTarget', target: sharedVoicemailTarget(undefined, warnings, label) }] } };
   }
   const target = convertTarget(cf.target, resolvers, warnings, label);
   if (!target) warnings.push(`${label}: no destination was chosen - calls will be disconnected until this is set.`);
@@ -155,12 +177,24 @@ export function convertAutoAttendantWizard(
     schedule = { type: 'weekly', weekly: { ...weekly, complement: true } };
   }
 
+  // The wizard's "From"/"To" date pickers are inclusive days; stored in the
+  // canonical exclusive-end form Discovery reads back from a live schedule
+  // (see normalizeFixedRange) so a deployed holiday compares equal to itself.
   const holiday_call_flows = answers.holidaysEnabled
-    ? (answers.holidays ?? []).map((h) => ({
-        name: h.name,
-        callFlow: convertCallFlow(h.flow, resolvers, warnings, `Holiday "${h.name}"`),
-        schedule: { type: 'fixed' as const, fixed: { ranges: [{ start: h.dateRange.start, end: h.dateRange.end }] } },
-      }))
+    ? (answers.holidays ?? []).flatMap((h) => {
+        const range = normalizeFixedRange({ start: h.dateRange.start, end: h.dateRange.end });
+        if (!range) {
+          warnings.push(`Holiday "${h.name}": no valid start date was entered, so it was left out - add its dates in Design & Build.`);
+          return [];
+        }
+        return [
+          {
+            name: h.name,
+            callFlow: convertCallFlow(h.flow, resolvers, warnings, `Holiday "${h.name}"`),
+            schedule: { type: 'fixed' as const, fixed: { ranges: [range] } },
+          },
+        ];
+      })
     : [];
 
   const operator = answers.operator ? (convertTarget(answers.operator, resolvers, warnings, 'Operator') ?? null) : null;
@@ -209,9 +243,30 @@ export function convertCallQueueWizard(
   // (target: string | undefined, never null) - deployment.ts's own
   // CallQueueActionSettings allows `null` for a resolved-but-empty target,
   // which the create DTO doesn't accept.
+  // Set-CsCallQueue's per-action target rules (Microsoft Learn): Forward = a
+  // person or a phone number, Voicemail = whose personal voicemail,
+  // SharedVoicemail = a Microsoft 365 group. People are matched to a synced
+  // user exactly like agents; a group can't be searched from the wizard.
   const actionSettings = (a: { action: string; forwardTo?: string }, label: string, threshold?: number) => {
-    if (a.action === 'Forward' && !a.forwardTo) warnings.push(`${label}: "Forward" was chosen but no destination was entered - set one after import.`);
-    return { action: a.action, ...(threshold !== undefined ? { threshold } : {}), target: a.action === 'Forward' ? a.forwardTo : undefined };
+    const typed = a.forwardTo?.trim() || undefined;
+    let target: string | undefined;
+    if (a.action === 'Forward' || a.action === 'Voicemail') {
+      if (!typed) {
+        warnings.push(
+          a.action === 'Forward'
+            ? `${label}: "Forward" was chosen but no destination was entered - set one after import.`
+            : `${label}: "Send to voicemail" was chosen but no person was entered - choose whose voicemail after import.`,
+        );
+      } else {
+        const upn = /^\+?[\d\s()-]+$/.test(typed) || typed.toLowerCase().startsWith('tel:') ? undefined : resolvers.resolvePerson(typed);
+        if (!upn && a.action === 'Voicemail') warnings.push(`${label}: "${typed}" doesn't match a synced user yet - confirm whose voicemail this is after import.`);
+        target = upn ?? typed;
+      }
+    } else if (a.action === 'SharedVoicemail') {
+      if (typed && GUID_RE.test(typed)) target = typed;
+      else warnings.push(`${label}: shared voicemail${typed ? ` ("${typed}")` : ''} needs its Microsoft 365 group chosen in Design & Build after import.`);
+    }
+    return { action: a.action, ...(threshold !== undefined ? { threshold } : {}), target };
   };
 
   return {

@@ -3,6 +3,7 @@ import { sql, type Kysely } from 'kysely';
 import { tenantDb, type DB } from '@tvmf/db';
 import {
   CALL_QUEUE_NO_AGENT_ACTIONS,
+  CALL_QUEUE_NO_AGENT_APPLY_TO,
   CALL_QUEUE_OVERFLOW_ACTIONS,
   CALL_QUEUE_ROUTING_METHODS,
   CALL_QUEUE_TIMEOUT_ACTIONS,
@@ -1045,6 +1046,14 @@ export class BuildService {
       if (live && typeof live.Identity === 'string') liveIdToBuild.set(live.Identity.toLowerCase(), { kind: 'call_queue', buildId: row.id });
     }
 
+    // A transfer to a resource account (ApplicationEndpoint) reaches the
+    // AA/CQ that account is associated with - same mapping
+    // resolveAutoAttendantDeepContext uses at deploy time.
+    const ownerByInstance = new Map<string, string>();
+    for (const d of [...aaByName.values(), ...cqByName.values()]) {
+      if (typeof d.Identity !== 'string' || !Array.isArray(d.ApplicationInstances)) continue;
+      for (const i of d.ApplicationInstances as unknown[]) if (typeof i === 'string') ownerByInstance.set(i.toLowerCase(), d.Identity.toLowerCase());
+    }
     const resolveTarget = (ref: LiveCallableEntityRef | undefined): AutoAttendantCallableEntity | undefined => {
       if (!ref) return undefined;
       if (ref.kind === 'external' && ref.number) return { kind: 'external', number: ref.number };
@@ -1052,8 +1061,10 @@ export class BuildService {
         const upn = upnByObjectId.get(ref.liveId.toLowerCase());
         return upn ? { kind: 'user', upn } : undefined;
       }
-      if (ref.kind === 'voice_app' && ref.liveId) {
-        const hit = liveIdToBuild.get(ref.liveId.toLowerCase());
+      if (ref.kind === 'shared_voicemail' && ref.liveId) return { kind: 'shared_voicemail', groupId: ref.liveId };
+      const appIdentity = ref.kind === 'voice_app' ? ref.liveId?.toLowerCase() : ref.kind === 'resource_account' && ref.liveId ? ownerByInstance.get(ref.liveId.toLowerCase()) : undefined;
+      if (appIdentity) {
+        const hit = liveIdToBuild.get(appIdentity);
         return hit ? { kind: hit.kind, buildId: hit.buildId } : undefined;
       }
       return undefined;
@@ -1129,6 +1140,9 @@ export class BuildService {
           action: decodeCallQueueEnum(live.NoAgentAction, CALL_QUEUE_NO_AGENT_ACTIONS),
           target: targetOf(live.NoAgentActionTarget),
         },
+        // Without this a populated queue never matches live (live 'AllCalls'
+        // vs a null row) and gets re-Set on every deployment.
+        no_agent_apply_to: decodeCallQueueEnum(live.NoAgentApplyTo, CALL_QUEUE_NO_AGENT_APPLY_TO) ?? null,
       };
       await s.updateTable('build_call_queues').set(patch as never).where('id', '=', row.id).execute();
     }

@@ -15,6 +15,7 @@
  * the caller has.
  */
 import { AA_DTMF_RESPONSES, AA_DIRECTORY_SEARCH_METHODS } from './domain';
+import { normalizeFixedRange } from './deployment';
 import type {
   AutoAttendantCallableEntity,
   AutoAttendantCallFlow,
@@ -25,8 +26,15 @@ import type {
 } from './deployment';
 
 export interface LiveCallableEntityRef {
-  kind: 'voice_app' | 'user' | 'external' | 'unknown';
-  /** Identity GUID - for kind 'voice_app' (resolve against both AA and CQ live-Identity maps) or 'user' (resolve against tenant_users.object_id). */
+  /**
+   * 'voice_app' = a nested AA/CQ referenced directly (ConfigurationEndpoint,
+   * liveId = the AA/CQ Identity); 'resource_account' = an AA/CQ reached via
+   * one of its resource accounts (ApplicationEndpoint, liveId = the
+   * resource account's object id - resolve through the owning AA/CQ's
+   * ApplicationInstances); 'shared_voicemail' = liveId is the M365 group id.
+   */
+  kind: 'voice_app' | 'resource_account' | 'user' | 'external' | 'shared_voicemail' | 'unknown';
+  /** Identity/object GUID - see `kind`. */
   liveId?: string;
   /** tel: string - only for kind 'external'. */
   number?: string;
@@ -34,9 +42,10 @@ export interface LiveCallableEntityRef {
 
 export interface LiveMenuOption {
   dtmf: (typeof AA_DTMF_RESPONSES)[number];
-  /** 'DisconnectCall' is used whenever no real CallTarget was captured - this is what Teams' simple after-hours/holiday action selector (not a custom menu) produces internally, not a guess. */
-  action: 'TransferCallToTarget' | 'DisconnectCall';
+  action: 'TransferCallToTarget' | 'TransferCallToOperator' | 'Announcement' | 'DisconnectCall';
   target?: LiveCallableEntityRef;
+  /** Only for 'Announcement'. */
+  prompt?: LivePrompt;
 }
 
 export interface LiveMenu {
@@ -86,31 +95,73 @@ export function parseLiveDtmf(raw: unknown): (typeof AA_DTMF_RESPONSES)[number] 
 }
 
 /**
- * CallTarget is `{Id, Type}` where Type 6 = voice app (AA/CQ), 0 = user, and
- * a bare `tel:` string Id = external number - OR a plain string holding the
- * .NET type name (`Microsoft.Rtc.Management.Hosted.OAA.Models.CallableEntity`)
- * when ConvertTo-Json's depth limit truncated a real object (see the AA
- * cmdlet's `depth: 10` fix, apps/worker/src/discovery/cmdlets.ts) - treated
- * as "no target captured", not a real disconnect/voicemail configuration.
+ * CallableEntityType, as serialized by Get-CsAutoAttendant - read from
+ * MicrosoftTeams 8.0.0's own assembly (Microsoft.Rtc.Management.Hosted.OAA
+ * .Models.CallableEntityType): User=0, OrganizationalAutoAttendant=1,
+ * HuntGroup=2, ApplicationEndpoint=3, ExternalPstn=4, SharedVoicemail=5,
+ * ConfigurationEndpoint=6, Voicemail=7. A string name is accepted too.
+ */
+const CALLABLE_ENTITY_TYPES = ['User', 'OrganizationalAutoAttendant', 'HuntGroup', 'ApplicationEndpoint', 'ExternalPstn', 'SharedVoicemail', 'ConfigurationEndpoint', 'Voicemail'];
+/** ActionType, same source: TransferCallToOperator=0, DisconnectCall=1, TransferCallToTarget=2, Announcement=3. */
+const MENU_OPTION_ACTION_TYPES = ['TransferCallToOperator', 'DisconnectCall', 'TransferCallToTarget', 'Announcement'];
+
+function decodeEnum(v: unknown, names: readonly string[]): string | undefined {
+  if (typeof v === 'string') return names.find((n) => n.toLowerCase() === v.toLowerCase()) ?? v;
+  if (typeof v === 'number') return names[v];
+  return undefined;
+}
+
+/**
+ * CallTarget is `{Id, Type}` (see CALLABLE_ENTITY_TYPES) - OR a plain string
+ * holding the .NET type name (`Microsoft.Rtc.Management.Hosted.OAA.Models
+ * .CallableEntity`) when ConvertTo-Json's depth limit truncated a real object
+ * (see the AA cmdlet's `depth: 10` fix, apps/worker/src/discovery/cmdlets.ts)
+ * - treated as "no target captured", not a real disconnect configuration.
  */
 export function parseLiveCallTarget(raw: unknown): LiveCallableEntityRef | undefined {
   if (raw == null || typeof raw !== 'object') return undefined;
   const o = raw as Record<string, unknown>;
   const id = typeof o.Id === 'string' ? o.Id : undefined;
   if (!id) return undefined;
-  if (id.startsWith('tel:')) return { kind: 'external', number: id };
-  const type = typeof o.Type === 'number' ? o.Type : undefined;
-  if (type === 0) return { kind: 'user', liveId: id };
-  if (type === 6) return { kind: 'voice_app', liveId: id };
-  return { kind: 'unknown', liveId: id };
+  if (id.toLowerCase().startsWith('tel:')) return { kind: 'external', number: id };
+  switch (decodeEnum(o.Type, CALLABLE_ENTITY_TYPES)) {
+    case 'User':
+      return { kind: 'user', liveId: id };
+    case 'ConfigurationEndpoint':
+    case 'OrganizationalAutoAttendant':
+    case 'HuntGroup':
+      return { kind: 'voice_app', liveId: id };
+    case 'ApplicationEndpoint':
+      return { kind: 'resource_account', liveId: id };
+    case 'SharedVoicemail':
+      return { kind: 'shared_voicemail', liveId: id };
+    case 'ExternalPstn':
+      return { kind: 'external', number: id };
+    default:
+      return { kind: 'unknown', liveId: id };
+  }
 }
 
+/**
+ * The live option's own Action decides what it does - not whether a
+ * CallTarget happened to be captured. Reading only CallTarget turned every
+ * "press 0 for the operator" and every Announcement into DisconnectCall the
+ * moment a live AA was populated into Design & Build.
+ */
 export function parseLiveMenuOption(raw: unknown): LiveMenuOption | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const o = raw as Record<string, unknown>;
   const dtmf = parseLiveDtmf(o.DtmfResponse);
   if (!dtmf) return undefined;
   const target = parseLiveCallTarget(o.CallTarget);
+  const action = decodeEnum(o.Action, MENU_OPTION_ACTION_TYPES);
+  if (action === 'TransferCallToOperator') return { dtmf, action: 'TransferCallToOperator' };
+  if (action === 'Announcement') {
+    const prompt = parseLivePrompt(o.Prompt);
+    return { dtmf, action: 'Announcement', ...(prompt && prompt.type !== 'None' ? { prompt } : {}) };
+  }
+  if (action === 'DisconnectCall') return { dtmf, action: 'DisconnectCall' };
+  // TransferCallToTarget, or an older snapshot without Action at all.
   return target ? { dtmf, action: 'TransferCallToTarget', target } : { dtmf, action: 'DisconnectCall' };
 }
 
@@ -163,6 +214,9 @@ function fmtTimeOfDay(raw: unknown): string | undefined {
   const h = typeof o.Hours === 'number' ? o.Hours : undefined;
   const m = typeof o.Minutes === 'number' ? o.Minutes : undefined;
   if (h == null || m == null) return undefined;
+  // A range that runs to midnight is the TimeSpan 1.00:00 (Days=1, Hours=0) -
+  // reading only Hours turned it into 00:00, an invalid zero-length range.
+  if (typeof o.Days === 'number' && o.Days >= 1) return '24:00';
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
@@ -189,7 +243,8 @@ export function parseLiveSchedule(raw: unknown): LiveSchedule | undefined {
       .map((r) => {
         if (!r || typeof r !== 'object') return undefined;
         const rr = r as Record<string, unknown>;
-        return typeof rr.Start === 'string' && typeof rr.End === 'string' ? { start: rr.Start, end: rr.End } : undefined;
+        if (typeof rr.Start !== 'string' || typeof rr.End !== 'string') return undefined;
+        return normalizeFixedRange({ start: rr.Start, end: rr.End }) ?? { start: rr.Start, end: rr.End };
       })
       .filter((v): v is { start: string; end: string } => !!v);
     return { type: 'fixed', fixed: { ranges } };
@@ -253,7 +308,8 @@ export function liveAutoAttendantToStructured(
   const resolveMenuOption = (opt: LiveMenuOption): AutoAttendantMenuOption => ({
     dtmf: opt.dtmf,
     action: opt.action,
-    target: resolveTarget(opt.target),
+    ...(opt.action === 'TransferCallToTarget' ? { target: resolveTarget(opt.target) } : {}),
+    ...(opt.action === 'Announcement' && opt.prompt ? { prompt: { type: opt.prompt.type, text: opt.prompt.text } } : {}),
   });
   const resolveMenu = (m: LiveMenu): AutoAttendantMenu => ({
     enableDialByName: m.enableDialByName,

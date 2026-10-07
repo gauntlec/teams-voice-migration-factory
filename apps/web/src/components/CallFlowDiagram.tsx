@@ -24,6 +24,7 @@ const KIND_STYLE: Record<CallFlowNodeKind, { bg: string; border: string; icon: s
   voicemail: { bg: '#FFF7ED', border: '#EA580C', icon: '📼', label: 'Voicemail' },
   shared_voicemail: { bg: '#FFF7ED', border: '#EA580C', icon: '📼', label: 'Shared voicemail' },
   operator: { bg: '#ECFEFF', border: '#0891B2', icon: '🎧', label: 'Operator' },
+  announcement: { bg: '#F0F9FF', border: '#0284C7', icon: '📢', label: 'Announcement' },
   disconnect: { bg: '#FEF2F2', border: '#DC2626', icon: '⛔', label: 'Disconnect' },
 };
 
