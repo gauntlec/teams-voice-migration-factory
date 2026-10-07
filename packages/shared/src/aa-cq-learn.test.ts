@@ -6,6 +6,7 @@ import {
   normalizeFixedRange,
   planAutoAttendantRow,
   planCallQueueRow,
+  planSharedCallingPolicyRow,
   renderCommand,
   type AutoAttendantCallFlow,
   type BuildAutoAttendantRow,
@@ -340,5 +341,13 @@ describe('Live call-flow visualiser', () => {
     expect(labels).toContain('Announcement');
     expect(labels).toContain('Sales');
     expect(labels).not.toContain('Disconnect');
+  });
+});
+
+describe('Shared Calling policy live diff', () => {
+  it('treats the same resource account as unchanged regardless of GUID case', () => {
+    const row = { id: 'sc-1', name: 'Seattle', resource_account_id: 'ra-1', emergency_numbers: ['+14255556677'], description: null };
+    const live = { identity: 'Seattle', resourceAccount: USER_GUID.toLowerCase(), emergencyNumbers: ['+14255556677'] };
+    expect(planSharedCallingPolicyRow(row, new Map([['ra-1', USER_GUID.toUpperCase()]]), live)).toEqual([]);
   });
 });

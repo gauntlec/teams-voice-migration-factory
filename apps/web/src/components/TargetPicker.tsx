@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Combobox, Dropdown, Field, Input, Option, Text, Textarea } from '@fluentui/react-components';
-import type { WizardTarget } from '@tvmf/shared';
+import type { Paginated, WizardTarget } from '@tvmf/shared';
+import { api } from '../api';
 import { CallQueueWizard } from './CallQueueWizard';
 import { UpnAutocomplete } from './UpnAutocomplete';
 import type { Choice } from './records';
@@ -78,6 +80,17 @@ export function TargetPicker({
   const offeredKinds = kinds.filter((k) => k !== 'call_queue' || canCreateCallQueue);
 
   const [nestedOpen, setNestedOpen] = useState(false);
+  // The nested Call Queue wizard offers the same site resource accounts as the
+  // top-level one - same query and cache key as SiteWorkspace's own list.
+  const siteResourceAccounts = useQuery({
+    queryKey: ['site-ras-lite', tenantId, siteId],
+    enabled: canCreateCallQueue,
+    queryFn: () => api<Paginated<{ id: string; name: string }>>(`${base}/resource-accounts?siteId=${siteId}&limit=200`),
+  });
+  const resourceAccountChoices: Choice[] = useMemo(
+    () => (siteResourceAccounts.data?.items ?? []).map((r) => ({ value: r.id, label: r.name })),
+    [siteResourceAccounts.data],
+  );
   const [prevValue, setPrevValue] = useState<WizardTarget | undefined>(undefined);
 
   return (
@@ -168,7 +181,7 @@ export function TargetPicker({
           base={base!}
           tenantId={tenantId!}
           siteId={siteId!}
-          resourceAccountChoices={[]}
+          resourceAccountChoices={resourceAccountChoices}
           onCreated={(row) => {
             if (row) {
               onChange({ kind: 'call_queue', label: row.name, flowId: row.id });

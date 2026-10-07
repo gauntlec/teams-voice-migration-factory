@@ -201,7 +201,34 @@ export class AuthService {
     return this.issueLogin(userId, role, email, meta);
   }
 
-  async beginTotpEnrol(userId: string, email: string) {
+  async beginTotpEnrol(userId: string, email: string, alreadyEnrolled: boolean, currentCode: string | undefined, meta: Meta) {
+    if (alreadyEnrolled) {
+      // Re-enrolment replaces the confirmed secret, so it needs the current
+      // code first - same lockout counter as login() and confirmTotpEnrol(),
+      // so this can't be used to grind codes either.
+      const user = await platformDb(this.db)
+        .selectFrom('users')
+        .select(['failed_logins', 'locked_until'])
+        .where('id', '=', userId)
+        .executeTakeFirstOrThrow();
+      if (user.locked_until && new Date(user.locked_until).getTime() > Date.now()) {
+        throw new UnauthorizedException('Account temporarily locked - try again later');
+      }
+      if (!currentCode) throw new UnauthorizedException('Enter the code from your current authenticator to re-enrol MFA');
+      const current = await platformDb(this.db)
+        .selectFrom('totp_secrets')
+        .select('secret_enc')
+        .where('user_id', '=', userId)
+        .where('confirmed_at', 'is not', null)
+        .executeTakeFirst();
+      if (!current || !this.totp.verify(currentCode, decryptSecret(current.secret_enc))) {
+        await this.recordFailedAttempt(userId, user.failed_logins);
+        await this.audit.platform('auth.totp.reenrol_failed', { actor: { id: userId, email, ip: meta.ip } });
+        throw new UnauthorizedException('MFA code incorrect or expired');
+      }
+      await this.clearFailedAttempts(userId, user.failed_logins);
+      await this.audit.platform('auth.totp.reenrol_started', { actor: { id: userId, email, ip: meta.ip } });
+    }
     const secret = this.totp.generateSecret();
     await platformDb(this.db)
       .insertInto('totp_secrets')

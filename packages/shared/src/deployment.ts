@@ -627,7 +627,7 @@ export function planSharedCallingPolicyRow(
   }
   const sortedLive = [...(live.emergencyNumbers ?? [])].sort();
   const changed =
-    (live.resourceAccount ?? undefined) !== resourceAccount ||
+    (live.resourceAccount ?? '').toLowerCase() !== resourceAccount.toLowerCase() ||
     JSON.stringify(sortedNumbers) !== JSON.stringify(sortedLive) ||
     (live.description ?? undefined) !== (row.description ?? undefined);
   if (!changed) return [];

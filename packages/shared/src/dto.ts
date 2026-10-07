@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ROLES } from './rbac';
 import { autoAttendantWizardAnswersSchema, callQueueWizardAnswersSchema } from './wizard';
 import {
+  DEPLOYMENT_SHEETS,
   AA_CALLABLE_ENTITY_KINDS,
   AA_DIRECTORY_SEARCH_METHODS,
   AA_DTMF_RESPONSES,
@@ -70,6 +71,12 @@ export type LoginInput = z.infer<typeof loginSchema>;
 export const totpEnrolConfirmSchema = z.object({
   totp: z.string().regex(/^\d{6}$/),
 });
+
+/** Start (re-)enrolment. `currentTotp` is required once the account already has confirmed MFA - re-enrolling must prove possession of the current authenticator before its secret can be replaced. */
+export const totpEnrolStartSchema = z.preprocess(
+  (v) => v ?? {},
+  z.object({ currentTotp: z.string().regex(/^\d{6}$/).optional() }),
+);
 
 /** Set a new password on the forced first-sign-in reset (before MFA enrolment). */
 export const passwordChangeSchema = z.object({
@@ -195,7 +202,7 @@ export const createDeploymentSchema = z.object({
       // request naming it ran to completion doing nothing for that sheet
       // while reporting success - confirmed this session. Matches
       // deploymentPreviewQuerySchema's own already-correct exclusion below.
-      sheets: z.array(z.enum(['users', 'caps', 'resource_accounts', 'shared_calling_policies', 'auto_attendants', 'call_queues'])).min(1),
+      sheets: z.array(z.enum(DEPLOYMENT_SHEETS)).min(1),
       waves: z.array(z.string()).optional(),
       rowIds: z.array(z.string().uuid()).optional(),
     })
@@ -222,7 +229,7 @@ const queryArray = <T extends z.ZodTypeAny>(arraySchema: T) =>
  */
 export const deploymentPreviewQuerySchema = z.object({
   siteId: z.string().uuid(),
-  sheets: queryArray(z.array(z.enum(['users', 'caps', 'resource_accounts', 'shared_calling_policies', 'call_queues', 'auto_attendants'])).min(1)).default([
+  sheets: queryArray(z.array(z.enum(DEPLOYMENT_SHEETS)).min(1)).default([
     'users',
     'caps',
     'resource_accounts',

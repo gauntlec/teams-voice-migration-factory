@@ -515,6 +515,10 @@ export const HANDOVER_SECTIONS = [
   { key: 'outstanding_actions', title: 'Outstanding Actions' },
 ] as const;
 
+/** Every deployable Design & Build sheet, in the worker's run order - the single list the UI, API and change document use for "everything". */
+export const DEPLOYMENT_SHEETS = ['users', 'caps', 'resource_accounts', 'shared_calling_policies', 'call_queues', 'auto_attendants'] as const;
+export type DeploymentSheet = (typeof DEPLOYMENT_SHEETS)[number];
+
 export const DEPLOYMENT_MODES = ['dry_run', 'execute'] as const;
 export type DeploymentMode = (typeof DEPLOYMENT_MODES)[number];
 

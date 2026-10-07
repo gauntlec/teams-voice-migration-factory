@@ -11,7 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
-import { loginSchema, passwordChangeSchema, totpEnrolConfirmSchema } from '@tvmf/shared';
+import { loginSchema, passwordChangeSchema, totpEnrolConfirmSchema, totpEnrolStartSchema } from '@tvmf/shared';
 import { APP_CONFIG, type AppConfig } from '../common/config';
 import type { AppRequest } from '../common/request';
 import { ZodBody } from '../common/zod.pipe';
@@ -101,18 +101,24 @@ export class AuthController {
 
   @AllowEnrol()
   @Post('totp/start')
-  async totpStart(@CurrentUser() user: AuthedUser) {
+  async totpStart(
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(totpEnrolStartSchema)) body: { currentTotp?: string },
+    @Req() req: Request,
+  ) {
     // A limited "enrol" token is only meant to cover first-time enrolment; if
     // the account is already confirmed by the time this runs, the token is
     // either stale (a second call in the same first-enrol flow, harmless) or
     // it leaked and the real account has since completed enrolment properly
     // elsewhere - either way, refuse to let it mint a fresh secret and wipe
-    // out the confirmed one. A fully-authenticated (non-enrolOnly) session
-    // re-enrolling on purpose - e.g. a lost device - is unaffected.
+    // out the confirmed one.
     if (user.enrolOnly && user.totpEnrolled) {
       throw new ForbiddenException('MFA is already enrolled for this account. Sign in fully to re-enrol.');
     }
-    return this.auth.beginTotpEnrol(user.id, user.email);
+    // A full session re-enrolling an already-enrolled account must also prove
+    // it holds the current authenticator - a stolen access token alone must
+    // not be able to swap the MFA secret (see beginTotpEnrol).
+    return this.auth.beginTotpEnrol(user.id, user.email, user.totpEnrolled, body.currentTotp, this.meta(req));
   }
 
   @AllowEnrol()

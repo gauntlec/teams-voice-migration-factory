@@ -28,7 +28,7 @@ import {
   tokens,
 } from '@fluentui/react-components';
 import { ArrowLeftRegular, WarningRegular } from '@fluentui/react-icons';
-import type { DeploymentPreviewRow, DeploymentSiteRollup, FileRow } from '@tvmf/shared';
+import { DEPLOYMENT_SHEETS, type DeploymentPreviewRow, type DeploymentSiteRollup, type FileRow } from '@tvmf/shared';
 import { api, apiDownload, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
@@ -194,7 +194,7 @@ export function DeploymentSiteWorkspace() {
     enabled: !!tid && !!siteId,
     queryFn: () =>
       api<DeploymentPreviewRow[]>(
-        `${base}/preview?siteId=${siteId}&sheets=users,caps,resource_accounts,call_queues,auto_attendants`,
+        `${base}/preview?siteId=${siteId}&sheets=${DEPLOYMENT_SHEETS.join(',')}`,
       ),
   });
 
@@ -213,7 +213,7 @@ export function DeploymentSiteWorkspace() {
   });
 
   const sheetsFor = (rowIds: Set<string> | undefined) => {
-    if (!rowIds || rowIds.size === 0) return ['users', 'caps', 'resource_accounts', 'call_queues', 'auto_attendants'];
+    if (!rowIds || rowIds.size === 0) return [...DEPLOYMENT_SHEETS];
     const selectedTypes = new Set(
       (preview.data ?? []).filter((r) => rowIds.has(r.rowId)).map((r) => r.objectType),
     );
@@ -221,6 +221,7 @@ export function DeploymentSiteWorkspace() {
     if (selectedTypes.has('user')) sheets.push('users');
     if (selectedTypes.has('cap')) sheets.push('caps');
     if (selectedTypes.has('resource_account')) sheets.push('resource_accounts');
+    if (selectedTypes.has('shared_calling_policy')) sheets.push('shared_calling_policies');
     if (selectedTypes.has('call_queue')) sheets.push('call_queues');
     if (selectedTypes.has('auto_attendant')) sheets.push('auto_attendants');
     return sheets;
@@ -252,7 +253,7 @@ export function DeploymentSiteWorkspace() {
           mode,
           scope: {
             siteId,
-            sheets: everyone ? ['users', 'caps', 'resource_accounts', 'call_queues', 'auto_attendants'] : sheetsFor(selectedRowIds),
+            sheets: everyone ? [...DEPLOYMENT_SHEETS] : sheetsFor(selectedRowIds),
             rowIds: everyone ? undefined : [...selectedRowIds],
           },
         }),

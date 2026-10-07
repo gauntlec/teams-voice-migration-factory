@@ -12,6 +12,7 @@ import {
   type Scoped,
 } from '@tvmf/db';
 import {
+  DEPLOYMENT_SHEETS,
   autoAttendantRowWarnings,
   callQueueRowWarnings,
   collectAutoAttendantUserUpns,
@@ -522,7 +523,7 @@ export class DeploymentService {
 
     const rows = await this.previewChanges(t, {
       siteId,
-      sheets: ['users', 'caps', 'resource_accounts', 'call_queues', 'auto_attendants'],
+      sheets: [...DEPLOYMENT_SHEETS],
       rowIds: input.rowIds,
     });
 

@@ -18,6 +18,8 @@ import {
 } from '@tvmf/shared';
 import type { DB } from './schema';
 
+const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * A tenant-schema-scoped Kysely instance, as returned by `tenantDb()`. Every
  * function here only ever takes one of these as input - never raw
@@ -66,11 +68,27 @@ export async function resolveLiveSharedCallingPolicyState(scoped: Scoped, names:
     .where('removed_at', 'is', null)
     .where(sql`lower(name)`, 'in', wanted)
     .execute();
+  // -ResourceAccount accepts the account's Identity (UPN/SIP) or its ObjectId
+  // (Microsoft Learn), so the live value can be either. The planner compares
+  // against the resolved Entra ObjectId - normalize a UPN to that here, or
+  // the same account reads as "changed" on every preview.
+  const raw = rows.map((r) => (r.data as Record<string, unknown>).ResourceAccount).filter((v): v is string => typeof v === 'string');
+  const upns = [...new Set(raw.filter((v) => !GUID_RE.test(v)).map((v) => v.replace(/^sip:/i, '').toLowerCase()))];
+  const entraByUpn = new Map<string, string>();
+  if (upns.length) {
+    const users = await scoped.selectFrom('tenant_users').select(['upn', 'entra_id']).where(sql`lower(upn)`, 'in', upns).execute();
+    for (const u of users) if (u.entra_id) entraByUpn.set(u.upn.toLowerCase(), u.entra_id);
+  }
+  const toObjectId = (v: unknown): string | undefined => {
+    if (typeof v !== 'string' || !v) return undefined;
+    if (GUID_RE.test(v)) return v.toLowerCase();
+    return entraByUpn.get(v.replace(/^sip:/i, '').toLowerCase())?.toLowerCase() ?? v;
+  };
   for (const r of rows) {
     const d = r.data as Record<string, unknown>;
     out.set(r.name.toLowerCase(), {
       identity: r.name,
-      resourceAccount: typeof d.ResourceAccount === 'string' ? d.ResourceAccount : undefined,
+      resourceAccount: toObjectId(d.ResourceAccount),
       emergencyNumbers: Array.isArray(d.EmergencyNumbers) ? (d.EmergencyNumbers as unknown[]).filter((v): v is string => typeof v === 'string') : undefined,
       description: typeof d.Description === 'string' ? d.Description : undefined,
     });
