@@ -29,12 +29,14 @@ import {
   type LiveCallFlow,
   type LiveMenuOption,
 } from './aa-live-parse';
-import type {
-  AutoAttendantCallableEntity,
-  AutoAttendantCallFlow,
-  AutoAttendantMenuOption,
-  CallQueueActionSettings,
+import {
+  decodeCallQueueEnum,
+  type AutoAttendantCallableEntity,
+  type AutoAttendantCallFlow,
+  type AutoAttendantMenuOption,
+  type CallQueueActionSettings,
 } from './deployment';
+import { CALL_QUEUE_NO_AGENT_ACTIONS, CALL_QUEUE_OVERFLOW_ACTIONS, CALL_QUEUE_TIMEOUT_ACTIONS } from './domain';
 
 export type CallFlowNodeKind =
   | 'auto_attendant'
@@ -190,10 +192,13 @@ function designCqActionEdges(b: GraphBuilder, cq: DesignCallQueueInput): void {
       // "SharedVoicemail target shows a raw GUID" bug report) - either way,
       // shown as a person/shared-voicemail node rather than guessed further.
       const looksLikeUpn = settings.target.includes('@');
+      const looksLikeNumber = /^(tel:)?\+?[\d\s()-]+$/i.test(settings.target.trim());
       const targetId =
         settings.action === 'SharedVoicemail' && !looksLikeUpn
           ? b.ensureNode({ id: `group:${settings.target}`, kind: 'shared_voicemail', label: 'Shared voicemail (group)', sublabel: settings.target })
-          : b.ensureNode({ id: `user:${settings.target.toLowerCase()}`, kind: 'person', label: settings.target });
+          : looksLikeNumber
+            ? b.ensureNode({ id: `ext:${settings.target}`, kind: 'external_number', label: settings.target.replace(/^tel:/i, '') })
+            : b.ensureNode({ id: `user:${settings.target.toLowerCase()}`, kind: 'person', label: settings.target });
       b.addEdge(sourceId, targetId, label, branch);
     } else if (settings.action === 'SharedVoicemail') {
       b.addEdge(sourceId, b.ensureNode({ id: 'shared_voicemail', kind: 'shared_voicemail', label: 'Shared voicemail' }), label, branch);
@@ -394,38 +399,106 @@ function liveCqAgentEdges(b: GraphBuilder, cq: LiveCallQueueInput, usersByEntraI
   }
 }
 
-/** `usersByEntraId` (tenant_users.entra_id, lowercased -> UPN) resolves a person target to a real UPN when the caller has that user loaded - otherwise falls back to a truncated id, same as an unresolved M365 group. */
-function liveCqActionEdges(b: GraphBuilder, cq: LiveCallQueueInput, usersByEntraId?: Map<string, string>): void {
+/**
+ * Get-CsCallQueue's …ActionTarget.Type, read from MicrosoftTeams 8.0.0's own
+ * assembly (Microsoft.Rtc.Management.Hosted.HuntGroup.Models.TargetType):
+ * UnResolved=0, User=1, ApplicationEndpoint=2, ApplicationInstance=3,
+ * Phone=4, MailBox=5. ConvertTo-Json writes it as the number, not the name.
+ */
+const CQ_TARGET_TYPES = ['UnResolved', 'User', 'ApplicationEndpoint', 'ApplicationInstance', 'Phone', 'MailBox'] as const;
+const CQ_ACTIONS = { overflow: CALL_QUEUE_OVERFLOW_ACTIONS, timeout: CALL_QUEUE_TIMEOUT_ACTIONS, no_agent: CALL_QUEUE_NO_AGENT_ACTIONS } as const;
+
+/**
+ * Overflow/Timeout/No-agent edges for a live queue, driven by the decoded
+ * action (not just whether a target exists): Disconnect draws a disconnect,
+ * Voicemail a personal voicemail, SharedVoicemail a group, Forward a person,
+ * phone number or - via `resolveVoiceApp` (the caller's AA/CQ lookup) -
+ * another voice app. `usersByEntraId` (tenant_users.entra_id, lowercased ->
+ * UPN) names a person target when the caller has that user loaded.
+ */
+function liveCqActionEdges(
+  b: GraphBuilder,
+  cq: LiveCallQueueInput,
+  usersByEntraId?: Map<string, string>,
+  resolveVoiceApp?: (id: string) => string | undefined,
+): void {
   const identity = typeof cq.data.Identity === 'string' ? cq.data.Identity : cq.name;
   const sourceId = `cq:${identity}`;
+  const personLabel = (id: string) => usersByEntraId?.get(id.toLowerCase()) ?? `User (${id.slice(0, 8)}…)`;
   for (const [actionKey, targetKey, branch] of [
     ['OverflowAction', 'OverflowActionTarget', 'overflow'],
     ['TimeoutAction', 'TimeoutActionTarget', 'timeout'],
     ['NoAgentAction', 'NoAgentActionTarget', 'no_agent'],
   ] as const) {
-    const action = cq.data[actionKey];
-    if (typeof action !== 'number') continue;
-    const targetObj = cq.data[targetKey] as { Id?: string; Type?: string } | undefined;
-    if (!targetObj?.Id) continue;
-    const nodeId =
-      targetObj.Type === 'MailBox'
-        ? b.ensureNode({ id: `group:${targetObj.Id}`, kind: 'shared_voicemail', label: 'Shared voicemail (group)', sublabel: targetObj.Id })
-        : b.ensureNode({
-            id: `user:${targetObj.Id}`,
-            kind: 'person',
-            label: usersByEntraId?.get(targetObj.Id.toLowerCase()) ?? `User (${targetObj.Id.slice(0, 8)}…)`,
-          });
-    b.addEdge(sourceId, nodeId, CQ_ACTION_LABEL[branch], branch);
+    const action = decodeCallQueueEnum(cq.data[actionKey], CQ_ACTIONS[branch]);
+    if (!action || action === 'Queue') continue;
+    const targetObj = cq.data[targetKey] as { Id?: unknown; Type?: unknown } | null | undefined;
+    const id = typeof targetObj?.Id === 'string' ? targetObj.Id : undefined;
+    const type = decodeCallQueueEnum(targetObj?.Type, CQ_TARGET_TYPES);
+    let nodeId: string | undefined;
+    if (action === 'Disconnect' || action === 'DisconnectWithBusy') {
+      nodeId = b.ensureNode({ id: 'disconnect', kind: 'disconnect', label: 'Disconnect' });
+    } else if (action === 'SharedVoicemail') {
+      nodeId = id
+        ? b.ensureNode({ id: `group:${id}`, kind: 'shared_voicemail', label: 'Shared voicemail (group)', sublabel: id })
+        : b.ensureNode({ id: 'shared_voicemail', kind: 'shared_voicemail', label: 'Shared voicemail' });
+    } else if (action === 'Voicemail') {
+      nodeId = id
+        ? b.ensureNode({ id: `voicemail:${id.toLowerCase()}`, kind: 'voicemail', label: 'Voicemail', sublabel: personLabel(id) })
+        : b.ensureNode({ id: 'voicemail', kind: 'voicemail', label: 'Voicemail' });
+    } else if (action === 'Forward' && id) {
+      if (id.toLowerCase().startsWith('tel:') || type === 'Phone') {
+        nodeId = b.ensureNode({ id: `ext:${id}`, kind: 'external_number', label: id.replace(/^tel:/i, '') });
+      } else if (type === 'ApplicationEndpoint' || type === 'ApplicationInstance') {
+        nodeId = resolveVoiceApp?.(id) ?? b.ensureNode({ id: `app:${id}`, kind: 'call_queue', label: `Voice app (${id.slice(0, 8)}…)` });
+      } else {
+        nodeId = resolveVoiceApp?.(id) ?? b.ensureNode({ id: `user:${id}`, kind: 'person', label: personLabel(id) });
+      }
+    }
+    if (nodeId) b.addEdge(sourceId, nodeId, CQ_ACTION_LABEL[branch], branch);
   }
 }
 
-/** The "as-is" graph for one Call Queue, straight from Discovery's live tenant_objects snapshot. */
-export function buildCallQueueFlowGraphFromLive(cq: LiveCallQueueInput, usersByEntraId?: Map<string, string>): CallFlowGraph {
+/** Resolves a live AA/CQ Identity, or one of their resource-account object ids, to that AA/CQ's node - shared by the live AA and CQ graphs. */
+function liveVoiceAppResolver(b: GraphBuilder, allAutoAttendants: LiveAutoAttendantInput[], allCallQueues: LiveCallQueueInput[]): (id: string) => string | undefined {
+  const byKey = new Map<string, { identity: string; name: string; kind: 'auto_attendant' | 'call_queue'; data: Record<string, unknown> }>();
+  for (const [list, kind] of [
+    [allAutoAttendants, 'auto_attendant'],
+    [allCallQueues, 'call_queue'],
+  ] as const) {
+    for (const o of list) {
+      const identity = typeof o.data.Identity === 'string' ? o.data.Identity : undefined;
+      if (!identity) continue;
+      const entry = { identity, name: o.name, kind, data: o.data };
+      byKey.set(identity.toLowerCase(), entry);
+      for (const i of Array.isArray(o.data.ApplicationInstances) ? (o.data.ApplicationInstances as unknown[]) : []) {
+        if (typeof i === 'string') byKey.set(i.toLowerCase(), entry);
+      }
+    }
+  }
+  return (id) => {
+    const hit = byKey.get(id.toLowerCase());
+    if (!hit) return undefined;
+    return b.ensureNode({
+      id: `${hit.kind === 'call_queue' ? 'cq' : 'aa'}:${hit.identity}`,
+      kind: hit.kind,
+      label: hit.name,
+      badge: hit.kind === 'auto_attendant' && liveHasPhoneNumber(hit.data) ? FRONT_DOOR_BADGE : undefined,
+    });
+  };
+}
+
+/** The "as-is" graph for one Call Queue, straight from Discovery's live tenant_objects snapshot. `siblings` (every live AA/CQ) lets a Forward to another voice app show its real name. */
+export function buildCallQueueFlowGraphFromLive(
+  cq: LiveCallQueueInput,
+  usersByEntraId?: Map<string, string>,
+  siblings?: { autoAttendants: LiveAutoAttendantInput[]; callQueues: LiveCallQueueInput[] },
+): CallFlowGraph {
   const b = new GraphBuilder();
   const identity = typeof cq.data.Identity === 'string' ? cq.data.Identity : cq.name;
   b.ensureNode({ id: `cq:${identity}`, kind: 'call_queue', label: cq.name, sublabel: liveCqSublabel(cq.data) });
   liveCqAgentEdges(b, cq, usersByEntraId);
-  liveCqActionEdges(b, cq, usersByEntraId);
+  liveCqActionEdges(b, cq, usersByEntraId, siblings ? liveVoiceAppResolver(b, siblings.autoAttendants, siblings.callQueues) : undefined);
   return b.build();
 }
 
@@ -482,6 +555,7 @@ export function buildAutoAttendantFlowGraphFromLive(
     const instances = Array.isArray(o.data.ApplicationInstances) ? (o.data.ApplicationInstances as unknown[]) : [];
     if (identity) for (const i of instances) if (typeof i === 'string') ownerByInstance.set(i.toLowerCase(), identity);
   }
+  const resolveVoiceAppNode = liveVoiceAppResolver(b, allAutoAttendants, allCallQueues);
   const voiceAppIdentity = (ref: LiveCallableEntityRef | undefined): string | undefined => {
     if (!ref?.liveId) return undefined;
     if (ref.kind === 'voice_app') return ref.liveId;
@@ -541,7 +615,7 @@ export function buildAutoAttendantFlowGraphFromLive(
     if (cq && !visitedCq.has(key)) {
       visitedCq.add(key);
       liveCqAgentEdges(b, cq, usersByEntraId);
-      liveCqActionEdges(b, cq, usersByEntraId);
+      liveCqActionEdges(b, cq, usersByEntraId, resolveVoiceAppNode);
       return;
     }
     const nextAa = aaByIdentity.get(key);

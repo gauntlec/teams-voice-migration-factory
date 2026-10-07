@@ -1283,12 +1283,10 @@ function LiveCallFlowDialog({ base, type, row, onClose }: { base: string; type: 
   const aaQ = useQuery({
     queryKey: ['tdisc', 'callflow-aa-all', base],
     queryFn: () => api<Paginated<TenantObject>>(`${base}/objects?type=auto_attendant&limit=200`),
-    enabled: needsSiblings,
   });
   const cqQ = useQuery({
     queryKey: ['tdisc', 'callflow-cq-all', base],
     queryFn: () => api<Paginated<TenantObject>>(`${base}/objects?type=call_queue&limit=200`),
-    enabled: needsSiblings,
   });
   const schedQ = useQuery({
     queryKey: ['tdisc', 'callflow-sched-all', base],
@@ -1310,7 +1308,15 @@ function LiveCallFlowDialog({ base, type, row, onClose }: { base: string; type: 
 
   const graph = useMemo(() => {
     if (type === 'call_queue') {
-      return buildCallQueueFlowGraphFromLive({ name: row.display_name ?? row.object_key, data: row.data }, usersByEntraId);
+      // Siblings name a Forward-to-voice-app target; drawn without them until they load.
+      const siblings =
+        aaQ.data && cqQ.data
+          ? {
+              autoAttendants: aaQ.data.items.map((o) => ({ name: o.display_name ?? o.object_key, data: o.data })),
+              callQueues: cqQ.data.items.map((o) => ({ name: o.display_name ?? o.object_key, data: o.data })),
+            }
+          : undefined;
+      return buildCallQueueFlowGraphFromLive({ name: row.display_name ?? row.object_key, data: row.data }, usersByEntraId, siblings);
     }
     if (!aaQ.data || !cqQ.data || !schedQ.data) return null;
     return buildAutoAttendantFlowGraphFromLive(

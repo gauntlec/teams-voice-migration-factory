@@ -14,6 +14,7 @@ import {
   type PreambleStep,
 } from './deployment';
 import { convertAutoAttendantWizard, convertCallQueueWizard } from './wizard-convert';
+import { buildAutoAttendantFlowGraphFromLive, buildCallQueueFlowGraphFromLive } from './call-flow-graph';
 
 /** Every cmdlet+params a call (and its preamble) issues, for asserting on one specific cmdlet. */
 function steps(call: CmdletInvocation): { cmdlet: string; parameters: Record<string, unknown> }[] {
@@ -282,5 +283,62 @@ describe('Wizard conversion', () => {
       { siteId: 's', name: 'CQ', resolvers: { resolvePerson: (l) => (l === 'Jane Doe' ? 'jane@contoso.com' : undefined), resolveTeam: () => undefined, resolveFlow: () => undefined } },
     );
     expect(value.timeout).toEqual({ action: 'Voicemail', threshold: 600, target: 'jane@contoso.com' });
+  });
+});
+
+describe('Live call-flow visualiser', () => {
+  const nodes = (g: { nodes: { id: string; kind: string; label: string; sublabel?: string }[] }) => g.nodes;
+
+  it('decodes numeric Call Queue actions and target types (MicrosoftTeams 8.0.0)', () => {
+    const cqData = {
+      Identity: 'cq-1',
+      Agents: [],
+      OverflowAction: 3, // SharedVoicemail
+      OverflowActionTarget: { Id: GROUP_GUID, Type: 5 }, // MailBox
+      TimeoutAction: 1, // Forward
+      TimeoutActionTarget: { Id: 'tel:+441234567890', Type: 4 }, // Phone
+      NoAgentAction: 1, // Disconnect
+      NoAgentActionTarget: null,
+    };
+    const g = buildCallQueueFlowGraphFromLive({ name: 'Support', data: cqData });
+    const kinds = Object.fromEntries(nodes(g).map((n) => [n.id, n.kind]));
+    expect(kinds[`group:${GROUP_GUID}`]).toBe('shared_voicemail');
+    expect(kinds['ext:tel:+441234567890']).toBe('external_number');
+    expect(kinds.disconnect).toBe('disconnect');
+  });
+
+  it('names a Forward-to-voice-app target via its resource account', () => {
+    const cqData = { Identity: 'cq-1', Agents: [], TimeoutAction: 1, TimeoutActionTarget: { Id: 'ra-guid', Type: 2 } };
+    const g = buildCallQueueFlowGraphFromLive({ name: 'Support', data: cqData }, undefined, {
+      autoAttendants: [{ name: 'Main AA', data: { Identity: 'aa-1', ApplicationInstances: ['ra-guid'] } }],
+      callQueues: [],
+    });
+    expect(nodes(g).find((n) => n.id === 'aa:aa-1')?.label).toBe('Main AA');
+  });
+
+  it('draws operator and announcement menu options, and resource-account transfers', () => {
+    const aa = {
+      name: 'Main AA',
+      data: {
+        Identity: 'aa-1',
+        Operator: { Id: USER_GUID, Type: 0 },
+        DefaultCallFlow: {
+          Menu: {
+            MenuOptions: [
+              { DtmfResponse: 0, Action: 0 },
+              { DtmfResponse: 2, Action: 3, Prompt: { TextToSpeechPrompt: 'We are open 9 to 5' } },
+              { DtmfResponse: 1, Action: 2, CallTarget: { Id: 'ra-guid', Type: 3 } },
+            ],
+          },
+        },
+      },
+    };
+    const cq = { name: 'Sales', data: { Identity: 'cq-9', ApplicationInstances: ['ra-guid'], Agents: [] } };
+    const g = buildAutoAttendantFlowGraphFromLive(aa, [aa], [cq], [], new Map([[USER_GUID, 'op@contoso.com']]));
+    const labels = nodes(g).map((n) => n.label);
+    expect(labels).toContain('op@contoso.com');
+    expect(labels).toContain('Announcement');
+    expect(labels).toContain('Sales');
+    expect(labels).not.toContain('Disconnect');
   });
 });
