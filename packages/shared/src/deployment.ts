@@ -132,17 +132,29 @@ export interface CmdletInvocation {
 }
 
 /**
+ * Every character PowerShell treats as a single-quote delimiter: the straight
+ * apostrophe plus the smart/typographic single quotes (U+2018 ‘, U+2019 ’,
+ * U+201A ‚, U+201B ‛). Microsoft Learn (about_Quoting_Rules) says PowerShell
+ * reads smart quotes as ordinary quotes, and the parser was confirmed to end a
+ * single-quoted literal at each of these four.
+ */
+const PS_SINGLE_QUOTE_CHARS = /['\u2018\u2019\u201A\u201B]/g;
+
+/**
  * PowerShell single-quoted string literal. Single quotes are the only safe
  * choice here: PS double-quoted strings interpolate `$variables` and treat
  * backslash as a plain character (not an escape), so `JSON.stringify` output
  * (which escapes `"` as `\"`) does NOT close cleanly inside one - a value
  * containing a `"` breaks out of the literal and the remainder is parsed as
- * live PowerShell. A single-quoted literal has exactly one escape rule -
- * double an embedded `'` - and no other metacharacter has special meaning
- * inside it, so this is immune to both injection and variable expansion.
+ * live PowerShell. Inside a single-quoted literal nothing is special except
+ * the single-quote characters, and each one is escaped by doubling it (Learn:
+ * `'don''t'`, and `'‘‘smart’’'` for the smart forms). Doubling every one of the
+ * four quote characters is what keeps a value like `Sales’ Queue` from ending
+ * the literal early - previously only the straight `'` was doubled, so a
+ * curly apostrophe broke the script, and anything after it ran as PowerShell.
  */
 export function psQuote(v: string): string {
-  return `'${v.replace(/'/g, "''")}'`;
+  return `'${v.replace(PS_SINGLE_QUOTE_CHARS, (q) => q + q)}'`;
 }
 
 /** Renders a VarRef as `$name` or, with `prop` set, `$name.Prop` (no quoting either way - it's a variable/property reference, not a literal). */

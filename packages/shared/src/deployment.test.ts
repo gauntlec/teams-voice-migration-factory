@@ -3,6 +3,7 @@ import {
   decodeCallQueueEnum,
   normalizePstnTarget,
   planCallQueueRow,
+  psQuote,
   type BuildCallQueueRow,
   type CallQueueLiveState,
 } from './deployment';
@@ -156,5 +157,43 @@ describe('planCallQueueRow', () => {
     const removal = calls.find((c) => c.cmdlet === 'Remove-CsOnlineApplicationInstanceAssociation');
     expect(removal).toBeDefined();
     expect(removal?.parameters.Identities).toEqual(['stale-app-instance-guid']);
+  });
+});
+
+describe('psQuote (PowerShell single-quoted literals)', () => {
+  it('doubles a straight apostrophe, as before', () => {
+    expect(psQuote("it's")).toBe("'it''s'");
+  });
+
+  it('doubles each smart single quote so it cannot end the literal', () => {
+    // U+2019 right single quote, U+2018 left, U+201A low, U+201B reversed.
+    expect(psQuote('Sales\u2019 Queue')).toBe("'Sales\u2019\u2019 Queue'");
+    expect(psQuote('\u2018x\u201A\u201B')).toBe("'\u2018\u2018x\u201A\u201A\u201B\u201B'");
+  });
+
+  it('leaves smart double quotes alone (harmless inside a single-quoted literal)', () => {
+    expect(psQuote('\u201Cquoted\u201D')).toBe("'\u201Cquoted\u201D'");
+  });
+
+  it('keeps a name with a smart apostrophe in the rendered New-CsCallQueue command', () => {
+    const [call] = planCallQueueRow(
+      {
+        id: 'cq-q',
+        name: 'Sales\u2019 Queue',
+        routing_method: 'Serial',
+        agent_alert_time: 30,
+        presence_based_routing: false,
+        agents: [],
+        overflow: null,
+        timeout: null,
+        no_agent_action: null,
+        no_agent_apply_to: null,
+        language_id: null,
+        resource_accounts: [],
+      },
+      new Map(),
+      new Map(),
+    );
+    expect(call?.parameters.Name).toBe('Sales\u2019 Queue');
   });
 });

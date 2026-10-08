@@ -32,6 +32,17 @@ function debugLog(dir: 'OUT' | 'IN' | 'ERR', text: string) {
   }
 }
 
+/** Resolves true if `p` settles within `ms`, false otherwise. */
+function settlesWithin(p: Promise<void>, ms: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve(false), ms);
+    p.then(() => {
+      clearTimeout(t);
+      resolve(true);
+    });
+  });
+}
+
 /**
  * Real executor: one long-lived `pwsh` child per connection running the
  * MicrosoftTeams module, signed in with a device code by the engineer.
@@ -48,6 +59,8 @@ export class PwshTeamsExecutor implements TeamsExecutor {
   private queue: Promise<unknown> = Promise.resolve();
   private pending: Map<string, { out: string[]; resolve: (v: string) => void; reject: (e: Error) => void }> =
     new Map();
+  /** Set while a timed-out command may still be running in pwsh - see abandon(). */
+  private stalled: { done: Promise<void> } | null = null;
   private devicePrompt: { resolve: (p: DeviceCodePrompt) => void; reject: (e: Error) => void } | null = null;
   private signIn: Promise<{ upn: string; tenantId: string }> | null = null;
   private signedIn = false;
@@ -181,43 +194,81 @@ export class PwshTeamsExecutor implements TeamsExecutor {
   /**
    * Run a script and return everything it printed up to the sentinel. Commands
    * are serialised - the module is not safe to drive concurrently.
+   *
+   * A command that outlives its timeout is still running inside pwsh (it can't
+   * be interrupted from here). See `abandon()`: the queue is held until that
+   * command's sentinel arrives, so its late output is never read as the next
+   * command's result.
    */
   private exec(
     script: string,
     timeoutMs = this.opts.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS,
   ): Promise<string> {
-    const run = () =>
-      new Promise<string>((resolve, reject) => {
-        if (this.disposed) return reject(new Error('executor disposed'));
-        const child = this.ensureChild();
-        const id = randomUUID();
-        const timer = setTimeout(() => {
-          this.pending.delete(id);
-          reject(new Error(`pwsh command timed out after ${Math.round(timeoutMs / 1000)}s`));
-        }, timeoutMs);
-        this.pending.set(id, {
-          out: [],
-          resolve: (v) => {
-            clearTimeout(timer);
-            this.lastUsedAt = Date.now();
-            resolve(v);
-          },
-          reject: (e) => {
-            clearTimeout(timer);
-            reject(e);
-          },
-        });
-        // One physical line per command: the script goes over base64 so
-        // multi-line try/catch blocks and quoting never confuse the line reader.
-        const b64 = Buffer.from(script, 'utf16le').toString('base64');
-        debugLog('OUT', `[${id}] ${script}`);
-        child.stdin.write(
-          `iex ([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${b64}'))); Write-Output '__END__${id}'\n`,
-        );
-      });
+    const run = async (): Promise<string> => {
+      if (this.stalled) {
+        const earlier = this.stalled;
+        if (!(await settlesWithin(earlier.done, timeoutMs))) {
+          // The earlier command never finished. Restart the session: the child's
+          // exit fails the pending entry, which releases the stall.
+          this.child?.kill('SIGKILL');
+          throw new Error(`pwsh did not finish an earlier timed-out command within ${Math.round(timeoutMs / 1000)}s; session restarted`);
+        }
+      }
+      return this.send(script, timeoutMs);
+    };
     const p = this.queue.then(run, run);
     this.queue = p.catch(() => undefined);
     return p;
+  }
+
+  /** Writes one command to the session and resolves with its output. Callers must be serialised via `exec`. */
+  private send(script: string, timeoutMs: number): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+      if (this.disposed) return reject(new Error('executor disposed'));
+      const child = this.ensureChild();
+      const id = randomUUID();
+      const timer = setTimeout(() => {
+        this.abandon(id);
+        reject(new Error(`pwsh command timed out after ${Math.round(timeoutMs / 1000)}s`));
+      }, timeoutMs);
+      this.pending.set(id, {
+        out: [],
+        resolve: (v) => {
+          clearTimeout(timer);
+          this.lastUsedAt = Date.now();
+          resolve(v);
+        },
+        reject: (e) => {
+          clearTimeout(timer);
+          reject(e);
+        },
+      });
+      // One physical line per command: the script goes over base64 so
+      // multi-line try/catch blocks and quoting never confuse the line reader.
+      const b64 = Buffer.from(script, 'utf16le').toString('base64');
+      debugLog('OUT', `[${id}] ${script}`);
+      child.stdin.write(
+        `iex ([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${b64}'))); Write-Output '__END__${id}'\n`,
+      );
+    });
+  }
+
+  /**
+   * Keeps a timed-out command's entry so its remaining output is swallowed, and
+   * holds the queue (`this.stalled`) until its __END__ sentinel arrives. Without
+   * this the next command was written straight behind the still-running one,
+   * and its output was read as the next command's: a timed-out query handed the
+   * next query the first one's records (reproduced against pwsh).
+   */
+  private abandon(id: string) {
+    let release!: () => void;
+    const token = { done: new Promise<void>((r) => (release = r)) };
+    this.stalled = token;
+    const finish = () => {
+      if (this.stalled === token) this.stalled = null;
+      release();
+    };
+    this.pending.set(id, { out: [], resolve: finish, reject: finish });
   }
 
   /* ----------------------------- TeamsExecutor ----------------------------- */
@@ -310,7 +361,7 @@ try {
     const clean = `/${String(path).replace(/^\/+/, '')}`;
     const out = await this.exec(
       `try {
-  $all = @(); $u = 'https://graph.microsoft.com/v1.0${clean}'
+  $all = @(); $u = ${psQuote(`https://graph.microsoft.com/v1.0${clean}`)}
   while ($u) {
     $resp = Invoke-MgGraphRequest -Method GET -Uri $u -OutputType PSObject -ErrorAction Stop
     if ($resp.value) { $all += $resp.value } else { $all += $resp }
