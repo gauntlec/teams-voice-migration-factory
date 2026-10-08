@@ -351,3 +351,21 @@ describe('Shared Calling policy live diff', () => {
     expect(planSharedCallingPolicyRow(row, new Map([['ra-1', USER_GUID.toUpperCase()]]), live)).toEqual([]);
   });
 });
+
+describe('Auto Attendant update path (Set-CsAutoAttendant -Instance)', () => {
+  const live = { identity: 'aa-live-1', languageId: 'fr-FR', timeZoneId: 'Romance Standard Time', enableVoiceResponse: false, applicationInstanceIds: [] };
+
+  it("assigns the object's real VoiceResponseEnabled property, not the New-CsAutoAttendant parameter name", () => {
+    const [call] = planAutoAttendantRow(aaRow({ voice_response_enabled: true }), new Map(), new Map(), users, live as never);
+    const assigned = (call!.preamble ?? []).filter((s): s is Extract<PreambleStep, { kind: 'assign' }> => 'kind' in s && s.kind === 'assign');
+    const props = assigned.map((a) => a.property);
+    expect(props).toContain('VoiceResponseEnabled');
+    expect(props).not.toContain('EnableVoiceResponse');
+    expect(renderCommand(call!)).toContain('$aa.VoiceResponseEnabled = $true');
+  });
+
+  it('still uses -EnableVoiceResponse, the real parameter, when creating', () => {
+    const [call] = planAutoAttendantRow(aaRow({ voice_response_enabled: true }), new Map(), new Map(), users);
+    expect(call!.parameters.EnableVoiceResponse).toBe(true);
+  });
+});

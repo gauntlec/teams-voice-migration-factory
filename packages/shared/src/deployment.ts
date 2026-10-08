@@ -1893,7 +1893,10 @@ export function planAutoAttendantRow(
       if (row.language_id) assign('LanguageId', row.language_id);
       if (row.time_zone_id) assign('TimeZoneId', row.time_zone_id);
       if (row.voice_id) assign('VoiceId', row.voice_id);
-      assign('EnableVoiceResponse', !!row.voice_response_enabled);
+      // The object's property is VoiceResponseEnabled; EnableVoiceResponse is only
+      // New-CsAutoAttendant's parameter name. Assigning the parameter name throws
+      // (the property doesn't exist on the model), failing every update.
+      assign('VoiceResponseEnabled', !!row.voice_response_enabled);
       assign('DefaultCallFlow', defaultFlowRef);
       assign('CallFlows', otherFlowRefs);
       assign('CallHandlingAssociations', chaRefs);
