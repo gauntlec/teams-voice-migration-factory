@@ -106,6 +106,23 @@ function isVarRef(v: unknown): v is VarRef {
   return typeof v === 'object' && v !== null && typeof (v as VarRef).$var === 'string';
 }
 
+/**
+ * Renders as a literal empty PowerShell array, `@()`. renderValue drops an
+ * ordinary empty array (an optional parameter left blank), but a parameter that
+ * is both mandatory and AllowEmptyCollection - Set-CsUserCallingSettings
+ * -CallGroupTargets, which is how a call group is cleared - needs the explicit
+ * empty list: left out, PowerShell prompts for it, and in the worker's piped
+ * session that prompt waits for the next line of input until the command times
+ * out. Only this one literal is ever rendered verbatim, never arbitrary text.
+ */
+export interface PsEmptyArray {
+  $ps: '@()';
+}
+export const PS_EMPTY_ARRAY: PsEmptyArray = { $ps: '@()' };
+function isPsEmptyArray(v: unknown): v is PsEmptyArray {
+  return typeof v === 'object' && v !== null && (v as PsEmptyArray).$ps === '@()';
+}
+
 export interface CmdletInvocation {
   cmdlet: string;
   parameters: Record<string, unknown>;
@@ -166,6 +183,7 @@ function renderVarRef(v: VarRef): string {
 function renderValue(v: unknown): string | null {
   if (v === undefined || v === null || v === '') return null;
   if (isVarRef(v)) return renderVarRef(v);
+  if (isPsEmptyArray(v)) return '@()';
   if (Array.isArray(v)) {
     if (v.length === 0) return null;
     return `@(${v.map((item) => (isVarRef(item) ? renderVarRef(item) : psQuote(String(item)))).join(', ')})`;
@@ -493,13 +511,17 @@ export function planIdentityRow(
       parameters: {
         Identity: identity,
         CallGroupOrder: row.pickup_group.order,
-        CallGroupTargets: row.pickup_group.targets,
+        // Empty means "clear the group": it must still be sent, as an explicit @().
+        CallGroupTargets: row.pickup_group.targets?.length ? row.pickup_group.targets : PS_EMPTY_ARRAY,
       },
       objectType,
       objectId: row.id,
     });
   }
   for (const d of Array.isArray(row.delegates) ? row.delegates : []) {
+    // New-CsUserCallingDelegate -Delegate is mandatory; a blank one would render
+    // without it and make PowerShell prompt (hanging the run), so skip it.
+    if (!d.delegateUpn?.trim()) continue;
     calls.push({
       cmdlet: 'New-CsUserCallingDelegate',
       parameters: {

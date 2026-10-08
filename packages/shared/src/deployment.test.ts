@@ -3,6 +3,9 @@ import {
   decodeCallQueueEnum,
   normalizePstnTarget,
   planCallQueueRow,
+  planIdentityRow,
+  renderCommand,
+  type BuildIdentityRow,
   psQuote,
   renderExportScript,
   type BuildCallQueueRow,
@@ -216,5 +219,40 @@ describe('renderExportScript', () => {
   it('declares the module it needs and names the deployment', () => {
     expect(script.startsWith('#Requires -Modules MicrosoftTeams')).toBe(true);
     expect(script).toContain('deployment dep-1');
+  });
+});
+
+describe('mandatory parameters are never dropped from a command', () => {
+  const identity = (over: Partial<BuildIdentityRow>): BuildIdentityRow => ({
+    id: 'u1',
+    upn: 'bob@contoso.com',
+    e164: null,
+    number_type: null,
+    revoke_ev: false,
+    policies: null,
+    voicemail: null,
+    call_forwarding: null,
+    pickup_group: null,
+    delegates: null,
+    ...over,
+  });
+
+  it('clearing a pickup group sends an explicit empty -CallGroupTargets', () => {
+    const calls = planIdentityRow(identity({ pickup_group: { order: 'InOrder', targets: [] } }), 'user');
+    expect(renderCommand(calls[0]!)).toBe("Set-CsUserCallingSettings -Identity 'bob@contoso.com' -CallGroupOrder 'InOrder' -CallGroupTargets @()");
+  });
+
+  it('still lists the targets when the group has members', () => {
+    const calls = planIdentityRow(identity({ pickup_group: { order: 'Simultaneous', targets: ['a@contoso.com', 'b@contoso.com'] } }), 'user');
+    expect(renderCommand(calls[0]!)).toContain("-CallGroupTargets @('a@contoso.com', 'b@contoso.com')");
+  });
+
+  it('skips a delegate with no UPN instead of emitting New-CsUserCallingDelegate without -Delegate', () => {
+    const blank = { delegateUpn: '', makeCalls: true, receiveCalls: true, manageSettings: false, pickUpHeldCalls: false, joinActiveCalls: false };
+    const good = { ...blank, delegateUpn: 'carol@contoso.com' };
+    const calls = planIdentityRow(identity({ delegates: [blank, { ...blank, delegateUpn: '   ' }, good] }), 'user');
+    const delegates = calls.filter((c) => c.cmdlet === 'New-CsUserCallingDelegate');
+    expect(delegates).toHaveLength(1);
+    expect(delegates[0]!.parameters.Delegate).toBe('carol@contoso.com');
   });
 });

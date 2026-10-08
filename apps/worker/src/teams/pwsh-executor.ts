@@ -93,7 +93,11 @@ export class PwshTeamsExecutor implements TeamsExecutor {
     // NB: not `-Command -` / `-File -` - those read stdin until EOF before
     // running anything. With plain redirected stdin pwsh executes line by line,
     // which is what a long-lived session needs.
-    const child = spawn('pwsh', ['-NoLogo', '-NoProfile'], {
+    // -NonInteractive: a command missing a mandatory parameter must fail at once
+    // with an error. Without it PowerShell prompts and reads the answer from the
+    // next line on stdin, so the run just hangs until the command timeout. The
+    // device-code sign-in is not a prompt and is unaffected.
+    const child = spawn('pwsh', ['-NoLogo', '-NoProfile', '-NonInteractive'], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, POWERSHELL_TELEMETRY_OPTOUT: '1', TERM: 'dumb', NO_COLOR: '1' },
     });
