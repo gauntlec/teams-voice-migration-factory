@@ -9,6 +9,7 @@ export * from './color';
 export * from './site-match';
 export * from './wizard';
 export * from './handover';
+export * from './service-requests';
 export * from './wizard-convert';
 
 import type { CmdletInvocation } from './deployment';
@@ -55,6 +56,8 @@ export interface MeTenant {
   /** the site ids this membership is limited to; empty when not site-scoped. */
   siteIds: string[];
   branding: Branding | null;
+  /** Managed Services is switched on for this customer (service requests). */
+  managedServices: boolean;
 }
 
 /**

@@ -43,6 +43,9 @@ export const PERMISSIONS = [
   'feature:read', // view the feature-request board
   'feature:create', // submit a feature request
   'feature:manage', // move status, edit labels, delete - SUPER_ADMIN only
+  'sr:read', // Managed Services: see this customer's service requests
+  'sr:create', // raise a service request, and comment on one
+  'sr:manage', // action requests: plan, build, deploy, cancel, assign, internal notes - engineers and admins
   'bug:read', // view the bug-report board
   'bug:create', // log a bug report
   'bug:manage', // move status, edit labels, delete - SUPER_ADMIN only
@@ -73,6 +76,8 @@ export const PERMISSION_MATRIX: Record<Role, ReadonlySet<Permission>> = {
     // NB: no build:* or deployment:* - Design & Build and Deployment are
     // engineer/admin-only and are hidden from the PM's left nav.
     'handover:read',
+    'sr:read',
+    'sr:create',
     'handover:generate',
     'handover:issue', // lock a draft pack as final
     'files:read',
@@ -98,6 +103,9 @@ export const PERMISSION_MATRIX: Record<Role, ReadonlySet<Permission>> = {
     'deployment:dryrun',
     'deployment:execute',
     'handover:read',
+    'sr:read',
+    'sr:create',
+    'sr:manage',
     'handover:generate',
     'handover:issue', // lock a draft pack as final
     'files:read',
@@ -118,6 +126,8 @@ export const PERMISSION_MATRIX: Record<Role, ReadonlySet<Permission>> = {
     // NB: no build:* or deployment:* - those areas are engineer/admin-only and
     // are hidden from the customer's left nav.
     'handover:read',
+    'sr:read',
+    'sr:create',
     'files:read',
     'audit:read:tenant',
   ]),

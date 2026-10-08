@@ -26,6 +26,8 @@ export interface TenantContext {
   siteScope: string[] | null;
   /** true -> no write cmdlet may ever reach this customer's live Microsoft Teams tenant - see docs/SECURITY.md. */
   teamsReadOnly: boolean;
+  /** Managed Services is switched on: the customer can raise service requests. */
+  managedServices: boolean;
 }
 
 export interface AppRequest extends Request {

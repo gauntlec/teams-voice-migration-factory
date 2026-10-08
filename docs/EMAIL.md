@@ -154,3 +154,10 @@ per failed cmdlet with its own live error text (`object`, `cmdlet`,
 `message`), so the recipient sees what broke without opening the app. Links
 to `WEB_ORIGIN/deployment/sites/:siteId`. Built in
 `notifyDeploymentRunComplete()` in `apps/worker/src/main.ts`.
+
+## `service_request_created` / `service_request_status_changed`
+
+Managed Services emails. `service_request_created` goes to the customer's
+engineers and every Super Admin when a request is raised; `service_request_status_changed`
+goes to the requester when their request is planned, designed & built, deployed
+or cancelled. Both use the customer's branding. See [SERVICE-REQUESTS.md](SERVICE-REQUESTS.md).

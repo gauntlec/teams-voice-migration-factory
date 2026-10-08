@@ -1,5 +1,6 @@
 import {
   BUG_STATUS_LABELS,
+  SR_STATUS_LABELS,
   FEATURE_STATUS_LABELS,
   type BugReportStatusChangedContext,
   type DeploymentCompletedContext,
@@ -10,6 +11,8 @@ import {
   type PortDocumentsCompletedContext,
   type PortDocumentsReminderContext,
   type PortDocumentsRequestedContext,
+  type ServiceRequestCreatedContext,
+  type ServiceRequestStatusChangedContext,
   type UserInvitationContext,
 } from '@tvmf/shared';
 import { renderHtml, renderText, type EmailBranding, type LayoutInput } from './layout';
@@ -47,6 +50,10 @@ export function renderEmail(template: string, context: Record<string, unknown>, 
       return featureRequestStatusChanged(context as unknown as FeatureRequestStatusChangedContext);
     case 'bug_report_status_changed':
       return bugReportStatusChanged(context as unknown as BugReportStatusChangedContext);
+    case 'service_request_created':
+      return serviceRequestCreated(context as unknown as ServiceRequestCreatedContext, branding);
+    case 'service_request_status_changed':
+      return serviceRequestStatusChanged(context as unknown as ServiceRequestStatusChangedContext, branding);
     default:
       throw new Error(`unknown email template: ${template}`);
   }
@@ -297,4 +304,49 @@ function bugReportStatusChanged(c: BugReportStatusChangedContext): RenderedEmail
     outro: ['You are receiving this because you reported this bug.'],
   };
   return { subject, html: renderHtml(layout), text: renderText(layout) };
+}
+
+/** To the engineers and admins on a customer: a new service request needs actioning. */
+function serviceRequestCreated(c: ServiceRequestCreatedContext, branding?: EmailBranding): RenderedEmail {
+  const subject = `New service request ${c.reference} — ${c.customerName}`;
+  const facts = [
+    `Type: ${c.typeLabel}`,
+    ...(c.siteLabel ? [`Site: ${c.siteLabel}`] : []),
+    `Priority: ${c.priority}`,
+    `Raised by: ${c.requestedBy}`,
+  ];
+  const layout: LayoutInput = {
+    previewText: `${c.requestedBy} raised ${c.reference}: ${c.title}`,
+    eyebrow: 'Managed Services',
+    heading: `${c.reference} — ${c.title}`,
+    intro: [`${c.customerName} has raised a new service request.`, ...facts, ...c.lines.map((l) => `${l.label}: ${l.value}`)],
+    cta: { label: 'Open the request', url: c.runUrl },
+    outro: ['You are receiving this because you are an engineer or admin for this customer.'],
+  };
+  return { subject, html: renderHtml(layout, branding), text: renderText(layout) };
+}
+
+/** To the person who raised a request: it was planned, built, deployed or cancelled. */
+function serviceRequestStatusChanged(c: ServiceRequestStatusChangedContext, branding?: EmailBranding): RenderedEmail {
+  const toLabel = SR_STATUS_LABELS[c.toStatus];
+  const lead: Record<string, string> = {
+    planned: 'Your request has been planned. The team will now design and build the change.',
+    built: 'Your request has been designed and built, and is ready to deploy.',
+    deployed: 'Your request has been deployed and is now live.',
+    cancelled: 'Your request has been cancelled.',
+  };
+  const subject = `${c.reference} ${toLabel.toLowerCase()} — ${c.title}`;
+  const layout: LayoutInput = {
+    previewText: `${c.reference} is now ${toLabel}.`,
+    eyebrow: 'Service request update',
+    heading: `${c.reference} — ${toLabel}`,
+    intro: [
+      `${c.title} (${c.typeLabel})`,
+      lead[c.toStatus] ?? `Your request moved from ${SR_STATUS_LABELS[c.fromStatus]} to ${toLabel}.`,
+      ...(c.note ? [`Note from the team: ${c.note}`] : []),
+    ],
+    cta: { label: 'View your request', url: c.runUrl },
+    outro: ['You are receiving this because you raised this request.'],
+  };
+  return { subject, html: renderHtml(layout, branding), text: renderText(layout) };
 }

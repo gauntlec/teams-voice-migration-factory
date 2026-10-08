@@ -19,6 +19,7 @@ import { NumberPortModule } from './modules/number-port/number-port.module';
 import { BuildModule } from './modules/build/build.module';
 import { DeploymentModule } from './modules/deployment/deployment.module';
 import { HandoverModule } from './modules/handover/handover.module';
+import { ServiceRequestsModule } from './modules/service-requests/service-requests.module';
 import { FilesModule } from './modules/files/files.module';
 import { TenantDiscoveryModule } from './modules/tenant-discovery/tenant-discovery.module';
 import { AuditReadModule } from './modules/audit/audit-read.module';
@@ -43,6 +44,7 @@ import { HealthController } from './health/health.controller';
     BuildModule,
     DeploymentModule,
     HandoverModule,
+    ServiceRequestsModule,
     FilesModule,
     TenantDiscoveryModule,
     AuditReadModule,

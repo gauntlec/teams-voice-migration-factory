@@ -27,7 +27,7 @@ export class TenantsService {
   async list(user: { id: string; role: Role }, search?: string) {
     let q = platformDb(this.db)
       .selectFrom('tenants')
-      .select(['id', 'slug', 'name', 'primary_domain', 'status', 'teams_read_only', 'branding', 'created_at'])
+      .select(['id', 'slug', 'name', 'primary_domain', 'status', 'teams_read_only', 'managed_services_enabled', 'branding', 'created_at'])
       .orderBy('name');
     if (user.role !== 'SUPER_ADMIN') {
       q = q
@@ -102,6 +102,29 @@ export class TenantsService {
       targetId: tenantId,
       tenantId,
       detail: { teamsReadOnly },
+    });
+    return tenant;
+  }
+
+  /**
+   * Switches Managed Services on or off for a customer: whether its users can
+   * raise service requests. SUPER_ADMIN only (tenant:update). Turning it off
+   * keeps existing requests; the service-request endpoints just refuse access.
+   */
+  async setManagedServices(tenantId: string, enabled: boolean, actor: AuditActor) {
+    await this.getTenantOrThrow(tenantId);
+    const tenant = await platformDb(this.db)
+      .updateTable('tenants')
+      .set({ managed_services_enabled: enabled })
+      .where('id', '=', tenantId)
+      .returning(['id', 'slug', 'name', 'primary_domain', 'status', 'teams_read_only', 'managed_services_enabled', 'created_at'])
+      .executeTakeFirstOrThrow();
+    await this.audit.platform('tenant.managed_services_changed', {
+      actor,
+      targetType: 'tenant',
+      targetId: tenantId,
+      tenantId,
+      detail: { enabled },
     });
     return tenant;
   }

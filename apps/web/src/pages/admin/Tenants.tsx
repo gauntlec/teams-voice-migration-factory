@@ -43,6 +43,7 @@ interface Tenant {
   primary_domain: string | null;
   status: string;
   teams_read_only: boolean;
+  managed_services_enabled: boolean;
   branding: Branding | null;
   created_at: string;
 }
@@ -90,6 +91,14 @@ export function AdminTenants() {
     mutationFn: ({ id, teamsReadOnly }: { id: string; teamsReadOnly: boolean }) =>
       api(`/tenants/${id}`, { method: 'PATCH', body: JSON.stringify({ teamsReadOnly }) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tenants'] }),
+  });
+  const setManagedServices = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      api(`/tenants/${id}/managed-services`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['tenants'] });
+      await refreshMe(); // the left nav shows Service Requests from the signed-in user's tenant list
+    },
   });
   const create = useMutation({
     mutationFn: async () => {
@@ -182,6 +191,7 @@ export function AdminTenants() {
                 <TableHeaderCell>Status</TableHeaderCell>
                 <TableHeaderCell>Branding</TableHeaderCell>
                 <TableHeaderCell>Teams read-only</TableHeaderCell>
+                <TableHeaderCell>Managed Services</TableHeaderCell>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -224,6 +234,22 @@ export function AdminTenants() {
                     ) : t.teams_read_only ? (
                       <Badge appearance="tint" color="warning">
                         Read-only
+                      </Badge>
+                    ) : (
+                      '—'
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {can('tenant:update') ? (
+                      <Checkbox
+                        checked={t.managed_services_enabled}
+                        disabled={setManagedServices.isPending}
+                        label={t.managed_services_enabled ? 'On' : 'Off'}
+                        onChange={(_, d) => setManagedServices.mutate({ id: t.id, enabled: !!d.checked })}
+                      />
+                    ) : t.managed_services_enabled ? (
+                      <Badge appearance="tint" color="success">
+                        On
                       </Badge>
                     ) : (
                       '—'

@@ -14,6 +14,8 @@ export const EMAIL_TEMPLATES = [
   'port_documents_completed',
   'feature_request_status_changed',
   'bug_report_status_changed',
+  'service_request_created',
+  'service_request_status_changed',
 ] as const;
 export type EmailTemplate = (typeof EMAIL_TEMPLATES)[number];
 
@@ -157,6 +159,33 @@ export interface BugReportStatusChangedContext {
   toStatus: import('./domain').BugStatus;
   resolutionNote?: string | null;
   /** absolute URL of the Bug Reports board */
+  runUrl: string;
+}
+
+/** To the engineers and admins on a customer when a service request is raised. */
+export interface ServiceRequestCreatedContext {
+  customerName: string;
+  /** e.g. SR-0042 */
+  reference: string;
+  title: string;
+  typeLabel: string;
+  siteLabel: string | null;
+  priority: string;
+  requestedBy: string;
+  /** label/value pairs from the request form */
+  lines: { label: string; value: string }[];
+  runUrl: string;
+}
+
+/** To the person who raised a request, when it is planned, built, deployed or cancelled. */
+export interface ServiceRequestStatusChangedContext {
+  customerName: string;
+  reference: string;
+  title: string;
+  typeLabel: string;
+  fromStatus: import('./service-requests').SrStatus;
+  toStatus: import('./service-requests').SrStatus;
+  note?: string | null;
   runUrl: string;
 }
 

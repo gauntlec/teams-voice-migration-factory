@@ -39,6 +39,13 @@ tenant only. **Design & Build and Deployment are not shown**; **cannot add or
 edit sites** (engineer/admin only). No access to users, tenants, or any other
 customer.
 
+### Managed Services (service requests)
+When Managed Services is switched on for a customer, `sr:read` and `sr:create`
+let SUPER_ADMIN, PROJECT_MANAGER, ENGINEER and CUSTOMER see and raise service
+requests; `sr:manage` (SUPER_ADMIN and ENGINEER) lets them action requests
+(plan, build, deploy, cancel, assign, internal notes). A site contact only sees
+and raises requests for their own sites. See [SERVICE-REQUESTS.md](SERVICE-REQUESTS.md).
+
 #### Site-scoped customer ("site contact")
 A `CUSTOMER` membership can carry `tenant_memberships.site_ids` (a list of
 `discovery_sites.id`). Empty = the whole customer. Non-empty = the user is a

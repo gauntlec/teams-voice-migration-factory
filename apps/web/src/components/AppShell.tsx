@@ -31,6 +31,7 @@ import {
   Lightbulb24Regular,
   Bug24Regular,
   Search24Regular,
+  TicketDiagonal24Regular,
 } from '@fluentui/react-icons';
 import type { Permission } from '@tvmf/shared';
 import { useAuth } from '../auth';
@@ -94,10 +95,13 @@ interface NavDef {
   label: string;
   icon: ReactNode;
   permission?: Permission;
+  /** Only shown when the active customer has Managed Services switched on. */
+  requiresManagedServices?: boolean;
 }
 
 const MAIN: NavDef[] = [
   { to: '/', label: 'Dashboard', icon: <Home24Regular /> },
+  { to: '/service-requests', label: 'Service Requests', icon: <TicketDiagonal24Regular />, permission: 'sr:read', requiresManagedServices: true },
   { to: '/data-collection', label: 'Data Collection', icon: <ClipboardTaskListLtr24Regular />, permission: 'discovery:read' },
   { to: '/discovery', label: 'Discovery', icon: <Search24Regular />, permission: 'tenantdiscovery:read' },
   { to: '/build', label: 'Design & Build', icon: <Board24Regular />, permission: 'build:read' },
@@ -173,9 +177,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         ? `/api/public/msps/${me.mspId}/logo?v=${me.mspBranding.logo.version}`
         : null;
 
+  const managedServices = tenants.find((t) => t.id === activeTenantId)?.managedServices ?? false;
   const renderNav = (items: NavDef[]) =>
     items
-      .filter((i) => !i.permission || can(i.permission))
+      .filter((i) => (!i.permission || can(i.permission)) && (!i.requiresManagedServices || managedServices))
       .map((i) => (
         <NavLink
           key={i.to}

@@ -24,6 +24,7 @@ import { AdminSites } from './pages/admin/Sites';
 import { AdminEmailLog } from './pages/admin/EmailLog';
 import { AdminAudit } from './pages/admin/Audit';
 import { FeatureRequests } from './pages/FeatureRequests';
+import { ServiceRequests } from './pages/ServiceRequests';
 import { BugReports } from './pages/BugReports';
 import { Discovery } from './pages/Discovery';
 
@@ -151,6 +152,14 @@ export function App() {
           element={
             <RequirePermission permission="feature:read">
               <FeatureRequests />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="/service-requests"
+          element={
+            <RequirePermission permission="sr:read">
+              <ServiceRequests />
             </RequirePermission>
           }
         />

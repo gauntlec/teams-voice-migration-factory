@@ -17,6 +17,8 @@ export interface TenantsTable {
   teams_read_only: ColumnType<boolean, boolean | undefined, boolean>;
   /** null = default Voxshift branding everywhere (web theme, Logo, emails) - see 0008_tenant_branding.sql. */
   branding: Json<import('@tvmf/shared').Branding> | null;
+  /** Managed Services switched on: this customer can raise service requests - see 0012_tenant_managed_services.sql. */
+  managed_services_enabled: ColumnType<boolean, boolean | undefined, boolean>;
   created_by: string | null;
   created_at: Ts;
 }
@@ -852,6 +854,39 @@ export interface HandoverPacksTable {
   created_at: Ts;
 }
 
+export interface ServiceRequestsTable {
+  id: Generated<string>;
+  /** per-customer sequence, shown as SR-0001 */
+  number: Generated<number>;
+  type: import('@tvmf/shared').SrType;
+  title: string;
+  site_id: string | null;
+  details: Json;
+  priority: ColumnType<import('@tvmf/shared').SrPriority, import('@tvmf/shared').SrPriority | undefined, import('@tvmf/shared').SrPriority>;
+  status: ColumnType<import('@tvmf/shared').SrStatus, import('@tvmf/shared').SrStatus | undefined, import('@tvmf/shared').SrStatus>;
+  target_date: string | null;
+  requested_by: string;
+  assigned_to: string | null;
+  created_at: Ts;
+  updated_at: Ts;
+  planned_at: string | null;
+  built_at: string | null;
+  deployed_at: string | null;
+  cancelled_at: string | null;
+}
+
+export interface ServiceRequestEventsTable {
+  id: Generated<string>;
+  request_id: string;
+  kind: 'created' | 'status_changed' | 'assigned' | 'comment';
+  from_status: string | null;
+  to_status: string | null;
+  body: string | null;
+  internal: ColumnType<boolean, boolean | undefined, boolean>;
+  author_id: string;
+  created_at: Ts;
+}
+
 /** One note per (section_key, site_id); site_id NULL applies to every site. */
 export interface HandoverNotesTable {
   id: Generated<string>;
@@ -962,6 +997,8 @@ export interface DB {
   handover_packs: HandoverPacksTable;
   handover_sections: HandoverSectionsTable;
   handover_notes: HandoverNotesTable;
+  service_requests: ServiceRequestsTable;
+  service_request_events: ServiceRequestEventsTable;
   files: FilesTable;
   audit_log: TenantAuditLogTable;
 }

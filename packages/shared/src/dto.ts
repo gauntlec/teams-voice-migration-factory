@@ -40,6 +40,7 @@ import {
 } from './domain';
 import { HEX_COLOR_RE } from './color';
 import { isHandoverSectionKey } from './handover';
+import { SR_PRIORITIES, SR_STATUSES, SR_TYPES, SR_TYPE_DEFS, type SrFieldSpec, type SrType } from './service-requests';
 
 export const emailSchema = z.string().email().max(320).transform((s) => s.toLowerCase().trim());
 
@@ -1390,3 +1391,94 @@ export type FilesQuery = z.infer<typeof filesQuerySchema>;
 /** The plain `?q=` search param, for list endpoints with nothing else to filter by. */
 export const searchQuerySchema = z.object({ q: z.string().trim().max(200).optional() }).strict();
 export type SearchQuery = z.infer<typeof searchQuerySchema>;
+
+
+/* ============================ Managed Services ============================ */
+
+/** Super Admin switch: let this customer raise service requests. */
+export const updateTenantManagedServicesSchema = z.object({ enabled: z.boolean() }).strict();
+export type UpdateTenantManagedServicesInput = z.infer<typeof updateTenantManagedServicesSchema>;
+
+function srFieldSchema(f: SrFieldSpec): z.ZodTypeAny {
+  const req = (msg = `${f.label} is required`) => msg;
+  switch (f.kind) {
+    case 'text':
+    case 'textarea': {
+      const base = z.string().trim().max(f.max ?? (f.kind === 'text' ? 200 : 4000));
+      return f.required ? base.min(1, req()) : base.optional();
+    }
+    case 'number': {
+      const base = z.number({ invalid_type_error: `${f.label} must be a number` }).int().min(f.min ?? 0).max(f.max ?? 100000);
+      return f.required ? base : base.optional();
+    }
+    case 'select': {
+      const opts = (f.options ?? []) as [string, ...string[]];
+      const base = z.enum(opts, { errorMap: () => ({ message: `Choose ${f.label.toLowerCase()}` }) });
+      return f.required ? base : base.optional();
+    }
+    case 'list': {
+      const base = z.array(z.string().trim().min(1).max(200)).max(f.max ?? 100);
+      return f.required ? base.min(1, req(`Add at least one entry for ${f.label.toLowerCase()}`)) : base.optional();
+    }
+    case 'boolean':
+      return f.required ? z.boolean() : z.boolean().optional();
+    case 'date': {
+      const base = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, `${f.label} must be a date`);
+      return f.required ? base : base.optional().or(z.literal('').transform(() => undefined));
+    }
+  }
+}
+
+/** The details object for one request type, built from its field specs. Unknown keys are rejected. */
+export function srDetailsSchema(type: SrType) {
+  const shape: Record<string, z.ZodTypeAny> = {};
+  for (const f of SR_TYPE_DEFS[type].fields) shape[f.key] = srFieldSchema(f);
+  return z.object(shape).strict();
+}
+
+export const createServiceRequestSchema = z
+  .object({
+    type: z.enum(SR_TYPES),
+    title: z.string().trim().min(3, 'Give the request a short title').max(160),
+    priority: z.enum(SR_PRIORITIES).default('normal'),
+    siteId: z.string().uuid().nullable().optional(),
+    targetDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .nullable()
+      .optional(),
+    details: z.record(z.unknown()).default({}),
+  })
+  .superRefine((v, ctx) => {
+    const parsed = srDetailsSchema(v.type).safeParse(v.details);
+    if (!parsed.success) {
+      for (const issue of parsed.error.issues) ctx.addIssue({ ...issue, path: ['details', ...issue.path] });
+    }
+    if (SR_TYPE_DEFS[v.type].needsSite && !v.siteId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['siteId'], message: 'Choose the site this request is for' });
+    }
+  })
+  .transform((v) => ({ ...v, details: srDetailsSchema(v.type).parse(v.details) as Record<string, unknown> }));
+export type CreateServiceRequestInput = z.infer<typeof createServiceRequestSchema>;
+
+export const serviceRequestStatusSchema = z.object({
+  to: z.enum(SR_STATUSES),
+  note: z.string().trim().max(4000).optional(),
+});
+export type ServiceRequestStatusInput = z.infer<typeof serviceRequestStatusSchema>;
+
+export const serviceRequestAssignSchema = z.object({ userId: z.string().uuid().nullable() });
+export type ServiceRequestAssignInput = z.infer<typeof serviceRequestAssignSchema>;
+
+export const serviceRequestCommentSchema = z.object({
+  body: z.string().trim().min(1, 'Write a comment').max(4000),
+  /** Staff-only note the customer never sees. */
+  internal: z.boolean().optional(),
+});
+export type ServiceRequestCommentInput = z.infer<typeof serviceRequestCommentSchema>;
+
+export const listServiceRequestsQuerySchema = z.object({
+  status: z.enum([...SR_STATUSES, 'open', 'all'] as [string, ...string[]]).default('open'),
+  type: z.enum(SR_TYPES).optional(),
+});
+export type ListServiceRequestsQuery = z.infer<typeof listServiceRequestsQuerySchema>;

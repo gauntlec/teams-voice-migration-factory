@@ -1,0 +1,622 @@
+import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  Badge,
+  Button,
+  Card,
+  Checkbox,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
+  Field,
+  Input,
+  Link,
+  Select,
+  Spinner,
+  TableBody,
+  TableCell,
+  TableHeader,
+  TableHeaderCell,
+  TableRow,
+  Text,
+  Textarea,
+  makeStyles,
+  shorthands,
+  tokens,
+} from '@fluentui/react-components';
+import {
+  SR_PRIORITIES,
+  SR_STATUS_LABELS,
+  SR_STATUSES,
+  SR_TYPES,
+  SR_TYPE_DEFS,
+  canMoveSr,
+  nextSrStatus,
+  srDetailLines,
+  type SrFieldSpec,
+  type SrPriority,
+  type SrStatus,
+  type SrType,
+} from '@tvmf/shared';
+import { api, ApiError } from '../api';
+import { useAuth } from '../auth';
+import { DataTable } from '../components/DataTable';
+import { Page } from '../components/Page';
+import { LoadError, NoTenant } from './DataCollection';
+
+interface RequestRow {
+  id: string;
+  number: number;
+  reference: string;
+  type: SrType;
+  title: string;
+  priority: SrPriority;
+  status: SrStatus;
+  site_id: string | null;
+  sitecode: string | null;
+  requested_by: string;
+  requested_by_name: string | null;
+  assigned_to: string | null;
+  assigned_to_name: string | null;
+  target_date: string | null;
+  created_at: string;
+}
+
+interface RequestDetail extends RequestRow {
+  details: Record<string, unknown>;
+  site_name: string | null;
+  planned_at: string | null;
+  built_at: string | null;
+  deployed_at: string | null;
+  cancelled_at: string | null;
+}
+
+interface RequestEvent {
+  id: string;
+  kind: 'created' | 'status_changed' | 'assigned' | 'comment';
+  from_status: SrStatus | null;
+  to_status: SrStatus | null;
+  body: string | null;
+  internal: boolean;
+  author_name: string | null;
+  created_at: string;
+}
+
+interface SiteOption {
+  id: string;
+  sitecode: string;
+  name: string | null;
+}
+
+const STATUS_COLOR: Record<SrStatus, 'informative' | 'brand' | 'warning' | 'success' | 'subtle'> = {
+  new: 'informative',
+  planned: 'brand',
+  built: 'warning',
+  deployed: 'success',
+  cancelled: 'subtle',
+};
+
+const PRIORITY_LABEL: Record<SrPriority, string> = { low: 'Low', normal: 'Normal', high: 'High', urgent: 'Urgent' };
+
+const useStyles = makeStyles({
+  toolbar: { display: 'flex', columnGap: tokens.spacingHorizontalM, alignItems: 'end', flexWrap: 'wrap', marginBottom: tokens.spacingVerticalM },
+  stack: { display: 'flex', flexDirection: 'column', rowGap: tokens.spacingVerticalM },
+  facts: { display: 'grid', gridTemplateColumns: 'max-content 1fr', columnGap: tokens.spacingHorizontalL, rowGap: tokens.spacingVerticalXS },
+  factLabel: { color: tokens.colorNeutralForeground3 },
+  section: { display: 'flex', flexDirection: 'column', rowGap: tokens.spacingVerticalS },
+  event: {
+    ...shorthands.padding(tokens.spacingVerticalS, tokens.spacingHorizontalM),
+    ...shorthands.borderLeft('3px', 'solid', tokens.colorNeutralStroke2),
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: tokens.spacingVerticalXXS,
+  },
+  internal: { ...shorthands.borderLeft('3px', 'solid', tokens.colorPaletteMarigoldBorder2), backgroundColor: tokens.colorPaletteYellowBackground1 },
+  actions: { display: 'flex', columnGap: tokens.spacingHorizontalS, flexWrap: 'wrap', alignItems: 'center' },
+  error: { color: tokens.colorPaletteRedForeground1 },
+  row: { cursor: 'pointer' },
+});
+
+function errorText(e: unknown, fallback: string) {
+  return e instanceof ApiError ? e.message : fallback;
+}
+
+function when(iso: string | null) {
+  return iso ? new Date(iso).toLocaleString() : '—';
+}
+
+export function ServiceRequests() {
+  const { activeTenantId, can, me } = useAuth();
+  const cs = useStyles();
+  const [params, setParams] = useSearchParams();
+  const [status, setStatus] = useState<string>('open');
+  const [type, setType] = useState<string>('');
+  const [creating, setCreating] = useState(false);
+  const openId = params.get('id');
+
+  const enabled = me?.tenants.find((t) => t.id === activeTenantId)?.managedServices ?? false;
+  const base = `/t/${activeTenantId}/service-requests`;
+
+  const list = useQuery({
+    queryKey: ['service-requests', activeTenantId, status, type],
+    enabled: !!activeTenantId && enabled,
+    queryFn: () => api<RequestRow[]>(`${base}?status=${status}${type ? `&type=${type}` : ''}`),
+  });
+  const sitesQ = useQuery({
+    queryKey: ['discovery', activeTenantId],
+    enabled: !!activeTenantId && enabled,
+    queryFn: () => api<{ sites: SiteOption[] }>(`/t/${activeTenantId}/discovery`),
+  });
+
+  const open = (id: string | null) => {
+    const next = new URLSearchParams(params);
+    if (id) next.set('id', id);
+    else next.delete('id');
+    setParams(next, { replace: true });
+  };
+
+  if (!activeTenantId) return <NoTenant />;
+  if (!enabled) {
+    return (
+      <Page title="Service Requests" subtitle="Raise and track changes to your Teams calling.">
+        <Card>
+          <Text>
+            Managed Services isn&apos;t switched on for this customer. A Super Admin can switch it on from <b>Customers</b>.
+          </Text>
+        </Card>
+      </Page>
+    );
+  }
+
+  return (
+    <Page
+      title="Service Requests"
+      subtitle="Ask for new users, numbers, sites, phones, call queues and auto attendants. Each request is planned, designed and built, then deployed, and you're emailed as it moves on."
+      actions={
+        can('sr:create') ? (
+          <Button appearance="primary" onClick={() => setCreating(true)}>
+            New request
+          </Button>
+        ) : undefined
+      }
+    >
+      <div className={cs.toolbar}>
+        <Field label="Status">
+          <Select value={status} onChange={(_, d) => setStatus(d.value)}>
+            <option value="open">Open</option>
+            {SR_STATUSES.map((s) => (
+              <option key={s} value={s}>
+                {SR_STATUS_LABELS[s]}
+              </option>
+            ))}
+            <option value="all">All</option>
+          </Select>
+        </Field>
+        <Field label="Type">
+          <Select value={type} onChange={(_, d) => setType(d.value)}>
+            <option value="">All types</option>
+            {SR_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {SR_TYPE_DEFS[t].label}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      </div>
+      {list.isError && <LoadError message={(list.error as Error).message} />}
+      <Card>
+        {list.isLoading ? (
+          <Spinner size="tiny" />
+        ) : (list.data?.length ?? 0) === 0 ? (
+          <Text size={200}>No requests here.</Text>
+        ) : (
+          <DataTable size="small" minWidth={900}>
+            <TableHeader>
+              <TableRow>
+                <TableHeaderCell>Ref</TableHeaderCell>
+                <TableHeaderCell>Title</TableHeaderCell>
+                <TableHeaderCell>Type</TableHeaderCell>
+                <TableHeaderCell>Site</TableHeaderCell>
+                <TableHeaderCell>Priority</TableHeaderCell>
+                <TableHeaderCell>Status</TableHeaderCell>
+                <TableHeaderCell>Assigned to</TableHeaderCell>
+                <TableHeaderCell>Raised</TableHeaderCell>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {list.data!.map((r) => (
+                <TableRow key={r.id} className={cs.row} onClick={() => open(r.id)}>
+                  <TableCell>
+                    <Link onClick={() => open(r.id)}>{r.reference}</Link>
+                  </TableCell>
+                  <TableCell>{r.title}</TableCell>
+                  <TableCell>{SR_TYPE_DEFS[r.type].label}</TableCell>
+                  <TableCell>{r.sitecode ?? '—'}</TableCell>
+                  <TableCell>{PRIORITY_LABEL[r.priority]}</TableCell>
+                  <TableCell>
+                    <Badge appearance="tint" color={STATUS_COLOR[r.status]}>
+                      {SR_STATUS_LABELS[r.status]}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>{r.assigned_to_name ?? '—'}</TableCell>
+                  <TableCell>
+                    {r.requested_by_name ?? '—'}
+                    <Text size={100} block>
+                      {new Date(r.created_at).toLocaleDateString()}
+                    </Text>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </DataTable>
+        )}
+      </Card>
+
+      {creating && (
+        <NewRequestDialog
+          base={base}
+          sites={sitesQ.data?.sites ?? []}
+          onClose={() => setCreating(false)}
+          onCreated={(id) => {
+            setCreating(false);
+            open(id);
+          }}
+        />
+      )}
+      {openId && <RequestDialog base={base} id={openId} onClose={() => open(null)} />}
+    </Page>
+  );
+}
+
+/* ------------------------------ new request ------------------------------ */
+
+function FieldInput({ spec, value, onChange }: { spec: SrFieldSpec; value: unknown; onChange: (v: unknown) => void }) {
+  switch (spec.kind) {
+    case 'textarea':
+      return <Textarea value={(value as string) ?? ''} maxLength={spec.max} resize="vertical" onChange={(_, d) => onChange(d.value)} />;
+    case 'number':
+      return (
+        <Input
+          type="number"
+          min={spec.min}
+          max={spec.max}
+          value={value === undefined ? '' : String(value)}
+          onChange={(_, d) => onChange(d.value === '' ? undefined : Number(d.value))}
+        />
+      );
+    case 'select':
+      return (
+        <Select value={(value as string) ?? ''} onChange={(_, d) => onChange(d.value || undefined)}>
+          <option value="">Choose…</option>
+          {(spec.options ?? []).map((o) => (
+            <option key={o} value={o}>
+              {o}
+            </option>
+          ))}
+        </Select>
+      );
+    case 'list':
+      return (
+        <Textarea
+          value={Array.isArray(value) ? (value as string[]).join('\n') : ''}
+          resize="vertical"
+          onChange={(_, d) =>
+            onChange(
+              d.value
+                .split(/\r?\n/)
+                .map((l) => l.trim())
+                .filter(Boolean),
+            )
+          }
+        />
+      );
+    case 'boolean':
+      return <Checkbox checked={!!value} label="Yes" onChange={(_, d) => onChange(!!d.checked)} />;
+    case 'date':
+      return <Input type="date" value={(value as string) ?? ''} onChange={(_, d) => onChange(d.value || undefined)} />;
+    default:
+      return <Input value={(value as string) ?? ''} maxLength={spec.max} onChange={(_, d) => onChange(d.value)} />;
+  }
+}
+
+function NewRequestDialog({ base, sites, onClose, onCreated }: { base: string; sites: SiteOption[]; onClose: () => void; onCreated: (id: string) => void }) {
+  const cs = useStyles();
+  const qc = useQueryClient();
+  const [type, setType] = useState<SrType>('new_user');
+  const [title, setTitle] = useState('');
+  const [siteId, setSiteId] = useState(sites.length === 1 ? sites[0]!.id : '');
+  const [priority, setPriority] = useState<SrPriority>('normal');
+  const [targetDate, setTargetDate] = useState('');
+  const [details, setDetails] = useState<Record<string, unknown>>({});
+  const def = SR_TYPE_DEFS[type];
+  const showSite = def.needsSite || type === 'other';
+
+  const create = useMutation({
+    mutationFn: () =>
+      api<{ id: string }>(base, {
+        method: 'POST',
+        body: JSON.stringify({ type, title, priority, siteId: showSite && siteId ? siteId : null, targetDate: targetDate || null, details }),
+      }),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['service-requests'] });
+      onCreated(r.id);
+    },
+  });
+
+  const missing = useMemo(() => {
+    const required = def.fields.filter((f) => f.required).filter((f) => {
+      const v = details[f.key];
+      return v === undefined || v === '' || (Array.isArray(v) && v.length === 0);
+    });
+    return required.length > 0 || title.trim().length < 3 || (def.needsSite && !siteId);
+  }, [def, details, title, siteId]);
+
+  return (
+    <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
+      <DialogSurface style={{ maxWidth: '640px' }}>
+        <DialogBody>
+          <DialogTitle>New service request</DialogTitle>
+          <DialogContent className={cs.stack}>
+            <Field label="What do you need?" hint={def.description}>
+              <Select
+                value={type}
+                onChange={(_, d) => {
+                  setType(d.value as SrType);
+                  setDetails({});
+                }}
+              >
+                {SR_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {SR_TYPE_DEFS[t].label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Title" required hint="A short summary, e.g. New starter: Jo Bloggs">
+              <Input value={title} maxLength={160} onChange={(_, d) => setTitle(d.value)} />
+            </Field>
+            {showSite && (
+              <Field label="Site" required={def.needsSite}>
+                <Select value={siteId} onChange={(_, d) => setSiteId(d.value)}>
+                  <option value="">{def.needsSite ? 'Choose a site…' : 'Not site-specific'}</option>
+                  {sites.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name ? `${s.sitecode} — ${s.name}` : s.sitecode}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            )}
+            {def.fields.map((f) => (
+              <Field key={f.key} label={f.label} required={f.required} hint={f.hint}>
+                <FieldInput spec={f} value={details[f.key]} onChange={(v) => setDetails((prev) => ({ ...prev, [f.key]: v }))} />
+              </Field>
+            ))}
+            <div className={cs.toolbar}>
+              <Field label="Priority">
+                <Select value={priority} onChange={(_, d) => setPriority(d.value as SrPriority)}>
+                  {SR_PRIORITIES.map((p) => (
+                    <option key={p} value={p}>
+                      {PRIORITY_LABEL[p]}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Needed by">
+                <Input type="date" value={targetDate} onChange={(_, d) => setTargetDate(d.value)} />
+              </Field>
+            </div>
+            {create.isError && <Text className={cs.error}>{errorText(create.error, 'Could not raise the request')}</Text>}
+          </DialogContent>
+          <DialogActions>
+            <Button appearance="secondary" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button appearance="primary" disabled={missing || create.isPending} onClick={() => create.mutate()}>
+              {create.isPending ? 'Raising…' : 'Raise request'}
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  );
+}
+
+/* ------------------------------ one request ------------------------------ */
+
+function RequestDialog({ base, id, onClose }: { base: string; id: string; onClose: () => void }) {
+  const cs = useStyles();
+  const qc = useQueryClient();
+  const { can, me } = useAuth();
+  const canManage = can('sr:manage');
+  const [note, setNote] = useState('');
+  const [comment, setComment] = useState('');
+  const [internal, setInternal] = useState(false);
+
+  const q = useQuery({
+    queryKey: ['service-request', base, id],
+    queryFn: () => api<{ request: RequestDetail; events: RequestEvent[] }>(`${base}/${id}`),
+  });
+  const assignees = useQuery({
+    queryKey: ['service-request-assignees', base],
+    enabled: canManage,
+    queryFn: () => api<{ id: string; display_name: string }[]>(`${base}/assignees`),
+  });
+
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['service-request', base, id] });
+    qc.invalidateQueries({ queryKey: ['service-requests'] });
+  };
+  const move = useMutation({
+    mutationFn: (to: SrStatus) => api(`${base}/${id}/status`, { method: 'POST', body: JSON.stringify({ to, note: note.trim() || undefined }) }),
+    onSuccess: () => {
+      setNote('');
+      refresh();
+    },
+  });
+  const assign = useMutation({
+    mutationFn: (userId: string | null) => api(`${base}/${id}/assign`, { method: 'POST', body: JSON.stringify({ userId }) }),
+    onSuccess: refresh,
+  });
+  const addComment = useMutation({
+    mutationFn: () => api(`${base}/${id}/comments`, { method: 'POST', body: JSON.stringify({ body: comment, internal: canManage && internal }) }),
+    onSuccess: () => {
+      setComment('');
+      setInternal(false);
+      refresh();
+    },
+  });
+
+  const r = q.data?.request;
+  const next = r ? nextSrStatus(r.status) : null;
+  const canCancelOwn = !!r && r.status === 'new' && r.requested_by === me?.id;
+  const actionError = move.error ?? assign.error ?? addComment.error;
+
+  return (
+    <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
+      <DialogSurface style={{ maxWidth: '820px', width: '92vw' }}>
+        <DialogBody>
+          <DialogTitle>
+            {r ? (
+              <span className={cs.actions}>
+                {r.reference} — {r.title}
+                <Badge appearance="tint" color={STATUS_COLOR[r.status]}>
+                  {SR_STATUS_LABELS[r.status]}
+                </Badge>
+              </span>
+            ) : (
+              'Service request'
+            )}
+          </DialogTitle>
+          <DialogContent className={cs.stack} style={{ maxHeight: '72vh', overflowY: 'auto' }}>
+            {q.isLoading && <Spinner size="tiny" />}
+            {q.isError && <LoadError message={(q.error as Error).message} />}
+            {r && (
+              <>
+                <div className={cs.facts}>
+                  <Text className={cs.factLabel}>Type</Text>
+                  <Text>{SR_TYPE_DEFS[r.type].label}</Text>
+                  <Text className={cs.factLabel}>Site</Text>
+                  <Text>{r.sitecode ? (r.site_name ? `${r.sitecode} — ${r.site_name}` : r.sitecode) : '—'}</Text>
+                  <Text className={cs.factLabel}>Priority</Text>
+                  <Text>{PRIORITY_LABEL[r.priority]}</Text>
+                  <Text className={cs.factLabel}>Needed by</Text>
+                  <Text>{r.target_date ?? '—'}</Text>
+                  <Text className={cs.factLabel}>Raised by</Text>
+                  <Text>
+                    {r.requested_by_name ?? '—'} · {when(r.created_at)}
+                  </Text>
+                  <Text className={cs.factLabel}>Assigned to</Text>
+                  {canManage && (r.status === 'new' || r.status === 'planned' || r.status === 'built') ? (
+                    <Select size="small" value={r.assigned_to ?? ''} disabled={assign.isPending} onChange={(_, d) => assign.mutate(d.value || null)}>
+                      <option value="">Unassigned</option>
+                      {(assignees.data ?? []).map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.display_name}
+                        </option>
+                      ))}
+                    </Select>
+                  ) : (
+                    <Text>{r.assigned_to_name ?? 'Unassigned'}</Text>
+                  )}
+                </div>
+
+                <div className={cs.section}>
+                  <Text weight="semibold">Request details</Text>
+                  <div className={cs.facts}>
+                    {srDetailLines(r.type, r.details).map((l) => (
+                      <FactRow key={l.label} label={l.label} value={l.value} />
+                    ))}
+                  </div>
+                </div>
+
+                {(canManage && (next || canMoveSr(r.status, 'cancelled'))) || canCancelOwn ? (
+                  <div className={cs.section}>
+                    <Text weight="semibold">Move this request on</Text>
+                    <Field hint={canManage ? 'Optional. Included in the update emailed to the requester.' : undefined}>
+                      <Textarea value={note} maxLength={4000} placeholder="Add a note (optional)" resize="vertical" onChange={(_, d) => setNote(d.value)} />
+                    </Field>
+                    <div className={cs.actions}>
+                      {canManage && next && (
+                        <Button appearance="primary" disabled={move.isPending} onClick={() => move.mutate(next)}>
+                          Mark as {SR_STATUS_LABELS[next].toLowerCase()}
+                        </Button>
+                      )}
+                      {(canManage || canCancelOwn) && canMoveSr(r.status, 'cancelled') && (
+                        <Button disabled={move.isPending} onClick={() => move.mutate('cancelled')}>
+                          Cancel request
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className={cs.section}>
+                  <Text weight="semibold">Timeline</Text>
+                  {q.data!.events.map((e) => (
+                    <div key={e.id} className={`${cs.event} ${e.internal ? cs.internal : ''}`}>
+                      <Text size={200}>
+                        <b>{e.author_name ?? 'Someone'}</b> · {when(e.created_at)}
+                        {e.internal ? ' · internal note' : ''}
+                      </Text>
+                      <Text>{eventText(e)}</Text>
+                    </div>
+                  ))}
+                </div>
+
+                {can('sr:create') && (
+                  <div className={cs.section}>
+                    <Field label="Add a comment">
+                      <Textarea value={comment} maxLength={4000} resize="vertical" onChange={(_, d) => setComment(d.value)} />
+                    </Field>
+                    <div className={cs.actions}>
+                      {canManage && <Checkbox checked={internal} label="Internal note (the customer won't see it)" onChange={(_, d) => setInternal(!!d.checked)} />}
+                      <Button disabled={!comment.trim() || addComment.isPending} onClick={() => addComment.mutate()}>
+                        Add comment
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                {actionError && <Text className={cs.error}>{errorText(actionError, 'That did not work')}</Text>}
+              </>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button appearance="secondary" onClick={onClose}>
+              Close
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  );
+}
+
+function FactRow({ label, value }: { label: string; value: string }) {
+  const cs = useStyles();
+  return (
+    <>
+      <Text className={cs.factLabel}>{label}</Text>
+      <Text style={{ whiteSpace: 'pre-wrap' }}>{value}</Text>
+    </>
+  );
+}
+
+function eventText(e: RequestEvent): string {
+  switch (e.kind) {
+    case 'created':
+      return 'Raised the request.';
+    case 'status_changed': {
+      const moved = `Moved from ${e.from_status ? SR_STATUS_LABELS[e.from_status] : '—'} to ${e.to_status ? SR_STATUS_LABELS[e.to_status] : '—'}.`;
+      return e.body ? `${moved} ${e.body}` : moved;
+    }
+    case 'assigned':
+      return e.body === 'Unassigned' ? 'Unassigned the request.' : `Assigned to ${e.body}.`;
+    case 'comment':
+      return e.body ?? '';
+  }
+}
