@@ -24,7 +24,9 @@ import {
   planIdentityRow,
   planResourceAccountRow,
   planSharedCallingPolicyRow,
+  DEFERRED_SCRIPT_NOTE,
   renderCommand,
+  renderExportScript,
   type AutoAttendantCallableEntity,
   type AutoAttendantCallFlow,
   type AutoAttendantCrossRef,
@@ -370,6 +372,30 @@ async function handleGraphConnect(job: Job) {
   }
 }
 
+/**
+ * Live deployments on one connection share a single pwsh session, and a call's
+ * construction steps ($flow1, $ce1, ...) are session variables that persist
+ * between round-trips. BullMQ runs several jobs at once, so two live runs on the
+ * same connection would interleave and overwrite each other's variables (the
+ * final New-CsAutoAttendant then used the other run's call flow - reproduced
+ * against the real executor). Run them one at a time per connection.
+ */
+const connectionLocks = new Map<string, Promise<void>>();
+async function withConnectionLock<T>(connectionId: string, fn: () => Promise<T>): Promise<T> {
+  const previous = connectionLocks.get(connectionId) ?? Promise.resolve();
+  let release!: () => void;
+  const mine = new Promise<void>((r) => (release = r));
+  const tail = previous.then(() => mine);
+  connectionLocks.set(connectionId, tail);
+  await previous;
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (connectionLocks.get(connectionId) === tail) connectionLocks.delete(connectionId);
+  }
+}
+
 async function handleDeploymentRun(job: Job) {
   const { schema, deploymentId, connectionId, mode, scope, operatorUserId, tenantId } = job.data as {
     schema: string;
@@ -403,7 +429,9 @@ async function handleDeploymentRun(job: Job) {
     if (!exec) {
       throw new Error('The tenant connection is no longer available (it expired, or the worker restarted since it was made) - reconnect to the customer tenant and run the deployment again.');
     }
-    await runDeployment(exec);
+    // Dry runs never run a cmdlet, so only live runs need the lock.
+    if (mode === 'execute') await withConnectionLock(connectionId, () => runDeployment(exec));
+    else await runDeployment(exec);
   } catch (err) {
     // A run that throws (e.g. a pwsh command timeout - see pwsh-executor.ts)
     // must still leave `deployments` in a terminal state. Without this, the
@@ -460,7 +488,10 @@ async function handleDeploymentRun(job: Job) {
   /** Records one cmdlet's outcome as a deployment_changes row. */
   const record = async (call: CmdletInvocation, res: Awaited<ReturnType<typeof exec.invoke>>) => {
     counts[res.result] += 1;
-    if (res.result === 'whatif') scriptLines.push(renderCommand(call));
+    if (res.result === 'whatif') {
+      if (call.deferred) scriptLines.push(DEFERRED_SCRIPT_NOTE);
+      scriptLines.push(renderCommand(call));
+    }
     if (res.result === 'failed') {
       failures.push({ object: call.objectType, cmdlet: call.cmdlet, message: res.message ?? 'Unknown error' });
     }
@@ -782,7 +813,7 @@ async function handleDeploymentRun(job: Job) {
         deployment_id: deploymentId,
         filename: `deployment-${deploymentId}.ps1`,
         kind: 'ps1',
-        content: ['Connect-MicrosoftTeams', ...scriptLines, 'Disconnect-MicrosoftTeams'].join('\n'),
+        content: renderExportScript(scriptLines, { deploymentId }),
       })
       .execute();
   }

@@ -4,6 +4,7 @@ import {
   normalizePstnTarget,
   planCallQueueRow,
   psQuote,
+  renderExportScript,
   type BuildCallQueueRow,
   type CallQueueLiveState,
 } from './deployment';
@@ -195,5 +196,25 @@ describe('psQuote (PowerShell single-quoted literals)', () => {
       new Map(),
     );
     expect(call?.parameters.Name).toBe('Sales\u2019 Queue');
+  });
+});
+
+describe('renderExportScript', () => {
+  const script = renderExportScript(["New-CsCallQueue -Name 'Sales'", "Set-CsCallQueue -Identity 'x'"], { deploymentId: 'dep-1' });
+
+  it('stops at the first error, as the live path does for each object', () => {
+    expect(script).toContain("$ErrorActionPreference = 'Stop'");
+  });
+
+  it('connects before the commands and always disconnects after them', () => {
+    const lines = script.split('\n');
+    expect(lines.indexOf('Connect-MicrosoftTeams')).toBeLessThan(lines.indexOf("New-CsCallQueue -Name 'Sales'"));
+    expect(lines.indexOf('} finally {')).toBeGreaterThan(lines.indexOf("Set-CsCallQueue -Identity 'x'"));
+    expect(script).toContain('  Disconnect-MicrosoftTeams');
+  });
+
+  it('declares the module it needs and names the deployment', () => {
+    expect(script.startsWith('#Requires -Modules MicrosoftTeams')).toBe(true);
+    expect(script).toContain('deployment dep-1');
   });
 });

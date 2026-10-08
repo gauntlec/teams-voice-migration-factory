@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { sql } from 'kysely';
 import {
   buildAutoAttendantCrossRef,
@@ -650,6 +650,21 @@ export class DeploymentService {
     }
     if (conn.status !== 'active') {
       throw new ForbiddenException('Connection is not active - sign in to the customer tenant first');
+    }
+    // A second live run on this connection would interleave with the first in
+    // the shared pwsh session (the worker also serialises them, this just gives
+    // an immediate answer, e.g. to a double-clicked Deploy).
+    if (input.mode === 'execute') {
+      const inFlight = await tenantDb(this.db, t.schema)
+        .selectFrom('deployments')
+        .select('id')
+        .where('connection_id', '=', conn.id)
+        .where('mode', '=', 'execute')
+        .where('status', 'in', ['queued', 'running'])
+        .executeTakeFirst();
+      if (inFlight) {
+        throw new ConflictException('A live deployment is already queued or running on this connection. Wait for it to finish, then deploy again.');
+      }
     }
 
     const s = tenantDb(this.db, t.schema);

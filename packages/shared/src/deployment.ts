@@ -224,6 +224,33 @@ export function renderCommand(call: CmdletInvocation): string {
   return lines.join('\n');
 }
 
+/**
+ * The exported .ps1 for a dry run or a read-only tenant, the only way a change
+ * reaches such a tenant. The live path runs every step with -ErrorAction Stop
+ * and abandons the object at its first failure; bare commands in a script keep
+ * going after an error, so a failed New-CsAutoAttendantCallFlow leaves $flow1
+ * empty and the next command builds from it. Stopping at the first error is the
+ * safe equivalent for a script run by hand (Microsoft Learn's own examples use
+ * -ErrorAction Stop for the same reason), and Disconnect still runs.
+ */
+export function renderExportScript(lines: string[], opts: { deploymentId: string }): string {
+  return [
+    '#Requires -Modules MicrosoftTeams',
+    `# Voxshift deployment ${opts.deploymentId} - review each command before running.`,
+    "$ErrorActionPreference = 'Stop'",
+    'Connect-MicrosoftTeams',
+    'try {',
+    ...lines,
+    '} finally {',
+    '  Disconnect-MicrosoftTeams',
+    '}',
+  ].join('\n');
+}
+
+/** Comment line placed before a deferred call in the exported script (see CmdletInvocation.deferred). */
+export const DEFERRED_SCRIPT_NOTE =
+  '# Deferred: needs a manual licensing step (not possible with a Teams Administrator role) before the commands that depend on it can succeed.';
+
 /** Mirrors dto.ts's callForwardingSchema exactly - see that file for the field-by-field cmdlet mapping. */
 export interface CallForwardingSettings {
   forwarding?: {
