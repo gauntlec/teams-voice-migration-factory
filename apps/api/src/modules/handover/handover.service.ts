@@ -1,4 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import { sql } from 'kysely';
 import { tenantDb } from '@tvmf/db';
 import { HANDOVER_SECTIONS, type DiscoverySiteOverview } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
@@ -67,46 +69,67 @@ export class HandoverService {
 
   async generate(t: TenantContext, user: AuthedUser, body: { notes?: string }) {
     const scoped = tenantDb(this.db, t.schema);
-    const last = await scoped
-      .selectFrom('handover_packs')
-      .select((eb) => eb.fn.max('version').as('v'))
-      .executeTakeFirst();
-    const version = Number(last?.v ?? 0) + 1;
-
+    // Sections are read before the transaction so the lock is held only for the writes.
     const sections = await this.buildSections(t);
     const generatedAt = new Date();
+    const packId = randomUUID();
 
-    const data = await this.documentBuilder.build({
-      tenantName: t.name,
-      version,
-      generatedBy: user.displayName,
-      generatedAt,
-      sections,
-    });
+    // The version read and the pack + section inserts share one transaction under
+    // an advisory lock, so two concurrent Generate requests can't both take the
+    // same max(version) + 1, and a failed insert can't leave a half-written pack.
+    const { pack, version, data } = await this.db.transaction().execute(async (trx) => {
+      await sql`select pg_advisory_xact_lock(hashtext(${t.schema} || ':handover_pack'))`.execute(trx);
+      const s = tenantDb(trx, t.schema);
+      const last = await s.selectFrom('handover_packs').select((eb) => eb.fn.max('version').as('v')).executeTakeFirst();
+      const version = Number(last?.v ?? 0) + 1;
 
-    const pack = await scoped
-      .insertInto('handover_packs')
-      .values({
+      const data = await this.documentBuilder.build({
+        tenantName: t.name,
         version,
-        status: 'draft',
-        generated_by: user.id,
-        generated_at: generatedAt.toISOString(),
-        source: { notes: body.notes ?? null, snapshotAt: generatedAt.toISOString() },
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
+        generatedBy: user.displayName,
+        generatedAt,
+        sections,
+      });
 
-    const file = await this.files.store(t, {
-      category: 'handover_pack',
-      sourceType: 'handover_pack',
-      sourceId: pack.id,
-      siteId: null,
-      filename: `${t.schema}-service-handover-v${version}.docx`,
-      contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      data,
-      uploadedBy: user.id,
-      metadata: { version },
+      const pack = await s
+        .insertInto('handover_packs')
+        .values({
+          id: packId,
+          version,
+          status: 'draft',
+          generated_by: user.id,
+          generated_at: generatedAt.toISOString(),
+          source: { notes: body.notes ?? null, snapshotAt: generatedAt.toISOString() },
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      await s
+        .insertInto('handover_sections')
+        .values(sections.map((sec, i) => ({ pack_id: pack.id, key: sec.key, title: sec.title, ordinal: i, content: sec.content })))
+        .execute();
+
+      return { pack, version, data };
     });
+
+    let file;
+    try {
+      file = await this.files.store(t, {
+        category: 'handover_pack',
+        sourceType: 'handover_pack',
+        sourceId: pack.id,
+        siteId: null,
+        filename: `${t.schema}-service-handover-v${version}.docx`,
+        contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        data,
+        uploadedBy: user.id,
+        metadata: { version },
+      });
+    } catch (err) {
+      // Don't leave a draft pack behind with no file to download (sections cascade).
+      await scoped.deleteFrom('handover_packs').where('id', '=', pack.id).execute();
+      throw err;
+    }
 
     const updated = await scoped
       .updateTable('handover_packs')
@@ -114,11 +137,6 @@ export class HandoverService {
       .where('id', '=', pack.id)
       .returningAll()
       .executeTakeFirstOrThrow();
-
-    await scoped
-      .insertInto('handover_sections')
-      .values(sections.map((s, i) => ({ pack_id: pack.id, key: s.key, title: s.title, ordinal: i, content: s.content })))
-      .execute();
 
     await this.audit.tenant(t.schema, 'handover.pack_generated', {
       actor: { id: user.id, email: user.email },

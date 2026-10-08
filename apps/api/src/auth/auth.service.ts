@@ -230,13 +230,24 @@ export class AuthService {
       await this.audit.platform('auth.totp.reenrol_started', { actor: { id: userId, email, ip: meta.ip } });
     }
     const secret = this.totp.generateSecret();
-    await platformDb(this.db)
-      .insertInto('totp_secrets')
-      .values({ user_id: userId, secret_enc: encryptSecret(secret), confirmed_at: null })
-      .onConflict((oc) =>
-        oc.column('user_id').doUpdateSet({ secret_enc: encryptSecret(secret), confirmed_at: null }),
-      )
-      .execute();
+    if (alreadyEnrolled) {
+      // Keep the confirmed secret in place - login keeps working on it until
+      // the replacement is confirmed (confirmTotpEnrol promotes it). Abandoning
+      // the re-enrol therefore leaves MFA exactly as it was.
+      await platformDb(this.db)
+        .updateTable('totp_secrets')
+        .set({ pending_secret_enc: encryptSecret(secret) })
+        .where('user_id', '=', userId)
+        .execute();
+    } else {
+      await platformDb(this.db)
+        .insertInto('totp_secrets')
+        .values({ user_id: userId, secret_enc: encryptSecret(secret), pending_secret_enc: null, confirmed_at: null })
+        .onConflict((oc) =>
+          oc.column('user_id').doUpdateSet({ secret_enc: encryptSecret(secret), pending_secret_enc: null, confirmed_at: null }),
+        )
+        .execute();
+    }
     const otpauthUrl = this.totp.otpauthUrl(email, secret);
     return { secret, otpauthUrl, qrDataUrl: await this.totp.qrDataUrl(otpauthUrl) };
   }
@@ -256,17 +267,24 @@ export class AuthService {
     }
     const row = await platformDb(this.db)
       .selectFrom('totp_secrets')
-      .select('secret_enc')
+      .select(['secret_enc', 'pending_secret_enc'])
       .where('user_id', '=', userId)
       .executeTakeFirst();
-    if (!row || !this.totp.verify(code, decryptSecret(row.secret_enc))) {
+    // A pending secret means a re-enrol is in progress: that replacement is the
+    // one being confirmed. Otherwise this is a first enrol on secret_enc.
+    const candidate = row?.pending_secret_enc ?? row?.secret_enc;
+    if (!candidate || !this.totp.verify(code, decryptSecret(candidate))) {
       await this.recordFailedAttempt(userId, user.failed_logins);
       throw new UnauthorizedException('Incorrect code');
     }
     await this.clearFailedAttempts(userId, user.failed_logins);
     await platformDb(this.db)
       .updateTable('totp_secrets')
-      .set({ confirmed_at: new Date().toISOString() })
+      .set(
+        row?.pending_secret_enc
+          ? { secret_enc: row.pending_secret_enc, pending_secret_enc: null, confirmed_at: new Date().toISOString() }
+          : { confirmed_at: new Date().toISOString() },
+      )
       .where('user_id', '=', userId)
       .execute();
     await platformDb(this.db)

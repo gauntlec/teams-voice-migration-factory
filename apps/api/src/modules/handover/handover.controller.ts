@@ -1,6 +1,8 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { handoverGenerateSchema } from '@tvmf/shared';
 import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
 import type { AuthedUser, TenantContext } from '../../common/request';
+import { ZodBody } from '../../common/zod.pipe';
 import { RequirePermission } from '../../rbac/require-permission.decorator';
 import { TenantGuard } from '../../rbac/tenant.guard';
 import { HandoverService } from './handover.service';
@@ -22,7 +24,11 @@ export class HandoverController {
 
   @Post('packs')
   @RequirePermission('handover:generate')
-  generate(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Body() body: { notes?: string }) {
+  generate(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(handoverGenerateSchema)) body: { notes?: string },
+  ) {
     return this.handover.generate(t, user, body);
   }
 

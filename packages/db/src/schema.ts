@@ -149,6 +149,7 @@ export interface TenantMembershipsTable {
 export interface TotpSecretsTable {
   user_id: string;
   secret_enc: string;
+  pending_secret_enc: string | null;
   confirmed_at: string | null;
   created_at: Ts;
 }

@@ -73,6 +73,12 @@ export const totpEnrolConfirmSchema = z.object({
 });
 
 /** Start (re-)enrolment. `currentTotp` is required once the account already has confirmed MFA - re-enrolling must prove possession of the current authenticator before its secret can be replaced. */
+// Body is optional (a bare Generate click sends none) - preprocess it to {}.
+export const handoverGenerateSchema = z.preprocess(
+  (v) => v ?? {},
+  z.object({ notes: z.string().trim().max(2000).optional() }),
+);
+
 export const totpEnrolStartSchema = z.preprocess(
   (v) => v ?? {},
   z.object({ currentTotp: z.string().regex(/^\d{6}$/).optional() }),
