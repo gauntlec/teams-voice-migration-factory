@@ -846,7 +846,20 @@ export interface HandoverPacksTable {
   source: Json;
   /** FK -> files.id (ON DELETE SET NULL) - the generated .docx, category 'handover_pack'. */
   file_id: string | null;
+  /** Set together when a draft is issued (the table's CHECK keeps status and issued_at consistent). */
+  issued_by: string | null;
+  issued_at: string | null;
   created_at: Ts;
+}
+
+/** One note per (section_key, site_id); site_id NULL applies to every site. */
+export interface HandoverNotesTable {
+  id: Generated<string>;
+  section_key: 'service_support_model' | 'paging' | 'teams_configuration' | 'outstanding_actions';
+  site_id: string | null;
+  body: string;
+  updated_by: string;
+  updated_at: Ts;
 }
 
 export interface HandoverSectionsTable {
@@ -948,6 +961,7 @@ export interface DB {
   deployment_scripts: DeploymentScriptsTable;
   handover_packs: HandoverPacksTable;
   handover_sections: HandoverSectionsTable;
+  handover_notes: HandoverNotesTable;
   files: FilesTable;
   audit_log: TenantAuditLogTable;
 }

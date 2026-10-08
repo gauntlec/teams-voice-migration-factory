@@ -515,6 +515,10 @@ export const HANDOVER_SECTIONS = [
   { key: 'outstanding_actions', title: 'Outstanding Actions' },
 ] as const;
 
+/** The Handover sections with no structured data source: filled from editable notes (per site, or for every site). */
+export const HANDOVER_NOTE_SECTIONS = ['service_support_model', 'paging', 'teams_configuration', 'outstanding_actions'] as const;
+export type HandoverNoteSection = (typeof HANDOVER_NOTE_SECTIONS)[number];
+
 /** Every deployable Design & Build sheet, in the worker's run order - the single list the UI, API and change document use for "everything". */
 export const DEPLOYMENT_SHEETS = ['users', 'caps', 'resource_accounts', 'shared_calling_policies', 'call_queues', 'auto_attendants'] as const;
 export type DeploymentSheet = (typeof DEPLOYMENT_SHEETS)[number];

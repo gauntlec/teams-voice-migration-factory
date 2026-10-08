@@ -101,8 +101,11 @@ single shared claim. |
 ### Service Handover
 | Table | Notes |
 |-------|-------|
-| `handover_packs` | id, version, status (`draft`/`issued`), generated_by, generated_at, source jsonb (snapshot refs), file (bytea, .docx) |
-| `handover_sections` | pack_id, key, title, ordinal, content jsonb — one per docx section (Site Information, Phone Numbers, Teams Users, CAPS, Analog Phones, Paging, Auto Attendants, Call Queues, Resource Accounts, Voicemail Groups, MS Teams Configuration, Network Data, Outstanding Actions) |
+| `handover_packs` | id, version, status (`draft`/`issued`), generated_by, generated_at, source jsonb (notes, snapshotAt, siteIds, siteCodes, sectionKeys — what the pack covers), file_id (FK → `files`, the generated .docx), issued_by, issued_at (set together when issued; a CHECK keeps `status` and `issued_at` consistent) |
+| `handover_sections` | pack_id, key, title, ordinal, content jsonb (`table` / `paragraphs` / `placeholder`) — one per section in the pack; the in-app preview reads these |
+| `handover_notes` | section_key (`service_support_model` / `paging` / `teams_configuration` / `outstanding_actions`), site_id (NULL = every site), body, updated_by, updated_at — hand-written text for the four template sections with no structured source. Unique per (section, site) |
+
+Handover is customer-wide: a "site contact" (a customer user pinned to certain sites) cannot read, build or issue a pack, because a pack covers every site's data. A pack can be limited to chosen sites and sections when it is generated.
 
 ### Common
 | Table | Notes |

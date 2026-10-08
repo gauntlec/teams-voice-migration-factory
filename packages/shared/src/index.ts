@@ -8,6 +8,7 @@ export * from './call-flow-graph';
 export * from './color';
 export * from './site-match';
 export * from './wizard';
+export * from './handover';
 export * from './wizard-convert';
 
 import type { CmdletInvocation } from './deployment';

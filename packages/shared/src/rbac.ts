@@ -36,6 +36,7 @@ export const PERMISSIONS = [
   'deployment:execute',
   'handover:read',
   'handover:generate',
+  'handover:issue', // lock a draft pack as final
   'files:read', // browse generated/stored files for a tenant - all 4 roles
   'audit:read:tenant',
   'audit:read:platform',
@@ -73,6 +74,7 @@ export const PERMISSION_MATRIX: Record<Role, ReadonlySet<Permission>> = {
     // engineer/admin-only and are hidden from the PM's left nav.
     'handover:read',
     'handover:generate',
+    'handover:issue', // lock a draft pack as final
     'files:read',
     'audit:read:tenant',
     'feature:read',
@@ -97,6 +99,7 @@ export const PERMISSION_MATRIX: Record<Role, ReadonlySet<Permission>> = {
     'deployment:execute',
     'handover:read',
     'handover:generate',
+    'handover:issue', // lock a draft pack as final
     'files:read',
     'audit:read:tenant',
     'feature:read',

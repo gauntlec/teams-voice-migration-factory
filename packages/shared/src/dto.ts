@@ -27,6 +27,7 @@ import {
   GREETING_TYPES,
   LICENSING_MODELS,
   NETWORK_SCOPES,
+  HANDOVER_NOTE_SECTIONS,
   NETWORK_TYPES,
   NUMBER_RANGE_KINDS,
   NUMBER_STATUSES,
@@ -38,6 +39,7 @@ import {
   normalizeVoicemailLanguage,
 } from './domain';
 import { HEX_COLOR_RE } from './color';
+import { isHandoverSectionKey } from './handover';
 
 export const emailSchema = z.string().email().max(320).transform((s) => s.toLowerCase().trim());
 
@@ -74,10 +76,23 @@ export const totpEnrolConfirmSchema = z.object({
 
 /** Start (re-)enrolment. `currentTotp` is required once the account already has confirmed MFA - re-enrolling must prove possession of the current authenticator before its secret can be replaced. */
 // Body is optional (a bare Generate click sends none) - preprocess it to {}.
+// siteIds: limit the pack to these sites (empty/absent = every site).
+// sectionKeys: limit it to these template sections (empty/absent = all of them).
 export const handoverGenerateSchema = z.preprocess(
   (v) => v ?? {},
-  z.object({ notes: z.string().trim().max(2000).optional() }),
+  z.object({
+    notes: z.string().trim().max(2000).optional(),
+    siteIds: z.array(z.string().uuid()).max(200).optional(),
+    sectionKeys: z.array(z.string().refine(isHandoverSectionKey, 'Unknown handover section')).max(20).optional(),
+  }),
 );
+
+/** Writes (or, with an empty body, clears) the note for one section - for one site, or for every site (siteId null). */
+export const handoverNoteSchema = z.object({
+  sectionKey: z.enum(HANDOVER_NOTE_SECTIONS),
+  siteId: z.string().uuid().nullable().optional(),
+  body: z.string().max(20000),
+});
 
 export const totpEnrolStartSchema = z.preprocess(
   (v) => v ?? {},
