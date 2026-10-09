@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { sql } from 'kysely';
 import { tenantDb, type DB } from '@tvmf/db';
-import { POLICY_KINDS, POLICY_KIND_TO_TENANT_TYPE, type BuildRowValidation, type PolicyKey } from '@tvmf/shared';
+import { POLICY_KINDS, POLICY_KIND_TO_TENANT_TYPE, policyMatchesLive, type BuildRowValidation, type PolicyKey } from '@tvmf/shared';
 import type { TenantContext } from '../../common/request';
 import { InjectDb, type Db } from '../../db/db.module';
 
@@ -140,7 +140,8 @@ export class BuildValidationService {
           unknownPolicies.push({ key: kind.key, label: kind.label, value });
         }
         const liveValue = (live?.policies as Record<string, string | null> | null)?.[tenantType] ?? null;
-        if (liveValue !== effectiveTarget) {
+        // "Global" = no per-user assignment, which Teams reports as no value.
+        if (!policyMatchesLive(effectiveTarget, liveValue)) {
           policyMismatches.push({ key: kind.key, label: kind.label, target: effectiveTarget, live: liveValue });
         }
       }

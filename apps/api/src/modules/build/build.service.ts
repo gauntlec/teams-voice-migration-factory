@@ -469,7 +469,13 @@ export class BuildService {
         throw isUniqueViolation(err) ? new ConflictException('That UPN is already on this site’s Build grid.') : err;
       });
     if (phone_number_id) {
-      const number = await this.setSingleNumber(t, holderTypeOf(table), row.id, phone_number_id);
+      // The number can only be claimed once the row exists (it's the holder) -
+      // if the claim fails (taken a moment ago), take the row back out so a
+      // retry doesn't hit "UPN already on this site".
+      const number = await this.setSingleNumber(t, holderTypeOf(table), row.id, phone_number_id).catch(async (err) => {
+        await this.s(t).deleteFrom(table).where('id', '=', row.id).execute();
+        throw err;
+      });
       row = await this.s(t)
         .updateTable(table)
         .set({ e164: number?.e164 ?? null, phone_number_id: number?.id ?? null } as never)
@@ -763,7 +769,10 @@ export class BuildService {
       .returningAll()
       .executeTakeFirstOrThrow();
     if (body.phone_number_id) {
-      const number = await this.setSingleNumber(t, 'resource_account', row.id, body.phone_number_id);
+      const number = await this.setSingleNumber(t, 'resource_account', row.id, body.phone_number_id).catch(async (err) => {
+        await this.s(t).deleteFrom('build_resource_accounts').where('id', '=', row.id).execute();
+        throw err;
+      });
       row = await this.s(t)
         .updateTable('build_resource_accounts')
         .set({ phone_number: number?.e164 ?? null, phone_number_id: number?.id ?? null })
@@ -1621,7 +1630,16 @@ export class BuildService {
     if ((current?.id ?? null) === numberId) {
       return numberId ? await this.s(t).selectFrom('phone_numbers').selectAll().where('id', '=', numberId).executeTakeFirst() : null;
     }
-    if (current) await this.releaseHolder(t, holderType, current.id);
+    // Free the number this holder has now. (This used to call releaseHolder
+    // with the *number's* id as the holder id, which matched nothing - so a
+    // changed number stayed 'assigned' to the row forever and leaked.)
+    if (current) {
+      await this.s(t)
+        .updateTable('phone_numbers')
+        .set({ holder_type: null, holder_id: null, status: 'available' })
+        .where('id', '=', current.id)
+        .execute();
+    }
     if (!numberId) return null;
     await this.claimNumber(t, numberId, holderType, holderId);
     return this.s(t).selectFrom('phone_numbers').selectAll().where('id', '=', numberId).executeTakeFirstOrThrow();

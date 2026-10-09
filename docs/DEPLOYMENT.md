@@ -97,6 +97,11 @@ identically - only the `object_type` tag differs):
    voicemail, emergency calling, emergency call routing, IP phone. Note
    `voicemail_policy` here is a *policy grant* (tenant-defined behaviour,
    e.g. max message length) - a different thing from item 4 below.
+   A target of **Global** (the tenant default) is granted as
+   `-PolicyName $null` - Teams won't grant "Global" by name; `$null` removes
+   the per-user assignment so the user falls back to it. Get-CsOnlineUser
+   reports a user on Global as null, so a null live value counts as already
+   matching (`policyMatchesLive`, shared with Validate against tenant).
 4. If `voicemail.enabled` is set on the row (not null/undefined - "not
    designed yet" is left alone) -> `Set-CsOnlineVoicemailUserSettings
    -VoicemailEnabled` (+ `-PromptLanguage` when enabling with a language

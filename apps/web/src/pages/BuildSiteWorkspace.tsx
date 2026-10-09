@@ -397,6 +397,9 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
       qc.invalidateQueries({ queryKey: ['users', tid, siteId] });
       qc.invalidateQueries({ queryKey: ['caps', tid, siteId] });
       qc.invalidateQueries({ queryKey: ['resource-accounts', tid, siteId] });
+      // Reset deletes these too - without this the tabs keep showing them.
+      qc.invalidateQueries({ queryKey: ['call-queues', tid, siteId] });
+      qc.invalidateQueries({ queryKey: ['auto-attendants', tid, siteId] });
       qc.invalidateQueries({ queryKey: ['build-summary', tid] });
     },
     onError: (e) => setResetError(e instanceof ApiError ? e.message : 'Reset failed'),
@@ -535,8 +538,10 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
                 This deletes all {site.counts.users} user{site.counts.users === 1 ? '' : 's'},{' '}
                 {site.counts.caps} common area phone{site.counts.caps === 1 ? '' : 's'} and{' '}
                 {site.counts.resourceAccounts} resource account{site.counts.resourceAccounts === 1 ? '' : 's'}{' '}
-                designed for this site, and releases any numbers they hold back to the inventory.
-                Data Collection is not affected - you can Populate from Discovery again afterwards.
+                designed for this site, <b>and every call queue and auto attendant</b> (with their agents, menus and
+                schedules), and releases any numbers they hold back to the inventory. Data Collection is not
+                affected - Populate from Discovery brings back what came from there, but anything designed by hand
+                here is lost.
               </Text>
               <Text block weight="semibold" style={{ marginTop: 8 }}>
                 This cannot be undone.
@@ -698,17 +703,21 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
             {
               key: 'calling_settings',
               label: 'Calling',
-              render: (r) => (
-                <Button
-                  size="small"
-                  appearance="subtle"
-                  onClick={() =>
-                    setCallingSettingsFor({ endpoint: `${base}/users`, queryKey: ['users', tid, siteId], row: r })
-                  }
-                >
-                  {callingSettingsSummary(r)}
-                </Button>
-              ),
+              // Read-only (no build:write, or a locked service request): the summary, not an editor.
+              render: (r) =>
+                canWrite ? (
+                  <Button
+                    size="small"
+                    appearance="subtle"
+                    onClick={() =>
+                      setCallingSettingsFor({ endpoint: `${base}/users`, queryKey: ['users', tid, siteId], row: r })
+                    }
+                  >
+                    {callingSettingsSummary(r)}
+                  </Button>
+                ) : (
+                  callingSettingsSummary(r)
+                ),
             },
             { key: 'validation', label: 'Validation', render: (r) => <ValidationBadge v={r.validation as BuildRowValidation | null} /> },
           ]}
@@ -754,17 +763,21 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
             {
               key: 'calling_settings',
               label: 'Calling',
-              render: (r) => (
-                <Button
-                  size="small"
-                  appearance="subtle"
-                  onClick={() =>
-                    setCallingSettingsFor({ endpoint: `${base}/caps`, queryKey: ['caps', tid, siteId], row: r })
-                  }
-                >
-                  {callingSettingsSummary(r)}
-                </Button>
-              ),
+              // Read-only (no build:write, or a locked service request): the summary, not an editor.
+              render: (r) =>
+                canWrite ? (
+                  <Button
+                    size="small"
+                    appearance="subtle"
+                    onClick={() =>
+                      setCallingSettingsFor({ endpoint: `${base}/caps`, queryKey: ['caps', tid, siteId], row: r })
+                    }
+                  >
+                    {callingSettingsSummary(r)}
+                  </Button>
+                ) : (
+                  callingSettingsSummary(r)
+                ),
             },
             { key: 'validation', label: 'Validation', render: (r) => <ValidationBadge v={r.validation as BuildRowValidation | null} /> },
           ]}
@@ -973,11 +986,14 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
             {
               key: 'settings',
               label: 'Agents / overflow / timeout',
-              render: (r) => (
-                <Button size="small" appearance="subtle" onClick={() => setCallQueueSettingsFor(r)}>
-                  Configure…
-                </Button>
-              ),
+              render: (r) =>
+                canWrite ? (
+                  <Button size="small" appearance="subtle" onClick={() => setCallQueueSettingsFor(r)}>
+                    Configure…
+                  </Button>
+                ) : (
+                  '—'
+                ),
             },
             {
               key: 'call_flow',
@@ -1037,11 +1053,14 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
             {
               key: 'settings',
               label: 'Menu editor',
-              render: (r) => (
-                <Button size="small" appearance="subtle" onClick={() => setAaSettingsFor(r)}>
-                  Configure…
-                </Button>
-              ),
+              render: (r) =>
+                canWrite ? (
+                  <Button size="small" appearance="subtle" onClick={() => setAaSettingsFor(r)}>
+                    Configure…
+                  </Button>
+                ) : (
+                  '—'
+                ),
             },
             {
               key: 'call_flow',

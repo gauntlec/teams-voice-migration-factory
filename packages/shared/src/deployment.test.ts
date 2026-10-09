@@ -4,6 +4,8 @@ import {
   normalizePstnTarget,
   planCallQueueRow,
   planIdentityRow,
+  policyMatchesLive,
+  renderStatement,
   renderCommand,
   type BuildIdentityRow,
   psQuote,
@@ -254,5 +256,32 @@ describe('mandatory parameters are never dropped from a command', () => {
     const delegates = calls.filter((c) => c.cmdlet === 'New-CsUserCallingDelegate');
     expect(delegates).toHaveLength(1);
     expect(delegates[0]!.parameters.Delegate).toBe('carol@contoso.com');
+  });
+});
+
+describe('Global policies', () => {
+  // "Global" is the tenant default - it can't be granted by name (Teams
+  // rejects it); -PolicyName $null removes the per-user assignment instead.
+  // Get-CsOnlineUser reports null for a user on Global.
+  const row: any = { id: 'r1', upn: 'a@x.com', e164: null, number_type: null, revoke_ev: false, voicemail: null, call_forwarding: null, pickup_group: null, delegates: null };
+  const live = (p: Record<string, string | null>): any => ({ enterpriseVoiceEnabled: true, lineUri: null, policies: p });
+
+  it('grants Global as -PolicyName $null', () => {
+    const calls = planIdentityRow({ ...row, policies: { voice_routing_policy: 'Global' } }, 'user');
+    expect(calls.map((c) => renderStatement(c.cmdlet, c.parameters))).toContain("Grant-CsOnlineVoiceRoutingPolicy -Identity 'a@x.com' -PolicyName $null");
+  });
+  it('treats a null live policy as already on Global', () => {
+    expect(planIdentityRow({ ...row, policies: { voice_routing_policy: 'global' } }, 'user', live({ OnlineVoiceRoutingPolicy: null }))).toEqual([]);
+    expect(planIdentityRow({ ...row, policies: { voice_routing_policy: 'Global' } }, 'user', live({ OnlineVoiceRoutingPolicy: 'VRP-US' }))).toHaveLength(1);
+  });
+  it('still grants a named policy when live is on Global', () => {
+    const calls = planIdentityRow({ ...row, policies: { voice_routing_policy: 'VRP-US' } }, 'user', live({ OnlineVoiceRoutingPolicy: null }));
+    expect(calls[0]?.parameters.PolicyName).toBe('VRP-US');
+  });
+  it('matches live the same way for validation', () => {
+    expect(policyMatchesLive('Global', null)).toBe(true);
+    expect(policyMatchesLive('Global', 'Global')).toBe(true);
+    expect(policyMatchesLive('Global', 'VRP-US')).toBe(false);
+    expect(policyMatchesLive('VRP-US', null)).toBe(false);
   });
 });

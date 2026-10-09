@@ -943,6 +943,8 @@ function RecordTable({
   onSelectedChange?: (next: Set<string>) => void;
 }) {
   const s = useRecordStyles();
+  // Delete asks once, in the row itself - a stray click used to remove the row (and free its number) outright.
+  const [confirming, setConfirming] = useState<string | null>(null);
   const minWidth = Math.max(560, columns.length * 132 + (readOnly ? 0 : 96) + (selectable ? 40 : 0));
   const allOnPageSelected = selectable && rows.length > 0 && rows.every((r) => selected?.has(r.id));
   const someOnPageSelected = selectable && rows.some((r) => selected?.has(r.id));
@@ -1001,24 +1003,43 @@ function RecordTable({
               })}
               {!readOnly && (
                 <TableCell>
-                  <div className={s.rowActions}>
-                    {extraRowAction?.(r)}
-                    <Button
-                      size="small"
-                      appearance="subtle"
-                      icon={<EditRegular />}
-                      aria-label="Edit"
-                      onClick={() => onEdit(r)}
-                    />
-                    <Button
-                      size="small"
-                      appearance="subtle"
-                      icon={<DeleteRegular />}
-                      aria-label="Delete"
-                      disabled={removing}
-                      onClick={() => onDelete(r.id)}
-                    />
-                  </div>
+                  {confirming === r.id ? (
+                    <div className={s.rowActions}>
+                      <Button
+                        size="small"
+                        appearance="primary"
+                        disabled={removing}
+                        onClick={() => {
+                          setConfirming(null);
+                          onDelete(r.id);
+                        }}
+                      >
+                        Delete
+                      </Button>
+                      <Button size="small" appearance="subtle" onClick={() => setConfirming(null)}>
+                        Keep
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className={s.rowActions}>
+                      {extraRowAction?.(r)}
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={<EditRegular />}
+                        aria-label="Edit"
+                        onClick={() => onEdit(r)}
+                      />
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={<DeleteRegular />}
+                        aria-label="Delete"
+                        disabled={removing}
+                        onClick={() => setConfirming(r.id)}
+                      />
+                    </div>
+                  )}
                 </TableCell>
               )}
             </TableRow>

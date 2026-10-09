@@ -102,6 +102,28 @@ export interface VarRef {
   prop?: string;
 }
 
+/**
+ * "Global" isn't a per-user policy you can grant by name - it's what a user
+ * has when there's no per-user assignment. Teams reports it as no value
+ * (Get-CsOnlineUser's policy field is empty), and it's granted by unassigning:
+ * Grant-Cs*Policy -PolicyName $null (Microsoft Learn: "To unassign a per-user
+ * policy, set the PolicyName to a null value ($null)").
+ */
+export function isGlobalPolicyName(name: string | null | undefined): boolean {
+  return !!name && /^global$/i.test(name.trim());
+}
+
+/** Whether a user's live policy already matches the design - with "Global" matching no assignment at all. */
+export function policyMatchesLive(target: string, live: string | null | undefined): boolean {
+  if (isGlobalPolicyName(target)) return live == null || live === '' || isGlobalPolicyName(live);
+  return live === target;
+}
+
+/** The -PolicyName value to grant a designed policy: the name, or $null for Global. */
+function grantPolicyName(target: string): string | VarRef {
+  return isGlobalPolicyName(target) ? { $var: 'null' } : target;
+}
+
 function isVarRef(v: unknown): v is VarRef {
   return typeof v === 'object' && v !== null && typeof (v as VarRef).$var === 'string';
 }
@@ -413,10 +435,10 @@ export function planIdentityRow(
     // Every kind maps to a live TenantPolicyType (POLICY_KIND_TO_TENANT_TYPE);
     // the guard is just defensive for any future kind added without one.
     const tenantType = POLICY_KIND_TO_TENANT_TYPE[kind.key];
-    if (tenantType && live && live.policies[tenantType] === value) continue;
+    if (tenantType && live && policyMatchesLive(value, live.policies[tenantType])) continue;
     calls.push({
       cmdlet: kind.cmdlet,
-      parameters: { Identity: identity, PolicyName: value },
+      parameters: { Identity: identity, PolicyName: grantPolicyName(value) },
       objectType,
       objectId: row.id,
     });
@@ -603,10 +625,10 @@ export function planResourceAccountRow(row: BuildResourceAccountRow, live?: Live
       objectId: row.id,
     });
   }
-  if (row.voice_routing_policy && (!live || live.policies['OnlineVoiceRoutingPolicy'] !== row.voice_routing_policy)) {
+  if (row.voice_routing_policy && (!live || !policyMatchesLive(row.voice_routing_policy, live.policies['OnlineVoiceRoutingPolicy']))) {
     calls.push({
       cmdlet: 'Grant-CsOnlineVoiceRoutingPolicy',
-      parameters: { Identity: row.upn, PolicyName: row.voice_routing_policy },
+      parameters: { Identity: row.upn, PolicyName: grantPolicyName(row.voice_routing_policy) },
       objectType: 'resource_account',
       objectId: row.id,
     });
