@@ -688,6 +688,8 @@ function FieldInput({
             <Checkbox
               key={o}
               label={o}
+              // The field is required, not each box (Field would otherwise mark every option with *).
+              required={false}
               checked={picked.includes(o)}
               onChange={(_, d) => {
                 const next = d.checked ? [...picked, o] : picked.filter((x) => x !== o);
