@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards, ParseUUIDPipe } from '@nestjs/common';
 import {
   can,
   startConnectionSchema,
@@ -56,7 +56,7 @@ export class TenantDiscoveryController {
   @RequirePermission('tenantdiscovery:read')
   getConnection(
     @TenantCtx() t: TenantContext,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthedUser,
   ) {
     return this.svc.getConnection(t, id, user);
@@ -67,7 +67,7 @@ export class TenantDiscoveryController {
   @RequirePermission('tenantdiscovery:run')
   connectGraph(
     @TenantCtx() t: TenantContext,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthedUser,
   ) {
     return this.svc.connectGraph(t, id, user);
@@ -133,7 +133,7 @@ export class TenantDiscoveryController {
 
   @Get('runs/:id')
   @RequirePermission('tenantdiscovery:read')
-  getRun(@TenantCtx() t: TenantContext, @Param('id') id: string) {
+  getRun(@TenantCtx() t: TenantContext, @Param('id', ParseUUIDPipe) id: string) {
     return this.svc.getRun(t, id);
   }
 
@@ -142,7 +142,7 @@ export class TenantDiscoveryController {
   @RequirePermission('tenantdiscovery:read')
   listRunChanges(
     @TenantCtx() t: TenantContext,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Query(new ZodBody(tenantObjectsQuerySchema)) q: TenantObjectsQuery,
   ) {
     return this.svc.listRunChanges(t, id, q);
@@ -178,14 +178,14 @@ export class TenantDiscoveryController {
 
   @Get('objects/:id')
   @RequirePermission('tenantdiscovery:read')
-  getObject(@TenantCtx() t: TenantContext, @Param('id') id: string) {
+  getObject(@TenantCtx() t: TenantContext, @Param('id', ParseUUIDPipe) id: string) {
     return this.svc.getObject(t, id);
   }
 
   /** Change timeline for one object (before/after per run). */
   @Get('objects/:id/versions')
   @RequirePermission('tenantdiscovery:read')
-  listObjectVersions(@TenantCtx() t: TenantContext, @Param('id') id: string) {
+  listObjectVersions(@TenantCtx() t: TenantContext, @Param('id', ParseUUIDPipe) id: string) {
     return this.svc.listObjectVersions(t, id);
   }
 

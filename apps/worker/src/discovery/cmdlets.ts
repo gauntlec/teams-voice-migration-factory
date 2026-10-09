@@ -255,8 +255,8 @@ export const STEP_CMDLETS: Record<TenantDiscoveryStep, CmdletSpec[]> = {
       objectType: 'civic_address',
       key: (r) => s(r.CivicAddressId),
       name: (r) =>
-        s(r.Description) ??
-        [r.HouseNumber, r.StreetName, r.City].filter(Boolean).map(String).join(' ') ??
+        s(r.Description) ||
+        [r.HouseNumber, r.StreetName, r.City].filter(Boolean).map(String).join(' ') ||
         null,
     },
   ],

@@ -501,8 +501,8 @@ export class TenantDiscoveryService {
   /* =============================== purge =============================== */
 
   /**
-   * Delete every discovered object, the Users/Policies projections and the run
-   * history for this customer. `tenant_users` / `tenant_policies` cascade from
+   * Delete every discovered object, the Users/Policies projections, the M365
+   * group cache and the run history for this customer. `tenant_users` / `tenant_policies` cascade from
    * `tenant_objects.object_id`; Data Collection users are kept but their
    * `tenant_user_id` link is cleared (FK is ON DELETE SET NULL). Blocked while a
    * discovery is queued or running. Not reversible - re-run discovery to rebuild.
@@ -527,7 +527,8 @@ export class TenantDiscoveryService {
         | 'tenant_object_versions'
         | 'tenant_users'
         | 'tenant_policies'
-        | 'tenant_discovery_runs',
+        | 'tenant_discovery_runs'
+        | 'tenant_groups',
     ) => {
       const [{ n }] = await s
         .selectFrom(table)
@@ -535,12 +536,13 @@ export class TenantDiscoveryService {
         .execute();
       return Number(n);
     };
-    const [objects, versions, users, policies, runs, linkedRow] = await Promise.all([
+    const [objects, versions, users, policies, runs, groups, linkedRow] = await Promise.all([
       count('tenant_objects'),
       count('tenant_object_versions'),
       count('tenant_users'),
       count('tenant_policies'),
       count('tenant_discovery_runs'),
+      count('tenant_groups'),
       s
         .selectFrom('discovery_users')
         .select((eb) => eb.fn.countAll<number>().as('n'))
@@ -557,8 +559,10 @@ export class TenantDiscoveryService {
     await s.deleteFrom('tenant_users').execute();
     await s.deleteFrom('tenant_policies').execute();
     await s.deleteFrom('tenant_discovery_runs').execute();
+    // The M365 group cache is discovered data too (Graph sign-in / each run).
+    await s.deleteFrom('tenant_groups').execute();
 
-    const result = { objects, versions, users, policies, runs, dataCollectionLinksCleared };
+    const result = { objects, versions, users, policies, runs, groups, dataCollectionLinksCleared };
     await this.audit.tenant(t.schema, 'tenant_discovery.purged', {
       actor: actorOf(user),
       targetType: 'tenant',

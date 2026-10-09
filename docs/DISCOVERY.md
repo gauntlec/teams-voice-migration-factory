@@ -22,9 +22,14 @@ Voxshift so Data Collection, Design & Build and Deployment can reference reality
    `tenant_discovery.run`. The worker walks the steps below, upserting objects as it
    goes and updating `progress` (`{step, completed[], counts{}, changed{}, errors[]}`),
    which the page polls every 3 s.
-4. Objects a successful step no longer returned are tombstoned (`removed_at`), kept
-   for history and hidden by default. A step that fails is recorded in
-   `progress.errors` and the run carries on; only a lost sign-in fails the run.
+4. Objects a **fully** successful step no longer returned are tombstoned
+   (`removed_at`), kept for history and hidden by default. Each cmdlet in a step
+   runs on its own: one that fails (e.g. a policy type the tenant doesn't have)
+   is recorded in `progress.errors` and the step's other cmdlets still run, but
+   a step with any failed cmdlet - or any failed user bucket - tombstones
+   nothing, because part of its data was never seen. Only a lost sign-in fails
+   the run; anything else that throws marks the run `failed` rather than
+   leaving it `running` (which would block new runs until the worker restarted).
 5. Sessions expire after `TEAMS_SESSION_TTL_MINUTES` idle (default 60) or when the
    worker restarts — tokens only ever live inside the pwsh process.
 
@@ -164,7 +169,8 @@ Other modules should read `GET policies` (e.g. Design & Build policy pickers) an
 `DELETE /t/:tenantId/tenant-discovery` (`tenantdiscovery:run`, and the **Delete
 discovered data** button on the Overview tab) wipes the whole inventory for one
 customer: `tenant_objects` (which cascades to `tenant_users`, `tenant_policies`
-and `tenant_object_versions`), then `tenant_discovery_runs`. Data Collection users are kept —
+and `tenant_object_versions`), then `tenant_discovery_runs` and the M365 group
+cache (`tenant_groups`). Data Collection users are kept —
 their `discovery_users.tenant_user_id` link is set null by the FK. `connections`
 are untouched. Blocked while a run is `queued`/`running`. Not reversible; re-run
 discovery to rebuild. Audited as `tenant_discovery.purged` (tenant + platform)
@@ -198,7 +204,8 @@ with the deleted row counts.
   (users m*, 13/42)…") and no single call can time out. Records are also
   `Select-Object`'d to the ~40 properties `projectUser` stores (depth 6, so the
   nested `AssignedPlan` licence fields always serialise). One bad bucket is
-  recorded in `progress.errors` and skipped, not fatal. Per-cmdlet timeout is
+  recorded in `progress.errors` and skipped, not fatal - and the run then leaves
+  users it didn't see as they were instead of marking them removed. Per-cmdlet timeout is
   `TEAMS_COMMAND_TIMEOUT_MS` (default 15 min).
 - **The user filter (Teams-licensed candidates only).** By default an
   `AccountType='User'` record is stored only if it is licensed for Teams —

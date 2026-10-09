@@ -611,8 +611,14 @@ function ConnectCard({
     queryKey: ['tdisc', 'conn', base, focusedId],
     enabled: !!focusedId,
     queryFn: () => api<Connection>(`${base}/connections/${focusedId}`),
+    // Fast while a sign-in is pending; slowly while connected, so an expired
+    // session stops showing "Connected" (and offering runs that would fail).
     refetchInterval: (q) =>
-      q.state.data?.status === 'pending' || q.state.data?.graph_status === 'pending' ? 3000 : false,
+      q.state.data?.status === 'pending' || q.state.data?.graph_status === 'pending'
+        ? 3000
+        : q.state.data?.status === 'active'
+          ? 30000
+          : false,
   });
 
   const start = useMutation({
@@ -638,16 +644,21 @@ function ConnectCard({
 
   const c = conn.data;
   const run = useMutation({
-    mutationFn: (scopeTypes?: TenantObjectType[]) =>
-      api<TenantDiscoveryRun>(`${base}/runs`, {
+    mutationFn: (scopeTypes?: TenantObjectType[]) => {
+      // The "include disabled / unlicensed" ticks belong to the partial-sync
+      // panel; a full run uses the customer's own setting, never a leftover tick.
+      const partial = !!scopeTypes?.length;
+      const widenUsers = partial && scopeTypes!.includes('user');
+      return api<TenantDiscoveryRun>(`${base}/runs`, {
         method: 'POST',
         body: JSON.stringify({
           connectionId: focusedId,
-          ...(scopeTypes && scopeTypes.length ? { scopeTypes } : {}),
-          ...(includeDisabled ? { includeDisabled: true } : {}),
-          ...(includeUnlicensed ? { includeUnlicensed: true } : {}),
+          ...(partial ? { scopeTypes } : {}),
+          ...(widenUsers && includeDisabled ? { includeDisabled: true } : {}),
+          ...(widenUsers && includeUnlicensed ? { includeUnlicensed: true } : {}),
         }),
-      }),
+      });
+    },
     onSuccess: () => {
       setErr(null);
       setScopeOpen(false);
@@ -1105,7 +1116,7 @@ function PurgeCard({
   const [err, setErr] = useState<string | null>(null);
 
   const total = Object.values(summary?.counts ?? {}).reduce((a, b) => a + (b ?? 0), 0);
-  const hasData = total > 0 || !!summary?.lastRun;
+  const hasData = total > 0 || !!summary?.lastRun || (summary?.groupsCount ?? 0) > 0;
   const running = !!summary?.lastRun && ['queued', 'running'].includes(summary.lastRun.status);
 
   const purge = useMutation({
@@ -1131,8 +1142,8 @@ function PurgeCard({
     <Card className={s.card}>
       <Text weight="semibold">Delete discovered data</Text>
       <Text size={200} className={s.muted}>
-        Removes every discovered object, the Users and Policies projections and the run history for
-        this customer. Data Collection entries are kept, but lose their link to a discovered user.
+        Removes every discovered object, the Users and Policies projections, the M365 group cache
+        and the run history for this customer. Data Collection entries are kept, but lose their link to a discovered user.
         Re-run discovery to rebuild. This cannot be undone.
       </Text>
       <div className={s.row}>
@@ -1163,6 +1174,7 @@ function PurgeCard({
               This permanently deletes the discovery inventory for{' '}
               <b>{summary?.tenant?.displayName ?? 'this customer'}</b>: {total.toLocaleString()} object
               {total === 1 ? '' : 's'}, the Users and Policies projections
+              {summary?.groupsCount ? `, ${summary.groupsCount.toLocaleString()} cached M365 groups` : ''}
               {summary?.lastRun ? ' and the run history' : ''}. Any Data Collection users stay, but
               lose their link to a discovered identity. This cannot be undone.
               {running && (
@@ -1277,25 +1289,41 @@ function JsonDialog({ title, data, onClose }: { title: string; data: unknown; on
  * is fetched either way, best-effort (capped at 200), to resolve a person
  * target's UPN instead of a raw Entra object id.
  */
+/** Reads every page of a paginated list (200 at a time, up to 50,000 rows), as one page-shaped result. */
+async function fetchAllPages<T>(path: string): Promise<Paginated<T>> {
+  const sep = path.endsWith('?') ? '' : path.includes('?') ? '&' : '?';
+  const items: T[] = [];
+  let total = 0;
+  for (let page = 1; page <= 250; page++) {
+    const res = await api<Paginated<T>>(`${path}${sep}page=${page}&limit=200`);
+    items.push(...res.items);
+    total = res.total;
+    if (items.length >= res.total || res.items.length === 0) break;
+  }
+  return { items, total, page: 1, limit: items.length };
+}
+
 function LiveCallFlowDialog({ base, type, row, onClose }: { base: string; type: 'auto_attendant' | 'call_queue'; row: TenantObject; onClose: () => void }) {
   const s = useStyles();
   const needsSiblings = type === 'auto_attendant';
+  // Every page, not just the first 200: on a big tenant a menu option or
+  // agent beyond the first page would otherwise show as a raw id.
   const aaQ = useQuery({
     queryKey: ['tdisc', 'callflow-aa-all', base],
-    queryFn: () => api<Paginated<TenantObject>>(`${base}/objects?type=auto_attendant&limit=200`),
+    queryFn: () => fetchAllPages<TenantObject>(`${base}/objects?type=auto_attendant`),
   });
   const cqQ = useQuery({
     queryKey: ['tdisc', 'callflow-cq-all', base],
-    queryFn: () => api<Paginated<TenantObject>>(`${base}/objects?type=call_queue&limit=200`),
+    queryFn: () => fetchAllPages<TenantObject>(`${base}/objects?type=call_queue`),
   });
   const schedQ = useQuery({
     queryKey: ['tdisc', 'callflow-sched-all', base],
-    queryFn: () => api<Paginated<TenantObject>>(`${base}/objects?type=schedule&limit=200`),
+    queryFn: () => fetchAllPages<TenantObject>(`${base}/objects?type=schedule`),
     enabled: needsSiblings,
   });
   const usersQ = useQuery({
     queryKey: ['tdisc', 'callflow-users-all', base],
-    queryFn: () => api<Paginated<TenantUserSummary>>(`${base}/users?limit=200`),
+    queryFn: () => fetchAllPages<TenantUserSummary>(`${base}/users?`),
   });
 
   // Get-CsAutoAttendant/Get-CsCallQueue's own CallTarget/Agent ObjectId
@@ -1329,7 +1357,7 @@ function LiveCallFlowDialog({ base, type, row, onClose }: { base: string; type: 
   }, [type, row, aaQ.data, cqQ.data, schedQ.data, usersByEntraId]);
 
   const loading = (needsSiblings && (aaQ.isLoading || cqQ.isLoading || schedQ.isLoading)) || usersQ.isLoading;
-  const loadError = (needsSiblings ? (aaQ.error ?? cqQ.error ?? schedQ.error) : null) as Error | null;
+  const loadError = ((needsSiblings ? (aaQ.error ?? cqQ.error ?? schedQ.error) : null) ?? usersQ.error) as Error | null;
 
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
@@ -1586,7 +1614,8 @@ function PoliciesTable({ base }: { base: string }) {
   );
 }
 
-const ACCOUNT_TYPES = ['User', 'ResourceAccount', 'Guest', 'IneligibleUser', 'SfBOnPremUser'] as const;
+/** Get-CsOnlineUser AccountType values, spelled exactly as Teams returns them (the filter is an exact match). */
+const ACCOUNT_TYPES = ['User', 'ResourceAccount', 'Guest', 'IneligibleUser', 'SfbOnPremUser', 'Unknown'] as const;
 
 function UsersTable({ base, canImport, onImported }: { base: string; canImport: boolean; onImported: () => void }) {
   const s = useStyles();
@@ -2287,7 +2316,7 @@ export function Discovery() {
 
       {tab === 'emergency' && (
         <>
-          <ObjectsTable base={base} type="emergency_location" columns={[{ label: 'Location', render: (o) => o.display_name ?? o.object_key }, { label: 'Address', render: (o) => str(o, 'HouseNumber') + ' ' + str(o, 'StreetName') }, { label: 'City', render: (o) => str(o, 'City') }, { label: 'Country', render: (o) => str(o, 'CountryOrRegion') }]} />
+          <ObjectsTable base={base} type="emergency_location" columns={[{ label: 'Location', render: (o) => o.display_name ?? o.object_key }, { label: 'Address', render: (o) => [o.data.HouseNumber, o.data.StreetName].filter((v) => v != null && v !== '').join(' ') || '—' }, { label: 'City', render: (o) => str(o, 'City') }, { label: 'Country', render: (o) => str(o, 'CountryOrRegion') }]} />
           <ObjectsTable base={base} type="civic_address" columns={[{ label: 'Address', render: (o) => o.display_name ?? o.object_key }, { label: 'City', render: (o) => str(o, 'City') }, { label: 'Validated', render: (o) => str(o, 'ValidationStatus') }]} />
         </>
       )}

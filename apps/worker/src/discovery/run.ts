@@ -74,12 +74,50 @@ function diffKeys(before: Rec | null, after: Rec | null): string[] {
   return out.sort();
 }
 
+/** The pwsh session itself is gone (vs one cmdlet failing) - the run can't go on. */
+const SESSION_GONE =
+  /pwsh exited|could not start pwsh|executor disposed|run connect-microsoftteams|not connected|session is disconnected|no valid connection|token.*expired/i;
+
 /**
  * Pull every step's objects from the connected tenant and upsert the current
  * snapshot. Per-step failures are recorded and the run carries on; only a lost
  * sign-in fails the run. See docs/DISCOVERY.md.
+ *
+ * Whatever happens, the run row ends in a terminal state: anything that throws
+ * past the per-step handling (a lost session during a targeted check, a
+ * database error while reconciling) marks the run failed rather than leaving
+ * it 'running' - which would also block every new run for this customer until
+ * the worker restarted.
  */
 export async function handleTenantDiscoveryRun(
+  job: Job,
+  db: Kysely<DB>,
+  getExecutor: (connectionId: string) => TeamsExecutor | undefined,
+  enqueueMail?: MailEnqueuer,
+) {
+  try {
+    await runDiscovery(job, db, getExecutor, enqueueMail);
+  } catch (e) {
+    const { schema, runId, connectionId } = job.data as { schema: string; runId: string; connectionId: string };
+    const message = (e as Error)?.message ?? String(e);
+    // eslint-disable-next-line no-console
+    console.error(`[discovery ${runId}] failed:`, message);
+    const s = tenantDb(db, schema);
+    await s
+      .updateTable('tenant_discovery_runs')
+      .set({ status: 'failed', finished_at: new Date().toISOString(), error: `The run stopped unexpectedly: ${message.slice(0, 500)}` })
+      .where('id', '=', runId)
+      .where('status', 'in', ['queued', 'running'])
+      .execute()
+      .catch(() => undefined);
+    const exec = getExecutor(connectionId);
+    if (!exec || !exec.alive || SESSION_GONE.test(message)) {
+      await s.updateTable('connections').set({ status: 'expired' }).where('id', '=', connectionId).execute().catch(() => undefined);
+    }
+  }
+}
+
+async function runDiscovery(
   job: Job,
   db: Kysely<DB>,
   getExecutor: (connectionId: string) => TeamsExecutor | undefined,
@@ -183,32 +221,35 @@ export async function handleTenantDiscoveryRun(
     progress.step = step;
     progress.note = null;
     await saveProgress(s, runId, progress);
-    try {
-      for (const spec of specs) {
-        // runSpec now updates progress.counts[spec.objectType] itself, live
-        await runSpec(s, exec, runId, spec, ctx, progress, filterOpts);
-      }
-      for (const t of STEP_TYPES[step]) if (wantType(t)) succeededTypes.add(t);
-      progress.completed.push(step);
-      progress.note = null;
-    } catch (e) {
-      const message = (e as Error).message ?? String(e);
-      progress.errors.push({ step, message });
-      // eslint-disable-next-line no-console
-      console.warn(`[discovery ${runId}] step ${step} failed: ${message}`);
-      // Only stop the whole run if the pwsh session is actually gone. A single
-      // slow or failing cmdlet (a command timeout while the child is still up)
-      // is recorded as a step error and the run carries on.
-      const sessionGone =
-        !exec.alive ||
-        /pwsh exited|could not start pwsh|executor disposed|run connect-microsoftteams|not connected|session is disconnected|no valid connection|token.*expired/i.test(
-          message,
-        );
-      if (sessionGone) {
-        signInLost = true;
-        break;
+    // Each cmdlet on its own: one failing (e.g. a policy type this tenant
+    // doesn't have) is recorded and the step's other cmdlets still run. A step
+    // is only "complete" - and so allowed to tombstone what it didn't see - when
+    // every cmdlet, and every slice of a bucketed one, came back.
+    let stepComplete = true;
+    for (const spec of specs) {
+      try {
+        // runSpec updates progress.counts[spec.objectType] itself, live
+        const r = await runSpec(s, exec, runId, spec, ctx, progress, filterOpts);
+        if (!r.complete) stepComplete = false;
+      } catch (e) {
+        const message = (e as Error).message ?? String(e);
+        progress.errors.push({ step, message: specs.length > 1 ? `${spec.command}: ${message}` : message });
+        // eslint-disable-next-line no-console
+        console.warn(`[discovery ${runId}] step ${step} (${spec.command}) failed: ${message}`);
+        // Only stop the whole run if the pwsh session is actually gone. A single
+        // slow or failing cmdlet (a command timeout while the child is still up)
+        // is recorded as an error and the run carries on.
+        if (!exec.alive || SESSION_GONE.test(message)) {
+          signInLost = true;
+          break;
+        }
+        stepComplete = false;
       }
     }
+    if (signInLost) break;
+    progress.completed.push(step);
+    progress.note = null;
+    if (stepComplete) for (const t of STEP_TYPES[step]) if (wantType(t)) succeededTypes.add(t);
     await saveProgress(s, runId, progress);
   }
 
@@ -515,7 +556,7 @@ async function runSpec(
   ctx: RunContext,
   progress: TenantDiscoveryProgress,
   filterOpts: DiscoveryFilterOpts = {},
-): Promise<number> {
+): Promise<{ stored: number; complete: boolean }> {
   const noun = nounFor(spec.objectType);
   let skippedUnlicensed = 0;
   // Filter `User` accounts down to Teams-licensed ones, unless the customer
@@ -627,6 +668,9 @@ async function runSpec(
   if (spec.buckets) {
     const buckets = spec.buckets(filterOpts);
     let fetched = 0;
+    // A slice that failed means part of the type was never seen this run, so
+    // it must not be reconciled (that would mark every user in it removed).
+    let failedBuckets = 0;
     for (let i = 0; i < buckets.length; i++) {
       const bk = buckets[i];
       progress.note = `Fetching ${noun}: ${fetched.toLocaleString()} so far (${bk.label}, ${i + 1}/${buckets.length})…`;
@@ -647,6 +691,7 @@ async function runSpec(
           step: progress.step ?? 'users',
           message: `bucket "${bk.label}": ${message}`,
         });
+        failedBuckets += 1;
         continue;
       }
       fetched += recs.length;
@@ -684,7 +729,13 @@ async function runSpec(
       // eslint-disable-next-line no-console
       console.log(`[discovery ${runId}] users: skipped ${skippedUnlicensed} not licensed for Teams`);
     }
-    return stored;
+    if (failedBuckets) {
+      progress.errors.push({
+        step: progress.step ?? 'users',
+        message: `${failedBuckets} of ${buckets.length} slices failed, so ${noun} not seen this run were left as they were (not marked removed).`,
+      });
+    }
+    return { stored, complete: failedBuckets === 0 };
   }
 
   if (!spec.page) {
@@ -695,12 +746,12 @@ async function runSpec(
       spec.resultSize ? { ResultSize: spec.resultSize } : {},
       qopts,
     );
-    expected = base + records.length;
+    expected = records.length;
     progress.note = `Fetched ${records.length.toLocaleString()} ${noun}, storing…`;
     await saveProgress(s, runId, progress);
     await handle(records);
     await flushVersions();
-    return stored;
+    return { stored, complete: true };
   }
 
   // Paged: keep going until a short page.
@@ -715,7 +766,7 @@ async function runSpec(
     if (skip > 500_000) break; // safety valve
   }
   await flushVersions();
-  return stored;
+  return { stored, complete: true };
 }
 
 function fallbackKey(r: Rec): string {
@@ -962,6 +1013,7 @@ async function syncVoicemailSettings(s: Scoped, exec: TeamsExecutor, objectId: s
  * current without requiring the engineer to re-sign-in to Graph each time.
  */
 export async function syncTenantGroups(s: Scoped, exec: TeamsExecutor): Promise<number> {
+  const syncStart = new Date().toISOString();
   const groups = await exec.graphList('/groups?$select=id,displayName,mail');
   let synced = 0;
   for (const g of groups) {
@@ -980,6 +1032,11 @@ export async function syncTenantGroups(s: Scoped, exec: TeamsExecutor): Promise<
       .execute();
     synced++;
   }
+  // Groups deleted from the tenant drop out of the cache, so they can't be
+  // picked as a Shared Voicemail target any more. Only after a full list that
+  // returned something - an empty answer is more likely a hiccup than a tenant
+  // with no groups at all.
+  if (synced > 0) await s.deleteFrom('tenant_groups').where('synced_at', '<', syncStart).execute();
   return synced;
 }
 
