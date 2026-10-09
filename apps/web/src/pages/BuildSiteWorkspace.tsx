@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   Badge,
   Button,
@@ -162,14 +162,21 @@ function callingSettingsSummary(r: Row): string {
   return bits.length ? bits.join(', ') : 'Calling settings…';
 }
 
+const BUILD_TABS = ['users', 'caps', 'resource-accounts', 'shared-calling-policies', 'call-queues', 'auto-attendants'] as const;
+type BuildTab = (typeof BUILD_TABS)[number];
+
 export function BuildSiteWorkspace() {
   const s = useRecordStyles();
   const { siteId = '' } = useParams();
   const { activeTenantId, can } = useAuth();
   const qc = useQueryClient();
-  const [tab, setTab] = useState<
-    'users' | 'caps' | 'resource-accounts' | 'shared-calling-policies' | 'call-queues' | 'auto-attendants'
-  >('users');
+  // ?tab=call-queues etc. opens straight on that tab (e.g. from a service
+  // request's "Created draft rows in Design & Build" link).
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState<BuildTab>(() => {
+    const requested = searchParams.get('tab');
+    return BUILD_TABS.includes(requested as BuildTab) ? (requested as BuildTab) : 'users';
+  });
 
   const tid = activeTenantId;
   const base = `/t/${tid}/build`;

@@ -279,7 +279,19 @@ export class BuildService {
     return out;
   }
   async createCap(t: TenantContext, u: AuthedUser, body: BuildCapCreateInput) {
-    return this.createIdentity(t, u, 'build_caps', 'cap', body, { display_name: body.display_name ?? null });
+    // The CAP-only columns. createIdentity writes the shared identity fields;
+    // these have to be passed through or the Add dialog's values are lost.
+    const { function: fn, display_name, phone_model, device_config_profile, mac_address, serial_number, phone_location, lan_jack, ...identity } = body;
+    return this.createIdentity(t, u, 'build_caps', 'cap', identity, {
+      function: fn || null,
+      display_name: display_name || null,
+      phone_model: phone_model || null,
+      device_config_profile: device_config_profile || null,
+      mac_address: mac_address || null,
+      serial_number: serial_number || null,
+      phone_location: phone_location || null,
+      lan_jack: lan_jack || null,
+    });
   }
   async updateCap(t: TenantContext, u: AuthedUser, id: string, body: BuildCapPatchInput) {
     return this.updateIdentity(t, u, 'build_caps', 'cap', id, body);

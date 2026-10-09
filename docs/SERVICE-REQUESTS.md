@@ -43,8 +43,56 @@ New ──▶ Planned ──▶ Designed & built ──▶ Deployed
 - The design and build itself happens in **Design & Build**, and the change goes
   live through **Deployment**, as for any other change. The request records the
   progress and keeps the customer informed.
-- Every event (raised, moved, assigned, comment) is on the request's timeline
-  and in the tenant audit log.
+- Every event (raised, moved, assigned, comment, rows created in Design & Build)
+  is on the request's timeline and in the tenant audit log.
+
+## Create in Design & Build
+
+So the engineer doesn't retype what the customer already entered, a request
+that is **New** or **Planned** has a **Create in Design & Build** button
+(engineers and Super Admins only). It creates the matching draft row from the
+request's answers:
+
+| Request | Creates | From the request |
+|---|---|---|
+| New user | Users row (`build_users`) | UPN; name, phone number need and notes go in Comments; voicemail on/off |
+| New common area phone | Common area phones row (`build_caps`) | Display name, location, model; number need and notes in Comments. The engineer enters the account UPN (suggested from the name and the customer's main domain) |
+| New call queue | Call queues row (`build_call_queues`) | Name, agents, routing method; "if nobody answers" and notes in Notes |
+| New auto attendant | Auto attendants row (`build_auto_attendants`) | Name; the greeting as a text-to-speech prompt; opening hours and out-of-hours as the narrative fields; menu and notes in Notes |
+| New site | A new site (`discovery_sites`) | Site code, name, address, country |
+| New phone numbers, Something else | Nothing - the button isn't shown | |
+
+- **The phone number is always left for the engineer** to pick in Design & Build.
+- **Agents** typed as names rather than sign-in addresses are looked up in the
+  synced directory (then Data Collection's users); a name that matches exactly
+  one person becomes their UPN. Anyone not found is listed as a warning.
+  How calls are shared out maps to the routing method: All at once ->
+  `Attendant`, In order -> `Serial`, Round robin -> `RoundRobin`, Longest idle ->
+  `LongestIdle` (`SR_ROUTING_TO_BUILD`).
+- Long answers are shortened to the Design & Build field limits, ending
+  "… (full text on SR-0042)". Every row's comments/notes start "From SR-0042."
+- The row goes through the **same validation and create path as adding it by
+  hand**. A UPN Design & Build wouldn't accept is refused with the reason.
+- **Nothing is ever overwritten.** If a row with the same natural key already
+  exists anywhere on the customer (UPN for users/CAPs, name for call queues and
+  auto attendants, site code for sites; all case-insensitive) it's reported as
+  "already in Design & Build" with a link, and left as it is. Pressing the
+  button twice is safe.
+- A new site is added even when the customer's Data Collection is accepted and
+  locked: a site added after go-live is an operational change
+  (`DataCollectionService.insertSite`).
+- The request's **status doesn't change**. Mark it Designed & built once the row
+  is finished.
+- A staff-only timeline entry ("Created draft rows in Design & Build: …") links
+  to the rows, which open on the right Design & Build tab
+  (`/build/sites/:siteId?tab=…`) or the new site's page.
+
+The mapping is in `packages/shared/src/service-request-build.ts` (pure, unit
+tested in `service-request-build.test.ts`); the endpoint is
+`POST /t/:tenantId/service-requests/:id/build-draft` (`sr:manage`; body
+`{ capUpn? }`), in `ServiceRequestsService.draftInBuild`. It also needs
+`build:write` (or `discovery:sites:manage` for a site), and is refused for
+Designed & built, Deployed and Cancelled requests.
 
 ## Who can do what
 
@@ -52,7 +100,7 @@ New ──▶ Planned ──▶ Designed & built ──▶ Deployed
 |---|---|---|
 | `sr:read` | See this customer's requests | SUPER_ADMIN, PROJECT_MANAGER, ENGINEER, CUSTOMER |
 | `sr:create` | Raise a request; comment; cancel your own New request | SUPER_ADMIN, PROJECT_MANAGER, ENGINEER, CUSTOMER |
-| `sr:manage` | Plan / build / deploy / cancel, assign, internal notes | SUPER_ADMIN, ENGINEER |
+| `sr:manage` | Plan / build / deploy / cancel, assign, internal notes, Create in Design & Build | SUPER_ADMIN, ENGINEER |
 
 A **site contact** (customer user pinned to certain sites) only sees requests for
 their own sites, can only raise requests for those sites, and can't ask for a new
@@ -127,11 +175,13 @@ Tenant schema (`0035_service_requests.sql`):
   `status`, `target_date`, `requested_by`, `assigned_to`, and when each stage was
   reached (`planned_at`, `built_at`, `deployed_at`, `cancelled_at`).
 - `service_request_events` — the timeline: `kind`
-  (`created`/`status_changed`/`assigned`/`comment`), from/to status, body,
-  `internal`, author.
+  (`created`/`status_changed`/`assigned`/`comment`/`build_drafted`), from/to
+  status, body, `internal`, author, and `links` (`build_drafted` only: the rows
+  created, `[{ kind, label, href }]`; `0037_sr_build_drafted_event.sql`).
 
 API: `apps/api/src/modules/service-requests/` — `GET/POST /t/:tenantId/service-requests`,
-`GET :id`, `POST :id/status`, `POST :id/assign`, `POST :id/comments`, `GET assignees`.
+`GET :id`, `POST :id/status`, `POST :id/assign`, `POST :id/comments`,
+`POST :id/build-draft`, `GET assignees`.
 Web: `apps/web/src/pages/ServiceRequests.tsx`.
 
 ## MSP service-request admin
