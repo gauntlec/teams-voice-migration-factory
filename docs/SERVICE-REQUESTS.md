@@ -1,9 +1,13 @@
 # Managed Services — service requests
 
 Once a customer's migration is live, Managed Services lets that customer ask for
-changes through Voxshift instead of by email: new users, phone numbers, sites,
-common area phones, call queues and auto attendants (plus "something else").
-The engineers and admins on the customer work each request through to live.
+changes through Voxshift instead of by email. They can ask for new things (users,
+several new starters at once, phone numbers, sites, common area phones, call
+queues, auto attendants), changes to existing ones (a user's number, forwarding,
+voicemail or permissions; a call queue's people and routing; an auto attendant's
+hours, holidays, menu or greeting), removals (a leaver, a common area phone),
+or "something else". The engineers and admins on the customer work each request
+through to live, against response and resolution targets.
 
 ## Switching it on
 
@@ -31,25 +35,56 @@ Collection is locked. Each change is audited with who and when.
 
 ```
 New ──▶ Planned ──▶ Designed & built ──▶ Deployed
- └────────┴──────────────┴──▶ Cancelled
+ │         ▲   ◀── send back ──┘            │
+ │         └──────── reopen (14 days) ──────┘
+ └─ any open status ──▶ Cancelled / Declined
 ```
 
-- Requests move **one step at a time**; a step can't be skipped and a request
-  can't go back. Any open request (New, Planned, Designed & built) can be cancelled.
-- Engineers and admins (`sr:manage`) move requests on, assign them, and can add
-  **internal notes** that the customer never sees. Each move can carry a note,
-  which is included in the email to the requester.
+- Requests move **one step forward at a time**. The team can also **send back**
+  Designed & built → Planned (e.g. the design was wrong or a deploy failed) and
+  **decline** an open request; the person who raised it, or the team, can
+  **reopen** a Deployed request within 14 days (`SR_REOPEN_DAYS`). Declining,
+  sending back and reopening need a reason. See `srMoveKind` in
+  `packages/shared/src/service-requests.ts`.
 - The person who raised a request can cancel it **while it is still New**.
-- Requests for a **user, common area phone, call queue or auto attendant** are
-  designed and deployed **inside the request** (its Design and Deploy tabs, below).
-  A new site is created from the request into Data Collection; new numbers and
-  "something else" are done by hand and moved on with the status buttons.
-- **Designed & built** needs at least one row designed for the request (and none
-  deleted since). A **Deploy** from the request with no failed changes moves it to
-  **Deployed** by itself and emails the requester. An engineer can still mark it
-  deployed by hand if it went live some other way.
-- Every event (raised, moved, assigned, comment, rows created in Design & Build,
-  deployment runs) is on the request's timeline and in the tenant audit log.
+- Customers see plain status names: Received, Scheduled, Ready to go live,
+  Completed, Cancelled, Declined (`SR_STATUS_CUSTOMER_LABELS`); the team sees
+  New, Planned, Designed & built, Deployed.
+- Requests that change Design & Build (new, change and remove for users, common
+  area phones, call queues and auto attendants, and several new users) are
+  designed and deployed **inside the request** (Design and Deploy tabs, below).
+  New phone numbers are designed by adding the range to the site's inventory. A
+  new site is created from the request (and goes straight into operations
+  mode). "Something else" is done by hand.
+- **Designed & built** needs the design done: at least one row linked (and none
+  deleted since), or for new numbers, at least one range added. A **Deploy**
+  from the request with no failed changes moves it to **Deployed** by itself and
+  emails the requester. An engineer can still mark it deployed by hand.
+- A request whose type the customer wants **approved** can't be planned until
+  one of their approvers approves it (see Approval).
+- Every event (raised, moved, assigned, comment, question, approval, attachment,
+  rows designed, deployment runs) is on the request's timeline and in the
+  tenant audit log.
+
+## Conversation
+
+- **The team replies** on the request: the requester is emailed
+  (`service_request_message`, kind `comment`).
+- **Ask and wait**: the team asks a question and the request is flagged
+  **Waiting on customer** (`waiting_since`). The requester is emailed (kind
+  `question`) and reminded every 3 days, at most 3 times (worker sweep, kind
+  `reminder`). The clock for targets stops while waiting. The customer's reply
+  ends the wait (and tells the team); the team can also **Stop waiting**, and
+  any status move ends it.
+- **The customer comments**: the assignee is emailed, or every engineer and
+  Super Admin on the customer when nobody is assigned (`service_request_activity`,
+  kind `comment` or `replied`).
+- **Internal notes** never reach the customer; the assignee is emailed.
+- **Assigning** a request emails the new assignee.
+- **Attachments**: anyone who can see a request can attach pictures, PDFs,
+  Office documents, CSV and text files (10 MB each), stored in the tenant file
+  store (category `service_request_attachment`) and downloaded through the
+  request (`GET :id/attachments/:fileId`), never the general file browser.
 
 ## The request page
 
@@ -86,6 +121,37 @@ request, but **listing only the rows designed for this request**.
   row deleted in Design & Build shows as "Deleted" and blocks Designed & built
   until it is removed from the request.
 
+### Change and remove requests
+
+"Prefill" becomes **Apply the request** (`service-request-change.ts`): it finds
+the existing Design & Build row (a user who isn't in Design & Build yet is added
+to the request's site; one on another site is refused), links it to the request
+and applies what maps cleanly through the normal update path:
+
+| Request | Applied automatically | Left as a to-do |
+|---|---|---|
+| Change a user | new number (if still free), voicemail on/off | forwarding, calling permissions, "something else" |
+| Remove a user / common area phone | Revoke Enterprise Voice (deploys `Remove-CsPhoneNumberAssignment -RemoveAll`) | clearing the number afterwards if it's to be reused |
+| Change a call queue | agents added / removed, routing method | timeout / overflow |
+| Change an auto attendant | new greeting, a holiday closure (play the message, then end the call) | opening hours, menu |
+
+The to-do list is shown on the Design tab and recorded on the timeline.
+
+### Several new users
+
+When "New number" is chosen, one free number per person is set aside when the
+request is raised (`details.new_numbers`, `{ upn: e164 }`; refused if the site
+hasn't enough). Prefill makes one Design & Build user per person, each with
+their number (and voicemail), and links them all. A single new user's picked
+number is also put on the row now, if it's still free.
+
+### New phone numbers
+
+The Design tab asks for the carrier's range (first / last number, carrier).
+`POST :id/numbers` adds it to the site's inventory as free numbers (not blocked
+by a locked Data Collection) and links it to the request (`number_range` item).
+There's nothing to deploy.
+
 ### Deploy
 
 What-If and Deploy for **just this request's rows** on the engineer's own
@@ -102,6 +168,56 @@ or attendant routes to.
   no failed changes** on a Designed & built request moves it to **Deployed** and
   emails the requester (`apps/worker/src/service-requests.ts`).
 - The tab lists the request's runs and each run's changes.
+- **Change window**: if the customer has one (Settings), a live deploy outside it
+  asks for a reason, which is noted on the request (the API refuses without
+  one). What-If is never restricted.
+- A read-only tenant is shown up front and Deploy is disabled.
+
+## Targets (SLAs)
+
+Per customer, per priority, in **calendar hours** (`service-request-sla.ts`):
+
+| Priority | First response | Completed |
+|---|---|---|
+| Urgent | 1h | 8h |
+| High | 4h | 24h |
+| Normal | 8h | 72h |
+| Low | 24h | 120h |
+
+These are the defaults; a Super Admin changes them in **Service Requests →
+Settings** (`platform.tenants.sr_settings.targets`). First response is the
+team's first reply, question or move; completed is Deployed (or Declined).
+Time waiting on the customer is left out, and a reopen restarts the completion
+clock. Each request shows where it stands (Due in…, At risk, Overdue, Paused,
+Met, Missed): staff see it in the list and both see it on the request. The
+worker emails the team once when a target is at risk (20% left) and once when
+it's missed (`sla_notified`).
+
+## Approval
+
+In Settings a Super Admin picks request types that need approval and the
+customer users who can approve. Such a request is raised **awaiting approval**
+and the approvers are emailed; the team can't plan it until one approves.
+Rejecting declines it, with the reason, and tells the requester and the team.
+An approver's own request is approved straight away.
+
+## Checks when raising
+
+The form shows non-blocking warnings as it's filled in (`POST check`), and the
+team sees the same on the request: the person isn't in the synced directory,
+has no Teams Phone licence (`PhoneSystem` feature or an enabled `MCOEV` plan),
+already has calling (new user) or has none to remove (leaver), is already in
+Design & Build, or another open request covers the same person, queue, auto
+attendant or phone.
+
+## Reporting and queue summary
+
+- **Reports** (Service Requests page, everyone): one month at a time - raised,
+  completed, median time to complete (less waiting), first response and
+  completion on time, by type, and today's open backlog by age
+  (`GET report?from=&to=`).
+- **Summary tiles** (staff): Open, Unassigned, Waiting on customer, At risk,
+  Overdue - click to filter. Also on the MSP queue.
 
 ## Create from the request
 
@@ -157,7 +273,11 @@ Designed & built, Deployed and Cancelled requests.
 |---|---|---|
 | `sr:read` | See this customer's requests | SUPER_ADMIN, PROJECT_MANAGER, ENGINEER, CUSTOMER |
 | `sr:create` | Raise a request; comment; cancel your own New request | SUPER_ADMIN, PROJECT_MANAGER, ENGINEER, CUSTOMER |
-| `sr:manage` | Plan / build / deploy / cancel, assign, internal notes, Create in Design & Build | SUPER_ADMIN, ENGINEER |
+| `sr:manage` | Plan / build / deploy / cancel, decline, send back, assign, internal notes, ask and wait, design | SUPER_ADMIN, ENGINEER |
+
+Settings (targets, approvals, change window) can only be changed by a Super
+Admin; everyone on the customer can read them ("Our targets"). Approving is for
+the customer users named as approvers.
 
 The Design tab also needs `build:read` (and `build:write` to change anything); Deploy needs `deployment:dryrun` for What-If and `deployment:execute` for a live deploy.
 
@@ -172,12 +292,15 @@ members of that customer** and **Super Admins**.
 
 | When | Template | To |
 |---|---|---|
-| A request is raised | `service_request_created` | The customer's engineers (members with the ENGINEER role) and every active Super Admin, except whoever raised it |
-| A request reaches Planned, Designed & built, Deployed or Cancelled | `service_request_status_changed` | The person who raised it, unless they made the change themselves |
+| A request is raised | `service_request_created` | The customer's engineers and every active Super Admin, except whoever raised it |
+| It needs approval | `service_request_activity` (`approval_needed`) | The customer's approvers |
+| It moves on, is declined, cancelled or reopened (not sent back) | `service_request_status_changed` | The person who raised it, unless they did it |
+| The team replies, asks, or the question is still unanswered | `service_request_message` (`comment` / `question` / `reminder`) | The person who raised it |
+| The customer comments, replies, reopens or cancels; it's approved or rejected | `service_request_activity` | The assignee, or the whole team when nobody is assigned |
+| An internal note; it's assigned to you | `service_request_activity` (`internal_note` / `assigned`) | The assignee |
+| A target is at risk or missed | `service_request_activity` (`sla_warning` / `sla_breached`) | The assignee, or the whole team |
 
-Both use the customer's branding and link straight to the request
-(`/service-requests/:id`). The Deployed email is also sent when a deployment
-from the request moves it on (by the worker, same template).
+All use the customer's branding and link to the request (`/service-requests/:id`).
 
 ## Picking from existing data
 
@@ -220,11 +343,22 @@ specs and the API builds its validation from the same specs (`srDetailsSchema` i
 |---|---|---|
 | New site | No | Site code, name, address, country (menu), wanted-by date, site contact (directory) |
 | New user | Yes | Person (directory), phone number (new = auto-picked free number, or keep one of the site's), voicemail |
+| Several new users | Yes | People (directory, up to 50), new number for each or none, voicemail |
 | New phone numbers | Yes | Quantity (1–1000), purpose, existing range to extend, number type |
 | New common area phone | Yes | Phone name, location, device model (menu), phone number |
 | New call queue | Yes | Name, agents (directory), call sharing, wait time, where unanswered calls go, phone number |
 | New auto attendant | Yes | Name, greeting, menu options (key → where), opening hours, out of hours (where), phone number |
+| Change a user | Yes | Person, what should change (number, forwarding, voicemail, permissions, other) and the matching answers, when |
+| Change a call queue | Yes | The queue (from the site), people to add / remove, routing, when nobody answers |
+| Change an auto attendant | Yes | The auto attendant, opening hours, holiday closure (name, dates, message), menu, greeting |
+| Remove a user | Yes | Person, last working day, release or keep their number |
+| Remove a common area phone | Yes | The phone (from the site), release or keep its number |
 | Something else | Optional | Description |
+
+Field kinds include `choices` (tick boxes - "what should change") and
+`site_object` (an existing queue / auto attendant / phone at the site). A field
+can depend on a tick (`showWhen`), and anything depending on a hidden field is
+hidden too.
 
 ## Data
 
@@ -240,18 +374,35 @@ Tenant schema (`0035_service_requests.sql`):
   created, `[{ kind, label, href }]`; `0037_sr_build_drafted_event.sql`), and
   `deployment_id` (`deployment` entries: the run).
 - `service_request_items` — rows designed for a request: `request_id`, `kind`
-  (`site`/`user`/`cap`/`resource_account`/`shared_calling_policy`/`call_queue`/`auto_attendant`),
+  (`site`/`user`/`cap`/`resource_account`/`shared_calling_policy`/`call_queue`/`auto_attendant`/`number_range`),
   `row_id` (a plain reference into the table `kind` names), `created_by`
   (`0038_sr_design_items.sql`).
+- `0039_sr_conversation_workflow.sql`: `declined` status, `declined_at`,
+  `reopened_at`, waiting on customer (`waiting_since`, `waiting_seconds`,
+  `waiting_reminded_at`, `waiting_reminders`), `first_response_at`, and the
+  `waiting` / `resumed` timeline kinds.
+- `0040_sr_change_remove_types.sql`: the change and remove types.
+- `0041_sr_sla_notified.sql`: `sla_notified` (target emails sent).
+- `0042_sr_phase4.sql`: `new_users`, approval (`approval_status`, `_by`, `_at`,
+  `_note`), `number_range` items, `approval` / `attachment` timeline kinds, the
+  `service_request_attachment` file category.
+- Platform `0014_tenant_sr_settings.sql`: `tenants.sr_settings` (targets,
+  approval, change window).
 
 API: `apps/api/src/modules/service-requests/` — `GET/POST /t/:tenantId/service-requests`,
 `GET :id`, `POST :id/status`, `POST :id/assign`, `POST :id/comments`,
 `POST :id/build-draft`, `GET :id/design`, `DELETE :id/items/:kind/:rowId`,
-`GET :id/deploy-preview`, `POST :id/deploy` (`{ connectionId, mode }`), `GET :id/runs`,
-`GET assignees`. Design & Build lists take `serviceRequestId` to list one request's rows.
-Shared rules: `packages/shared/src/service-request-design.ts`.
+`GET :id/deploy-preview`, `POST :id/deploy` (`{ connectionId, mode, outsideWindowReason? }`), `GET :id/runs`,
+`POST :id/resume`, `POST :id/approval`, `POST :id/numbers`, `GET/POST :id/attachments`,
+`GET :id/attachments/:fileId`, `GET/PUT settings`, `GET report`, `POST check`,
+`GET customer-users`, `GET assignees`. Design & Build lists take `serviceRequestId`
+to list one request's rows.
+Shared rules: `packages/shared/src/service-request-design.ts`, `service-request-change.ts`,
+`service-request-sla.ts`. Worker: `apps/worker/src/service-requests.ts` (run results,
+reminders, target emails, every 15 minutes).
 Web: `apps/web/src/pages/ServiceRequests.tsx` (list, new request),
-`ServiceRequestPage.tsx` (one request), `BuildSiteWorkspace.tsx` (`embedded`).
+`ServiceRequestPage.tsx` (one request), `ServiceRequestAdmin.tsx` (settings, reports),
+`components/SrTarget.tsx`, `BuildSiteWorkspace.tsx` (`embedded`).
 
 ## MSP service-request admin
 
@@ -265,6 +416,10 @@ is one queue across every customer an MSP looks after.
   Staff not linked to an MSP see an empty queue with an explanation.
 - Super Admins see every customer and can filter by MSP (or "No MSP").
 - Only customers with Managed Services switched on are included.
-- The queue is for triage. A request is opened (and actioned) inside its
-  customer, so a request for a customer you're not on the team for is listed
-  but can't be opened.
+- Each item shows its target status; the most urgent come first. Summary tiles
+  and **Assigned to me** filter the queue.
+- For customers you're on the team for, **Assign / reply** works from the queue
+  itself (assign, reply, ask and wait, internal note:
+  `msp/service-requests/:tenantId/:id/assign|comments`). Anything else is done
+  inside the customer; a request for a customer you're not on is listed but
+  can't be opened.

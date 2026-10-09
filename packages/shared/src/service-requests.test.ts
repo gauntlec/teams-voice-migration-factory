@@ -12,6 +12,7 @@ const al = { upn: 'al@contoso.com', name: 'Al Smith' };
 const VALID: Record<SrType, Record<string, unknown>> = {
   new_site: { sitecode: 'LON02', name: 'London', address: '1 High St, London', country: 'GB', contact: jo },
   new_user: { user: jo, number: 'New number', new_number: '+442079460001', voicemail: true },
+  new_users: { people: [jo, al], number: 'New number', voicemail: true },
   new_phone_numbers: { quantity: 10, purpose: 'Users', range: { id: RANGE, label: '+44 20 7946 0000–0099' } },
   new_common_area_phone: { display_name: 'Reception', device_model: 'Poly CCX 400', number: 'No number' },
   new_call_queue: {

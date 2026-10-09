@@ -178,6 +178,8 @@ export interface BuildEmbedding {
   editable: boolean;
   /** Tab to open on, e.g. 'call-queues' for a call queue request. */
   tab?: BuildTab;
+  /** Called after any row is added, changed or deleted here. */
+  onChanged?: () => void;
 }
 
 /** The SR-0042 tags on a row designed for a service request. */
@@ -603,6 +605,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           onClose={() => setCallingSettingsFor(null)}
           onSaved={() => {
             qc.invalidateQueries({ queryKey: callingSettingsFor.queryKey });
+            embedded?.onChanged?.();
             setCallingSettingsFor(null);
           }}
         />
@@ -617,6 +620,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           onSaved={() => {
             qc.invalidateQueries({ queryKey: ['call-queues', tid, siteId] });
             setCallQueueSettingsFor(null);
+            embedded?.onChanged?.();
           }}
         />
       )}
@@ -630,6 +634,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           onSaved={() => {
             qc.invalidateQueries({ queryKey: ['auto-attendants', tid, siteId] });
             setAaSettingsFor(null);
+            embedded?.onChanged?.();
           }}
         />
       )}
@@ -656,6 +661,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
+          onChanged={embedded?.onChanged}
           pageSize={500}
           selectable={siteTools}
           selected={usersSelected}
@@ -719,6 +725,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
+          onChanged={embedded?.onChanged}
           pageSize={500}
           selectable={siteTools}
           selected={capsSelected}
@@ -783,6 +790,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
+          onChanged={embedded?.onChanged}
           headerActions={
             siteTools && (
               <>
@@ -891,6 +899,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
+          onChanged={embedded?.onChanged}
           emptyText="No Shared Calling policies yet."
           columns={[
             withSrTags({ key: 'name', label: 'Name' }),
@@ -935,6 +944,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
+          onChanged={embedded?.onChanged}
           emptyText="No call queues yet - Populate from Discovery on the Resource accounts tab first."
           columns={[
             withSrTags({ key: 'name', label: 'Name' }),
@@ -999,6 +1009,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
+          onChanged={embedded?.onChanged}
           emptyText="No auto attendants yet - add one, or Populate from Discovery on the Resource accounts tab."
           columns={[
             withSrTags({ key: 'name', label: 'Name' }),

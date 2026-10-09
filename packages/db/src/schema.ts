@@ -894,12 +894,17 @@ export interface ServiceRequestsTable {
   first_response_at: ColumnType<string | null, string | null | undefined, string | null>;
   /** Target emails already sent: { response_warning, response_breached, resolution_warning, resolution_breached } -> ISO time. */
   sla_notified: ColumnType<Record<string, string>, string | undefined, string>;
+  /** 0042_sr_phase4.sql - null when the type needs no approval. */
+  approval_status: ColumnType<import('@tvmf/shared').SrApprovalStatus | null, import('@tvmf/shared').SrApprovalStatus | null | undefined, import('@tvmf/shared').SrApprovalStatus | null>;
+  approval_by: ColumnType<string | null, string | null | undefined, string | null>;
+  approval_at: ColumnType<string | null, string | null | undefined, string | null>;
+  approval_note: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 export interface ServiceRequestEventsTable {
   id: Generated<string>;
   request_id: string;
-  kind: 'created' | 'status_changed' | 'assigned' | 'comment' | 'build_drafted' | 'deployment' | 'waiting' | 'resumed';
+  kind: 'created' | 'status_changed' | 'assigned' | 'comment' | 'build_drafted' | 'deployment' | 'waiting' | 'resumed' | 'approval' | 'attachment';
   from_status: string | null;
   to_status: string | null;
   body: string | null;
@@ -952,7 +957,7 @@ export interface HandoverSectionsTable {
  */
 export interface FilesTable {
   id: Generated<string>;
-  category: 'deployment_change_document' | 'number_port_document' | 'resource_account_request' | 'handover_pack';
+  category: 'deployment_change_document' | 'number_port_document' | 'resource_account_request' | 'handover_pack' | 'service_request_attachment';
   source_type: string;
   source_id: string;
   site_id: string | null;

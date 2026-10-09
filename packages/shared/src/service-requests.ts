@@ -12,6 +12,7 @@
 export const SR_TYPES = [
   'new_site',
   'new_user',
+  'new_users',
   'new_phone_numbers',
   'new_common_area_phone',
   'new_call_queue',
@@ -298,6 +299,18 @@ export const SR_TYPE_DEFS: Record<SrType, SrTypeDef> = {
       NOTES,
     ],
   },
+  new_users: {
+    label: 'Several new users',
+    description: 'Give a group of people Teams calling, e.g. this month\'s new starters.',
+    group: 'new',
+    needsSite: true,
+    fields: [
+      { key: 'people', label: 'People', kind: 'people', required: true, max: 50, hint: 'Search your directory and add everyone.' },
+      { key: 'number', label: 'Phone numbers', kind: 'select', required: true, options: [NUMBER_NEED_NEW, 'No number'], hint: 'With "New number", a free number at the site is set aside for each person when you send the request.' },
+      { key: 'voicemail', label: 'Voicemail', kind: 'boolean' },
+      NOTES,
+    ],
+  },
   new_phone_numbers: {
     label: 'New phone numbers',
     description: 'Order new numbers for a site.',
@@ -462,6 +475,12 @@ export function srFieldVisible(f: SrFieldSpec, details: Record<string, unknown>,
 /** The field holding a free number the request would take, if this type has one. */
 export const SR_NEW_NUMBER_KEY = 'new_number';
 
+/** Several new users: the free numbers set aside for them when the request was raised, { upn: e164 }. Not a form field. */
+export const SR_NEW_NUMBERS_KEY = 'new_numbers';
+
+/** Whether a request waits for the customer's approver - see SrSettings.approval. */
+export type SrApprovalStatus = 'pending' | 'approved' | 'rejected';
+
 /**
  * ISO 3166-1 alpha-2 codes. Names come from Intl.DisplayNames (countryName), so
  * there is no hand-maintained list of names to drift.
@@ -537,6 +556,10 @@ export function srDetailLines(type: SrType, details: Record<string, unknown>): {
         value = Array.isArray(v) ? v.join(', ') : String(v);
     }
     out.push({ label: f.label, value });
+  }
+  const set = details[SR_NEW_NUMBERS_KEY];
+  if (set && typeof set === 'object' && !Array.isArray(set) && Object.keys(set).length) {
+    out.push({ label: 'Numbers set aside', value: Object.entries(set as Record<string, string>).map(([upn, n]) => `${upn}: ${n}`).join('\n') });
   }
   return out;
 }

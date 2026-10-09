@@ -38,6 +38,7 @@ export type SrBuildKind = 'site' | 'user' | 'cap' | 'call_queue' | 'auto_attenda
 export const SR_BUILD_KIND: Record<SrType, SrBuildKind | null> = {
   new_site: 'site',
   new_user: 'user',
+  new_users: 'user',
   new_phone_numbers: null,
   new_common_area_phone: 'cap',
   new_call_queue: 'call_queue',

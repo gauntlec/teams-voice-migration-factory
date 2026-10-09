@@ -17,6 +17,14 @@ import {
   SR_TYPE_DEFS,
   SR_TYPES,
   SR_PRIORITIES,
+  SR_NEW_NUMBERS_KEY,
+  SR_ATTACHMENT_TYPES,
+  srChangeWindowText,
+  srHasNumbersDesign,
+  srInChangeWindow,
+  type ServiceRequestApprovalInput,
+  type ServiceRequestNumbersInput,
+  type SrPerson,
   srEffectiveTargets,
   srNextClock,
   srSla,
@@ -83,6 +91,8 @@ import { MailService } from '../../mail/mail.service';
 import { BuildService } from '../build/build.service';
 import { DataCollectionService } from '../data-collection/data-collection.service';
 import { DeploymentService } from '../deployment/deployment.service';
+import { expandRange } from '../data-collection/data-collection.telephony.service';
+import { FilesService } from '../files/files.service';
 import { assertSiteInScope, isSiteScoped } from '../data-collection/site-scope';
 
 /** When each status was reached. */
@@ -120,6 +130,7 @@ export class ServiceRequestsService {
     private readonly build: BuildService,
     private readonly dataCollection: DataCollectionService,
     private readonly deployment: DeploymentService,
+    private readonly files: FilesService,
   ) {}
 
   private assertEnabled(t: TenantContext) {
@@ -202,6 +213,7 @@ export class ServiceRequestsService {
         'sr.declined_at as declined_at',
         'sr.cancelled_at as cancelled_at',
         'sr.reopened_at as reopened_at',
+        'sr.approval_status as approval_status',
       ])
       .orderBy('sr.number', 'desc');
     if (q.status === 'open') query = query.where('sr.status', 'in', [...SR_OPEN_STATUSES]);
@@ -222,7 +234,7 @@ export class ServiceRequestsService {
     }));
   }
 
-  async get(t: TenantContext, id: string, canManage: boolean) {
+  async get(t: TenantContext, id: string, canManage: boolean, viewerId?: string) {
     this.assertEnabled(t);
     const row = await this.load(t, id);
     const s = tenantDb(this.db, t.schema);
@@ -248,10 +260,27 @@ export class ServiceRequestsService {
             buildKind === 'cap' ? suggestCapUpn(String((row.details as Record<string, unknown>).display_name ?? ''), await this.mainDomain(t)) : null,
         }
       : null;
-    const targets = srEffectiveTargets(await this.settingsRaw(t));
+    const settings = await this.settingsRaw(t);
+    const targets = srEffectiveTargets(settings);
+    const approverIds = settings.approval?.approverIds ?? [];
+    const approvalNames = await this.names([...approverIds, row.approval_by]);
+    const open = SR_OPEN_STATUSES.includes(row.status);
     return {
       build,
       sla: { ...srSla(row, targets), target: targets[row.priority] },
+      approval: row.approval_status
+        ? {
+            status: row.approval_status,
+            by: row.approval_by ? (approvalNames.get(row.approval_by) ?? null) : null,
+            at: row.approval_at,
+            note: row.approval_note,
+            approvers: approverIds.map((a) => approvalNames.get(a) ?? 'Unknown user'),
+            canDecide: row.approval_status === 'pending' && approverIds.includes(viewerId ?? ''),
+          }
+        : null,
+      // Staff only: things worth checking before work starts.
+      checks: canManage && open ? await this.checks(t, row.type, row.site_id, row.details as Record<string, unknown>, row.id) : [],
+      changeWindow: canManage ? (settings.changeWindow ?? null) : null,
       request: {
         ...row,
         reference: srReference(row.number),
@@ -475,14 +504,23 @@ export class ServiceRequestsService {
   /* ----------------------------- form data ----------------------------- */
 
   /** Numbers already promised to an open request, so two requests never take the same free number. */
+  /** Numbers promised to open requests: a single new number, or the set aside for several new users. */
   private async claimedNumbers(s: ReturnType<typeof tenantDb>) {
-    const rows = await s
-      .selectFrom('service_requests')
-      .select(sql<string>`details->>${SR_NEW_NUMBER_KEY}`.as('n'))
-      .where('status', 'in', [...SR_OPEN_STATUSES])
-      .where(sql<boolean>`details ? ${SR_NEW_NUMBER_KEY}`)
-      .execute();
-    return new Set(rows.map((r) => r.n).filter(Boolean));
+    const [single, multi] = await Promise.all([
+      s
+        .selectFrom('service_requests')
+        .select(sql<string>`details->>${SR_NEW_NUMBER_KEY}`.as('n'))
+        .where('status', 'in', [...SR_OPEN_STATUSES])
+        .where(sql<boolean>`details ? ${SR_NEW_NUMBER_KEY}`)
+        .execute(),
+      s
+        .selectFrom('service_requests')
+        .select(sql<Record<string, string>>`details->${SR_NEW_NUMBERS_KEY}`.as('m'))
+        .where('status', 'in', [...SR_OPEN_STATUSES])
+        .where(sql<boolean>`details ? ${SR_NEW_NUMBERS_KEY}`)
+        .execute(),
+    ]);
+    return new Set([...single.map((r) => r.n), ...multi.flatMap((r) => Object.values(r.m ?? {}))].filter(Boolean));
   }
 
   /**
@@ -584,13 +622,42 @@ export class ServiceRequestsService {
     if (isSiteScoped(t) && !siteId) {
       throw new ForbiddenException('You can only raise requests for your own sites. Ask your main contact to request a new site.');
     }
-    const details = input.details;
+    const details: Record<string, unknown> = { ...input.details };
+    const bulkNumbers = input.type === 'new_users' && details.number === NUMBER_NEED_NEW;
+
+    // Approval: types the customer wants approved wait for an approver (unless the requester is one).
+    const settings = await this.settingsRaw(t);
+    const approverIds = settings.approval?.approverIds ?? [];
+    const needsApproval = !!settings.approval?.types.includes(input.type) && approverIds.length > 0;
+    const selfApproved = needsApproval && approverIds.includes(user.id);
 
     const row = await this.db.transaction().execute(async (trx) => {
       const s = tenantDb(trx, t.schema);
       // Serialise requests that take a free number, so two can't take the same one.
-      if (details[SR_NEW_NUMBER_KEY]) await sql`select pg_advisory_xact_lock(hashtext(${t.schema} || ':sr_number'))`.execute(trx);
+      if (details[SR_NEW_NUMBER_KEY] || bulkNumbers) await sql`select pg_advisory_xact_lock(hashtext(${t.schema} || ':sr_number'))`.execute(trx);
       await this.checkAgainstData(s, input.type, details, site);
+      if (bulkNumbers) {
+        // Set aside one free number per person, in number order.
+        const people = (details.people as SrPerson[]) ?? [];
+        const claimed = await this.claimedNumbers(s);
+        const free = await s
+          .selectFrom('phone_numbers as pn')
+          .innerJoin('discovery_number_ranges as r', 'r.id', 'pn.range_id')
+          .select('pn.e164 as e164')
+          .where('r.sitecode', '=', site?.sitecode ?? '')
+          .where('pn.status', '=', 'available')
+          .orderBy('pn.e164')
+          .limit(people.length + claimed.size)
+          .execute();
+        const pick = free.map((f) => f.e164).filter((e) => !claimed.has(e)).slice(0, people.length);
+        if (pick.length < people.length) {
+          throw new BadRequestException(
+            `There ${pick.length === 1 ? 'is' : 'are'} only ${pick.length} free number${pick.length === 1 ? '' : 's'} at this site for ${people.length} people. Raise a "New phone numbers" request first, or choose "No number".`,
+          );
+        }
+        details[SR_NEW_NUMBERS_KEY] = Object.fromEntries(people.map((p, i) => [p.upn.toLowerCase(), pick[i]!]));
+      }
+      const now = new Date().toISOString();
       const created = await s
         .insertInto('service_requests')
         .values({
@@ -601,6 +668,9 @@ export class ServiceRequestsService {
           priority: input.priority,
           target_date: input.targetDate ?? null,
           requested_by: user.id,
+          approval_status: needsApproval ? (selfApproved ? 'approved' : 'pending') : null,
+          approval_by: selfApproved ? user.id : null,
+          approval_at: selfApproved ? now : null,
         })
         .returningAll()
         .executeTakeFirstOrThrow();
@@ -638,7 +708,152 @@ export class ServiceRequestsService {
         tenantId: t.id,
       });
     }
+    if (row.approval_status === 'pending') await this.emailApprovers(t, row, approverIds, user);
     return { ...row, reference };
+  }
+
+  /* ------------------------------ approval ------------------------------ */
+
+  private async emailApprovers(t: TenantContext, row: { id: string; number: number; title: string; type: SrType }, approverIds: string[], author: AuthedUser) {
+    const approvers = await platformDb(this.db).selectFrom('users').select(['id', 'email', 'display_name']).where('id', 'in', approverIds).where('status', '=', 'active').execute();
+    const context: ServiceRequestActivityContext = { ...this.emailBase(t, row), kind: 'approval_needed', author: author.displayName, body: null };
+    for (const a of approvers) {
+      if (a.id === author.id) continue;
+      await this.mail.enqueue({
+        template: 'service_request_activity',
+        to: { email: a.email, name: a.display_name },
+        context: context as unknown as Record<string, unknown>,
+        related: { type: 'service_request', id: row.id },
+        createdBy: author.id,
+        tenantId: t.id,
+      });
+    }
+  }
+
+  /**
+   * The customer's approver approves or rejects a request waiting for them.
+   * Approved: the team can plan it. Rejected: it is declined, with the reason,
+   * and the requester is told.
+   */
+  async decideApproval(t: TenantContext, user: AuthedUser, id: string, input: ServiceRequestApprovalInput) {
+    this.assertEnabled(t);
+    const row = await this.load(t, id);
+    const approverIds = (await this.settingsRaw(t)).approval?.approverIds ?? [];
+    if (!approverIds.includes(user.id)) throw new ForbiddenException("You're not an approver for this customer's requests.");
+    if (row.approval_status !== 'pending' || row.status !== 'new') throw new BadRequestException('This request is not waiting for approval.');
+    const s = tenantDb(this.db, t.schema);
+    const now = new Date().toISOString();
+    const note = input.note?.trim() || null;
+    const updated = await s
+      .updateTable('service_requests')
+      .set({
+        approval_status: input.approve ? 'approved' : 'rejected',
+        approval_by: user.id,
+        approval_at: now,
+        approval_note: note,
+        updated_at: now,
+        ...(input.approve ? {} : { status: 'declined' as const, declined_at: now }),
+      })
+      .where('id', '=', id)
+      .where('approval_status', '=', 'pending')
+      .returningAll()
+      .executeTakeFirst();
+    if (!updated) throw new ConflictException('Someone has just decided this request. Refresh and try again.');
+    await s.insertInto('service_request_events').values({ request_id: id, kind: 'approval', body: `${input.approve ? 'Approved' : 'Rejected'}${note ? `: ${note}` : '.'}`, author_id: user.id }).execute();
+    if (!input.approve) {
+      await s.insertInto('service_request_events').values({ request_id: id, kind: 'status_changed', from_status: 'new', to_status: 'declined', body: note, author_id: user.id }).execute();
+      const context: ServiceRequestStatusChangedContext = { ...this.emailBase(t, row), fromStatus: 'new', toStatus: 'declined', moveKind: 'decline', note };
+      await this.emailRequester(t, row, user.id, 'service_request_status_changed', context);
+    }
+    await this.emailTeam(t, row, input.approve ? 'approved' : 'rejected', user, note);
+    await this.audit.tenant(t.schema, input.approve ? 'service_request.approved' : 'service_request.rejected', {
+      actor: { id: user.id, email: user.email },
+      targetType: 'service_request',
+      targetId: id,
+      detail: { reference: srReference(row.number), note },
+    });
+    return { ...updated, reference: srReference(row.number) };
+  }
+
+  /* ------------------------------ checks ------------------------------ */
+
+  /**
+   * Things worth knowing about a request before work starts - never blocking:
+   * the person isn't in the synced directory, has no Teams Phone licence,
+   * already has calling (new user) or has none to remove (leaver), is already
+   * in Design & Build, or another open request covers the same person or number.
+   */
+  async checks(t: TenantContext, type: SrType, siteId: string | null, details: Record<string, unknown>, exceptId?: string): Promise<string[]> {
+    this.assertEnabled(t);
+    const s = tenantDb(this.db, t.schema);
+    const out: string[] = [];
+    const people: SrPerson[] =
+      type === 'new_users' ? ((details.people as SrPerson[]) ?? []) : details.user && typeof details.user === 'object' ? [details.user as SrPerson] : [];
+    const synced = (await s.selectFrom('tenant_users').select('id').limit(1).execute()).length > 0;
+    for (const p of people) {
+      const upn = p.upn.toLowerCase();
+      const tu = await s
+        .selectFrom('tenant_users')
+        .select(['enterprise_voice_enabled', 'line_uri', 'feature_types', 'assigned_plans'])
+        .where(sql<string>`lower(upn)`, '=', upn)
+        .where('removed_at', 'is', null)
+        .executeTakeFirst();
+      if (!tu) {
+        if (synced) out.push(`${p.name} isn't in the synced directory yet. Check the sign-in address, or run Discovery again if they're new.`);
+      } else {
+        const features = (tu.feature_types ?? []) as string[];
+        const plans = (Array.isArray(tu.assigned_plans) ? tu.assigned_plans : []) as { Capability?: string; CapabilityStatus?: string }[];
+        const known = features.length > 0 || plans.length > 0;
+        const phone =
+          features.some((f) => /PhoneSystem/i.test(f)) ||
+          plans.some((pl) => String(pl.Capability ?? '').toUpperCase() === 'MCOEV' && ['Enabled', 'Warning'].includes(String(pl.CapabilityStatus ?? '')));
+        if (['new_user', 'new_users', 'change_user'].includes(type) && known && !phone) {
+          out.push(`${p.name} doesn't have a Teams Phone licence yet. Calling won't work until one is assigned.`);
+        }
+        if ((type === 'new_user' || type === 'new_users') && tu.enterprise_voice_enabled && tu.line_uri) {
+          out.push(`${p.name} already has Teams calling (${tu.line_uri.replace(/^tel:/i, '')}).`);
+        }
+        if (type === 'remove_user' && !tu.enterprise_voice_enabled) out.push(`${p.name} doesn't have Teams calling to remove.`);
+      }
+      if (type === 'new_user' || type === 'new_users') {
+        const inBuild = await s
+          .selectFrom('build_users as b')
+          .innerJoin('discovery_sites as ds', 'ds.id', 'b.site_id')
+          .select('ds.sitecode')
+          .where(sql<string>`lower(b.upn)`, '=', upn)
+          .executeTakeFirst();
+        if (inBuild) out.push(`${p.name} is already in Design & Build at ${inBuild.sitecode}.`);
+      }
+      // Another open request for the same person.
+      const dup = await s
+        .selectFrom('service_requests')
+        .select(['id', 'number'])
+        .where('status', 'in', [...SR_OPEN_STATUSES])
+        .where((eb) =>
+          eb.or([
+            eb(sql<string>`lower(details->'user'->>'upn')`, '=', upn),
+            eb(sql<boolean>`exists (select 1 from jsonb_array_elements(coalesce(details->'people', '[]'::jsonb)) x where lower(x->>'upn') = ${upn})`, '=', true),
+          ]),
+        )
+        .$if(!!exceptId, (qb) => qb.where('id', '!=', exceptId!))
+        .executeTakeFirst();
+      if (dup) out.push(`${srReference(dup.number)} is already open for ${p.name}.`);
+    }
+    // Another open request for the same queue / auto attendant / phone.
+    for (const key of ['queue', 'auto_attendant', 'phone']) {
+      const picked = details[key] as SrSiteObject | undefined;
+      if (!picked?.id) continue;
+      const dup = await s
+        .selectFrom('service_requests')
+        .select('number')
+        .where('status', 'in', [...SR_OPEN_STATUSES])
+        .where(sql<string>`details->${key}->>'id'`, '=', picked.id)
+        .$if(!!exceptId, (qb) => qb.where('id', '!=', exceptId!))
+        .executeTakeFirst();
+      if (dup) out.push(`${srReference(dup.number)} is already open for ${picked.label}.`);
+    }
+    void siteId;
+    return out;
   }
 
   /**
@@ -794,6 +1009,9 @@ export class ServiceRequestsService {
     const note = input.note?.trim() || null;
     if (SR_NOTE_REQUIRED.includes(kind) && !note) {
       throw new BadRequestException(kind === 'decline' ? 'Say why the request is being declined.' : kind === 'send_back' ? 'Say why it is being sent back.' : 'Say what is wrong.');
+    }
+    if (kind === 'forward' && from === 'new' && row.approval_status === 'pending') {
+      throw new BadRequestException("This request is waiting for the customer's approval.");
     }
     if (kind === 'forward' && to === 'built') {
       const blockers = (await this.design(t, id)).builtBlockers;
@@ -965,6 +1183,7 @@ export class ServiceRequestsService {
     }
 
     if (isSrChangeType(row.type)) return this.applyChange(t, user, row);
+    if (row.type === 'new_users') return this.draftUsers(t, user, row);
 
     const reference = srReference(row.number);
     const details = row.details as Record<string, unknown>;
@@ -1004,6 +1223,14 @@ export class ServiceRequestsService {
     }
     await this.linkItem(t, user, id, draft.kind, createdId);
     const created: SrBuildLink[] = [{ kind, label: draft.label, href: srBuildHref(kind, siteId) }];
+    // A new user with a free number picked: put it on the row (if it's still free).
+    if (draft.kind === 'user' && typeof details[SR_NEW_NUMBER_KEY] === 'string') {
+      if (!(await this.assignNumber(t, user, createdId, details[SR_NEW_NUMBER_KEY] as string))) {
+        warnings.push(`${details[SR_NEW_NUMBER_KEY]} is no longer free - pick another number for the row.`);
+      }
+    }
+    // A site made for a request is already live, so it takes requests straight away.
+    if (draft.kind === 'site') await this.setSiteMode(t, user, createdId, 'operations');
 
     const s = tenantDb(this.db, t.schema);
     const body = [
@@ -1129,6 +1356,13 @@ export class ServiceRequestsService {
       byName('build_call_queues', 'call_queue'),
       byName('build_auto_attendants', 'auto_attendant'),
       (async () => {
+        const list = ids('number_range');
+        if (list.length) {
+          const ranges = await s.selectFrom('discovery_number_ranges as r').innerJoin('discovery_sites as ds', 'ds.sitecode', 'r.sitecode').select(['r.id', 'r.range_start', 'r.range_end', 'ds.id as site_id']).where('r.id', 'in', list).execute();
+          add(ranges.map((r) => ({ id: r.id, label: `${r.range_start} – ${r.range_end}`, site_id: r.site_id })));
+        }
+      })(),
+      (async () => {
         const list = ids('site');
         if (list.length) add(await s.selectFrom('discovery_sites').select(['id', 'sitecode as label', 'id as site_id']).where('id', 'in', list).execute());
       })(),
@@ -1147,7 +1381,8 @@ export class ServiceRequestsService {
     const live = items.filter((i) => i.label !== null);
     const deployableCount = live.filter((i) => SR_ITEM_SHEET[i.kind] && i.site_id === row.site_id).length;
     const missingCount = items.length - live.length;
-    return { items, deployableCount, builtBlockers: srBuiltBlockers(row.type, { siteId: row.site_id, deployableCount, missingCount }) };
+    const rangeCount = live.filter((i) => i.kind === 'number_range').length;
+    return { items, deployableCount, builtBlockers: srBuiltBlockers(row.type, { siteId: row.site_id, deployableCount, missingCount, rangeCount }) };
   }
 
   /** Removes a row from the request. The row itself stays in Design & Build - delete it there if it isn't wanted at all. */
@@ -1231,6 +1466,12 @@ export class ServiceRequestsService {
       );
     }
     const scope = await this.deployScope(t, row);
+    // The customer's change window: a live deploy outside it needs a reason, which is recorded.
+    const window = (await this.settingsRaw(t)).changeWindow ?? null;
+    const outside = input.mode === 'execute' && !srInChangeWindow(window);
+    if (outside && !input.outsideWindowReason) {
+      throw new ConflictException(`It's outside this customer's change window (${srChangeWindowText(window!)}). Say why it has to go now to deploy anyway.`);
+    }
     const dep = await this.deployment.createDeployment(
       t,
       user,
@@ -1238,6 +1479,12 @@ export class ServiceRequestsService {
       (p) => can(user.role, p),
       { serviceRequestId: id },
     );
+    if (outside) {
+      await tenantDb(this.db, t.schema)
+        .insertInto('service_request_events')
+        .values({ request_id: id, kind: 'comment', internal: true, body: `Deployed outside the change window (${srChangeWindowText(window!)}): ${input.outsideWindowReason}`, author_id: user.id })
+        .execute();
+    }
     await tenantDb(this.db, t.schema).updateTable('service_requests').set({ updated_at: new Date().toISOString() }).where('id', '=', id).execute();
     return dep;
   }
@@ -1254,6 +1501,173 @@ export class ServiceRequestsService {
       .limit(50)
       .execute();
     return rows.map((r) => ({ ...r, mode: r.mode as SrDeploymentRun['mode'], summary: (r.summary ?? {}) as Record<string, number> }));
+  }
+
+  /** Puts an inventory number on a user row, if it's still free. */
+  private async assignNumber(t: TenantContext, user: AuthedUser, rowId: string, e164: string): Promise<boolean> {
+    const n = await tenantDb(this.db, t.schema).selectFrom('phone_numbers').select(['id', 'status']).where('e164', '=', e164).executeTakeFirst();
+    if (!n || n.status !== 'available') return false;
+    await this.build.updateUser(t, user, rowId, buildIdentityPatchSchema.parse({ phone_number_id: n.id }));
+    return true;
+  }
+
+  /**
+   * "Prefill" for several new users: one Design & Build user per person, each
+   * with the number set aside for them when the request was raised. People
+   * already in Design & Build are linked as they are.
+   */
+  private async draftUsers(
+    t: TenantContext,
+    user: AuthedUser,
+    row: { id: string; number: number; site_id: string | null; details: unknown },
+  ): Promise<SrBuildDraftResult> {
+    if (!row.site_id) throw new BadRequestException("The request's site no longer exists.");
+    const siteId = row.site_id;
+    const details = row.details as Record<string, unknown>;
+    const reference = srReference(row.number);
+    const people = (details.people as SrPerson[]) ?? [];
+    const numbers = (details[SR_NEW_NUMBERS_KEY] as Record<string, string> | undefined) ?? {};
+    const s = tenantDb(this.db, t.schema);
+    const created: SrBuildLink[] = [];
+    const existing: SrBuildLink[] = [];
+    const warnings: string[] = [];
+    for (const p of people) {
+      const upn = p.upn.toLowerCase();
+      const link: SrBuildLink = { kind: 'user', label: upn, href: srBuildHref('user', siteId) };
+      const found = await s.selectFrom('build_users').select(['id', 'site_id']).where(sql<string>`lower(upn)`, '=', upn).executeTakeFirst();
+      if (found) {
+        if (found.site_id !== siteId) {
+          warnings.push(`${upn} is on another site in Design & Build - left out.`);
+          continue;
+        }
+        await this.linkItem(t, user, row.id, 'user', found.id);
+        existing.push(link);
+        continue;
+      }
+      const input: Record<string, unknown> = { site_id: siteId, upn, comments: `From ${reference}: ${p.name}.` };
+      if (typeof details.voicemail === 'boolean') input.voicemail = { enabled: details.voicemail };
+      const r = await this.build.createUser(t, user, buildIdentityCreateSchema.parse(input));
+      await this.linkItem(t, user, row.id, 'user', r.id);
+      if (numbers[upn] && !(await this.assignNumber(t, user, r.id, numbers[upn]))) {
+        warnings.push(`${numbers[upn]} (for ${upn}) is no longer free - pick another number for the row.`);
+      }
+      created.push(link);
+    }
+    await s
+      .insertInto('service_request_events')
+      .values({
+        request_id: row.id,
+        kind: 'build_drafted',
+        internal: true,
+        links: JSON.stringify([...created, ...existing].slice(0, 50)),
+        body: [`Created ${created.length} user${created.length === 1 ? '' : 's'} in Design & Build${existing.length ? `, linked ${existing.length} already there` : ''}.`, ...warnings].join('\n'),
+        author_id: user.id,
+      })
+      .execute();
+    await s.updateTable('service_requests').set({ updated_at: new Date().toISOString() }).where('id', '=', row.id).execute();
+    return { created, existing, warnings };
+  }
+
+  /* --------------------------- new phone numbers --------------------------- */
+
+  /**
+   * Designs a "new phone numbers" request: adds the range the carrier gave to
+   * the site's inventory (free numbers, ready to use) and links it to the
+   * request. Not blocked by a locked Data Collection - adding numbers after
+   * go-live is an operational change.
+   */
+  async addNumbers(t: TenantContext, user: AuthedUser, id: string, input: ServiceRequestNumbersInput) {
+    this.assertEnabled(t);
+    const row = await this.load(t, id);
+    if (!srHasNumbersDesign(row.type)) throw new BadRequestException('Only a new phone numbers request adds numbers here.');
+    if (!srDesignEditable(row.status)) throw new BadRequestException(`Numbers can only be added while the request is Planned. This one is ${SR_STATUS_LABELS[row.status]}.`);
+    if (!can(user.role, 'build:write')) throw new ForbiddenException('You do not have permission to add numbers.');
+    if (!row.site_id) throw new BadRequestException("The request's site no longer exists.");
+    const site = await this.loadSite(t, row.site_id);
+    const e164s = expandRange(input.range_start, input.range_end);
+    const s = tenantDb(this.db, t.schema);
+    const reference = srReference(row.number);
+    const result = await this.db.transaction().execute(async (trx) => {
+      const ts = tenantDb(trx, t.schema);
+      const range = await ts
+        .insertInto('discovery_number_ranges')
+        .values({
+          sitecode: site.sitecode,
+          range_start: e164s[0]!,
+          range_end: e164s[e164s.length - 1]!,
+          kind: 'new',
+          carrier: input.carrier?.trim() || null,
+          comments: `Added for ${reference}.`,
+        })
+        .returning(['id', 'range_start', 'range_end'])
+        .executeTakeFirstOrThrow();
+      let added = 0;
+      for (let k = 0; k < e164s.length; k += 500) {
+        const chunk = e164s.slice(k, k + 500).map((e164) => ({ range_id: range.id, e164 }));
+        added += (await ts.insertInto('phone_numbers').values(chunk).onConflict((oc) => oc.column('e164').doNothing()).returning('id').execute()).length;
+      }
+      return { range, added };
+    });
+    await this.linkItem(t, user, id, 'number_range', result.range.id);
+    await s
+      .insertInto('service_request_events')
+      .values({
+        request_id: id,
+        kind: 'build_drafted',
+        internal: true,
+        body: `Added ${result.range.range_start} – ${result.range.range_end} to ${site.sitecode}: ${result.added} new number${result.added === 1 ? '' : 's'}${e164s.length - result.added ? `, ${e164s.length - result.added} already in the inventory` : ''}.`,
+        author_id: user.id,
+      })
+      .execute();
+    await s.updateTable('service_requests').set({ updated_at: new Date().toISOString() }).where('id', '=', id).execute();
+    await this.audit.tenant(t.schema, 'service_request.numbers_added', {
+      actor: { id: user.id, email: user.email },
+      targetType: 'service_request',
+      targetId: id,
+      detail: { reference, rangeId: result.range.id, added: result.added },
+    });
+    return { rangeId: result.range.id, added: result.added, skipped: e164s.length - result.added };
+  }
+
+  /* ------------------------------ attachments ------------------------------ */
+
+  async attachments(t: TenantContext, id: string) {
+    this.assertEnabled(t);
+    await this.load(t, id);
+    return this.files.list(t, { sourceType: 'service_request', sourceId: id });
+  }
+
+  /** Anyone who can see the request can attach a file (screenshots, approvals, port forms). */
+  async attach(t: TenantContext, user: AuthedUser, id: string, file: { originalname: string; mimetype: string; buffer: Buffer; size: number } | undefined) {
+    this.assertEnabled(t);
+    const row = await this.load(t, id);
+    if (!file) throw new BadRequestException('Choose a file to attach.');
+    if (!SR_ATTACHMENT_TYPES.test(file.mimetype)) {
+      throw new BadRequestException('That kind of file can\'t be attached. Use a picture, PDF, Word, Excel, CSV or text file.');
+    }
+    const stored = await this.files.store(t, {
+      category: 'service_request_attachment',
+      sourceType: 'service_request',
+      sourceId: id,
+      siteId: row.site_id,
+      filename: file.originalname,
+      contentType: file.mimetype,
+      data: file.buffer,
+      uploadedBy: user.id,
+    });
+    const s = tenantDb(this.db, t.schema);
+    await s.insertInto('service_request_events').values({ request_id: id, kind: 'attachment', body: stored.filename, author_id: user.id }).execute();
+    await s.updateTable('service_requests').set({ updated_at: new Date().toISOString() }).where('id', '=', id).execute();
+    return stored;
+  }
+
+  /** The file, if it belongs to this request. */
+  async attachment(t: TenantContext, id: string, fileId: string) {
+    this.assertEnabled(t);
+    await this.load(t, id);
+    const { row, data } = await this.files.readBytes(t, fileId);
+    if (row.sourceType !== 'service_request' || row.sourceId !== id) throw new NotFoundException('attachment not found');
+    return { row, data };
   }
 
   /**

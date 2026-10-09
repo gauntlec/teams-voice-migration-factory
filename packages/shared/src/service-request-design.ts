@@ -16,7 +16,7 @@ import { SR_BUILD_KIND } from './service-request-build';
 import type { SrStatus, SrType } from './service-requests';
 
 /** What a request can be linked to. `site` is a new site (Data Collection); the rest are Design & Build rows. */
-export const SR_ITEM_KINDS = ['site', 'user', 'cap', 'resource_account', 'shared_calling_policy', 'call_queue', 'auto_attendant'] as const;
+export const SR_ITEM_KINDS = ['site', 'user', 'cap', 'resource_account', 'shared_calling_policy', 'call_queue', 'auto_attendant', 'number_range'] as const;
 export type SrItemKind = (typeof SR_ITEM_KINDS)[number];
 
 export const SR_ITEM_KIND_LABELS: Record<SrItemKind, string> = {
@@ -27,6 +27,7 @@ export const SR_ITEM_KIND_LABELS: Record<SrItemKind, string> = {
   shared_calling_policy: 'Shared calling policy',
   call_queue: 'Call queue',
   auto_attendant: 'Auto attendant',
+  number_range: 'Number range',
 };
 
 /** Rows a deployment can push to Teams, and the deployment sheet each one is on. */
@@ -64,6 +65,11 @@ export const SR_DESIGN_HEADER = 'x-service-request';
 export function srHasDesign(type: SrType): boolean {
   const kind = SR_BUILD_KIND[type];
   return kind !== null && kind !== 'site';
+}
+
+/** A "new phone numbers" request is designed by adding the numbers to the site's inventory (Design tab), and has nothing to deploy. */
+export function srHasNumbersDesign(type: SrType): boolean {
+  return type === 'new_phone_numbers';
 }
 
 /** The Design tab can change rows only while the request is Planned. */
@@ -120,8 +126,9 @@ export function srItemSheets(kinds: Iterable<SrItemKind>): (typeof DEPLOYMENT_SH
  */
 export function srBuiltBlockers(
   type: SrType,
-  args: { siteId: string | null; deployableCount: number; missingCount: number },
+  args: { siteId: string | null; deployableCount: number; missingCount: number; rangeCount?: number },
 ): string[] {
+  if (srHasNumbersDesign(type)) return (args.rangeCount ?? 0) > 0 ? [] : ['Add the new numbers to the site on the Design tab first.'];
   if (!srHasDesign(type)) return [];
   const out: string[] = [];
   if (!args.siteId) out.push('The request has no site, so there is nothing to design against.');
@@ -139,6 +146,32 @@ export const serviceRequestDeploySchema = z
   .object({
     connectionId: z.string().uuid(),
     mode: z.enum(['dry_run', 'execute']),
+    /** Needed for a live deploy outside the customer's change window; recorded on the request. */
+    outsideWindowReason: z.string().trim().min(3).max(1000).optional(),
   })
   .strict();
+
+/** POST /service-requests/:id/approval - the customer's approver decides. */
+export const serviceRequestApprovalSchema = z
+  .object({
+    approve: z.boolean(),
+    note: z.string().trim().max(2000).optional(),
+  })
+  .strict()
+  .refine((v) => v.approve || !!v.note, { message: 'Say why it is rejected', path: ['note'] });
+export type ServiceRequestApprovalInput = z.infer<typeof serviceRequestApprovalSchema>;
+
+/** POST /service-requests/:id/numbers - add a range to the site's inventory for a "new phone numbers" request. */
+export const serviceRequestNumbersSchema = z
+  .object({
+    range_start: z.string().trim().regex(/^\+?\d{6,15}$/, 'Enter the first number, e.g. +442079460100'),
+    range_end: z.string().trim().regex(/^\+?\d{6,15}$/, 'Enter the last number'),
+    carrier: z.string().trim().max(160).optional(),
+  })
+  .strict();
+export type ServiceRequestNumbersInput = z.infer<typeof serviceRequestNumbersSchema>;
 export type ServiceRequestDeployInput = z.infer<typeof serviceRequestDeploySchema>;
+
+/** What can be attached to a request: pictures, PDF, Office documents, CSV and text. 10 MB each. */
+export const SR_ATTACHMENT_TYPES = /^(image\/(png|jpeg|gif|webp)|application\/pdf|text\/(plain|csv)|application\/vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet|presentationml\.presentation)|application\/msword|application\/vnd\.ms-excel)$/;
+export const SR_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;

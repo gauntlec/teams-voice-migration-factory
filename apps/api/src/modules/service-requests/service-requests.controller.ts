@@ -1,4 +1,6 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import {
   can,
   createServiceRequestSchema,
@@ -8,6 +10,10 @@ import {
   serviceRequestCommentSchema,
   serviceRequestDeploySchema,
   serviceRequestSettingsSchema,
+  serviceRequestApprovalSchema,
+  serviceRequestNumbersSchema,
+  createServiceRequestCheckSchema,
+  SR_ATTACHMENT_MAX_BYTES,
   serviceRequestReportQuerySchema,
   serviceRequestStatusSchema,
   setSiteModeSchema,
@@ -20,6 +26,9 @@ import {
   type ServiceRequestCommentInput,
   type ServiceRequestDeployInput,
   type ServiceRequestSettingsInput,
+  type ServiceRequestApprovalInput,
+  type ServiceRequestNumbersInput,
+  type CreateServiceRequestCheckInput,
   type ServiceRequestReportQuery,
   type ServiceRequestStatusInput,
   type SetSiteModeInput,
@@ -92,6 +101,13 @@ export class ServiceRequestsController {
     return this.svc.updateSettings(t, user, body);
   }
 
+  /** The new-request form's warnings (licence, duplicates ...) - never blocking. */
+  @Post('check')
+  @RequirePermission('sr:create')
+  check(@TenantCtx() t: TenantContext, @Body(new ZodBody(createServiceRequestCheckSchema)) body: CreateServiceRequestCheckInput) {
+    return this.svc.checks(t, body.type, body.siteId ?? null, body.details);
+  }
+
   @Get('customer-users')
   @RequirePermission('sr:manage')
   customerUsers(@TenantCtx() t: TenantContext) {
@@ -120,7 +136,7 @@ export class ServiceRequestsController {
   @Get(':id')
   @RequirePermission('sr:read')
   get(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string) {
-    return this.svc.get(t, id, can(user.role, 'sr:manage'));
+    return this.svc.get(t, id, can(user.role, 'sr:manage'), user.id);
   }
 
   @Post()
@@ -217,6 +233,58 @@ export class ServiceRequestsController {
   @RequirePermission('sr:manage', 'deployment:read')
   runs(@TenantCtx() t: TenantContext, @Param('id') id: string) {
     return this.svc.runs(t, id);
+  }
+
+  /** The customer's approver approves or rejects (checked in the service). */
+  @Post(':id/approval')
+  @RequirePermission('sr:read')
+  approval(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Param('id') id: string,
+    @Body(new ZodBody(serviceRequestApprovalSchema)) body: ServiceRequestApprovalInput,
+  ) {
+    return this.svc.decideApproval(t, user, id, body);
+  }
+
+  /** New phone numbers: add the carrier's range to the site's inventory. */
+  @Post(':id/numbers')
+  @RequirePermission('sr:manage')
+  numbers(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Param('id') id: string,
+    @Body(new ZodBody(serviceRequestNumbersSchema)) body: ServiceRequestNumbersInput,
+  ) {
+    return this.svc.addNumbers(t, user, id, body);
+  }
+
+  @Get(':id/attachments')
+  @RequirePermission('sr:read')
+  attachments(@TenantCtx() t: TenantContext, @Param('id') id: string) {
+    return this.svc.attachments(t, id);
+  }
+
+  @Post(':id/attachments')
+  @RequirePermission('sr:create')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: SR_ATTACHMENT_MAX_BYTES } }))
+  attach(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.svc.attach(t, user, id, file);
+  }
+
+  @Get(':id/attachments/:fileId')
+  @RequirePermission('sr:read')
+  async attachment(@TenantCtx() t: TenantContext, @Param('id') id: string, @Param('fileId') fileId: string, @Res() res: Response) {
+    const { row, data } = await this.svc.attachment(t, id, fileId);
+    res.setHeader('Content-Type', row.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${row.filename.replace(/"/g, '')}"`);
+    res.setHeader('Content-Length', String(row.byteSize));
+    res.send(data);
   }
 
   @Post(':id/comments')

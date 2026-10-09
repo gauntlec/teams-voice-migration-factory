@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { QueueTiles, SlaBadge, queueFilter, type QueueFilter } from '../components/SrTarget';
-import { ReportsDialog, SettingsDialog } from './ServiceRequestAdmin';
+import { ReportsDialog, SettingsDialog, useSrSettings } from './ServiceRequestAdmin';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Badge,
@@ -92,6 +92,7 @@ export interface RequestRow {
   waiting_since: string | null;
   /** The target that matters now (response, then resolution). */
   sla: { which: 'response' | 'resolution'; clock: SrClock };
+  approval_status?: 'pending' | 'approved' | 'rejected' | null;
 }
 
 export interface RequestDetail extends RequestRow {
@@ -108,7 +109,7 @@ export interface RequestDetail extends RequestRow {
 
 export interface RequestEvent {
   id: string;
-  kind: 'created' | 'status_changed' | 'assigned' | 'comment' | 'build_drafted' | 'deployment' | 'waiting' | 'resumed';
+  kind: 'created' | 'status_changed' | 'assigned' | 'comment' | 'build_drafted' | 'deployment' | 'waiting' | 'resumed' | 'approval' | 'attachment';
   from_status: SrStatus | null;
   to_status: SrStatus | null;
   body: string | null;
@@ -319,6 +320,11 @@ export function ServiceRequests() {
                     <Badge appearance="tint" color={STATUS_COLOR[r.status]}>
                       {srStatusLabel(r.status, can('sr:manage'))}
                     </Badge>
+                    {r.approval_status === 'pending' && (
+                      <Badge appearance="outline" color="brand" style={{ marginLeft: 4 }}>
+                        Awaiting approval
+                      </Badge>
+                    )}
                     {r.waiting_since && (
                       <Badge appearance="outline" color="warning" style={{ marginLeft: 4 }} title="The team asked a question and is waiting for a reply.">
                         {can('sr:manage') ? 'Waiting on customer' : 'Needs your reply'}
@@ -787,6 +793,23 @@ function NewRequestDialog({ base, sites, onClose, onCreated }: { base: string; s
     },
   });
 
+  // Warnings worth knowing before sending (licence, duplicates ...) - never blocking.
+  const checkKey = JSON.stringify({ type, siteId, details });
+  const [debouncedKey, setDebouncedKey] = useState(checkKey);
+  useEffect(() => {
+    const h = setTimeout(() => setDebouncedKey(checkKey), 500);
+    return () => clearTimeout(h);
+  }, [checkKey]);
+  const checks = useQuery({
+    queryKey: ['sr-check', base, debouncedKey],
+    queryFn: () => {
+      const v = JSON.parse(debouncedKey) as { type: SrType; siteId: string; details: Record<string, unknown> };
+      return api<string[]>(`${base}/check`, { method: 'POST', body: JSON.stringify({ type: v.type, siteId: v.siteId || null, details: v.details }) });
+    },
+  });
+  const settings = useSrSettings(base);
+  const needsApproval = !!settings.data?.approval.types.includes(type) && (settings.data?.approval.approvers.length ?? 0) > 0;
+
   const incomplete = useMemo(() => {
     const missing = def.fields.some((f) => f.required && srFieldVisible(f, details, def.fields) && isBlank(details[f.key]));
     return missing || title.trim().length < 3 || (def.needsSite && !siteId);
@@ -865,6 +888,24 @@ function NewRequestDialog({ base, sites, onClose, onCreated }: { base: string; s
                 <Input type="date" value={targetDate} onChange={(_, d) => setTargetDate(d.value)} />
               </Field>
             </div>
+            {(checks.data ?? []).length > 0 && (
+              <div className={cs.section}>
+                <Text weight="semibold">Worth checking</Text>
+                <ul style={{ margin: 0, paddingLeft: 20 }}>
+                  {checks.data!.map((w) => (
+                    <li key={w}>
+                      <Text size={200}>{w}</Text>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {needsApproval && (
+              <Text size={200}>
+                This kind of request needs approval from {settings.data!.approval.approvers.map((a) => a.display_name).join(' or ')} before the team
+                starts. They&apos;ll be emailed.
+              </Text>
+            )}
             {create.isError && <Text className={cs.error}>{errorText(create.error, 'Could not raise the request')}</Text>}
           </DialogContent>
           <DialogActions>

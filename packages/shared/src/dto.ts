@@ -1485,6 +1485,7 @@ function srIsBlank(v: unknown): boolean {
  */
 export function srDetailsSchema(type: SrType) {
   const fields = SR_TYPE_DEFS[type].fields;
+  // SR_NEW_NUMBERS_KEY is set by the API, never by the form - it stays an unknown key here.
   const shape: Record<string, z.ZodTypeAny> = {};
   for (const f of fields) shape[f.key] = z.unknown().optional();
   return z
@@ -1535,6 +1536,16 @@ export const createServiceRequestSchema = z
   })
   .transform((v) => ({ ...v, details: srDetailsSchema(v.type).parse(v.details) as Record<string, unknown> }));
 export type CreateServiceRequestInput = z.infer<typeof createServiceRequestSchema>;
+
+/** POST /service-requests/check - the form's live warnings. Details are checked loosely: it runs while the form is half filled in. */
+export const createServiceRequestCheckSchema = z
+  .object({
+    type: z.enum(SR_TYPES),
+    siteId: z.string().uuid().nullable().optional(),
+    details: z.record(z.unknown()).default({}),
+  })
+  .strict();
+export type CreateServiceRequestCheckInput = z.infer<typeof createServiceRequestCheckSchema>;
 
 export const serviceRequestStatusSchema = z.object({
   to: z.enum(SR_STATUSES),

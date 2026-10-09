@@ -16,6 +16,7 @@ describe('srHasDesign', () => {
   it('is on for the types that make Design & Build rows', () => {
     expect(SR_TYPES.filter(srHasDesign)).toEqual([
       'new_user',
+      'new_users',
       'new_common_area_phone',
       'new_call_queue',
       'new_auto_attendant',
@@ -43,7 +44,7 @@ describe('srItemSheets', () => {
   it('every deployable kind has a real deployment sheet', () => {
     for (const k of SR_ITEM_KINDS) {
       const sheet = SR_ITEM_SHEET[k];
-      if (k === 'site') expect(sheet).toBeUndefined();
+      if (k === 'site' || k === 'number_range') expect(sheet).toBeUndefined();
       else expect(DEPLOYMENT_SHEETS).toContain(sheet);
     }
   });
@@ -69,9 +70,13 @@ describe('srBuiltBlockers', () => {
     expect(out[0]).toContain('2 linked rows were deleted');
   });
   it('never blocks requests without a design', () => {
-    for (const t of ['new_site', 'new_phone_numbers', 'other'] as const) {
+    for (const t of ['new_site', 'other'] as const) {
       expect(srBuiltBlockers(t, { siteId: null, deployableCount: 0, missingCount: 3 })).toEqual([]);
     }
+  });
+  it('needs the numbers added for a new phone numbers request', () => {
+    expect(srBuiltBlockers('new_phone_numbers', { siteId: 's', deployableCount: 0, missingCount: 0 })).toHaveLength(1);
+    expect(srBuiltBlockers('new_phone_numbers', { siteId: 's', deployableCount: 0, missingCount: 0, rangeCount: 1 })).toEqual([]);
   });
 });
 

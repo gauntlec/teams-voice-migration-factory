@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link as RouterLink, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -50,17 +50,22 @@ import {
   srDesignEditable,
   srDetailLines,
   srHasDesign,
+  srHasNumbersDesign,
+  srInChangeWindow,
+  srChangeWindowText,
   type DeploymentPreviewRow,
   type SrBuildDraftResult,
   type SrBuildKind,
   type SrBuildLink,
   type SrClock,
+  type SrChangeWindow,
+  type FileRow,
   type SrDeploymentRun,
   type SrDesignSummary,
   type SrItem,
   type SrStatus,
 } from '@tvmf/shared';
-import { api, setDesigningServiceRequest } from '../api';
+import { api, apiDownload, apiUpload, setDesigningServiceRequest } from '../api';
 import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
 import { Page } from '../components/Page';
@@ -168,6 +173,11 @@ interface RequestPayload {
   events: RequestEvent[];
   build: RequestBuildInfo | null;
   sla: { response: SrClock; resolution: SrClock; target: { responseHours: number; resolveHours: number } };
+  approval: { status: 'pending' | 'approved' | 'rejected'; by: string | null; at: string | null; note: string | null; approvers: string[]; canDecide: boolean } | null;
+  /** Staff only: worth checking before work starts. */
+  checks: string[];
+  /** Staff only: the customer's change window. */
+  changeWindow: SrChangeWindow | null;
 }
 
 export function ServiceRequestPage() {
@@ -186,16 +196,13 @@ export function ServiceRequestPage() {
     queryFn: () => api<RequestPayload>(`${base}/${id}`),
   });
   const r = q.data?.request;
-  const hasDesign = !!r && canManage && can('build:read') && srHasDesign(r.type) && !!r.site_id;
-  const canDeployTab = hasDesign && can('deployment:dryrun');
-  const editable = !!r && srDesignEditable(r.status);
+  const hasDesign = !!r && canManage && can('build:read') && (srHasDesign(r.type) || srHasNumbersDesign(r.type)) && !!r.site_id;
+  // New numbers have nothing to deploy.
+  const canDeployTab = hasDesign && !!r && srHasDesign(r.type) && can('deployment:dryrun');
 
   const design = useQuery({
     queryKey: ['service-request-design', base, id],
     enabled: hasDesign,
-    // Rows made in the embedded editors are linked server-side; poll so the
-    // summary above them catches up without wiring every editor to it.
-    refetchInterval: tab === 'design' && editable ? 5000 : false,
     queryFn: () => api<SrDesignSummary>(`${base}/${id}/design`),
   });
 
@@ -269,7 +276,9 @@ export function ServiceRequestPage() {
         />
       )}
       {tab === 'design' && hasDesign && <DesignTab base={base} data={q.data!} design={design.data} designError={design.error} />}
-      {tab === 'deploy' && canDeployTab && <DeployTab base={base} tid={activeTenantId} request={r} design={design.data} />}
+      {tab === 'deploy' && canDeployTab && (
+        <DeployTab base={base} tid={activeTenantId} request={r} design={design.data} changeWindow={q.data!.changeWindow} />
+      )}
     </Page>
   );
 }
@@ -367,6 +376,21 @@ function Overview({
 
   return (
     <>
+      {data.approval && <ApprovalBanner base={base} id={id} approval={data.approval} onDone={refresh} />}
+      {data.checks.length > 0 && (
+        <div className={ps.waiting}>
+          <div>
+            <Text weight="semibold">Worth checking</Text>
+            <ul style={{ margin: 0, paddingLeft: 20 }}>
+              {data.checks.map((c) => (
+                <li key={c}>
+                  <Text size={200}>{c}</Text>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
       {r.waiting_since && (
         <div className={ps.waiting}>
           <Text>
@@ -531,6 +555,8 @@ function Overview({
         </Card>
       ) : null}
 
+      <Attachments base={base} id={id} />
+
       <Card className={ps.card}>
         <Text weight="semibold">Timeline</Text>
         {data.events.map((e) => (
@@ -601,6 +627,10 @@ function eventText(e: RequestEvent, staff: boolean): string {
       return `Asked: ${e.body ?? ''}`;
     case 'resumed':
       return staff ? 'No longer waiting on the customer.' : 'No longer waiting for your reply.';
+    case 'approval':
+      return e.body ?? '';
+    case 'attachment':
+      return `Attached ${e.body ?? 'a file'}.`;
     case 'assigned':
       return e.body === 'Unassigned' ? 'Unassigned the request.' : `Assigned to ${e.body}.`;
     case 'comment':
@@ -647,6 +677,8 @@ function DesignTab({
     mutationFn: (item: SrItem) => api(`${base}/${r.id}/items/${item.kind}/${item.row_id}`, { method: 'DELETE' }),
     onSuccess: refresh,
   });
+
+  if (srHasNumbersDesign(r.type)) return <NumbersDesign base={base} request={r} design={design} onDone={refresh} />;
 
   const lockedWhy =
     r.status === 'new'
@@ -725,7 +757,15 @@ function DesignTab({
 
       {r.status !== 'new' && r.site_id && (
         <BuildSiteWorkspace
-          embedded={{ siteId: r.site_id, requestId: r.id, reference: r.reference, editable, tab: kind ? BUILD_TAB_FOR[kind] : undefined }}
+          embedded={{
+            siteId: r.site_id,
+            requestId: r.id,
+            reference: r.reference,
+            editable,
+            tab: kind ? BUILD_TAB_FOR[kind] : undefined,
+            // Rows made below are linked server-side; refresh the summary above.
+            onChanged: () => qc.invalidateQueries({ queryKey: ['service-request-design', base, r.id] }),
+          }}
         />
       )}
     </>
@@ -878,13 +918,29 @@ function runBadge(d: SrDeploymentRun): { label: string; color: 'success' | 'dang
   return { label: d.status === 'queued' ? 'Queued' : 'Running', color: 'informative' };
 }
 
-function DeployTab({ base, tid, request: r, design }: { base: string; tid: string; request: RequestDetail; design: SrDesignSummary | undefined }) {
+function DeployTab({
+  base,
+  tid,
+  request: r,
+  design,
+  changeWindow,
+}: {
+  base: string;
+  tid: string;
+  request: RequestDetail;
+  design: SrDesignSummary | undefined;
+  changeWindow: SrChangeWindow | null;
+}) {
   const ps = usePageStyles();
   const cs = useSrStyles();
   const qc = useQueryClient();
   const { can } = useAuth();
   const canExecute = can('deployment:execute');
   const [confirm, setConfirm] = useState(false);
+  const [outsideReason, setOutsideReason] = useState('');
+  const insideWindow = srInChangeWindow(changeWindow);
+  const tenants = useQuery({ queryKey: ['tenants'], queryFn: () => api<{ id: string; teams_read_only: boolean }[]>('/tenants') });
+  const readOnly = tenants.data?.find((x) => x.id === tid)?.teams_read_only ?? false;
   const [runFor, setRunFor] = useState<string | null>(null);
 
   const connections = useQuery({
@@ -923,9 +979,17 @@ function DeployTab({ base, tid, request: r, design }: { base: string; tid: strin
 
   const run = useMutation({
     mutationFn: (mode: 'dry_run' | 'execute') =>
-      api(`${base}/${r.id}/deploy`, { method: 'POST', body: JSON.stringify({ connectionId: activeConn?.id, mode }) }),
+      api(`${base}/${r.id}/deploy`, {
+        method: 'POST',
+        body: JSON.stringify({
+          connectionId: activeConn?.id,
+          mode,
+          outsideWindowReason: mode === 'execute' && !insideWindow ? outsideReason.trim() : undefined,
+        }),
+      }),
     onSuccess: () => {
       setConfirm(false);
+      setOutsideReason('');
       qc.invalidateQueries({ queryKey: ['sr-runs', base, r.id] });
     },
   });
@@ -933,7 +997,7 @@ function DeployTab({ base, tid, request: r, design }: { base: string; tid: strin
   const rows = preview.data ?? [];
   const busy = (runs.data ?? []).some((d) => d.status === 'queued' || d.status === 'running');
   const canWhatIf = r.status === 'planned' || r.status === 'built';
-  const canLive = r.status === 'built' && canExecute;
+  const canLive = r.status === 'built' && canExecute && !readOnly;
 
   return (
     <>
@@ -958,7 +1022,13 @@ function DeployTab({ base, tid, request: r, design }: { base: string; tid: strin
           {r.status === 'built' && ' A deployment with no failed changes marks the request as deployed and emails the requester.'}
           {r.status === 'deployed' && ' This request is deployed.'}
           {!canExecute && ' You can run What-If; a live deployment needs an engineer who can deploy.'}
+          {changeWindow && ` Change window: ${srChangeWindowText(changeWindow)}${insideWindow ? ' - open now.' : ' - closed now.'}`}
         </Text>
+        {readOnly && (
+          <Text size={200}>
+            <WarningRegular /> This customer&apos;s tenant is read-only, so live changes are switched off. What-If still works.
+          </Text>
+        )}
         {!activeConn && (
           <Text size={200}>
             <WarningRegular /> No active connection to the customer&apos;s tenant. Connect from <RouterLink to="/deployment">Deployment</RouterLink>, then come back.
@@ -1108,12 +1178,27 @@ function DeployTab({ base, tid, request: r, design }: { base: string; tid: strin
                 This makes the {rows.length} change{rows.length === 1 ? '' : 's'} above live in the customer&apos;s Microsoft Teams tenant. Nothing
                 else on the site is touched.
               </Text>
+              {!insideWindow && changeWindow && (
+                <Field
+                  label="Why can't this wait for the change window?"
+                  required
+                  hint={`The customer's change window is ${srChangeWindowText(changeWindow)}. Your reason is noted on the request.`}
+                  style={{ marginTop: 12 }}
+                >
+                  <Textarea value={outsideReason} maxLength={1000} onChange={(_, d) => setOutsideReason(d.value)} />
+                </Field>
+              )}
+              {run.error && <Text className={cs.error}>{errorText(run.error, 'Could not start the deployment')}</Text>}
             </DialogContent>
             <DialogActions>
               <Button appearance="secondary" onClick={() => setConfirm(false)}>
                 Cancel
               </Button>
-              <Button appearance="primary" disabled={run.isPending} onClick={() => run.mutate('execute')}>
+              <Button
+                appearance="primary"
+                disabled={run.isPending || (!insideWindow && outsideReason.trim().length < 3)}
+                onClick={() => run.mutate('execute')}
+              >
                 Deploy now
               </Button>
             </DialogActions>
@@ -1121,5 +1206,182 @@ function DeployTab({ base, tid, request: r, design }: { base: string; tid: strin
         </DialogSurface>
       </Dialog>
     </>
+  );
+}
+
+/* -------------------------------- approval -------------------------------- */
+
+function ApprovalBanner({ base, id, approval, onDone }: { base: string; id: string; approval: NonNullable<RequestPayload['approval']>; onDone: () => void }) {
+  const ps = usePageStyles();
+  const cs = useSrStyles();
+  const [note, setNote] = useState('');
+  const decide = useMutation({
+    mutationFn: (approve: boolean) => api(`${base}/${id}/approval`, { method: 'POST', body: JSON.stringify({ approve, note: note.trim() || undefined }) }),
+    onSuccess: onDone,
+  });
+  if (approval.status !== 'pending') {
+    return (
+      <Text size={200}>
+        {approval.status === 'approved' ? 'Approved' : 'Rejected'} by {approval.by ?? 'the approver'}
+        {approval.at ? ` on ${new Date(approval.at).toLocaleDateString()}` : ''}
+        {approval.note ? `: ${approval.note}` : '.'}
+      </Text>
+    );
+  }
+  return (
+    <div className={ps.waiting} style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+      <Text>
+        <b>Waiting for approval</b> from {approval.approvers.join(' or ') || 'the customer'}. The team can&apos;t start until it&apos;s approved.
+      </Text>
+      {approval.canDecide && (
+        <>
+          <Field label="Note" hint="Needed to reject. Shared with the team and the requester.">
+            <Textarea value={note} maxLength={2000} onChange={(_, d) => setNote(d.value)} />
+          </Field>
+          <div className={cs.actions}>
+            <Button appearance="primary" disabled={decide.isPending} onClick={() => decide.mutate(true)}>
+              Approve
+            </Button>
+            <Button disabled={decide.isPending || !note.trim()} onClick={() => decide.mutate(false)}>
+              Reject
+            </Button>
+          </div>
+          {decide.error && <Text className={cs.error}>{errorText(decide.error, 'That did not work')}</Text>}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------ attachments ------------------------------ */
+
+function Attachments({ base, id }: { base: string; id: string }) {
+  const ps = usePageStyles();
+  const cs = useSrStyles();
+  const qc = useQueryClient();
+  const { can } = useAuth();
+  const picker = useRef<HTMLInputElement>(null);
+  const list = useQuery({ queryKey: ['sr-attachments', base, id], queryFn: () => api<FileRow[]>(`${base}/${id}/attachments`) });
+  const upload = useMutation({
+    mutationFn: (f: File) => apiUpload(`${base}/${id}/attachments`, f),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sr-attachments', base, id] });
+      qc.invalidateQueries({ queryKey: ['service-request', base, id] });
+    },
+  });
+  return (
+    <Card className={ps.card}>
+      <div className={cs.actions} style={{ justifyContent: 'space-between' }}>
+        <Text weight="semibold">Attachments</Text>
+        {can('sr:create') && (
+          <>
+            <input
+              ref={picker}
+              type="file"
+              style={{ display: 'none' }}
+              accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.pptx,.csv,.txt"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) upload.mutate(f);
+                e.target.value = '';
+              }}
+            />
+            <Button size="small" disabled={upload.isPending} onClick={() => picker.current?.click()}>
+              {upload.isPending ? 'Uploading…' : 'Attach a file'}
+            </Button>
+          </>
+        )}
+      </div>
+      {(list.data ?? []).length === 0 ? (
+        <Text size={200} className={ps.muted}>
+          No files yet. Pictures, PDFs, Office documents, CSV and text files up to 10 MB.
+        </Text>
+      ) : (
+        <ul style={{ margin: 0, paddingLeft: 20 }}>
+          {list.data!.map((f) => (
+            <li key={f.id}>
+              <Link onClick={() => apiDownload(`${base}/${id}/attachments/${f.id}`, f.filename)}>{f.filename}</Link>{' '}
+              <Text size={200} className={ps.muted}>
+                {Math.max(1, Math.round(f.byteSize / 1024))} KB · {new Date(f.createdAt).toLocaleDateString()}
+              </Text>
+            </li>
+          ))}
+        </ul>
+      )}
+      {upload.error && <Text className={cs.error}>{errorText(upload.error, 'Could not attach the file')}</Text>}
+    </Card>
+  );
+}
+
+/* --------------------------- new phone numbers --------------------------- */
+
+/** Design for a "new phone numbers" request: add the carrier's range to the site's inventory. */
+function NumbersDesign({ base, request: r, design, onDone }: { base: string; request: RequestDetail; design: SrDesignSummary | undefined; onDone: () => void }) {
+  const ps = usePageStyles();
+  const cs = useSrStyles();
+  const editable = srDesignEditable(r.status);
+  const [start, setStart] = useState('');
+  const [end, setEnd] = useState('');
+  const [carrier, setCarrier] = useState('');
+  const add = useMutation({
+    mutationFn: () =>
+      api<{ added: number; skipped: number }>(`${base}/${r.id}/numbers`, {
+        method: 'POST',
+        body: JSON.stringify({ range_start: start.trim(), range_end: (end || start).trim(), carrier: carrier.trim() || undefined }),
+      }),
+    onSuccess: () => {
+      setStart('');
+      setEnd('');
+      onDone();
+    },
+  });
+  const ranges = (design?.items ?? []).filter((i) => i.kind === 'number_range');
+  return (
+    <Card className={ps.card}>
+      <Text weight="semibold" size={400}>
+        Numbers for {r.reference}
+      </Text>
+      <Text size={200} className={ps.muted}>
+        {editable
+          ? "Once the carrier has given you the numbers, add them here. They go into the site's number inventory as free numbers, ready to give to people. There's nothing to deploy - mark the request as designed & built, then as deployed when the numbers work."
+          : r.status === 'new'
+            ? 'Mark the request as planned to add numbers.'
+            : `Locked because the request is ${SR_STATUS_LABELS[r.status]}.`}
+      </Text>
+      {ranges.length > 0 ? (
+        <ul style={{ margin: 0, paddingLeft: 20 }}>
+          {ranges.map((i) => (
+            <li key={i.row_id}>
+              <Text>{i.label ?? 'Range deleted from the inventory'}</Text>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <Text size={200}>No numbers added yet.</Text>
+      )}
+      {editable && (
+        <div className={cs.actions} style={{ alignItems: 'end' }}>
+          <Field label="First number">
+            <Input value={start} placeholder="+442079460100" onChange={(_, d) => setStart(d.value)} />
+          </Field>
+          <Field label="Last number" hint="Leave empty for a single number.">
+            <Input value={end} placeholder="+442079460199" onChange={(_, d) => setEnd(d.value)} />
+          </Field>
+          <Field label="Carrier">
+            <Input value={carrier} onChange={(_, d) => setCarrier(d.value)} />
+          </Field>
+          <Button appearance="primary" disabled={!start.trim() || add.isPending} onClick={() => add.mutate()}>
+            Add numbers
+          </Button>
+        </div>
+      )}
+      {add.data && (
+        <Text size={200}>
+          Added {add.data.added} number{add.data.added === 1 ? '' : 's'}
+          {add.data.skipped ? `; ${add.data.skipped} were already in the inventory` : ''}.
+        </Text>
+      )}
+      {add.error && <Text className={cs.error}>{errorText(add.error, 'Could not add the numbers')}</Text>}
+    </Card>
   );
 }

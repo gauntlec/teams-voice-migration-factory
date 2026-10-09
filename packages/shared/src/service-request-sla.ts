@@ -132,6 +132,25 @@ export function srNextClock(sla: { response: SrClock; resolution: SrClock }): { 
   return { which: 'resolution', clock: sla.resolution };
 }
 
+/** Whether `now` falls inside a change window (in the window's own time zone). No window = always inside. */
+export function srInChangeWindow(w: SrChangeWindow | null | undefined, now = new Date()): boolean {
+  if (!w) return true;
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: w.timeZone, weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+  const day = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(get('weekday'));
+  const hhmm = `${get('hour')}:${get('minute')}`;
+  return w.days.includes(day) && hhmm >= w.start && hhmm < w.end;
+}
+
+/** "Mon-Fri 18:00-22:00 (Europe/London)" */
+export function srChangeWindowText(w: SrChangeWindow): string {
+  const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const days = [...w.days].sort();
+  const contiguous = days.length > 2 && days.every((d, i) => i === 0 || d === days[i - 1]! + 1);
+  const dayText = contiguous ? `${names[days[0]!]}-${names[days[days.length - 1]!]}` : days.map((d) => names[d]).join(', ');
+  return `${dayText} ${w.start}-${w.end} (${w.timeZone})`;
+}
+
 /** "2h 5m", "3d 4h" - for due-in / overdue-by text. */
 export function srDuration(msLeft: number): string {
   const m = Math.max(0, Math.round(Math.abs(msLeft) / 60_000));
