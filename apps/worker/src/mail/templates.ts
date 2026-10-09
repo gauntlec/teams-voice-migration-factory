@@ -1,6 +1,6 @@
 import {
   BUG_STATUS_LABELS,
-  SR_STATUS_LABELS,
+  SR_STATUS_CUSTOMER_LABELS,
   FEATURE_STATUS_LABELS,
   type BugReportStatusChangedContext,
   type DeploymentCompletedContext,
@@ -12,6 +12,8 @@ import {
   type PortDocumentsReminderContext,
   type PortDocumentsRequestedContext,
   type ServiceRequestCreatedContext,
+  type ServiceRequestActivityContext,
+  type ServiceRequestMessageContext,
   type ServiceRequestStatusChangedContext,
   type UserInvitationContext,
 } from '@tvmf/shared';
@@ -54,6 +56,10 @@ export function renderEmail(template: string, context: Record<string, unknown>, 
       return serviceRequestCreated(context as unknown as ServiceRequestCreatedContext, branding);
     case 'service_request_status_changed':
       return serviceRequestStatusChanged(context as unknown as ServiceRequestStatusChangedContext, branding);
+    case 'service_request_message':
+      return serviceRequestMessage(context as unknown as ServiceRequestMessageContext, branding);
+    case 'service_request_activity':
+      return serviceRequestActivity(context as unknown as ServiceRequestActivityContext, branding);
     default:
       throw new Error(`unknown email template: ${template}`);
   }
@@ -326,27 +332,88 @@ function serviceRequestCreated(c: ServiceRequestCreatedContext, branding?: Email
   return { subject, html: renderHtml(layout, branding), text: renderText(layout) };
 }
 
-/** To the person who raised a request: it was planned, built, deployed or cancelled. */
+/** To the person who raised a request: it moved on, was sent back, reopened, declined or cancelled. Uses the customer's status names. */
 function serviceRequestStatusChanged(c: ServiceRequestStatusChangedContext, branding?: EmailBranding): RenderedEmail {
-  const toLabel = SR_STATUS_LABELS[c.toStatus];
+  const toLabel = SR_STATUS_CUSTOMER_LABELS[c.toStatus];
   const lead: Record<string, string> = {
-    planned: 'Your request has been planned. The team will now design and build the change.',
-    built: 'Your request has been designed and built, and is ready to deploy.',
-    deployed: 'Your request has been deployed and is now live.',
+    planned: "Your request has been scheduled. The team is now working on it.",
+    built: 'Your change is ready to go live. The team will make it live shortly.',
+    deployed: 'Your change is now live.',
     cancelled: 'Your request has been cancelled.',
+    declined: "The team can't go ahead with your request.",
   };
-  const subject = `${c.reference} ${toLabel.toLowerCase()} — ${c.title}`;
+  const reopened = c.moveKind === 'reopen';
+  const subject = reopened ? `${c.reference} reopened — ${c.title}` : `${c.reference} ${toLabel.toLowerCase()} — ${c.title}`;
   const layout: LayoutInput = {
-    previewText: `${c.reference} is now ${toLabel}.`,
+    previewText: reopened ? `${c.reference} has been reopened.` : `${c.reference} is now ${toLabel}.`,
     eyebrow: 'Service request update',
-    heading: `${c.reference} — ${toLabel}`,
+    heading: reopened ? `${c.reference} — Reopened` : `${c.reference} — ${toLabel}`,
     intro: [
       `${c.title} (${c.typeLabel})`,
-      lead[c.toStatus] ?? `Your request moved from ${SR_STATUS_LABELS[c.fromStatus]} to ${toLabel}.`,
-      ...(c.note ? [`Note from the team: ${c.note}`] : []),
+      reopened
+        ? 'Your request has been reopened and the team is looking at it again.'
+        : (lead[c.toStatus] ?? `Your request moved from ${SR_STATUS_CUSTOMER_LABELS[c.fromStatus]} to ${toLabel}.`),
+      ...(c.note ? [`${c.toStatus === 'declined' ? 'Reason' : 'Note from the team'}: ${c.note}`] : []),
     ],
     cta: { label: 'View your request', url: c.runUrl },
     outro: ['You are receiving this because you raised this request.'],
   };
   return { subject, html: renderHtml(layout, branding), text: renderText(layout) };
+}
+
+/** To the person who raised a request: a reply, a question that needs answering, or a reminder about one. */
+function serviceRequestMessage(c: ServiceRequestMessageContext, branding?: EmailBranding): RenderedEmail {
+  const subject =
+    c.kind === 'question'
+      ? `${c.reference} needs your reply — ${c.title}`
+      : c.kind === 'reminder'
+        ? `Reminder: ${c.reference} is waiting for your reply`
+        : `New reply on ${c.reference} — ${c.title}`;
+  const lead =
+    c.kind === 'question'
+      ? `${c.author} needs some information before the team can carry on with your request:`
+      : c.kind === 'reminder'
+        ? `The team is still waiting for your reply before it can carry on with your request. ${c.author} asked:`
+        : `${c.author} replied on your request:`;
+  const layout: LayoutInput = {
+    previewText: c.body.slice(0, 120),
+    eyebrow: 'Service request',
+    heading: `${c.reference} — ${c.title}`,
+    intro: [lead, c.body, ...(c.kind === 'comment' ? [] : ['Reply on the request page and the team will pick it up straight away.'])],
+    cta: { label: c.kind === 'comment' ? 'View your request' : 'Reply now', url: c.runUrl },
+    outro: ['You are receiving this because you raised this request.'],
+  };
+  return { subject, html: renderHtml(layout, branding), text: renderText(layout) };
+}
+
+/** To the team: the customer wrote or reopened, a request was assigned to you, a target is at risk, an approval came in. */
+function serviceRequestActivity(c: ServiceRequestActivityContext, branding?: EmailBranding): RenderedEmail {
+  const who = c.author ?? 'Someone';
+  const what: Record<ServiceRequestActivityContext['kind'], { subject: string; lead: string }> = {
+    comment: { subject: `${c.reference}: new comment from the customer`, lead: `${who} commented:` },
+    replied: { subject: `${c.reference}: the customer replied`, lead: `${who} answered your question, so the request is no longer waiting on them:` },
+    internal_note: { subject: `${c.reference}: internal note`, lead: `${who} added an internal note:` },
+    assigned: { subject: `${c.reference} assigned to you`, lead: `${who} assigned this request to you.` },
+    reopened: { subject: `${c.reference} reopened by the customer`, lead: `${who} reopened this deployed request:` },
+    cancelled: { subject: `${c.reference} cancelled by the customer`, lead: `${who} cancelled this request.` },
+    sla_warning: { subject: `${c.reference} is about to miss its target`, lead: 'This request is close to missing its target:' },
+    sla_breached: { subject: `${c.reference} has missed its target`, lead: 'This request has missed its target:' },
+    approval_needed: { subject: `${c.reference} needs your approval`, lead: `${who} raised a request that needs your approval before the team can start.` },
+    approved: { subject: `${c.reference} approved`, lead: `${who} approved this request. You can now plan it.` },
+    rejected: { subject: `${c.reference} rejected by the approver`, lead: `${who} rejected this request:` },
+  };
+  const w = what[c.kind];
+  const layout: LayoutInput = {
+    previewText: w.lead,
+    eyebrow: `Managed Services · ${c.customerName}`,
+    heading: `${c.reference} — ${c.title}`,
+    intro: [`${c.typeLabel} for ${c.customerName}.`, w.lead, ...(c.body ? [c.body] : [])],
+    cta: { label: c.kind === 'approval_needed' ? 'Review the request' : 'Open the request', url: c.runUrl },
+    outro: [
+      c.kind === 'approval_needed'
+        ? 'You are receiving this because you approve service requests for your organisation.'
+        : 'You are receiving this because you work on this customer\'s service requests.',
+    ],
+  };
+  return { subject: w.subject, html: renderHtml(layout, branding), text: renderText(layout) };
 }

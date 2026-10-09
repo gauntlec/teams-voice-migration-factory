@@ -49,7 +49,7 @@ import { renderEmail } from './mail/templates';
 import type { EmailBranding } from './mail/layout';
 import { mailerConfigured, sendMail } from './mail/mailer';
 import { makeMailEnqueuer } from './mail/enqueue';
-import { recordServiceRequestRun } from './service-requests';
+import { recordServiceRequestRun, sweepServiceRequests } from './service-requests';
 
 const QUEUE_NAME = 'deployments';
 const MAIL_QUEUE_NAME = 'mail';
@@ -269,6 +269,9 @@ async function sweepPortDocumentReminders() {
 }
 setInterval(() => void sweepPortDocumentReminders(), 60 * 60_000).unref();
 void sweepPortDocumentReminders();
+// Managed Services: waiting-on-customer reminders (and, later, target warnings).
+setInterval(() => void sweepServiceRequests(db, enqueueMail).catch((e) => console.warn('service request sweep failed', e)), 15 * 60_000).unref();
+void sweepServiceRequests(db, enqueueMail).catch((e) => console.warn('service request sweep failed', e));
 
 async function handleConnectionStart(job: Job) {
   const { schema, connectionId, tenantDomain } = job.data as {

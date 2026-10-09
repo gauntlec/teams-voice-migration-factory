@@ -14,6 +14,8 @@ import {
   DialogTitle,
   Field,
   Input,
+  Radio,
+  RadioGroup,
   Link,
   Select,
   Spinner,
@@ -35,10 +37,15 @@ import {
   SR_BUILD_KIND,
   SR_BUILD_KIND_LABELS,
   SR_ITEM_KIND_LABELS,
+  SR_NOTE_REQUIRED,
+  SR_REOPEN_DAYS,
   SR_STATUS_LABELS,
   SR_TYPE_DEFS,
   canMoveSr,
   nextSrStatus,
+  srCanReopen,
+  srMoveKind,
+  srStatusLabel,
   srDesignEditable,
   srDetailLines,
   srHasDesign,
@@ -60,6 +67,7 @@ import { BuildSiteWorkspace, type BuildTab } from './BuildSiteWorkspace';
 import {
   PRIORITY_LABEL,
   STATUS_COLOR,
+  day,
   errorText,
   useSrStyles,
   when,
@@ -137,6 +145,18 @@ const usePageStyles = makeStyles({
     fontSize: tokens.fontSizeBase200,
   },
   blockers: { margin: 0, paddingLeft: '20px', color: tokens.colorPaletteMarigoldForeground1 },
+  waiting: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    columnGap: tokens.spacingHorizontalM,
+    rowGap: tokens.spacingVerticalS,
+    ...shorthands.padding(tokens.spacingVerticalS, tokens.spacingHorizontalM),
+    ...shorthands.borderRadius(tokens.borderRadiusMedium),
+    ...shorthands.border('1px', 'solid', tokens.colorPaletteYellowBorder1),
+    backgroundColor: tokens.colorPaletteYellowBackground1,
+  },
 });
 
 interface RequestPayload {
@@ -202,9 +222,9 @@ export function ServiceRequestPage() {
       }
     >
       <div className={ps.steps} aria-label="Request progress">
-        {r.status === 'cancelled' ? (
-          <Badge appearance="tint" color="subtle">
-            Cancelled
+        {r.status === 'cancelled' || r.status === 'declined' ? (
+          <Badge appearance="tint" color={STATUS_COLOR[r.status]}>
+            {srStatusLabel(r.status, canManage)}
           </Badge>
         ) : (
           STEPS.map((st, i) => {
@@ -216,7 +236,7 @@ export function ServiceRequestPage() {
                   color={i < at ? 'success' : i === at ? STATUS_COLOR[st] : 'subtle'}
                   icon={i < at ? <CheckmarkRegular /> : undefined}
                 >
-                  {SR_STATUS_LABELS[st]}
+                  {srStatusLabel(st, canManage)}
                 </Badge>
                 {i < STEPS.length - 1 && <ChevronRightRegular className={ps.stepSep} />}
               </span>
@@ -273,7 +293,8 @@ function Overview({
   const canManage = can('sr:manage');
   const [note, setNote] = useState('');
   const [comment, setComment] = useState('');
-  const [internal, setInternal] = useState(false);
+  // Team only: a public reply, a question the customer must answer, or an internal note.
+  const [commentKind, setCommentKind] = useState<'public' | 'question' | 'internal'>('public');
   const r = data.request;
   const id = r.id;
 
@@ -300,17 +321,40 @@ function Overview({
     onSuccess: refresh,
   });
   const addComment = useMutation({
-    mutationFn: () => api(`${base}/${id}/comments`, { method: 'POST', body: JSON.stringify({ body: comment, internal: canManage && internal }) }),
+    mutationFn: () =>
+      api(`${base}/${id}/comments`, {
+        method: 'POST',
+        body: JSON.stringify({
+          body: comment,
+          internal: canManage && commentKind === 'internal',
+          waitForReply: canManage && commentKind === 'question',
+        }),
+      }),
     onSuccess: () => {
       setComment('');
-      setInternal(false);
+      setCommentKind('public');
       refresh();
     },
   });
+  const resume = useMutation({
+    mutationFn: () => api(`${base}/${id}/resume`, { method: 'POST' }),
+    onSuccess: refresh,
+  });
 
   const next = nextSrStatus(r.status);
-  const canCancelOwn = r.status === 'new' && r.requested_by === me?.id;
-  const actionError = move.error ?? assign.error ?? addComment.error;
+  const own = r.requested_by === me?.id;
+  const canCancelOwn = r.status === 'new' && own;
+  const canReopen = srCanReopen(r.status, r.deployed_at) && (canManage || own);
+  const canDecline = canManage && canMoveSr(r.status, 'declined');
+  const canSendBack = canManage && r.status === 'built';
+  const canCancel = (canManage || canCancelOwn) && canMoveSr(r.status, 'cancelled');
+  const noteMissing = !note.trim();
+  const needsNote = (to: SrStatus) => {
+    const k = srMoveKind(r.status, to);
+    return !!k && SR_NOTE_REQUIRED.includes(k);
+  };
+  const actionError = move.error ?? assign.error ?? addComment.error ?? resume.error;
+  const label = (st: SrStatus) => srStatusLabel(st, canManage);
   // "Designed & built" needs the design done; while the summary loads, hold the button.
   const builtBlockers = next === 'built' && hasDesign ? (design?.builtBlockers ?? null) : [];
   const nextBlocked = builtBlockers === null || builtBlockers.length > 0;
@@ -318,18 +362,38 @@ function Overview({
 
   return (
     <>
+      {r.waiting_since && (
+        <div className={ps.waiting}>
+          <Text>
+            {canManage ? (
+              <>
+                <b>Waiting on the customer</b> since {when(r.waiting_since)}. The clock is paused, and they're reminded every few days.
+              </>
+            ) : (
+              <>
+                <b>The team needs your reply</b> before it can carry on. Answer in a comment below.
+              </>
+            )}
+          </Text>
+          {canManage && (
+            <Button size="small" disabled={resume.isPending} onClick={() => resume.mutate()}>
+              Stop waiting
+            </Button>
+          )}
+        </div>
+      )}
       <Card className={ps.card}>
         <div className={cs.facts}>
           <Text className={cs.factLabel}>Status</Text>
           <span>
             <Badge appearance="tint" color={STATUS_COLOR[r.status]}>
-              {SR_STATUS_LABELS[r.status]}
+              {label(r.status)}
             </Badge>
           </span>
           <Text className={cs.factLabel}>Priority</Text>
           <Text>{PRIORITY_LABEL[r.priority]}</Text>
           <Text className={cs.factLabel}>Needed by</Text>
-          <Text>{r.target_date ?? '—'}</Text>
+          <Text>{day(r.target_date)}</Text>
           <Text className={cs.factLabel}>Raised by</Text>
           <Text>
             {r.requested_by_name ?? '—'} · {when(r.created_at)}
@@ -366,9 +430,9 @@ function Overview({
         </Card>
       )}
 
-      {(canManage && (next || canMoveSr(r.status, 'cancelled'))) || canCancelOwn ? (
+      {(canManage && next) || canCancel || canDecline || canSendBack || canReopen ? (
         <Card className={ps.card}>
-          <Text weight="semibold">Move this request on</Text>
+          <Text weight="semibold">{r.status === 'deployed' ? 'Something wrong?' : 'Move this request on'}</Text>
           {hasDesign && r.status === 'new' && canManage && (
             <Text size={200} className={ps.muted}>
               Mark it as planned to start designing it on the Design tab.
@@ -392,8 +456,27 @@ function Overview({
               deployed and emails the requester. Only mark it by hand if it was deployed some other way.
             </Text>
           )}
-          <Field hint={canManage ? 'Optional. Included in the update emailed to the requester.' : undefined}>
-            <Textarea value={note} maxLength={4000} placeholder="Add a note (optional)" resize="vertical" onChange={(_, d) => setNote(d.value)} />
+          {r.status === 'deployed' && canReopen && (
+            <Text size={200} className={ps.muted}>
+              If the change isn&apos;t working, reopen the request within {SR_REOPEN_DAYS} days of it being completed and say what&apos;s wrong.
+            </Text>
+          )}
+          <Field
+            hint={
+              canManage
+                ? 'Included in the email to the requester. Needed to decline, send back or reopen.'
+                : r.status === 'deployed'
+                  ? "Say what isn't working."
+                  : undefined
+            }
+          >
+            <Textarea
+              value={note}
+              maxLength={4000}
+              placeholder={r.status === 'deployed' ? "What isn't working?" : 'Add a note'}
+              resize="vertical"
+              onChange={(_, d) => setNote(d.value)}
+            />
           </Field>
           <div className={cs.actions}>
             {canManage && next && (
@@ -402,11 +485,26 @@ function Overview({
                 disabled={move.isPending || nextBlocked}
                 onClick={() => move.mutate(next)}
               >
-                Mark as {SR_STATUS_LABELS[next].toLowerCase()}
+                Mark as {label(next).toLowerCase()}
               </Button>
             )}
-            {(canManage || canCancelOwn) && canMoveSr(r.status, 'cancelled') && (
-              <Button disabled={move.isPending} onClick={() => move.mutate('cancelled')}>
+            {canSendBack && (
+              <Button disabled={move.isPending || noteMissing} title="Back to Planned, e.g. the design needs changing or a deploy failed." onClick={() => move.mutate('planned')}>
+                Send back to planned
+              </Button>
+            )}
+            {canReopen && (
+              <Button appearance="primary" disabled={move.isPending || noteMissing} onClick={() => move.mutate('planned')}>
+                Reopen
+              </Button>
+            )}
+            {canDecline && (
+              <Button disabled={move.isPending || noteMissing} title="The team won't do this request. The requester is told why." onClick={() => move.mutate('declined')}>
+                Decline
+              </Button>
+            )}
+            {canCancel && (
+              <Button disabled={move.isPending || (needsNote('cancelled') && noteMissing)} onClick={() => move.mutate('cancelled')}>
                 Cancel request
               </Button>
             )}
@@ -422,7 +520,7 @@ function Overview({
               <b>{e.author_name ?? 'Someone'}</b> · {when(e.created_at)}
               {e.internal ? ' · internal note' : ''}
             </Text>
-            <Text style={{ whiteSpace: 'pre-wrap' }}>{eventText(e)}</Text>
+            <Text style={{ whiteSpace: 'pre-wrap' }}>{eventText(e, canManage)}</Text>
             {e.links && e.links.length > 0 && <BuildLinks links={e.links} />}
             {e.kind === 'deployment' && canDeployTab && <Link onClick={() => onOpenTab('deploy')}>See the run on the Deploy tab</Link>}
           </div>
@@ -433,10 +531,16 @@ function Overview({
             <Field label="Add a comment">
               <Textarea value={comment} maxLength={4000} resize="vertical" onChange={(_, d) => setComment(d.value)} />
             </Field>
+            {canManage && (
+              <RadioGroup layout="horizontal" value={commentKind} onChange={(_, d) => setCommentKind(d.value as typeof commentKind)}>
+                <Radio value="public" label="Reply to the customer" />
+                <Radio value="question" label="Ask the customer and wait for their reply" disabled={!['new', 'planned', 'built'].includes(r.status)} />
+                <Radio value="internal" label="Internal note (the customer won't see it)" />
+              </RadioGroup>
+            )}
             <div className={cs.actions}>
-              {canManage && <Checkbox checked={internal} label="Internal note (the customer won't see it)" onChange={(_, d) => setInternal(!!d.checked)} />}
               <Button disabled={!comment.trim() || addComment.isPending} onClick={() => addComment.mutate()}>
-                Add comment
+                {commentKind === 'question' && canManage ? 'Ask and wait' : 'Add comment'}
               </Button>
             </div>
           </div>
@@ -457,14 +561,27 @@ function FactRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function eventText(e: RequestEvent): string {
+function eventText(e: RequestEvent, staff: boolean): string {
   switch (e.kind) {
     case 'created':
       return 'Raised the request.';
     case 'status_changed': {
-      const moved = `Moved from ${e.from_status ? SR_STATUS_LABELS[e.from_status] : '—'} to ${e.to_status ? SR_STATUS_LABELS[e.to_status] : '—'}.`;
+      const k = e.from_status && e.to_status ? srMoveKind(e.from_status, e.to_status) : null;
+      const label = (st: SrStatus | null) => (st ? srStatusLabel(st, staff) : '—');
+      const moved =
+        k === 'reopen'
+          ? 'Reopened the request.'
+          : k === 'send_back'
+            ? `Sent it back to ${label(e.to_status)}.`
+            : k === 'decline'
+              ? 'Declined the request.'
+              : `Moved from ${label(e.from_status)} to ${label(e.to_status)}.`;
       return e.body ? `${moved} ${e.body}` : moved;
     }
+    case 'waiting':
+      return `Asked: ${e.body ?? ''}`;
+    case 'resumed':
+      return staff ? 'No longer waiting on the customer.' : 'No longer waiting for your reply.';
     case 'assigned':
       return e.body === 'Unassigned' ? 'Unassigned the request.' : `Assigned to ${e.body}.`;
     case 'comment':

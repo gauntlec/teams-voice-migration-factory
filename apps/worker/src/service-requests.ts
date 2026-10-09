@@ -1,6 +1,14 @@
 import type { Kysely } from 'kysely';
 import { platformDb, tenantDb, type DB } from '@tvmf/db';
-import { SR_CUSTOMER_NOTIFY_STATUSES, SR_TYPE_DEFS, srReference, type ServiceRequestStatusChangedContext } from '@tvmf/shared';
+import {
+  SR_CUSTOMER_NOTIFY_STATUSES,
+  SR_TYPE_DEFS,
+  SR_WAITING_MAX_REMINDERS,
+  SR_WAITING_REMINDER_DAYS,
+  srReference,
+  type ServiceRequestMessageContext,
+  type ServiceRequestStatusChangedContext,
+} from '@tvmf/shared';
 import type { MailEnqueuer } from './mail/enqueue';
 
 /**
@@ -35,7 +43,7 @@ export async function recordServiceRequestRun(
     const s = tenantDb(db, args.schema);
     const sr = await s
       .selectFrom('service_requests')
-      .select(['id', 'number', 'type', 'title', 'status', 'requested_by'])
+      .select(['id', 'number', 'type', 'title', 'status', 'requested_by', 'waiting_since', 'waiting_seconds'])
       .where('id', '=', args.serviceRequestId)
       .executeTakeFirst();
     if (!sr) return;
@@ -63,7 +71,20 @@ export async function recordServiceRequestRun(
     const now = new Date().toISOString();
     const moved = await s
       .updateTable('service_requests')
-      .set({ status: 'deployed', deployed_at: now, updated_at: now })
+      .set({
+        status: 'deployed',
+        deployed_at: now,
+        updated_at: now,
+        // Deploying ends any wait on the customer.
+        ...(sr.waiting_since
+          ? {
+              waiting_since: null,
+              waiting_seconds: sr.waiting_seconds + Math.max(0, Math.round((Date.now() - new Date(sr.waiting_since).getTime()) / 1000)),
+              waiting_reminded_at: null,
+              waiting_reminders: 0,
+            }
+          : {}),
+      })
       .where('id', '=', sr.id)
       .where('status', '=', 'built') // an engineer moving it at the same moment wins
       .returning('id')
@@ -89,6 +110,7 @@ export async function recordServiceRequestRun(
       typeLabel: SR_TYPE_DEFS[sr.type].label,
       fromStatus: 'built',
       toStatus: 'deployed',
+      moveKind: 'forward',
       note,
       runUrl: `${webOrigin}/service-requests/${sr.id}`,
     };
@@ -103,5 +125,79 @@ export async function recordServiceRequestRun(
   } catch (e) {
     // eslint-disable-next-line no-console
     console.warn(`[deployment ${args.deploymentId}] service request update failed: ${(e as Error).message}`);
+  }
+}
+
+/**
+ * Managed Services housekeeping, every 15 minutes:
+ * - Waiting on customer: remind the requester every SR_WAITING_REMINDER_DAYS
+ *   days, at most SR_WAITING_MAX_REMINDERS times, quoting the team's question.
+ */
+export async function sweepServiceRequests(db: Kysely<DB>, enqueueMail: MailEnqueuer): Promise<void> {
+  const webOrigin = (process.env.WEB_ORIGIN ?? '').replace(/\/+$/, '');
+  const tenants = await platformDb(db).selectFrom('tenants').select(['id', 'schema_name', 'name']).where('managed_services_enabled', '=', true).execute();
+  let reminders = 0;
+  for (const tenant of tenants) {
+    try {
+      const s = tenantDb(db, tenant.schema_name);
+      const dueBefore = Date.now() - SR_WAITING_REMINDER_DAYS * 86_400_000;
+      const waiting = await s
+        .selectFrom('service_requests')
+        .select(['id', 'number', 'type', 'title', 'requested_by', 'waiting_since', 'waiting_reminded_at', 'waiting_reminders'])
+        .where('waiting_since', 'is not', null)
+        .where('status', 'in', ['new', 'planned', 'built'])
+        .where('waiting_reminders', '<', SR_WAITING_MAX_REMINDERS)
+        .execute();
+      for (const r of waiting) {
+        // pg hands timestamps back as Date objects; compare as times.
+        const last = new Date(r.waiting_reminded_at ?? r.waiting_since!).getTime();
+        if (last > dueBefore) continue;
+        const question = await s
+          .selectFrom('service_request_events')
+          .select(['body', 'author_id'])
+          .where('request_id', '=', r.id)
+          .where('kind', '=', 'waiting')
+          .orderBy('created_at', 'desc')
+          .executeTakeFirst();
+        const [requester, author] = await Promise.all([
+          platformDb(db).selectFrom('users').select(['email', 'display_name', 'status']).where('id', '=', r.requested_by).executeTakeFirst(),
+          question ? platformDb(db).selectFrom('users').select('display_name').where('id', '=', question.author_id).executeTakeFirst() : undefined,
+        ]);
+        // Claim the reminder first so two workers never both send it.
+        const claimed = await s
+          .updateTable('service_requests')
+          .set({ waiting_reminded_at: new Date().toISOString(), waiting_reminders: r.waiting_reminders + 1 })
+          .where('id', '=', r.id)
+          .where('waiting_reminders', '=', r.waiting_reminders)
+          .returning('id')
+          .executeTakeFirst();
+        if (!claimed || !requester || requester.status !== 'active') continue;
+        const context: ServiceRequestMessageContext = {
+          customerName: tenant.name,
+          reference: srReference(r.number),
+          title: r.title,
+          typeLabel: SR_TYPE_DEFS[r.type].label,
+          kind: 'reminder',
+          author: author?.display_name ?? 'The team',
+          body: question?.body ?? 'The team needs more information from you.',
+          runUrl: `${webOrigin}/service-requests/${r.id}`,
+        };
+        await enqueueMail({
+          template: 'service_request_message',
+          to: { email: requester.email, name: requester.display_name },
+          context,
+          related: { type: 'service_request', id: r.id },
+          tenantId: tenant.id,
+        });
+        reminders++;
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn(`[service requests] sweep failed for ${tenant.schema_name}: ${(e as Error).message}`);
+    }
+  }
+  if (reminders) {
+    // eslint-disable-next-line no-console
+    console.log(`service request sweep: sent ${reminders} reminder(s)`);
   }
 }

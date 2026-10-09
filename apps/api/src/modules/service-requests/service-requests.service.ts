@@ -21,7 +21,10 @@ import {
   buildIdentityCreateSchema,
   can,
   canDraftSrInBuild,
-  canMoveSr,
+  SR_NOTE_REQUIRED,
+  SR_REOPEN_DAYS,
+  srCanReopen,
+  srMoveKind,
   srBuiltBlockers,
   srDesignEditable,
   srHasDesign,
@@ -47,6 +50,9 @@ import {
   type ServiceRequestCommentInput,
   type ServiceRequestCreatedContext,
   type ServiceRequestStatusChangedContext,
+  type ServiceRequestActivityContext,
+  type ServiceRequestMessageContext,
+  type SrType,
   type ServiceRequestStatusInput,
   type SiteMode,
   type SrMenuOption,
@@ -64,11 +70,12 @@ import { DeploymentService } from '../deployment/deployment.service';
 import { assertSiteInScope, isSiteScoped } from '../data-collection/site-scope';
 
 /** When each status was reached. */
-const REACHED_AT: Partial<Record<SrStatus, 'planned_at' | 'built_at' | 'deployed_at' | 'cancelled_at'>> = {
+const REACHED_AT: Partial<Record<SrStatus, 'planned_at' | 'built_at' | 'deployed_at' | 'cancelled_at' | 'declined_at'>> = {
   planned: 'planned_at',
   built: 'built_at',
   deployed: 'deployed_at',
   cancelled: 'cancelled_at',
+  declined: 'declined_at',
 };
 
 interface StaffMember {
@@ -172,6 +179,7 @@ export class ServiceRequestsService {
         'sr.target_date as target_date',
         'sr.created_at as created_at',
         'sr.updated_at as updated_at',
+        'sr.waiting_since as waiting_since',
       ])
       .orderBy('sr.number', 'desc');
     if (q.status === 'open') query = query.where('sr.status', 'in', [...SR_OPEN_STATUSES]);
@@ -490,27 +498,120 @@ export class ServiceRequestsService {
    * requests move them; the person who raised one may cancel it while it is
    * still New. The customer is emailed at Planned, Built, Deployed and Cancelled.
    */
+  /* ------------------------------ notifications ------------------------------ */
+
+  /** The fields every service request email starts with. */
+  private emailBase(t: TenantContext, row: { id: string; number: number; title: string; type: SrType }) {
+    return { customerName: t.name, reference: srReference(row.number), title: row.title, typeLabel: SR_TYPE_DEFS[row.type].label, runUrl: this.url(row.id) };
+  }
+
+  /** Emails the person who raised the request - unless they did this themselves, or their account is no longer active. */
+  private async emailRequester(
+    t: TenantContext,
+    row: { id: string; requested_by: string },
+    authorId: string,
+    template: 'service_request_status_changed' | 'service_request_message',
+    context: ServiceRequestStatusChangedContext | ServiceRequestMessageContext,
+  ) {
+    if (row.requested_by === authorId) return;
+    const requester = await platformDb(this.db)
+      .selectFrom('users')
+      .select(['email', 'display_name', 'status'])
+      .where('id', '=', row.requested_by)
+      .executeTakeFirst();
+    if (!requester || requester.status !== 'active') return;
+    await this.mail.enqueue({
+      template,
+      to: { email: requester.email, name: requester.display_name },
+      context: context as unknown as Record<string, unknown>,
+      related: { type: 'service_request', id: row.id },
+      createdBy: authorId,
+      tenantId: t.id,
+    });
+  }
+
+  /**
+   * Emails the team about a request: its assignee, or - when nobody is
+   * assigned - every engineer and Super Admin on the customer. Never the
+   * person who caused it.
+   */
+  private async emailTeam(
+    t: TenantContext,
+    row: { id: string; number: number; title: string; type: SrType; assigned_to: string | null },
+    kind: ServiceRequestActivityContext['kind'],
+    author: { id: string; displayName: string } | null,
+    body: string | null,
+    opts: { assigneeOnly?: boolean } = {},
+  ) {
+    const staff = await this.staff(t);
+    const assignee = row.assigned_to ? staff.find((m) => m.id === row.assigned_to) : undefined;
+    const to = assignee ? [assignee] : opts.assigneeOnly ? [] : staff;
+    const context: ServiceRequestActivityContext = { ...this.emailBase(t, row), kind, author: author?.displayName ?? null, body };
+    for (const m of to) {
+      if (author && m.id === author.id) continue;
+      await this.mail.enqueue({
+        template: 'service_request_activity',
+        to: { email: m.email, name: m.display_name },
+        context: context as unknown as Record<string, unknown>,
+        related: { type: 'service_request', id: row.id },
+        createdBy: author?.id ?? null,
+        tenantId: t.id,
+      });
+    }
+  }
+
+  /** Stops the "waiting on customer" clock, adding the time to waiting_seconds. Returns the columns to set. */
+  private stopWaiting(row: { waiting_since: string | null; waiting_seconds: number }, now: string) {
+    if (!row.waiting_since) return {};
+    const waited = Math.max(0, Math.round((new Date(now).getTime() - new Date(row.waiting_since).getTime()) / 1000));
+    return { waiting_since: null, waiting_seconds: row.waiting_seconds + waited, waiting_reminded_at: null, waiting_reminders: 0 };
+  }
+
+  /* ------------------------------ workflow ------------------------------ */
+
+  /**
+   * Moves a request (see srMoveKind). Engineers and admins can make every
+   * move; the person who raised it can cancel it while it is New, and reopen
+   * it within SR_REOPEN_DAYS of it being deployed. Declining, sending back
+   * and reopening need a reason. Any move ends "waiting on customer".
+   */
   async move(t: TenantContext, user: AuthedUser, id: string, input: ServiceRequestStatusInput, canManage: boolean) {
     this.assertEnabled(t);
     const row = await this.load(t, id);
     const from = row.status;
     const to = input.to;
+    const kind = srMoveKind(from, to);
+    if (!kind) throw new BadRequestException(`A ${SR_STATUS_LABELS[from]} request can't be moved to ${SR_STATUS_LABELS[to]}.`);
+    const own = row.requested_by === user.id;
     if (!canManage) {
-      const ownCancel = to === 'cancelled' && from === 'new' && row.requested_by === user.id;
-      if (!ownCancel) throw new ForbiddenException('Only the engineers on this customer can move a request on. You can cancel your own request while it is still New.');
+      const allowed = (kind === 'cancel' && from === 'new' && own) || (kind === 'reopen' && own);
+      if (!allowed) {
+        throw new ForbiddenException(
+          'Only the engineers on this customer can move a request on. You can cancel your own request while it is still New, or reopen it shortly after it was completed.',
+        );
+      }
     }
-    if (!canMoveSr(from, to)) {
-      throw new BadRequestException(`A ${SR_STATUS_LABELS[from]} request can't be moved to ${SR_STATUS_LABELS[to]}.`);
+    if (kind === 'reopen' && !srCanReopen(from, row.deployed_at)) {
+      throw new BadRequestException(`A request can only be reopened within ${SR_REOPEN_DAYS} days of being completed. Raise a new request instead.`);
     }
-    if (to === 'built') {
+    const note = input.note?.trim() || null;
+    if (SR_NOTE_REQUIRED.includes(kind) && !note) {
+      throw new BadRequestException(kind === 'decline' ? 'Say why the request is being declined.' : kind === 'send_back' ? 'Say why it is being sent back.' : 'Say what is wrong.');
+    }
+    if (kind === 'forward' && to === 'built') {
       const blockers = (await this.design(t, id)).builtBlockers;
       if (blockers.length) throw new BadRequestException(`Not ready to mark as designed & built: ${blockers.join(' ')}`);
     }
+
     const now = new Date().toISOString();
     const reachedAt = REACHED_AT[to];
+    const set: Record<string, unknown> = { status: to, updated_at: now, ...(reachedAt ? { [reachedAt]: now } : {}), ...this.stopWaiting(row, now) };
+    if (kind === 'send_back') set.built_at = null;
+    if (kind === 'reopen') Object.assign(set, { reopened_at: now, deployed_at: null, built_at: null });
+    if (canManage && !row.first_response_at) set.first_response_at = now;
     const updated = await tenantDb(this.db, t.schema)
       .updateTable('service_requests')
-      .set({ status: to, updated_at: now, ...(reachedAt ? { [reachedAt]: now } : {}) })
+      .set(set)
       .where('id', '=', id)
       .where('status', '=', from) // someone else moving it at the same moment loses, not both
       .returningAll()
@@ -519,42 +620,24 @@ export class ServiceRequestsService {
 
     await tenantDb(this.db, t.schema)
       .insertInto('service_request_events')
-      .values({ request_id: id, kind: 'status_changed', from_status: from, to_status: to, body: input.note || null, author_id: user.id })
+      .values({ request_id: id, kind: 'status_changed', from_status: from, to_status: to, body: note, author_id: user.id })
       .execute();
     const reference = srReference(row.number);
     await this.audit.tenant(t.schema, 'service_request.status_changed', {
       actor: { id: user.id, email: user.email },
       targetType: 'service_request',
       targetId: id,
-      detail: { reference, from, to },
+      detail: { reference, from, to, kind },
     });
 
-    if (SR_CUSTOMER_NOTIFY_STATUSES.includes(to) && row.requested_by !== user.id) {
-      const requester = await platformDb(this.db)
-        .selectFrom('users')
-        .select(['email', 'display_name', 'status'])
-        .where('id', '=', row.requested_by)
-        .executeTakeFirst();
-      if (requester && requester.status === 'active') {
-        const context: ServiceRequestStatusChangedContext = {
-          customerName: t.name,
-          reference,
-          title: row.title,
-          typeLabel: SR_TYPE_DEFS[row.type].label,
-          fromStatus: from,
-          toStatus: to,
-          note: input.note || null,
-          runUrl: this.url(id),
-        };
-        await this.mail.enqueue({
-          template: 'service_request_status_changed',
-          to: { email: requester.email, name: requester.display_name },
-          context: context as unknown as Record<string, unknown>,
-          related: { type: 'service_request', id },
-          createdBy: user.id,
-          tenantId: t.id,
-        });
-      }
+    // The customer hears about every move except an internal send-back.
+    if (kind !== 'send_back' && SR_CUSTOMER_NOTIFY_STATUSES.includes(to)) {
+      const context: ServiceRequestStatusChangedContext = { ...this.emailBase(t, row), fromStatus: from, toStatus: to, moveKind: kind, note };
+      await this.emailRequester(t, row, user.id, 'service_request_status_changed', context);
+    }
+    // The team hears when the customer acts.
+    if (!canManage && (kind === 'reopen' || kind === 'cancel')) {
+      await this.emailTeam(t, row, kind === 'reopen' ? 'reopened' : 'cancelled', user, note);
     }
     return { ...updated, reference };
   }
@@ -582,20 +665,70 @@ export class ServiceRequestsService {
       targetId: id,
       detail: { reference: srReference(row.number), assigneeId },
     });
+    // Tell the new assignee (not when you pick yourself).
+    if (assigneeId && assigneeId !== user.id && assigneeId !== row.assigned_to) {
+      await this.emailTeam(t, { ...row, assigned_to: assigneeId }, 'assigned', user, null, { assigneeOnly: true });
+    }
     return { ...updated, reference: srReference(row.number) };
   }
 
+  /**
+   * A comment on the request.
+   * - Team, public: emailed to the requester. With waitForReply, it's a
+   *   question: the request is "waiting on customer" (the clock stops) until
+   *   the customer replies, and they're reminded every few days.
+   * - Team, internal: never shown to the customer; emailed to the assignee.
+   * - Customer: emailed to the assignee (or the whole team); if the team was
+   *   waiting on them, that ends the wait.
+   */
   async comment(t: TenantContext, user: AuthedUser, id: string, input: ServiceRequestCommentInput, canManage: boolean) {
     this.assertEnabled(t);
-    await this.load(t, id);
+    const row = await this.load(t, id);
     if (input.internal && !canManage) throw new ForbiddenException('Only engineers and admins can add internal notes.');
-    const event = await tenantDb(this.db, t.schema)
+    if (input.waitForReply && (!canManage || input.internal)) throw new BadRequestException('Only a public comment from the team can wait for the customer.');
+    if (input.waitForReply && !SR_OPEN_STATUSES.includes(row.status)) throw new BadRequestException('Only an open request can wait on the customer.');
+    const s = tenantDb(this.db, t.schema);
+    const now = new Date().toISOString();
+    const question = !!input.waitForReply;
+    const event = await s
       .insertInto('service_request_events')
-      .values({ request_id: id, kind: 'comment', body: input.body, internal: !!input.internal, author_id: user.id })
+      .values({ request_id: id, kind: question ? 'waiting' : 'comment', body: input.body, internal: !!input.internal, author_id: user.id })
       .returningAll()
       .executeTakeFirstOrThrow();
-    await tenantDb(this.db, t.schema).updateTable('service_requests').set({ updated_at: new Date().toISOString() }).where('id', '=', id).execute();
+
+    const set: Record<string, unknown> = { updated_at: now };
+    const publicFromTeam = canManage && !input.internal;
+    if (publicFromTeam && !row.first_response_at) set.first_response_at = now;
+    if (question && !row.waiting_since) Object.assign(set, { waiting_since: now, waiting_reminded_at: null, waiting_reminders: 0 });
+    // The customer answering ends the wait.
+    const replied = !canManage && !!row.waiting_since;
+    if (replied) Object.assign(set, this.stopWaiting(row, now));
+    await s.updateTable('service_requests').set(set).where('id', '=', id).execute();
+    if (replied) {
+      await s.insertInto('service_request_events').values({ request_id: id, kind: 'resumed', author_id: user.id }).execute();
+    }
+
+    if (publicFromTeam) {
+      const context: ServiceRequestMessageContext = { ...this.emailBase(t, row), kind: question ? 'question' : 'comment', author: user.displayName, body: input.body };
+      await this.emailRequester(t, row, user.id, 'service_request_message', context);
+    } else if (input.internal) {
+      await this.emailTeam(t, row, 'internal_note', user, input.body, { assigneeOnly: true });
+    } else {
+      await this.emailTeam(t, row, replied ? 'replied' : 'comment', user, input.body);
+    }
     return event;
+  }
+
+  /** The team stops waiting on the customer without a reply (e.g. they answered by phone). */
+  async stopWaitingOnCustomer(t: TenantContext, user: AuthedUser, id: string) {
+    this.assertEnabled(t);
+    const row = await this.load(t, id);
+    if (!row.waiting_since) return { ok: true };
+    const s = tenantDb(this.db, t.schema);
+    const now = new Date().toISOString();
+    await s.updateTable('service_requests').set({ ...this.stopWaiting(row, now), updated_at: now }).where('id', '=', id).execute();
+    await s.insertInto('service_request_events').values({ request_id: id, kind: 'resumed', author_id: user.id }).execute();
+    return { ok: true };
   }
 
   /* ----------------------- Create in Design & Build ----------------------- */

@@ -20,26 +20,52 @@ export const SR_TYPES = [
 ] as const;
 export type SrType = (typeof SR_TYPES)[number];
 
-/** Workflow order. `cancelled` can be reached from any open status. */
-export const SR_STATUSES = ['new', 'planned', 'built', 'deployed', 'cancelled'] as const;
+/**
+ * Workflow order. `cancelled` (the customer or team withdrew it) and
+ * `declined` (the team won't do it) can be reached from any open status.
+ */
+export const SR_STATUSES = ['new', 'planned', 'built', 'deployed', 'cancelled', 'declined'] as const;
 export type SrStatus = (typeof SR_STATUSES)[number];
 
+/** What the team sees. */
 export const SR_STATUS_LABELS: Record<SrStatus, string> = {
   new: 'New',
   planned: 'Planned',
   built: 'Designed & built',
   deployed: 'Deployed',
   cancelled: 'Cancelled',
+  declined: 'Declined',
 };
+
+/** What the customer sees (pages and emails): plain words, no delivery jargon. */
+export const SR_STATUS_CUSTOMER_LABELS: Record<SrStatus, string> = {
+  new: 'Received',
+  planned: 'Scheduled',
+  built: 'Ready to go live',
+  deployed: 'Completed',
+  cancelled: 'Cancelled',
+  declined: 'Declined',
+};
+
+export function srStatusLabel(status: SrStatus, staff: boolean): string {
+  return (staff ? SR_STATUS_LABELS : SR_STATUS_CUSTOMER_LABELS)[status];
+}
 
 /** Still waiting on the team. */
 export const SR_OPEN_STATUSES: readonly SrStatus[] = ['new', 'planned', 'built'];
 
-/** The customer is emailed when their request reaches one of these. */
-export const SR_CUSTOMER_NOTIFY_STATUSES: readonly SrStatus[] = ['planned', 'built', 'deployed', 'cancelled'];
+/** The customer is emailed when their request reaches one of these (but not when it's sent back a step). */
+export const SR_CUSTOMER_NOTIFY_STATUSES: readonly SrStatus[] = ['planned', 'built', 'deployed', 'cancelled', 'declined'];
 
 export const SR_PRIORITIES = ['low', 'normal', 'high', 'urgent'] as const;
 export type SrPriority = (typeof SR_PRIORITIES)[number];
+
+/** A deployed request can be reopened for this long (e.g. "it isn't working"). */
+export const SR_REOPEN_DAYS = 14;
+
+/** While waiting on the customer, remind them every this many days, at most SR_WAITING_MAX_REMINDERS times. */
+export const SR_WAITING_REMINDER_DAYS = 3;
+export const SR_WAITING_MAX_REMINDERS = 3;
 
 const FORWARD: Partial<Record<SrStatus, SrStatus>> = { new: 'planned', planned: 'built', built: 'deployed' };
 
@@ -48,10 +74,36 @@ export function nextSrStatus(status: SrStatus): SrStatus | null {
   return FORWARD[status] ?? null;
 }
 
-/** A move is one step forward, or a cancel from any open status. */
+/**
+ * The kinds of move:
+ *  forward   - one step on (New -> Planned -> Designed & built -> Deployed)
+ *  cancel    - withdrawn, from any open status
+ *  decline   - the team won't do it, from any open status (reason required)
+ *  send_back - Designed & built -> Planned, e.g. the design was wrong or a deploy failed (reason required)
+ *  reopen    - Deployed -> Planned within SR_REOPEN_DAYS (reason required)
+ */
+export type SrMoveKind = 'forward' | 'cancel' | 'decline' | 'send_back' | 'reopen';
+
+export function srMoveKind(from: SrStatus, to: SrStatus): SrMoveKind | null {
+  if (to === 'cancelled') return SR_OPEN_STATUSES.includes(from) ? 'cancel' : null;
+  if (to === 'declined') return SR_OPEN_STATUSES.includes(from) ? 'decline' : null;
+  if (FORWARD[from] === to) return 'forward';
+  if (from === 'built' && to === 'planned') return 'send_back';
+  if (from === 'deployed' && to === 'planned') return 'reopen';
+  return null;
+}
+
+/** Moves that must say why. */
+export const SR_NOTE_REQUIRED: readonly SrMoveKind[] = ['decline', 'send_back', 'reopen'];
+
 export function canMoveSr(from: SrStatus, to: SrStatus): boolean {
-  if (to === 'cancelled') return SR_OPEN_STATUSES.includes(from);
-  return FORWARD[from] === to;
+  return srMoveKind(from, to) !== null;
+}
+
+/** Whether a Deployed request is still inside the reopen window. */
+export function srCanReopen(status: SrStatus, deployedAt: string | null, now = Date.now()): boolean {
+  if (status !== 'deployed' || !deployedAt) return false;
+  return now - new Date(deployedAt).getTime() <= SR_REOPEN_DAYS * 86_400_000;
 }
 
 /** "SR-0042": how a request is referred to in the app and in email. */

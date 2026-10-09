@@ -1542,6 +1542,8 @@ export const serviceRequestCommentSchema = z.object({
   body: z.string().trim().min(1, 'Write a comment').max(4000),
   /** Staff-only note the customer never sees. */
   internal: z.boolean().optional(),
+  /** Team only, public: a question - the request waits on the customer until they reply. */
+  waitForReply: z.boolean().optional(),
 });
 export type ServiceRequestCommentInput = z.infer<typeof serviceRequestCommentSchema>;
 

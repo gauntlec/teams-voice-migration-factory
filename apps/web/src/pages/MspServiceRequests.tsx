@@ -48,12 +48,13 @@ interface QueueResponse {
   items: QueueItem[];
 }
 
-const STATUS_COLOR: Record<SrStatus, 'informative' | 'brand' | 'warning' | 'success' | 'subtle'> = {
+const STATUS_COLOR: Record<SrStatus, 'informative' | 'brand' | 'warning' | 'success' | 'subtle' | 'danger'> = {
   new: 'informative',
   planned: 'brand',
   built: 'warning',
   deployed: 'success',
   cancelled: 'subtle',
+  declined: 'danger',
 };
 const PRIORITY_LABEL: Record<SrPriority, string> = { low: 'Low', normal: 'Normal', high: 'High', urgent: 'Urgent' };
 

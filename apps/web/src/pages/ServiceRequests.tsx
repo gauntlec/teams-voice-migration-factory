@@ -39,7 +39,7 @@ import {
   SR_NEW_NUMBER_KEY,
   SR_BUILD_KIND_LABELS,
   SR_PRIORITIES,
-  SR_STATUS_LABELS,
+  srStatusLabel,
   SR_STATUSES,
   SR_TYPES,
   SR_TYPE_DEFS,
@@ -83,6 +83,8 @@ export interface RequestRow {
   assigned_to_name: string | null;
   target_date: string | null;
   created_at: string;
+  /** Set while the team is waiting for the customer's reply. */
+  waiting_since: string | null;
 }
 
 export interface RequestDetail extends RequestRow {
@@ -92,11 +94,14 @@ export interface RequestDetail extends RequestRow {
   built_at: string | null;
   deployed_at: string | null;
   cancelled_at: string | null;
+  declined_at: string | null;
+  reopened_at: string | null;
+  first_response_at: string | null;
 }
 
 export interface RequestEvent {
   id: string;
-  kind: 'created' | 'status_changed' | 'assigned' | 'comment' | 'build_drafted' | 'deployment';
+  kind: 'created' | 'status_changed' | 'assigned' | 'comment' | 'build_drafted' | 'deployment' | 'waiting' | 'resumed';
   from_status: SrStatus | null;
   to_status: SrStatus | null;
   body: string | null;
@@ -138,12 +143,13 @@ interface FormOptions {
 
 const COUNTRY_OPTIONS = [...COUNTRY_CODES].map((c) => ({ code: c, name: countryName(c) })).sort((a, b) => a.name.localeCompare(b.name));
 
-export const STATUS_COLOR: Record<SrStatus, 'informative' | 'brand' | 'warning' | 'success' | 'subtle'> = {
+export const STATUS_COLOR: Record<SrStatus, 'informative' | 'brand' | 'warning' | 'success' | 'subtle' | 'danger'> = {
   new: 'informative',
   planned: 'brand',
   built: 'warning',
   deployed: 'success',
   cancelled: 'subtle',
+  declined: 'danger',
 };
 
 export const PRIORITY_LABEL: Record<SrPriority, string> = { low: 'Low', normal: 'Normal', high: 'High', urgent: 'Urgent' };
@@ -169,6 +175,13 @@ export const useSrStyles = makeStyles({
 
 export function errorText(e: unknown, fallback: string) {
   return e instanceof ApiError ? e.message : fallback;
+}
+
+/** A date-only value (e.g. "needed by"): shown as that calendar day, whatever the viewer's time zone. */
+export function day(value: string | null) {
+  if (!value) return '—';
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString() : value;
 }
 
 export function when(iso: string | null) {
@@ -238,7 +251,7 @@ export function ServiceRequests() {
             <option value="open">Open</option>
             {SR_STATUSES.map((s) => (
               <option key={s} value={s}>
-                {SR_STATUS_LABELS[s]}
+                {srStatusLabel(s, can('sr:manage'))}
               </option>
             ))}
             <option value="all">All</option>
@@ -287,8 +300,13 @@ export function ServiceRequests() {
                   <TableCell>{PRIORITY_LABEL[r.priority]}</TableCell>
                   <TableCell>
                     <Badge appearance="tint" color={STATUS_COLOR[r.status]}>
-                      {SR_STATUS_LABELS[r.status]}
+                      {srStatusLabel(r.status, can('sr:manage'))}
                     </Badge>
+                    {r.waiting_since && (
+                      <Badge appearance="outline" color="warning" style={{ marginLeft: 4 }} title="The team asked a question and is waiting for a reply.">
+                        {can('sr:manage') ? 'Waiting on customer' : 'Needs your reply'}
+                      </Badge>
+                    )}
                   </TableCell>
                   <TableCell>{r.assigned_to_name ?? '—'}</TableCell>
                   <TableCell>

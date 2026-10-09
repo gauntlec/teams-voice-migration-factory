@@ -16,6 +16,8 @@ export const EMAIL_TEMPLATES = [
   'bug_report_status_changed',
   'service_request_created',
   'service_request_status_changed',
+  'service_request_message',
+  'service_request_activity',
 ] as const;
 export type EmailTemplate = (typeof EMAIL_TEMPLATES)[number];
 
@@ -185,7 +187,52 @@ export interface ServiceRequestStatusChangedContext {
   typeLabel: string;
   fromStatus: import('./service-requests').SrStatus;
   toStatus: import('./service-requests').SrStatus;
+  /** How it moved; a reopen or decline reads differently from a step forward. Older messages have none. */
+  moveKind?: import('./service-requests').SrMoveKind;
   note?: string | null;
+  runUrl: string;
+}
+
+/**
+ * To the person who raised a request: the team wrote to them.
+ *  comment  - a reply on the request
+ *  question - the team needs something before it can carry on (waiting on the customer)
+ *  reminder - the question is still unanswered (worker, every few days)
+ */
+export interface ServiceRequestMessageContext {
+  customerName: string;
+  reference: string;
+  title: string;
+  typeLabel: string;
+  kind: 'comment' | 'question' | 'reminder';
+  author: string;
+  body: string;
+  runUrl: string;
+}
+
+/**
+ * To the team (the assignee, or every engineer and Super Admin on the customer
+ * when nobody is assigned): something happened on a request they need to see.
+ */
+export interface ServiceRequestActivityContext {
+  customerName: string;
+  reference: string;
+  title: string;
+  typeLabel: string;
+  kind:
+    | 'comment' // the customer commented
+    | 'replied' // the customer answered the team's question
+    | 'internal_note' // a colleague added an internal note
+    | 'assigned' // the request was assigned to the recipient
+    | 'reopened' // the customer reopened a deployed request
+    | 'cancelled' // the customer cancelled it
+    | 'sla_warning' // a response/resolution target is about to be missed
+    | 'sla_breached' // ... or has been
+    | 'approval_needed' // (phase 4) a customer approver must approve it
+    | 'approved'
+    | 'rejected';
+  author: string | null;
+  body: string | null;
   runUrl: string;
 }
 

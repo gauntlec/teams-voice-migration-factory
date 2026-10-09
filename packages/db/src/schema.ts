@@ -879,12 +879,23 @@ export interface ServiceRequestsTable {
   built_at: string | null;
   deployed_at: string | null;
   cancelled_at: string | null;
+  /** 0039_sr_conversation_workflow.sql */
+  declined_at: ColumnType<string | null, string | null | undefined, string | null>;
+  reopened_at: ColumnType<string | null, string | null | undefined, string | null>;
+  /** Set while the team is waiting for the customer's reply. */
+  waiting_since: ColumnType<string | null, string | null | undefined, string | null>;
+  /** Total seconds spent waiting on the customer - left out of response/resolution targets. */
+  waiting_seconds: ColumnType<number, number | undefined, number>;
+  waiting_reminded_at: ColumnType<string | null, string | null | undefined, string | null>;
+  waiting_reminders: ColumnType<number, number | undefined, number>;
+  /** The team's first reply, question or move - the response target is measured to it. */
+  first_response_at: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 export interface ServiceRequestEventsTable {
   id: Generated<string>;
   request_id: string;
-  kind: 'created' | 'status_changed' | 'assigned' | 'comment' | 'build_drafted' | 'deployment';
+  kind: 'created' | 'status_changed' | 'assigned' | 'comment' | 'build_drafted' | 'deployment' | 'waiting' | 'resumed';
   from_status: string | null;
   to_status: string | null;
   body: string | null;

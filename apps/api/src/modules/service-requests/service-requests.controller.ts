@@ -107,6 +107,13 @@ export class ServiceRequestsController {
     return this.svc.move(t, user, id, body, can(user.role, 'sr:manage'));
   }
 
+  /** The team stops waiting on the customer without a reply. */
+  @Post(':id/resume')
+  @RequirePermission('sr:manage')
+  resume(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string) {
+    return this.svc.stopWaitingOnCustomer(t, user, id);
+  }
+
   @Post(':id/assign')
   @RequirePermission('sr:manage')
   assign(
