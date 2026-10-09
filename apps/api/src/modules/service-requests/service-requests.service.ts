@@ -1735,6 +1735,8 @@ export class ServiceRequestsService {
       if (!found || found.site_id !== siteId) throw new BadRequestException(`${plan.label} is no longer at this site in Design & Build.`);
       rowId = found.id;
     }
+    // A row still waiting to deploy on another request can't take this change yet (409, names that request).
+    await this.build.assertNotSrLocked(t, [rowId]);
     await this.linkItem(t, user, row.id, plan.kind, rowId);
 
     // 2. Apply what maps cleanly.

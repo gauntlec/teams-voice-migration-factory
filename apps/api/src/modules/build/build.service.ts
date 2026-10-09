@@ -45,6 +45,9 @@ import {
   type NumberType,
   type Paginated,
   type PolicyKey,
+  SR_STATUSES,
+  srDesignLockedMessage,
+  srDesignLocksRows,
   srReference,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
@@ -89,6 +92,26 @@ export class BuildService {
     const byRow = new Map<string, string[]>();
     for (const l of links) byRow.set(l.row_id, [...(byRow.get(l.row_id) ?? []), srReference(l.number)]);
     return rows.map((r) => ({ ...r, service_requests: byRow.get(r.id) ?? [] }));
+  }
+
+  /**
+   * Managed Services: refuses (409) to change or delete rows linked to a
+   * request that locks its design - Designed & built, waiting to deploy (see
+   * srDesignLocksRows). Called first by every update / delete / bulk path,
+   * before any side effect such as releasing a number. Rows on no request,
+   * or only on Planned or finished ones, pass. No role overrides it.
+   */
+  async assertNotSrLocked(t: TenantContext, rowIds: string[]) {
+    if (rowIds.length === 0) return;
+    const hit = await this.s(t)
+      .selectFrom('service_request_items as i')
+      .innerJoin('service_requests as r', 'r.id', 'i.request_id')
+      .select(['r.number', 'r.status'])
+      .where('i.row_id', 'in', rowIds)
+      .where('r.status', 'in', SR_STATUSES.filter(srDesignLocksRows))
+      .orderBy('r.number')
+      .executeTakeFirst();
+    if (hit) throw new ConflictException(srDesignLockedMessage(hit.number, hit.status));
   }
 
   /* ============================ site rollup ============================ */
@@ -413,6 +436,7 @@ export class BuildService {
   }
 
   async deleteIdentity(t: TenantContext, u: AuthedUser, table: 'build_users' | 'build_caps', id: string) {
+    await this.assertNotSrLocked(t, [id]);
     await this.releaseHolder(t, holderTypeOf(table), id);
     const row = await this.s(t).deleteFrom(table).where('id', '=', id).returningAll().executeTakeFirst();
     if (!row) throw new NotFoundException('row not found');
@@ -499,6 +523,7 @@ export class BuildService {
     id: string,
     body: BuildIdentityPatchInput & Record<string, unknown>,
   ) {
+    await this.assertNotSrLocked(t, [id]);
     const { phone_number_id, policy_ids, ...rest } = body;
     const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
     // pg serialises a plain object to jsonb fine, but a top-level array value
@@ -549,6 +574,7 @@ export class BuildService {
     ids: string[],
     body: Record<string, unknown>,
   ): Promise<{ updated: number }> {
+    await this.assertNotSrLocked(t, ids);
     const { policy_ids, ...rest } = body;
     const patch: Record<string, unknown> = { ...rest };
     // Bulk patches are genuinely partial by design - BulkEditDialog starts
@@ -709,6 +735,7 @@ export class BuildService {
    * exists in place, deletable separately if that's really the intent too.
    */
   async deleteResourceAccount(t: TenantContext, u: AuthedUser, id: string) {
+    await this.assertNotSrLocked(t, [id]);
     await this.releaseHolder(t, 'resource_account', id);
     const row = await this.s(t).deleteFrom('build_resource_accounts').where('id', '=', id).returningAll().executeTakeFirst();
     if (!row) throw new NotFoundException('row not found');
@@ -789,6 +816,7 @@ export class BuildService {
   }
 
   async updateResourceAccount(t: TenantContext, u: AuthedUser, id: string, body: BuildResourceAccountPatchInput) {
+    await this.assertNotSrLocked(t, [id]);
     const { phone_number_id, created, voice_routing_policy_id, ...rest } = body;
     const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
     if (phone_number_id !== undefined) {
@@ -867,6 +895,7 @@ export class BuildService {
   }
 
   async updateSharedCallingPolicy(t: TenantContext, u: AuthedUser, id: string, body: BuildSharedCallingPolicyPatchInput) {
+    await this.assertNotSrLocked(t, [id]);
     const { emergency_numbers, ...rest } = body;
     const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
     if (emergency_numbers !== undefined) patch.emergency_numbers = JSON.stringify(emergency_numbers);
@@ -887,6 +916,7 @@ export class BuildService {
   }
 
   async deleteSharedCallingPolicy(t: TenantContext, u: AuthedUser, id: string) {
+    await this.assertNotSrLocked(t, [id]);
     const row = await this.s(t).deleteFrom('build_shared_calling_policies').where('id', '=', id).returningAll().executeTakeFirst();
     if (!row) throw new NotFoundException('row not found');
     await this.audit.tenant(t.schema, 'build.shared_calling_policy_deleted', {
@@ -1243,6 +1273,7 @@ export class BuildService {
   }
 
   async updateCallQueue(t: TenantContext, u: AuthedUser, id: string, body: BuildCallQueuePatchInput) {
+    await this.assertNotSrLocked(t, [id]);
     const existing = await this.getCallQueue(t, id);
     const overflow = body.overflow !== undefined ? body.overflow : (existing.overflow as Record<string, unknown>);
     const timeout = body.timeout !== undefined ? body.timeout : (existing.timeout as Record<string, unknown>);
@@ -1273,6 +1304,7 @@ export class BuildService {
   }
 
   async deleteCallQueue(t: TenantContext, u: AuthedUser, id: string) {
+    await this.assertNotSrLocked(t, [id]);
     const row = await this.s(t).deleteFrom('build_call_queues').where('id', '=', id).returningAll().executeTakeFirst();
     if (!row) throw new NotFoundException('row not found');
     await this.audit.tenant(t.schema, 'build.call_queue_deleted', { actor: actorOf(u), targetType: 'build_call_queue', targetId: id });
@@ -1343,6 +1375,7 @@ export class BuildService {
   }
 
   async updateAutoAttendant(t: TenantContext, u: AuthedUser, id: string, body: BuildAutoAttendantPatchInput) {
+    await this.assertNotSrLocked(t, [id]);
     const { holiday_call_flows, resource_accounts, ...rest } = body;
     const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
     // pg binds a plain array as a native Postgres array, not jsonb, unless
@@ -1368,6 +1401,7 @@ export class BuildService {
   }
 
   async deleteAutoAttendant(t: TenantContext, u: AuthedUser, id: string) {
+    await this.assertNotSrLocked(t, [id]);
     const row = await this.s(t).deleteFrom('build_auto_attendants').where('id', '=', id).returningAll().executeTakeFirst();
     if (!row) throw new NotFoundException('row not found');
     await this.audit.tenant(t.schema, 'build.auto_attendant_deleted', {
@@ -2020,11 +2054,14 @@ export class BuildService {
    */
   async resetSite(t: TenantContext, u: AuthedUser, siteId: string) {
     const s = this.s(t);
-    const [users, caps, ras] = await Promise.all([
+    const [users, caps, ras, cqs, aas] = await Promise.all([
       s.selectFrom('build_users').select('id').where('site_id', '=', siteId).execute(),
       s.selectFrom('build_caps').select('id').where('site_id', '=', siteId).execute(),
       s.selectFrom('build_resource_accounts').select('id').where('site_id', '=', siteId).execute(),
+      s.selectFrom('build_call_queues').select('id').where('site_id', '=', siteId).execute(),
+      s.selectFrom('build_auto_attendants').select('id').where('site_id', '=', siteId).execute(),
     ]);
+    await this.assertNotSrLocked(t, [...users, ...caps, ...ras, ...cqs, ...aas].map((r) => r.id));
     const releaseAll = async (holderType: NumberHolderType, ids: string[]) => {
       if (ids.length === 0) return;
       await s
@@ -2312,6 +2349,7 @@ export class BuildService {
   async applyTemplate(t: TenantContext, u: AuthedUser, id: string, ids: string[]) {
     const template = await this.s(t).selectFrom('build_templates').selectAll().where('id', '=', id).executeTakeFirst();
     if (!template) throw new NotFoundException('Template not found');
+    await this.assertNotSrLocked(t, ids);
     const table = template.kind === 'user' ? 'build_users' : 'build_caps';
     const patch: Record<string, unknown> = { policy_ids: template.policy_ids, policies: template.policies };
     if (template.voicemail_enabled !== null || template.voicemail_language !== null) {

@@ -13,7 +13,7 @@
 import { z } from 'zod';
 import type { DEPLOYMENT_SHEETS } from './domain';
 import { SR_BUILD_KIND } from './service-request-build';
-import type { SrStatus, SrType } from './service-requests';
+import { SR_OPEN_STATUSES, SR_STATUS_LABELS, srReference, type SrStatus, type SrType } from './service-requests';
 
 /** What a request can be linked to. `site` is a new site (Data Collection); the rest are Design & Build rows. */
 export const SR_ITEM_KINDS = ['site', 'user', 'cap', 'resource_account', 'shared_calling_policy', 'call_queue', 'auto_attendant', 'number_range'] as const;
@@ -75,6 +75,28 @@ export function srHasNumbersDesign(type: SrType): boolean {
 /** The Design tab can change rows only while the request is Planned. */
 export function srDesignEditable(status: SrStatus): boolean {
   return status === 'planned';
+}
+
+/**
+ * Whether a request locks the Design & Build rows linked to it, so the API
+ * refuses to change or delete them (BuildService.assertNotSrLocked) from
+ * anywhere - the Design tab, the site's Design & Build page or a direct call.
+ *
+ * Only open requests past design lock: in practice Designed & built, waiting
+ * to deploy, so what is deployed is what was signed off. Deployed, cancelled
+ * and declined requests are finished and release their rows, or a row could
+ * never change again after go-live (a later change request applies its
+ * change to the same row). There is no Super Admin override: send the
+ * request back to Planned, which any engineer can do with a reason.
+ */
+export function srDesignLocksRows(status: SrStatus): boolean {
+  return SR_OPEN_STATUSES.includes(status) && !srDesignEditable(status);
+}
+
+/** Why a linked row can't change: "SR-0003 is Designed & built - send it back to Planned to change its design." */
+export function srDesignLockedMessage(number: number, status: SrStatus): string {
+  const step = status === 'new' ? 'mark it Planned' : 'send it back to Planned';
+  return `${srReference(number)} is ${SR_STATUS_LABELS[status]} - ${step} to change its design.`;
 }
 
 /** One row linked to a request, as the Design tab lists it. */

@@ -120,6 +120,23 @@ request, but **listing only the rows designed for this request**.
 - **Remove from request** takes a row off the request without deleting it. A
   row deleted in Design & Build shows as "Deleted" and blocks Designed & built
   until it is removed from the request.
+- **Rows lock once the request is past design.** While a linked request is
+  **Designed & built** (any open request that isn't Planned), the API
+  refuses to change or delete its rows from anywhere - the Design tab, the
+  site's Design & Build page, bulk edit, templates, Reset site, "Apply the
+  request" on another request, or a direct call - with a 409 such as
+  "SR-0003 is Designed & built - send it back to Planned to change its
+  design." What gets deployed is then what was signed off. The rule is
+  `srDesignLocksRows` (`service-request-design.ts`); the check is
+  `BuildService.assertNotSrLocked`, run before any side effect.
+  - **No Super Admin override.** Sending the request back to Planned (with a
+    reason, on its timeline) is the way to change it, for everyone.
+  - **Finished requests release their rows.** Deployed, Cancelled and
+    Declined don't lock, or a row could never change after go-live: a later
+    change request links and edits the same row. Reopening a Deployed request
+    puts it back to Planned, which is editable anyway.
+  - Number ranges (new phone numbers requests) aren't Design & Build rows and
+    aren't covered by this lock.
 
 ### Change and remove requests
 

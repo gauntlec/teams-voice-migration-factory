@@ -7,10 +7,12 @@ import {
   serviceRequestDeploySchema,
   srBuiltBlockers,
   srDesignEditable,
+  srDesignLockedMessage,
+  srDesignLocksRows,
   srHasDesign,
   srItemSheets,
 } from './service-request-design';
-import { SR_TYPES } from './service-requests';
+import { SR_STATUSES, SR_TYPES } from './service-requests';
 
 describe('srHasDesign', () => {
   it('is on for the types that make Design & Build rows', () => {
@@ -86,5 +88,18 @@ describe('serviceRequestDeploySchema', () => {
     expect(serviceRequestDeploySchema.safeParse({ connectionId: id, mode: 'dry_run' }).success).toBe(true);
     expect(serviceRequestDeploySchema.safeParse({ connectionId: id, mode: 'execute', scope: {} }).success).toBe(false);
     expect(serviceRequestDeploySchema.safeParse({ connectionId: 'x', mode: 'execute' }).success).toBe(false);
+  });
+});
+
+describe('srDesignLocksRows', () => {
+  it('locks linked rows only on open requests past design', () => {
+    expect(SR_STATUSES.filter(srDesignLocksRows)).toEqual(['new', 'built']);
+  });
+  it('never locks while the design can still change', () => {
+    for (const s of SR_STATUSES) if (srDesignEditable(s)) expect(srDesignLocksRows(s)).toBe(false);
+  });
+  it('names the request and the way out', () => {
+    expect(srDesignLockedMessage(3, 'built')).toBe('SR-0003 is Designed & built - send it back to Planned to change its design.');
+    expect(srDesignLockedMessage(42, 'new')).toBe('SR-0042 is New - mark it Planned to change its design.');
   });
 });
