@@ -32,8 +32,33 @@ const VALID: Record<SrType, Record<string, unknown>> = {
     after_hours: { kind: 'disconnect', label: 'Disconnect' },
     number: 'No number',
   },
+  change_user: { user: jo, changes: ['Phone number', 'Voicemail'], new_number: '+442079460003', voicemail: 'Turn off' },
+  change_call_queue: { queue: { id: CQ, label: 'Sales' }, changes: ['Add people', 'How calls are shared out'], add_agents: [al], routing: 'Round robin' },
+  change_auto_attendant: {
+    auto_attendant: { id: CQ, label: 'Main line' },
+    changes: ['Holiday closure'],
+    holiday_name: 'Christmas',
+    holiday_from: '2026-12-24',
+    holiday_to: '2026-12-27',
+  },
+  remove_user: { user: jo, leaving_date: '2026-11-30', number_after: 'Release it so it can be reused' },
+  remove_common_area_phone: { phone: { id: CQ, label: 'Lobby phone' }, number_after: 'Keep it for a replacement' },
   other: { description: 'Change our caller ID' },
 };
+
+describe('change requests', () => {
+  it('only asks for what is ticked', () => {
+    const r = srDetailsSchema('change_user').safeParse({ user: jo, changes: ['Voicemail'], voicemail: 'Turn on', new_number: '+442079460003' });
+    expect(r.success && r.data).toEqual({ user: jo, changes: ['Voicemail'], voicemail: 'Turn on' });
+  });
+  it('requires what a tick needs', () => {
+    const r = srDetailsSchema('change_call_queue').safeParse({ queue: { id: CQ, label: 'Sales' }, changes: ['Remove people'] });
+    expect(r.success).toBe(false);
+  });
+  it('rejects an option that is not on the list', () => {
+    expect(srDetailsSchema('change_user').safeParse({ user: jo, changes: ['Teleport'] }).success).toBe(false);
+  });
+});
 
 describe('workflow', () => {
   it('moves forward one step at a time: new, planned, built, deployed', () => {

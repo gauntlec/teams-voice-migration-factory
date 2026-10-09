@@ -42,6 +42,7 @@ import {
   SR_STATUS_LABELS,
   SR_TYPE_DEFS,
   canMoveSr,
+  isSrChangeType,
   nextSrStatus,
   srCanReopen,
   srMoveKind,
@@ -693,7 +694,14 @@ function DesignTab({
           <Text size={200}>Ready: mark the request as designed &amp; built on the Overview tab, then deploy it.</Text>
         )}
         {editable && data.build?.canDraft && data.build.kind && (
-          <BuildDraftSection base={base} id={r.id} kind={data.build.kind} suggestedCapUpn={data.build.suggestedCapUpn} onDone={refresh} />
+          <BuildDraftSection
+            base={base}
+            id={r.id}
+            kind={data.build.kind}
+            suggestedCapUpn={data.build.suggestedCapUpn}
+            onDone={refresh}
+            change={isSrChangeType(r.type)}
+          />
         )}
       </Card>
 
@@ -717,12 +725,15 @@ function BuildDraftSection({
   kind,
   suggestedCapUpn,
   onDone,
+  change = false,
 }: {
   base: string;
   id: string;
   kind: SrBuildKind;
   suggestedCapUpn: string | null;
   onDone: () => void;
+  /** A change or removal: links the existing row and applies the request to it. */
+  change?: boolean;
 }) {
   const cs = useSrStyles();
   const [capUpn, setCapUpn] = useState(suggestedCapUpn ?? '');
@@ -736,6 +747,43 @@ function BuildDraftSection({
   });
   const result = draft.data;
   const what = kind === 'site' ? 'the new site' : `the ${SR_BUILD_KIND_LABELS[kind].toLowerCase()}`;
+  if (change) {
+    return (
+      <div className={cs.section}>
+        <Text weight="semibold">Apply the request</Text>
+        <Text size={200}>
+          Finds the {SR_BUILD_KIND_LABELS[kind].toLowerCase()} in Design &amp; Build (adding a user to this site if they aren&apos;t there yet), adds it to this
+          request, and makes the changes that can be made automatically. Anything else is listed for you to finish below.
+        </Text>
+        <div className={cs.actions}>
+          <Button disabled={draft.isPending} onClick={() => draft.mutate()}>
+            Apply the request
+          </Button>
+          {draft.isPending && <Spinner size="tiny" />}
+        </div>
+        {result && (
+          <div>
+            <BuildLinks links={[...result.created, ...result.existing]} />
+            {result.applied && result.applied.length > 0 && <Text block>Applied: {result.applied.join('; ')}.</Text>}
+            {result.applied && result.applied.length === 0 && <Text block>Nothing could be applied automatically.</Text>}
+          </div>
+        )}
+        {result && result.warnings.length > 0 && (
+          <div>
+            <Text weight="semibold">Still to do</Text>
+            <ul style={{ margin: 0, paddingLeft: '20px' }}>
+              {result.warnings.map((w) => (
+                <li key={w}>
+                  <Text size={200}>{w}</Text>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {draft.error && <Text className={cs.error}>{errorText(draft.error, 'Could not apply the request')}</Text>}
+      </div>
+    );
+  }
   return (
     <div className={cs.section}>
       <Text weight="semibold">Prefill from the request</Text>

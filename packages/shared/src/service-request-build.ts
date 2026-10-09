@@ -42,6 +42,12 @@ export const SR_BUILD_KIND: Record<SrType, SrBuildKind | null> = {
   new_common_area_phone: 'cap',
   new_call_queue: 'call_queue',
   new_auto_attendant: 'auto_attendant',
+  // Change and remove requests link the existing row - see service-request-change.ts.
+  change_user: 'user',
+  change_call_queue: 'call_queue',
+  change_auto_attendant: 'auto_attendant',
+  remove_user: 'user',
+  remove_common_area_phone: 'cap',
   other: null,
 };
 
@@ -346,8 +352,10 @@ export interface SrBuildDraftResult {
   created: SrBuildLink[];
   /** Rows that already existed with the same UPN / name / site code - left untouched. */
   existing: SrBuildLink[];
-  /** Things the engineer should check, e.g. agents that couldn't be found. */
+  /** Things the engineer should check, e.g. agents that couldn't be found - for a change request, its to-do list. */
   warnings: string[];
+  /** Change requests: what was applied to the existing row. */
+  applied?: string[];
 }
 
 /** Where a row lives in the app - the Design & Build tab, or the site's Data Collection page. */

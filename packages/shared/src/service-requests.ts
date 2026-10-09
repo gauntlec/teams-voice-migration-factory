@@ -16,6 +16,11 @@ export const SR_TYPES = [
   'new_common_area_phone',
   'new_call_queue',
   'new_auto_attendant',
+  'change_user',
+  'change_call_queue',
+  'change_auto_attendant',
+  'remove_user',
+  'remove_common_area_phone',
   'other',
 ] as const;
 export type SrType = (typeof SR_TYPES)[number];
@@ -129,6 +134,9 @@ export const SITE_MODE_LABELS: Record<SiteMode, string> = { project: 'Project', 
  * - menu: auto attendant key presses, each to a target
  * - number_range / device_model / country: the site's ranges, known phone
  *   models, ISO countries
+ * - choices: tick one or more of `options` (e.g. what should change)
+ * - site_object: an existing common area phone, call queue or auto attendant
+ *   at the site (`objectKind`), from Design & Build
  */
 export type SrFieldKind =
   | 'text'
@@ -144,7 +152,18 @@ export type SrFieldKind =
   | 'menu'
   | 'number_range'
   | 'device_model'
-  | 'country';
+  | 'country'
+  | 'choices'
+  | 'site_object';
+
+/** What a site_object field picks. */
+export type SrSiteObjectKind = 'cap' | 'call_queue' | 'auto_attendant';
+
+/** A picked site_object: the Design & Build row and how it's shown. */
+export interface SrSiteObject {
+  id: string;
+  label: string;
+}
 
 export interface SrFieldSpec {
   key: string;
@@ -160,17 +179,30 @@ export interface SrFieldSpec {
   hint?: string;
   /** phone_number only: which of the site's numbers to offer. */
   numberSource?: 'available' | 'site';
+  /** site_object only: what to pick. */
+  objectKind?: SrSiteObjectKind;
   /**
-   * Only asked (and only required) when another field has this value, e.g. the
-   * number to keep is only asked when "Keep an existing number" is chosen.
-   * Hidden fields are dropped from the request.
+   * Only asked (and only required) when another field has this value (or, for
+   * a choices field, has it ticked), e.g. the number to keep is only asked
+   * when "Keep an existing number" is chosen. Hidden fields are dropped from
+   * the request, and so is anything that depends on a hidden field.
    */
   showWhen?: { key: string; equals: string };
 }
 
+/** How the "What do you need?" list is grouped. */
+export type SrTypeGroup = 'new' | 'change' | 'remove' | 'other';
+export const SR_TYPE_GROUP_LABELS: Record<SrTypeGroup, string> = {
+  new: 'Add something new',
+  change: 'Change something',
+  remove: 'Remove something',
+  other: 'Other',
+};
+
 export interface SrTypeDef {
   label: string;
   description: string;
+  group: SrTypeGroup;
   /** false only for a new site, which by definition has no site yet. */
   needsSite: boolean;
   fields: readonly SrFieldSpec[];
@@ -228,10 +260,21 @@ const NUMBER_FIELDS: readonly SrFieldSpec[] = [
 
 const NOTES: SrFieldSpec = { key: 'notes', label: 'Anything else we should know', kind: 'textarea', max: 4000 };
 
+/** "What should change" ticks for the change types. */
+export const USER_CHANGES = ['Phone number', 'Call forwarding', 'Voicemail', 'Calling permissions', 'Something else'] as const;
+export const QUEUE_CHANGES = ['Add people', 'Remove people', 'How calls are shared out', 'When nobody answers', 'Something else'] as const;
+export const AA_CHANGES = ['Opening hours', 'Holiday closure', 'Menu options', 'Greeting', 'Something else'] as const;
+
+/** What happens to a removed user's or phone's number. */
+export const NUMBER_RELEASE = 'Release it so it can be reused';
+export const NUMBER_HOLD = 'Keep it for a replacement';
+const NUMBER_AFTER = [NUMBER_RELEASE, NUMBER_HOLD] as const;
+
 export const SR_TYPE_DEFS: Record<SrType, SrTypeDef> = {
   new_site: {
     label: 'New site',
     description: 'Add a new office or location to the service.',
+    group: 'new',
     needsSite: false,
     fields: [
       { key: 'sitecode', label: 'Site code', kind: 'text', required: true, max: 20, hint: 'A short unique code, e.g. LON02' },
@@ -246,6 +289,7 @@ export const SR_TYPE_DEFS: Record<SrType, SrTypeDef> = {
   new_user: {
     label: 'New user',
     description: 'Give a person Teams calling.',
+    group: 'new',
     needsSite: true,
     fields: [
       { key: 'user', label: 'Person', kind: 'person', required: true, hint: 'Search your directory by name or sign-in address.' },
@@ -257,6 +301,7 @@ export const SR_TYPE_DEFS: Record<SrType, SrTypeDef> = {
   new_phone_numbers: {
     label: 'New phone numbers',
     description: 'Order new numbers for a site.',
+    group: 'new',
     needsSite: true,
     fields: [
       { key: 'quantity', label: 'How many numbers', kind: 'number', required: true, min: 1, max: 1000 },
@@ -269,6 +314,7 @@ export const SR_TYPE_DEFS: Record<SrType, SrTypeDef> = {
   new_common_area_phone: {
     label: 'New common area phone',
     description: 'A shared desk, lobby or meeting-room phone.',
+    group: 'new',
     needsSite: true,
     fields: [
       { key: 'display_name', label: 'Phone name', kind: 'text', required: true, max: 120, hint: 'e.g. Reception desk' },
@@ -281,6 +327,7 @@ export const SR_TYPE_DEFS: Record<SrType, SrTypeDef> = {
   new_call_queue: {
     label: 'New call queue',
     description: 'Ring a group of people, e.g. a sales or support line.',
+    group: 'new',
     needsSite: true,
     fields: [
       { key: 'name', label: 'Queue name', kind: 'text', required: true, max: 120 },
@@ -295,6 +342,7 @@ export const SR_TYPE_DEFS: Record<SrType, SrTypeDef> = {
   new_auto_attendant: {
     label: 'New auto attendant',
     description: 'A menu that answers calls, e.g. "Press 1 for sales".',
+    group: 'new',
     needsSite: true,
     fields: [
       { key: 'name', label: 'Auto attendant name', kind: 'text', required: true, max: 120 },
@@ -306,17 +354,109 @@ export const SR_TYPE_DEFS: Record<SrType, SrTypeDef> = {
       NOTES,
     ],
   },
+  change_user: {
+    label: 'Change a user',
+    description: "Change someone's number, call forwarding, voicemail or calling permissions.",
+    group: 'change',
+    needsSite: true,
+    fields: [
+      { key: 'user', label: 'Person', kind: 'person', required: true, hint: 'Search your directory by name or sign-in address.' },
+      { key: 'changes', label: 'What should change', kind: 'choices', required: true, options: USER_CHANGES },
+      {
+        key: 'new_number',
+        label: 'New number',
+        kind: 'phone_number',
+        numberSource: 'available',
+        required: true,
+        showWhen: { key: 'changes', equals: 'Phone number' },
+        hint: "A free number at this site is picked for you. Choose another if you'd prefer.",
+      },
+      { key: 'forward_to', label: 'Forward calls to', kind: 'target', showWhen: { key: 'changes', equals: 'Call forwarding' } },
+      { key: 'voicemail', label: 'Voicemail', kind: 'select', options: ['Turn on', 'Turn off'], required: true, showWhen: { key: 'changes', equals: 'Voicemail' } },
+      { key: 'permissions', label: 'Calling permissions needed', kind: 'textarea', max: 1000, showWhen: { key: 'changes', equals: 'Calling permissions' }, hint: 'e.g. international calls to France and Germany' },
+      { key: 'when', label: 'When should it change', kind: 'date' },
+      NOTES,
+    ],
+  },
+  change_call_queue: {
+    label: 'Change a call queue',
+    description: 'Add or remove people, or change how calls are shared or overflow.',
+    group: 'change',
+    needsSite: true,
+    fields: [
+      { key: 'queue', label: 'Call queue', kind: 'site_object', objectKind: 'call_queue', required: true },
+      { key: 'changes', label: 'What should change', kind: 'choices', required: true, options: QUEUE_CHANGES },
+      { key: 'add_agents', label: 'People to add', kind: 'people', required: true, max: 50, showWhen: { key: 'changes', equals: 'Add people' } },
+      { key: 'remove_agents', label: 'People to remove', kind: 'people', required: true, max: 50, showWhen: { key: 'changes', equals: 'Remove people' } },
+      { key: 'routing', label: 'How calls are shared out', kind: 'select', required: true, options: ['All at once', 'In order', 'Round robin', 'Longest idle'], showWhen: { key: 'changes', equals: 'How calls are shared out' } },
+      { key: 'unanswered_after', label: 'If nobody answers within', kind: 'select', options: ['30 seconds', '1 minute', '2 minutes', '5 minutes', '10 minutes', '20 minutes'], showWhen: { key: 'changes', equals: 'When nobody answers' } },
+      { key: 'unanswered', label: 'Then send the call to', kind: 'target', showWhen: { key: 'changes', equals: 'When nobody answers' } },
+      { key: 'when', label: 'When should it change', kind: 'date' },
+      NOTES,
+    ],
+  },
+  change_auto_attendant: {
+    label: 'Change an auto attendant',
+    description: 'Change opening hours, add a holiday closure, or change the menu or greeting.',
+    group: 'change',
+    needsSite: true,
+    fields: [
+      { key: 'auto_attendant', label: 'Auto attendant', kind: 'site_object', objectKind: 'auto_attendant', required: true },
+      { key: 'changes', label: 'What should change', kind: 'choices', required: true, options: AA_CHANGES },
+      { key: 'business_hours', label: 'New opening hours', kind: 'textarea', required: true, max: 1000, showWhen: { key: 'changes', equals: 'Opening hours' }, hint: 'e.g. Mon-Fri 8:30-17:30, closed weekends' },
+      { key: 'holiday_name', label: 'Holiday name', kind: 'text', required: true, max: 120, showWhen: { key: 'changes', equals: 'Holiday closure' }, hint: 'e.g. Christmas 2026' },
+      { key: 'holiday_from', label: 'Closed from', kind: 'date', required: true, showWhen: { key: 'changes', equals: 'Holiday closure' } },
+      { key: 'holiday_to', label: 'Closed until', kind: 'date', required: true, showWhen: { key: 'changes', equals: 'Holiday closure' } },
+      { key: 'holiday_greeting', label: 'What callers hear while closed', kind: 'textarea', max: 1000, showWhen: { key: 'changes', equals: 'Holiday closure' } },
+      { key: 'menu', label: 'New menu options', kind: 'menu', max: 10, showWhen: { key: 'changes', equals: 'Menu options' } },
+      { key: 'greeting', label: 'New greeting', kind: 'textarea', required: true, max: 1000, showWhen: { key: 'changes', equals: 'Greeting' } },
+      NOTES,
+    ],
+  },
+  remove_user: {
+    label: 'Remove a user',
+    description: 'Someone is leaving: take away their Teams calling and phone number.',
+    group: 'remove',
+    needsSite: true,
+    fields: [
+      { key: 'user', label: 'Person', kind: 'person', required: true, hint: 'Search your directory by name or sign-in address.' },
+      { key: 'leaving_date', label: 'Last working day', kind: 'date' },
+      { key: 'number_after', label: 'Their phone number', kind: 'select', required: true, options: NUMBER_AFTER },
+      NOTES,
+    ],
+  },
+  remove_common_area_phone: {
+    label: 'Remove a common area phone',
+    description: 'A shared phone is no longer needed.',
+    group: 'remove',
+    needsSite: true,
+    fields: [
+      { key: 'phone', label: 'Common area phone', kind: 'site_object', objectKind: 'cap', required: true },
+      { key: 'number_after', label: 'Its phone number', kind: 'select', required: true, options: NUMBER_AFTER },
+      NOTES,
+    ],
+  },
   other: {
     label: 'Something else',
     description: 'Any other change to your Teams calling.',
+    group: 'other',
     needsSite: false,
     fields: [{ key: 'description', label: 'What do you need?', kind: 'textarea', required: true, max: 4000 }],
   },
 };
 
-/** Whether a field is asked, given the other answers (see showWhen). */
-export function srFieldVisible(f: SrFieldSpec, details: Record<string, unknown>): boolean {
-  return !f.showWhen || details[f.showWhen.key] === f.showWhen.equals;
+/**
+ * Whether a field is asked, given the other answers (see showWhen). A field
+ * that depends on a hidden field is hidden too. Pass the type's fields so that
+ * chain can be followed; without them only the field's own condition is checked.
+ */
+export function srFieldVisible(f: SrFieldSpec, details: Record<string, unknown>, fields?: readonly SrFieldSpec[], depth = 0): boolean {
+  if (!f.showWhen) return true;
+  const v = details[f.showWhen.key];
+  const met = Array.isArray(v) ? v.includes(f.showWhen.equals) : v === f.showWhen.equals;
+  if (!met) return false;
+  const parent = fields?.find((x) => x.key === f.showWhen!.key);
+  return !parent || depth > 5 || srFieldVisible(parent, details, fields, depth + 1);
 }
 
 /** The field holding a free number the request would take, if this type has one. */
@@ -358,8 +498,9 @@ function targetLabel(t: SrTarget): string {
 /** Label/value pairs for display and email, in form order, skipping blanks and hidden fields. */
 export function srDetailLines(type: SrType, details: Record<string, unknown>): { label: string; value: string }[] {
   const out: { label: string; value: string }[] = [];
-  for (const f of SR_TYPE_DEFS[type].fields) {
-    if (!srFieldVisible(f, details)) continue;
+  const fields = SR_TYPE_DEFS[type].fields;
+  for (const f of fields) {
+    if (!srFieldVisible(f, details, fields)) continue;
     const v = details[f.key];
     if (v === undefined || v === null || v === '') continue;
     let value: string;
@@ -385,7 +526,12 @@ export function srDetailLines(type: SrType, details: Record<string, unknown>): {
         value = v ? 'Yes' : 'No';
         break;
       case 'number_range':
+      case 'site_object':
         value = (v as { label: string }).label;
+        break;
+      case 'choices':
+        if (!Array.isArray(v) || v.length === 0) continue;
+        value = (v as string[]).join(', ');
         break;
       default:
         value = Array.isArray(v) ? v.join(', ') : String(v);

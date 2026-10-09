@@ -16,6 +16,15 @@ import {
   SR_STATUS_LABELS,
   SR_TYPE_DEFS,
   buildAutoAttendantCreateSchema,
+  buildAutoAttendantPatchSchema,
+  buildCallQueuePatchSchema,
+  buildCapPatchSchema,
+  buildIdentityPatchSchema,
+  isSrChangeType,
+  srChangePlan,
+  type AutoAttendantCallFlow,
+  type AutoAttendantHolidayCallFlow,
+  type SrSiteObject,
   buildCallQueueCreateSchema,
   buildCapCreateSchema,
   buildIdentityCreateSchema,
@@ -309,11 +318,11 @@ export class ServiceRequestsService {
       .union(s.selectFrom('build_caps').select('phone_model as m').where('phone_model', 'is not', null))
       .execute();
     const models = [...new Set(deviceModels.map((r) => (r.m ?? '').trim()).filter(Boolean))].sort();
-    if (!siteId) return { deviceModels: models, availableNumbers: [], siteNumbers: [], ranges: [], callQueues: [], autoAttendants: [] };
+    if (!siteId) return { deviceModels: models, availableNumbers: [], siteNumbers: [], ranges: [], callQueues: [], autoAttendants: [], caps: [] };
 
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(siteId)) throw new BadRequestException('Unknown site.');
     const site = await this.loadSite(t, siteId);
-    const [claimed, numbers, ranges, callQueues, autoAttendants] = await Promise.all([
+    const [claimed, numbers, ranges, callQueues, autoAttendants, caps] = await Promise.all([
       this.claimedNumbers(s),
       s
         .selectFrom('phone_numbers as pn')
@@ -326,6 +335,7 @@ export class ServiceRequestsService {
       s.selectFrom('discovery_number_ranges').select(['id', 'range_start', 'range_end', 'carrier']).where('sitecode', '=', site.sitecode).orderBy('range_start').execute(),
       s.selectFrom('build_call_queues').select(['id', 'name']).where('site_id', '=', site.id).orderBy('name').execute(),
       s.selectFrom('build_auto_attendants').select(['id', 'name']).where('site_id', '=', site.id).orderBy('name').execute(),
+      s.selectFrom('build_caps').select(['id', 'upn', 'display_name']).where('site_id', '=', site.id).where('hidden', '=', false).orderBy('upn').execute(),
     ]);
     const unclaimed = numbers.filter((n) => !claimed.has(n.e164));
     return {
@@ -335,6 +345,7 @@ export class ServiceRequestsService {
       ranges: ranges.map((r) => ({ id: r.id, label: `${r.range_start} – ${r.range_end}${r.carrier ? ` (${r.carrier})` : ''}` })),
       callQueues,
       autoAttendants,
+      caps: caps.map((c) => ({ id: c.id, name: c.display_name ? `${c.display_name} (${c.upn})` : c.upn })),
     };
   }
 
@@ -469,7 +480,8 @@ export class ServiceRequestsService {
         .where('r.sitecode', '=', site?.sitecode ?? '')
         .executeTakeFirst();
 
-    if (details.number === NUMBER_NEED_NEW && typeof details[SR_NEW_NUMBER_KEY] === 'string') {
+    // Any type with a picked new number (new user/phone/queue/AA, or a change of number).
+    if (typeof details[SR_NEW_NUMBER_KEY] === 'string') {
       const e164 = details[SR_NEW_NUMBER_KEY] as string;
       const n = await siteNumber(e164);
       if (!n || n.status !== 'available') throw new BadRequestException(`${e164} isn't a free number at this site. Choose another.`);
@@ -482,8 +494,16 @@ export class ServiceRequestsService {
       const clash = await s.selectFrom('discovery_sites').select('id').where(sql<boolean>`lower(sitecode) = lower(${details.sitecode})`).executeTakeFirst();
       if (clash) throw new BadRequestException(`There is already a site with code ${details.sitecode}.`);
     }
+    // A queue / auto attendant / common area phone picked to change or remove must be at the site.
+    for (const f of SR_TYPE_DEFS[type].fields) {
+      if (f.kind !== 'site_object' || !details[f.key]) continue;
+      const picked = details[f.key] as SrSiteObject;
+      const table = f.objectKind === 'call_queue' ? 'build_call_queues' : f.objectKind === 'auto_attendant' ? 'build_auto_attendants' : 'build_caps';
+      const hit = await s.selectFrom(table).select('id').where('id', '=', picked.id).where('site_id', '=', site?.id ?? '').executeTakeFirst();
+      if (!hit) throw new BadRequestException(`${picked.label} isn't at this site.`);
+    }
     const targets: SrTarget[] = [];
-    for (const key of ['unanswered', 'after_hours']) if (details[key]) targets.push(details[key] as SrTarget);
+    for (const key of ['unanswered', 'after_hours', 'forward_to']) if (details[key]) targets.push(details[key] as SrTarget);
     if (Array.isArray(details.menu)) for (const o of details.menu as SrMenuOption[]) targets.push(o.target);
     for (const target of targets) {
       if (target.kind !== 'call_queue' && target.kind !== 'auto_attendant') continue;
@@ -493,11 +513,6 @@ export class ServiceRequestsService {
     }
   }
 
-  /**
-   * Moves a request one step on (or cancels it). Only people who can manage
-   * requests move them; the person who raised one may cancel it while it is
-   * still New. The customer is emailed at Planned, Built, Deployed and Cancelled.
-   */
   /* ------------------------------ notifications ------------------------------ */
 
   /** The fields every service request email starts with. */
@@ -760,6 +775,8 @@ export class ServiceRequestsService {
     if (!can(user.role, kind === 'site' ? 'discovery:sites:manage' : 'build:write')) {
       throw new ForbiddenException('You do not have permission to add this to Design & Build.');
     }
+
+    if (isSrChangeType(row.type)) return this.applyChange(t, user, row);
 
     const reference = srReference(row.number);
     const details = row.details as Record<string, unknown>;
@@ -1049,6 +1066,132 @@ export class ServiceRequestsService {
       .limit(50)
       .execute();
     return rows.map((r) => ({ ...r, mode: r.mode as SrDeploymentRun['mode'], summary: (r.summary ?? {}) as Record<string, number> }));
+  }
+
+  /**
+   * "Prefill" for a change or removal (see service-request-change.ts): finds
+   * the existing Design & Build row - a user not in Design & Build yet is
+   * added to the request's site - links it to the request, and applies what
+   * maps cleanly (new number, voicemail, revoke, queue agents and routing, AA
+   * greeting and holiday) through the normal update path. Everything else
+   * comes back as warnings: the engineer's to-do list.
+   */
+  private async applyChange(
+    t: TenantContext,
+    user: AuthedUser,
+    row: { id: string; number: number; type: SrType; site_id: string | null; details: unknown },
+  ): Promise<SrBuildDraftResult> {
+    const mapped = srChangePlan(row.type, row.details as Record<string, unknown>);
+    if (!mapped.ok) throw new BadRequestException(mapped.error);
+    const plan = mapped.plan;
+    if (!row.site_id) throw new BadRequestException("The request's site no longer exists.");
+    const siteId = row.site_id;
+    const reference = srReference(row.number);
+    const s = tenantDb(this.db, t.schema);
+    const valid = <T>(schema: ZodType<T, ZodTypeDef, unknown>, v: unknown): T => {
+      const r = schema.safeParse(v);
+      if (r.success) return r.data;
+      throw new BadRequestException(`The change can't be applied as it is (${r.error.issues.map((i) => i.message).join('; ')}). Make it by hand on the Design tab.`);
+    };
+
+    // 1. Find (or, for a user, add) the row.
+    let rowId: string;
+    let created = false;
+    if ('upn' in plan.find) {
+      const found = await s.selectFrom('build_users').select(['id', 'site_id']).where(sql<string>`lower(upn)`, '=', plan.find.upn).executeTakeFirst();
+      if (found && found.site_id !== siteId) {
+        const other = await s.selectFrom('discovery_sites').select('sitecode').where('id', '=', found.site_id).executeTakeFirst();
+        throw new BadRequestException(`${plan.find.upn} is on site ${other?.sitecode ?? 'another site'} in Design & Build, not this request's site. Change the request's site, or make the change there.`);
+      }
+      if (found) rowId = found.id;
+      else {
+        const r = await this.build.createUser(t, user, valid(buildIdentityCreateSchema, { site_id: siteId, upn: plan.find.upn, comments: `From ${reference}: ${plan.find.name}.` }));
+        rowId = r.id;
+        created = true;
+      }
+    } else {
+      const table = plan.kind === 'cap' ? 'build_caps' : plan.kind === 'call_queue' ? 'build_call_queues' : 'build_auto_attendants';
+      const found = await s.selectFrom(table).select(['id', 'site_id']).where('id', '=', plan.find.id).executeTakeFirst();
+      if (!found || found.site_id !== siteId) throw new BadRequestException(`${plan.label} is no longer at this site in Design & Build.`);
+      rowId = found.id;
+    }
+    await this.linkItem(t, user, row.id, plan.kind, rowId);
+
+    // 2. Apply what maps cleanly.
+    const applied: string[] = [];
+    const a = plan.apply;
+    if (plan.kind === 'user' || plan.kind === 'cap') {
+      const patch: Record<string, unknown> = {};
+      if (a.newNumber) {
+        const n = await s.selectFrom('phone_numbers').select(['id', 'status']).where('e164', '=', a.newNumber).executeTakeFirst();
+        if (n && n.status === 'available') {
+          patch.phone_number_id = n.id;
+          applied.push(`number ${a.newNumber}`);
+        } else plan.todo.unshift(`${a.newNumber} is no longer free - pick another number for the row.`);
+      }
+      if (a.voicemail !== undefined) {
+        patch.voicemail = { enabled: a.voicemail };
+        applied.push(`voicemail ${a.voicemail ? 'on' : 'off'}`);
+      }
+      if (a.revoke) {
+        patch.revoke_ev = true;
+        applied.push('Revoke Enterprise Voice (removes the number and Teams calling when deployed)');
+      }
+      if (Object.keys(patch).length) {
+        if (plan.kind === 'user') await this.build.updateUser(t, user, rowId, valid(buildIdentityPatchSchema, patch));
+        else await this.build.updateCap(t, user, rowId, valid(buildCapPatchSchema, patch));
+      }
+    } else if (plan.kind === 'call_queue') {
+      const cq = await s.selectFrom('build_call_queues').select(['agents', 'routing_method']).where('id', '=', rowId).executeTakeFirstOrThrow();
+      const patch: Record<string, unknown> = {};
+      if (a.addAgents?.length || a.removeAgents?.length) {
+        const current = ((cq.agents as string[] | null) ?? []).map((u) => u.toLowerCase());
+        const remove = new Set(a.removeAgents ?? []);
+        const next = [...new Set([...current.filter((u) => !remove.has(u)), ...(a.addAgents ?? [])])];
+        patch.agents = next;
+        if (a.addAgents?.length) applied.push(`added ${a.addAgents.join(', ')}`);
+        if (a.removeAgents?.length) applied.push(`removed ${a.removeAgents.join(', ')}`);
+        const missing = (a.removeAgents ?? []).filter((u) => !current.includes(u));
+        if (missing.length) plan.todo.unshift(`${missing.join(', ')} ${missing.length === 1 ? "wasn't" : "weren't"} in the queue already.`);
+      }
+      if (a.routing && a.routing !== cq.routing_method) {
+        patch.routing_method = a.routing;
+        applied.push(`routing ${a.routing}`);
+      }
+      if (Object.keys(patch).length) await this.build.updateCallQueue(t, user, rowId, valid(buildCallQueuePatchSchema, patch));
+    } else {
+      const aa = await s.selectFrom('build_auto_attendants').select(['default_call_flow', 'holiday_call_flows']).where('id', '=', rowId).executeTakeFirstOrThrow();
+      const patch: Record<string, unknown> = {};
+      if (a.greeting) {
+        const flow = (aa.default_call_flow as AutoAttendantCallFlow | null) ?? { greetings: [], menu: { options: [] } };
+        patch.default_call_flow = { ...flow, greetings: [{ type: 'Text', text: a.greeting }] };
+        applied.push('new greeting');
+      }
+      if (a.holiday) {
+        const holidays = ((aa.holiday_call_flows as AutoAttendantHolidayCallFlow[] | null) ?? []).filter((h) => h.name !== a.holiday!.name);
+        patch.holiday_call_flows = [...holidays, a.holiday];
+        applied.push(`holiday "${a.holiday.name}"`);
+      }
+      if (Object.keys(patch).length) await this.build.updateAutoAttendant(t, user, rowId, valid(buildAutoAttendantPatchSchema, patch));
+    }
+
+    const link: SrBuildLink = { kind: plan.kind, label: plan.label, href: srBuildHref(plan.kind, siteId) };
+    const body = [
+      `${created ? 'Added' : 'Linked'} ${SR_BUILD_KIND_LABELS[plan.kind].toLowerCase()} ${plan.label}${applied.length ? ` and applied: ${applied.join('; ')}` : ''}.`,
+      ...plan.todo.map((x) => `To do: ${x}`),
+    ].join('\n');
+    await s
+      .insertInto('service_request_events')
+      .values({ request_id: row.id, kind: 'build_drafted', body, internal: true, links: JSON.stringify([link]), author_id: user.id })
+      .execute();
+    await s.updateTable('service_requests').set({ updated_at: new Date().toISOString() }).where('id', '=', row.id).execute();
+    await this.audit.tenant(t.schema, 'service_request.change_applied', {
+      actor: { id: user.id, email: user.email },
+      targetType: 'service_request',
+      targetId: row.id,
+      detail: { reference, kind: plan.kind, rowId, applied },
+    });
+    return { created: created ? [link] : [], existing: created ? [] : [link], warnings: plan.todo, applied };
   }
 
   /**

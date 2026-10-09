@@ -43,6 +43,8 @@ import {
   SR_STATUSES,
   SR_TYPES,
   SR_TYPE_DEFS,
+  SR_TYPE_GROUP_LABELS,
+  type SrTypeGroup,
   canMoveSr,
   countryName,
   nextSrStatus,
@@ -139,6 +141,8 @@ interface FormOptions {
   ranges: { id: string; label: string }[];
   callQueues: { id: string; name: string }[];
   autoAttendants: { id: string; name: string }[];
+  /** Common area phones at the site (Design & Build). */
+  caps: { id: string; name: string }[];
 }
 
 const COUNTRY_OPTIONS = [...COUNTRY_CODES].map((c) => ({ code: c, name: countryName(c) })).sort((a, b) => a.name.localeCompare(b.name));
@@ -650,6 +654,47 @@ function FieldInput({
         </Select>
       );
     }
+    case 'choices': {
+      const picked = (value as string[] | undefined) ?? [];
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          {(spec.options ?? []).map((o) => (
+            <Checkbox
+              key={o}
+              label={o}
+              checked={picked.includes(o)}
+              onChange={(_, d) => {
+                const next = d.checked ? [...picked, o] : picked.filter((x) => x !== o);
+                onChange(next.length ? (spec.options ?? []).filter((x) => next.includes(x)) : undefined);
+              }}
+            />
+          ))}
+        </div>
+      );
+    }
+    case 'site_object': {
+      if (!siteChosen) return <Text size={200}>Choose the site first.</Text>;
+      const list = spec.objectKind === 'call_queue' ? options?.callQueues : spec.objectKind === 'auto_attendant' ? options?.autoAttendants : options?.caps;
+      const what = spec.objectKind === 'call_queue' ? 'call queues' : spec.objectKind === 'auto_attendant' ? 'auto attendants' : 'common area phones';
+      if (options && (list ?? []).length === 0) return <Text size={200}>There are no {what} recorded at this site.</Text>;
+      const v = value as { id: string; label: string } | undefined;
+      return (
+        <Select
+          value={v?.id ?? ''}
+          onChange={(_, d) => {
+            const hit = list?.find((x) => x.id === d.value);
+            onChange(hit ? { id: hit.id, label: hit.name } : undefined);
+          }}
+        >
+          <option value="">Choose…</option>
+          {(list ?? []).map((x) => (
+            <option key={x.id} value={x.id}>
+              {x.name}
+            </option>
+          ))}
+        </Select>
+      );
+    }
     case 'country':
       return (
         <Select value={(value as string) ?? ''} onChange={(_, d) => onChange(d.value || undefined)}>
@@ -690,19 +735,21 @@ function NewRequestDialog({ base, sites, onClose, onCreated }: { base: string; s
 
   // A new number at a site: take the first free one, unless the person already picked a valid one.
   const free = options.data?.availableNumbers;
+  const newNumberField = def.fields.find((f) => f.key === SR_NEW_NUMBER_KEY);
+  const wantsNewNumber = !!newNumberField && srFieldVisible(newNumberField, details, def.fields);
   useEffect(() => {
-    if (details.number !== NUMBER_NEED_NEW || !siteId || !free) return;
+    if (!wantsNewNumber || !siteId || !free) return;
     const current = details[SR_NEW_NUMBER_KEY] as string | undefined;
     if (current && free.includes(current)) return;
     setDetails((prev) => ({ ...prev, [SR_NEW_NUMBER_KEY]: free[0] }));
-  }, [details.number, siteId, free]);
+  }, [wantsNewNumber, siteId, free]);
 
   const chooseSite = (id: string) => {
     setSiteId(id);
     // Numbers, ranges and queue/auto attendant picks belong to the old site.
     setDetails((prev) => {
       const next: Record<string, unknown> = { ...prev };
-      for (const k of ['new_number', 'existing_number', 'range', 'unanswered', 'after_hours', 'menu']) delete next[k];
+      for (const k of ['new_number', 'existing_number', 'range', 'unanswered', 'after_hours', 'menu', 'forward_to', 'queue', 'auto_attendant', 'phone']) delete next[k];
       return next;
     });
   };
@@ -721,7 +768,7 @@ function NewRequestDialog({ base, sites, onClose, onCreated }: { base: string; s
   });
 
   const incomplete = useMemo(() => {
-    const missing = def.fields.some((f) => f.required && srFieldVisible(f, details) && isBlank(details[f.key]));
+    const missing = def.fields.some((f) => f.required && srFieldVisible(f, details, def.fields) && isBlank(details[f.key]));
     return missing || title.trim().length < 3 || (def.needsSite && !siteId);
   }, [def, details, title, siteId]);
 
@@ -739,10 +786,14 @@ function NewRequestDialog({ base, sites, onClose, onCreated }: { base: string; s
                   setDetails({});
                 }}
               >
-                {SR_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {SR_TYPE_DEFS[t].label}
-                  </option>
+                {(Object.keys(SR_TYPE_GROUP_LABELS) as SrTypeGroup[]).map((g) => (
+                  <optgroup key={g} label={SR_TYPE_GROUP_LABELS[g]}>
+                    {SR_TYPES.filter((t) => SR_TYPE_DEFS[t].group === g).map((t) => (
+                      <option key={t} value={t}>
+                        {SR_TYPE_DEFS[t].label}
+                      </option>
+                    ))}
+                  </optgroup>
                 ))}
               </Select>
             </Field>
@@ -767,7 +818,7 @@ function NewRequestDialog({ base, sites, onClose, onCreated }: { base: string; s
               </Field>
             )}
             {def.fields
-              .filter((f) => srFieldVisible(f, details))
+              .filter((f) => srFieldVisible(f, details, def.fields))
               .map((f) => (
                 <Field key={f.key} label={f.label} required={f.required} hint={f.hint}>
                   <FieldInput

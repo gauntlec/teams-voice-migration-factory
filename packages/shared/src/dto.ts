@@ -1464,6 +1464,13 @@ function srFieldSchema(f: SrFieldSpec): z.ZodTypeAny {
       return z.string().trim().min(1).max(120);
     case 'country':
       return z.enum(COUNTRY_CODES, { errorMap: () => ({ message: 'Choose a country' }) });
+    case 'choices':
+      return z
+        .array(z.enum((f.options ?? []) as [string, ...string[]]))
+        .max((f.options ?? []).length)
+        .refine((v) => new Set(v).size === v.length, 'Tick each option once');
+    case 'site_object':
+      return z.object({ id: z.string().uuid(), label: z.string().trim().min(1).max(200) }).strict();
   }
 }
 
@@ -1486,7 +1493,7 @@ export function srDetailsSchema(type: SrType) {
     .transform((raw, ctx) => {
       const out: Record<string, unknown> = {};
       for (const f of fields) {
-        if (!srFieldVisible(f, raw)) continue;
+        if (!srFieldVisible(f, raw, fields)) continue;
         let v = raw[f.key];
         if (typeof v === 'string') v = v.trim();
         if (srIsBlank(v)) {

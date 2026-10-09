@@ -14,7 +14,17 @@ import { SR_TYPES } from './service-requests';
 
 describe('srHasDesign', () => {
   it('is on for the types that make Design & Build rows', () => {
-    expect(SR_TYPES.filter(srHasDesign)).toEqual(['new_user', 'new_common_area_phone', 'new_call_queue', 'new_auto_attendant']);
+    expect(SR_TYPES.filter(srHasDesign)).toEqual([
+      'new_user',
+      'new_common_area_phone',
+      'new_call_queue',
+      'new_auto_attendant',
+      'change_user',
+      'change_call_queue',
+      'change_auto_attendant',
+      'remove_user',
+      'remove_common_area_phone',
+    ]);
   });
 });
 
