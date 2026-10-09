@@ -816,11 +816,15 @@ export class ServiceRequestsService {
         if (type === 'remove_user' && !tu.enterprise_voice_enabled) out.push(`${p.name} doesn't have Teams calling to remove.`);
       }
       if (type === 'new_user' || type === 'new_users') {
+        // Rows designed for this very request don't count.
         const inBuild = await s
           .selectFrom('build_users as b')
           .innerJoin('discovery_sites as ds', 'ds.id', 'b.site_id')
           .select('ds.sitecode')
           .where(sql<string>`lower(b.upn)`, '=', upn)
+          .$if(!!exceptId, (qb) =>
+            qb.where('b.id', 'not in', s.selectFrom('service_request_items').select('row_id').where('request_id', '=', exceptId!)),
+          )
           .executeTakeFirst();
         if (inBuild) out.push(`${p.name} is already in Design & Build at ${inBuild.sitecode}.`);
       }
