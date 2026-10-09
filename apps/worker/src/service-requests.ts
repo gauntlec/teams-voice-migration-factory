@@ -1,12 +1,17 @@
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import { platformDb, tenantDb, type DB } from '@tvmf/db';
 import {
   SR_CUSTOMER_NOTIFY_STATUSES,
   SR_TYPE_DEFS,
   SR_WAITING_MAX_REMINDERS,
   SR_WAITING_REMINDER_DAYS,
+  srDuration,
+  srEffectiveTargets,
   srReference,
+  srSla,
+  type ServiceRequestActivityContext,
   type ServiceRequestMessageContext,
+  type SrSettings,
   type ServiceRequestStatusChangedContext,
 } from '@tvmf/shared';
 import type { MailEnqueuer } from './mail/enqueue';
@@ -135,8 +140,14 @@ export async function recordServiceRequestRun(
  */
 export async function sweepServiceRequests(db: Kysely<DB>, enqueueMail: MailEnqueuer): Promise<void> {
   const webOrigin = (process.env.WEB_ORIGIN ?? '').replace(/\/+$/, '');
-  const tenants = await platformDb(db).selectFrom('tenants').select(['id', 'schema_name', 'name']).where('managed_services_enabled', '=', true).execute();
+  const tenants = await platformDb(db)
+    .selectFrom('tenants')
+    .select(['id', 'schema_name', 'name', 'sr_settings'])
+    .where('managed_services_enabled', '=', true)
+    .where('status', '=', 'active')
+    .execute();
   let reminders = 0;
+  let targetEmails = 0;
   for (const tenant of tenants) {
     try {
       const s = tenantDb(db, tenant.schema_name);
@@ -191,13 +202,112 @@ export async function sweepServiceRequests(db: Kysely<DB>, enqueueMail: MailEnqu
         });
         reminders++;
       }
+      targetEmails += await sweepTargets(db, enqueueMail, tenant, webOrigin);
     } catch (e) {
       // eslint-disable-next-line no-console
       console.warn(`[service requests] sweep failed for ${tenant.schema_name}: ${(e as Error).message}`);
     }
   }
-  if (reminders) {
+  if (reminders || targetEmails) {
     // eslint-disable-next-line no-console
-    console.log(`service request sweep: sent ${reminders} reminder(s)`);
+    console.log(`service request sweep: sent ${reminders} reminder(s), ${targetEmails} target email(s)`);
   }
+}
+
+/**
+ * Response/resolution targets: email the team once when an open request is
+ * at risk (SR_SLA_WARN_FRACTION of the target left) and once when it's missed.
+ * "The team" is the assignee, or every engineer and Super Admin on the
+ * customer when nobody is assigned. Paused requests (waiting on the customer)
+ * are skipped.
+ */
+async function sweepTargets(
+  db: Kysely<DB>,
+  enqueueMail: MailEnqueuer,
+  tenant: { id: string; schema_name: string; name: string; sr_settings: unknown },
+  webOrigin: string,
+): Promise<number> {
+  const s = tenantDb(db, tenant.schema_name);
+  const targets = srEffectiveTargets(tenant.sr_settings as SrSettings);
+  const open = await s
+    .selectFrom('service_requests')
+    .select([
+      'id', 'number', 'type', 'title', 'priority', 'status', 'assigned_to', 'created_at', 'first_response_at', 'deployed_at',
+      'declined_at', 'cancelled_at', 'waiting_since', 'waiting_seconds', 'reopened_at', 'sla_notified',
+    ])
+    .where('status', 'in', ['new', 'planned', 'built'])
+    .execute();
+  let sent = 0;
+  let team: { id: string; email: string; display_name: string }[] | null = null;
+  const loadTeam = async () => {
+    if (team) return team;
+    const p = platformDb(db);
+    const [engineers, admins] = await Promise.all([
+      p
+        .selectFrom('tenant_memberships as m')
+        .innerJoin('users as u', 'u.id', 'm.user_id')
+        .select(['u.id as id', 'u.email as email', 'u.display_name as display_name'])
+        .where('m.tenant_id', '=', tenant.id)
+        .where('u.role', '=', 'ENGINEER')
+        .where('u.status', '=', 'active')
+        .execute(),
+      p.selectFrom('users').select(['id', 'email', 'display_name']).where('role', '=', 'SUPER_ADMIN').where('status', '=', 'active').execute(),
+    ]);
+    const byId = new Map<string, { id: string; email: string; display_name: string }>();
+    for (const u of [...engineers, ...admins]) byId.set(u.id, u);
+    team = [...byId.values()];
+    return team;
+  };
+
+  for (const r of open) {
+    const sla = srSla(r, targets);
+    const notified = { ...((r.sla_notified ?? {}) as Record<string, string>) };
+    const due: { key: string; kind: 'sla_warning' | 'sla_breached'; body: string }[] = [];
+    for (const which of ['response', 'resolution'] as const) {
+      const c = sla[which];
+      const what = which === 'response' ? 'First response' : 'Resolution';
+      if (c.state === 'overdue' && !notified[`${which}_breached`]) {
+        due.push({ key: `${which}_breached`, kind: 'sla_breached', body: `${what} was due ${srDuration(c.leftMs ?? 0)} ago (${r.priority} priority).` });
+      } else if (c.state === 'at_risk' && !notified[`${which}_warning`] && !notified[`${which}_breached`]) {
+        due.push({ key: `${which}_warning`, kind: 'sla_warning', body: `${what} is due in ${srDuration(c.leftMs ?? 0)} (${r.priority} priority).` });
+      }
+    }
+    if (!due.length) continue;
+    const now = new Date().toISOString();
+    for (const d of due) notified[d.key] = now;
+    // Claim first (compare-and-set on the old value) so two workers don't both send.
+    const claimed = await s
+      .updateTable('service_requests')
+      .set({ sla_notified: JSON.stringify(notified) })
+      .where('id', '=', r.id)
+      .where(sql<boolean>`sla_notified = ${JSON.stringify(r.sla_notified ?? {})}::jsonb`)
+      .returning('id')
+      .executeTakeFirst();
+    if (!claimed) continue;
+    const members = await loadTeam();
+    const to = r.assigned_to ? members.filter((m) => m.id === r.assigned_to) : members;
+    for (const d of due) {
+      const context: ServiceRequestActivityContext = {
+        customerName: tenant.name,
+        reference: srReference(r.number),
+        title: r.title,
+        typeLabel: SR_TYPE_DEFS[r.type].label,
+        kind: d.kind,
+        author: null,
+        body: d.body,
+        runUrl: `${webOrigin}/service-requests/${r.id}`,
+      };
+      for (const m of to) {
+        await enqueueMail({
+          template: 'service_request_activity',
+          to: { email: m.email, name: m.display_name },
+          context,
+          related: { type: 'service_request', id: r.id },
+          tenantId: tenant.id,
+        });
+        sent++;
+      }
+    }
+  }
+  return sent;
 }

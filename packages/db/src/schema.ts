@@ -19,6 +19,8 @@ export interface TenantsTable {
   branding: Json<import('@tvmf/shared').Branding> | null;
   /** Managed Services switched on: this customer can raise service requests - see 0012_tenant_managed_services.sql. */
   managed_services_enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  /** Managed Services settings: targets, approvals, change window - see 0014_tenant_sr_settings.sql. Written as JSON.stringify(...). */
+  sr_settings: ColumnType<import('@tvmf/shared').SrSettings, string | undefined, string>;
   /** The MSP that looks after this customer - see 0013_tenant_msp.sql. */
   msp_id: string | null;
   created_by: string | null;
@@ -890,6 +892,8 @@ export interface ServiceRequestsTable {
   waiting_reminders: ColumnType<number, number | undefined, number>;
   /** The team's first reply, question or move - the response target is measured to it. */
   first_response_at: ColumnType<string | null, string | null | undefined, string | null>;
+  /** Target emails already sent: { response_warning, response_breached, resolution_warning, resolution_breached } -> ISO time. */
+  sla_notified: ColumnType<Record<string, string>, string | undefined, string>;
 }
 
 export interface ServiceRequestEventsTable {

@@ -1572,5 +1572,7 @@ export const mspServiceRequestsQuerySchema = z.object({
   status: z.enum([...SR_STATUSES, 'open', 'all'] as [string, ...string[]]).default('open'),
   /** Super Admins only: limit to one MSP ('none' = customers with no MSP). */
   mspId: z.union([z.string().uuid(), z.literal('none')]).optional(),
+  /** Only requests assigned to me. */
+  mine: z.enum(['true', 'false']).optional(),
 });
 export type MspServiceRequestsQuery = z.infer<typeof mspServiceRequestsQuerySchema>;

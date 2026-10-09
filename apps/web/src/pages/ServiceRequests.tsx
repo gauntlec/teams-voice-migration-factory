@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { QueueTiles, SlaBadge, queueFilter, type QueueFilter } from '../components/SrTarget';
+import { ReportsDialog, SettingsDialog } from './ServiceRequestAdmin';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Badge,
@@ -45,6 +47,7 @@ import {
   SR_TYPE_DEFS,
   SR_TYPE_GROUP_LABELS,
   type SrTypeGroup,
+  type SrClock,
   canMoveSr,
   countryName,
   nextSrStatus,
@@ -87,6 +90,8 @@ export interface RequestRow {
   created_at: string;
   /** Set while the team is waiting for the customer's reply. */
   waiting_since: string | null;
+  /** The target that matters now (response, then resolution). */
+  sla: { which: 'response' | 'resolution'; clock: SrClock };
 }
 
 export interface RequestDetail extends RequestRow {
@@ -217,6 +222,10 @@ export function ServiceRequests() {
     queryFn: () => api<SiteOption[]>(`${base}/sites`),
   });
   const [modesOpen, setModesOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [reportsOpen, setReportsOpen] = useState(false);
+  const [tile, setTile] = useState<QueueFilter>('all');
+  const staff = can('sr:manage');
 
   const open = (id: string) => navigate(`/service-requests/${id}`);
 
@@ -240,6 +249,8 @@ export function ServiceRequests() {
       subtitle="Ask for new users, numbers, sites, phones, call queues and auto attendants. Each request is planned, designed and built, then deployed, and you're emailed as it moves on."
       actions={
         <div className={cs.actions}>
+          <Button onClick={() => setReportsOpen(true)}>Reports</Button>
+          <Button onClick={() => setSettingsOpen(true)}>{staff ? 'Settings' : 'Our targets'}</Button>
           {can('sr:manage') && <Button onClick={() => setModesOpen(true)}>Site modes</Button>}
           {can('sr:create') && (
             <Button appearance="primary" onClick={() => setCreating(true)}>
@@ -273,6 +284,7 @@ export function ServiceRequests() {
         </Field>
       </div>
       {list.isError && <LoadError message={(list.error as Error).message} />}
+      {staff && status === 'open' && list.data && <QueueTiles items={list.data} filter={tile} onFilter={setTile} />}
       <Card>
         {list.isLoading ? (
           <Spinner size="tiny" />
@@ -288,12 +300,13 @@ export function ServiceRequests() {
                 <TableHeaderCell>Site</TableHeaderCell>
                 <TableHeaderCell>Priority</TableHeaderCell>
                 <TableHeaderCell>Status</TableHeaderCell>
+                {staff && <TableHeaderCell>Target</TableHeaderCell>}
                 <TableHeaderCell>Assigned to</TableHeaderCell>
                 <TableHeaderCell>Raised</TableHeaderCell>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {list.data!.map((r) => (
+              {list.data!.filter(queueFilter(staff && status === 'open' ? tile : 'all')).map((r) => (
                 <TableRow key={r.id} className={cs.row} onClick={() => open(r.id)}>
                   <TableCell>
                     <Link onClick={() => open(r.id)}>{r.reference}</Link>
@@ -312,6 +325,11 @@ export function ServiceRequests() {
                       </Badge>
                     )}
                   </TableCell>
+                  {staff && (
+                    <TableCell>
+                      <SlaBadge clock={r.sla.clock} which={r.sla.which} />
+                    </TableCell>
+                  )}
                   <TableCell>{r.assigned_to_name ?? '—'}</TableCell>
                   <TableCell>
                     {r.requested_by_name ?? '—'}
@@ -338,6 +356,8 @@ export function ServiceRequests() {
         />
       )}
       {modesOpen && <SiteModesDialog base={base} sites={sitesQ.data ?? []} onClose={() => setModesOpen(false)} />}
+      {settingsOpen && <SettingsDialog base={base} onClose={() => setSettingsOpen(false)} />}
+      {reportsOpen && <ReportsDialog base={base} onClose={() => setReportsOpen(false)} />}
     </Page>
   );
 }

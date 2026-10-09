@@ -15,6 +15,13 @@ import {
   SR_OPEN_STATUSES,
   SR_STATUS_LABELS,
   SR_TYPE_DEFS,
+  SR_TYPES,
+  SR_PRIORITIES,
+  srEffectiveTargets,
+  srNextClock,
+  srSla,
+  type ServiceRequestSettingsInput,
+  type SrSettings,
   buildAutoAttendantCreateSchema,
   buildAutoAttendantPatchSchema,
   buildCallQueuePatchSchema,
@@ -189,6 +196,12 @@ export class ServiceRequestsService {
         'sr.created_at as created_at',
         'sr.updated_at as updated_at',
         'sr.waiting_since as waiting_since',
+        'sr.waiting_seconds as waiting_seconds',
+        'sr.first_response_at as first_response_at',
+        'sr.deployed_at as deployed_at',
+        'sr.declined_at as declined_at',
+        'sr.cancelled_at as cancelled_at',
+        'sr.reopened_at as reopened_at',
       ])
       .orderBy('sr.number', 'desc');
     if (q.status === 'open') query = query.where('sr.status', 'in', [...SR_OPEN_STATUSES]);
@@ -197,8 +210,12 @@ export class ServiceRequestsService {
     if (isSiteScoped(t)) query = query.where('sr.site_id', 'in', t.siteScope);
     const rows = await query.execute();
     const names = await this.names(rows.flatMap((r) => [r.requested_by, r.assigned_to]));
+    const targets = srEffectiveTargets(await this.settingsRaw(t));
+    const now = Date.now();
     return rows.map((r) => ({
       ...r,
+      // The target that matters now (response, then resolution) - see service-request-sla.ts.
+      sla: srNextClock(srSla(r, targets, now)),
       reference: srReference(r.number),
       requested_by_name: names.get(r.requested_by) ?? null,
       assigned_to_name: r.assigned_to ? (names.get(r.assigned_to) ?? null) : null,
@@ -231,8 +248,10 @@ export class ServiceRequestsService {
             buildKind === 'cap' ? suggestCapUpn(String((row.details as Record<string, unknown>).display_name ?? ''), await this.mainDomain(t)) : null,
         }
       : null;
+    const targets = srEffectiveTargets(await this.settingsRaw(t));
     return {
       build,
+      sla: { ...srSla(row, targets), target: targets[row.priority] },
       request: {
         ...row,
         reference: srReference(row.number),
@@ -242,6 +261,169 @@ export class ServiceRequestsService {
         assigned_to_name: row.assigned_to ? (names.get(row.assigned_to) ?? null) : null,
       },
       events: events.map((e) => ({ ...e, author_name: names.get(e.author_id) ?? null })),
+    };
+  }
+
+  /* ------------------------------ settings ------------------------------ */
+
+  /** The customer's stored Managed Services settings (empty = defaults). */
+  private async settingsRaw(t: TenantContext): Promise<SrSettings> {
+    const row = await platformDb(this.db).selectFrom('tenants').select('sr_settings').where('id', '=', t.id).executeTakeFirst();
+    return (row?.sr_settings ?? {}) as SrSettings;
+  }
+
+  /**
+   * Targets (with defaults filled in), approvals and the change window.
+   * Everyone on the customer can see them; approver ids come with names.
+   */
+  async settings(t: TenantContext) {
+    this.assertEnabled(t);
+    const raw = await this.settingsRaw(t);
+    const approverIds = raw.approval?.approverIds ?? [];
+    const names = await this.names(approverIds);
+    return {
+      targets: srEffectiveTargets(raw),
+      customTargets: SR_PRIORITIES.filter((p) => !!raw.targets?.[p]),
+      approval: {
+        types: raw.approval?.types ?? [],
+        approvers: approverIds.map((id) => ({ id, display_name: names.get(id) ?? 'Unknown user' })),
+      },
+      changeWindow: raw.changeWindow ?? null,
+    };
+  }
+
+  /** Active customer users on this customer - who can be made an approver. */
+  async customerUsers(t: TenantContext) {
+    this.assertEnabled(t);
+    return platformDb(this.db)
+      .selectFrom('users as u')
+      .innerJoin('tenant_memberships as m', 'm.user_id', 'u.id')
+      .select(['u.id as id', 'u.display_name as display_name', 'u.email as email'])
+      .where('m.tenant_id', '=', t.id)
+      .where('u.role', '=', 'CUSTOMER')
+      .where('u.status', '=', 'active')
+      .orderBy('u.display_name')
+      .execute();
+  }
+
+  /**
+   * Changes the settings - Super Admins only (targets and approvals are part
+   * of the customer's contract). Approvers must be active customer users on
+   * this customer.
+   */
+  async updateSettings(t: TenantContext, user: AuthedUser, input: ServiceRequestSettingsInput) {
+    this.assertEnabled(t);
+    if (user.role !== 'SUPER_ADMIN') throw new ForbiddenException('Only a Super Admin can change Managed Services settings.');
+    const current = await this.settingsRaw(t);
+    const next: SrSettings = { ...current };
+    if (input.targets !== undefined) next.targets = input.targets;
+    if (input.changeWindow !== undefined) next.changeWindow = input.changeWindow;
+    if (input.approval !== undefined) {
+      const ids = [...new Set(input.approval.approverIds)];
+      if (ids.length) {
+        const ok = await platformDb(this.db)
+          .selectFrom('users as u')
+          .innerJoin('tenant_memberships as m', 'm.user_id', 'u.id')
+          .select('u.id')
+          .where('m.tenant_id', '=', t.id)
+          .where('u.role', '=', 'CUSTOMER')
+          .where('u.status', '=', 'active')
+          .where('u.id', 'in', ids)
+          .execute();
+        if (ok.length !== ids.length) throw new BadRequestException("Approvers must be active customer users on this customer.");
+      }
+      next.approval = { types: [...new Set(input.approval.types)], approverIds: ids };
+    }
+    await platformDb(this.db).updateTable('tenants').set({ sr_settings: JSON.stringify(next) }).where('id', '=', t.id).execute();
+    await this.audit.tenant(t.schema, 'service_request.settings_changed', {
+      actor: { id: user.id, email: user.email },
+      targetType: 'tenant',
+      targetId: t.id,
+      detail: next as unknown as Record<string, unknown>,
+    });
+    return this.settings(t);
+  }
+
+  /* ------------------------------ reporting ------------------------------ */
+
+  /**
+   * Requests raised in [from, to): counts by type and status, how many were
+   * finished, median time to deploy (raised -> deployed, less waiting on the
+   * customer), the share that met each target, and today's open backlog by
+   * age. A site contact only counts their own sites.
+   */
+  async report(t: TenantContext, from: string, to: string) {
+    this.assertEnabled(t);
+    const start = new Date(from);
+    const end = new Date(to);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) throw new BadRequestException('Choose a valid date range.');
+    const s = tenantDb(this.db, t.schema);
+    let q = s
+      .selectFrom('service_requests')
+      .select(['id', 'type', 'status', 'priority', 'created_at', 'first_response_at', 'deployed_at', 'declined_at', 'cancelled_at', 'waiting_since', 'waiting_seconds', 'reopened_at', 'site_id'])
+      .where('created_at', '>=', start.toISOString())
+      .where('created_at', '<', end.toISOString());
+    if (isSiteScoped(t)) q = q.where('site_id', 'in', t.siteScope);
+    const rows = await q.execute();
+    const targets = srEffectiveTargets(await this.settingsRaw(t));
+
+    const byType = Object.fromEntries(SR_TYPES.map((k) => [k, 0])) as Record<string, number>;
+    const byStatus: Record<string, number> = {};
+    const deployHours: number[] = [];
+    let responseMet = 0;
+    let responseDone = 0;
+    let resolutionMet = 0;
+    let resolutionDone = 0;
+    for (const r of rows) {
+      byType[r.type] = (byType[r.type] ?? 0) + 1;
+      byStatus[r.status] = (byStatus[r.status] ?? 0) + 1;
+      const sla = srSla(r, targets);
+      if (sla.response.state === 'met' || sla.response.state === 'missed') {
+        responseDone++;
+        if (sla.response.state === 'met') responseMet++;
+      }
+      if (sla.resolution.state === 'met' || sla.resolution.state === 'missed') {
+        resolutionDone++;
+        if (sla.resolution.state === 'met') resolutionMet++;
+      }
+      if (r.status === 'deployed' && r.deployed_at) {
+        const h = (new Date(r.deployed_at).getTime() - new Date(r.created_at).getTime() - r.waiting_seconds * 1000) / 3_600_000;
+        deployHours.push(Math.max(0, h));
+      }
+    }
+    deployHours.sort((a, b) => a - b);
+    const median = deployHours.length
+      ? deployHours.length % 2
+        ? deployHours[(deployHours.length - 1) / 2]!
+        : (deployHours[deployHours.length / 2 - 1]! + deployHours[deployHours.length / 2]!) / 2
+      : null;
+
+    // Today's open backlog, by age.
+    let openQ = s.selectFrom('service_requests').select(['created_at']).where('status', 'in', [...SR_OPEN_STATUSES]);
+    if (isSiteScoped(t)) openQ = openQ.where('site_id', 'in', t.siteScope);
+    const open = await openQ.execute();
+    const age = { under1d: 0, d1to3: 0, d3to7: 0, over7d: 0 };
+    for (const o of open) {
+      const days = (Date.now() - new Date(o.created_at).getTime()) / 86_400_000;
+      if (days < 1) age.under1d++;
+      else if (days < 3) age.d1to3++;
+      else if (days < 7) age.d3to7++;
+      else age.over7d++;
+    }
+
+    return {
+      from: start.toISOString(),
+      to: end.toISOString(),
+      raised: rows.length,
+      deployed: byStatus.deployed ?? 0,
+      byType,
+      byStatus,
+      medianHoursToDeploy: median === null ? null : Math.round(median * 10) / 10,
+      responseMetPct: responseDone ? Math.round((responseMet / responseDone) * 100) : null,
+      resolutionMetPct: resolutionDone ? Math.round((resolutionMet / resolutionDone) * 100) : null,
+      responseMeasured: responseDone,
+      resolutionMeasured: resolutionDone,
+      openBacklog: { total: open.length, ...age },
     };
   }
 
@@ -622,7 +804,13 @@ export class ServiceRequestsService {
     const reachedAt = REACHED_AT[to];
     const set: Record<string, unknown> = { status: to, updated_at: now, ...(reachedAt ? { [reachedAt]: now } : {}), ...this.stopWaiting(row, now) };
     if (kind === 'send_back') set.built_at = null;
-    if (kind === 'reopen') Object.assign(set, { reopened_at: now, deployed_at: null, built_at: null });
+    // A reopen restarts the resolution clock (and its emails).
+    if (kind === 'reopen') {
+      const notified = { ...((row.sla_notified ?? {}) as Record<string, string>) };
+      delete notified.resolution_warning;
+      delete notified.resolution_breached;
+      Object.assign(set, { reopened_at: now, deployed_at: null, built_at: null, sla_notified: JSON.stringify(notified) });
+    }
     if (canManage && !row.first_response_at) set.first_response_at = now;
     const updated = await tenantDb(this.db, t.schema)
       .updateTable('service_requests')

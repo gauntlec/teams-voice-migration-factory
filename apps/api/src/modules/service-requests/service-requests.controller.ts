@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
 import {
   can,
   createServiceRequestSchema,
@@ -7,6 +7,8 @@ import {
   serviceRequestBuildDraftSchema,
   serviceRequestCommentSchema,
   serviceRequestDeploySchema,
+  serviceRequestSettingsSchema,
+  serviceRequestReportQuerySchema,
   serviceRequestStatusSchema,
   setSiteModeSchema,
   SR_ITEM_KINDS,
@@ -17,6 +19,8 @@ import {
   type ServiceRequestBuildDraftInput,
   type ServiceRequestCommentInput,
   type ServiceRequestDeployInput,
+  type ServiceRequestSettingsInput,
+  type ServiceRequestReportQuery,
   type ServiceRequestStatusInput,
   type SetSiteModeInput,
 } from '@tvmf/shared';
@@ -70,6 +74,36 @@ export class ServiceRequestsController {
   }
 
   /** What the request form can offer for a site: free numbers, ranges, queues, auto attendants, phone models. */
+  /** Targets, approvals and change window - everyone on the customer can read them. */
+  @Get('settings')
+  @RequirePermission('sr:read')
+  settings(@TenantCtx() t: TenantContext) {
+    return this.svc.settings(t);
+  }
+
+  /** Super Admins only (checked in the service). */
+  @Put('settings')
+  @RequirePermission('sr:manage')
+  updateSettings(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Body(new ZodBody(serviceRequestSettingsSchema)) body: ServiceRequestSettingsInput,
+  ) {
+    return this.svc.updateSettings(t, user, body);
+  }
+
+  @Get('customer-users')
+  @RequirePermission('sr:manage')
+  customerUsers(@TenantCtx() t: TenantContext) {
+    return this.svc.customerUsers(t);
+  }
+
+  @Get('report')
+  @RequirePermission('sr:read')
+  report(@TenantCtx() t: TenantContext, @Query(new ZodBody(serviceRequestReportQuerySchema)) q: ServiceRequestReportQuery) {
+    return this.svc.report(t, q.from, q.to);
+  }
+
   @Get('options')
   @RequirePermission('sr:create')
   options(@TenantCtx() t: TenantContext, @Query('siteId') siteId?: string) {

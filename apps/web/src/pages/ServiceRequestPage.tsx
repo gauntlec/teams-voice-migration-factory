@@ -54,6 +54,7 @@ import {
   type SrBuildDraftResult,
   type SrBuildKind,
   type SrBuildLink,
+  type SrClock,
   type SrDeploymentRun,
   type SrDesignSummary,
   type SrItem,
@@ -65,6 +66,8 @@ import { DataTable } from '../components/DataTable';
 import { Page } from '../components/Page';
 import { LoadError, NoTenant } from '../components/records';
 import { BuildSiteWorkspace, type BuildTab } from './BuildSiteWorkspace';
+import { SlaBadge } from '../components/SrTarget';
+import { hoursText } from './ServiceRequestAdmin';
 import {
   PRIORITY_LABEL,
   STATUS_COLOR,
@@ -164,6 +167,7 @@ interface RequestPayload {
   request: RequestDetail;
   events: RequestEvent[];
   build: RequestBuildInfo | null;
+  sla: { response: SrClock; resolution: SrClock; target: { responseHours: number; resolveHours: number } };
 }
 
 export function ServiceRequestPage() {
@@ -393,6 +397,20 @@ function Overview({
           </span>
           <Text className={cs.factLabel}>Priority</Text>
           <Text>{PRIORITY_LABEL[r.priority]}</Text>
+          <Text className={cs.factLabel}>First response</Text>
+          <span>
+            <SlaBadge clock={data.sla.response} />{' '}
+            <Text size={200} className={ps.muted}>
+              target {hoursText(data.sla.target.responseHours)}
+            </Text>
+          </span>
+          <Text className={cs.factLabel}>Completed</Text>
+          <span>
+            <SlaBadge clock={data.sla.resolution} />{' '}
+            <Text size={200} className={ps.muted}>
+              target {hoursText(data.sla.target.resolveHours)}
+            </Text>
+          </span>
           <Text className={cs.factLabel}>Needed by</Text>
           <Text>{day(r.target_date)}</Text>
           <Text className={cs.factLabel}>Raised by</Text>
