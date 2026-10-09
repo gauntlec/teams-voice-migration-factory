@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createServiceRequestSchema, setSiteModeSchema, srDetailsSchema } from './dto';
-import { SR_TYPES, SR_TYPE_DEFS, canMoveSr, countryName, nextSrStatus, srDetailLines, srReference, type SrType } from './service-requests';
+import { SR_TYPES, SR_TYPE_DEFS, canMoveSr, countryName, srCanReopen, srMoveKind, srStatusLabel, nextSrStatus, srDetailLines, srReference, type SrType } from './service-requests';
 
 const SITE = '11111111-2222-3333-4444-555555555555';
 const CQ = '22222222-3333-4444-5555-666666666666';
@@ -44,13 +44,31 @@ describe('workflow', () => {
     expect(nextSrStatus('cancelled')).toBeNull();
   });
 
-  it('allows only the next step or a cancel while open', () => {
+  it('allows the next step, cancel/decline while open, send back and reopen', () => {
     expect(canMoveSr('new', 'planned')).toBe(true);
     expect(canMoveSr('new', 'built')).toBe(false);
-    expect(canMoveSr('built', 'planned')).toBe(false);
     expect(canMoveSr('planned', 'cancelled')).toBe(true);
     expect(canMoveSr('deployed', 'cancelled')).toBe(false);
     expect(canMoveSr('cancelled', 'planned')).toBe(false);
+    expect(srMoveKind('built', 'planned')).toBe('send_back');
+    expect(srMoveKind('deployed', 'planned')).toBe('reopen');
+    expect(srMoveKind('planned', 'declined')).toBe('decline');
+    expect(srMoveKind('deployed', 'declined')).toBe(null);
+    expect(srMoveKind('declined', 'planned')).toBe(null);
+    expect(srMoveKind('planned', 'new')).toBe(null);
+  });
+
+  it('reopens only within the window', () => {
+    const now = Date.parse('2026-10-20T12:00:00Z');
+    expect(srCanReopen('deployed', '2026-10-10T12:00:00Z', now)).toBe(true);
+    expect(srCanReopen('deployed', '2026-10-01T12:00:00Z', now)).toBe(false);
+    expect(srCanReopen('planned', '2026-10-19T12:00:00Z', now)).toBe(false);
+    expect(srCanReopen('deployed', null, now)).toBe(false);
+  });
+
+  it('has plain customer-facing status names', () => {
+    expect(srStatusLabel('built', false)).toBe('Ready to go live');
+    expect(srStatusLabel('built', true)).toBe('Designed & built');
   });
 
   it('formats a reference', () => {
