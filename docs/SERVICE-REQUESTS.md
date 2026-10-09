@@ -40,18 +40,75 @@ New ──▶ Planned ──▶ Designed & built ──▶ Deployed
   **internal notes** that the customer never sees. Each move can carry a note,
   which is included in the email to the requester.
 - The person who raised a request can cancel it **while it is still New**.
-- The design and build itself happens in **Design & Build**, and the change goes
-  live through **Deployment**, as for any other change. The request records the
-  progress and keeps the customer informed.
-- Every event (raised, moved, assigned, comment, rows created in Design & Build)
-  is on the request's timeline and in the tenant audit log.
+- Requests for a **user, common area phone, call queue or auto attendant** are
+  designed and deployed **inside the request** (its Design and Deploy tabs, below).
+  A new site is created from the request into Data Collection; new numbers and
+  "something else" are done by hand and moved on with the status buttons.
+- **Designed & built** needs at least one row designed for the request (and none
+  deleted since). A **Deploy** from the request with no failed changes moves it to
+  **Deployed** by itself and emails the requester. An engineer can still mark it
+  deployed by hand if it went live some other way.
+- Every event (raised, moved, assigned, comment, rows created in Design & Build,
+  deployment runs) is on the request's timeline and in the tenant audit log.
 
-## Create in Design & Build
+## The request page
+
+Each request opens on its own page, `/service-requests/:id` (old `?id=` links
+redirect). Everyone sees **Overview**: the details, progress, the "move this
+request on" buttons and the timeline. Engineers and Super Admins also get
+**Design** and **Deploy** on user, common area phone, call queue and auto
+attendant requests that have a site. Customers never see those tabs.
+
+### Design
+
+The Design tab embeds the **same editors as Design & Build** (the record forms,
+the calling settings, the call queue and auto attendant configuration dialogs,
+shared calling), opened on the request's site and on the tab that matches the
+request, but **listing only the rows designed for this request**.
+
+- It's editable while the request is **Planned**; read-only before (mark it
+  Planned to start) and after (Designed & built, Deployed, Cancelled).
+- **Prefill** creates the request's main row from the customer's answers (see
+  "Create from the request" below), then the engineer finishes it in the
+  editors: number, policies, routing, menus.
+- Anything **added** on the Design tab (a user, phone, resource account, call
+  queue, auto attendant or shared calling policy) is **linked to the request**:
+  the browser sends `x-service-request: <id>` on Design & Build create calls,
+  and `ServiceRequestLinkInterceptor` (on the Design & Build controller) links
+  the new row in `service_request_items`. It refuses, before anything is made,
+  unless Managed Services is on, the caller has `sr:manage`, the request is
+  Planned and the row is on the request's site.
+- Site-wide tools (Populate from Discovery, Reset site, bulk edit, templates,
+  resource account requests) stay on the site's own Design & Build page.
+- Linked rows are **ordinary Design & Build rows**: they also show on the site's
+  Design & Build page, tagged with the request reference (e.g. `SR-0042`).
+- **Remove from request** takes a row off the request without deleting it. A
+  row deleted in Design & Build shows as "Deleted" and blocks Designed & built
+  until it is removed from the request.
+
+### Deploy
+
+What-If and Deploy for **just this request's rows** on the engineer's own
+tenant connection, through the normal deployment path (read-only tenants,
+number mismatches and one live run per connection are all still enforced).
+The scope is the linked rows on the site, plus the resource accounts its call
+queues and auto attendants answer on, plus (as for any deployment) users a queue
+or attendant routes to.
+
+- **What-If** while Planned or Designed & built; **Deploy** (needs
+  `deployment:execute`) once Designed & built, after a confirmation.
+- The run is stored with `scope.serviceRequestId`. When it finishes, the
+  worker adds a staff-only "deployment" entry to the timeline. A **live run with
+  no failed changes** on a Designed & built request moves it to **Deployed** and
+  emails the requester (`apps/worker/src/service-requests.ts`).
+- The tab lists the request's runs and each run's changes.
+
+## Create from the request
 
 So the engineer doesn't retype what the customer already entered, a request
-that is **New** or **Planned** has a **Create in Design & Build** button
-(engineers and Super Admins only). It creates the matching draft row from the
-request's answers:
+that is **New** or **Planned** can create its main row from the request's
+answers (**Prefill** on the Design tab; **Create the site** on a new-site
+request's Overview). It is linked to the request:
 
 | Request | Creates | From the request |
 |---|---|---|
@@ -82,7 +139,7 @@ request's answers:
   locked: a site added after go-live is an operational change
   (`DataCollectionService.insertSite`).
 - The request's **status doesn't change**. Mark it Designed & built once the row
-  is finished.
+  is finished. An existing row it finds is linked to the request as it is.
 - A staff-only timeline entry ("Created draft rows in Design & Build: …") links
   to the rows, which open on the right Design & Build tab
   (`/build/sites/:siteId?tab=…`) or the new site's page.
@@ -102,6 +159,8 @@ Designed & built, Deployed and Cancelled requests.
 | `sr:create` | Raise a request; comment; cancel your own New request | SUPER_ADMIN, PROJECT_MANAGER, ENGINEER, CUSTOMER |
 | `sr:manage` | Plan / build / deploy / cancel, assign, internal notes, Create in Design & Build | SUPER_ADMIN, ENGINEER |
 
+The Design tab also needs `build:read` (and `build:write` to change anything); Deploy needs `deployment:dryrun` for What-If and `deployment:execute` for a live deploy.
+
 A **site contact** (customer user pinned to certain sites) only sees requests for
 their own sites, can only raise requests for those sites, and can't ask for a new
 site (that's a customer-wide request).
@@ -117,7 +176,8 @@ members of that customer** and **Super Admins**.
 | A request reaches Planned, Designed & built, Deployed or Cancelled | `service_request_status_changed` | The person who raised it, unless they made the change themselves |
 
 Both use the customer's branding and link straight to the request
-(`/service-requests?id=…`).
+(`/service-requests/:id`). The Deployed email is also sent when a deployment
+from the request moves it on (by the worker, same template).
 
 ## Picking from existing data
 
@@ -177,12 +237,21 @@ Tenant schema (`0035_service_requests.sql`):
 - `service_request_events` — the timeline: `kind`
   (`created`/`status_changed`/`assigned`/`comment`/`build_drafted`), from/to
   status, body, `internal`, author, and `links` (`build_drafted` only: the rows
-  created, `[{ kind, label, href }]`; `0037_sr_build_drafted_event.sql`).
+  created, `[{ kind, label, href }]`; `0037_sr_build_drafted_event.sql`), and
+  `deployment_id` (`deployment` entries: the run).
+- `service_request_items` — rows designed for a request: `request_id`, `kind`
+  (`site`/`user`/`cap`/`resource_account`/`shared_calling_policy`/`call_queue`/`auto_attendant`),
+  `row_id` (a plain reference into the table `kind` names), `created_by`
+  (`0038_sr_design_items.sql`).
 
 API: `apps/api/src/modules/service-requests/` — `GET/POST /t/:tenantId/service-requests`,
 `GET :id`, `POST :id/status`, `POST :id/assign`, `POST :id/comments`,
-`POST :id/build-draft`, `GET assignees`.
-Web: `apps/web/src/pages/ServiceRequests.tsx`.
+`POST :id/build-draft`, `GET :id/design`, `DELETE :id/items/:kind/:rowId`,
+`GET :id/deploy-preview`, `POST :id/deploy` (`{ connectionId, mode }`), `GET :id/runs`,
+`GET assignees`. Design & Build lists take `serviceRequestId` to list one request's rows.
+Shared rules: `packages/shared/src/service-request-design.ts`.
+Web: `apps/web/src/pages/ServiceRequests.tsx` (list, new request),
+`ServiceRequestPage.tsx` (one request), `BuildSiteWorkspace.tsx` (`embedded`).
 
 ## MSP service-request admin
 

@@ -89,7 +89,7 @@ export function MspServiceRequests() {
   const open = (i: QueueItem) => {
     if (!i.can_open) return;
     setActiveTenant(i.tenant_id);
-    navigate(`/service-requests?id=${i.id}`);
+    navigate(`/service-requests/${i.id}`);
   };
 
   const items = (q.data?.items ?? []).filter((i) => !customer || i.tenant_id === customer);

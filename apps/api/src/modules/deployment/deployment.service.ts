@@ -626,6 +626,8 @@ export class DeploymentService {
     user: AuthedUser,
     input: CreateDeploymentInput,
     can: (p: 'deployment:execute') => boolean,
+    /** Set by a service request's Deploy tab: a clean live run moves that request to Deployed (see the worker). */
+    link?: { serviceRequestId: string },
   ) {
     if (input.mode === 'execute' && !can('deployment:execute')) {
       throw new ForbiddenException('Missing permission: deployment:execute');
@@ -679,7 +681,9 @@ export class DeploymentService {
     // History can show "+N rows included automatically" for this run. The
     // `deployments.scope` column is untyped jsonb, and this object is never
     // re-validated against the request schema, so the extra key is safe.
-    const scope = { ...input.scope, sheets, rowIds, autoIncludedRowIds };
+    // serviceRequestId likewise never comes from the client's own scope - only
+    // ServiceRequestsService.deploy passes `link`, after its own checks.
+    const scope = { ...input.scope, sheets, rowIds, autoIncludedRowIds, ...(link ? { serviceRequestId: link.serviceRequestId } : {}) };
 
     const dep = await s
       .insertInto('deployments')

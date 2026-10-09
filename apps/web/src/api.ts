@@ -1,8 +1,18 @@
-import { TENANT_HEADER } from '@tvmf/shared';
+import { SR_DESIGN_HEADER, TENANT_HEADER } from '@tvmf/shared';
 
 let accessToken: string | null = null;
 let activeTenantId: string | null = null;
 let onAuthLost: (() => void) | null = null;
+/**
+ * Set while a service request's Design tab is open: Design & Build rows
+ * created there are linked to that request (see ServiceRequestLinkInterceptor).
+ * Only sent on POSTs to Design & Build.
+ */
+let designingRequestId: string | null = null;
+
+export function setDesigningServiceRequest(id: string | null) {
+  designingRequestId = id;
+}
 
 export const auth = {
   setToken(t: string | null) {
@@ -36,6 +46,7 @@ async function raw(path: string, init: RequestInit): Promise<Response> {
   const headers = new Headers(init.headers);
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
   if (activeTenantId) headers.set(TENANT_HEADER, activeTenantId);
+  if (designingRequestId && init.method === 'POST' && /\/t\/[^/]+\/build\//.test(path)) headers.set(SR_DESIGN_HEADER, designingRequestId);
   // FormData sets its own multipart boundary in the Content-Type header the
   // browser generates - stamping application/json here would break it.
   if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {

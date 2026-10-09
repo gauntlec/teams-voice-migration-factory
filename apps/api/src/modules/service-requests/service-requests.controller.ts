@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import {
   can,
   createServiceRequestSchema,
@@ -6,13 +6,17 @@ import {
   serviceRequestAssignSchema,
   serviceRequestBuildDraftSchema,
   serviceRequestCommentSchema,
+  serviceRequestDeploySchema,
   serviceRequestStatusSchema,
   setSiteModeSchema,
+  SR_ITEM_KINDS,
+  type SrItemKind,
   type CreateServiceRequestInput,
   type ListServiceRequestsQuery,
   type ServiceRequestAssignInput,
   type ServiceRequestBuildDraftInput,
   type ServiceRequestCommentInput,
+  type ServiceRequestDeployInput,
   type ServiceRequestStatusInput,
   type SetSiteModeInput,
 } from '@tvmf/shared';
@@ -124,6 +128,54 @@ export class ServiceRequestsController {
     @Body(new ZodBody(serviceRequestBuildDraftSchema)) body: ServiceRequestBuildDraftInput,
   ) {
     return this.svc.draftInBuild(t, user, id, body);
+  }
+
+  /* Design and deploy inside the request - see service-request-design.ts. */
+
+  /** The Design tab's linked rows and whether the request can be marked designed & built. */
+  @Get(':id/design')
+  @RequirePermission('sr:manage', 'build:read')
+  design(@TenantCtx() t: TenantContext, @Param('id') id: string) {
+    return this.svc.design(t, id);
+  }
+
+  /** Takes a row off the request (the row stays in Design & Build). Planned requests only. */
+  @Delete(':id/items/:kind/:rowId')
+  @RequirePermission('sr:manage', 'build:write')
+  unlinkItem(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Param('id') id: string,
+    @Param('kind') kind: string,
+    @Param('rowId') rowId: string,
+  ) {
+    if (!SR_ITEM_KINDS.includes(kind as SrItemKind)) throw new BadRequestException('Unknown row type.');
+    return this.svc.unlinkItem(t, user, id, kind as SrItemKind, rowId);
+  }
+
+  /** What What-If / Deploy would change for this request's rows. */
+  @Get(':id/deploy-preview')
+  @RequirePermission('sr:manage', 'deployment:dryrun')
+  deployPreview(@TenantCtx() t: TenantContext, @Param('id') id: string) {
+    return this.svc.deployPreview(t, id);
+  }
+
+  /** What-If (dry run) or Deploy just this request's rows. A live run also needs deployment:execute (checked by the deployment service). */
+  @Post(':id/deploy')
+  @RequirePermission('sr:manage', 'deployment:dryrun')
+  deploy(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Param('id') id: string,
+    @Body(new ZodBody(serviceRequestDeploySchema)) body: ServiceRequestDeployInput,
+  ) {
+    return this.svc.deploy(t, user, id, body);
+  }
+
+  @Get(':id/runs')
+  @RequirePermission('sr:manage', 'deployment:read')
+  runs(@TenantCtx() t: TenantContext, @Param('id') id: string) {
+    return this.svc.runs(t, id);
   }
 
   @Post(':id/comments')

@@ -9,6 +9,7 @@ import {
   SR_BUILD_DRAFT_STATUSES,
   SR_BUILD_KIND,
   SR_BUILD_KIND_LABELS,
+  SR_ITEM_SHEET,
   SR_CUSTOMER_NOTIFY_STATUSES,
   SR_NEW_NUMBER_KEY,
   SR_OPEN_STATUSES,
@@ -21,6 +22,10 @@ import {
   can,
   canDraftSrInBuild,
   canMoveSr,
+  srBuiltBlockers,
+  srDesignEditable,
+  srHasDesign,
+  srItemSheets,
   discoverySiteSchema,
   srAgentEntries,
   srBuildHref,
@@ -33,6 +38,11 @@ import {
   type SrBuildDraft,
   type SrBuildDraftResult,
   type SrBuildLink,
+  type ServiceRequestDeployInput,
+  type SrDeploymentRun,
+  type SrDesignSummary,
+  type SrItem,
+  type SrItemKind,
   type ListServiceRequestsQuery,
   type ServiceRequestCommentInput,
   type ServiceRequestCreatedContext,
@@ -50,6 +60,7 @@ import { InjectDb, type Db } from '../../db/db.module';
 import { MailService } from '../../mail/mail.service';
 import { BuildService } from '../build/build.service';
 import { DataCollectionService } from '../data-collection/data-collection.service';
+import { DeploymentService } from '../deployment/deployment.service';
 import { assertSiteInScope, isSiteScoped } from '../data-collection/site-scope';
 
 /** When each status was reached. */
@@ -85,6 +96,7 @@ export class ServiceRequestsService {
     @Inject(APP_CONFIG) private readonly cfg: AppConfig,
     private readonly build: BuildService,
     private readonly dataCollection: DataCollectionService,
+    private readonly deployment: DeploymentService,
   ) {}
 
   private assertEnabled(t: TenantContext) {
@@ -93,7 +105,7 @@ export class ServiceRequestsService {
 
   private url(id?: string) {
     const base = `${this.cfg.WEB_ORIGIN.replace(/\/+$/, '')}/service-requests`;
-    return id ? `${base}?id=${id}` : base;
+    return id ? `${base}/${id}` : base;
   }
 
   private async names(ids: (string | null | undefined)[]) {
@@ -490,6 +502,10 @@ export class ServiceRequestsService {
     if (!canMoveSr(from, to)) {
       throw new BadRequestException(`A ${SR_STATUS_LABELS[from]} request can't be moved to ${SR_STATUS_LABELS[to]}.`);
     }
+    if (to === 'built') {
+      const blockers = (await this.design(t, id)).builtBlockers;
+      if (blockers.length) throw new BadRequestException(`Not ready to mark as designed & built: ${blockers.join(' ')}`);
+    }
     const now = new Date().toISOString();
     const reachedAt = REACHED_AT[to];
     const updated = await tenantDb(this.db, t.schema)
@@ -628,7 +644,10 @@ export class ServiceRequestsService {
     const draft = mapping.draft;
 
     const already = await this.findBuildRow(t, draft);
-    if (already) return { created: [], existing: [already], warnings };
+    if (already) {
+      await this.linkItem(t, user, id, draft.kind, already.id);
+      return { created: [], existing: [already.link], warnings };
+    }
 
     let createdId: string;
     let siteId: string;
@@ -638,10 +657,14 @@ export class ServiceRequestsService {
       // Someone added the same row a moment ago - report it like any other duplicate.
       if (e instanceof ConflictException) {
         const now = await this.findBuildRow(t, draft);
-        if (now) return { created: [], existing: [now], warnings };
+        if (now) {
+          await this.linkItem(t, user, id, draft.kind, now.id);
+          return { created: [], existing: [now.link], warnings };
+        }
       }
       throw e;
     }
+    await this.linkItem(t, user, id, draft.kind, createdId);
     const created: SrBuildLink[] = [{ kind, label: draft.label, href: srBuildHref(kind, siteId) }];
 
     const s = tenantDb(this.db, t.schema);
@@ -700,7 +723,7 @@ export class ServiceRequestsService {
    * Case-insensitive: UPNs and site codes are, and deployment matches call
    * queues and auto attendants to Teams by lower-cased name tenant-wide.
    */
-  private async findBuildRow(t: TenantContext, draft: SrBuildDraft): Promise<SrBuildLink | null> {
+  private async findBuildRow(t: TenantContext, draft: SrBuildDraft): Promise<{ id: string; link: SrBuildLink } | null> {
     const s = tenantDb(this.db, t.schema);
     const key = draft.key.toLowerCase();
     let hit: { id: string; site_id: string } | undefined;
@@ -729,7 +752,170 @@ export class ServiceRequestsService {
           .executeTakeFirst();
         break;
     }
-    return hit ? { kind: draft.kind, label: draft.label, href: srBuildHref(draft.kind, hit.site_id) } : null;
+    return hit ? { id: hit.id, link: { kind: draft.kind, label: draft.label, href: srBuildHref(draft.kind, hit.site_id) } } : null;
+  }
+
+  /* --------------------------- design and deploy --------------------------- */
+
+  /** Links a row to the request (no-op if it already is). */
+  private async linkItem(t: TenantContext, user: AuthedUser, requestId: string, kind: SrItemKind, rowId: string) {
+    await tenantDb(this.db, t.schema)
+      .insertInto('service_request_items')
+      .values({ request_id: requestId, kind, row_id: rowId, created_by: user.id })
+      .onConflict((oc) => oc.doNothing())
+      .execute();
+  }
+
+  /** The request's linked rows, with their current UPN / name (null once deleted from Design & Build). */
+  private async items(t: TenantContext, requestId: string): Promise<SrItem[]> {
+    const s = tenantDb(this.db, t.schema);
+    const links = await s.selectFrom('service_request_items').selectAll().where('request_id', '=', requestId).orderBy('created_at').execute();
+    const ids = (k: SrItemKind) => links.filter((l) => l.kind === k).map((l) => l.row_id);
+    const found = new Map<string, { label: string; site_id: string }>();
+    const add = (rows: { id: string; label: string | null; site_id: string }[]) => {
+      for (const r of rows) found.set(r.id, { label: r.label ?? '', site_id: r.site_id });
+    };
+    const byUpn = async (table: 'build_users' | 'build_caps' | 'build_resource_accounts', k: SrItemKind) => {
+      const list = ids(k);
+      if (list.length) add(await s.selectFrom(table).select(['id', 'upn as label', 'site_id']).where('id', 'in', list).execute());
+    };
+    const byName = async (table: 'build_shared_calling_policies' | 'build_call_queues' | 'build_auto_attendants', k: SrItemKind) => {
+      const list = ids(k);
+      if (list.length) add(await s.selectFrom(table).select(['id', 'name as label', 'site_id']).where('id', 'in', list).execute());
+    };
+    await Promise.all([
+      byUpn('build_users', 'user'),
+      byUpn('build_caps', 'cap'),
+      byUpn('build_resource_accounts', 'resource_account'),
+      byName('build_shared_calling_policies', 'shared_calling_policy'),
+      byName('build_call_queues', 'call_queue'),
+      byName('build_auto_attendants', 'auto_attendant'),
+      (async () => {
+        const list = ids('site');
+        if (list.length) add(await s.selectFrom('discovery_sites').select(['id', 'sitecode as label', 'id as site_id']).where('id', 'in', list).execute());
+      })(),
+    ]);
+    return links.map((l) => {
+      const hit = found.get(l.row_id);
+      return { kind: l.kind, row_id: l.row_id, label: hit ? hit.label : null, site_id: hit?.site_id ?? null, created_at: l.created_at };
+    });
+  }
+
+  /** The Design tab's summary: linked rows, and what stops "Mark as designed & built". */
+  async design(t: TenantContext, id: string): Promise<SrDesignSummary> {
+    this.assertEnabled(t);
+    const row = await this.load(t, id);
+    const items = await this.items(t, id);
+    const live = items.filter((i) => i.label !== null);
+    const deployableCount = live.filter((i) => SR_ITEM_SHEET[i.kind] && i.site_id === row.site_id).length;
+    const missingCount = items.length - live.length;
+    return { items, deployableCount, builtBlockers: srBuiltBlockers(row.type, { siteId: row.site_id, deployableCount, missingCount }) };
+  }
+
+  /** Removes a row from the request. The row itself stays in Design & Build - delete it there if it isn't wanted at all. */
+  async unlinkItem(t: TenantContext, user: AuthedUser, id: string, kind: SrItemKind, rowId: string) {
+    this.assertEnabled(t);
+    const row = await this.load(t, id);
+    if (!srDesignEditable(row.status)) {
+      throw new BadRequestException(`Rows can only be removed while the request is Planned. This one is ${SR_STATUS_LABELS[row.status]}.`);
+    }
+    const s = tenantDb(this.db, t.schema);
+    const gone = await s
+      .deleteFrom('service_request_items')
+      .where('request_id', '=', id)
+      .where('kind', '=', kind)
+      .where('row_id', '=', rowId)
+      .executeTakeFirst();
+    if (!Number(gone.numDeletedRows)) throw new NotFoundException('That row is not on this request.');
+    await s.updateTable('service_requests').set({ updated_at: new Date().toISOString() }).where('id', '=', id).execute();
+    await this.audit.tenant(t.schema, 'service_request.item_removed', {
+      actor: { id: user.id, email: user.email },
+      targetType: 'service_request',
+      targetId: id,
+      detail: { reference: srReference(row.number), kind, rowId },
+    });
+    return { ok: true };
+  }
+
+  /**
+   * What a deployment for this request acts on: its linked rows on the
+   * request's site, plus the resource accounts its call queues and auto
+   * attendants answer on (they have to exist for the queue / attendant to
+   * work). Users that a queue or attendant routes to are added by the
+   * deployment's own dependency expansion.
+   */
+  private async deployScope(t: TenantContext, row: { id: string; type: keyof typeof SR_TYPE_DEFS; site_id: string | null; number: number }) {
+    if (!srHasDesign(row.type)) throw new BadRequestException(`A ${SR_TYPE_DEFS[row.type].label.toLowerCase()} request has nothing to deploy from here.`);
+    if (!row.site_id) throw new BadRequestException('The request has no site.');
+    const siteId = row.site_id;
+    const items = (await this.items(t, row.id)).filter((i) => i.label !== null && SR_ITEM_SHEET[i.kind] && i.site_id === siteId);
+    if (items.length === 0) throw new BadRequestException('Nothing has been designed for this request yet.');
+    const s = tenantDb(this.db, t.schema);
+    const flowIds = (k: SrItemKind) => items.filter((i) => i.kind === k).map((i) => i.row_id);
+    const [cqs, aas] = await Promise.all([
+      flowIds('call_queue').length ? s.selectFrom('build_call_queues').select('resource_accounts').where('id', 'in', flowIds('call_queue')).execute() : [],
+      flowIds('auto_attendant').length ? s.selectFrom('build_auto_attendants').select('resource_accounts').where('id', 'in', flowIds('auto_attendant')).execute() : [],
+    ]);
+    const raIds = [...cqs, ...aas].flatMap((r) => (Array.isArray(r.resource_accounts) ? (r.resource_accounts as unknown[]).filter((v): v is string => typeof v === 'string') : []));
+    const ras = raIds.length
+      ? await s.selectFrom('build_resource_accounts').select('id').where('id', 'in', raIds).where('site_id', '=', siteId).execute()
+      : [];
+    const kinds = new Set<SrItemKind>(items.map((i) => i.kind));
+    if (ras.length) kinds.add('resource_account');
+    const rowIds = [...new Set([...items.map((i) => i.row_id), ...ras.map((r) => r.id)])];
+    return { siteId, sheets: srItemSheets(kinds), rowIds };
+  }
+
+  /** What What-If / Deploy would do for this request right now (no connection needed). */
+  async deployPreview(t: TenantContext, id: string) {
+    this.assertEnabled(t);
+    const row = await this.load(t, id);
+    const scope = await this.deployScope(t, row);
+    return this.deployment.previewChanges(t, scope);
+  }
+
+  /**
+   * What-If or Deploy just this request's rows, on the caller's own tenant
+   * connection - the normal deployment path, with all its checks (read-only
+   * tenant, number mismatches, one live run per connection). What-If is open
+   * while the request is Planned or Designed & built; a live deploy needs it
+   * Designed & built, and a clean live run moves it to Deployed.
+   */
+  async deploy(t: TenantContext, user: AuthedUser, id: string, input: ServiceRequestDeployInput) {
+    this.assertEnabled(t);
+    const row = await this.load(t, id);
+    const allowed: SrStatus[] = input.mode === 'execute' ? ['built'] : ['planned', 'built'];
+    if (!allowed.includes(row.status)) {
+      throw new BadRequestException(
+        input.mode === 'execute'
+          ? `Mark the request as designed & built before deploying it. It is ${SR_STATUS_LABELS[row.status]}.`
+          : `What-If runs while a request is Planned or Designed & built. This one is ${SR_STATUS_LABELS[row.status]}.`,
+      );
+    }
+    const scope = await this.deployScope(t, row);
+    const dep = await this.deployment.createDeployment(
+      t,
+      user,
+      { connectionId: input.connectionId, mode: input.mode, scope },
+      (p) => can(user.role, p),
+      { serviceRequestId: id },
+    );
+    await tenantDb(this.db, t.schema).updateTable('service_requests').set({ updated_at: new Date().toISOString() }).where('id', '=', id).execute();
+    return dep;
+  }
+
+  /** Deployment runs started from this request, newest first. */
+  async runs(t: TenantContext, id: string): Promise<SrDeploymentRun[]> {
+    this.assertEnabled(t);
+    await this.load(t, id);
+    const rows = await tenantDb(this.db, t.schema)
+      .selectFrom('deployments')
+      .select(['id', 'mode', 'status', 'summary', 'created_at', 'finished_at'])
+      .where(sql<boolean>`scope->>'serviceRequestId' = ${id}`)
+      .orderBy('created_at', 'desc')
+      .limit(50)
+      .execute();
+    return rows.map((r) => ({ ...r, mode: r.mode as SrDeploymentRun['mode'], summary: (r.summary ?? {}) as Record<string, number> }));
   }
 
   /**

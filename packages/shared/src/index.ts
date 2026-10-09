@@ -11,6 +11,7 @@ export * from './wizard';
 export * from './handover';
 export * from './service-requests';
 export * from './service-request-build';
+export * from './service-request-design';
 export * from './wizard-convert';
 
 import type { CmdletInvocation } from './deployment';

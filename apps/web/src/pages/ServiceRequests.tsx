@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link as RouterLink, useSearchParams } from 'react-router-dom';
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Badge,
@@ -67,7 +67,7 @@ import { useDebounced } from '../hooks/useDebounced';
 import { Page } from '../components/Page';
 import { LoadError, NoTenant } from './DataCollection';
 
-interface RequestRow {
+export interface RequestRow {
   id: string;
   number: number;
   reference: string;
@@ -85,7 +85,7 @@ interface RequestRow {
   created_at: string;
 }
 
-interface RequestDetail extends RequestRow {
+export interface RequestDetail extends RequestRow {
   details: Record<string, unknown>;
   site_name: string | null;
   planned_at: string | null;
@@ -94,21 +94,23 @@ interface RequestDetail extends RequestRow {
   cancelled_at: string | null;
 }
 
-interface RequestEvent {
+export interface RequestEvent {
   id: string;
-  kind: 'created' | 'status_changed' | 'assigned' | 'comment' | 'build_drafted';
+  kind: 'created' | 'status_changed' | 'assigned' | 'comment' | 'build_drafted' | 'deployment';
   from_status: SrStatus | null;
   to_status: SrStatus | null;
   body: string | null;
   internal: boolean;
   /** build_drafted only: the Design & Build rows it made. */
   links: SrBuildLink[] | null;
+  /** deployment only: the run. */
+  deployment_id: string | null;
   author_name: string | null;
   created_at: string;
 }
 
 /** Staff only (null for customers): whether "Create in Design & Build" applies. */
-interface RequestBuildInfo {
+export interface RequestBuildInfo {
   kind: SrBuildKind | null;
   canDraft: boolean;
   /** Common area phones: a suggested account UPN, since the customer isn't asked for one. */
@@ -136,7 +138,7 @@ interface FormOptions {
 
 const COUNTRY_OPTIONS = [...COUNTRY_CODES].map((c) => ({ code: c, name: countryName(c) })).sort((a, b) => a.name.localeCompare(b.name));
 
-const STATUS_COLOR: Record<SrStatus, 'informative' | 'brand' | 'warning' | 'success' | 'subtle'> = {
+export const STATUS_COLOR: Record<SrStatus, 'informative' | 'brand' | 'warning' | 'success' | 'subtle'> = {
   new: 'informative',
   planned: 'brand',
   built: 'warning',
@@ -144,9 +146,9 @@ const STATUS_COLOR: Record<SrStatus, 'informative' | 'brand' | 'warning' | 'succ
   cancelled: 'subtle',
 };
 
-const PRIORITY_LABEL: Record<SrPriority, string> = { low: 'Low', normal: 'Normal', high: 'High', urgent: 'Urgent' };
+export const PRIORITY_LABEL: Record<SrPriority, string> = { low: 'Low', normal: 'Normal', high: 'High', urgent: 'Urgent' };
 
-const useStyles = makeStyles({
+export const useSrStyles = makeStyles({
   toolbar: { display: 'flex', columnGap: tokens.spacingHorizontalM, alignItems: 'end', flexWrap: 'wrap', marginBottom: tokens.spacingVerticalM },
   stack: { display: 'flex', flexDirection: 'column', rowGap: tokens.spacingVerticalM },
   facts: { display: 'grid', gridTemplateColumns: 'max-content 1fr', columnGap: tokens.spacingHorizontalL, rowGap: tokens.spacingVerticalXS },
@@ -165,21 +167,23 @@ const useStyles = makeStyles({
   row: { cursor: 'pointer' },
 });
 
-function errorText(e: unknown, fallback: string) {
+export function errorText(e: unknown, fallback: string) {
   return e instanceof ApiError ? e.message : fallback;
 }
 
-function when(iso: string | null) {
+export function when(iso: string | null) {
   return iso ? new Date(iso).toLocaleString() : '—';
 }
 
 export function ServiceRequests() {
   const { activeTenantId, can, me } = useAuth();
-  const cs = useStyles();
-  const [params, setParams] = useSearchParams();
+  const cs = useSrStyles();
+  const [params] = useSearchParams();
   const [status, setStatus] = useState<string>('open');
   const [type, setType] = useState<string>('');
   const [creating, setCreating] = useState(false);
+  const navigate = useNavigate();
+  // Old links (and emails sent before the request page existed) use ?id=.
   const openId = params.get('id');
 
   const enabled = me?.tenants.find((t) => t.id === activeTenantId)?.managedServices ?? false;
@@ -197,13 +201,9 @@ export function ServiceRequests() {
   });
   const [modesOpen, setModesOpen] = useState(false);
 
-  const open = (id: string | null) => {
-    const next = new URLSearchParams(params);
-    if (id) next.set('id', id);
-    else next.delete('id');
-    setParams(next, { replace: true });
-  };
+  const open = (id: string) => navigate(`/service-requests/${id}`);
 
+  if (openId) return <Navigate to={`/service-requests/${openId}`} replace />;
   if (!activeTenantId) return <NoTenant />;
   if (!enabled) {
     return (
@@ -315,7 +315,6 @@ export function ServiceRequests() {
           }}
         />
       )}
-      {openId && <RequestDialog base={base} id={openId} onClose={() => open(null)} />}
       {modesOpen && <SiteModesDialog base={base} sites={sitesQ.data ?? []} onClose={() => setModesOpen(false)} />}
     </Page>
   );
@@ -654,7 +653,7 @@ function isBlank(v: unknown) {
 }
 
 function NewRequestDialog({ base, sites, onClose, onCreated }: { base: string; sites: SiteOption[]; onClose: () => void; onCreated: (id: string) => void }) {
-  const cs = useStyles();
+  const cs = useSrStyles();
   const qc = useQueryClient();
   const operational = sites.filter((s) => s.mode === 'operations');
   const [type, setType] = useState<SrType>('new_user');
@@ -852,292 +851,5 @@ function SiteModesDialog({ base, sites, onClose }: { base: string; sites: SiteOp
         </DialogBody>
       </DialogSurface>
     </Dialog>
-  );
-}
-
-/* ------------------------------ one request ------------------------------ */
-
-function RequestDialog({ base, id, onClose }: { base: string; id: string; onClose: () => void }) {
-  const cs = useStyles();
-  const qc = useQueryClient();
-  const { can, me } = useAuth();
-  const canManage = can('sr:manage');
-  const [note, setNote] = useState('');
-  const [comment, setComment] = useState('');
-  const [internal, setInternal] = useState(false);
-
-  const q = useQuery({
-    queryKey: ['service-request', base, id],
-    queryFn: () => api<{ request: RequestDetail; events: RequestEvent[]; build: RequestBuildInfo | null }>(`${base}/${id}`),
-  });
-  const assignees = useQuery({
-    queryKey: ['service-request-assignees', base],
-    enabled: canManage,
-    queryFn: () => api<{ id: string; display_name: string }[]>(`${base}/assignees`),
-  });
-
-  const refresh = () => {
-    qc.invalidateQueries({ queryKey: ['service-request', base, id] });
-    qc.invalidateQueries({ queryKey: ['service-requests'] });
-  };
-  const move = useMutation({
-    mutationFn: (to: SrStatus) => api(`${base}/${id}/status`, { method: 'POST', body: JSON.stringify({ to, note: note.trim() || undefined }) }),
-    onSuccess: () => {
-      setNote('');
-      refresh();
-    },
-  });
-  const assign = useMutation({
-    mutationFn: (userId: string | null) => api(`${base}/${id}/assign`, { method: 'POST', body: JSON.stringify({ userId }) }),
-    onSuccess: refresh,
-  });
-  const addComment = useMutation({
-    mutationFn: () => api(`${base}/${id}/comments`, { method: 'POST', body: JSON.stringify({ body: comment, internal: canManage && internal }) }),
-    onSuccess: () => {
-      setComment('');
-      setInternal(false);
-      refresh();
-    },
-  });
-
-  const r = q.data?.request;
-  const next = r ? nextSrStatus(r.status) : null;
-  const canCancelOwn = !!r && r.status === 'new' && r.requested_by === me?.id;
-  const actionError = move.error ?? assign.error ?? addComment.error;
-
-  return (
-    <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: '820px', width: '92vw' }}>
-        <DialogBody>
-          <DialogTitle>
-            {r ? (
-              <span className={cs.actions}>
-                {r.reference} — {r.title}
-                <Badge appearance="tint" color={STATUS_COLOR[r.status]}>
-                  {SR_STATUS_LABELS[r.status]}
-                </Badge>
-              </span>
-            ) : (
-              'Service request'
-            )}
-          </DialogTitle>
-          <DialogContent className={cs.stack} style={{ maxHeight: '72vh', overflowY: 'auto' }}>
-            {q.isLoading && <Spinner size="tiny" />}
-            {q.isError && <LoadError message={(q.error as Error).message} />}
-            {r && (
-              <>
-                <div className={cs.facts}>
-                  <Text className={cs.factLabel}>Type</Text>
-                  <Text>{SR_TYPE_DEFS[r.type].label}</Text>
-                  <Text className={cs.factLabel}>Site</Text>
-                  <Text>{r.sitecode ? (r.site_name ? `${r.sitecode} — ${r.site_name}` : r.sitecode) : '—'}</Text>
-                  <Text className={cs.factLabel}>Priority</Text>
-                  <Text>{PRIORITY_LABEL[r.priority]}</Text>
-                  <Text className={cs.factLabel}>Needed by</Text>
-                  <Text>{r.target_date ?? '—'}</Text>
-                  <Text className={cs.factLabel}>Raised by</Text>
-                  <Text>
-                    {r.requested_by_name ?? '—'} · {when(r.created_at)}
-                  </Text>
-                  <Text className={cs.factLabel}>Assigned to</Text>
-                  {canManage && (r.status === 'new' || r.status === 'planned' || r.status === 'built') ? (
-                    <Select size="small" value={r.assigned_to ?? ''} disabled={assign.isPending} onChange={(_, d) => assign.mutate(d.value || null)}>
-                      <option value="">Unassigned</option>
-                      {(assignees.data ?? []).map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.display_name}
-                        </option>
-                      ))}
-                    </Select>
-                  ) : (
-                    <Text>{r.assigned_to_name ?? 'Unassigned'}</Text>
-                  )}
-                </div>
-
-                <div className={cs.section}>
-                  <Text weight="semibold">Request details</Text>
-                  <div className={cs.facts}>
-                    {srDetailLines(r.type, r.details).map((l) => (
-                      <FactRow key={l.label} label={l.label} value={l.value} />
-                    ))}
-                  </div>
-                </div>
-
-                {q.data!.build?.canDraft && q.data!.build.kind && (
-                  <BuildDraftSection base={base} id={id} kind={q.data!.build.kind} suggestedCapUpn={q.data!.build.suggestedCapUpn} onDone={refresh} />
-                )}
-
-                {(canManage && (next || canMoveSr(r.status, 'cancelled'))) || canCancelOwn ? (
-                  <div className={cs.section}>
-                    <Text weight="semibold">Move this request on</Text>
-                    <Field hint={canManage ? 'Optional. Included in the update emailed to the requester.' : undefined}>
-                      <Textarea value={note} maxLength={4000} placeholder="Add a note (optional)" resize="vertical" onChange={(_, d) => setNote(d.value)} />
-                    </Field>
-                    <div className={cs.actions}>
-                      {canManage && next && (
-                        <Button appearance="primary" disabled={move.isPending} onClick={() => move.mutate(next)}>
-                          Mark as {SR_STATUS_LABELS[next].toLowerCase()}
-                        </Button>
-                      )}
-                      {(canManage || canCancelOwn) && canMoveSr(r.status, 'cancelled') && (
-                        <Button disabled={move.isPending} onClick={() => move.mutate('cancelled')}>
-                          Cancel request
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                ) : null}
-
-                <div className={cs.section}>
-                  <Text weight="semibold">Timeline</Text>
-                  {q.data!.events.map((e) => (
-                    <div key={e.id} className={`${cs.event} ${e.internal ? cs.internal : ''}`}>
-                      <Text size={200}>
-                        <b>{e.author_name ?? 'Someone'}</b> · {when(e.created_at)}
-                        {e.internal ? ' · internal note' : ''}
-                      </Text>
-                      <Text style={{ whiteSpace: 'pre-wrap' }}>{eventText(e)}</Text>
-                      {e.links && e.links.length > 0 && <BuildLinks links={e.links} />}
-                    </div>
-                  ))}
-                </div>
-
-                {can('sr:create') && (
-                  <div className={cs.section}>
-                    <Field label="Add a comment">
-                      <Textarea value={comment} maxLength={4000} resize="vertical" onChange={(_, d) => setComment(d.value)} />
-                    </Field>
-                    <div className={cs.actions}>
-                      {canManage && <Checkbox checked={internal} label="Internal note (the customer won't see it)" onChange={(_, d) => setInternal(!!d.checked)} />}
-                      <Button disabled={!comment.trim() || addComment.isPending} onClick={() => addComment.mutate()}>
-                        Add comment
-                      </Button>
-                    </div>
-                  </div>
-                )}
-                {actionError && <Text className={cs.error}>{errorText(actionError, 'That did not work')}</Text>}
-              </>
-            )}
-          </DialogContent>
-          <DialogActions>
-            <Button appearance="secondary" onClick={onClose}>
-              Close
-            </Button>
-          </DialogActions>
-        </DialogBody>
-      </DialogSurface>
-    </Dialog>
-  );
-}
-
-function FactRow({ label, value }: { label: string; value: string }) {
-  const cs = useStyles();
-  return (
-    <>
-      <Text className={cs.factLabel}>{label}</Text>
-      <Text style={{ whiteSpace: 'pre-wrap' }}>{value}</Text>
-    </>
-  );
-}
-
-function eventText(e: RequestEvent): string {
-  switch (e.kind) {
-    case 'created':
-      return 'Raised the request.';
-    case 'status_changed': {
-      const moved = `Moved from ${e.from_status ? SR_STATUS_LABELS[e.from_status] : '—'} to ${e.to_status ? SR_STATUS_LABELS[e.to_status] : '—'}.`;
-      return e.body ? `${moved} ${e.body}` : moved;
-    }
-    case 'assigned':
-      return e.body === 'Unassigned' ? 'Unassigned the request.' : `Assigned to ${e.body}.`;
-    case 'comment':
-    case 'build_drafted':
-      return e.body ?? '';
-  }
-}
-
-/* ------------------------ Create in Design & Build ------------------------ */
-
-/**
- * Staff only, while the request is New or Planned: creates the draft Design &
- * Build row from the customer's answers (see service-request-build.ts). The
- * request's status doesn't change - mark it Designed & built once the row is done.
- */
-function BuildDraftSection({
-  base,
-  id,
-  kind,
-  suggestedCapUpn,
-  onDone,
-}: {
-  base: string;
-  id: string;
-  kind: SrBuildKind;
-  suggestedCapUpn: string | null;
-  onDone: () => void;
-}) {
-  const cs = useStyles();
-  const [capUpn, setCapUpn] = useState(suggestedCapUpn ?? '');
-  const draft = useMutation({
-    mutationFn: () =>
-      api<SrBuildDraftResult>(`${base}/${id}/build-draft`, {
-        method: 'POST',
-        body: JSON.stringify(kind === 'cap' ? { capUpn: capUpn.trim() } : {}),
-      }),
-    onSuccess: onDone,
-  });
-  const result = draft.data;
-  const what = kind === 'site' ? 'the new site' : `a draft ${SR_BUILD_KIND_LABELS[kind].toLowerCase()} row in Design & Build`;
-  return (
-    <div className={cs.section}>
-      <Text weight="semibold">Design & Build</Text>
-      <Text size={200}>
-        Create {what} from this request's answers, so you don't have to retype them. Pick the phone number there. This doesn't change the
-        request's status.
-      </Text>
-      {kind === 'cap' && (
-        <Field label="Account sign-in address (UPN)" required hint="The customer isn't asked for this. Suggested from the phone's name.">
-          <Input value={capUpn} onChange={(_, d) => setCapUpn(d.value)} placeholder="e.g. reception.desk@contoso.com" />
-        </Field>
-      )}
-      <div className={cs.actions}>
-        <Button disabled={draft.isPending || (kind === 'cap' && !capUpn.trim())} onClick={() => draft.mutate()}>
-          Create in Design & Build
-        </Button>
-        {draft.isPending && <Spinner size="tiny" />}
-      </div>
-      {result && result.created.length > 0 && (
-        <div>
-          <Text>Created:</Text>
-          <BuildLinks links={result.created} />
-        </div>
-      )}
-      {result && result.existing.length > 0 && (
-        <div>
-          <Text>Already in Design & Build, so nothing was changed:</Text>
-          <BuildLinks links={result.existing} />
-        </div>
-      )}
-      {result?.warnings.map((w) => (
-        <Text key={w} className={cs.error}>
-          {w}
-        </Text>
-      ))}
-      {draft.error && <Text className={cs.error}>{errorText(draft.error, 'Could not create the row')}</Text>}
-    </div>
-  );
-}
-
-function BuildLinks({ links }: { links: SrBuildLink[] }) {
-  return (
-    <ul style={{ margin: 0, paddingLeft: '20px' }}>
-      {links.map((l) => (
-        <li key={l.href + l.label}>
-          <RouterLink to={l.href}>
-            {SR_BUILD_KIND_LABELS[l.kind]}: {l.label}
-          </RouterLink>
-        </li>
-      ))}
-    </ul>
   );
 }

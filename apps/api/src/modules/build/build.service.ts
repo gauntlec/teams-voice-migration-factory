@@ -45,6 +45,7 @@ import {
   type NumberType,
   type Paginated,
   type PolicyKey,
+  srReference,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
 import { applyBulkPatch, auditBulkPatch } from '../../common/bulk-patch';
@@ -70,6 +71,24 @@ export class BuildService {
   ) {}
   private s(t: TenantContext): Scoped {
     return tenantDb(this.db, t.schema);
+  }
+
+  /**
+   * Adds `service_requests` (e.g. ["SR-0042"]) to each row: the Managed
+   * Services requests it was designed for, shown as a tag in Design & Build.
+   */
+  private async withSrRefs<T extends { id: string }>(t: TenantContext, rows: T[]): Promise<(T & { service_requests: string[] })[]> {
+    if (rows.length === 0) return [];
+    const links = await this.s(t)
+      .selectFrom('service_request_items as i')
+      .innerJoin('service_requests as r', 'r.id', 'i.request_id')
+      .select(['i.row_id', 'r.number'])
+      .where('i.row_id', 'in', rows.map((r) => r.id))
+      .orderBy('r.number')
+      .execute();
+    const byRow = new Map<string, string[]>();
+    for (const l of links) byRow.set(l.row_id, [...(byRow.get(l.row_id) ?? []), srReference(l.number)]);
+    return rows.map((r) => ({ ...r, service_requests: byRow.get(r.id) ?? [] }));
   }
 
   /* ============================ site rollup ============================ */
@@ -352,6 +371,8 @@ export class BuildService {
   private async listIdentity(t: TenantContext, table: 'build_users' | 'build_caps', q: BuildListQuery) {
     const s = this.s(t);
     let base = s.selectFrom(table).where('site_id', '=', q.siteId);
+    // A service request's Design tab lists only the rows designed for it.
+    if (q.serviceRequestId) base = base.where('id', 'in', s.selectFrom('service_request_items').select('row_id').where('request_id', '=', q.serviceRequestId));
     if (q.hidden !== undefined) base = base.where('hidden', '=', q.hidden);
     else base = base.where('hidden', '=', false);
     if (q.q) {
@@ -380,7 +401,7 @@ export class BuildService {
     );
     // phone_number_id is a native column now (see 0017_build_phone_number_id) -
     // no separate holder lookup needed to know "what number is this row's".
-    const items = rows.map((r) => ({ ...r, validation: validated.get(r.id) ?? null }));
+    const items = await this.withSrRefs(t, rows.map((r) => ({ ...r, validation: validated.get(r.id) ?? null })));
     return { items, total: Number(n), page: q.page, limit: q.limit } satisfies Paginated<unknown>;
   }
 
@@ -643,6 +664,8 @@ export class BuildService {
   async listResourceAccounts(t: TenantContext, q: BuildListQuery) {
     const s = this.s(t);
     let base = s.selectFrom('build_resource_accounts').where('site_id', '=', q.siteId);
+    // A service request's Design tab lists only the rows designed for it.
+    if (q.serviceRequestId) base = base.where('id', 'in', s.selectFrom('service_request_items').select('row_id').where('request_id', '=', q.serviceRequestId));
     if (q.q) {
       const like = `%${q.q}%`;
       base = base.where((eb) => eb.or([eb('upn', 'ilike', like), eb('display_name', 'ilike', like)]));
@@ -655,7 +678,7 @@ export class BuildService {
       .offset((q.page - 1) * q.limit)
       .execute();
     // phone_number_id is a native column now (see 0017_build_phone_number_id).
-    const items = rows;
+    const items = await this.withSrRefs(t, rows);
     return { items, total: Number(n), page: q.page, limit: q.limit } satisfies Paginated<unknown>;
   }
 
@@ -795,6 +818,8 @@ export class BuildService {
   async listSharedCallingPolicies(t: TenantContext, q: BuildListQuery) {
     const s = this.s(t);
     let base = s.selectFrom('build_shared_calling_policies').where('site_id', '=', q.siteId);
+    // A service request's Design tab lists only the rows designed for it.
+    if (q.serviceRequestId) base = base.where('id', 'in', s.selectFrom('service_request_items').select('row_id').where('request_id', '=', q.serviceRequestId));
     if (q.q) base = base.where('name', 'ilike', `%${q.q}%`);
     const [{ n }] = await base.select((eb) => eb.fn.countAll<number>().as('n')).execute();
     const rows = await base
@@ -803,7 +828,7 @@ export class BuildService {
       .limit(q.limit)
       .offset((q.page - 1) * q.limit)
       .execute();
-    return { items: rows, total: Number(n), page: q.page, limit: q.limit } satisfies Paginated<unknown>;
+    return { items: await this.withSrRefs(t, rows), total: Number(n), page: q.page, limit: q.limit } satisfies Paginated<unknown>;
   }
 
   async getSharedCallingPolicy(t: TenantContext, id: string) {
@@ -1165,9 +1190,11 @@ export class BuildService {
   async listCallQueues(t: TenantContext, q: BuildListQuery) {
     const s = this.s(t);
     let base = s.selectFrom('build_call_queues').where('site_id', '=', q.siteId);
+    // A service request's Design tab lists only the rows designed for it.
+    if (q.serviceRequestId) base = base.where('id', 'in', s.selectFrom('service_request_items').select('row_id').where('request_id', '=', q.serviceRequestId));
     if (q.q) base = base.where('name', 'ilike', `%${q.q}%`);
     const [{ n }] = await base.select((eb) => eb.fn.countAll<number>().as('n')).execute();
-    const items = await base.selectAll().orderBy('name').limit(q.limit).offset((q.page - 1) * q.limit).execute();
+    const items = await this.withSrRefs(t, await base.selectAll().orderBy('name').limit(q.limit).offset((q.page - 1) * q.limit).execute());
     return { items, total: Number(n), page: q.page, limit: q.limit } satisfies Paginated<unknown>;
   }
 
@@ -1259,9 +1286,11 @@ export class BuildService {
   async listAutoAttendants(t: TenantContext, q: BuildListQuery) {
     const s = this.s(t);
     let base = s.selectFrom('build_auto_attendants').where('site_id', '=', q.siteId);
+    // A service request's Design tab lists only the rows designed for it.
+    if (q.serviceRequestId) base = base.where('id', 'in', s.selectFrom('service_request_items').select('row_id').where('request_id', '=', q.serviceRequestId));
     if (q.q) base = base.where('name', 'ilike', `%${q.q}%`);
     const [{ n }] = await base.select((eb) => eb.fn.countAll<number>().as('n')).execute();
-    const items = await base.selectAll().orderBy('name').limit(q.limit).offset((q.page - 1) * q.limit).execute();
+    const items = await this.withSrRefs(t, await base.selectAll().orderBy('name').limit(q.limit).offset((q.page - 1) * q.limit).execute());
     return { items, total: Number(n), page: q.page, limit: q.limit } satisfies Paginated<unknown>;
   }
 

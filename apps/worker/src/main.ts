@@ -49,6 +49,7 @@ import { renderEmail } from './mail/templates';
 import type { EmailBranding } from './mail/layout';
 import { mailerConfigured, sendMail } from './mail/mailer';
 import { makeMailEnqueuer } from './mail/enqueue';
+import { recordServiceRequestRun } from './service-requests';
 
 const QUEUE_NAME = 'deployments';
 const MAIL_QUEUE_NAME = 'mail';
@@ -402,7 +403,8 @@ async function handleDeploymentRun(job: Job) {
     deploymentId: string;
     connectionId: string;
     mode: 'dry_run' | 'execute';
-    scope: { siteId: string; sheets: string[]; rowIds?: string[] };
+    /** serviceRequestId: started from a service request's Deploy tab - see service-requests.ts. */
+    scope: { siteId: string; sheets: string[]; rowIds?: string[]; serviceRequestId?: string };
     operatorUserId: string;
     tenantId: string;
   };
@@ -463,6 +465,18 @@ async function handleDeploymentRun(job: Job) {
       failures,
       errorMessage: message,
     });
+    if (scope.serviceRequestId) {
+      await recordServiceRequestRun(db, enqueueMail, {
+        tenantId,
+        schema,
+        serviceRequestId: scope.serviceRequestId,
+        deploymentId,
+        operatorUserId,
+        mode,
+        counts,
+        errorMessage: message,
+      });
+    }
     throw err;
   }
 
@@ -842,6 +856,17 @@ async function handleDeploymentRun(job: Job) {
     total: seq,
     failures,
   });
+  if (scope.serviceRequestId) {
+    await recordServiceRequestRun(db, enqueueMail, {
+      tenantId,
+      schema,
+      serviceRequestId: scope.serviceRequestId,
+      deploymentId,
+      operatorUserId,
+      mode,
+      counts,
+    });
+  }
   }
 }
 

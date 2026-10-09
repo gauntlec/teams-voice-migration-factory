@@ -884,7 +884,7 @@ export interface ServiceRequestsTable {
 export interface ServiceRequestEventsTable {
   id: Generated<string>;
   request_id: string;
-  kind: 'created' | 'status_changed' | 'assigned' | 'comment' | 'build_drafted';
+  kind: 'created' | 'status_changed' | 'assigned' | 'comment' | 'build_drafted' | 'deployment';
   from_status: string | null;
   to_status: string | null;
   body: string | null;
@@ -892,7 +892,19 @@ export interface ServiceRequestEventsTable {
   /** build_drafted only: the Design & Build rows it made - see 0037_sr_build_drafted_event.sql. */
   // Written as JSON.stringify(...): pg would bind a plain array as a Postgres array, not jsonb.
   links: ColumnType<import('@tvmf/shared').SrBuildLink[] | null, string | null | undefined, string | null>;
+  /** 'deployment' only: the run that finished - see 0038_sr_design_items.sql. */
+  deployment_id: ColumnType<string | null, string | null | undefined, string | null>;
   author_id: string;
+  created_at: Ts;
+}
+
+/** Design & Build rows (or a new site) designed for a service request - see 0038_sr_design_items.sql. */
+export interface ServiceRequestItemsTable {
+  request_id: string;
+  kind: import('@tvmf/shared').SrItemKind;
+  /** Plain reference into the table `kind` names. */
+  row_id: string;
+  created_by: string | null;
   created_at: Ts;
 }
 
@@ -1008,6 +1020,7 @@ export interface DB {
   handover_notes: HandoverNotesTable;
   service_requests: ServiceRequestsTable;
   service_request_events: ServiceRequestEventsTable;
+  service_request_items: ServiceRequestItemsTable;
   files: FilesTable;
   audit_log: TenantAuditLogTable;
 }

@@ -25,6 +25,7 @@ import { AdminEmailLog } from './pages/admin/EmailLog';
 import { AdminAudit } from './pages/admin/Audit';
 import { FeatureRequests } from './pages/FeatureRequests';
 import { MspServiceRequests } from './pages/MspServiceRequests';
+import { ServiceRequestPage } from './pages/ServiceRequestPage';
 import { ServiceRequests } from './pages/ServiceRequests';
 import { BugReports } from './pages/BugReports';
 import { Discovery } from './pages/Discovery';
@@ -169,6 +170,14 @@ export function App() {
           element={
             <RequirePermission permission="sr:read">
               <ServiceRequests />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="/service-requests/:id"
+          element={
+            <RequirePermission permission="sr:read">
+              <ServiceRequestPage />
             </RequirePermission>
           }
         />

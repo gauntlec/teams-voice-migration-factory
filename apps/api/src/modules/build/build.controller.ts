@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards, UseInterceptors } from '@nestjs/common';
 import {
   can,
   buildAutoAttendantCreateSchema,
@@ -56,6 +56,7 @@ import { ZodBody } from '../../common/zod.pipe';
 import { RequirePermission } from '../../rbac/require-permission.decorator';
 import { TenantGuard } from '../../rbac/tenant.guard';
 import { BuildService } from './build.service';
+import { ServiceRequestLinkInterceptor } from './service-request-link.interceptor';
 
 /**
  * Design & Build - target configuration for Users, Common Area Phones and
@@ -67,6 +68,8 @@ import { BuildService } from './build.service';
  */
 @Controller('t/:tenantId/build')
 @UseGuards(TenantGuard)
+// Links rows made on a service request's Design tab to that request.
+@UseInterceptors(ServiceRequestLinkInterceptor)
 export class BuildController {
   constructor(private readonly svc: BuildService) {}
 

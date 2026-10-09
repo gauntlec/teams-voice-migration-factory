@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
@@ -163,24 +163,73 @@ function callingSettingsSummary(r: Row): string {
 }
 
 const BUILD_TABS = ['users', 'caps', 'resource-accounts', 'shared-calling-policies', 'call-queues', 'auto-attendants'] as const;
-type BuildTab = (typeof BUILD_TABS)[number];
+export type BuildTab = (typeof BUILD_TABS)[number];
 
-export function BuildSiteWorkspace() {
+/**
+ * Set when the workspace is embedded in a service request's Design tab: the
+ * request's site, only the rows designed for it (new rows are linked to it -
+ * see setDesigningServiceRequest), no site-wide actions, and read-only unless
+ * the request is Planned.
+ */
+export interface BuildEmbedding {
+  siteId: string;
+  requestId: string;
+  reference: string;
+  editable: boolean;
+  /** Tab to open on, e.g. 'call-queues' for a call queue request. */
+  tab?: BuildTab;
+}
+
+/** The SR-0042 tags on a row designed for a service request. */
+function SrTags({ refs }: { refs: unknown }) {
+  if (!Array.isArray(refs) || refs.length === 0) return null;
+  return (
+    <>
+      {(refs as string[]).map((ref) => (
+        <Badge key={ref} size="small" appearance="tint" color="brand" style={{ marginLeft: 6 }} title={`Designed for service request ${ref}`}>
+          {ref}
+        </Badge>
+      ))}
+    </>
+  );
+}
+
+/** Adds the row's service request tags after a column's own content (the row's first column). */
+function withSrTags(col: ColumnDef): ColumnDef {
+  return {
+    ...col,
+    render: (r) => (
+      <>
+        {col.render ? col.render(r) : ((r[col.key] as string) ?? '—') || '—'}
+        <SrTags refs={r.service_requests} />
+      </>
+    ),
+  };
+}
+
+export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } = {}) {
   const s = useRecordStyles();
-  const { siteId = '' } = useParams();
+  const params = useParams();
+  const siteId = embedded?.siteId ?? params.siteId ?? '';
   const { activeTenantId, can } = useAuth();
   const qc = useQueryClient();
   // ?tab=call-queues etc. opens straight on that tab (e.g. from a service
   // request's "Created draft rows in Design & Build" link).
   const [searchParams] = useSearchParams();
   const [tab, setTab] = useState<BuildTab>(() => {
+    if (embedded?.tab) return embedded.tab;
     const requested = searchParams.get('tab');
     return BUILD_TABS.includes(requested as BuildTab) ? (requested as BuildTab) : 'users';
   });
 
   const tid = activeTenantId;
   const base = `/t/${tid}/build`;
-  const canWrite = can('build:write');
+  const canWrite = can('build:write') && (!embedded || embedded.editable);
+  // Site-wide tools (populate, reset, bulk edit, templates, account requests)
+  // act on every row of the site, so they're left to the site's own page.
+  const siteTools = canWrite && !embedded;
+  // Lists: the whole site, or only a service request's rows.
+  const listParams = { siteId, serviceRequestId: embedded?.requestId };
 
   const rollup = useQuery({
     queryKey: ['build-summary', tid],
@@ -412,8 +461,11 @@ export function BuildSiteWorkspace() {
     choices: policyChoicesByKey[k.key] ?? [],
   }));
 
+  // Embedded in a service request, the request page supplies the title.
+  const Shell = embedded ? EmbeddedShell : Page;
+
   return (
-    <Page
+    <Shell
       title={site.name || site.sitecode}
       subtitle={`Design & Build · ${site.sitecode}`}
       actions={
@@ -425,15 +477,19 @@ export function BuildSiteWorkspace() {
       }
     >
       <div className={s.summary}>
-        <Text size={200}>
-          Users: <b>{site.counts.users}</b>
-        </Text>
-        <Text size={200}>
-          CAPs: <b>{site.counts.caps}</b>
-        </Text>
-        <Text size={200}>
-          Resource accounts: <b>{site.counts.resourceAccounts}</b>
-        </Text>
+        {!embedded && (
+          <>
+            <Text size={200}>
+              Users: <b>{site.counts.users}</b>
+            </Text>
+            <Text size={200}>
+              CAPs: <b>{site.counts.caps}</b>
+            </Text>
+            <Text size={200}>
+              Resource accounts: <b>{site.counts.resourceAccounts}</b>
+            </Text>
+          </>
+        )}
         {canWrite && (
           <Button size="small" disabled={validate.isPending} onClick={() => validate.mutate({})}>
             {validate.isPending ? 'Validating…' : 'Validate against tenant'}
@@ -449,7 +505,7 @@ export function BuildSiteWorkspace() {
             {validateMsg}
           </Text>
         )}
-        {canWrite && (site.counts.users + site.counts.caps + site.counts.resourceAccounts) > 0 && (
+        {siteTools && (site.counts.users + site.counts.caps + site.counts.resourceAccounts) > 0 && (
           <Button
             size="small"
             appearance="subtle"
@@ -597,15 +653,15 @@ export function BuildSiteWorkspace() {
           hint="Teams users with Enterprise Voice - target numbers and policies for this site. Replaces the USERS build sheet."
           endpoint={`${base}/users`}
           queryKey={['users', tid, siteId]}
-          params={{ siteId }}
+          params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
           pageSize={500}
-          selectable={canWrite}
+          selectable={siteTools}
           selected={usersSelected}
           onSelectedChange={setUsersSelected}
           headerActions={
-            canWrite && (
+            siteTools && (
               <>
                 <Button size="small" disabled={populate.isPending} onClick={() => populate.mutate('users')}>
                   Populate from Discovery
@@ -620,7 +676,7 @@ export function BuildSiteWorkspace() {
             )
           }
           columns={[
-            { key: 'upn', label: 'UPN' },
+            withSrTags({ key: 'upn', label: 'UPN' }),
             { key: 'e164', label: 'Number' },
             ...policyColumns(),
             {
@@ -660,15 +716,15 @@ export function BuildSiteWorkspace() {
           hint="Phones logged in permanently (lobbies, meeting rooms) - target numbers and policies. Replaces the CAPS build sheet."
           endpoint={`${base}/caps`}
           queryKey={['caps', tid, siteId]}
-          params={{ siteId }}
+          params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
           pageSize={500}
-          selectable={canWrite}
+          selectable={siteTools}
           selected={capsSelected}
           onSelectedChange={setCapsSelected}
           headerActions={
-            canWrite && (
+            siteTools && (
               <>
                 <Button size="small" disabled={populate.isPending} onClick={() => populate.mutate('caps')}>
                   Populate from Discovery
@@ -683,7 +739,7 @@ export function BuildSiteWorkspace() {
             )
           }
           columns={[
-            { key: 'upn', label: 'UPN' },
+            withSrTags({ key: 'upn', label: 'UPN' }),
             { key: 'display_name', label: 'Name' },
             { key: 'e164', label: 'Number' },
             { key: 'phone_model', label: 'Model' },
@@ -724,11 +780,11 @@ export function BuildSiteWorkspace() {
           hint="Identity + number for Auto Attendant / Call Queue resource accounts. Model a new one before it exists live, then use Request accounts below to ask the customer to create and license it - see the note below."
           endpoint={`${base}/resource-accounts`}
           queryKey={['resource-accounts', tid, siteId]}
-          params={{ siteId }}
+          params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
           headerActions={
-            canWrite && (
+            siteTools && (
               <>
                 <Button size="small" disabled={populate.isPending} onClick={() => populate.mutate('resource-accounts')}>
                   Populate from Discovery
@@ -753,7 +809,7 @@ export function BuildSiteWorkspace() {
           }
           emptyText="No resource accounts yet."
           columns={[
-            { key: 'display_name', label: 'Name' },
+            withSrTags({ key: 'display_name', label: 'Name' }),
             { key: 'kind', label: 'Kind' },
             { key: 'upn', label: 'UPN' },
             { key: 'phone_number', label: 'Number' },
@@ -832,12 +888,12 @@ export function BuildSiteWorkspace() {
           hint="Manage the TeamsSharedCallingRoutingPolicy objects themselves - name, resource account (used as outbound/callback caller ID), and emergency callback numbers. Grant an existing policy to a user on the Users/CAPs tab's Policies field."
           endpoint={`${base}/shared-calling-policies`}
           queryKey={['shared-calling-policies', tid, siteId]}
-          params={{ siteId }}
+          params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
           emptyText="No Shared Calling policies yet."
           columns={[
-            { key: 'name', label: 'Name' },
+            withSrTags({ key: 'name', label: 'Name' }),
             {
               key: 'resource_account_id',
               label: 'Resource account',
@@ -876,12 +932,12 @@ export function BuildSiteWorkspace() {
           hint="Routing, agents and overflow/timeout behaviour for Call Queue resource accounts. New rows are seeded by Populate from Discovery on the Resource accounts tab."
           endpoint={`${base}/call-queues`}
           queryKey={['call-queues', tid, siteId]}
-          params={{ siteId }}
+          params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
           emptyText="No call queues yet - Populate from Discovery on the Resource accounts tab first."
           columns={[
-            { key: 'name', label: 'Name' },
+            withSrTags({ key: 'name', label: 'Name' }),
             { key: 'routing_method', label: 'Routing' },
             { key: 'agent_alert_time', label: 'Alert (s)' },
             {
@@ -940,12 +996,12 @@ export function BuildSiteWorkspace() {
           hint="Language/voice and the real call-flow menu (business hours, after hours, holidays) for Auto Attendant resource accounts. Populate from Discovery pre-fills these from a live tenant; for a greenfield site, add one by hand and link resource accounts to it in Configure… - it just won't get a phone number until that account is created and licensed."
           endpoint={`${base}/auto-attendants`}
           queryKey={['auto-attendants', tid, siteId]}
-          params={{ siteId }}
+          params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
           emptyText="No auto attendants yet - add one, or Populate from Discovery on the Resource accounts tab."
           columns={[
-            { key: 'name', label: 'Name' },
+            withSrTags({ key: 'name', label: 'Name' }),
             { key: 'language_id', label: 'Language' },
             { key: 'time_zone_id', label: 'Time zone' },
             { key: 'voice_id', label: 'Voice' },
@@ -997,8 +1053,12 @@ export function BuildSiteWorkspace() {
         />
       )}
 
-    </Page>
+    </Shell>
   );
+}
+
+function EmbeddedShell({ children }: { title: string; subtitle?: string; actions?: ReactNode; children: ReactNode }) {
+  return <div style={{ display: 'grid', gap: 16 }}>{children}</div>;
 }
 
 /** Maps a Design & Build Call Queue row to the shape buildCallQueueFlowGraphFromDesign/buildAutoAttendantFlowGraphFromDesign need. */

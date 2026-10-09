@@ -1382,6 +1382,8 @@ export const buildListQuerySchema = z.object({
   siteId: z.string().uuid(),
   q: z.string().trim().max(160).optional(),
   hidden: z.coerce.boolean().optional(),
+  /** Only rows designed for this service request (its Design tab). */
+  serviceRequestId: z.string().uuid().optional(),
   page: z.coerce.number().int().min(1).max(100000).default(1),
   limit: z.coerce.number().int().min(1).max(500).default(200),
 });
