@@ -178,6 +178,8 @@ export interface TenantDiscoveryRun {
   id: string;
   connection_id: string | null;
   status: import('./domain').TenantDiscoveryRunStatus;
+  /** `targeted` = a Design & Build Validate check, not a real sync */
+  kind: import('./domain').TenantDiscoveryRunKind;
   started_by: string;
   started_at: string | null;
   finished_at: string | null;

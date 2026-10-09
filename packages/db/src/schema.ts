@@ -717,6 +717,12 @@ export interface TenantDiscoveryRunsTable {
     import('@tvmf/shared').TenantDiscoveryRunStatus | undefined,
     import('@tvmf/shared').TenantDiscoveryRunStatus
   >;
+  /** 'targeted' = a Design & Build Validate check (migration 0044) */
+  kind: ColumnType<
+    import('@tvmf/shared').TenantDiscoveryRunKind,
+    import('@tvmf/shared').TenantDiscoveryRunKind | undefined,
+    import('@tvmf/shared').TenantDiscoveryRunKind
+  >;
   started_by: string;
   started_at: string | null;
   finished_at: string | null;

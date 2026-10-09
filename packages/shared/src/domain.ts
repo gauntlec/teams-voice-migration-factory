@@ -681,6 +681,15 @@ export const TENANT_DISCOVERY_RUN_STATUSES = ['queued', 'running', 'completed', 
 export type TenantDiscoveryRunStatus = (typeof TENANT_DISCOVERY_RUN_STATUSES)[number];
 
 /**
+ * `sync` = a discovery started from the Discovery page (full or partial);
+ * `targeted` = Design & Build's "Validate against tenant" check for a few UPNs.
+ * Targeted runs are kept out of the "latest run" card and labelled
+ * "Validate check" in the Changes tab, but still block a second run starting.
+ */
+export const TENANT_DISCOVERY_RUN_KINDS = ['sync', 'targeted'] as const;
+export type TenantDiscoveryRunKind = (typeof TENANT_DISCOVERY_RUN_KINDS)[number];
+
+/**
  * How a discovered object changed between two runs. `readded` = an object that
  * was tombstoned (gone from the tenant) and has come back.
  */

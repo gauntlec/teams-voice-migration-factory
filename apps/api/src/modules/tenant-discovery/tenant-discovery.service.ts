@@ -321,12 +321,19 @@ export class TenantDiscoveryService {
     if (conn.status !== 'active') {
       throw new ForbiddenException('Connection is not active - sign in to the customer tenant first');
     }
+    // Counts both kinds: a Validate check holds the same pwsh session.
     const running = await this.s(t)
       .selectFrom('tenant_discovery_runs')
-      .select('id')
+      .select(['id', 'kind'])
       .where('status', 'in', ['queued', 'running'])
       .executeTakeFirst();
-    if (running) throw new BadRequestException('A discovery is already running for this customer');
+    if (running) {
+      throw new BadRequestException(
+        running.kind === 'targeted'
+          ? 'A Design & Build validate check is running against this tenant - try again in a minute'
+          : 'A discovery is already running for this customer',
+      );
+    }
 
     // de-dup + stable order; null = full run
     const scope = scopeTypes?.length
@@ -404,7 +411,7 @@ export class TenantDiscoveryService {
     const capped = upns.slice(0, 50);
     const run = await this.s(t)
       .insertInto('tenant_discovery_runs')
-      .values({ connection_id: conn.id, status: 'queued', started_by: user.id, scope_types: ['user'] })
+      .values({ connection_id: conn.id, status: 'queued', kind: 'targeted', started_by: user.id, scope_types: ['user'] })
       .returningAll()
       .executeTakeFirstOrThrow();
 
@@ -598,6 +605,8 @@ export class TenantDiscoveryService {
       .selectFrom('tenant_discovery_runs')
       .selectAll()
       .where('status', 'in', ['completed', 'failed', 'running', 'queued'])
+      // a Validate check is not "the latest discovery run"
+      .where('kind', '=', 'sync')
       .orderBy('created_at', 'desc')
       .executeTakeFirst();
     // Live sessions. A SUPER_ADMIN sees every engineer's; anyone else only their

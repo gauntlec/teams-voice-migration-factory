@@ -55,6 +55,20 @@ run). The worker filters `STEP_CMDLETS` to the requested types, runs only those
 steps, and **only tombstones within the covered types** — a "users only" run
 never touches policies. Useful on large tenants to refresh one area quickly.
 
+### Validate checks (targeted runs)
+
+Design & Build's **Validate against tenant** also starts a run
+(`TenantDiscoveryService.startTargetedUserRun`): a users-only lookup of up to 50
+specific UPNs that had no stored `tenant_users` match. The worker
+(`runTargetedUserSync`) upserts just those users, never tombstones anything and
+sends no completion email. These rows have `kind = 'targeted'` (real syncs are
+`'sync'`, the default) so they don't masquerade as a partial "users" sync:
+`GET summary`'s `lastRun` (the **Latest discovery run** card) ignores them, and
+the Changes tab labels them **Validate check** and defaults to the newest real
+sync. The "a run is already in flight" guards (`POST runs`, purge, the next
+Validate check) still count both kinds — a Validate check holds the same pwsh
+session.
+
 ### Version history
 
 `upsertObject` compares each incoming record against the stored one (order-
@@ -110,6 +124,7 @@ storage.
 
 - `tenant_discovery_runs` — one row per run (status, progress, summary, error).
   `scope_types` = the object types a partial run covered (`NULL` = full).
+  `kind` = `sync` | `targeted` (a Design & Build Validate check; migration 0044).
 - `tenant_objects` — **current snapshot**, one row per object (`object_type`,
   `object_key` unique). Raw record in `data` (JSONB, GIN-indexed) plus a generated
   `search` tsvector; `first/last_seen_run_id`, `content_changed_at`, `removed_at`.

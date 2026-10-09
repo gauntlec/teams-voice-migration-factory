@@ -2045,7 +2045,8 @@ function ChangesTab({ base }: { base: string }) {
     queryFn: () => api<TenantDiscoveryRun[]>(`${base}/runs`),
   });
   const runList = runs.data ?? [];
-  const activeRun = runId || runList[0]?.id || '';
+  // Default to the newest real sync, not a Design & Build validate check.
+  const activeRun = runId || (runList.find((r) => r.kind !== 'targeted') ?? runList[0])?.id || '';
   useEffect(() => setPage(1), [activeRun, type, q]);
 
   const list = useQuery({
@@ -2062,7 +2063,9 @@ function ChangesTab({ base }: { base: string }) {
   const total = list.data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / limit));
   const runLabel = (r: TenantDiscoveryRun) =>
-    `${fmt(r.started_at ?? r.created_at)} · ${r.scope_types ? 'partial' : 'full'} · ${r.status}`;
+    `${fmt(r.started_at ?? r.created_at)} · ${
+      r.kind === 'targeted' ? 'Validate check' : r.scope_types ? 'partial' : 'full'
+    } · ${r.status}`;
 
   return (
     <Card className={s.card}>
