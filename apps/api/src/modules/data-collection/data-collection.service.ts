@@ -375,6 +375,17 @@ export class DataCollectionService {
   async addSite(t: TenantContext, user: AuthedUser, input: DiscoverySiteInput, canReview: boolean) {
     assertCustomerWide(t, 'Sites');
     await this.assertEditable(t, canReview);
+    return this.insertSite(t, user, input);
+  }
+
+  /**
+   * The insert behind addSite, without its Data Collection guards. Also used
+   * by Managed Services' "Create in Design & Build" for a new-site request: a
+   * site added after go-live is an operational change, so it mustn't need the
+   * (accepted, locked) migration Data Collection reopened. Callers check
+   * permissions and validate `input` with discoverySiteSchema first.
+   */
+  async insertSite(t: TenantContext, user: AuthedUser, input: DiscoverySiteInput) {
     let row;
     try {
       row = await this.scoped(t)

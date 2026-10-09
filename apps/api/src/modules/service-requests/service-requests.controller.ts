@@ -4,11 +4,13 @@ import {
   createServiceRequestSchema,
   listServiceRequestsQuerySchema,
   serviceRequestAssignSchema,
+  serviceRequestBuildDraftSchema,
   serviceRequestCommentSchema,
   serviceRequestStatusSchema,
   type CreateServiceRequestInput,
   type ListServiceRequestsQuery,
   type ServiceRequestAssignInput,
+  type ServiceRequestBuildDraftInput,
   type ServiceRequestCommentInput,
   type ServiceRequestStatusInput,
 } from '@tvmf/shared';
@@ -76,6 +78,18 @@ export class ServiceRequestsController {
     @Body(new ZodBody(serviceRequestAssignSchema)) body: ServiceRequestAssignInput,
   ) {
     return this.svc.assign(t, user, id, body.userId);
+  }
+
+  /** "Create in Design & Build": the draft row(s) the request asks for. Engineers and admins, New or Planned requests only. */
+  @Post(':id/build-draft')
+  @RequirePermission('sr:manage')
+  buildDraft(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Param('id') id: string,
+    @Body(new ZodBody(serviceRequestBuildDraftSchema)) body: ServiceRequestBuildDraftInput,
+  ) {
+    return this.svc.draftInBuild(t, user, id, body);
   }
 
   @Post(':id/comments')

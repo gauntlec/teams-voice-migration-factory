@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link as RouterLink, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Badge,
@@ -29,6 +29,7 @@ import {
   tokens,
 } from '@fluentui/react-components';
 import {
+  SR_BUILD_KIND_LABELS,
   SR_PRIORITIES,
   SR_STATUS_LABELS,
   SR_STATUSES,
@@ -37,6 +38,9 @@ import {
   canMoveSr,
   nextSrStatus,
   srDetailLines,
+  type SrBuildDraftResult,
+  type SrBuildKind,
+  type SrBuildLink,
   type SrFieldSpec,
   type SrPriority,
   type SrStatus,
@@ -77,13 +81,23 @@ interface RequestDetail extends RequestRow {
 
 interface RequestEvent {
   id: string;
-  kind: 'created' | 'status_changed' | 'assigned' | 'comment';
+  kind: 'created' | 'status_changed' | 'assigned' | 'comment' | 'build_drafted';
   from_status: SrStatus | null;
   to_status: SrStatus | null;
   body: string | null;
   internal: boolean;
+  /** build_drafted only: the Design & Build rows it made. */
+  links: SrBuildLink[] | null;
   author_name: string | null;
   created_at: string;
+}
+
+/** Staff only (null for customers): whether "Create in Design & Build" applies. */
+interface RequestBuildInfo {
+  kind: SrBuildKind | null;
+  canDraft: boolean;
+  /** Common area phones: a suggested account UPN, since the customer isn't asked for one. */
+  suggestedCapUpn: string | null;
 }
 
 interface SiteOption {
@@ -439,7 +453,7 @@ function RequestDialog({ base, id, onClose }: { base: string; id: string; onClos
 
   const q = useQuery({
     queryKey: ['service-request', base, id],
-    queryFn: () => api<{ request: RequestDetail; events: RequestEvent[] }>(`${base}/${id}`),
+    queryFn: () => api<{ request: RequestDetail; events: RequestEvent[]; build: RequestBuildInfo | null }>(`${base}/${id}`),
   });
   const assignees = useQuery({
     queryKey: ['service-request-assignees', base],
@@ -534,6 +548,10 @@ function RequestDialog({ base, id, onClose }: { base: string; id: string; onClos
                   </div>
                 </div>
 
+                {q.data!.build?.canDraft && q.data!.build.kind && (
+                  <BuildDraftSection base={base} id={id} kind={q.data!.build.kind} suggestedCapUpn={q.data!.build.suggestedCapUpn} onDone={refresh} />
+                )}
+
                 {(canManage && (next || canMoveSr(r.status, 'cancelled'))) || canCancelOwn ? (
                   <div className={cs.section}>
                     <Text weight="semibold">Move this request on</Text>
@@ -563,7 +581,8 @@ function RequestDialog({ base, id, onClose }: { base: string; id: string; onClos
                         <b>{e.author_name ?? 'Someone'}</b> · {when(e.created_at)}
                         {e.internal ? ' · internal note' : ''}
                       </Text>
-                      <Text>{eventText(e)}</Text>
+                      <Text style={{ whiteSpace: 'pre-wrap' }}>{eventText(e)}</Text>
+                      {e.links && e.links.length > 0 && <BuildLinks links={e.links} />}
                     </div>
                   ))}
                 </div>
@@ -617,6 +636,93 @@ function eventText(e: RequestEvent): string {
     case 'assigned':
       return e.body === 'Unassigned' ? 'Unassigned the request.' : `Assigned to ${e.body}.`;
     case 'comment':
+    case 'build_drafted':
       return e.body ?? '';
   }
+}
+
+/* ------------------------ Create in Design & Build ------------------------ */
+
+/**
+ * Staff only, while the request is New or Planned: creates the draft Design &
+ * Build row from the customer's answers (see service-request-build.ts). The
+ * request's status doesn't change - mark it Designed & built once the row is done.
+ */
+function BuildDraftSection({
+  base,
+  id,
+  kind,
+  suggestedCapUpn,
+  onDone,
+}: {
+  base: string;
+  id: string;
+  kind: SrBuildKind;
+  suggestedCapUpn: string | null;
+  onDone: () => void;
+}) {
+  const cs = useStyles();
+  const [capUpn, setCapUpn] = useState(suggestedCapUpn ?? '');
+  const draft = useMutation({
+    mutationFn: () =>
+      api<SrBuildDraftResult>(`${base}/${id}/build-draft`, {
+        method: 'POST',
+        body: JSON.stringify(kind === 'cap' ? { capUpn: capUpn.trim() } : {}),
+      }),
+    onSuccess: onDone,
+  });
+  const result = draft.data;
+  const what = kind === 'site' ? 'the new site' : `a draft ${SR_BUILD_KIND_LABELS[kind].toLowerCase()} row in Design & Build`;
+  return (
+    <div className={cs.section}>
+      <Text weight="semibold">Design & Build</Text>
+      <Text size={200}>
+        Create {what} from this request's answers, so you don't have to retype them. Pick the phone number there. This doesn't change the
+        request's status.
+      </Text>
+      {kind === 'cap' && (
+        <Field label="Account sign-in address (UPN)" required hint="The customer isn't asked for this. Suggested from the phone's name.">
+          <Input value={capUpn} onChange={(_, d) => setCapUpn(d.value)} placeholder="e.g. reception.desk@contoso.com" />
+        </Field>
+      )}
+      <div className={cs.actions}>
+        <Button disabled={draft.isPending || (kind === 'cap' && !capUpn.trim())} onClick={() => draft.mutate()}>
+          Create in Design & Build
+        </Button>
+        {draft.isPending && <Spinner size="tiny" />}
+      </div>
+      {result && result.created.length > 0 && (
+        <div>
+          <Text>Created:</Text>
+          <BuildLinks links={result.created} />
+        </div>
+      )}
+      {result && result.existing.length > 0 && (
+        <div>
+          <Text>Already in Design & Build, so nothing was changed:</Text>
+          <BuildLinks links={result.existing} />
+        </div>
+      )}
+      {result?.warnings.map((w) => (
+        <Text key={w} className={cs.error}>
+          {w}
+        </Text>
+      ))}
+      {draft.error && <Text className={cs.error}>{errorText(draft.error, 'Could not create the row')}</Text>}
+    </div>
+  );
+}
+
+function BuildLinks({ links }: { links: SrBuildLink[] }) {
+  return (
+    <ul style={{ margin: 0, paddingLeft: '20px' }}>
+      {links.map((l) => (
+        <li key={l.href + l.label}>
+          <RouterLink to={l.href}>
+            {SR_BUILD_KIND_LABELS[l.kind]}: {l.label}
+          </RouterLink>
+        </li>
+      ))}
+    </ul>
+  );
 }

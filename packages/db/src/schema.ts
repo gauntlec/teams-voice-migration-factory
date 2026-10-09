@@ -878,11 +878,14 @@ export interface ServiceRequestsTable {
 export interface ServiceRequestEventsTable {
   id: Generated<string>;
   request_id: string;
-  kind: 'created' | 'status_changed' | 'assigned' | 'comment';
+  kind: 'created' | 'status_changed' | 'assigned' | 'comment' | 'build_drafted';
   from_status: string | null;
   to_status: string | null;
   body: string | null;
   internal: ColumnType<boolean, boolean | undefined, boolean>;
+  /** build_drafted only: the Design & Build rows it made - see 0037_sr_build_drafted_event.sql. */
+  // Written as JSON.stringify(...): pg would bind a plain array as a Postgres array, not jsonb.
+  links: ColumnType<import('@tvmf/shared').SrBuildLink[] | null, string | null | undefined, string | null>;
   author_id: string;
   created_at: Ts;
 }
