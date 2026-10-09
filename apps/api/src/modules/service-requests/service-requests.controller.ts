@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import {
   can,
   createServiceRequestSchema,
@@ -6,11 +6,13 @@ import {
   serviceRequestAssignSchema,
   serviceRequestCommentSchema,
   serviceRequestStatusSchema,
+  setSiteModeSchema,
   type CreateServiceRequestInput,
   type ListServiceRequestsQuery,
   type ServiceRequestAssignInput,
   type ServiceRequestCommentInput,
   type ServiceRequestStatusInput,
+  type SetSiteModeInput,
 } from '@tvmf/shared';
 import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
 import type { AuthedUser, TenantContext } from '../../common/request';
@@ -41,6 +43,38 @@ export class ServiceRequestsController {
   @RequirePermission('sr:manage')
   async assignees(@TenantCtx() t: TenantContext) {
     return (await this.svc.staff(t)).map((m) => ({ id: m.id, display_name: m.display_name, role: m.role }));
+  }
+
+  /** Sites and whether each takes requests (operations) or not yet (project). */
+  @Get('sites')
+  @RequirePermission('sr:read')
+  sites(@TenantCtx() t: TenantContext) {
+    return this.svc.sites(t);
+  }
+
+  @Patch('sites/:siteId/mode')
+  @RequirePermission('sr:manage')
+  setSiteMode(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Param('siteId') siteId: string,
+    @Body(new ZodBody(setSiteModeSchema)) body: SetSiteModeInput,
+  ) {
+    return this.svc.setSiteMode(t, user, siteId, body.mode);
+  }
+
+  /** What the request form can offer for a site: free numbers, ranges, queues, auto attendants, phone models. */
+  @Get('options')
+  @RequirePermission('sr:create')
+  options(@TenantCtx() t: TenantContext, @Query('siteId') siteId?: string) {
+    return this.svc.options(t, siteId || undefined);
+  }
+
+  /** Directory search for the person pickers. */
+  @Get('people')
+  @RequirePermission('sr:create')
+  people(@TenantCtx() t: TenantContext, @Query('q') q?: string) {
+    return this.svc.people(t, String(q ?? ''));
   }
 
   @Get(':id')

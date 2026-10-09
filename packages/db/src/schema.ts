@@ -19,6 +19,8 @@ export interface TenantsTable {
   branding: Json<import('@tvmf/shared').Branding> | null;
   /** Managed Services switched on: this customer can raise service requests - see 0012_tenant_managed_services.sql. */
   managed_services_enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  /** The MSP that looks after this customer - see 0013_tenant_msp.sql. */
+  msp_id: string | null;
   created_by: string | null;
   created_at: Ts;
 }
@@ -246,6 +248,10 @@ export interface DiscoverySitesTable {
   overview: Json<import('@tvmf/shared').DiscoverySiteOverview>;
   paging: Json;
   created_at: Ts;
+  /** 'project' until moved to 'operations'; only operations sites take service requests - see 0036_site_mode.sql. */
+  mode: ColumnType<'project' | 'operations', 'project' | 'operations' | undefined, 'project' | 'operations'>;
+  mode_changed_at: string | null;
+  mode_changed_by: string | null;
 }
 
 export interface DiscoveryNumberRangesTable {

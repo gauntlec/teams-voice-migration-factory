@@ -1,7 +1,12 @@
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { sql } from 'kysely';
 import { platformDb, tenantDb } from '@tvmf/db';
 import {
+  NUMBER_NEED_KEEP,
+  NUMBER_NEED_NEW,
+  SITE_MODE_LABELS,
   SR_CUSTOMER_NOTIFY_STATUSES,
+  SR_NEW_NUMBER_KEY,
   SR_OPEN_STATUSES,
   SR_STATUS_LABELS,
   SR_TYPE_DEFS,
@@ -14,7 +19,10 @@ import {
   type ServiceRequestCreatedContext,
   type ServiceRequestStatusChangedContext,
   type ServiceRequestStatusInput,
+  type SiteMode,
+  type SrMenuOption,
   type SrStatus,
+  type SrTarget,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
 import { APP_CONFIG, type AppConfig } from '../../common/config';
@@ -173,36 +181,184 @@ export class ServiceRequestsService {
     };
   }
 
+  /* ------------------------------ sites ------------------------------ */
+
+  /** Sites with their mode. A site contact only sees their own sites. */
+  async sites(t: TenantContext) {
+    this.assertEnabled(t);
+    let q = tenantDb(this.db, t.schema)
+      .selectFrom('discovery_sites')
+      .select(['id', 'sitecode', 'name', 'mode', 'mode_changed_at', 'mode_changed_by'])
+      .orderBy('sitecode');
+    if (isSiteScoped(t)) q = q.where('id', 'in', t.siteScope);
+    const rows = await q.execute();
+    const names = await this.names(rows.map((r) => r.mode_changed_by));
+    return rows.map((r) => ({ ...r, mode_changed_by_name: r.mode_changed_by ? (names.get(r.mode_changed_by) ?? null) : null }));
+  }
+
+  /** Engineers and admins move a site between project and operations mode. */
+  async setSiteMode(t: TenantContext, user: AuthedUser, siteId: string, mode: SiteMode) {
+    this.assertEnabled(t);
+    const row = await tenantDb(this.db, t.schema)
+      .updateTable('discovery_sites')
+      .set({ mode, mode_changed_at: new Date().toISOString(), mode_changed_by: user.id })
+      .where('id', '=', siteId)
+      .returning(['id', 'sitecode', 'name', 'mode', 'mode_changed_at'])
+      .executeTakeFirst();
+    if (!row) throw new NotFoundException('site not found');
+    await this.audit.tenant(t.schema, 'site.mode_changed', {
+      actor: { id: user.id, email: user.email },
+      targetType: 'discovery_site',
+      targetId: siteId,
+      detail: { sitecode: row.sitecode, mode },
+    });
+    return row;
+  }
+
+  private async loadSite(t: TenantContext, siteId: string) {
+    const site = await tenantDb(this.db, t.schema)
+      .selectFrom('discovery_sites')
+      .select(['id', 'sitecode', 'name', 'mode'])
+      .where('id', '=', siteId)
+      .executeTakeFirst();
+    if (!site) throw new BadRequestException('That site does not exist for this customer.');
+    if (isSiteScoped(t)) assertSiteInScope(t, siteId);
+    return site;
+  }
+
+  /* ----------------------------- form data ----------------------------- */
+
+  /** Numbers already promised to an open request, so two requests never take the same free number. */
+  private async claimedNumbers(s: ReturnType<typeof tenantDb>) {
+    const rows = await s
+      .selectFrom('service_requests')
+      .select(sql<string>`details->>${SR_NEW_NUMBER_KEY}`.as('n'))
+      .where('status', 'in', [...SR_OPEN_STATUSES])
+      .where(sql<boolean>`details ? ${SR_NEW_NUMBER_KEY}`)
+      .execute();
+    return new Set(rows.map((r) => r.n).filter(Boolean));
+  }
+
+  /**
+   * What the request form offers for a site: its free numbers (first one is
+   * picked automatically), all its numbers, its ranges, call queues and auto
+   * attendants, and the phone models already in use.
+   */
+  async options(t: TenantContext, siteId: string | undefined) {
+    this.assertEnabled(t);
+    const s = tenantDb(this.db, t.schema);
+    const deviceModels = await s
+      .selectFrom('discovery_caps')
+      .select('device_model as m')
+      .where('device_model', 'is not', null)
+      .union(s.selectFrom('build_caps').select('phone_model as m').where('phone_model', 'is not', null))
+      .execute();
+    const models = [...new Set(deviceModels.map((r) => (r.m ?? '').trim()).filter(Boolean))].sort();
+    if (!siteId) return { deviceModels: models, availableNumbers: [], siteNumbers: [], ranges: [], callQueues: [], autoAttendants: [] };
+
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(siteId)) throw new BadRequestException('Unknown site.');
+    const site = await this.loadSite(t, siteId);
+    const [claimed, numbers, ranges, callQueues, autoAttendants] = await Promise.all([
+      this.claimedNumbers(s),
+      s
+        .selectFrom('phone_numbers as pn')
+        .innerJoin('discovery_number_ranges as r', 'r.id', 'pn.range_id')
+        .select(['pn.e164 as e164', 'pn.status as status'])
+        .where('r.sitecode', '=', site.sitecode)
+        .orderBy('pn.e164')
+        .limit(2000)
+        .execute(),
+      s.selectFrom('discovery_number_ranges').select(['id', 'range_start', 'range_end', 'carrier']).where('sitecode', '=', site.sitecode).orderBy('range_start').execute(),
+      s.selectFrom('build_call_queues').select(['id', 'name']).where('site_id', '=', site.id).orderBy('name').execute(),
+      s.selectFrom('build_auto_attendants').select(['id', 'name']).where('site_id', '=', site.id).orderBy('name').execute(),
+    ]);
+    const unclaimed = numbers.filter((n) => !claimed.has(n.e164));
+    return {
+      deviceModels: models,
+      availableNumbers: unclaimed.filter((n) => n.status === 'available').map((n) => n.e164),
+      siteNumbers: unclaimed.map((n) => n.e164),
+      ranges: ranges.map((r) => ({ id: r.id, label: `${r.range_start} – ${r.range_end}${r.carrier ? ` (${r.carrier})` : ''}` })),
+      callQueues,
+      autoAttendants,
+    };
+  }
+
+  /** The customer's directory: synced users, then Data Collection users not yet synced. */
+  async people(t: TenantContext, q: string) {
+    this.assertEnabled(t);
+    const term = q.trim();
+    if (term.length < 2) return [];
+    const like = `%${term.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const s = tenantDb(this.db, t.schema);
+    const [live, collected] = await Promise.all([
+      s
+        .selectFrom('tenant_users')
+        .select(['upn', 'display_name'])
+        .where((eb) => eb.or([eb('upn', 'ilike', like), eb('display_name', 'ilike', like)]))
+        .where((eb) => eb.or([eb('account_enabled', 'is', null), eb('account_enabled', '=', true)]))
+        .orderBy('display_name')
+        .limit(20)
+        .execute(),
+      s
+        .selectFrom('discovery_users')
+        .select(['upn', 'display_name'])
+        .where((eb) => eb.or([eb('upn', 'ilike', like), eb('display_name', 'ilike', like)]))
+        .orderBy('display_name')
+        .limit(20)
+        .execute(),
+    ]);
+    const seen = new Set<string>();
+    const out: { upn: string; name: string; synced: boolean }[] = [];
+    for (const [rows, synced] of [[live, true], [collected, false]] as const) {
+      for (const r of rows) {
+        const key = r.upn.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ upn: r.upn, name: r.display_name || r.upn, synced });
+      }
+    }
+    return out.slice(0, 25);
+  }
+
+  /* ------------------------------ requests ------------------------------ */
+
   async create(t: TenantContext, user: AuthedUser, input: CreateServiceRequestInput) {
     this.assertEnabled(t);
     const def = SR_TYPE_DEFS[input.type];
-    const s = tenantDb(this.db, t.schema);
     // A new site has no site yet, whatever the form sent.
     const siteId = def.needsSite || input.type === 'other' ? (input.siteId ?? null) : null;
-    let site: { id: string; sitecode: string; name: string | null } | undefined;
-    if (siteId) {
-      site = await s.selectFrom('discovery_sites').select(['id', 'sitecode', 'name']).where('id', '=', siteId).executeTakeFirst();
-      if (!site) throw new BadRequestException('That site does not exist for this customer.');
+    const site = siteId ? await this.loadSite(t, siteId) : undefined;
+    if (site && site.mode !== 'operations') {
+      throw new BadRequestException(
+        `${site.sitecode} is still in ${SITE_MODE_LABELS[site.mode].toLowerCase()} mode. Service requests open for a site once it moves to operations.`,
+      );
     }
-    if (isSiteScoped(t)) {
-      if (!siteId) throw new ForbiddenException('You can only raise requests for your own sites. Ask your main contact to request a new site.');
-      assertSiteInScope(t, siteId);
+    if (isSiteScoped(t) && !siteId) {
+      throw new ForbiddenException('You can only raise requests for your own sites. Ask your main contact to request a new site.');
     }
+    const details = input.details;
 
-    const row = await s
-      .insertInto('service_requests')
-      .values({
-        type: input.type,
-        title: input.title,
-        site_id: siteId,
-        details: input.details,
-        priority: input.priority,
-        target_date: input.targetDate ?? null,
-        requested_by: user.id,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    await s.insertInto('service_request_events').values({ request_id: row.id, kind: 'created', to_status: 'new', author_id: user.id }).execute();
+    const row = await this.db.transaction().execute(async (trx) => {
+      const s = tenantDb(trx, t.schema);
+      // Serialise requests that take a free number, so two can't take the same one.
+      if (details[SR_NEW_NUMBER_KEY]) await sql`select pg_advisory_xact_lock(hashtext(${t.schema} || ':sr_number'))`.execute(trx);
+      await this.checkAgainstData(s, input.type, details, site);
+      const created = await s
+        .insertInto('service_requests')
+        .values({
+          type: input.type,
+          title: input.title,
+          site_id: siteId,
+          details,
+          priority: input.priority,
+          target_date: input.targetDate ?? null,
+          requested_by: user.id,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await s.insertInto('service_request_events').values({ request_id: created.id, kind: 'created', to_status: 'new', author_id: user.id }).execute();
+      return created;
+    });
 
     const reference = srReference(row.number);
     await this.audit.tenant(t.schema, 'service_request.created', {
@@ -220,7 +376,7 @@ export class ServiceRequestsService {
       siteLabel: site ? (site.name ? `${site.sitecode} — ${site.name}` : site.sitecode) : null,
       priority: row.priority,
       requestedBy: user.displayName,
-      lines: srDetailLines(row.type, input.details),
+      lines: srDetailLines(row.type, details),
       runUrl: this.url(row.id),
     };
     const recipients = (await this.staff(t)).filter((m) => m.id !== user.id);
@@ -235,6 +391,51 @@ export class ServiceRequestsService {
       });
     }
     return { ...row, reference };
+  }
+
+  /**
+   * The form only offers real data, but the API is checked too: the new number
+   * must be free at the site and not promised to another open request, a number
+   * to keep must belong to the site, a new site code must be unused, and any
+   * queue or auto attendant chosen must exist at the site.
+   */
+  private async checkAgainstData(
+    s: ReturnType<typeof tenantDb>,
+    type: CreateServiceRequestInput['type'],
+    details: Record<string, unknown>,
+    site: { id: string; sitecode: string } | undefined,
+  ) {
+    const siteNumber = async (e164: string) =>
+      s
+        .selectFrom('phone_numbers as pn')
+        .innerJoin('discovery_number_ranges as r', 'r.id', 'pn.range_id')
+        .select(['pn.status as status'])
+        .where('pn.e164', '=', e164)
+        .where('r.sitecode', '=', site?.sitecode ?? '')
+        .executeTakeFirst();
+
+    if (details.number === NUMBER_NEED_NEW && typeof details[SR_NEW_NUMBER_KEY] === 'string') {
+      const e164 = details[SR_NEW_NUMBER_KEY] as string;
+      const n = await siteNumber(e164);
+      if (!n || n.status !== 'available') throw new BadRequestException(`${e164} isn't a free number at this site. Choose another.`);
+      if ((await this.claimedNumbers(s)).has(e164)) throw new ConflictException(`${e164} has just been taken by another request. Choose another.`);
+    }
+    if (details.number === NUMBER_NEED_KEEP && typeof details.existing_number === 'string') {
+      if (!(await siteNumber(details.existing_number))) throw new BadRequestException(`${details.existing_number} isn't one of this site's numbers.`);
+    }
+    if (type === 'new_site' && typeof details.sitecode === 'string') {
+      const clash = await s.selectFrom('discovery_sites').select('id').where(sql<boolean>`lower(sitecode) = lower(${details.sitecode})`).executeTakeFirst();
+      if (clash) throw new BadRequestException(`There is already a site with code ${details.sitecode}.`);
+    }
+    const targets: SrTarget[] = [];
+    for (const key of ['unanswered', 'after_hours']) if (details[key]) targets.push(details[key] as SrTarget);
+    if (Array.isArray(details.menu)) for (const o of details.menu as SrMenuOption[]) targets.push(o.target);
+    for (const target of targets) {
+      if (target.kind !== 'call_queue' && target.kind !== 'auto_attendant') continue;
+      const table = target.kind === 'call_queue' ? 'build_call_queues' : 'build_auto_attendants';
+      const hit = await s.selectFrom(table).select('id').where('id', '=', target.id!).where('site_id', '=', site?.id ?? '').executeTakeFirst();
+      if (!hit) throw new BadRequestException(`${target.label} isn't a ${target.kind === 'call_queue' ? 'call queue' : 'auto attendant'} at this site.`);
+    }
   }
 
   /**

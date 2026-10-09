@@ -5,6 +5,7 @@ import {
   Button,
   Card,
   Checkbox,
+  Select,
   Dialog,
   DialogActions,
   DialogBody,
@@ -44,6 +45,7 @@ interface Tenant {
   status: string;
   teams_read_only: boolean;
   managed_services_enabled: boolean;
+  msp_id: string | null;
   branding: Branding | null;
   created_at: string;
 }
@@ -90,6 +92,16 @@ export function AdminTenants() {
   const setReadOnly = useMutation({
     mutationFn: ({ id, teamsReadOnly }: { id: string; teamsReadOnly: boolean }) =>
       api(`/tenants/${id}`, { method: 'PATCH', body: JSON.stringify({ teamsReadOnly }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tenants'] }),
+  });
+  const mspList = useQuery({
+    queryKey: ['msps', 'all'],
+    enabled: can('tenant:update'),
+    queryFn: () => api<{ id: string; name: string }[]>('/msps'),
+  });
+  const setMsp = useMutation({
+    mutationFn: ({ id, mspId }: { id: string; mspId: string | null }) =>
+      api(`/tenants/${id}/msp`, { method: 'PATCH', body: JSON.stringify({ mspId }) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tenants'] }),
   });
   const setManagedServices = useMutation({
@@ -192,6 +204,7 @@ export function AdminTenants() {
                 <TableHeaderCell>Branding</TableHeaderCell>
                 <TableHeaderCell>Teams read-only</TableHeaderCell>
                 <TableHeaderCell>Managed Services</TableHeaderCell>
+                <TableHeaderCell>MSP</TableHeaderCell>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -253,6 +266,25 @@ export function AdminTenants() {
                       </Badge>
                     ) : (
                       '—'
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {can('tenant:update') ? (
+                      <Select
+                        size="small"
+                        value={t.msp_id ?? ''}
+                        disabled={setMsp.isPending}
+                        onChange={(_, d) => setMsp.mutate({ id: t.id, mspId: d.value || null })}
+                      >
+                        <option value="">No MSP</option>
+                        {(mspList.data ?? []).map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.name}
+                          </option>
+                        ))}
+                      </Select>
+                    ) : (
+                      (mspList.data ?? []).find((m) => m.id === t.msp_id)?.name ?? '—'
                     )}
                   </TableCell>
                 </TableRow>

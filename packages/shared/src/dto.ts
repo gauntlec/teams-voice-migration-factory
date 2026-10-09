@@ -40,7 +40,19 @@ import {
 } from './domain';
 import { HEX_COLOR_RE } from './color';
 import { isHandoverSectionKey } from './handover';
-import { SR_PRIORITIES, SR_STATUSES, SR_TYPES, SR_TYPE_DEFS, type SrFieldSpec, type SrType } from './service-requests';
+import {
+  COUNTRY_CODES,
+  SITE_MODES,
+  SR_MENU_KEYS,
+  SR_PRIORITIES,
+  SR_STATUSES,
+  SR_TARGET_KINDS,
+  SR_TYPES,
+  SR_TYPE_DEFS,
+  srFieldVisible,
+  type SrFieldSpec,
+  type SrType,
+} from './service-requests';
 
 export const emailSchema = z.string().email().max(320).transform((s) => s.toLowerCase().trim());
 
@@ -1399,41 +1411,95 @@ export type SearchQuery = z.infer<typeof searchQuerySchema>;
 export const updateTenantManagedServicesSchema = z.object({ enabled: z.boolean() }).strict();
 export type UpdateTenantManagedServicesInput = z.infer<typeof updateTenantManagedServicesSchema>;
 
+const UPN_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+const srPersonSchema = z.object({
+  upn: z.string().trim().regex(UPN_RE, 'Enter a sign-in address like name@company.com').max(200),
+  name: z.string().trim().min(1).max(120),
+}).strict();
+const srTargetSchema = z
+  .object({
+    kind: z.enum(SR_TARGET_KINDS),
+    id: z.string().uuid().optional(),
+    upn: z.string().trim().regex(UPN_RE).max(200).optional(),
+    label: z.string().trim().min(1).max(200),
+  })
+  .strict()
+  .superRefine((t, ctx) => {
+    if ((t.kind === 'call_queue' || t.kind === 'auto_attendant') && !t.id) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Choose which one' });
+    if (t.kind === 'person' && !t.upn) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Choose a person' });
+  });
+
+/** One field's value. Required-ness is applied by srDetailsSchema, which knows whether the field is shown. */
 function srFieldSchema(f: SrFieldSpec): z.ZodTypeAny {
-  const req = (msg = `${f.label} is required`) => msg;
   switch (f.kind) {
     case 'text':
-    case 'textarea': {
-      const base = z.string().trim().max(f.max ?? (f.kind === 'text' ? 200 : 4000));
-      return f.required ? base.min(1, req()) : base.optional();
-    }
-    case 'number': {
-      const base = z.number({ invalid_type_error: `${f.label} must be a number` }).int().min(f.min ?? 0).max(f.max ?? 100000);
-      return f.required ? base : base.optional();
-    }
-    case 'select': {
-      const opts = (f.options ?? []) as [string, ...string[]];
-      const base = z.enum(opts, { errorMap: () => ({ message: `Choose ${f.label.toLowerCase()}` }) });
-      return f.required ? base : base.optional();
-    }
-    case 'list': {
-      const base = z.array(z.string().trim().min(1).max(200)).max(f.max ?? 100);
-      return f.required ? base.min(1, req(`Add at least one entry for ${f.label.toLowerCase()}`)) : base.optional();
-    }
+    case 'textarea':
+      return z.string().trim().max(f.max ?? (f.kind === 'text' ? 200 : 4000));
+    case 'number':
+      return z.number({ invalid_type_error: `${f.label} must be a number` }).int().min(f.min ?? 0).max(f.max ?? 100000);
+    case 'select':
+      return z.enum((f.options ?? []) as [string, ...string[]], { errorMap: () => ({ message: `Choose ${f.label.toLowerCase()}` }) });
     case 'boolean':
-      return f.required ? z.boolean() : z.boolean().optional();
-    case 'date': {
-      const base = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, `${f.label} must be a date`);
-      return f.required ? base : base.optional().or(z.literal('').transform(() => undefined));
-    }
+      return z.boolean();
+    case 'date':
+      return z.string().regex(/^\d{4}-\d{2}-\d{2}$/, `${f.label} must be a date`);
+    case 'person':
+      return srPersonSchema;
+    case 'people':
+      return z.array(srPersonSchema).max(f.max ?? 100);
+    case 'phone_number':
+      return z.string().trim().regex(/^\+\d{6,15}$/, `${f.label} must be a phone number`);
+    case 'target':
+      return srTargetSchema;
+    case 'menu':
+      return z
+        .array(z.object({ key: z.enum(SR_MENU_KEYS), target: srTargetSchema }).strict())
+        .max(f.max ?? 10)
+        .refine((opts) => new Set(opts.map((o) => o.key)).size === opts.length, 'Each key can only be used once');
+    case 'number_range':
+      return z.object({ id: z.string().uuid(), label: z.string().trim().min(1).max(200) }).strict();
+    case 'device_model':
+      return z.string().trim().min(1).max(120);
+    case 'country':
+      return z.enum(COUNTRY_CODES, { errorMap: () => ({ message: 'Choose a country' }) });
   }
 }
 
-/** The details object for one request type, built from its field specs. Unknown keys are rejected. */
+function srIsBlank(v: unknown): boolean {
+  return v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0);
+}
+
+/**
+ * The details object for one request type, built from its field specs. Unknown
+ * keys are rejected. A field hidden by showWhen is dropped; a shown required
+ * field must be answered; blank optional answers are dropped.
+ */
 export function srDetailsSchema(type: SrType) {
+  const fields = SR_TYPE_DEFS[type].fields;
   const shape: Record<string, z.ZodTypeAny> = {};
-  for (const f of SR_TYPE_DEFS[type].fields) shape[f.key] = srFieldSchema(f);
-  return z.object(shape).strict();
+  for (const f of fields) shape[f.key] = z.unknown().optional();
+  return z
+    .object(shape)
+    .strict()
+    .transform((raw, ctx) => {
+      const out: Record<string, unknown> = {};
+      for (const f of fields) {
+        if (!srFieldVisible(f, raw)) continue;
+        let v = raw[f.key];
+        if (typeof v === 'string') v = v.trim();
+        if (srIsBlank(v)) {
+          if (f.required) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [f.key], message: `${f.label} is required` });
+          continue;
+        }
+        const parsed = srFieldSchema(f).safeParse(v);
+        if (!parsed.success) {
+          for (const issue of parsed.error.issues) ctx.addIssue({ ...issue, path: [f.key, ...issue.path] });
+          continue;
+        }
+        out[f.key] = parsed.data;
+      }
+      return out;
+    });
 }
 
 export const createServiceRequestSchema = z
@@ -1482,3 +1548,18 @@ export const listServiceRequestsQuerySchema = z.object({
   type: z.enum(SR_TYPES).optional(),
 });
 export type ListServiceRequestsQuery = z.infer<typeof listServiceRequestsQuerySchema>;
+
+/** Engineers and admins: whether a site takes service requests (operations) or not yet (project). */
+export const setSiteModeSchema = z.object({ mode: z.enum(SITE_MODES) }).strict();
+export type SetSiteModeInput = z.infer<typeof setSiteModeSchema>;
+
+/** Super Admin: which MSP looks after a customer (null = none). */
+export const setTenantMspSchema = z.object({ mspId: z.string().uuid().nullable() }).strict();
+export type SetTenantMspInput = z.infer<typeof setTenantMspSchema>;
+
+export const mspServiceRequestsQuerySchema = z.object({
+  status: z.enum([...SR_STATUSES, 'open', 'all'] as [string, ...string[]]).default('open'),
+  /** Super Admins only: limit to one MSP ('none' = customers with no MSP). */
+  mspId: z.union([z.string().uuid(), z.literal('none')]).optional(),
+});
+export type MspServiceRequestsQuery = z.infer<typeof mspServiceRequestsQuerySchema>;

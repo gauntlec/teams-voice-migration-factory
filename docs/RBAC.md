@@ -43,7 +43,9 @@ customer.
 When Managed Services is switched on for a customer, `sr:read` and `sr:create`
 let SUPER_ADMIN, PROJECT_MANAGER, ENGINEER and CUSTOMER see and raise service
 requests; `sr:manage` (SUPER_ADMIN and ENGINEER) lets them action requests
-(plan, build, deploy, cancel, assign, internal notes). A site contact only sees
+(plan, build, deploy, cancel, assign, internal notes) and move sites between
+project and operations mode; `sr:msp` (SUPER_ADMIN, ENGINEER, PROJECT_MANAGER)
+opens the MSP service-request admin queue across an MSP's customers. A site contact only sees
 and raises requests for their own sites. See [SERVICE-REQUESTS.md](SERVICE-REQUESTS.md).
 
 #### Site-scoped customer ("site contact")

@@ -27,7 +27,7 @@ export class TenantsService {
   async list(user: { id: string; role: Role }, search?: string) {
     let q = platformDb(this.db)
       .selectFrom('tenants')
-      .select(['id', 'slug', 'name', 'primary_domain', 'status', 'teams_read_only', 'managed_services_enabled', 'branding', 'created_at'])
+      .select(['id', 'slug', 'name', 'primary_domain', 'status', 'teams_read_only', 'managed_services_enabled', 'msp_id', 'branding', 'created_at'])
       .orderBy('name');
     if (user.role !== 'SUPER_ADMIN') {
       q = q
@@ -126,6 +126,23 @@ export class TenantsService {
       tenantId,
       detail: { enabled },
     });
+    return tenant;
+  }
+
+  /** Which MSP looks after a customer (null = none). Drives the MSP service-request queue. SUPER_ADMIN only. */
+  async setMsp(tenantId: string, mspId: string | null, actor: AuditActor) {
+    await this.getTenantOrThrow(tenantId);
+    if (mspId) {
+      const msp = await platformDb(this.db).selectFrom('msps').select('id').where('id', '=', mspId).executeTakeFirst();
+      if (!msp) throw new NotFoundException('MSP not found');
+    }
+    const tenant = await platformDb(this.db)
+      .updateTable('tenants')
+      .set({ msp_id: mspId })
+      .where('id', '=', tenantId)
+      .returning(['id', 'slug', 'name', 'msp_id'])
+      .executeTakeFirstOrThrow();
+    await this.audit.platform('tenant.msp_changed', { actor, targetType: 'tenant', targetId: tenantId, tenantId, detail: { mspId } });
     return tenant;
   }
 

@@ -14,6 +14,19 @@ on per customer from **Administration → Customers → Managed Services**
 Requests** page is hidden from the left nav and every service-request endpoint
 returns 403. Turning it off later keeps existing requests.
 
+## Site modes: project and operations
+
+Every site is in **project** mode while it is being migrated and moves to
+**operations** mode once it is live (`discovery_sites.mode`, migration
+`0036_site_mode.sql`). Service requests can only be raised for sites in
+operations mode; a site in project mode is shown but can't be picked.
+Requests with no site (a new site, or "something else") are always allowed.
+
+Engineers and admins (`sr:manage`) change a site's mode from **Service Requests →
+Site modes** (`PATCH /t/:tenantId/service-requests/sites/:siteId/mode`). This
+is separate from editing the site in Sites, so it still works once Data
+Collection is locked. Each change is audited with who and when.
+
 ## Workflow
 
 ```
@@ -58,6 +71,36 @@ members of that customer** and **Super Admins**.
 Both use the customer's branding and link straight to the request
 (`/service-requests?id=…`).
 
+## Picking from existing data
+
+The request form avoids free text wherever Voxshift already has the data
+(`GET /t/:tenantId/service-requests/options?siteId=` and `/people?q=`):
+
+- **People** (new user, site contact, call queue agents, "a person" as a call
+  target) are searched in the customer's directory: the synced Teams users,
+  then Data Collection users not synced yet. "Not listed?" allows typing a
+  person who isn't in either.
+- **New number**: when "New number" is chosen and a site is picked, the first
+  free number at that site is picked automatically and can be changed. Free
+  means `available` in the site's ranges and not already taken by another open
+  request; cancelling a request frees its number. If the site has no free
+  numbers the form says so.
+- **Number to keep**: any of the site's numbers.
+- **Where calls go** (call queue overflow, auto attendant menu options and out
+  of hours): a call queue or auto attendant at the site, a person, voicemail,
+  or disconnect.
+- **Range** (new numbers), **device model** (common area phones, from the
+  models already recorded) and **country** (new sites) are menus.
+
+Free text is kept only where there is nothing to pick from: names, addresses,
+greetings, opening hours and notes.
+
+The API checks the same things, so a hand-crafted request can't get around
+them: the site must be in operations mode, the new number must be free at the
+site and not taken (requests taking a number are serialised, so two can't take
+the same one), a number to keep must be one of the site's, a new site code must
+be unused, and any call queue or auto attendant chosen must be at the site.
+
 ## Request types and their fields
 
 Each type's form is defined once, in `SR_TYPE_DEFS`
@@ -67,12 +110,12 @@ specs and the API builds its validation from the same specs (`srDetailsSchema` i
 
 | Type | Needs a site | Key fields |
 |---|---|---|
-| New site | No | Site code, name, address, country, wanted-by date, site contact |
-| New user | Yes | Name, sign-in address (UPN), phone number need, voicemail |
-| New phone numbers | Yes | Quantity (1–1000), purpose, area, number type |
-| New common area phone | Yes | Phone name, location, device model, phone number need |
-| New call queue | Yes | Name, agents (one per line), call sharing, unanswered behaviour, phone number need |
-| New auto attendant | Yes | Name, greeting, menu options, opening hours, out of hours, phone number need |
+| New site | No | Site code, name, address, country (menu), wanted-by date, site contact (directory) |
+| New user | Yes | Person (directory), phone number (new = auto-picked free number, or keep one of the site's), voicemail |
+| New phone numbers | Yes | Quantity (1–1000), purpose, existing range to extend, number type |
+| New common area phone | Yes | Phone name, location, device model (menu), phone number |
+| New call queue | Yes | Name, agents (directory), call sharing, wait time, where unanswered calls go, phone number |
+| New auto attendant | Yes | Name, greeting, menu options (key → where), opening hours, out of hours (where), phone number |
 | Something else | Optional | Description |
 
 ## Data
@@ -90,3 +133,19 @@ Tenant schema (`0035_service_requests.sql`):
 API: `apps/api/src/modules/service-requests/` — `GET/POST /t/:tenantId/service-requests`,
 `GET :id`, `POST :id/status`, `POST :id/assign`, `POST :id/comments`, `GET assignees`.
 Web: `apps/web/src/pages/ServiceRequests.tsx`.
+
+## MSP service-request admin
+
+**MSP → Service request admin** (`/msp/service-requests`, permission `sr:msp`)
+is one queue across every customer an MSP looks after.
+
+- A customer's MSP is set by a Super Admin on **Customers → MSP**
+  (`platform.tenants.msp_id`, migration `0013_tenant_msp.sql`).
+- Engineers and project managers see the customers of their own MSP, worked
+  out the same way as app branding (email domain, then the per-user override).
+  Staff not linked to an MSP see an empty queue with an explanation.
+- Super Admins see every customer and can filter by MSP (or "No MSP").
+- Only customers with Managed Services switched on are included.
+- The queue is for triage. A request is opened (and actioned) inside its
+  customer, so a request for a customer you're not on the team for is listed
+  but can't be opened.

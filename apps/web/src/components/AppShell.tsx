@@ -32,6 +32,7 @@ import {
   Bug24Regular,
   Search24Regular,
   TicketDiagonal24Regular,
+  TaskListSquareLtr24Regular,
 } from '@fluentui/react-icons';
 import type { Permission } from '@tvmf/shared';
 import { useAuth } from '../auth';
@@ -108,6 +109,11 @@ const MAIN: NavDef[] = [
   { to: '/deployment', label: 'Deployment', icon: <CloudArrowUp24Regular />, permission: 'deployment:read' },
   { to: '/handover', label: 'Service Handover', icon: <DocumentBulletListMultiple24Regular />, permission: 'handover:read' },
   { to: '/files', label: 'Files', icon: <DocumentFolder24Regular />, permission: 'files:read' },
+];
+
+/** Cross-customer views for an MSP's own staff (and Super Admins). */
+const MSP_ITEMS: NavDef[] = [
+  { to: '/msp/service-requests', label: 'Service request admin', icon: <TaskListSquareLtr24Regular />, permission: 'sr:msp' },
 ];
 
 /**
@@ -264,6 +270,12 @@ export function AppShell({ children }: { children: ReactNode }) {
         <nav className={s.nav}>
           <div className={s.navSectionLabel}>Migration</div>
           {renderNav(MAIN)}
+          {MSP_ITEMS.some((i) => !i.permission || can(i.permission)) && (
+            <>
+              <div className={s.navSectionLabel}>MSP</div>
+              {renderNav(MSP_ITEMS)}
+            </>
+          )}
           {visibleAdminGroups.length > 0 && (
             <>
               <div className={s.navSectionLabel}>Administration</div>

@@ -46,6 +46,7 @@ export const PERMISSIONS = [
   'sr:read', // Managed Services: see this customer's service requests
   'sr:create', // raise a service request, and comment on one
   'sr:manage', // action requests: plan, build, deploy, cancel, assign, internal notes - engineers and admins
+  'sr:msp', // MSP service-request admin: one queue across every customer of your MSP
   'bug:read', // view the bug-report board
   'bug:create', // log a bug report
   'bug:manage', // move status, edit labels, delete - SUPER_ADMIN only
@@ -78,6 +79,7 @@ export const PERMISSION_MATRIX: Record<Role, ReadonlySet<Permission>> = {
     'handover:read',
     'sr:read',
     'sr:create',
+    'sr:msp',
     'handover:generate',
     'handover:issue', // lock a draft pack as final
     'files:read',
@@ -105,6 +107,7 @@ export const PERMISSION_MATRIX: Record<Role, ReadonlySet<Permission>> = {
     'handover:read',
     'sr:read',
     'sr:create',
+    'sr:msp',
     'sr:manage',
     'handover:generate',
     'handover:issue', // lock a draft pack as final

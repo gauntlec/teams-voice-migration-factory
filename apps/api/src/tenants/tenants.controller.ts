@@ -6,12 +6,14 @@ import {
   searchQuerySchema,
   updateMembershipSchema,
   updateTenantBrandingSchema,
+  setTenantMspSchema,
   updateTenantManagedServicesSchema,
   updateTenantSchema,
   type CreateTenantInput,
   type SearchQuery,
   type UpdateTenantBrandingInput,
   type UpdateTenantInput,
+  type SetTenantMspInput,
   type UpdateTenantManagedServicesInput,
 } from '@tvmf/shared';
 import { CurrentUser } from '../auth/auth.decorators';
@@ -61,6 +63,16 @@ export class TenantsController {
     @CurrentUser() user: AuthedUser,
   ) {
     return this.tenants.setManagedServices(tenantId, body.enabled, this.actor(user));
+  }
+
+  @Patch(':tenantId/msp')
+  @RequirePermission('tenant:update')
+  setMsp(
+    @Param('tenantId') tenantId: string,
+    @Body(new ZodBody(setTenantMspSchema)) body: SetTenantMspInput,
+    @CurrentUser() user: AuthedUser,
+  ) {
+    return this.tenants.setMsp(tenantId, body.mspId, this.actor(user));
   }
 
   @Patch(':tenantId/branding')

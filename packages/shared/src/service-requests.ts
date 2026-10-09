@@ -59,7 +59,40 @@ export function srReference(number: number): string {
   return `SR-${String(number).padStart(4, '0')}`;
 }
 
-export type SrFieldKind = 'text' | 'textarea' | 'number' | 'select' | 'list' | 'boolean' | 'date';
+/** Whether a site accepts service requests: only sites in operations mode do. */
+export const SITE_MODES = ['project', 'operations'] as const;
+export type SiteMode = (typeof SITE_MODES)[number];
+export const SITE_MODE_LABELS: Record<SiteMode, string> = { project: 'Project', operations: 'Operations' };
+
+/**
+ * How a field is answered. Plain text kinds are only used where Voxshift has no
+ * data to offer (names, addresses, greetings); everything else is picked from
+ * existing data:
+ * - person / people: the customer's directory (synced users, plus Data Collection users)
+ * - phone_number: a number at the request's site - `numberSource` 'available'
+ *   offers free numbers (and one is picked automatically), 'site' offers any of
+ *   the site's numbers (keeping an existing one)
+ * - target: where a call goes - a call queue or auto attendant at the site, a
+ *   person, voicemail, or disconnect
+ * - menu: auto attendant key presses, each to a target
+ * - number_range / device_model / country: the site's ranges, known phone
+ *   models, ISO countries
+ */
+export type SrFieldKind =
+  | 'text'
+  | 'textarea'
+  | 'number'
+  | 'select'
+  | 'boolean'
+  | 'date'
+  | 'person'
+  | 'people'
+  | 'phone_number'
+  | 'target'
+  | 'menu'
+  | 'number_range'
+  | 'device_model'
+  | 'country';
 
 export interface SrFieldSpec {
   key: string;
@@ -70,9 +103,17 @@ export interface SrFieldSpec {
   options?: readonly string[];
   /** number: min value */
   min?: number;
-  /** text/textarea: max length; number: max value; list: max items */
+  /** text/textarea: max length; number: max value; people/menu: max items */
   max?: number;
   hint?: string;
+  /** phone_number only: which of the site's numbers to offer. */
+  numberSource?: 'available' | 'site';
+  /**
+   * Only asked (and only required) when another field has this value, e.g. the
+   * number to keep is only asked when "Keep an existing number" is chosen.
+   * Hidden fields are dropped from the request.
+   */
+  showWhen?: { key: string; equals: string };
 }
 
 export interface SrTypeDef {
@@ -83,7 +124,56 @@ export interface SrTypeDef {
   fields: readonly SrFieldSpec[];
 }
 
-const NUMBER_NEED = ['New number', 'Keep an existing number', 'No number'] as const;
+/** A person from the directory. `name` is shown; `upn` identifies them. */
+export interface SrPerson {
+  upn: string;
+  name: string;
+}
+
+export const SR_TARGET_KINDS = ['call_queue', 'auto_attendant', 'person', 'voicemail', 'disconnect'] as const;
+export type SrTargetKind = (typeof SR_TARGET_KINDS)[number];
+
+/** Where a call goes. `id` is the queue / auto attendant; `upn` the person. */
+export interface SrTarget {
+  kind: SrTargetKind;
+  id?: string;
+  upn?: string;
+  label: string;
+}
+
+export const SR_MENU_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'] as const;
+
+export interface SrMenuOption {
+  key: (typeof SR_MENU_KEYS)[number];
+  target: SrTarget;
+}
+
+export const NUMBER_NEED_NEW = 'New number';
+export const NUMBER_NEED_KEEP = 'Keep an existing number';
+const NUMBER_NEED = [NUMBER_NEED_NEW, NUMBER_NEED_KEEP, 'No number'] as const;
+
+/** The three number fields every number-bearing request shares. */
+const NUMBER_FIELDS: readonly SrFieldSpec[] = [
+  { key: 'number', label: 'Phone number', kind: 'select', required: true, options: NUMBER_NEED },
+  {
+    key: 'new_number',
+    label: 'New number',
+    kind: 'phone_number',
+    numberSource: 'available',
+    required: true,
+    showWhen: { key: 'number', equals: NUMBER_NEED_NEW },
+    hint: "A free number at this site is picked for you. Choose another if you'd prefer.",
+  },
+  {
+    key: 'existing_number',
+    label: 'Number to keep',
+    kind: 'phone_number',
+    numberSource: 'site',
+    required: true,
+    showWhen: { key: 'number', equals: NUMBER_NEED_KEEP },
+  },
+];
+
 const NOTES: SrFieldSpec = { key: 'notes', label: 'Anything else we should know', kind: 'textarea', max: 4000 };
 
 export const SR_TYPE_DEFS: Record<SrType, SrTypeDef> = {
@@ -95,9 +185,9 @@ export const SR_TYPE_DEFS: Record<SrType, SrTypeDef> = {
       { key: 'sitecode', label: 'Site code', kind: 'text', required: true, max: 20, hint: 'A short unique code, e.g. LON02' },
       { key: 'name', label: 'Site name', kind: 'text', required: true, max: 120 },
       { key: 'address', label: 'Address', kind: 'textarea', required: true, max: 400, hint: 'Used for emergency calling, so include the full address.' },
-      { key: 'country', label: 'Country', kind: 'text', max: 80 },
+      { key: 'country', label: 'Country', kind: 'country', required: true },
       { key: 'go_live', label: 'Wanted by', kind: 'date' },
-      { key: 'contact_email', label: 'Site contact email', kind: 'text', max: 200 },
+      { key: 'contact', label: 'Site contact', kind: 'person' },
       NOTES,
     ],
   },
@@ -106,10 +196,8 @@ export const SR_TYPE_DEFS: Record<SrType, SrTypeDef> = {
     description: 'Give a person Teams calling.',
     needsSite: true,
     fields: [
-      { key: 'display_name', label: 'Name', kind: 'text', required: true, max: 120 },
-      { key: 'upn', label: 'Sign-in address (UPN)', kind: 'text', required: true, max: 200, hint: 'e.g. jo.bloggs@contoso.com' },
-      { key: 'number', label: 'Phone number', kind: 'select', required: true, options: NUMBER_NEED },
-      { key: 'existing_number', label: 'Number to keep', kind: 'text', max: 40, hint: 'Only if keeping an existing number' },
+      { key: 'user', label: 'Person', kind: 'person', required: true, hint: 'Search your directory by name or sign-in address.' },
+      ...NUMBER_FIELDS,
       { key: 'voicemail', label: 'Voicemail', kind: 'boolean' },
       NOTES,
     ],
@@ -121,7 +209,7 @@ export const SR_TYPE_DEFS: Record<SrType, SrTypeDef> = {
     fields: [
       { key: 'quantity', label: 'How many numbers', kind: 'number', required: true, min: 1, max: 1000 },
       { key: 'purpose', label: 'What they are for', kind: 'select', required: true, options: ['Users', 'Call queue or auto attendant', 'Common area phones', 'Other'] },
-      { key: 'area', label: 'Area code or locality', kind: 'text', max: 80 },
+      { key: 'range', label: 'Next to which range', kind: 'number_range', hint: 'Pick an existing range to extend, or leave it for a new range.' },
       { key: 'number_type', label: 'Number type', kind: 'select', options: ['No preference', 'Calling Plan', 'Direct Routing', 'Operator Connect'] },
       NOTES,
     ],
@@ -133,8 +221,8 @@ export const SR_TYPE_DEFS: Record<SrType, SrTypeDef> = {
     fields: [
       { key: 'display_name', label: 'Phone name', kind: 'text', required: true, max: 120, hint: 'e.g. Reception desk' },
       { key: 'location', label: 'Where it will be', kind: 'text', max: 120 },
-      { key: 'device_model', label: 'Device model', kind: 'text', max: 120 },
-      { key: 'number', label: 'Phone number', kind: 'select', required: true, options: NUMBER_NEED },
+      { key: 'device_model', label: 'Device model', kind: 'device_model' },
+      ...NUMBER_FIELDS,
       NOTES,
     ],
   },
@@ -144,10 +232,11 @@ export const SR_TYPE_DEFS: Record<SrType, SrTypeDef> = {
     needsSite: true,
     fields: [
       { key: 'name', label: 'Queue name', kind: 'text', required: true, max: 120 },
-      { key: 'agents', label: 'Who should answer (sign-in addresses)', kind: 'list', required: true, max: 50, hint: 'One per line' },
+      { key: 'agents', label: 'Who should answer', kind: 'people', required: true, max: 50 },
       { key: 'routing', label: 'How calls are shared out', kind: 'select', options: ['All at once', 'In order', 'Round robin', 'Longest idle'] },
-      { key: 'unanswered', label: 'If nobody answers', kind: 'textarea', max: 1000, hint: 'e.g. go to voicemail after 60 seconds' },
-      { key: 'number', label: 'Phone number', kind: 'select', required: true, options: NUMBER_NEED },
+      { key: 'unanswered_after', label: 'If nobody answers within', kind: 'select', options: ['30 seconds', '1 minute', '2 minutes', '5 minutes', '10 minutes', '20 minutes'] },
+      { key: 'unanswered', label: 'Then send the call to', kind: 'target' },
+      ...NUMBER_FIELDS,
       NOTES,
     ],
   },
@@ -157,11 +246,11 @@ export const SR_TYPE_DEFS: Record<SrType, SrTypeDef> = {
     needsSite: true,
     fields: [
       { key: 'name', label: 'Auto attendant name', kind: 'text', required: true, max: 120 },
-      { key: 'greeting', label: 'Greeting', kind: 'textarea', required: true, max: 1000 },
-      { key: 'menu', label: 'Menu options', kind: 'textarea', max: 2000, hint: 'e.g. 1 = Sales queue, 2 = Support queue, 0 = Reception' },
+      { key: 'greeting', label: 'Greeting', kind: 'textarea', required: true, max: 1000, hint: 'What callers hear first.' },
+      { key: 'menu', label: 'Menu options', kind: 'menu', max: 10 },
       { key: 'business_hours', label: 'Opening hours', kind: 'textarea', max: 1000 },
-      { key: 'after_hours', label: 'Out of hours', kind: 'textarea', max: 1000, hint: 'What callers should hear or where calls should go' },
-      { key: 'number', label: 'Phone number', kind: 'select', required: true, options: NUMBER_NEED },
+      { key: 'after_hours', label: 'Out of hours, send calls to', kind: 'target' },
+      ...NUMBER_FIELDS,
       NOTES,
     ],
   },
@@ -173,18 +262,82 @@ export const SR_TYPE_DEFS: Record<SrType, SrTypeDef> = {
   },
 };
 
-/** Label/value pairs for display and email, in form order, skipping blanks. */
+/** Whether a field is asked, given the other answers (see showWhen). */
+export function srFieldVisible(f: SrFieldSpec, details: Record<string, unknown>): boolean {
+  return !f.showWhen || details[f.showWhen.key] === f.showWhen.equals;
+}
+
+/** The field holding a free number the request would take, if this type has one. */
+export const SR_NEW_NUMBER_KEY = 'new_number';
+
+/**
+ * ISO 3166-1 alpha-2 codes. Names come from Intl.DisplayNames (countryName), so
+ * there is no hand-maintained list of names to drift.
+ */
+export const COUNTRY_CODES = [
+  'AD', 'AE', 'AF', 'AG', 'AI', 'AL', 'AM', 'AO', 'AQ', 'AR', 'AS', 'AT', 'AU', 'AW', 'AX', 'AZ', 'BA', 'BB', 'BD', 'BE', 'BF', 'BG', 'BH', 'BI', 'BJ',
+  'BL', 'BM', 'BN', 'BO', 'BQ', 'BR', 'BS', 'BT', 'BV', 'BW', 'BY', 'BZ', 'CA', 'CC', 'CD', 'CF', 'CG', 'CH', 'CI', 'CK', 'CL', 'CM', 'CN', 'CO', 'CR',
+  'CU', 'CV', 'CW', 'CX', 'CY', 'CZ', 'DE', 'DJ', 'DK', 'DM', 'DO', 'DZ', 'EC', 'EE', 'EG', 'EH', 'ER', 'ES', 'ET', 'FI', 'FJ', 'FK', 'FM', 'FO', 'FR',
+  'GA', 'GB', 'GD', 'GE', 'GF', 'GG', 'GH', 'GI', 'GL', 'GM', 'GN', 'GP', 'GQ', 'GR', 'GS', 'GT', 'GU', 'GW', 'GY', 'HK', 'HM', 'HN', 'HR', 'HT', 'HU',
+  'ID', 'IE', 'IL', 'IM', 'IN', 'IO', 'IQ', 'IR', 'IS', 'IT', 'JE', 'JM', 'JO', 'JP', 'KE', 'KG', 'KH', 'KI', 'KM', 'KN', 'KP', 'KR', 'KW', 'KY', 'KZ',
+  'LA', 'LB', 'LC', 'LI', 'LK', 'LR', 'LS', 'LT', 'LU', 'LV', 'LY', 'MA', 'MC', 'MD', 'ME', 'MF', 'MG', 'MH', 'MK', 'ML', 'MM', 'MN', 'MO', 'MP', 'MQ',
+  'MR', 'MS', 'MT', 'MU', 'MV', 'MW', 'MX', 'MY', 'MZ', 'NA', 'NC', 'NE', 'NF', 'NG', 'NI', 'NL', 'NO', 'NP', 'NR', 'NU', 'NZ', 'OM', 'PA', 'PE', 'PF',
+  'PG', 'PH', 'PK', 'PL', 'PM', 'PN', 'PR', 'PS', 'PT', 'PW', 'PY', 'QA', 'RE', 'RO', 'RS', 'RU', 'RW', 'SA', 'SB', 'SC', 'SD', 'SE', 'SG', 'SH', 'SI',
+  'SJ', 'SK', 'SL', 'SM', 'SN', 'SO', 'SR', 'SS', 'ST', 'SV', 'SX', 'SY', 'SZ', 'TC', 'TD', 'TF', 'TG', 'TH', 'TJ', 'TK', 'TL', 'TM', 'TN', 'TO', 'TR',
+  'TT', 'TV', 'TW', 'TZ', 'UA', 'UG', 'UM', 'US', 'UY', 'UZ', 'VA', 'VC', 'VE', 'VG', 'VI', 'VN', 'VU', 'WF', 'WS', 'YE', 'YT', 'ZA', 'ZM', 'ZW',
+] as const;
+export type CountryCode = (typeof COUNTRY_CODES)[number];
+
+let regionNames: Intl.DisplayNames | null = null;
+/** English country name for an ISO code, e.g. GB -> United Kingdom. */
+export function countryName(code: string): string {
+  try {
+    regionNames ??= new Intl.DisplayNames(['en'], { type: 'region' });
+    return regionNames.of(code) ?? code;
+  } catch {
+    return code;
+  }
+}
+
+function targetLabel(t: SrTarget): string {
+  return t.label;
+}
+
+/** Label/value pairs for display and email, in form order, skipping blanks and hidden fields. */
 export function srDetailLines(type: SrType, details: Record<string, unknown>): { label: string; value: string }[] {
   const out: { label: string; value: string }[] = [];
   for (const f of SR_TYPE_DEFS[type].fields) {
+    if (!srFieldVisible(f, details)) continue;
     const v = details[f.key];
     if (v === undefined || v === null || v === '') continue;
     let value: string;
-    if (Array.isArray(v)) {
-      if (v.length === 0) continue;
-      value = v.join(', ');
-    } else if (typeof v === 'boolean') value = v ? 'Yes' : 'No';
-    else value = String(v);
+    switch (f.kind) {
+      case 'person':
+        value = `${(v as SrPerson).name} (${(v as SrPerson).upn})`;
+        break;
+      case 'people':
+        if (!Array.isArray(v) || v.length === 0) continue;
+        value = (v as SrPerson[]).map((p) => p.name).join(', ');
+        break;
+      case 'target':
+        value = targetLabel(v as SrTarget);
+        break;
+      case 'menu':
+        if (!Array.isArray(v) || v.length === 0) continue;
+        value = (v as SrMenuOption[]).map((o) => `${o.key}: ${targetLabel(o.target)}`).join('; ');
+        break;
+      case 'country':
+        value = countryName(String(v));
+        break;
+      case 'boolean':
+        value = v ? 'Yes' : 'No';
+        break;
+      case 'number_range':
+        value = (v as { label: string }).label;
+        break;
+      default:
+        value = Array.isArray(v) ? v.join(', ') : String(v);
+    }
     out.push({ label: f.label, value });
   }
   return out;
