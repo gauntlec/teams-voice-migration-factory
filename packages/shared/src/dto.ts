@@ -1382,7 +1382,7 @@ export const buildListQuerySchema = z.object({
   siteId: z.string().uuid(),
   q: z.string().trim().max(160).optional(),
   // Not z.coerce.boolean(): that turns the query-string text "false" into true.
-  hidden: z.enum(['true', 'false']).transform((v) => v === 'true').optional(),
+  hidden: z.preprocess((v) => (v === 'true' ? true : v === 'false' ? false : v), z.boolean()).optional(),
   /** Only rows designed for this service request (its Design tab). */
   serviceRequestId: z.string().uuid().optional(),
   page: z.coerce.number().int().min(1).max(100000).default(1),
