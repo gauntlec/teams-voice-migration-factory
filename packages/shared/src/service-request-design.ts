@@ -126,13 +126,17 @@ export function srItemSheets(kinds: Iterable<SrItemKind>): (typeof DEPLOYMENT_SH
  */
 export function srBuiltBlockers(
   type: SrType,
-  args: { siteId: string | null; deployableCount: number; missingCount: number; rangeCount?: number },
+  args: { siteId: string | null; deployableCount: number; missingCount: number; rangeCount?: number; otherSiteCount?: number },
 ): string[] {
   if (srHasNumbersDesign(type)) return (args.rangeCount ?? 0) > 0 ? [] : ['Add the new numbers to the site on the Design tab first.'];
   if (!srHasDesign(type)) return [];
   const out: string[] = [];
   if (!args.siteId) out.push('The request has no site, so there is nothing to design against.');
   if (args.deployableCount === 0) out.push('Design at least one row on the Design tab first.');
+  const other = args.otherSiteCount ?? 0;
+  if (other > 0) {
+    out.push(`${other} linked row${other === 1 ? ' is' : 's are'} on a different site from the request, so ${other === 1 ? 'it' : 'they'} can't be deployed from here. Remove ${other === 1 ? 'it' : 'them'} from the request.`);
+  }
   if (args.missingCount > 0) {
     out.push(
       `${args.missingCount} linked row${args.missingCount === 1 ? ' was' : 's were'} deleted from Design & Build. Remove ${args.missingCount === 1 ? 'it' : 'them'} from the request or design ${args.missingCount === 1 ? 'it' : 'them'} again.`,

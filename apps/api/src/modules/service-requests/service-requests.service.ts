@@ -1204,9 +1204,14 @@ export class ServiceRequestsService {
     if (!mapping.ok) throw new BadRequestException(mapping.error);
     const draft = mapping.draft;
 
-    const already = await this.findBuildRow(t, draft);
+    const already = await this.findBuildRow(t, draft, row.site_id);
     if (already) {
-      await this.linkItem(t, user, id, draft.kind, already.id);
+      // Only a row on the request's own site belongs to it (a new site is its own site).
+      if (draft.kind === 'site' || already.siteId === row.site_id) {
+        await this.linkItem(t, user, id, draft.kind, already.id);
+      } else {
+        warnings.push(`${draft.label} is already in Design & Build on another site, so it wasn't added to this request. Design it there, or change the request's site.`);
+      }
       return { created: [], existing: [already.link], warnings };
     }
 
@@ -1217,9 +1222,9 @@ export class ServiceRequestsService {
     } catch (e) {
       // Someone added the same row a moment ago - report it like any other duplicate.
       if (e instanceof ConflictException) {
-        const now = await this.findBuildRow(t, draft);
+        const now = await this.findBuildRow(t, draft, row.site_id);
         if (now) {
-          await this.linkItem(t, user, id, draft.kind, now.id);
+          if (draft.kind === 'site' || now.siteId === row.site_id) await this.linkItem(t, user, id, draft.kind, now.id);
           return { created: [], existing: [now.link], warnings };
         }
       }
@@ -1292,9 +1297,11 @@ export class ServiceRequestsService {
    * Case-insensitive: UPNs and site codes are, and deployment matches call
    * queues and auto attendants to Teams by lower-cased name tenant-wide.
    */
-  private async findBuildRow(t: TenantContext, draft: SrBuildDraft): Promise<{ id: string; link: SrBuildLink } | null> {
+  private async findBuildRow(t: TenantContext, draft: SrBuildDraft, preferSiteId?: string | null): Promise<{ id: string; siteId: string; link: SrBuildLink } | null> {
     const s = tenantDb(this.db, t.schema);
     const key = draft.key.toLowerCase();
+    // The request's own site first, so a row there wins over a namesake elsewhere.
+    const preferred = sql<number>`case when site_id = ${preferSiteId ?? null}::uuid then 0 else 1 end`;
     let hit: { id: string; site_id: string } | undefined;
     switch (draft.kind) {
       case 'site':
@@ -1310,6 +1317,7 @@ export class ServiceRequestsService {
           .selectFrom(draft.kind === 'user' ? 'build_users' : 'build_caps')
           .select(['id', 'site_id'])
           .where(sql<string>`lower(upn)`, '=', key)
+          .orderBy(preferred)
           .executeTakeFirst();
         break;
       case 'call_queue':
@@ -1318,10 +1326,11 @@ export class ServiceRequestsService {
           .selectFrom(draft.kind === 'call_queue' ? 'build_call_queues' : 'build_auto_attendants')
           .select(['id', 'site_id'])
           .where(sql<string>`lower(name)`, '=', key)
+          .orderBy(preferred)
           .executeTakeFirst();
         break;
     }
-    return hit ? { id: hit.id, link: { kind: draft.kind, label: draft.label, href: srBuildHref(draft.kind, hit.site_id) } } : null;
+    return hit ? { id: hit.id, siteId: hit.site_id, link: { kind: draft.kind, label: draft.label, href: srBuildHref(draft.kind, hit.site_id) } } : null;
   }
 
   /* --------------------------- design and deploy --------------------------- */
@@ -1386,7 +1395,12 @@ export class ServiceRequestsService {
     const deployableCount = live.filter((i) => SR_ITEM_SHEET[i.kind] && i.site_id === row.site_id).length;
     const missingCount = items.length - live.length;
     const rangeCount = live.filter((i) => i.kind === 'number_range').length;
-    return { items, deployableCount, builtBlockers: srBuiltBlockers(row.type, { siteId: row.site_id, deployableCount, missingCount, rangeCount }) };
+    const otherSiteCount = live.filter((i) => SR_ITEM_SHEET[i.kind] && i.site_id !== row.site_id).length;
+    return {
+      items,
+      deployableCount,
+      builtBlockers: srBuiltBlockers(row.type, { siteId: row.site_id, deployableCount, missingCount, rangeCount, otherSiteCount }),
+    };
   }
 
   /** Removes a row from the request. The row itself stays in Design & Build - delete it there if it isn't wanted at all. */

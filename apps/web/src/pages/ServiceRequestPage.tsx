@@ -720,6 +720,11 @@ function DesignTab({
                         Deleted from Design & Build
                       </Badge>
                     )}
+                    {i.label && i.site_id && r.site_id && i.site_id !== r.site_id && i.kind !== 'site' && (
+                      <Badge appearance="tint" color="warning" style={{ marginLeft: 6 }} title="This row is on a different site from the request, so it can't be deployed from here.">
+                        On another site
+                      </Badge>
+                    )}
                   </TableCell>
                   <TableCell>
                     {editable && (
