@@ -80,6 +80,9 @@ npm run dev:web      # http://localhost:5173
 npm run dev:worker
 ```
 
+Tests: `npm run build:packages && npm run test && npm run test:db` (the second
+suite starts its own throwaway Postgres - see "Testing" in docs/ARCHITECTURE.md).
+
 ## Repository layout
 
 ```
@@ -90,6 +93,8 @@ apps/
 packages/
   shared/   role/permission matrix, domain value lists, shared DTO/zod schemas
   db/       Kysely types, .sql migrations (platform + tenant template), runner, seed
+tests/
+  db/       database-backed tests (real Postgres + migrations) - npm run test:db
 docs/       architecture / rbac / security / data-model
 infra/      (reserved) k8s, CI
 ```

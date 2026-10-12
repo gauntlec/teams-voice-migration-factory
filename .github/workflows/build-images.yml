@@ -29,11 +29,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Typecheck every package + run packages/shared's unit tests before any
-  # image build - a broken cmdlet planner (the code that decides what
-  # Set-Cs*/New-Cs* runs against a real customer tenant) used to be able to
-  # ship straight to GHCR/production with nothing catching it. Runs on PRs
-  # too (not just push to main) so a broken change is visible before merge.
+  # Typecheck every package + run packages/shared's unit tests and the
+  # database-backed tests (tests/db) before any image build - a broken cmdlet
+  # planner (the code that decides what Set-Cs*/New-Cs* runs against a real
+  # customer tenant) used to be able to ship straight to GHCR/production with
+  # nothing catching it. Runs on PRs too (not just push to main) so a broken
+  # change is visible before merge.
   verify:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
@@ -55,6 +56,12 @@ jobs:
       - run: npm run typecheck --workspaces --if-present
 
       - run: npm run test --workspaces --if-present
+
+      # The real api/worker services against a real Postgres 16 with every
+      # migration applied (tests/db - one embedded Postgres for the run, a
+      # fresh tenant schema per file). Catches data bugs unit tests can't see:
+      # a number never freed, change history lost, a run stuck 'queued'.
+      - run: npm run test:db
 
   build:
     needs: verify

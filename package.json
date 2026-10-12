@@ -5,7 +5,8 @@
   "description": "Multi-tenant web platform that replaces the manual Microsoft Teams voice migration workflow (discovery, design/build, deployment, service handover).",
   "workspaces": [
     "packages/*",
-    "apps/*"
+    "apps/*",
+    "tests/*"
   ],
   "engines": {
     "node": ">=20 <23"
@@ -20,7 +21,8 @@
     "seed": "npm run seed --workspace @tvmf/db",
     "lint": "npm run lint --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present"
+    "test": "npm run test --workspaces --if-present",
+    "test:db": "npm run test:db --workspace @tvmf/db-tests"
   },
   "devDependencies": {
     "typescript": "5.5.4",
@@ -28,6 +30,10 @@
   },
   "allowScripts": {
     "esbuild@0.23.1": true,
-    "esbuild@0.21.5": true
+    "esbuild@0.21.5": true,
+    "@embedded-postgres/darwin-arm64@16.14.0-beta.17": true,
+    "@embedded-postgres/darwin-x64@16.14.0-beta.17": true,
+    "@embedded-postgres/linux-x64@16.14.0-beta.17": true,
+    "@embedded-postgres/linux-arm64@16.14.0-beta.17": true
   }
 }

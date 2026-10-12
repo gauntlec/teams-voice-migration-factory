@@ -118,3 +118,49 @@ model in place, to be filled in next.
   `records.tsx` `CrudSection` / `PagedSection` already build on it.
 - Griffel `makeStyles` + `className` for styling — inline `style` on Fluent
   slot components (`Table`, `TableCell`, …) is dropped and won't apply.
+
+## Testing
+
+Two suites, both run by CI's `verify` job before any image is built (a red
+run means nothing ships):
+
+| Command | What it covers | Where |
+| --- | --- | --- |
+| `npm run test` | Pure unit tests (no database) - cmdlet planning, SR rules, mappers | `packages/shared/src/*.test.ts` |
+| `npm run test:db` | Database-backed tests: the real API/worker services against real Postgres with every migration applied | `tests/db/src/**/*.db.test.ts` |
+
+Run both after `npm run build:packages` (the apps import `@tvmf/shared` and
+`@tvmf/db` from their built `dist/`):
+
+```bash
+npm install
+npm run build:packages
+npm run test
+npm run test:db
+```
+
+**How `test:db` works.** `tests/db` is its own workspace (`@tvmf/db-tests`),
+so its `embedded-postgres` dev dependency never reaches a Docker image (the
+Dockerfiles only copy `packages/` and `apps/`).
+
+- `tests/db/src/global-setup.ts` starts **one** Postgres 16 for the whole run
+  (`embedded-postgres` - no Docker or local install needed, same major as
+  production), on a free port in a temp folder, and applies the platform
+  migrations. It's deleted when the run ends. To use an existing throwaway
+  database instead, set `TEST_DATABASE_URL`.
+- Each test file calls `useDb()` and `seedCustomer()` (`tests/db/src/helpers.ts`),
+  which provisions a **fresh tenant schema** with every tenant migration, so
+  files run in parallel without seeing each other's rows. `seedUser`,
+  `seedSite`, `seedNumbers` and `seedConnection` add the usual fixtures.
+- Services are constructed directly (`new BuildService(db, new AuditService(db), ...)`)
+  from the TypeScript source - no Nest app, no build of `apps/*` needed.
+  Dependencies a test shouldn't touch are `unused('name')` (throws if called);
+  queues and mail are small fakes. `tests/db/src/setup.ts` swaps out the
+  API's `queue.module` so importing a service never opens a Redis connection.
+- The discovery worker is driven by calling `handleTenantDiscoveryRun` with a
+  fake job and a fake PowerShell session (`alive` / `graphAlive` / `query`).
+
+**When to add one.** Any bug that was about data - a row left behind, a
+number not freed, history not written, a run stuck in flight - gets a
+`*.db.test.ts` that fails without the fix. Check it does: undo the fix
+locally, watch the test fail, put the fix back.

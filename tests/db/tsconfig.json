@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Typecheck only (vitest runs the files): resolve like vitest does, which
+    // also finds embedded-postgres's ESM-only types.
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "types": ["node", "multer"],
+    // Same as apps/api: the services under test are Nest classes.
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "strictPropertyInitialization": false,
+    "noUncheckedIndexedAccess": false
+  },
+  "include": ["src/**/*", "vitest.config.mts"]
+}

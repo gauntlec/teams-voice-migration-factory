@@ -1,0 +1,18 @@
+{
+  "name": "@tvmf/db-tests",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Database-backed tests: real Postgres, every migration, the real api/worker services. Not shipped in any image.",
+  "scripts": {
+    "test:db": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@tvmf/db": "0.1.0",
+    "@tvmf/shared": "0.1.0"
+  },
+  "devDependencies": {
+    "embedded-postgres": "16.14.0-beta.17"
+  }
+}
