@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { sql, type Kysely } from 'kysely';
 import { tenantDb, type DB } from '@tvmf/db';
@@ -72,8 +73,24 @@ export class BuildService {
     private readonly documentBuilder: DeploymentDocumentService,
     private readonly files: FilesService,
   ) {}
+  /** The open transaction, while inTx is running - see inTx. */
+  private readonly tx = new AsyncLocalStorage<Scoped>();
+
   private s(t: TenantContext): Scoped {
-    return tenantDb(this.db, t.schema);
+    return this.tx.getStore() ?? tenantDb(this.db, t.schema);
+  }
+
+  /**
+   * Runs `fn` with every `this.s(t)` inside it on one database transaction,
+   * so a change that touches the number inventory and a build row either
+   * fully happens or not at all. Before this, a number could be claimed (and
+   * the old one freed) and then the row update fail - e.g. a UPN clash -
+   * leaving the inventory and the row disagreeing. Nested calls join the
+   * outer transaction.
+   */
+  private inTx<T>(t: TenantContext, fn: () => Promise<T>): Promise<T> {
+    if (this.tx.getStore()) return fn();
+    return this.db.transaction().execute((trx) => this.tx.run(tenantDb(trx, t.schema), fn));
   }
 
   /**
@@ -437,9 +454,11 @@ export class BuildService {
 
   async deleteIdentity(t: TenantContext, u: AuthedUser, table: 'build_users' | 'build_caps', id: string) {
     await this.assertNotSrLocked(t, [id]);
-    await this.releaseHolder(t, holderTypeOf(table), id);
-    const row = await this.s(t).deleteFrom(table).where('id', '=', id).returningAll().executeTakeFirst();
-    if (!row) throw new NotFoundException('row not found');
+    await this.inTx(t, async () => {
+      await this.releaseHolder(t, holderTypeOf(table), id);
+      const row = await this.s(t).deleteFrom(table).where('id', '=', id).returningAll().executeTakeFirst();
+      if (!row) throw new NotFoundException('row not found');
+    });
     await this.audit.tenant(t.schema, `build.${holderTypeOf(table)}_deleted`, {
       actor: actorOf(u),
       targetType: `build_${holderTypeOf(table)}`,
@@ -463,6 +482,9 @@ export class BuildService {
     // life silently missing Set-CsPhoneNumberAssignment (see siteNumberTypeDefault).
     const number_type =
       rest.number_type ?? (phone_number_id ? await this.siteNumberTypeDefault(t, rest.site_id) : null);
+    // One transaction: if the number can't be claimed (taken a moment ago),
+    // the row isn't left behind either.
+    const row = await this.inTx(t, async () => {
     let row = await this.s(t)
       .insertInto(table)
       .values({
@@ -493,13 +515,8 @@ export class BuildService {
         throw isUniqueViolation(err) ? new ConflictException('That UPN is already on this site’s Build grid.') : err;
       });
     if (phone_number_id) {
-      // The number can only be claimed once the row exists (it's the holder) -
-      // if the claim fails (taken a moment ago), take the row back out so a
-      // retry doesn't hit "UPN already on this site".
-      const number = await this.setSingleNumber(t, holderTypeOf(table), row.id, phone_number_id).catch(async (err) => {
-        await this.s(t).deleteFrom(table).where('id', '=', row.id).execute();
-        throw err;
-      });
+      // The number can only be claimed once the row exists (it's the holder).
+      const number = await this.setSingleNumber(t, holderTypeOf(table), row.id, phone_number_id);
       row = await this.s(t)
         .updateTable(table)
         .set({ e164: number?.e164 ?? null, phone_number_id: number?.id ?? null } as never)
@@ -507,6 +524,8 @@ export class BuildService {
         .returningAll()
         .executeTakeFirstOrThrow();
     }
+    return row;
+    });
     await this.audit.tenant(t.schema, `build.${objectType}_created`, {
       actor: actorOf(u),
       targetType: `build_${objectType}`,
@@ -531,22 +550,26 @@ export class BuildService {
     // stringified first (see schema.ts) - delegates is the one array-shaped
     // field here (call_forwarding/pickup_group are plain objects).
     if (patch.delegates !== undefined) patch.delegates = JSON.stringify(patch.delegates);
-    if (phone_number_id !== undefined) {
-      Object.assign(patch, await this.applyNumberChange(t, table, holderType, id, phone_number_id, 'number_type' in rest));
-    }
-    if (policy_ids !== undefined) {
-      Object.assign(patch, await this.resolvePolicyIds(t, policy_ids));
-    }
-    const row = await this.s(t)
-      .updateTable(table)
-      .set(patch as never)
-      .where('id', '=', id)
-      .returningAll()
-      .executeTakeFirst()
-      .catch((err) => {
-        throw isUniqueViolation(err) ? new ConflictException('That UPN is already on this site’s Build grid.') : err;
-      });
-    if (!row) throw new NotFoundException('row not found');
+    // One transaction: a number change only sticks if the row update does too.
+    const row = await this.inTx(t, async () => {
+      if (phone_number_id !== undefined) {
+        Object.assign(patch, await this.applyNumberChange(t, table, holderType, id, phone_number_id, 'number_type' in rest));
+      }
+      if (policy_ids !== undefined) {
+        Object.assign(patch, await this.resolvePolicyIds(t, policy_ids));
+      }
+      const updated = await this.s(t)
+        .updateTable(table)
+        .set(patch as never)
+        .where('id', '=', id)
+        .returningAll()
+        .executeTakeFirst()
+        .catch((err) => {
+          throw isUniqueViolation(err) ? new ConflictException('That UPN is already on this site’s Build grid.') : err;
+        });
+      if (!updated) throw new NotFoundException('row not found');
+      return updated;
+    });
     await this.audit.tenant(t.schema, `build.${holderType}_updated`, {
       actor: actorOf(u),
       targetType: `build_${holderType}`,
@@ -577,6 +600,9 @@ export class BuildService {
     await this.assertNotSrLocked(t, ids);
     const { policy_ids, ...rest } = body;
     const patch: Record<string, unknown> = { ...rest };
+    // Same as updateIdentity: an array bound as-is becomes a Postgres array,
+    // which the jsonb column rejects (a bulk edit with delegates used to 500).
+    if (patch.delegates !== undefined) patch.delegates = JSON.stringify(patch.delegates);
     // Bulk patches are genuinely partial by design - BulkEditDialog starts
     // every field blank (there's no single row to seed "unchanged" from
     // like RecordDialog does for single-row edit), so only the keys the
@@ -736,9 +762,22 @@ export class BuildService {
    */
   async deleteResourceAccount(t: TenantContext, u: AuthedUser, id: string) {
     await this.assertNotSrLocked(t, [id]);
-    await this.releaseHolder(t, 'resource_account', id);
-    const row = await this.s(t).deleteFrom('build_resource_accounts').where('id', '=', id).returningAll().executeTakeFirst();
-    if (!row) throw new NotFoundException('row not found');
+    const row = await this.inTx(t, async () => {
+      await this.releaseHolder(t, 'resource_account', id);
+      const deleted = await this.s(t).deleteFrom('build_resource_accounts').where('id', '=', id).returningAll().executeTakeFirst();
+      if (!deleted) throw new NotFoundException('row not found');
+      // Auto attendants and call queues list their resource accounts by id
+      // in a jsonb array (no foreign key), so a deleted account used to stay
+      // there and show up at deploy time as an account that isn't live.
+      for (const table of ['build_auto_attendants', 'build_call_queues'] as const) {
+        await this.s(t)
+          .updateTable(table)
+          .set({ resource_accounts: sql`${sql.ref('resource_accounts')} - ${id}::text` } as never)
+          .where(sql<boolean>`${sql.ref('resource_accounts')} ? ${id}::text`)
+          .execute();
+      }
+      return deleted;
+    });
     let unlinkedFromSite = false;
     if (row.discovery_resource_account_id) {
       const discoveryRow = await this.s(t)
@@ -779,6 +818,7 @@ export class BuildService {
     // being assigned right here and the caller didn't say what type it is.
     const number_type =
       body.number_type ?? (body.phone_number_id ? await this.siteNumberTypeDefault(t, body.site_id) : null);
+    const row = await this.inTx(t, async () => {
     let row = await this.s(t)
       .insertInto('build_resource_accounts')
       .values({
@@ -796,10 +836,8 @@ export class BuildService {
       .returningAll()
       .executeTakeFirstOrThrow();
     if (body.phone_number_id) {
-      const number = await this.setSingleNumber(t, 'resource_account', row.id, body.phone_number_id).catch(async (err) => {
-        await this.s(t).deleteFrom('build_resource_accounts').where('id', '=', row.id).execute();
-        throw err;
-      });
+      // Same transaction: a failed claim leaves no row behind.
+      const number = await this.setSingleNumber(t, 'resource_account', row.id, body.phone_number_id);
       row = await this.s(t)
         .updateTable('build_resource_accounts')
         .set({ phone_number: number?.e164 ?? null, phone_number_id: number?.id ?? null })
@@ -807,6 +845,8 @@ export class BuildService {
         .returningAll()
         .executeTakeFirstOrThrow();
     }
+    return row;
+    });
     await this.audit.tenant(t.schema, 'build.resource_account_created', {
       actor: actorOf(u),
       targetType: 'build_resource_account',
@@ -819,28 +859,37 @@ export class BuildService {
     await this.assertNotSrLocked(t, [id]);
     const { phone_number_id, created, voice_routing_policy_id, ...rest } = body;
     const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
-    if (phone_number_id !== undefined) {
-      Object.assign(
-        patch,
-        await this.applyNumberChange(t, 'build_resource_accounts', 'resource_account', id, phone_number_id, 'number_type' in rest),
-      );
-    }
-    if (voice_routing_policy_id !== undefined) {
-      const resolved = await this.resolvePolicyIds(t, { voice_routing_policy: voice_routing_policy_id });
-      patch.voice_routing_policy = resolved.policies.voice_routing_policy ?? null;
-      patch.voice_routing_policy_id = resolved.policy_ids.voice_routing_policy ?? null;
-    }
-    if (created !== undefined) {
-      const row = await this.getResourceAccount(t, id);
-      patch.application_id = created ? RESOURCE_ACCOUNT_APPLICATION_IDS[row.kind] : null;
-    }
-    const row = await this.s(t)
-      .updateTable('build_resource_accounts')
-      .set(patch as never)
-      .where('id', '=', id)
-      .returningAll()
-      .executeTakeFirst();
-    if (!row) throw new NotFoundException('row not found');
+    const row = await this.inTx(t, async () => {
+      const existing = await this.getResourceAccount(t, id);
+      if (phone_number_id !== undefined) {
+        Object.assign(
+          patch,
+          await this.applyNumberChange(t, 'build_resource_accounts', 'resource_account', id, phone_number_id, 'number_type' in rest),
+        );
+      }
+      if (voice_routing_policy_id !== undefined) {
+        const resolved = await this.resolvePolicyIds(t, { voice_routing_policy: voice_routing_policy_id });
+        patch.voice_routing_policy = resolved.policies.voice_routing_policy ?? null;
+        patch.voice_routing_policy_id = resolved.policy_ids.voice_routing_policy ?? null;
+      }
+      // The application id follows the account's kind (auto attendant vs call
+      // queue). It used to come from the stored kind only, so changing the kind
+      // - alone, or in the same save as "created" - kept the old kind's id and
+      // the account would be created as the wrong type.
+      const kind = rest.kind ?? existing.kind;
+      const isCreated = created ?? !!existing.application_id;
+      if (created !== undefined || (rest.kind !== undefined && rest.kind !== existing.kind)) {
+        patch.application_id = isCreated ? RESOURCE_ACCOUNT_APPLICATION_IDS[kind] : null;
+      }
+      const updated = await this.s(t)
+        .updateTable('build_resource_accounts')
+        .set(patch as never)
+        .where('id', '=', id)
+        .returningAll()
+        .executeTakeFirst();
+      if (!updated) throw new NotFoundException('row not found');
+      return updated;
+    });
     await this.audit.tenant(t.schema, 'build.resource_account_updated', {
       actor: actorOf(u),
       targetType: 'build_resource_account',
@@ -1955,7 +2004,7 @@ export class BuildService {
     const [users, caps, resourceAccounts, autoAttendants, callQueues] = await Promise.all([
       s.selectFrom('build_users').select(['id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids']).where('site_id', '=', siteId).execute(),
       s.selectFrom('build_caps').select(['id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids']).where('site_id', '=', siteId).execute(),
-      s.selectFrom('build_resource_accounts').select(['id', 'upn', 'phone_number', 'number_type', 'voice_routing_policy', 'voice_routing_policy_id']).where('site_id', '=', siteId).execute(),
+      s.selectFrom('build_resource_accounts').select(['id', 'upn', 'phone_number', 'number_type', 'voice_routing_policy', 'voice_routing_policy_id', 'application_id']).where('site_id', '=', siteId).execute(),
       s.selectFrom('build_auto_attendants').select(['id', 'name', 'default_call_flow']).where('site_id', '=', siteId).execute(),
       s.selectFrom('build_call_queues').select(['id', 'name', 'routing_method']).where('site_id', '=', siteId).execute(),
     ]);
@@ -1992,13 +2041,21 @@ export class BuildService {
       number_type: r.number_type,
       policies: { voice_routing_policy: r.voice_routing_policy },
       policy_ids: { voice_routing_policy: r.voice_routing_policy_id },
+      created: !!r.application_id,
     }));
     const raValidated = raRows.length ? await this.validation.validateRows(t, raRows) : new Map<string, BuildRowValidation>();
     for (const row of raRows) {
       const v = raValidated.get(row.id);
       if (!v) continue;
-      if (hasIssue(v)) issues += 1;
-      if (!v.existsInTenant) unmatchedUpns.push(row.upn);
+      if (row.created && row.upn) {
+        if (hasIssue(v)) issues += 1;
+        if (!v.existsInTenant) unmatchedUpns.push(row.upn);
+      } else if (v.numberConflict || v.numberTypeMissing || v.unknownPolicies.length > 0) {
+        // Not created yet: it can't exist in the tenant or match live policy,
+        // so only design problems count. These used to be counted as issues,
+        // and a blank UPN was sent to the live check.
+        issues += 1;
+      }
     }
 
     // AA/CQ: existence-only for now (does this name resolve live at all) -
@@ -2062,9 +2119,9 @@ export class BuildService {
       s.selectFrom('build_auto_attendants').select('id').where('site_id', '=', siteId).execute(),
     ]);
     await this.assertNotSrLocked(t, [...users, ...caps, ...ras, ...cqs, ...aas].map((r) => r.id));
-    const releaseAll = async (holderType: NumberHolderType, ids: string[]) => {
+    const releaseAll = async (x: Scoped, holderType: NumberHolderType, ids: string[]) => {
       if (ids.length === 0) return;
-      await s
+      await x
         .updateTable('phone_numbers')
         .set({ holder_type: null, holder_id: null, status: 'available' })
         .where('holder_type', '=', holderType)
@@ -2075,18 +2132,17 @@ export class BuildService {
         )
         .execute();
     };
-    await Promise.all([
-      releaseAll('user', users.map((r) => r.id)),
-      releaseAll('cap', caps.map((r) => r.id)),
-      releaseAll('resource_account', ras.map((r) => r.id)),
-    ]);
-    await Promise.all([
-      s.deleteFrom('build_users').where('site_id', '=', siteId).execute(),
-      s.deleteFrom('build_caps').where('site_id', '=', siteId).execute(),
-      s.deleteFrom('build_resource_accounts').where('site_id', '=', siteId).execute(),
-      s.deleteFrom('build_call_queues').where('site_id', '=', siteId).execute(),
-      s.deleteFrom('build_auto_attendants').where('site_id', '=', siteId).execute(),
-    ]);
+    // All or nothing: a reset that failed part-way used to leave numbers
+    // freed for rows that still existed, or half the grids deleted.
+    await this.inTx(t, async () => {
+      const x = this.s(t);
+      await releaseAll(x, 'user', users.map((r) => r.id));
+      await releaseAll(x, 'cap', caps.map((r) => r.id));
+      await releaseAll(x, 'resource_account', ras.map((r) => r.id));
+      for (const table of ['build_users', 'build_caps', 'build_resource_accounts', 'build_call_queues', 'build_auto_attendants'] as const) {
+        await x.deleteFrom(table).where('site_id', '=', siteId).execute();
+      }
+    });
     const counts = { users: users.length, caps: caps.length, resourceAccounts: ras.length };
     await this.audit.tenant(t.schema, 'build.site_reset', {
       actor: actorOf(u),
@@ -2352,10 +2408,13 @@ export class BuildService {
     await this.assertNotSrLocked(t, ids);
     const table = template.kind === 'user' ? 'build_users' : 'build_caps';
     const patch: Record<string, unknown> = { policy_ids: template.policy_ids, policies: template.policies };
-    if (template.voicemail_enabled !== null || template.voicemail_language !== null) {
-      patch.voicemail = { enabled: template.voicemail_enabled, language: template.voicemail_language };
-    }
-    const { updated, appliedPatch } = await applyBulkPatch(this.s(t), table, ids, patch, ['policy_ids', 'policies']);
+    // Only the voicemail half the template actually sets, merged in - a
+    // template with just "voicemail on" used to wipe each row's language too.
+    const voicemail: Record<string, unknown> = {};
+    if (template.voicemail_enabled !== null) voicemail.enabled = template.voicemail_enabled;
+    if (template.voicemail_language !== null) voicemail.language = template.voicemail_language;
+    if (Object.keys(voicemail).length) patch.voicemail = voicemail;
+    const { updated, appliedPatch } = await applyBulkPatch(this.s(t), table, ids, patch, ['policy_ids', 'policies', 'voicemail']);
     await auditBulkPatch(this.audit, t.schema, `build.${holderTypeOf(table)}s_template_applied`, {
       actor: actorOf(u),
       targetType: `build_${holderTypeOf(table)}`,
