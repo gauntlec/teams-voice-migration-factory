@@ -3,6 +3,8 @@ export * from './domain';
 export * from './dto';
 export * from './email';
 export * from './deployment';
+export * from './deployment-verify';
+export * from './deployment-rollback';
 export * from './aa-live-parse';
 export * from './call-flow-graph';
 export * from './color';

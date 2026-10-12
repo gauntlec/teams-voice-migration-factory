@@ -10,7 +10,6 @@ import {
   resolveLiveAutoAttendantState,
   resolveLiveCallQueueState,
   resolveLiveIdentityState,
-  resolveLivePolicyNames,
   resolveLiveSharedCallingPolicyState,
   tenantDb,
 } from '@tvmf/db';
@@ -21,8 +20,6 @@ import {
   orderAutoAttendantRowsByDependency,
   planAutoAttendantRow,
   planCallQueueRow,
-  planIdentityRow,
-  planResourceAccountRow,
   planSharedCallingPolicyRow,
   DEFERRED_SCRIPT_NOTE,
   renderCommand,
@@ -34,17 +31,15 @@ import {
   type AutoAttendantLiveState,
   type AutoAttendantSchedule,
   type BuildAutoAttendantRow,
-  type CallDelegate,
-  type CallForwardingSettings,
   type CallQueueActionSettings,
   type CallQueueLiveState,
   type CmdletInvocation,
   type DeploymentCompletedContext,
-  type PickupGroupSettings,
 } from '@tvmf/shared';
 import { SimulatedTeamsExecutor, type TeamsExecutor } from './teams/executor';
 import { PwshTeamsExecutor } from './teams/pwsh-executor';
 import { handleTenantDiscoveryRun, syncTenantGroups } from './discovery/run';
+import { beforeStateResolver, planIdentityRows, planResourceAccountRows, verifyDeployment } from './deployment-verify';
 import { renderEmail } from './mail/templates';
 import type { EmailBranding } from './mail/layout';
 import { mailerConfigured, sendMail } from './mail/mailer';
@@ -159,6 +154,18 @@ async function expireOrphanedWork() {
       .executeTakeFirst()
       .catch(() => undefined);
     deployments += Number(d?.numUpdatedRows ?? 0);
+    await tenantDb(db, schema_name)
+      .updateTable('deployments')
+      .set({
+        verification: {
+          status: 'failed',
+          checkedAt: new Date().toISOString(),
+          reason: 'The worker restarted before the re-check finished. Run Validate against tenant on this site to check it.',
+        },
+      })
+      .where(sql<boolean>`verification->>'status' = 'pending'`)
+      .execute()
+      .catch(() => undefined);
   }
   if (conns || runs || deployments) {
     // eslint-disable-next-line no-console
@@ -385,6 +392,13 @@ async function handleGraphConnect(job: Job) {
  * against the real executor). Run them one at a time per connection.
  */
 const connectionLocks = new Map<string, Promise<void>>();
+
+/**
+ * How long a live run waits before re-reading what it changed - Teams can take
+ * a little while to report a change it has just accepted, and re-reading at
+ * once would list it as "still differs". DEPLOY_VERIFY_DELAY_SECONDS, default 60.
+ */
+const VERIFY_DELAY_MS = Math.max(0, Number(process.env.DEPLOY_VERIFY_DELAY_SECONDS ?? 60)) * 1000;
 async function withConnectionLock<T>(connectionId: string, fn: () => Promise<T>): Promise<T> {
   const previous = connectionLocks.get(connectionId) ?? Promise.resolve();
   let release!: () => void;
@@ -483,6 +497,34 @@ async function handleDeploymentRun(job: Job) {
     throw err;
   }
 
+  // Did it land? Re-read what this run touched and compare it to the design
+  // (deployment-verify.ts). Outside the connection lock - it only reads, like
+  // any Discovery run - and it can never fail the deployment, which is
+  // already recorded as finished.
+  if (mode === 'execute') {
+    try {
+      const v = await verifyDeployment(scoped, exec!, {
+        deploymentId,
+        siteId: scope.siteId,
+        connectionId,
+        operatorUserId,
+        delayMs: VERIFY_DELAY_MS,
+      });
+      // eslint-disable-next-line no-console
+      console.log(`[deployment ${deploymentId}] verification: ${v.status}`);
+    } catch (e) {
+      const message = (e as Error)?.message ?? String(e);
+      // eslint-disable-next-line no-console
+      console.warn(`[deployment ${deploymentId}] verification error: ${message}`);
+      await scoped
+        .updateTable('deployments')
+        .set({ verification: { status: 'failed', checkedAt: new Date().toISOString(), reason: `The re-check stopped unexpectedly: ${message.slice(0, 300)}` } })
+        .where('id', '=', deploymentId)
+        .execute()
+        .catch(() => undefined);
+    }
+  }
+
   async function runDeployment(exec: TeamsExecutor) {
     // Re-checked fresh here rather than trusted from the queued job payload,
     // so toggling this off/on always takes effect on the next cmdlet, even
@@ -502,8 +544,12 @@ async function handleDeploymentRun(job: Job) {
 
     const whatIf = mode === 'dry_run';
 
-  /** Records one cmdlet's outcome as a deployment_changes row. */
-  const record = async (call: CmdletInvocation, res: Awaited<ReturnType<typeof exec.invoke>>) => {
+  /**
+   * Records one cmdlet's outcome as a deployment_changes row. `before` is what
+   * the call is about to change (see beforeStateResolver) - the executor itself
+   * doesn't read anything back, and it's what the rollback script restores.
+   */
+  const record = async (call: CmdletInvocation, res: Awaited<ReturnType<typeof exec.invoke>>, before: Record<string, unknown> = {}) => {
     counts[res.result] += 1;
     if (res.result === 'whatif') {
       if (call.deferred) scriptLines.push(DEFERRED_SCRIPT_NOTE);
@@ -523,7 +569,7 @@ async function handleDeploymentRun(job: Job) {
         object_id: call.objectId ?? null,
         cmdlet: call.cmdlet,
         parameters: call.parameters as object,
-        before: res.before as object,
+        before: { ...res.before, ...before } as object,
         after: res.after as object,
         result: res.result,
         message: res.message ?? null,
@@ -540,19 +586,19 @@ async function handleDeploymentRun(job: Job) {
    * New-CsCallQueue/New-CsAutoAttendant genuinely just created something
    * live, worth a crossRef refresh - see refreshCrossRefEntry.
    */
-  const runCall = async (call: CmdletInvocation) => {
+  const runCall = async (call: CmdletInvocation, before?: Record<string, unknown>) => {
     if (call.deferred) {
       const res = { result: 'whatif' as const, before: {}, after: {}, message: 'Deferred - needs manual licensing before rerunning.' };
-      await record(call, res);
+      await record(call, res, before);
       return res.result;
     }
     if (teamsReadOnly) {
       const res = { result: 'whatif' as const, before: {}, after: {}, message: 'Tenant is read-only - cmdlet not sent to Microsoft Teams.' };
-      await record(call, res);
+      await record(call, res, before);
       return res.result;
     }
     const res = await exec.invoke(call, { whatIf });
-    await record(call, res);
+    await record(call, res, before);
     return res.result;
   };
 
@@ -595,82 +641,18 @@ async function handleDeploymentRun(job: Job) {
       ? await buildAutoAttendantCrossRef(scoped, scope.siteId)
       : undefined;
 
-  if (scope.sheets.includes('users') || scope.sheets.includes('caps')) {
-    for (const [sheet, table, objectType] of [
-      ['users', 'build_users', 'user'],
-      ['caps', 'build_caps', 'cap'],
-    ] as const) {
-      if (!scope.sheets.includes(sheet)) continue;
-      let q = scoped.selectFrom(table).selectAll().where('site_id', '=', scope.siteId).where('hidden', '=', false);
-      if (scope.rowIds?.length) q = q.where('id', 'in', scope.rowIds);
-      const rows = await q.execute();
-      const [liveNames, liveState] = await Promise.all([
-        resolveLivePolicyNames(
-          scoped,
-          rows.flatMap((row) => Object.values((row.policy_ids as Record<string, string | null>) ?? {})),
-        ),
-        resolveLiveIdentityState(scoped, rows.map((row) => row.upn)),
-      ]);
-      for (const row of rows) {
-        const policyIds = (row.policy_ids as Record<string, string | null>) ?? {};
-        const storedPolicies = (row.policies as Record<string, string | null>) ?? {};
-        // A row with a policy_ids link always deploys whatever that policy
-        // is called *right now* in the tenant, not whatever name was live
-        // when the engineer last saved - a rename since then shouldn't ship
-        // stale. Rows with no link (legacy, or the untracked
-        // dial_out_policy) fall back to the stored name unchanged.
-        const policies: Record<string, string | null> = {};
-        for (const key of Object.keys(storedPolicies)) {
-          const linkedId = policyIds[key];
-          policies[key] = (linkedId && liveNames.get(linkedId)) || storedPolicies[key];
-        }
-        const calls = planIdentityRow(
-          {
-            id: row.id,
-            upn: row.upn,
-            e164: row.e164,
-            number_type: row.number_type,
-            revoke_ev: row.revoke_ev,
-            policies,
-            voicemail: (row.voicemail as { enabled?: boolean | null; language?: string | null }) ?? null,
-            call_forwarding: (row.call_forwarding as CallForwardingSettings) ?? null,
-            pickup_group: (row.pickup_group as PickupGroupSettings) ?? null,
-            delegates: (row.delegates as CallDelegate[]) ?? null,
-          },
-          objectType,
-          liveState.get(row.upn.toLowerCase()),
-        );
-        for (const call of calls) await runCall(call);
-      }
-    }
-  }
-
-  if (scope.sheets.includes('resource_accounts')) {
-    let q = scoped.selectFrom('build_resource_accounts').selectAll().where('site_id', '=', scope.siteId);
-    if (scope.rowIds?.length) q = q.where('id', 'in', scope.rowIds);
-    const rows = await q.execute();
-    const [liveNames, liveState] = await Promise.all([
-      resolveLivePolicyNames(scoped, rows.map((r) => r.voice_routing_policy_id)),
-      resolveLiveIdentityState(scoped, rows.map((row) => row.upn)),
-    ]);
-    for (const row of rows) {
-      const linkedId = row.voice_routing_policy_id;
-      const calls = planResourceAccountRow(
-        {
-          id: row.id,
-          upn: row.upn,
-          display_name: row.display_name,
-          kind: row.kind,
-          location_id: row.location_id,
-          phone_number: row.phone_number,
-          number_type: row.number_type,
-          voice_routing_policy: (linkedId && liveNames.get(linkedId)) || row.voice_routing_policy,
-          application_id: row.application_id,
-        },
-        liveState.get(row.upn.toLowerCase()),
-      );
-      for (const call of calls) await runCall(call);
-    }
+  // Users, CAPs and resource accounts are planned by the same helpers the
+  // post-deploy re-check uses (deployment-verify.ts), and each call records
+  // what it's about to change for the rollback script.
+  const rowFilter = scope.rowIds?.length ? scope.rowIds : undefined;
+  const identityRows = [
+    ...(scope.sheets.includes('users') ? await planIdentityRows(scoped, 'build_users', 'user', scope.siteId, rowFilter) : []),
+    ...(scope.sheets.includes('caps') ? await planIdentityRows(scoped, 'build_caps', 'cap', scope.siteId, rowFilter) : []),
+    ...(scope.sheets.includes('resource_accounts') ? await planResourceAccountRows(scoped, scope.siteId, rowFilter) : []),
+  ];
+  const beforeOf = await beforeStateResolver(scoped, identityRows);
+  for (const row of identityRows) {
+    for (const call of row.calls) await runCall(call, beforeOf(row, call));
   }
 
   if (scope.sheets.includes('shared_calling_policies')) {

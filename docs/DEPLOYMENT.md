@@ -167,10 +167,100 @@ identity + number only, matching what the reference script itself automates.
 
 ## Verifying a deployment
 
+Every live (`execute`) run checks itself once it finishes - nobody has to
+remember to re-run Discovery.
+
+1. `handleDeploymentRun` (`apps/worker/src/main.ts`) marks the run finished
+   and sends its email as before, then calls `verifyDeployment`
+   (`apps/worker/src/deployment-verify.ts`). Dry runs are never checked.
+2. It collects every user, CAP and resource account the run touched (a change
+   that was `applied` or `failed`). A run that applied nothing, or only
+   changed Call Queues / Auto Attendants / Shared Calling policies, is
+   recorded as **skipped** with that reason - those objects aren't re-read
+   automatically; re-run Discovery to see them.
+3. It takes the customer's one in-flight Discovery slot
+   (`idx_tenant_discovery_runs_one_in_flight`) by inserting a
+   `tenant_discovery_runs` row of kind `targeted` - the same narrow check
+   Design & Build's *Validate against tenant* uses - so nothing else shares
+   the PowerShell session with it. If a sync or Validate check already holds
+   the slot, it doesn't wait: the verdict is **skipped** ("a Discovery run was
+   already in progress") and the engineer runs Validate later.
+4. It waits `DEPLOY_VERIFY_DELAY_SECONDS` (default 60 - Teams can take a
+   moment to report a change it just accepted), then re-reads each account
+   with `Get-CsOnlineUser -Identity` + `Get-CsOnlineVoicemailUserSettings`
+   (`runTargetedUserSync`, shared with Validate), updating Discovery's stored
+   snapshot and history exactly like a Validate check. At most 200 accounts
+   per run (`VERIFY_MAX_ACCOUNTS`); the rest are counted as "not re-checked".
+5. It re-plans those rows with the **same** `planIdentityRows` /
+   `planResourceAccountRows` helpers the deployment itself used. A design that
+   landed plans zero calls; every call still planned is a difference,
+   described in plain English (`describeRemainingCall`,
+   `packages/shared/src/deployment-verify.ts`), e.g. "Phone number: designed
+   +1555..., live +1555...". An account the check couldn't find counts as
+   still different. Call forwarding / call group / delegate settings can't be
+   read back (Discovery doesn't capture `Get-CsUserCallingSettings`) so they
+   are left out of the verdict and counted separately.
+6. The verdict is stored on `deployments.verification` (jsonb, migration
+   0046; type `DeploymentVerification`): `pending` while it runs, then
+   `verified` (`checked`, `matched`, `differing[]` with each row's
+   differences, `notChecked`, `unverifiableSettings`, `discoveryRunId`), or
+   `skipped` / `failed` with a `reason`. A Teams error during the re-check
+   becomes a `failed` verdict - it never changes the deployment's own status.
+   A worker restart mid-check marks a `pending` verdict failed.
+
+The Deployment site workspace's **Run history** shows it in a Verification
+column: "Verified: 48/50 match - 2 still differ", with the differing rows and
+what differs underneath. Teams can lag; if a difference looks wrong, run
+Validate against tenant later to re-check.
+
+Also still available:
+
 - `GET /t/:id/deployments/:id/changes` - the full per-cmdlet audit trail.
 - `GET /t/:id/deployments/:id/scripts` - any exported `.ps1` (What-If output,
   or resource-account creation cmdlets).
 - Design & Build's per-row validation badge (`docs/DATA-MODEL.md`
-  `build_users.validation`) reflects Discovery's live state, so re-running
-  Discovery after a deployment and reopening the site shows whether the
-  target configuration actually landed.
+  `build_users.validation`) reflects Discovery's live state.
+
+## Rolling back
+
+Voxshift never undoes a run by itself. For any finished live run that applied
+something (completed, or failed part-way), Run history offers **Download
+rollback script** (`GET /t/:id/deployments/:id/rollback-script`, audited as
+`deployment.rollback_script_downloaded`): a PowerShell script for the engineer
+to review and run themselves.
+
+**Where "before" comes from.** The executor doesn't read anything back, so as
+each user / CAP / resource-account cmdlet runs, the worker records in
+`deployment_changes.before` what that cmdlet is about to change, taken from
+the same Discovery snapshot the plan was diffed against
+(`identityBeforeState`, `beforeStateResolver`): the previous LineUri +
+Enterprise Voice state (and the number's type, from Discovery's phone number
+inventory - needed to reassign it), the previous per-user policy (null =
+Global), or the previous voicemail on/off + language (only when a Validate
+check had read it). It is tagged `source: 'discovery_snapshot'`. Runs from
+before this existed have empty `before` and get nothing reversed.
+
+**What the script does** (`planRollback` / `renderRollbackScript`,
+`packages/shared/src/deployment-rollback.ts`), newest change first, rendered
+with `renderStatement` so values are quoted the same way as a deployment:
+
+- New number -> reassigns the previous number with its type; if the person
+  had no number, removes the new one (`-RemoveAll` when Enterprise Voice was
+  also off before).
+- Enterprise Voice switched on (Shared Calling) -> switches it back off.
+- Revoke (`Remove-CsPhoneNumberAssignment -RemoveAll`) -> reassigns the
+  previous number, or switches Enterprise Voice back on.
+- `Grant-Cs*Policy` -> grants the previous policy; a previous Global is
+  `-PolicyName $null` (see `isGlobalPolicyName` above).
+- Voicemail -> previous on/off (+ language).
+- `New-CsUserCallingDelegate` -> `Remove-CsUserCallingDelegate` (an applied
+  one can only have been added by this run - the cmdlet fails on a duplicate).
+
+**What it can't reverse** is listed in the script's header comments instead
+of guessed at: anything with no recorded before-state, a previous number of
+unknown type (with the command to finish by hand), emergency locations,
+call forwarding / call group settings, Call Queue / Auto Attendant / Shared
+Calling policy creations and changes, and resource accounts created by hand
+from the exported `New-CsOnlineApplicationInstance` script. Failed commands
+changed nothing and are left out. Like the exported script it stops at the
+first error, and every command is safe to repeat.

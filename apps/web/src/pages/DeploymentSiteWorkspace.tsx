@@ -27,8 +27,15 @@ import {
   shorthands,
   tokens,
 } from '@fluentui/react-components';
-import { ArrowLeftRegular, WarningRegular } from '@fluentui/react-icons';
-import { DEPLOYMENT_SHEETS, type DeploymentPreviewRow, type DeploymentSiteRollup, type FileRow } from '@tvmf/shared';
+import { ArrowLeftRegular, CheckmarkCircleRegular, WarningRegular } from '@fluentui/react-icons';
+import {
+  DEPLOYMENT_SHEETS,
+  verificationHeadline,
+  type DeploymentPreviewRow,
+  type DeploymentSiteRollup,
+  type DeploymentVerification,
+  type FileRow,
+} from '@tvmf/shared';
 import { api, apiDownload, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
@@ -90,6 +97,9 @@ const useStyles = makeStyles({
     display: 'inline-block',
     marginTop: '4px',
   },
+  verifyList: { margin: '4px 0 0', paddingLeft: '16px', fontSize: '12px', lineHeight: '16px' },
+  verifyDetail: { margin: 0, paddingLeft: '16px', color: tokens.colorNeutralForeground2 },
+  verifyNote: { marginTop: '4px', color: tokens.colorNeutralForeground3 },
 });
 
 interface Connection {
@@ -106,6 +116,8 @@ interface Deployment {
   status: string;
   scope: { siteId?: string; autoIncludedRowIds?: string[] } | null;
   summary: Record<string, number>;
+  /** post-deploy live re-check (live runs only) - see apps/worker/src/deployment-verify.ts */
+  verification: DeploymentVerification | null;
   created_at: string;
 }
 interface Change {
@@ -131,6 +143,82 @@ function runStatusBadge(d: Deployment): { label: string; color: 'success' | 'dan
   if (d.status === 'completed' && failed > 0) return { label: `completed - ${failed} failed`, color: 'danger', icon: true };
   if (d.status === 'completed') return { label: 'completed', color: 'success' };
   return { label: d.status, color: 'informative' };
+}
+
+/** A re-check that never finished (worker stopped mid-way) - don't show "Checking…" forever. */
+const VERIFY_STALE_MS = 60 * 60_000;
+
+const VERIFY_OBJECT_LABEL: Record<string, string> = { user: 'User', cap: 'Common Area Phone', resource_account: 'Resource Account' };
+
+/**
+ * The Run history's answer to "did it land?" for a live run: the one-line
+ * verdict, then each person/account that still differs from the design and
+ * what differs. Collapsed past a few rows so a big site stays readable.
+ */
+function VerificationCell({ v }: { v: DeploymentVerification }) {
+  const cs = useStyles();
+  const [showAll, setShowAll] = useState(false);
+  if (v.status === 'pending' && Date.now() - new Date(v.startedAt).getTime() > VERIFY_STALE_MS) {
+    return <Text size={200}>Not verified - the re-check didn't finish. Run Validate against tenant to check.</Text>;
+  }
+  const headline = verificationHeadline(v);
+  if (v.status === 'pending') {
+    return (
+      <span className={cs.row}>
+        <Spinner size="extra-tiny" /> <Text size={200}>{headline}</Text>
+      </span>
+    );
+  }
+  if (v.status !== 'verified') {
+    return (
+      <Text size={200} style={{ color: v.status === 'failed' ? tokens.colorPaletteRedForeground1 : undefined }}>
+        {headline}
+      </Text>
+    );
+  }
+  const differ = v.differing.length;
+  const shown = showAll ? v.differing : v.differing.slice(0, 3);
+  return (
+    <div>
+      <Badge
+        appearance="tint"
+        color={differ ? 'warning' : 'success'}
+        icon={differ ? <WarningRegular /> : <CheckmarkCircleRegular />}
+        title={`Re-read from Teams ${new Date(v.checkedAt).toLocaleString()}`}
+      >
+        {headline}
+      </Badge>
+      {shown.length > 0 && (
+        <ul className={cs.verifyList}>
+          {shown.map((r) => (
+            <li key={r.objectId}>
+              <span className={cs.mono}>{r.upn}</span> <Text size={100}>({VERIFY_OBJECT_LABEL[r.objectType] ?? r.objectType})</Text>
+              <ul className={cs.verifyDetail}>
+                {r.differences.map((d, i) => (
+                  <li key={i}>{d}</li>
+                ))}
+              </ul>
+            </li>
+          ))}
+        </ul>
+      )}
+      {differ > 3 && (
+        <Link onClick={() => setShowAll((x) => !x)}>{showAll ? 'Show fewer' : `Show all ${differ}`}</Link>
+      )}
+      {differ > 0 && (
+        <Text size={100} block className={cs.verifyNote}>
+          Teams can take a few minutes to show a change - if these look right, run Validate against tenant later to re-check.
+        </Text>
+      )}
+      {(v.notChecked > 0 || v.unverifiableSettings > 0) && (
+        <Text size={100} block className={cs.verifyNote}>
+          {v.notChecked > 0 && `${v.notChecked} more changed account(s) not re-checked (limit per run). `}
+          {v.unverifiableSettings > 0 &&
+            `${v.unverifiableSettings} call forwarding / delegate change(s) can't be read back from Teams, so aren't part of this check.`}
+        </Text>
+      )}
+    </div>
+  );
 }
 
 /** Result column badge for one deployment_changes row - 'failed' is the one that must never blend in with the rest. */
@@ -167,6 +255,7 @@ export function DeploymentSiteWorkspace() {
   const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(new Set());
   const [selectedDeployment, setSelectedDeployment] = useState<string | null>(null);
   const [generatedFile, setGeneratedFile] = useState<FileRow | null>(null);
+  const [rollbackError, setRollbackError] = useState<string | null>(null);
   // Only the live-execute path gets a confirm gate - a What-If run never
   // touches the tenant, so accidentally running it on the whole site instead
   // of a selection has no real consequence beyond a bigger preview.
@@ -500,13 +589,15 @@ export function DeploymentSiteWorkspace() {
             <Text weight="semibold" size={400}>
               Run history
             </Text>
-            <DataTable size="small" minWidth={780}>
+            {rollbackError && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{rollbackError}</Text>}
+            <DataTable size="small" minWidth={1000}>
               <TableHeader>
                 <TableRow>
                   <TableHeaderCell>Created</TableHeaderCell>
                   <TableHeaderCell>Mode</TableHeaderCell>
                   <TableHeaderCell>Status</TableHeaderCell>
                   <TableHeaderCell>Summary</TableHeaderCell>
+                  <TableHeaderCell>Verification</TableHeaderCell>
                   <TableHeaderCell></TableHeaderCell>
                 </TableRow>
               </TableHeader>
@@ -550,7 +641,31 @@ export function DeploymentSiteWorkspace() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <Link onClick={() => setSelectedDeployment(d.id)}>View changes</Link>
+                      {d.verification ? (
+                        <VerificationCell v={d.verification} />
+                      ) : d.mode === 'execute' && (d.status === 'queued' || d.status === 'running') ? (
+                        <Text size={200}>After the run</Text>
+                      ) : (
+                        '—'
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <Link onClick={() => setSelectedDeployment(d.id)}>View changes</Link>
+                        {d.mode === 'execute' && (d.status === 'completed' || d.status === 'failed') && (d.summary?.applied ?? 0) > 0 && (
+                          <Link
+                            title="A PowerShell script that puts back the previous numbers, policies and voicemail settings. Voxshift never runs it - review it and run it yourself."
+                            onClick={() => {
+                              setRollbackError(null);
+                              apiDownload(`${base}/${d.id}/rollback-script`, `rollback-${d.id}.ps1`).catch((e) =>
+                                setRollbackError(e instanceof ApiError ? e.message : 'Could not download the rollback script'),
+                              );
+                            }}
+                          >
+                            Download rollback script
+                          </Link>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                   );

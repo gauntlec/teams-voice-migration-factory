@@ -23,7 +23,7 @@ import {
 type Rec = Record<string, unknown>;
 export type Scoped = ReturnType<typeof tenantDb>;
 
-const emptyProgress = (): TenantDiscoveryProgress => ({
+export const emptyProgress = (): TenantDiscoveryProgress => ({
   step: null,
   completed: [],
   counts: {},
@@ -964,7 +964,7 @@ async function projectUser(s: Scoped, runId: string, objectId: string, r: Rec) {
  * recorded and skipped, same as the bucket loop, unless the session itself
  * is gone.
  */
-async function runTargetedUserSync(
+export async function runTargetedUserSync(
   s: Scoped,
   exec: TeamsExecutor,
   runId: string,

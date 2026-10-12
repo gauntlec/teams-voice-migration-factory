@@ -824,6 +824,8 @@ export interface DeploymentsTable {
   started_at: string | null;
   finished_at: string | null;
   summary: Json;
+  /** Post-deploy live re-check (migration 0046) - a DeploymentVerification, null until one has run. */
+  verification: ColumnType<import('@tvmf/shared').DeploymentVerification | null, import('@tvmf/shared').DeploymentVerification | null | undefined, import('@tvmf/shared').DeploymentVerification | null>;
   created_at: Ts;
 }
 

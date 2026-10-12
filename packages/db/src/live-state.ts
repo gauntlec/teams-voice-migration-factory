@@ -327,3 +327,33 @@ export async function buildAutoAttendantCrossRef(s: Scoped, siteId: string): Pro
   }
   return crossRef;
 }
+
+/** The -PhoneNumberType values Set-CsPhoneNumberAssignment accepts. */
+const ASSIGNABLE_NUMBER_TYPES = new Set(['CallingPlan', 'DirectRouting', 'OperatorConnect']);
+
+/**
+ * Number type (CallingPlan / DirectRouting / OperatorConnect) of each live
+ * number, from Discovery's phone number inventory (tenant_objects
+ * 'phone_number' = Get-CsPhoneNumberAssignment, keyed by TelephoneNumber).
+ * tenant_users only has the LineUri, and putting a number back needs its
+ * type - see identityBeforeState in packages/shared/src/deployment-verify.ts.
+ * Keyed by the number as given (`+15551234567`); a number Discovery hasn't
+ * seen, or of a type that can't be assigned this way, is left out.
+ */
+export async function resolveLiveNumberTypes(scoped: Scoped, numbers: (string | null | undefined)[]) {
+  const wanted = [...new Set(numbers.filter((n): n is string => !!n))];
+  const out = new Map<string, string>();
+  if (wanted.length === 0) return out;
+  const rows = await scoped
+    .selectFrom('tenant_objects')
+    .select(['object_key', 'data'])
+    .where('object_type', '=', 'phone_number')
+    .where('removed_at', 'is', null)
+    .where('object_key', 'in', wanted)
+    .execute();
+  for (const r of rows) {
+    const type = (r.data as Record<string, unknown>)?.NumberType;
+    if (typeof type === 'string' && ASSIGNABLE_NUMBER_TYPES.has(type)) out.set(r.object_key, type);
+  }
+  return out;
+}

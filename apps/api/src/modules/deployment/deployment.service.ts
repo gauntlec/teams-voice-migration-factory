@@ -25,6 +25,7 @@ import {
   planResourceAccountRow,
   planSharedCallingPolicyRow,
   renderCommand,
+  renderRollbackScript,
   resourceAccountRowWarnings,
   sharedCallingPolicyRowWarnings,
   type AutoAttendantCallableEntity,
@@ -748,6 +749,45 @@ export class DeploymentService {
       .where('deployment_id', '=', id)
       .orderBy('seq')
       .execute();
+  }
+
+  /**
+   * The reverse PowerShell script for a live run, built from its
+   * deployment_changes (renderRollbackScript). Only generated and handed over -
+   * Voxshift never runs it. Offered for any live run that applied something,
+   * including one that stopped part-way.
+   */
+  async rollbackScript(t: TenantContext, user: AuthedUser, id: string) {
+    const s = tenantDb(this.db, t.schema);
+    const dep = await this.getDeployment(t, id);
+    assertSiteInScope(t, (dep.scope as { siteId?: string } | null)?.siteId ?? '');
+    if (dep.mode !== 'execute') throw new BadRequestException('Only a live run changes the tenant, so only a live run has a rollback script.');
+    if (dep.status !== 'completed' && dep.status !== 'failed') throw new ConflictException('This run has not finished yet.');
+    const changes = await s
+      .selectFrom('deployment_changes')
+      .select(['seq', 'object_type', 'cmdlet', 'parameters', 'before', 'result'])
+      .where('deployment_id', '=', id)
+      .orderBy('seq')
+      .execute();
+    if (!changes.some((c) => c.result === 'applied')) throw new BadRequestException('Nothing in this run was applied, so there is nothing to roll back.');
+    const content = renderRollbackScript(
+      changes.map((c) => ({
+        seq: c.seq,
+        object_type: c.object_type,
+        cmdlet: c.cmdlet,
+        parameters: c.parameters as Record<string, unknown> | null,
+        before: c.before as Record<string, unknown> | null,
+        result: c.result,
+      })),
+      { deploymentId: id, finishedAt: dep.finished_at ? new Date(dep.finished_at).toISOString() : null },
+    );
+    await this.audit.tenant(t.schema, 'deployment.rollback_script_downloaded', {
+      actor: { id: user.id, email: user.email },
+      targetType: 'deployment',
+      targetId: id,
+      detail: { applied: changes.filter((c) => c.result === 'applied').length },
+    });
+    return { filename: `rollback-${id}.ps1`, content };
   }
 
   scripts(t: TenantContext, id: string) {

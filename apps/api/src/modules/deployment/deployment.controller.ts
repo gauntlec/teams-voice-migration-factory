@@ -1,4 +1,5 @@
-import { Body, Controller, ForbiddenException, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, Param, Post, Query, Res, UseGuards } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   can,
   createDeploymentSchema,
@@ -105,6 +106,16 @@ export class DeploymentController {
   @RequirePermission('deployment:read')
   changes(@TenantCtx() t: TenantContext, @Param('id') id: string) {
     return this.svc.changes(t, id);
+  }
+
+  /** Download the reverse script for a live run - never executed by Voxshift. See docs/DEPLOYMENT.md "Rolling back". */
+  @Get(':id/rollback-script')
+  @RequirePermission('deployment:read')
+  async rollbackScript(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string, @Res() res: Response) {
+    const { filename, content } = await this.svc.rollbackScript(t, user, id);
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/"/g, '')}"`);
+    res.send(content);
   }
 
   @Get(':id/scripts')
