@@ -67,7 +67,25 @@ sends no completion email. These rows have `kind = 'targeted'` (real syncs are
 the Changes tab labels them **Validate check** and defaults to the newest real
 sync. The "a run is already in flight" guards (`POST runs`, purge, the next
 Validate check) still count both kinds — a Validate check holds the same pwsh
-session.
+session. A Validate check that finds a user changed records a version row like
+any sync (run id = the check), so the change shows in the user's history and on
+the Changes tab rather than being silently absorbed.
+
+### One run at a time
+
+Tenant migration 0045 adds a partial unique index
+(`idx_tenant_discovery_runs_one_in_flight`) so only one run - sync or Validate
+check - can be `queued`/`running` per customer. The API's "already running"
+check alone left a gap between checking and inserting. A second start gets
+"A discovery is already running"; a Validate check falls back to its DB-only
+result. If the API can't hand a new run to the queue (Redis down), it marks
+the run `failed` instead of leaving a `queued` row that would block every
+later run, Validate check and purge.
+
+A run that dies unexpectedly (anything past the per-step handling) is marked
+`failed` and its starter gets the usual completion email with outcome
+"failed" - once, and never for a Validate check. A step that fails part-way
+still writes the history rows for the objects it had already stored.
 
 ### Version history
 

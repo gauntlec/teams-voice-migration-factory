@@ -103,16 +103,34 @@ export async function handleTenantDiscoveryRun(
     // eslint-disable-next-line no-console
     console.error(`[discovery ${runId}] failed:`, message);
     const s = tenantDb(db, schema);
-    await s
+    const failed = await s
       .updateTable('tenant_discovery_runs')
       .set({ status: 'failed', finished_at: new Date().toISOString(), error: `The run stopped unexpectedly: ${message.slice(0, 500)}` })
       .where('id', '=', runId)
       .where('status', 'in', ['queued', 'running'])
-      .execute()
+      .returning(['kind', 'progress', 'scope_types', 'started_at'])
+      .executeTakeFirst()
       .catch(() => undefined);
     const exec = getExecutor(connectionId);
     if (!exec || !exec.alive || SESSION_GONE.test(message)) {
       await s.updateTable('connections').set({ status: 'expired' }).where('id', '=', connectionId).execute().catch(() => undefined);
+    }
+    // The starter hears about this failure too, same as any other finished
+    // run - but only once (this run was still in flight), and never for a
+    // Validate check.
+    if (failed && failed.kind === 'sync') {
+      const { tenantId, operatorUserId } = job.data as { tenantId?: string; operatorUserId?: string };
+      await notifyRunComplete(db, s, enqueueMail, {
+        tenantId,
+        runId,
+        operatorUserId,
+        outcome: 'failed',
+        errorMessage: 'The run stopped unexpectedly.',
+        startedAt: failed.started_at ? new Date(failed.started_at).getTime() : Date.now(),
+        // a run that never started still has the column's bare default
+        progress: { ...emptyProgress(), ...((failed.progress as Partial<TenantDiscoveryProgress> | null) ?? {}) },
+        scopeTypes: (failed.scope_types as TenantObjectType[] | null) ?? undefined,
+      });
     }
   }
 }
@@ -173,6 +191,8 @@ async function runDiscovery(
       .where('id', '=', runId)
       .execute();
     await s.updateTable('connections').set({ status: 'expired' }).where('id', '=', connectionId).execute();
+    // A Validate check is part of one click in Design & Build, not a Discovery run to email about.
+    if (targetedUpns?.length) return;
     await notifyRunComplete(db, s, enqueueMail, {
       tenantId,
       runId,
@@ -662,6 +682,21 @@ async function runSpec(
 
   const qopts = { select: spec.select, depth: spec.depth, timeoutMs: spec.timeoutMs };
 
+  // The objects stored so far are already updated in tenant_objects, so their
+  // history rows must be written too even if the step fails part-way -
+  // otherwise the next run diffs against the new data and the change is
+  // never recorded anywhere.
+  try {
+    return await fetchAndStore();
+  } finally {
+    await flushVersions().catch((e) => {
+      // eslint-disable-next-line no-console
+      console.warn(`[discovery ${runId}] could not save change history: ${(e as Error).message}`);
+    });
+  }
+
+  async function fetchAndStore(): Promise<{ stored: number; complete: boolean }> {
+
   // Bucketed fetch (Get-CsOnlineUser): one -Filter per disjoint slice, so a huge
   // result comes back in visible chunks and no single call can time out. One
   // bad bucket is recorded and skipped - it must not abort the others.
@@ -763,10 +798,13 @@ async function runSpec(
     const batch = await exec.query(spec.command, params, qopts);
     await handle(batch);
     if (batch.length < size) break;
-    if (skip > 500_000) break; // safety valve
+    // Safety valve. Stopping here means objects past this point weren't
+    // seen, so the step mustn't count as complete (that would mark them removed).
+    if (skip > 500_000) return { stored, complete: false };
   }
   await flushVersions();
   return { stored, complete: true };
+  }
 }
 
 function fallbackKey(r: Rec): string {
@@ -961,15 +999,29 @@ async function runTargetedUserSync(
       .where('object_type', '=', 'user')
       .where('object_key', '=', key)
       .executeTakeFirst();
-    const { id: objectId } = await upsertObject(
-      s,
-      runId,
-      'user',
-      key,
-      name,
-      r,
-      prevRow ? { data: prevRow.data as Rec, display_name: prevRow.display_name, removed_at: prevRow.removed_at } : undefined,
-    );
+    const prev = prevRow ? { data: prevRow.data as Rec, display_name: prevRow.display_name, removed_at: prevRow.removed_at } : undefined;
+    const { id: objectId, change } = await upsertObject(s, runId, 'user', key, name, r, prev);
+    // A Validate check updates the stored user, so it records the change like
+    // a sync does - otherwise the next sync diffs against the new data and the
+    // change never shows in the user's history or the Changes tab.
+    if (change) {
+      progress.changed[change] += 1;
+      await s
+        .insertInto('tenant_object_versions')
+        .values({
+          object_id: objectId,
+          run_id: runId,
+          object_type: 'user',
+          object_key: key,
+          display_name: name,
+          change_kind: change,
+          changed_fields: change === 'updated' ? diffKeys(prev?.data ?? null, r) : [],
+          before: prev?.data ?? null,
+          after: r,
+          changed_at: new Date().toISOString(),
+        })
+        .execute();
+    }
     await projectUser(s, runId, objectId, r);
     await syncVoicemailSettings(s, exec, objectId, upn);
     progress.counts.user += 1;

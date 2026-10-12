@@ -348,9 +348,14 @@ export class TenantDiscoveryService {
       .insertInto('tenant_discovery_runs')
       .values({ connection_id: conn.id, status: 'queued', started_by: user.id, scope_types: scope })
       .returningAll()
-      .executeTakeFirstOrThrow();
+      .executeTakeFirstOrThrow()
+      .catch((err) => {
+        // idx_tenant_discovery_runs_one_in_flight: another start got in first
+        if (isUniqueViolation(err)) throw new BadRequestException('A discovery is already running for this customer');
+        throw err;
+      });
 
-    await this.queue.add('tenant_discovery.run', {
+    await this.enqueueRun(t, run.id, {
       kind: 'tenant_discovery.run',
       tenantId: t.id,
       schema: t.schema,
@@ -413,9 +418,14 @@ export class TenantDiscoveryService {
       .insertInto('tenant_discovery_runs')
       .values({ connection_id: conn.id, status: 'queued', kind: 'targeted', started_by: user.id, scope_types: ['user'] })
       .returningAll()
-      .executeTakeFirstOrThrow();
+      .executeTakeFirst()
+      .catch((err) => {
+        if (isUniqueViolation(err)) return undefined; // a run got in first - fall back to the DB-only result
+        throw err;
+      });
+    if (!run) return null;
 
-    await this.queue.add('tenant_discovery.run', {
+    await this.enqueueRun(t, run.id, {
       kind: 'tenant_discovery.run',
       tenantId: t.id,
       schema: t.schema,
@@ -433,6 +443,24 @@ export class TenantDiscoveryService {
       detail: { upns: capped, count: capped.length },
     });
     return run;
+  }
+
+  /**
+   * Hand a just-inserted run to the worker. If the queue is unreachable the
+   * row would sit at 'queued' and block every later run, Validate check and
+   * purge for this customer until the worker restarted - so mark it failed.
+   */
+  private async enqueueRun(t: TenantContext, runId: string, data: Record<string, unknown>) {
+    try {
+      await this.queue.add('tenant_discovery.run', data);
+    } catch (err) {
+      await this.s(t)
+        .updateTable('tenant_discovery_runs')
+        .set({ status: 'failed', finished_at: new Date().toISOString(), error: 'Could not hand the run to the worker - try again.' })
+        .where('id', '=', runId)
+        .execute();
+      throw err;
+    }
   }
 
   listRuns(t: TenantContext) {
@@ -1032,4 +1060,9 @@ export class TenantDiscoveryService {
     });
     return { created, skipped };
   }
+}
+
+/** Postgres unique_violation (23505). */
+function isUniqueViolation(err: unknown): boolean {
+  return (err as { code?: string } | null)?.code === '23505';
 }

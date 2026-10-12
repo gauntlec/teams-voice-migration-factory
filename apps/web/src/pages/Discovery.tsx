@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Badge,
@@ -922,6 +922,17 @@ function RunCard({ base, summary }: { base: string; summary: TenantDiscoverySumm
       q.state.data && ['queued', 'running'].includes(q.state.data.status) ? 3000 : false,
   });
   const run = live.data ?? last;
+  // When a run finishes, refresh the summary and every list on the page - they
+  // otherwise kept showing the old snapshot until something else refetched.
+  const liveStatus = live.data?.status;
+  const prevStatus = useRef(liveStatus);
+  useEffect(() => {
+    const was = prevStatus.current;
+    prevStatus.current = liveStatus;
+    if (was && ['queued', 'running'].includes(was) && liveStatus && !['queued', 'running'].includes(liveStatus)) {
+      void qc.invalidateQueries({ queryKey: ['tdisc'] });
+    }
+  }, [liveStatus, qc]);
   const done = new Set(run?.progress?.completed ?? []);
   // for a partial run only the in-scope steps count towards progress
   const scopeSteps = run?.scope_types
@@ -1806,6 +1817,9 @@ function ResourceAccountsTab({ base, canImport, onImported }: { base: string; ca
   );
 }
 
+/** Import dialog row choice: leave this candidate out. */
+const SKIP = '__skip__';
+
 /** One discovered-but-not-yet-captured candidate, shape shared by the users and resource-account import previews. */
 type ImportCandidate = { id: string; name: string | null; upn?: string | null; kind?: string | null; phone: string | null; suggestedSiteId: string | null };
 
@@ -1884,7 +1898,7 @@ function ImportDialog({
                   Created <b>{result.created}</b> Data Collection {noun}
                   {result.created === 1 ? '' : 's'}
                   {result.linked ? ` and linked ${result.linked} existing` : ''}
-                  {result.skipped ? `; skipped ${result.skipped} with no site chosen` : ''}.
+                  {result.skipped ? `; skipped ${result.skipped} left out or with no site` : ''}.
                 </MessageBarBody>
               </MessageBar>
             ) : (
@@ -1956,12 +1970,18 @@ function ImportDialog({
                             <TableCell>
                               <Dropdown
                                 size="small"
-                                placeholder="Pick a site…"
+                                placeholder={rowSiteId[c.id] === '' ? "Don't import" : 'Pick a site…'}
                                 selectedOptions={value ? [value] : []}
                                 value={value ? siteLabel(value) : ''}
-                                onOptionSelect={(_, d) => setRowSiteId((prev) => ({ ...prev, [c.id]: d.optionValue ?? '' }))}
+                                onOptionSelect={(_, d) =>
+                                  setRowSiteId((prev) => ({ ...prev, [c.id]: d.optionValue === SKIP ? '' : d.optionValue ?? '' }))
+                                }
                                 style={{ minWidth: 200 }}
                               >
+                                {/* A suggested row could not be left out before - every row had a site. */}
+                                <Option value={SKIP} text="Don't import">
+                                  Don't import
+                                </Option>
                                 {siteList.map((x) => (
                                   <Option key={x.id} value={x.id} text={`${x.sitecode} · ${x.name ?? ''}`}>
                                     {x.sitecode} · {x.name ?? ''}
