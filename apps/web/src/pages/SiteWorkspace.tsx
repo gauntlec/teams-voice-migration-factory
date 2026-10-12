@@ -453,6 +453,7 @@ export function SiteWorkspace() {
       {tab === 'users' && (
         <PagedSection
           title="Users"
+          bulkDelete={{ noun: 'user', plural: 'users', note: "Their phone numbers go back to this site's free pool. Anything already populated into Design & Build stays there, unlinked." }}
           hint="Teams users with Enterprise Voice. Each holds at most one number from this site's inventory."
           endpoint={`${base}/users`}
           queryKey={['users', tid, siteId]}
@@ -607,6 +608,7 @@ export function SiteWorkspace() {
       {tab === 'caps' && (
         <PagedSection
           title="Common area phones"
+          bulkDelete={{ noun: 'common area phone', plural: 'common area phones', note: "Their phone numbers go back to this site's free pool. Anything already populated into Design & Build stays there, unlinked." }}
           hint="Shared / lobby / meeting-room phones. Each holds at most one number."
           endpoint={`${base}/caps`}
           queryKey={['caps', tid, siteId]}
@@ -651,6 +653,7 @@ export function SiteWorkspace() {
       {tab === 'resource-accounts' && (
         <PagedSection
           title="Resource accounts"
+          bulkDelete={{ noun: 'resource account', plural: 'resource accounts', note: "Their phone numbers go back to this site's free pool. Anything already populated into Design & Build stays there, unlinked." }}
           hint="Auto attendants & call queues. May hold several numbers — use the Numbers button."
           endpoint={`${base}/resource-accounts`}
           queryKey={['ras', tid, siteId]}

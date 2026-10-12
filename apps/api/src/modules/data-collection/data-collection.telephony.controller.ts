@@ -2,7 +2,9 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } f
 import {
   callingPolicySchema,
   can,
+  discoveryBulkDeleteSchema,
   discoveryCapBulkPatchSchema,
+  type DiscoveryBulkDeleteInput,
   discoveryCapSchema,
   discoveryListQuerySchema,
   discoveryNumberRangeSchema,
@@ -198,6 +200,17 @@ export class TelephonyController {
     return this.svc.updateUser(t, u, id, body, this.review(u));
   }
 
+  /** Delete the ticked rows, or every one on a site - see TelephonyService.bulkDelete. */
+  @Post('users/bulk-delete')
+  @RequirePermission('discovery:write')
+  bulkDeleteUser(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() u: AuthedUser,
+    @Body(new ZodBody(discoveryBulkDeleteSchema)) body: DiscoveryBulkDeleteInput,
+  ) {
+    return this.svc.bulkDelete(t, u, 'user', body, this.review(u));
+  }
+
   @Delete('users/:id')
   @RequirePermission('discovery:write')
   deleteUser(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Param('id') id: string) {
@@ -260,6 +273,17 @@ export class TelephonyController {
     return this.svc.updateCap(t, u, id, body, this.review(u));
   }
 
+  /** Delete the ticked rows, or every one on a site - see TelephonyService.bulkDelete. */
+  @Post('caps/bulk-delete')
+  @RequirePermission('discovery:write')
+  bulkDeleteCap(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() u: AuthedUser,
+    @Body(new ZodBody(discoveryBulkDeleteSchema)) body: DiscoveryBulkDeleteInput,
+  ) {
+    return this.svc.bulkDelete(t, u, 'cap', body, this.review(u));
+  }
+
   @Delete('caps/:id')
   @RequirePermission('discovery:write')
   deleteCap(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Param('id') id: string) {
@@ -287,6 +311,17 @@ export class TelephonyController {
     @Body(new ZodBody(discoveryResourceAccountSchema.partial())) body: Partial<DiscoveryResourceAccountInput>,
   ) {
     return this.svc.updateResourceAccount(t, u, id, body, this.review(u));
+  }
+
+  /** Delete the ticked rows, or every one on a site - see TelephonyService.bulkDelete. */
+  @Post('resource-accounts/bulk-delete')
+  @RequirePermission('discovery:write')
+  bulkDeleteResourceAccount(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() u: AuthedUser,
+    @Body(new ZodBody(discoveryBulkDeleteSchema)) body: DiscoveryBulkDeleteInput,
+  ) {
+    return this.svc.bulkDelete(t, u, 'resource_account', body, this.review(u));
   }
 
   @Delete('resource-accounts/:id')

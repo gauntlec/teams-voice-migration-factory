@@ -41,6 +41,15 @@ Aligned to `Overland Park - ATTC MS Teams Telephony Discovery Template`.
 
 `discovery_users.tenant_user_id` links a captured user to the real tenant user found by Discovery (matched on `lower(upn)`).
 
+**Bulk delete.** The Users, Common area phones and Resource accounts tabs have
+"Delete selected (N)" and "Delete all…" (typed DELETE to confirm) -
+`POST .../{users|caps|resource-accounts}/bulk-delete` with `{ ids }` or
+`{ site_id, all: true }` (`TelephonyService.bulkDelete`). Each row goes exactly
+as a single delete would: Data Collection lock and site scope apply, its
+`phone_numbers` claims return to `available`, and Design & Build rows populated
+from it stay with their `discovery_*_id` link cleared (FK `ON DELETE SET NULL`).
+One transaction, one audit row (`discovery.<kind>s_bulk_deleted`).
+
 ### Discovery (live tenant inventory) — see [`DISCOVERY.md`](DISCOVERY.md)
 | Table | Notes |
 |-------|-------|

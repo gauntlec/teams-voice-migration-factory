@@ -18,6 +18,7 @@ import {
   type DiscoveryUserInput,
   type ImportUserRow,
   type NumberHolderType,
+  type DiscoveryBulkDeleteInput,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
 import { applyBulkPatch, auditBulkPatch } from '../../common/bulk-patch';
@@ -122,6 +123,52 @@ export class TelephonyService {
     if (missing.length) throw new NotFoundException(`${missing.length} row(s) not found`);
     if (!t.siteScope) return;
     for (const row of rows) assertSiteInScope(t, row.site_id);
+  }
+
+  /**
+   * Bulk delete for Data Collection's Users / CAPs / Resource accounts tabs -
+   * the ticked rows, or every row of that kind on one site. Same rules and
+   * side effects as deleting each row on its own (Data Collection lock, site
+   * scope, numbers back to the free pool; Design & Build rows populated from
+   * them stay, just unlinked), in one transaction and one audit row.
+   */
+  async bulkDelete(t: TenantContext, u: AuthedUser, kind: 'user' | 'cap' | 'resource_account', body: DiscoveryBulkDeleteInput, canReview: boolean) {
+    await this.base.assertEditable(t, canReview);
+    const table = ({ user: 'discovery_users', cap: 'discovery_caps', resource_account: 'discovery_resource_accounts' } as const)[kind];
+    let ids: string[];
+    let siteId: string | null = null;
+    if ('ids' in body) {
+      ids = [...new Set(body.ids)];
+      const rows = await this.s(t).selectFrom(table).select(['id', 'site_id']).where('id', 'in', ids).execute();
+      if (rows.length !== ids.length) throw new NotFoundException(`${ids.length - rows.length} row(s) not found - refresh and try again.`);
+      for (const row of rows) assertSiteInScope(t, row.site_id);
+    } else {
+      siteId = body.site_id;
+      assertSiteInScope(t, siteId);
+      ids = (await this.s(t).selectFrom(table).select('id').where('site_id', '=', siteId).execute()).map((r) => r.id);
+    }
+    if (ids.length === 0) return { deleted: 0 };
+
+    await this.db.transaction().execute(async (trx) => {
+      const x = tenantDb(trx as unknown as Kysely<DB>, t.schema);
+      for (let i = 0; i < ids.length; i += 1000) {
+        const chunk = ids.slice(i, i + 1000);
+        await x
+          .updateTable('phone_numbers')
+          .set({ holder_type: null, holder_id: null, status: 'available' })
+          .where('holder_type', '=', kind)
+          .where('holder_id', 'in', chunk)
+          .execute();
+        await x.deleteFrom(table).where('id', 'in', chunk).execute();
+      }
+    });
+    await this.audit.tenant(t.schema, `discovery.${kind}s_bulk_deleted`, {
+      actor: actorOf(u),
+      targetType: siteId ? 'discovery_site' : `discovery_${kind}`,
+      targetId: siteId ?? undefined,
+      detail: { count: ids.length, all: !!siteId, ids: ids.slice(0, 500) },
+    });
+    return { deleted: ids.length };
   }
 
   /* ===================== paginated list reads ===================== */

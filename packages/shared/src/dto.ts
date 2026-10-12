@@ -304,6 +304,17 @@ const optStr = (max = 400) => str(max).optional().or(z.literal(''));
  * lowering how many rows a bulk edit can touch at once changes for every
  * module together.
  */
+/**
+ * Data Collection bulk delete (users / CAPs / resource accounts): either the
+ * rows ticked in the grid, or every row of that kind on one site ("start
+ * again"). Each row is deleted exactly as a single delete would be.
+ */
+export const discoveryBulkDeleteSchema = z.union([
+  z.object({ ids: z.array(z.string().uuid()).min(1).max(5000) }).strict(),
+  z.object({ site_id: z.string().uuid(), all: z.literal(true) }).strict(),
+]);
+export type DiscoveryBulkDeleteInput = z.infer<typeof discoveryBulkDeleteSchema>;
+
 const bulkPatchSchema = <T extends z.ZodRawShape>(fields: T) =>
   z
     .object({

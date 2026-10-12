@@ -730,6 +730,7 @@ export function PagedSection({
   selected,
   onSelectedChange,
   onEditRow,
+  bulkDelete,
 }: {
   title: string;
   hint?: string;
@@ -761,9 +762,22 @@ export function PagedSection({
    * behavior for every other caller.
    */
   onEditRow?: (r: Row) => boolean;
+  /**
+   * Opt-in "Delete selected" / "Delete all…" for this list, via
+   * POST {endpoint}/bulk-delete ({ ids } or { site_id, all: true }; site_id
+   * comes from `fixed`). Adds row checkboxes if the caller doesn't manage
+   * selection itself. `note` says what else happens (e.g. numbers freed).
+   */
+  bulkDelete?: { noun: string; plural: string; note?: string };
 }) {
   const s = useRecordStyles();
   const qc = useQueryClient();
+  // Selection: the caller's (bulk edit) if it has one, otherwise our own for bulk delete.
+  const [ownSelected, setOwnSelected] = useState<Set<string>>(new Set());
+  const sel = selected ?? ownSelected;
+  const setSel = onSelectedChange ?? setOwnSelected;
+  const canSelect = selectable ?? (!!bulkDelete && !readOnly);
+  const [confirmDelete, setConfirmDelete] = useState<'selected' | 'all' | null>(null);
   const [page, setPage] = useState(1);
   const [qInput, setQInput] = useState('');
   const q = useDebounced(qInput);
@@ -807,6 +821,20 @@ export function PagedSection({
     onSuccess: invalidate,
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Delete failed'),
   });
+  const removeMany = useMutation({
+    mutationFn: (which: 'selected' | 'all') =>
+      api<{ deleted: number }>(`${endpoint}/bulk-delete`, {
+        method: 'POST',
+        body: JSON.stringify(which === 'all' ? { site_id: fixed?.site_id, all: true } : { ids: [...sel] }),
+      }),
+    onSuccess: () => {
+      setConfirmDelete(null);
+      setSel(new Set());
+      setPage(1);
+      invalidate();
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Delete failed'),
+  });
 
   const total = list.data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / pageSize));
@@ -834,6 +862,16 @@ export function PagedSection({
             style={{ minWidth: 200 }}
           />
           {headerActions}
+          {bulkDelete && !readOnly && sel.size > 0 && (
+            <Button size="small" icon={<DeleteRegular />} onClick={() => setConfirmDelete('selected')}>
+              Delete selected ({sel.size})
+            </Button>
+          )}
+          {bulkDelete && !readOnly && !!fixed?.site_id && total > 0 && (
+            <Button size="small" appearance="subtle" icon={<DeleteRegular />} onClick={() => setConfirmDelete('all')}>
+              Delete all…
+            </Button>
+          )}
           {!readOnly && (
             <Button
               size="small"
@@ -874,9 +912,9 @@ export function PagedSection({
               setOpen(true);
             }}
             onDelete={(id) => remove.mutate(id)}
-            selectable={selectable}
-            selected={selected}
-            onSelectedChange={onSelectedChange}
+            selectable={canSelect}
+            selected={sel}
+            onSelectedChange={setSel}
           />
           {pages > 1 && (
             <div className={s.pager}>
@@ -902,6 +940,19 @@ export function PagedSection({
         </>
       )}
 
+      {bulkDelete && confirmDelete && (
+        <BulkDeleteDialog
+          what={confirmDelete}
+          count={confirmDelete === 'all' ? total : sel.size}
+          noun={bulkDelete.noun}
+          plural={bulkDelete.plural}
+          note={bulkDelete.note}
+          busy={removeMany.isPending}
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={() => removeMany.mutate(confirmDelete)}
+        />
+      )}
+
       <RecordDialog
         open={open}
         onOpenChange={setOpen}
@@ -914,6 +965,64 @@ export function PagedSection({
         suggest={suggest}
       />
     </Card>
+  );
+}
+
+/**
+ * Confirms a bulk delete. Deleting everything asks for the word DELETE, since
+ * it can't be undone and is easy to click by mistake.
+ */
+function BulkDeleteDialog({
+  what,
+  count,
+  noun,
+  plural,
+  note,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  what: 'selected' | 'all';
+  count: number;
+  noun: string;
+  plural: string;
+  note?: string;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const [typed, setTyped] = useState('');
+  const label = `${count.toLocaleString()} ${count === 1 ? noun : plural}`;
+  const needsWord = what === 'all';
+  return (
+    <Dialog open onOpenChange={(_, d) => !d.open && !busy && onCancel()}>
+      <DialogSurface>
+        <DialogBody>
+          <DialogTitle>{what === 'all' ? `Delete all ${plural} on this site?` : `Delete ${label}?`}</DialogTitle>
+          <DialogContent>
+            <div style={{ display: 'grid', gap: 12 }}>
+              <Text>
+                {what === 'all' ? `All ${label} will be deleted.` : `The ${label} you selected will be deleted.`} This can't be undone.
+              </Text>
+              {note && <Text size={200}>{note}</Text>}
+              {needsWord && (
+                <Field label="Type DELETE to confirm">
+                  <Input value={typed} onChange={(_, d) => setTyped(d.value)} autoFocus />
+                </Field>
+              )}
+            </div>
+          </DialogContent>
+          <DialogActions>
+            <Button appearance="secondary" disabled={busy} onClick={onCancel}>
+              Cancel
+            </Button>
+            <Button appearance="primary" disabled={busy || (needsWord && typed.trim() !== 'DELETE')} onClick={onConfirm}>
+              {busy ? 'Deleting…' : `Delete ${label}`}
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
   );
 }
 
