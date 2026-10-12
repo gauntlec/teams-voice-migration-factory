@@ -338,7 +338,7 @@ export class AuthService {
     if (user.role === 'SUPER_ADMIN') {
       const rows = await platformDb(this.db)
         .selectFrom('tenants')
-        .select(['id', 'slug', 'name', 'branding', 'managed_services_enabled'])
+        .select(['id', 'slug', 'name', 'branding', 'managed_services_enabled', 'sandbox'])
         .where('status', '=', 'active')
         .orderBy('name')
         .execute();
@@ -350,19 +350,20 @@ export class AuthService {
         siteIds: [],
         branding: r.branding ?? null,
         managedServices: r.managed_services_enabled,
+        sandbox: r.sandbox,
       }));
     } else {
       const rows = await platformDb(this.db)
         .selectFrom('tenant_memberships as m')
         .innerJoin('tenants as t', 't.id', 'm.tenant_id')
-        .select(['t.id as id', 't.slug as slug', 't.name as name', 'm.site_ids as siteIds', 't.branding as branding', 't.managed_services_enabled as managedServices'])
+        .select(['t.id as id', 't.slug as slug', 't.name as name', 'm.site_ids as siteIds', 't.branding as branding', 't.managed_services_enabled as managedServices', 't.sandbox as sandbox'])
         .where('m.user_id', '=', userId)
         .where('t.status', '=', 'active')
         .orderBy('t.name')
         .execute();
       tenants = rows.map((r) => {
         const siteIds = Array.isArray(r.siteIds) ? r.siteIds : [];
-        return { id: r.id, slug: r.slug, name: r.name, siteScoped: siteIds.length > 0, siteIds, branding: r.branding ?? null, managedServices: r.managedServices };
+        return { id: r.id, slug: r.slug, name: r.name, siteScoped: siteIds.length > 0, siteIds, branding: r.branding ?? null, managedServices: r.managedServices, sandbox: r.sandbox };
       });
     }
 

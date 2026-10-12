@@ -44,6 +44,7 @@ import { renderEmail } from './mail/templates';
 import type { EmailBranding } from './mail/layout';
 import { mailerConfigured, sendMail } from './mail/mailer';
 import { makeMailEnqueuer } from './mail/enqueue';
+import { planDelivery } from './mail/sandbox';
 import { recordServiceRequestRun, sweepServiceRequests } from './service-requests';
 
 const QUEUE_NAME = 'deployments';
@@ -972,7 +973,7 @@ async function handleMail(job: Job) {
   const { id } = job.data as { id: string };
   const row = await platformDb(db)
     .selectFrom('email_messages')
-    .select(['id', 'to_email', 'to_name', 'template', 'context', 'status', 'tenant_id', 'msp_id'])
+    .select(['id', 'to_email', 'to_name', 'template', 'context', 'status', 'tenant_id', 'msp_id', 'created_by', 'original_to_email'])
     .where('id', '=', id)
     .executeTakeFirst();
   if (!row) {
@@ -985,15 +986,34 @@ async function handleMail(job: Job) {
   const branding = await loadEmailBranding(row.tenant_id, row.msp_id);
   const rendered = renderEmail(row.template, (row.context ?? {}) as Record<string, unknown>, branding);
 
+  // Test customers: redirect to whoever triggered it (or skip) - see mail/sandbox.ts.
+  const delivery = await planDelivery(db, row, rendered.subject);
+  if (delivery.action === 'skip') {
+    // eslint-disable-next-line no-console
+    console.log(`[mail ${id}] test customer - not sent (would have gone to ${delivery.originalTo})`);
+    await platformDb(db)
+      .updateTable('email_messages')
+      .set({ status: 'skipped', error: delivery.reason, subject: rendered.subject, to_email: delivery.originalTo, original_to_email: null })
+      .where('id', '=', id)
+      .execute();
+    return;
+  }
+  // Record where it actually goes before sending, so the email log never shows a redirected email as sent to the customer.
+  await platformDb(db)
+    .updateTable('email_messages')
+    .set({ to_email: delivery.to, original_to_email: delivery.originalTo })
+    .where('id', '=', id)
+    .execute();
+
   if (!mailerConfigured) {
     // eslint-disable-next-line no-console
     console.log(
       `[mail ${id}] SMTP not configured - not sent.\n` +
-        `  to: ${row.to_email}\n  subject: ${rendered.subject}\n\n${rendered.text}\n`,
+        `  to: ${delivery.to}\n  subject: ${delivery.subject}\n\n${rendered.text}\n`,
     );
     await platformDb(db)
       .updateTable('email_messages')
-      .set({ status: 'failed', error: 'SMTP not configured', subject: rendered.subject })
+      .set({ status: 'failed', error: 'SMTP not configured', subject: delivery.subject })
       .where('id', '=', id)
       .execute();
     return;
@@ -1001,9 +1021,9 @@ async function handleMail(job: Job) {
 
   try {
     await sendMail({
-      to: row.to_email,
-      toName: row.to_name,
-      subject: rendered.subject,
+      to: delivery.to,
+      toName: delivery.toName,
+      subject: delivery.subject,
       html: rendered.html,
       text: rendered.text,
     });
@@ -1011,7 +1031,7 @@ async function handleMail(job: Job) {
       .updateTable('email_messages')
       .set({
         status: 'sent',
-        subject: rendered.subject,
+        subject: delivery.subject,
         sent_at: new Date().toISOString(),
         error: null,
         attempts: (job.attemptsMade ?? 0) + 1,
@@ -1019,13 +1039,13 @@ async function handleMail(job: Job) {
       .where('id', '=', id)
       .execute();
     // eslint-disable-next-line no-console
-    console.log(`[mail ${id}] sent to ${row.to_email}`);
+    console.log(`[mail ${id}] sent to ${delivery.to}${delivery.originalTo ? ` (test customer - would have gone to ${delivery.originalTo})` : ''}`);
   } catch (err) {
     await platformDb(db)
       .updateTable('email_messages')
       .set({
         error: (err as Error).message,
-        subject: rendered.subject,
+        subject: delivery.subject,
         attempts: (job.attemptsMade ?? 0) + 1,
       })
       .where('id', '=', id)

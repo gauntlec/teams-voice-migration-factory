@@ -23,6 +23,7 @@ import {
   type TenantUsersImportInput,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
+import { assertNoMaintenanceFreeze, currentMaintenance } from '../../platform-ops/maintenance';
 import type { AuthedUser, TenantContext } from '../../common/request';
 import { InjectDb, type Db } from '../../db/db.module';
 import { InjectDeployQueue, type Queue } from '../../queue/queue.module';
@@ -321,6 +322,8 @@ export class TenantDiscoveryService {
     if (conn.status !== 'active') {
       throw new ForbiddenException('Connection is not active - sign in to the customer tenant first');
     }
+    // A run started now would be failed by the worker restart of a scheduled update.
+    await assertNoMaintenanceFreeze(this.db, 'discovery run');
     // Counts both kinds: a Validate check holds the same pwsh session.
     const running = await this.s(t)
       .selectFrom('tenant_discovery_runs')
@@ -403,6 +406,8 @@ export class TenantDiscoveryService {
     const conns = await this.deployments.listConnections(t);
     const conn = conns.find((c) => c.status === 'active' && (c.started_by === user.id || user.role === 'SUPER_ADMIN'));
     if (!conn) return null; // no eligible live session - caller falls back to the DB-only result
+    // An update is minutes away: fall back to the DB-only result rather than start a run it would kill.
+    if ((await currentMaintenance(this.db))?.phase === 'freeze') return null;
 
     const running = await this.s(t)
       .selectFrom('tenant_discovery_runs')

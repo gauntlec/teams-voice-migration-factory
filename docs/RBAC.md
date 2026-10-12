@@ -84,6 +84,7 @@ audit:read:tenant   audit:read:platform
 feature:read  feature:create  feature:manage
 bug:read  bug:create  bug:manage
 tenantdiscovery:read  tenantdiscovery:run
+platform:operate
 ```
 
 ## Matrix (✓ = allowed)
@@ -114,6 +115,7 @@ tenantdiscovery:read  tenantdiscovery:run
 | bug:read / bug:create | ✓ | ✓ | ✓ | |
 | bug:manage (move / edit / delete cards) | ✓ | | | |
 | tenantdiscovery:read / run (Discovery: connect to the customer's live Teams tenant) | ✓ | | ✓ | |
+| platform:operate (Release check page, set/clear the maintenance notice) | ✓ | | | |
 
 ## Enforcement
 

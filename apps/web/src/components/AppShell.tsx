@@ -1,7 +1,9 @@
 import { useEffect, type ReactNode } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
   Avatar,
+  Badge,
   Button,
   Dropdown,
   Menu,
@@ -9,6 +11,9 @@ import {
   MenuList,
   MenuPopover,
   MenuTrigger,
+  MessageBar,
+  MessageBarBody,
+  MessageBarTitle,
   Option,
   Text,
   Tooltip,
@@ -33,8 +38,10 @@ import {
   Search24Regular,
   TicketDiagonal24Regular,
   TaskListSquareLtr24Regular,
+  ShieldCheckmark24Regular,
 } from '@fluentui/react-icons';
-import type { Permission } from '@tvmf/shared';
+import type { MaintenanceNoticeView, Permission } from '@tvmf/shared';
+import { api } from '../api';
 import { useAuth } from '../auth';
 import { Wordmark } from './Logo';
 
@@ -135,6 +142,7 @@ const ADMIN_GROUPS: { label: string; items: NavDef[] }[] = [
   {
     label: 'Observability',
     items: [
+      { to: '/admin/release-check', label: 'Release check', icon: <ShieldCheckmark24Regular />, permission: 'platform:operate' },
       { to: '/admin/email', label: 'Email log', icon: <Mail24Regular />, permission: 'audit:read:platform' },
       { to: '/admin/audit', label: 'Platform Audit', icon: <History24Regular />, permission: 'audit:read:platform' },
     ],
@@ -163,6 +171,14 @@ export function AppShell({ children }: { children: ReactNode }) {
       setActiveTenant(tenants[0].id);
     }
   }, [tenants, activeTenantId, setActiveTenant]);
+
+  // Maintenance notice banner - staff only (customers have no live sessions to lose).
+  const maintenance = useQuery({
+    queryKey: ['maintenance'],
+    queryFn: () => api<MaintenanceNoticeView | null>('/platform/maintenance'),
+    enabled: !!me && me.role !== 'CUSTOMER',
+    refetchInterval: 60_000,
+  });
 
   if (!me) return null;
 
@@ -219,6 +235,13 @@ export function AppShell({ children }: { children: ReactNode }) {
               Site contact
             </Text>
           )}
+          {activeTenant?.sandbox && (
+            <Tooltip content="A test customer: its emails go to whoever triggered them, not to the real recipients." relationship="description">
+              <Badge appearance="filled" color="warning">
+                Test customer
+              </Badge>
+            </Tooltip>
+          )}
           {tenants.length > 0 ? (
             <Dropdown
               appearance="filled-lighter"
@@ -232,6 +255,11 @@ export function AppShell({ children }: { children: ReactNode }) {
               {tenants.map((t) => (
                 <Option key={t.id} value={t.id} text={t.name}>
                   {t.name}
+                  {t.sandbox && (
+                    <Badge appearance="tint" color="warning" size="small" style={{ marginLeft: 6 }}>
+                      Test customer
+                    </Badge>
+                  )}
                 </Option>
               ))}
             </Dropdown>
@@ -288,7 +316,21 @@ export function AppShell({ children }: { children: ReactNode }) {
             </>
           )}
         </nav>
-        <main className={s.content}>{children}</main>
+        <main className={s.content}>
+          {maintenance.data && (
+            <MessageBar intent={maintenance.data.phase === 'freeze' ? 'warning' : 'info'} style={{ marginBottom: 16 }}>
+              <MessageBarBody>
+                <MessageBarTitle>
+                  {maintenance.data.phase === 'freeze'
+                    ? 'Platform update imminent - new deployments, discovery runs and sign-ins are paused'
+                    : `Platform update scheduled for ${new Date(maintenance.data.startsAt).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}`}
+                </MessageBarTitle>
+                {maintenance.data.message}
+              </MessageBarBody>
+            </MessageBar>
+          )}
+          {children}
+        </main>
       </div>
     </div>
   );

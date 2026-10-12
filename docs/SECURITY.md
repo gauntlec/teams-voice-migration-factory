@@ -137,7 +137,9 @@
   requested between sentinel markers; stderr is discarded; raw output is never
   logged. The `connections` table has no token columns by design.
 - Sessions end on `Disconnect-MicrosoftTeams` + process exit: after
-  `TEAMS_SESSION_TTL_MINUTES` idle (default 60), on worker restart, or on any
+  `TEAMS_SESSION_TTL_MINUTES` idle (default 60), on worker restart (every
+  release - check *Administration → Release check* first, see
+  [`ARCHITECTURE.md`](ARCHITECTURE.md#operations-releasing-safely)), or on any
   sign-in error. The row is marked `expired`; a new run needs a fresh sign-in.
 - Discovery is read-only (`Get-Cs*` only) and stores configuration, never
   credentials. What it stores per customer is listed in `docs/DISCOVERY.md`.

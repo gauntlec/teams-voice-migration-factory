@@ -27,7 +27,7 @@ export class TenantsService {
   async list(user: { id: string; role: Role }, search?: string) {
     let q = platformDb(this.db)
       .selectFrom('tenants')
-      .select(['id', 'slug', 'name', 'primary_domain', 'status', 'teams_read_only', 'managed_services_enabled', 'msp_id', 'branding', 'created_at'])
+      .select(['id', 'slug', 'name', 'primary_domain', 'status', 'teams_read_only', 'managed_services_enabled', 'msp_id', 'branding', 'sandbox', 'sandbox_email', 'created_at'])
       .orderBy('name');
     if (user.role !== 'SUPER_ADMIN') {
       q = q
@@ -125,6 +125,30 @@ export class TenantsService {
       targetId: tenantId,
       tenantId,
       detail: { enabled },
+    });
+    return tenant;
+  }
+
+  /**
+   * Marks a customer as a test customer: the worker sends every email for it
+   * to whoever triggered it (else `sandboxEmail`, else not at all), subject
+   * prefixed with the real recipient - see docs/EMAIL.md. SUPER_ADMIN only
+   * (tenant:update). `sandboxEmail` omitted = keep the current one.
+   */
+  async setSandbox(tenantId: string, sandbox: boolean, sandboxEmail: string | null | undefined, actor: AuditActor) {
+    await this.getTenantOrThrow(tenantId);
+    const tenant = await platformDb(this.db)
+      .updateTable('tenants')
+      .set({ sandbox, ...(sandboxEmail !== undefined ? { sandbox_email: sandboxEmail || null } : {}) })
+      .where('id', '=', tenantId)
+      .returning(['id', 'slug', 'name', 'sandbox', 'sandbox_email'])
+      .executeTakeFirstOrThrow();
+    await this.audit.platform('tenant.sandbox_changed', {
+      actor,
+      targetType: 'tenant',
+      targetId: tenantId,
+      tenantId,
+      detail: { sandbox, sandboxEmail: tenant.sandbox_email },
     });
     return tenant;
   }

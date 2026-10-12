@@ -23,6 +23,7 @@ import { AdminMsps } from './pages/admin/Msps';
 import { AdminSites } from './pages/admin/Sites';
 import { AdminEmailLog } from './pages/admin/EmailLog';
 import { AdminAudit } from './pages/admin/Audit';
+import { AdminReleaseCheck } from './pages/admin/ReleaseCheck';
 import { FeatureRequests } from './pages/FeatureRequests';
 import { MspServiceRequests } from './pages/MspServiceRequests';
 import { ServiceRequestPage } from './pages/ServiceRequestPage';
@@ -130,6 +131,14 @@ export function App() {
           element={
             <RequirePermission permission="discovery:sites:manage">
               <AdminSites />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="/admin/release-check"
+          element={
+            <RequirePermission permission="platform:operate">
+              <AdminReleaseCheck />
             </RequirePermission>
           }
         />

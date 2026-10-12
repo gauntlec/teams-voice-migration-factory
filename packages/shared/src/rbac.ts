@@ -52,6 +52,7 @@ export const PERMISSIONS = [
   'bug:manage', // move status, edit labels, delete - SUPER_ADMIN only
   'tenantdiscovery:read', // view the live-tenant Discovery inventory - admin & engineer only
   'tenantdiscovery:run', // connect to the customer tenant and run a discovery - admin & engineer only
+  'platform:operate', // release check + maintenance notice - SUPER_ADMIN only
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 

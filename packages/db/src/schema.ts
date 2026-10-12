@@ -23,6 +23,10 @@ export interface TenantsTable {
   sr_settings: ColumnType<import('@tvmf/shared').SrSettings, string | undefined, string>;
   /** The MSP that looks after this customer - see 0013_tenant_msp.sql. */
   msp_id: string | null;
+  /** A test customer: its emails go to whoever triggered them - see 0015_release_safety.sql. */
+  sandbox: ColumnType<boolean, boolean | undefined, boolean>;
+  /** Test customer's fallback address for emails nobody triggered; null = those are skipped. */
+  sandbox_email: string | null;
   created_by: string | null;
   created_at: Ts;
 }
@@ -85,6 +89,17 @@ export interface EmailMessagesTable {
   created_by: string | null;
   created_at: Ts;
   sent_at: string | null;
+  /** Set when a test customer's email was redirected: who it was really for (to_email is where it went) - see 0015_release_safety.sql. */
+  original_to_email: ColumnType<string | null, string | null | undefined, string | null>;
+}
+
+/** The single maintenance notice (id is always true) - see 0015_release_safety.sql. */
+export interface MaintenanceNoticeTable {
+  id: ColumnType<boolean, boolean | undefined, boolean>;
+  message: string;
+  starts_at: string;
+  created_by: string | null;
+  created_at: Ts;
 }
 
 export interface FeatureRequestsTable {
@@ -1007,6 +1022,7 @@ export interface DB {
   feature_requests: FeatureRequestsTable;
   bug_reports: BugReportsTable;
   platform_audit_log: PlatformAuditLogTable;
+  maintenance_notice: MaintenanceNoticeTable;
   // tenant
   discovery: DiscoveryTable;
   discovery_sites: DiscoverySitesTable;

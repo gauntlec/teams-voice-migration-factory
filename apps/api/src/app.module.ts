@@ -24,6 +24,7 @@ import { FilesModule } from './modules/files/files.module';
 import { TenantDiscoveryModule } from './modules/tenant-discovery/tenant-discovery.module';
 import { AuditReadModule } from './modules/audit/audit-read.module';
 import { ProgressModule } from './modules/progress/progress.module';
+import { PlatformOpsModule } from './platform-ops/platform-ops.module';
 import { HealthController } from './health/health.controller';
 
 @Module({
@@ -50,6 +51,7 @@ import { HealthController } from './health/health.controller';
     TenantDiscoveryModule,
     AuditReadModule,
     ProgressModule,
+    PlatformOpsModule,
   ],
   controllers: [HealthController],
   providers: [

@@ -89,6 +89,7 @@ export class MailService {
         'related_id',
         'created_at',
         'sent_at',
+        'original_to_email',
       ])
       .orderBy('created_at', 'desc')
       .limit(Math.min(Math.max(limit, 1), 500));

@@ -120,6 +120,51 @@ model in place, to be filled in next.
 - Griffel `makeStyles` + `className` for styling — inline `style` on Fluent
   slot components (`Table`, `TableCell`, …) is dropped and won't apply.
 
+## Operations: releasing safely
+
+A release (push `main` → images build → **Update** in Dockge) restarts the
+worker. Customer-tenant sessions live only in the worker's memory (pwsh
+children - nothing is stored), so the worker's startup sweep
+(`expireOrphanedWork` in `apps/worker/src/main.ts`) marks every
+pending/active `connections` row `expired` and fails every queued/running
+`tenant_discovery_runs` and `deployments` row. Engineers then have to sign in
+to their customer tenants again (device code) and restart their runs.
+
+**Before every release:**
+
+1. **Administration → Observability → Release check** (`/admin/release-check`,
+   SUPER_ADMIN, `platform:operate`; `GET /api/platform/release-check`). It lists,
+   across every customer schema, exactly what the sweep would end: live
+   sign-ins (with the engineer who owns each), queued/running discovery runs
+   (including Design & Build Validate checks) and deployment runs (live ones
+   flagged). **"Safe to release"** = nothing in progress. Built in
+   `apps/api/src/platform-ops/release-check.ts`; wording in
+   `summarizeReleaseCheck` (`packages/shared/src/release-safety.ts`).
+2. If anything is in progress, ask the people listed, or set a **maintenance
+   notice** on the same page: a message + a time ("Update at 18:00 - live
+   tenant sessions will end"). Stored in `platform.maintenance_notice` (one
+   row); `PUT`/`DELETE /api/platform/maintenance`, audited as
+   `platform.maintenance_notice_set` / `_cleared`.
+   - Every signed-in staff member sees it as a banner (AppShell polls
+     `GET /api/platform/maintenance` every minute; customers get `null`).
+   - In its **final 10 minutes** (`MAINTENANCE_FREEZE_MINUTES`) - and after the
+     time until it is cleared - the API refuses to start a new deployment run
+     (What-If or live), discovery run or customer-tenant sign-in, with a
+     clear message (`assertNoMaintenanceFreeze`,
+     `apps/api/src/platform-ops/maintenance.ts`). A Design & Build Validate
+     check quietly falls back to its database-only result. Work already running
+     is not touched.
+   - A notice nobody cleared lapses 30 minutes after its time
+     (`MAINTENANCE_LAPSE_MINUTES`) so a forgotten one can't block work forever.
+3. Re-run the check; release when it says **Safe to release** (or when the
+   people listed have agreed). Clear the notice afterwards.
+
+**Testing on a test customer.** Mark a customer as a **test customer**
+(Customers page, SUPER_ADMIN; `platform.tenants.sandbox`) and none of its
+emails reach real recipients - each goes to whoever triggered it, subject
+prefixed `[TEST - would have gone to x@y]`. The switcher shows a
+**Test customer** badge. Details in [`EMAIL.md`](EMAIL.md#test-customers).
+
 ## Testing
 
 Two suites, both run by CI's `verify` job before any image is built (a red

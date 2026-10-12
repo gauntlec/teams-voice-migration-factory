@@ -47,6 +47,7 @@ import {
   type GenerateDeploymentDocumentInput,
   type PickupGroupSettings,
 } from '@tvmf/shared';
+import { assertNoMaintenanceFreeze } from '../../platform-ops/maintenance';
 import { AuditService } from '../../common/audit.service';
 import type { AuthedUser, TenantContext } from '../../common/request';
 import { InjectDb, type Db } from '../../db/db.module';
@@ -564,6 +565,8 @@ export class DeploymentService {
   /* ============================ connections ============================ */
 
   async startConnection(t: TenantContext, user: AuthedUser, tenantDomain?: string) {
+    // A sign-in made now would die with the worker restart minutes later.
+    await assertNoMaintenanceFreeze(this.db, 'customer-tenant sign-in');
     const conn = await tenantDb(this.db, t.schema)
       .insertInto('connections')
       .values({
@@ -633,6 +636,8 @@ export class DeploymentService {
     if (input.mode === 'execute' && !can('deployment:execute')) {
       throw new ForbiddenException('Missing permission: deployment:execute');
     }
+    // A run started now would be failed by the worker restart of a scheduled update.
+    await assertNoMaintenanceFreeze(this.db, input.mode === 'execute' ? 'live deployment' : 'What-If run');
     // A tenant property, not a role property - even a Super Admin with
     // deployment:execute must be blocked here. Re-checked independently in
     // the worker right before the cmdlet actually goes out - see docs/SECURITY.md.

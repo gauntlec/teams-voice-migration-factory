@@ -47,6 +47,8 @@ interface Tenant {
   managed_services_enabled: boolean;
   msp_id: string | null;
   branding: Branding | null;
+  sandbox: boolean;
+  sandbox_email: string | null;
   created_at: string;
 }
 interface Member {
@@ -77,6 +79,7 @@ export function AdminTenants() {
   const [accentColor, setAccentColor] = useState(DEFAULT_ACCENT);
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [sandboxErr, setSandboxErr] = useState<string | null>(null);
   const [brandingFor, setBrandingFor] = useState<Tenant | null>(null);
 
   const [searchInput, setSearchInput] = useState('');
@@ -111,6 +114,16 @@ export function AdminTenants() {
       await qc.invalidateQueries({ queryKey: ['tenants'] });
       await refreshMe(); // the left nav shows Service Requests from the signed-in user's tenant list
     },
+  });
+  const setSandbox = useMutation({
+    mutationFn: ({ id, sandbox, sandboxEmail }: { id: string; sandbox: boolean; sandboxEmail?: string | null }) =>
+      api(`/tenants/${id}/sandbox`, { method: 'PATCH', body: JSON.stringify({ sandbox, sandboxEmail }) }),
+    onSuccess: async () => {
+      setSandboxErr(null);
+      await qc.invalidateQueries({ queryKey: ['tenants'] });
+      await refreshMe(); // the "Test customer" badge in the customer switcher
+    },
+    onError: (e) => setSandboxErr((e as Error).message),
   });
   const create = useMutation({
     mutationFn: async () => {
@@ -194,7 +207,7 @@ export function AdminTenants() {
         ) : list.isError ? (
           <LoadError message={(list.error as Error).message} />
         ) : (
-          <DataTable size="small" minWidth={780}>
+          <DataTable size="small" minWidth={940}>
             <TableHeader>
               <TableRow>
                 <TableHeaderCell>Name</TableHeaderCell>
@@ -205,6 +218,7 @@ export function AdminTenants() {
                 <TableHeaderCell>Teams read-only</TableHeaderCell>
                 <TableHeaderCell>Managed Services</TableHeaderCell>
                 <TableHeaderCell>MSP</TableHeaderCell>
+                <TableHeaderCell>Test customer</TableHeaderCell>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -287,6 +301,38 @@ export function AdminTenants() {
                       (mspList.data ?? []).find((m) => m.id === t.msp_id)?.name ?? '—'
                     )}
                   </TableCell>
+                  <TableCell>
+                    {can('tenant:update') ? (
+                      <div style={{ display: 'grid', gap: 4 }}>
+                        <Checkbox
+                          checked={t.sandbox}
+                          disabled={setSandbox.isPending}
+                          label={t.sandbox ? 'On' : 'Off'}
+                          onChange={(_, d) => setSandbox.mutate({ id: t.id, sandbox: !!d.checked })}
+                        />
+                        {t.sandbox && (
+                          <Input
+                            key={t.sandbox_email ?? ''}
+                            size="small"
+                            type="email"
+                            placeholder="Fallback address (optional)"
+                            title="Where emails nobody triggered (reminders) go. Empty = they're not sent."
+                            defaultValue={t.sandbox_email ?? ''}
+                            onBlur={(e) => {
+                              const v = e.target.value.trim();
+                              if (v !== (t.sandbox_email ?? '')) setSandbox.mutate({ id: t.id, sandbox: true, sandboxEmail: v || null });
+                            }}
+                          />
+                        )}
+                      </div>
+                    ) : t.sandbox ? (
+                      <Badge appearance="tint" color="warning">
+                        Test customer
+                      </Badge>
+                    ) : (
+                      '—'
+                    )}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -296,6 +342,12 @@ export function AdminTenants() {
           When Teams read-only is on, the platform can never send a write cmdlet to that customer's
           live Microsoft Teams tenant - every deployment run is forced to dry-run, no matter what
           mode is requested. Discovery and validation (read-only) are unaffected.
+        </Text>
+        {sandboxErr && <Text style={{ color: '#b10e1c' }}>{sandboxErr}</Text>}
+        <Text size={200} style={{ color: '#616161' }}>
+          A test customer never emails its real recipients: every email for it goes to the person who
+          triggered it, with the subject starting "[TEST - would have gone to ...]". Emails nobody
+          triggered (reminders) go to the fallback address, or aren't sent if it's empty.
         </Text>
       </Card>
 

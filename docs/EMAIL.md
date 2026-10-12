@@ -34,12 +34,43 @@ API (MailService.enqueue)
     `enqueueMail` producer passed into the discovery runner, and
     `notifyDeploymentRunComplete()` called at the end of `handleDeploymentRun`.
 
+## Test customers
+
+A customer marked **Test customer** (Customers page, SUPER_ADMIN only;
+`platform.tenants.sandbox`, `PATCH /api/tenants/:id/sandbox`, audited as
+`tenant.sandbox_changed`) never emails its real recipients. The decision is
+made by the **worker at send time** (`planDelivery` in
+`apps/worker/src/mail/sandbox.ts`, called by `handleMail`), so it covers every
+template, both producers (API and worker) and every resend:
+
+- An email whose `email_messages.tenant_id` is a test customer goes to the
+  person who **triggered** it (`created_by`), with the subject prefixed
+  `[TEST - would have gone to <real recipient>]`.
+- An email nobody triggered (port-document and service-request reminders,
+  target emails from the worker's sweeps) goes to the customer's optional
+  **fallback address** (`sandbox_email`); with none set it is not sent and is
+  logged `skipped`.
+- The row's `to_email` becomes where it actually went, and
+  `original_to_email` keeps the real recipient. The Email log shows a
+  **Test customer** badge with "would have gone to …". A resend starts again
+  from `original_to_email`, so after switching the flag off a resend reaches
+  the real recipient.
+- Mail with no `tenant_id` (feature/bug board updates, invitations of staff or
+  multi-customer users) is not affected. A CUSTOMER user invited to one test
+  customer *is* redirected - the inviter still sees the temporary password on
+  the Users screen.
+
+Rule and wording: `sandboxRedirect` in `packages/shared/src/release-safety.ts`
+(unit-tested); the database path is covered by
+`tests/db/src/mail/test-customer.db.test.ts`.
+
 ## `platform.email_messages`
 
 The auditable comms log. Key columns: `to_email`, `template`, `context` (jsonb),
 `subject` (filled on render), `status` (`queued` / `sent` / `failed` / `skipped`),
 `error`, `attempts`, `related_type` + `related_id` (e.g. `user` + the user id),
-`created_by`, `created_at`, `sent_at`.
+`created_by`, `created_at`, `sent_at`, `original_to_email` (test customers -
+see above).
 
 ### Email log page
 
@@ -125,6 +156,8 @@ also usable as an admin "reset & re-invite".
 3. Call `mailService.enqueue({ template, to, context, related, createdBy })` from
    the API where the event happens, or the worker's `enqueueMail({...})` for an
    event the worker owns.
+   Always pass `tenantId` for customer mail and `createdBy` when a person
+   caused it - test customers redirect by them (see *Test customers*).
 
 ## `discovery_completed`
 

@@ -36,6 +36,8 @@ interface EmailMessage {
   related_id: string | null;
   created_at: string;
   sent_at: string | null;
+  /** set when a test customer's email was redirected - who it was really for */
+  original_to_email: string | null;
 }
 
 interface EmailLogResponse {
@@ -151,14 +153,24 @@ export function AdminEmailLog() {
               {items.map((m) => (
                 <TableRow key={m.id}>
                   <TableCell>{fmt(m.created_at)}</TableCell>
-                  <TableCell title={m.to_email}>{m.to_email}</TableCell>
+                  <TableCell title={m.to_email}>
+                    {m.to_email}
+                    {m.original_to_email && (
+                      <Text size={200} block style={{ color: '#666' }}>
+                        <Badge appearance="tint" color="warning" size="small">
+                          Test customer
+                        </Badge>{' '}
+                        would have gone to {m.original_to_email}
+                      </Text>
+                    )}
+                  </TableCell>
                   <TableCell>{m.template}</TableCell>
                   <TableCell>
                     <Badge appearance="tint" color={STATUS_COLOR[m.status]}>
                       {m.status}
                     </Badge>
                   </TableCell>
-                  <TableCell title={m.status === 'failed' ? m.error ?? undefined : undefined}>
+                  <TableCell title={m.status === 'failed' || m.status === 'skipped' ? m.error ?? undefined : undefined}>
                     {m.status === 'sent' ? (
                       <Text size={200}>sent {fmt(m.sent_at)}</Text>
                     ) : m.status === 'failed' ? (
