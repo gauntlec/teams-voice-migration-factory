@@ -23,6 +23,7 @@ import { ServiceRequestsModule } from './modules/service-requests/service-reques
 import { FilesModule } from './modules/files/files.module';
 import { TenantDiscoveryModule } from './modules/tenant-discovery/tenant-discovery.module';
 import { AuditReadModule } from './modules/audit/audit-read.module';
+import { ProgressModule } from './modules/progress/progress.module';
 import { HealthController } from './health/health.controller';
 
 @Module({
@@ -48,6 +49,7 @@ import { HealthController } from './health/health.controller';
     FilesModule,
     TenantDiscoveryModule,
     AuditReadModule,
+    ProgressModule,
   ],
   controllers: [HealthController],
   providers: [

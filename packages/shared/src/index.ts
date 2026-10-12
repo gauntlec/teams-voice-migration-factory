@@ -17,6 +17,7 @@ export * from './service-request-design';
 export * from './service-request-change';
 export * from './service-request-sla';
 export * from './wizard-convert';
+export * from './progress';
 
 import type { CmdletInvocation } from './deployment';
 
