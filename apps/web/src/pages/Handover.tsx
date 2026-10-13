@@ -372,7 +372,13 @@ function NotesDialog({ tenantId, sites, onClose }: { tenantId: string; sites: Si
   const body = draft ?? saved;
   const dirty = body !== saved;
 
+  // Switching section/site or closing used to drop unsaved text without a word.
+  const okToDiscard = () => !dirty || window.confirm('Discard the changes to this note?');
+  const close = () => {
+    if (okToDiscard()) onClose();
+  };
   const choose = (nextSection: HandoverNoteSection, nextSite: string) => {
+    if (!okToDiscard()) return;
     setSection(nextSection);
     setSiteId(nextSite);
     setDraft(null);
@@ -391,7 +397,7 @@ function NotesDialog({ tenantId, sites, onClose }: { tenantId: string; sites: Si
   });
 
   return (
-    <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
+    <Dialog open onOpenChange={(_, d) => !d.open && close()}>
       <DialogSurface>
         <DialogBody>
           <DialogTitle>Handover notes</DialogTitle>
@@ -430,7 +436,7 @@ function NotesDialog({ tenantId, sites, onClose }: { tenantId: string; sites: Si
             {save.isError && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{errorMessage(save.error, 'Could not save the note')}</Text>}
           </DialogContent>
           <DialogActions>
-            <Button appearance="secondary" onClick={onClose}>
+            <Button appearance="secondary" onClick={close}>
               Close
             </Button>
             <Button appearance="primary" disabled={!dirty || save.isPending} onClick={() => save.mutate(body)}>

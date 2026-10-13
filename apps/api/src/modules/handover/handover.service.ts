@@ -1,8 +1,9 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
-import { tenantDb } from '@tvmf/db';
+import { platformDb, tenantDb } from '@tvmf/db';
 import {
+  can,
   HANDOVER_NOTE_SECTIONS,
   HANDOVER_SECTIONS,
   handoverScopeLabel,
@@ -52,6 +53,18 @@ function targetSummary(settings: { action?: string; threshold?: number; target?:
   return parts.join(' ');
 }
 
+/** Staff who build packs see drafts and internal notes; everyone else only issued packs. */
+function isPackAuthor(user: AuthedUser): boolean {
+  return can(user.role, 'handover:generate');
+}
+
+/** The Generate dialog's internal note is for Voxshift only - not sent to customers. */
+function withoutInternalNote<T extends { source: unknown }>(pack: T): T {
+  const source = (pack.source ?? {}) as Record<string, unknown>;
+  const { notes: _internal, ...rest } = source;
+  return { ...pack, source: rest };
+}
+
 function jsonArrayLength(v: unknown): number {
   return Array.isArray(v) ? v.length : 0;
 }
@@ -70,24 +83,29 @@ export class HandoverService {
    * data), so a site contact - a customer user pinned to certain sites - can't
    * read, build or issue one. The files endpoint already refuses them the .docx.
    */
-  list(t: TenantContext) {
+  async list(t: TenantContext, user: AuthedUser) {
     assertCustomerWide(t, 'The Service Handover pack');
-    return tenantDb(this.db, t.schema)
+    const staff = isPackAuthor(user);
+    const rows = await tenantDb(this.db, t.schema)
       .selectFrom('handover_packs')
       .select(['id', 'version', 'status', 'generated_by', 'generated_at', 'file_id', 'issued_by', 'issued_at', 'source', 'created_at'])
+      // A draft is still being prepared - customers only ever see issued packs.
+      .$if(!staff, (qb) => qb.where('status', '=', 'issued'))
       .orderBy('version', 'desc')
       .execute();
+    return staff ? rows : rows.map(withoutInternalNote);
   }
 
-  async get(t: TenantContext, id: string) {
+  async get(t: TenantContext, user: AuthedUser, id: string) {
     assertCustomerWide(t, 'The Service Handover pack');
     const scoped = tenantDb(this.db, t.schema);
     const [pack, sections] = await Promise.all([
       scoped.selectFrom('handover_packs').selectAll().where('id', '=', id).executeTakeFirst(),
       scoped.selectFrom('handover_sections').selectAll().where('pack_id', '=', id).orderBy('ordinal').execute(),
     ]);
-    if (!pack) throw new NotFoundException('handover pack not found');
-    return { pack, sections };
+    const staff = isPackAuthor(user);
+    if (!pack || (!staff && pack.status !== 'issued')) throw new NotFoundException('handover pack not found');
+    return { pack: staff ? pack : withoutInternalNote(pack), sections };
   }
 
   /** The sites a pack is limited to, checked against this tenant. No ids = every site (null). */
@@ -126,6 +144,7 @@ export class HandoverService {
         generatedAt,
         scope: scopeLabel,
         sections,
+        status: { kind: 'draft' },
       });
 
       const pack = await s
@@ -203,10 +222,40 @@ export class HandoverService {
     if (pack.status === 'issued') throw new ConflictException('This pack has already been issued.');
     if (!pack.file_id) throw new BadRequestException('This pack has no document, so it cannot be issued. Generate it again.');
 
+    // The draft's document says DRAFT, so issuing re-renders it from the pack's
+    // saved sections (the same snapshot - nothing is re-read from live data)
+    // with who issued it and when. Before, the issued pack kept the draft's
+    // file, so a draft sent out early looked exactly like the final one.
+    const full = await scoped.selectFrom('handover_packs').selectAll().where('id', '=', id).executeTakeFirstOrThrow();
+    const savedSections = await scoped.selectFrom('handover_sections').selectAll().where('pack_id', '=', id).orderBy('ordinal').execute();
+    const author = await platformDb(this.db).selectFrom('users').select('display_name').where('id', '=', full.generated_by).executeTakeFirst();
+    const issuedAt = new Date();
+    const source = (full.source ?? {}) as { siteCodes?: string[] };
+    const data = await this.documentBuilder.build({
+      tenantName: t.name,
+      version: full.version,
+      generatedBy: author?.display_name ?? 'Voxshift',
+      generatedAt: new Date(full.generated_at ?? full.created_at),
+      scope: handoverScopeLabel(source.siteCodes),
+      sections: savedSections.map((sec) => ({ key: sec.key, title: sec.title, content: sec.content as HandoverSectionContent })),
+      status: { kind: 'issued', issuedBy: user.displayName, issuedAt },
+    });
+    const file = await this.files.store(t, {
+      category: 'handover_pack',
+      sourceType: 'handover_pack',
+      sourceId: id,
+      siteId: null,
+      filename: `${t.schema}-service-handover-v${full.version}.docx`,
+      contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      data,
+      uploadedBy: user.id,
+      metadata: { version: full.version, issued: true },
+    });
+
     // Guarded on status so two people issuing at once cannot both succeed.
     const updated = await scoped
       .updateTable('handover_packs')
-      .set({ status: 'issued', issued_by: user.id, issued_at: new Date().toISOString() })
+      .set({ status: 'issued', issued_by: user.id, issued_at: issuedAt.toISOString(), file_id: file.id })
       .where('id', '=', id)
       .where('status', '=', 'draft')
       .returningAll()
@@ -272,6 +321,32 @@ export class HandoverService {
 
   /* ------------------------------ sections ------------------------------ */
 
+  /** holder id -> a readable name, across the Data Collection and Design & Build tables a claim can point at. */
+  private async holderNames(t: TenantContext, numbers: { holder_type: string | null; holder_id: string | null }[]) {
+    const s = tenantDb(this.db, t.schema);
+    const idsOf = (type: string) => [...new Set(numbers.filter((n) => n.holder_type === type && n.holder_id).map((n) => n.holder_id!))];
+    const users = idsOf('user');
+    const caps = idsOf('cap');
+    const ras = idsOf('resource_account');
+    const out = new Map<string, string>();
+    const add = (rows: { id: string; name: string | null; upn?: string | null }[]) => {
+      for (const r of rows) out.set(r.id, r.name || r.upn || '—');
+    };
+    if (users.length) {
+      add(await s.selectFrom('discovery_users').select(['id', 'display_name as name', 'upn']).where('id', 'in', users).execute());
+      add(await s.selectFrom('build_users').select(['id', 'upn as name', 'upn']).where('id', 'in', users).execute());
+    }
+    if (caps.length) {
+      add(await s.selectFrom('discovery_caps').select(['id', 'display_name as name', 'upn']).where('id', 'in', caps).execute());
+      add(await s.selectFrom('build_caps').select(['id', 'upn as name', 'upn']).where('id', 'in', caps).execute());
+    }
+    if (ras.length) {
+      add(await s.selectFrom('discovery_resource_accounts').select(['id', 'name']).where('id', 'in', ras).execute());
+      add(await s.selectFrom('build_resource_accounts').select(['id', 'display_name as name', 'upn']).where('id', 'in', ras).execute());
+    }
+    return out;
+  }
+
   private async buildSections(t: TenantContext, scope: SiteScope | null): Promise<HandoverSectionData[]> {
     const scoped = tenantDb(this.db, t.schema);
     const bySite = scope !== null;
@@ -290,26 +365,29 @@ export class HandoverService {
         scoped
           .selectFrom('phone_numbers as pn')
           .leftJoin('discovery_number_ranges as r', 'r.id', 'pn.range_id')
-          .select(['pn.e164 as e164', 'pn.status as status', 'pn.holder_type as holder_type', 'r.sitecode as sitecode', 'r.carrier as carrier'])
+          .select(['pn.e164 as e164', 'pn.status as status', 'pn.holder_type as holder_type', 'pn.holder_id as holder_id', 'r.sitecode as sitecode', 'r.carrier as carrier'])
           .where((eb) => eb.or([eb('pn.holder_type', 'is', null), eb('pn.holder_type', '!=', 'analogue')]))
           .$if(bySite, (qb) => qb.where('r.sitecode', 'in', codes))
           .orderBy('pn.e164')
           .execute(),
 
         scoped
+          // calling_policy_id points at Data Collection's own calling-policy
+          // list, not tenant_policies - joining the wrong table left this column
+          // blank in every pack.
           .selectFrom('discovery_users as du')
-          .leftJoin('tenant_policies as tp', 'tp.id', 'du.calling_policy_id')
+          .leftJoin('discovery_calling_policies as cp', 'cp.id', 'du.calling_policy_id')
           .leftJoin('discovery_sites as ds', 'ds.id', 'du.site_id')
-          .select(['du.upn as upn', 'du.display_name as display_name', 'ds.sitecode as sitecode', 'tp.name as policy_name', 'du.caller_id as caller_id', 'du.voicemail_enabled as voicemail_enabled'])
+          .select(['du.id as id', 'du.upn as upn', 'du.display_name as display_name', 'ds.sitecode as sitecode', 'cp.name as policy_name', 'du.caller_id as caller_id', 'du.voicemail_enabled as voicemail_enabled'])
           .$if(bySite, (qb) => qb.where('ds.id', 'in', ids))
           .orderBy('du.upn')
           .execute(),
 
         scoped
           .selectFrom('discovery_caps as dc')
-          .leftJoin('tenant_policies as tp', 'tp.id', 'dc.calling_policy_id')
+          .leftJoin('discovery_calling_policies as cp', 'cp.id', 'dc.calling_policy_id')
           .leftJoin('discovery_sites as ds', 'ds.id', 'dc.site_id')
-          .select(['dc.display_name as display_name', 'dc.upn as upn', 'dc.device_model as device_model', 'ds.sitecode as sitecode', 'tp.name as policy_name'])
+          .select(['dc.id as id', 'dc.display_name as display_name', 'dc.upn as upn', 'dc.device_model as device_model', 'ds.sitecode as sitecode', 'cp.name as policy_name'])
           .$if(bySite, (qb) => qb.where('ds.id', 'in', ids))
           .orderBy('dc.display_name')
           .execute(),
@@ -372,6 +450,13 @@ export class HandoverService {
           .execute(),
       ]);
 
+    // Who holds each number. A claim's holder_id is a Data Collection row or a
+    // Design & Build row, depending on where the number was picked, so both
+    // are looked up. The section used to say just "User".
+    const holderName = await this.holderNames(t, phoneNumbers);
+    const numberOf = new Map<string, string>();
+    for (const p of phoneNumbers) if (p.holder_id) numberOf.set(p.holder_id, p.e164);
+
     const byKey: Record<string, HandoverSectionContent> = {
       site_information: {
         kind: 'table',
@@ -392,22 +477,21 @@ export class HandoverService {
       phone_numbers: {
         kind: 'table',
         columns: ['Number', 'Status', 'Assigned to', 'Site', 'Carrier'],
-        rows: phoneNumbers.map((p) => [
-          p.e164,
-          p.status,
-          p.holder_type ? (HOLDER_TYPE_LABEL[p.holder_type] ?? p.holder_type) : 'Unassigned',
-          p.sitecode ?? '—',
-          p.carrier ?? '—',
-        ]),
+        rows: phoneNumbers.map((p) => {
+          const type = p.holder_type ? (HOLDER_TYPE_LABEL[p.holder_type] ?? p.holder_type) : null;
+          const who = p.holder_id ? holderName.get(p.holder_id) : undefined;
+          return [p.e164, p.status, type ? (who ? `${who} (${type})` : type) : 'Unassigned', p.sitecode ?? '—', p.carrier ?? '—'];
+        }),
       },
 
       teams_users: {
         kind: 'table',
-        columns: ['UPN', 'Display name', 'Site', 'Calling policy', 'Caller ID', 'Voicemail'],
+        columns: ['UPN', 'Display name', 'Site', 'Number', 'Calling policy', 'Caller ID', 'Voicemail'],
         rows: users.map((u) => [
           u.upn,
           u.display_name ?? '—',
           u.sitecode ?? '—',
+          numberOf.get(u.id) ?? '—',
           u.policy_name ?? '—',
           u.caller_id ?? '—',
           u.voicemail_enabled ? 'Enabled' : 'Disabled',
@@ -416,8 +500,8 @@ export class HandoverService {
 
       common_area_phones: {
         kind: 'table',
-        columns: ['Display name', 'UPN', 'Device model', 'Site', 'Calling policy'],
-        rows: caps.map((c) => [c.display_name, c.upn ?? '—', c.device_model ?? '—', c.sitecode ?? '—', c.policy_name ?? '—']),
+        columns: ['Display name', 'UPN', 'Number', 'Device model', 'Site', 'Calling policy'],
+        rows: caps.map((c) => [c.display_name, c.upn ?? '—', numberOf.get(c.id) ?? '—', c.device_model ?? '—', c.sitecode ?? '—', c.policy_name ?? '—']),
       },
 
       analogue_phones: {

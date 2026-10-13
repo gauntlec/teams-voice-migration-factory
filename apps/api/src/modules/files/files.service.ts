@@ -60,6 +60,11 @@ function toRow(r: {
  * No upload/write HTTP route exists yet - the only writer today is
  * DeploymentService.generateChangeDocument calling store() in-process.
  */
+/** Per-caller visibility rules on top of site scope. */
+export interface FileAccess {
+  hideDraftHandover?: boolean;
+}
+
 @Injectable()
 export class FilesService {
   constructor(
@@ -94,8 +99,22 @@ export class FilesService {
     return toRow(row);
   }
 
-  async list(t: TenantContext, filter: FilesQuery): Promise<FileRow[]> {
+  /**
+   * `hideDraftHandover`: for people who can't generate handover packs (i.e.
+   * customers) a pack's .docx only exists once the pack is issued - a draft
+   * is still being prepared and must not reach them.
+   */
+  async list(t: TenantContext, filter: FilesQuery, opts: FileAccess = {}): Promise<FileRow[]> {
     let q = tenantDb(this.db, t.schema).selectFrom('files').selectAll().orderBy('created_at', 'desc');
+    if (opts.hideDraftHandover) {
+      q = q.where((eb) =>
+        eb.or([
+          eb('category', '!=', 'handover_pack'),
+          // only an issued pack's current document - not its superseded draft file
+          eb('id', 'in', eb.selectFrom('handover_packs').select('file_id').where('status', '=', 'issued').where('file_id', 'is not', null)),
+        ]),
+      );
+    }
     if (filter.siteId) q = q.where('site_id', '=', filter.siteId);
     if (filter.category) q = q.where('category', '=', filter.category);
     if (filter.sourceType) q = q.where('source_type', '=', filter.sourceType);
@@ -106,19 +125,24 @@ export class FilesService {
     return rows.map(toRow);
   }
 
-  private async loadRow(t: TenantContext, id: string) {
-    const row = await tenantDb(this.db, t.schema).selectFrom('files').selectAll().where('id', '=', id).executeTakeFirst();
+  private async loadRow(t: TenantContext, id: string, opts: FileAccess = {}) {
+    const s = tenantDb(this.db, t.schema);
+    const row = await s.selectFrom('files').selectAll().where('id', '=', id).executeTakeFirst();
     if (!row) throw new NotFoundException('file not found');
     assertSiteInScope(t, row.site_id);
+    if (opts.hideDraftHandover && row.category === 'handover_pack') {
+      const pack = await s.selectFrom('handover_packs').select(['status', 'file_id']).where('id', '=', row.source_id).executeTakeFirst();
+      if (pack?.status !== 'issued' || pack.file_id !== row.id) throw new NotFoundException('file not found');
+    }
     return row;
   }
 
-  async get(t: TenantContext, id: string): Promise<FileRow> {
-    return toRow(await this.loadRow(t, id));
+  async get(t: TenantContext, id: string, opts: FileAccess = {}): Promise<FileRow> {
+    return toRow(await this.loadRow(t, id, opts));
   }
 
-  async readBytes(t: TenantContext, id: string): Promise<{ row: FileRow; data: Buffer }> {
-    const raw = await this.loadRow(t, id);
+  async readBytes(t: TenantContext, id: string, opts: FileAccess = {}): Promise<{ row: FileRow; data: Buffer }> {
+    const raw = await this.loadRow(t, id, opts);
     const data = await this.storage.read(raw.storage_path);
     return { row: toRow(raw), data };
   }

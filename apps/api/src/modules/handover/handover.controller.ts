@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Put, UseGuards } from '@nestjs/common';
 import { handoverGenerateSchema, handoverNoteSchema } from '@tvmf/shared';
 import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
 import type { AuthedUser, TenantContext } from '../../common/request';
@@ -18,8 +18,8 @@ export class HandoverController {
 
   @Get('packs')
   @RequirePermission('handover:read')
-  list(@TenantCtx() t: TenantContext) {
-    return this.handover.list(t);
+  list(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser) {
+    return this.handover.list(t, user);
   }
 
   @Post('packs')
@@ -34,14 +34,14 @@ export class HandoverController {
 
   @Get('packs/:id')
   @RequirePermission('handover:read')
-  get(@TenantCtx() t: TenantContext, @Param('id') id: string) {
-    return this.handover.get(t, id);
+  get(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id', ParseUUIDPipe) id: string) {
+    return this.handover.get(t, user, id);
   }
 
   /** Locks a draft pack as final. */
   @Post('packs/:id/issue')
   @RequirePermission('handover:issue')
-  issue(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string) {
+  issue(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id', ParseUUIDPipe) id: string) {
     return this.handover.issue(t, user, id);
   }
 

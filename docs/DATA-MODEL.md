@@ -117,6 +117,15 @@ single shared claim. |
 
 Handover is customer-wide: a "site contact" (a customer user pinned to certain sites) cannot read, build or issue a pack, because a pack covers every site's data. A pack can be limited to chosen sites and sections when it is generated.
 
+Drafts are for Voxshift staff (anyone with `handover:generate`). Customers see
+a pack only once it is issued - in the pack list, the preview and the Files
+page - and never the Generate dialog's internal note (`source.notes`). A
+draft's .docx is marked DRAFT on the cover, header and footer; issuing
+re-renders the document from the pack's saved `handover_sections` (the same
+snapshot, nothing re-read) with "Issued by / Issued at", stores it as a new
+file and points `file_id` at it. Customers can only download an issued pack's
+current file, never the superseded draft.
+
 ### Common
 | Table | Notes |
 |-------|-------|
