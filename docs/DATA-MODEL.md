@@ -117,6 +117,24 @@ single shared claim. |
 
 Handover is customer-wide: a "site contact" (a customer user pinned to certain sites) cannot read, build or issue a pack, because a pack covers every site's data. A pack can be limited to chosen sites and sections when it is generated.
 
+**The pack documents what is deployed.** Teams Users, Common Area Phones and
+Resource Accounts come from Design & Build, each planned against Discovery's
+live snapshot with the same diff a deployment makes (`planIdentityRows` /
+`planResourceAccountRows`, now in `@tvmf/db` so the worker and the API share
+it). A row with nothing left to change is live and is printed with the values
+Teams has (number, voice routing and calling policy, voicemail) plus when
+Voxshift last changed it (`deployment_changes`, execute runs, applied) or
+"Already in place". Anything else - not created, not found, a different
+number or policy, calling still to be removed - goes in the **Designed but Not
+Yet Live** section with what differs. Voicemail is only known for accounts a
+targeted check has read, so an unread value isn't treated as a difference
+(shown as "designed, not checked live"). Auto attendants and call queues count
+as live when Teams has one by that name; queues list their agents. Phone
+Numbers say who holds each number in Teams (`tenant_users.line_uri`): In use /
+Spare / Reserved. The cover says when Discovery last read Teams ("Checked
+against Teams", also saved as `source.liveAsOf`), so re-run Discovery - or
+rely on a deployment's automatic re-check - before generating.
+
 Drafts are for Voxshift staff (anyone with `handover:generate`). Customers see
 a pack only once it is issued - in the pack list, the preview and the Files
 page - and never the Generate dialog's internal note (`source.notes`). A

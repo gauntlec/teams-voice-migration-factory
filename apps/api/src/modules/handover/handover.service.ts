@@ -1,12 +1,15 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
-import { platformDb, tenantDb } from '@tvmf/db';
+import { planIdentityRows, planResourceAccountRows, platformDb, tenantDb, type PlannedIdentityRow } from '@tvmf/db';
 import {
   can,
   HANDOVER_NOTE_SECTIONS,
   HANDOVER_SECTIONS,
   handoverScopeLabel,
+  lineUriToNumber,
+  verificationRowDifferences,
+  type LiveIdentityState,
   noteSectionContent,
   selectSections,
   type DiscoverySiteOverview,
@@ -19,12 +22,6 @@ import { InjectDb, type Db } from '../../db/db.module';
 import { assertCustomerWide } from '../data-collection/site-scope';
 import { FilesService } from '../files/files.service';
 import { HandoverDocumentService, type HandoverSectionContent, type HandoverSectionData } from './handover-document.service';
-
-const HOLDER_TYPE_LABEL: Record<string, string> = {
-  user: 'User',
-  cap: 'Common area phone',
-  resource_account: 'Resource account',
-};
 
 /** What a pack covers: the sites chosen (empty = every site) and the section keys chosen (empty = every section). */
 export interface HandoverGenerateInput {
@@ -122,7 +119,8 @@ export class HandoverService {
     const scoped = tenantDb(this.db, t.schema);
     const scope = await this.resolveScope(t, body.siteIds);
     // Sections are read before the transaction so the lock is held only for the writes.
-    const sections = selectSections(await this.buildSections(t, scope), body.sectionKeys);
+    const built = await this.buildSections(t, scope);
+    const sections = selectSections(built.sections, body.sectionKeys);
     if (sections.length === 0) throw new BadRequestException('Choose at least one section for the pack.');
     const generatedAt = new Date();
     const packId = randomUUID();
@@ -144,6 +142,7 @@ export class HandoverService {
         generatedAt,
         scope: scopeLabel,
         sections,
+        liveAsOf: built.liveAsOf ? new Date(built.liveAsOf) : null,
         status: { kind: 'draft' },
       });
 
@@ -161,6 +160,8 @@ export class HandoverService {
             siteIds: scope?.ids ?? [],
             siteCodes: scope?.codes ?? [],
             sectionKeys: sections.map((x) => x.key),
+            // when Discovery last read Teams - the "live" every as-built table is checked against
+            liveAsOf: built.liveAsOf,
           },
         })
         .returningAll()
@@ -230,7 +231,7 @@ export class HandoverService {
     const savedSections = await scoped.selectFrom('handover_sections').selectAll().where('pack_id', '=', id).orderBy('ordinal').execute();
     const author = await platformDb(this.db).selectFrom('users').select('display_name').where('id', '=', full.generated_by).executeTakeFirst();
     const issuedAt = new Date();
-    const source = (full.source ?? {}) as { siteCodes?: string[] };
+    const source = (full.source ?? {}) as { siteCodes?: string[]; liveAsOf?: string | null };
     const data = await this.documentBuilder.build({
       tenantName: t.name,
       version: full.version,
@@ -238,6 +239,7 @@ export class HandoverService {
       generatedAt: new Date(full.generated_at ?? full.created_at),
       scope: handoverScopeLabel(source.siteCodes),
       sections: savedSections.map((sec) => ({ key: sec.key, title: sec.title, content: sec.content as HandoverSectionContent })),
+      liveAsOf: source.liveAsOf ? new Date(source.liveAsOf) : null,
       status: { kind: 'issued', issuedBy: user.displayName, issuedAt },
     });
     const file = await this.files.store(t, {
@@ -321,141 +323,98 @@ export class HandoverService {
 
   /* ------------------------------ sections ------------------------------ */
 
-  /** holder id -> a readable name, across the Data Collection and Design & Build tables a claim can point at. */
-  private async holderNames(t: TenantContext, numbers: { holder_type: string | null; holder_id: string | null }[]) {
-    const s = tenantDb(this.db, t.schema);
-    const idsOf = (type: string) => [...new Set(numbers.filter((n) => n.holder_type === type && n.holder_id).map((n) => n.holder_id!))];
-    const users = idsOf('user');
-    const caps = idsOf('cap');
-    const ras = idsOf('resource_account');
-    const out = new Map<string, string>();
-    const add = (rows: { id: string; name: string | null; upn?: string | null }[]) => {
-      for (const r of rows) out.set(r.id, r.name || r.upn || '—');
-    };
-    if (users.length) {
-      add(await s.selectFrom('discovery_users').select(['id', 'display_name as name', 'upn']).where('id', 'in', users).execute());
-      add(await s.selectFrom('build_users').select(['id', 'upn as name', 'upn']).where('id', 'in', users).execute());
-    }
-    if (caps.length) {
-      add(await s.selectFrom('discovery_caps').select(['id', 'display_name as name', 'upn']).where('id', 'in', caps).execute());
-      add(await s.selectFrom('build_caps').select(['id', 'upn as name', 'upn']).where('id', 'in', caps).execute());
-    }
-    if (ras.length) {
-      add(await s.selectFrom('discovery_resource_accounts').select(['id', 'name']).where('id', 'in', ras).execute());
-      add(await s.selectFrom('build_resource_accounts').select(['id', 'display_name as name', 'upn']).where('id', 'in', ras).execute());
-    }
-    return out;
-  }
-
-  private async buildSections(t: TenantContext, scope: SiteScope | null): Promise<HandoverSectionData[]> {
+  /**
+   * The pack documents what is deployed, not what was asked for. Users, common
+   * area phones and resource accounts come from Design & Build, each planned
+   * against Discovery's live snapshot with the same diff a deployment uses
+   * (planIdentityRows): a row that plans nothing is live and goes in the main
+   * table, with the values Teams actually has. Anything that would still
+   * change - not created, not found, a different number or policy - is listed
+   * under "Designed but Not Yet Live" instead, so the pack never claims what
+   * isn't there. Auto attendants and call queues count as live when Teams has
+   * one by that name. Numbers show who holds them in Teams.
+   */
+  private async buildSections(t: TenantContext, scope: SiteScope | null): Promise<{ sections: HandoverSectionData[]; liveAsOf: string | null }> {
     const scoped = tenantDb(this.db, t.schema);
     const bySite = scope !== null;
     const ids = scope?.ids ?? [];
     const codes = scope?.codes ?? [];
 
-    const [sites, phoneNumbers, users, caps, analogue, autoAttendants, callQueues, resourceAccounts, voicemailGroups, network, noteRows] =
-      await Promise.all([
-        scoped
-          .selectFrom('discovery_sites')
-          .select(['sitecode', 'name', 'address', 'country', 'region', 'overview'])
-          .$if(bySite, (qb) => qb.where('id', 'in', ids))
-          .orderBy('sitecode')
-          .execute(),
+    const [sites, phoneNumbers, analogue, voicemailGroups, network, noteRows, lastSync] = await Promise.all([
+      scoped
+        .selectFrom('discovery_sites')
+        .select(['id', 'sitecode', 'name', 'address', 'country', 'region', 'overview'])
+        .$if(bySite, (qb) => qb.where('id', 'in', ids))
+        .orderBy('sitecode')
+        .execute(),
 
-        scoped
-          .selectFrom('phone_numbers as pn')
-          .leftJoin('discovery_number_ranges as r', 'r.id', 'pn.range_id')
-          .select(['pn.e164 as e164', 'pn.status as status', 'pn.holder_type as holder_type', 'pn.holder_id as holder_id', 'r.sitecode as sitecode', 'r.carrier as carrier'])
-          .where((eb) => eb.or([eb('pn.holder_type', 'is', null), eb('pn.holder_type', '!=', 'analogue')]))
-          .$if(bySite, (qb) => qb.where('r.sitecode', 'in', codes))
-          .orderBy('pn.e164')
-          .execute(),
+      scoped
+        .selectFrom('phone_numbers as pn')
+        .leftJoin('discovery_number_ranges as r', 'r.id', 'pn.range_id')
+        .select(['pn.e164 as e164', 'pn.status as status', 'r.sitecode as sitecode', 'r.carrier as carrier'])
+        .where((eb) => eb.or([eb('pn.holder_type', 'is', null), eb('pn.holder_type', '!=', 'analogue')]))
+        .$if(bySite, (qb) => qb.where('r.sitecode', 'in', codes))
+        .orderBy('pn.e164')
+        .execute(),
 
-        scoped
-          // calling_policy_id points at Data Collection's own calling-policy
-          // list, not tenant_policies - joining the wrong table left this column
-          // blank in every pack.
-          .selectFrom('discovery_users as du')
-          .leftJoin('discovery_calling_policies as cp', 'cp.id', 'du.calling_policy_id')
-          .leftJoin('discovery_sites as ds', 'ds.id', 'du.site_id')
-          .select(['du.id as id', 'du.upn as upn', 'du.display_name as display_name', 'ds.sitecode as sitecode', 'cp.name as policy_name', 'du.caller_id as caller_id', 'du.voicemail_enabled as voicemail_enabled'])
-          .$if(bySite, (qb) => qb.where('ds.id', 'in', ids))
-          .orderBy('du.upn')
-          .execute(),
+      scoped
+        .selectFrom('phone_numbers as pn')
+        .leftJoin('discovery_number_ranges as r', 'r.id', 'pn.range_id')
+        .select(['pn.e164 as e164', 'r.sitecode as sitecode', 'pn.note as note'])
+        .where('pn.holder_type', '=', 'analogue')
+        .$if(bySite, (qb) => qb.where('r.sitecode', 'in', codes))
+        .orderBy('pn.e164')
+        .execute(),
 
-        scoped
-          .selectFrom('discovery_caps as dc')
-          .leftJoin('discovery_calling_policies as cp', 'cp.id', 'dc.calling_policy_id')
-          .leftJoin('discovery_sites as ds', 'ds.id', 'dc.site_id')
-          .select(['dc.id as id', 'dc.display_name as display_name', 'dc.upn as upn', 'dc.device_model as device_model', 'ds.sitecode as sitecode', 'cp.name as policy_name'])
-          .$if(bySite, (qb) => qb.where('ds.id', 'in', ids))
-          .orderBy('dc.display_name')
-          .execute(),
+      // Voicemail groups belong to the tenant, not a site, so a per-site pack still lists them all.
+      scoped
+        .selectFrom('build_m365_groups')
+        .select(['name', 'email', 'members', 'owners'])
+        .where('used_for_voicemail', '=', true)
+        .orderBy('name')
+        .execute(),
 
-        scoped
-          .selectFrom('phone_numbers as pn')
-          .leftJoin('discovery_number_ranges as r', 'r.id', 'pn.range_id')
-          .select(['pn.e164 as e164', 'r.sitecode as sitecode', 'pn.note as note'])
-          .where('pn.holder_type', '=', 'analogue')
-          .$if(bySite, (qb) => qb.where('r.sitecode', 'in', codes))
-          .orderBy('pn.e164')
-          .execute(),
+      scoped
+        .selectFrom('discovery_network as n')
+        .leftJoin('discovery_sites as ds', 'ds.id', 'n.site_id')
+        .select(['ds.sitecode as sitecode', 'n.scope as scope', 'n.subnet as subnet', 'n.mask as mask', 'n.vlan_id as vlan_id', 'n.network_type as network_type', 'n.location as location'])
+        .$if(bySite, (qb) => qb.where('n.site_id', 'in', ids))
+        .orderBy('n.subnet')
+        .execute(),
 
-        scoped
-          .selectFrom('build_auto_attendants as aa')
-          .innerJoin('discovery_sites as ds', 'ds.id', 'aa.site_id')
-          .select(['aa.name as name', 'ds.sitecode as sitecode', 'aa.language_id as language_id', 'aa.language as language', 'aa.time_zone_id as time_zone_id', 'aa.timezone as timezone', 'aa.resource_accounts as resource_accounts'])
-          .$if(bySite, (qb) => qb.where('ds.id', 'in', ids))
-          .orderBy('aa.name')
-          .execute(),
+      // An all-sites note always applies; a site's note only when that site is in the pack.
+      scoped
+        .selectFrom('handover_notes as hn')
+        .leftJoin('discovery_sites as ds', 'ds.id', 'hn.site_id')
+        .select(['hn.section_key as section_key', 'hn.body as body', 'ds.sitecode as sitecode'])
+        .$if(bySite, (qb) => qb.where((eb) => eb.or([eb('hn.site_id', 'is', null), eb('hn.site_id', 'in', ids)])))
+        .execute(),
 
-        scoped
-          .selectFrom('build_call_queues as cq')
-          .innerJoin('discovery_sites as ds', 'ds.id', 'cq.site_id')
-          .select(['cq.name as name', 'ds.sitecode as sitecode', 'cq.routing_method as routing_method', 'cq.agent_alert_time as agent_alert_time', 'cq.agents as agents', 'cq.overflow as overflow', 'cq.timeout as timeout', 'cq.no_agent_action as no_agent_action'])
-          .$if(bySite, (qb) => qb.where('ds.id', 'in', ids))
-          .orderBy('cq.name')
-          .execute(),
+      // How fresh "live" is: the last time Discovery read Teams (a sync, a Validate check or a post-deploy check).
+      scoped
+        .selectFrom('tenant_discovery_runs')
+        .select('finished_at')
+        .where('status', '=', 'completed')
+        .orderBy('finished_at', 'desc')
+        .executeTakeFirst(),
+    ]);
 
-        scoped
-          .selectFrom('build_resource_accounts as ra')
-          .innerJoin('discovery_sites as ds', 'ds.id', 'ra.site_id')
-          .select(['ra.upn as upn', 'ra.display_name as display_name', 'ra.kind as kind', 'ds.sitecode as sitecode', 'ra.phone_number as phone_number'])
-          .$if(bySite, (qb) => qb.where('ds.id', 'in', ids))
-          .orderBy('ra.upn')
-          .execute(),
+    const built = await this.asBuilt(t, sites);
 
-        // Voicemail groups belong to the tenant, not a site, so a per-site pack still lists them all.
-        scoped
-          .selectFrom('build_m365_groups')
-          .select(['name', 'email', 'members', 'owners'])
-          .where('used_for_voicemail', '=', true)
-          .orderBy('name')
-          .execute(),
-
-        scoped
-          .selectFrom('discovery_network as n')
-          .leftJoin('discovery_sites as ds', 'ds.id', 'n.site_id')
-          .select(['ds.sitecode as sitecode', 'n.scope as scope', 'n.subnet as subnet', 'n.mask as mask', 'n.vlan_id as vlan_id', 'n.network_type as network_type', 'n.location as location'])
-          .$if(bySite, (qb) => qb.where('n.site_id', 'in', ids))
-          .orderBy('n.subnet')
-          .execute(),
-
-        // An all-sites note always applies; a site's note only when that site is in the pack.
-        scoped
-          .selectFrom('handover_notes as hn')
-          .leftJoin('discovery_sites as ds', 'ds.id', 'hn.site_id')
-          .select(['hn.section_key as section_key', 'hn.body as body', 'ds.sitecode as sitecode'])
-          .$if(bySite, (qb) => qb.where((eb) => eb.or([eb('hn.site_id', 'is', null), eb('hn.site_id', 'in', ids)])))
-          .execute(),
-      ]);
-
-    // Who holds each number. A claim's holder_id is a Data Collection row or a
-    // Design & Build row, depending on where the number was picked, so both
-    // are looked up. The section used to say just "User".
-    const holderName = await this.holderNames(t, phoneNumbers);
-    const numberOf = new Map<string, string>();
-    for (const p of phoneNumbers) if (p.holder_id) numberOf.set(p.holder_id, p.e164);
+    // Who holds each number in Teams right now.
+    const liveHolders = await scoped
+      .selectFrom('tenant_users')
+      .select(['upn', 'display_name', 'account_type', 'line_uri'])
+      .where('removed_at', 'is', null)
+      .where('line_uri', 'is not', null)
+      .execute();
+    const holderOf = new Map<string, string>();
+    for (const u of liveHolders) {
+      const n = lineUriToNumber(u.line_uri);
+      if (!n) continue;
+      const type = u.account_type === 'ResourceAccount' ? 'Resource account' : 'User';
+      holderOf.set(n, `${u.display_name || u.upn} (${type})`);
+    }
 
     const byKey: Record<string, HandoverSectionContent> = {
       site_information: {
@@ -476,32 +435,24 @@ export class HandoverService {
 
       phone_numbers: {
         kind: 'table',
-        columns: ['Number', 'Status', 'Assigned to', 'Site', 'Carrier'],
+        columns: ['Number', 'Status', 'Assigned to (in Teams)', 'Site', 'Carrier'],
         rows: phoneNumbers.map((p) => {
-          const type = p.holder_type ? (HOLDER_TYPE_LABEL[p.holder_type] ?? p.holder_type) : null;
-          const who = p.holder_id ? holderName.get(p.holder_id) : undefined;
-          return [p.e164, p.status, type ? (who ? `${who} (${type})` : type) : 'Unassigned', p.sitecode ?? '—', p.carrier ?? '—'];
+          const holder = holderOf.get(p.e164);
+          const status = holder ? 'In use' : p.status === 'reserved' ? 'Reserved' : 'Spare';
+          return [p.e164, status, holder ?? '—', p.sitecode ?? '—', p.carrier ?? '—'];
         }),
       },
 
       teams_users: {
         kind: 'table',
-        columns: ['UPN', 'Display name', 'Site', 'Number', 'Calling policy', 'Caller ID', 'Voicemail'],
-        rows: users.map((u) => [
-          u.upn,
-          u.display_name ?? '—',
-          u.sitecode ?? '—',
-          numberOf.get(u.id) ?? '—',
-          u.policy_name ?? '—',
-          u.caller_id ?? '—',
-          u.voicemail_enabled ? 'Enabled' : 'Disabled',
-        ]),
+        columns: ['UPN', 'Display name', 'Site', 'Number', 'Number type', 'Voice routing policy', 'Calling policy', 'Voicemail', 'Last changed by Voxshift'],
+        rows: built.users,
       },
 
       common_area_phones: {
         kind: 'table',
-        columns: ['Display name', 'UPN', 'Number', 'Device model', 'Site', 'Calling policy'],
-        rows: caps.map((c) => [c.display_name, c.upn ?? '—', numberOf.get(c.id) ?? '—', c.device_model ?? '—', c.sitecode ?? '—', c.policy_name ?? '—']),
+        columns: ['Display name', 'UPN', 'Number', 'Device model', 'Site', 'Calling policy', 'IP phone policy', 'Last changed by Voxshift'],
+        rows: built.caps,
       },
 
       analogue_phones: {
@@ -513,40 +464,19 @@ export class HandoverService {
       auto_attendants: {
         kind: 'table',
         columns: ['Name', 'Site', 'Language', 'Time zone', 'Resource accounts'],
-        rows: autoAttendants.map((a) => [
-          a.name,
-          a.sitecode,
-          a.language_id ?? a.language ?? '—',
-          a.time_zone_id ?? a.timezone ?? '—',
-          String(jsonArrayLength(a.resource_accounts)),
-        ]),
+        rows: built.autoAttendants,
       },
 
       call_queues: {
         kind: 'table',
         columns: ['Name', 'Site', 'Routing method', 'Alert time (s)', 'Agents', 'Overflow', 'Timeout', 'No agents'],
-        rows: callQueues.map((q) => [
-          q.name,
-          q.sitecode,
-          q.routing_method,
-          String(q.agent_alert_time),
-          String(jsonArrayLength(q.agents)),
-          targetSummary(q.overflow as { action?: string; threshold?: number; target?: string | null } | null),
-          targetSummary(q.timeout as { action?: string; threshold?: number; target?: string | null } | null),
-          targetSummary(q.no_agent_action as { action?: string; threshold?: number; target?: string | null } | null),
-        ]),
+        rows: built.callQueues,
       },
 
       resource_accounts: {
         kind: 'table',
-        columns: ['UPN', 'Display name', 'Kind', 'Site', 'Phone number'],
-        rows: resourceAccounts.map((r) => [
-          r.upn,
-          r.display_name ?? '—',
-          r.kind === 'auto_attendant' ? 'Auto Attendant' : 'Call Queue',
-          r.sitecode,
-          r.phone_number ?? '—',
-        ]),
+        columns: ['UPN', 'Display name', 'Kind', 'Site', 'Phone number', 'Voice routing policy', 'Last changed by Voxshift'],
+        rows: built.resourceAccounts,
       },
 
       voicemail_groups: {
@@ -568,6 +498,10 @@ export class HandoverService {
           n.location ?? '—',
         ]),
       },
+
+      not_yet_live: built.notLive.length
+        ? { kind: 'table', columns: ['Item', 'Type', 'Site', 'What differs from the design'], rows: built.notLive }
+        : { kind: 'placeholder', note: 'Everything designed in Design & Build for these sites is live in Teams.' },
     };
 
     // The four sections with no structured source are written by hand as notes.
@@ -576,10 +510,206 @@ export class HandoverService {
       byKey[key] = noteSectionContent(key, notes);
     }
 
-    return HANDOVER_SECTIONS.map((s) => ({
-      key: s.key,
-      title: s.title,
-      content: byKey[s.key] ?? { kind: 'placeholder', note: 'No data available for this section.' },
-    }));
+    return {
+      sections: HANDOVER_SECTIONS.map((s) => ({
+        key: s.key,
+        title: s.title,
+        content: byKey[s.key] ?? { kind: 'placeholder', note: 'No data available for this section.' },
+      })),
+      liveAsOf: lastSync?.finished_at ? new Date(lastSync.finished_at).toISOString() : null,
+    };
+  }
+
+  /** Design & Build rows split into what's live (table rows, live values) and what isn't (with why). */
+  private async asBuilt(t: TenantContext, sites: { id: string; sitecode: string }[]) {
+    const s = tenantDb(this.db, t.schema);
+    const users: string[][] = [];
+    const caps: string[][] = [];
+    const resourceAccounts: string[][] = [];
+    const autoAttendants: string[][] = [];
+    const callQueues: string[][] = [];
+    const notLive: string[][] = [];
+    if (sites.length === 0) return { users, caps, resourceAccounts, autoAttendants, callQueues, notLive };
+    const siteIds = sites.map((x) => x.id);
+    const codeOf = new Map(sites.map((x) => [x.id, x.sitecode]));
+
+    const [userRows, capRows, raRows, aaRows, cqRows, liveNames, capDetails] = await Promise.all([
+      s.selectFrom('build_users').select(['id', 'site_id', 'upn', 'number_type', 'revoke_ev', 'voicemail']).where('site_id', 'in', siteIds).where('hidden', '=', false).orderBy('upn').execute(),
+      s.selectFrom('build_caps').select(['id', 'site_id', 'upn', 'number_type', 'revoke_ev', 'discovery_cap_id']).where('site_id', 'in', siteIds).where('hidden', '=', false).orderBy('upn').execute(),
+      s.selectFrom('build_resource_accounts').select(['id', 'site_id', 'upn', 'display_name', 'kind', 'application_id']).where('site_id', 'in', siteIds).orderBy('display_name').execute(),
+      s.selectFrom('build_auto_attendants').select(['name', 'site_id', 'language_id', 'language', 'time_zone_id', 'timezone', 'resource_accounts']).where('site_id', 'in', siteIds).orderBy('name').execute(),
+      s.selectFrom('build_call_queues').select(['name', 'site_id', 'routing_method', 'agent_alert_time', 'agents', 'overflow', 'timeout', 'no_agent_action']).where('site_id', 'in', siteIds).orderBy('name').execute(),
+      s.selectFrom('tenant_objects').select(['object_type', 'display_name']).where('object_type', 'in', ['auto_attendant', 'call_queue']).where('removed_at', 'is', null).execute(),
+      s.selectFrom('discovery_caps').select(['id', 'display_name', 'device_model']).where('site_id', 'in', siteIds).execute(),
+    ]);
+
+    // Plan every row against live, per site (the helper is site-scoped).
+    const planned = new Map<string, PlannedIdentityRow>();
+    for (const siteId of siteIds) {
+      for (const p of [
+        ...(await planIdentityRows(s, 'build_users', 'user', siteId)),
+        ...(await planIdentityRows(s, 'build_caps', 'cap', siteId)),
+        ...(await planResourceAccountRows(s, siteId)),
+      ]) {
+        planned.set(p.id, p);
+      }
+    }
+
+    const upns = [...userRows, ...capRows, ...raRows].map((r) => r.upn.toLowerCase()).filter(Boolean);
+    const displayNames = new Map(
+      (upns.length
+        ? await s.selectFrom('tenant_users').select(['upn', 'display_name']).where(sql`lower(upn)`, 'in', upns).where('removed_at', 'is', null).execute()
+        : []
+      ).map((u) => [u.upn.toLowerCase(), u.display_name]),
+    );
+
+    // When Voxshift last changed each row live.
+    const rowIds = [...userRows, ...capRows, ...raRows].map((r) => r.id);
+    const lastChanged = new Map(
+      (rowIds.length
+        ? await s
+            .selectFrom('deployment_changes as dc')
+            .innerJoin('deployments as d', 'd.id', 'dc.deployment_id')
+            .select(['dc.object_id as object_id', (eb) => eb.fn.max('dc.at').as('at')])
+            .where('d.mode', '=', 'execute')
+            .where('dc.result', '=', 'applied')
+            .where('dc.object_id', 'in', rowIds)
+            .groupBy('dc.object_id')
+            .execute()
+        : []
+      ).map((r) => [r.object_id as string, r.at ? new Date(r.at as string).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : null]),
+    );
+    const changedText = (id: string) => lastChanged.get(id) ?? 'Already in place';
+
+    // A row is live when the deployment diff has nothing left to do. Voicemail
+    // is only known for accounts a targeted check has read, so "unknown" isn't
+    // counted as a difference - it's shown as the designed value, unchecked.
+    const differencesOf = (p: PlannedIdentityRow | undefined): string[] => {
+      if (!p) return ['Not planned'];
+      if (!p.live) return ['Not found in Teams'];
+      const live = p.live;
+      const calls = p.calls.filter((c) => !(c.cmdlet === 'Set-CsOnlineVoicemailUserSettings' && live.voicemailEnabled === undefined));
+      return verificationRowDifferences(calls, live);
+    };
+    const policy = (live: LiveIdentityState, type: string) => live.policies?.[type] || 'Global';
+    const number = (live: LiveIdentityState) => lineUriToNumber(live.lineUri) ?? '—';
+
+    for (const r of userRows) {
+      const p = planned.get(r.id);
+      const diffs = differencesOf(p);
+      if (r.revoke_ev) {
+        // A removal: done means Teams calling is off, so the person isn't listed as a Teams Phone user.
+        if (diffs.length) notLive.push([r.upn, 'User (remove calling)', codeOf.get(r.site_id) ?? '—', 'Teams calling still to be removed']);
+        continue;
+      }
+      if (diffs.length) {
+        notLive.push([r.upn, 'User', codeOf.get(r.site_id) ?? '—', diffs.join('; ')]);
+        continue;
+      }
+      const live = p!.live!;
+      const vm = r.voicemail as { enabled?: boolean | null; language?: string | null } | null;
+      const voicemail =
+        live.voicemailEnabled === undefined
+          ? vm?.enabled == null
+            ? '—'
+            : `${vm.enabled ? 'On' : 'Off'} (designed, not checked live)`
+          : live.voicemailEnabled
+            ? `On${live.voicemailPromptLanguage ? ` (${live.voicemailPromptLanguage})` : ''}`
+            : 'Off';
+      users.push([
+        r.upn,
+        displayNames.get(r.upn.toLowerCase()) ?? '—',
+        codeOf.get(r.site_id) ?? '—',
+        number(live),
+        r.number_type ?? '—',
+        policy(live, 'OnlineVoiceRoutingPolicy'),
+        policy(live, 'TeamsCallingPolicy'),
+        voicemail,
+        changedText(r.id),
+      ]);
+    }
+
+    const capInfo = new Map(capDetails.map((c) => [c.id, c]));
+    for (const r of capRows) {
+      const p = planned.get(r.id);
+      const diffs = differencesOf(p);
+      if (r.revoke_ev) {
+        if (diffs.length) notLive.push([r.upn, 'Common area phone (remove calling)', codeOf.get(r.site_id) ?? '—', 'Teams calling still to be removed']);
+        continue;
+      }
+      if (diffs.length) {
+        notLive.push([r.upn, 'Common area phone', codeOf.get(r.site_id) ?? '—', diffs.join('; ')]);
+        continue;
+      }
+      const live = p!.live!;
+      const info = r.discovery_cap_id ? capInfo.get(r.discovery_cap_id) : undefined;
+      caps.push([
+        info?.display_name ?? displayNames.get(r.upn.toLowerCase()) ?? r.upn,
+        r.upn,
+        number(live),
+        info?.device_model ?? '—',
+        codeOf.get(r.site_id) ?? '—',
+        policy(live, 'TeamsCallingPolicy'),
+        policy(live, 'TeamsIPPhonePolicy'),
+        changedText(r.id),
+      ]);
+    }
+
+    for (const r of raRows) {
+      const p = planned.get(r.id);
+      const diffs = !r.application_id || !r.upn ? ['Not created yet'] : differencesOf(p);
+      const kind = r.kind === 'auto_attendant' ? 'Auto Attendant' : 'Call Queue';
+      if (diffs.length) {
+        notLive.push([r.upn || r.display_name || '—', `Resource account (${kind})`, codeOf.get(r.site_id) ?? '—', diffs.join('; ')]);
+        continue;
+      }
+      const live = p!.live!;
+      resourceAccounts.push([
+        r.upn,
+        r.display_name ?? '—',
+        kind,
+        codeOf.get(r.site_id) ?? '—',
+        number(live),
+        policy(live, 'OnlineVoiceRoutingPolicy'),
+        changedText(r.id),
+      ]);
+    }
+
+    const liveAa = new Set(liveNames.filter((o) => o.object_type === 'auto_attendant').map((o) => (o.display_name ?? '').toLowerCase()));
+    const liveCq = new Set(liveNames.filter((o) => o.object_type === 'call_queue').map((o) => (o.display_name ?? '').toLowerCase()));
+    for (const a of aaRows) {
+      if (!liveAa.has(a.name.toLowerCase())) {
+        notLive.push([a.name, 'Auto attendant', codeOf.get(a.site_id) ?? '—', 'Not found in Teams']);
+        continue;
+      }
+      autoAttendants.push([
+        a.name,
+        codeOf.get(a.site_id) ?? '—',
+        a.language_id ?? a.language ?? '—',
+        a.time_zone_id ?? a.timezone ?? '—',
+        String(jsonArrayLength(a.resource_accounts)),
+      ]);
+    }
+    for (const q of cqRows) {
+      if (!liveCq.has(q.name.toLowerCase())) {
+        notLive.push([q.name, 'Call queue', codeOf.get(q.site_id) ?? '—', 'Not found in Teams']);
+        continue;
+      }
+      // Agent names, not just a count - the customer needs to know who answers.
+      const agents = Array.isArray(q.agents) ? (q.agents as string[]) : [];
+      const agentText = agents.length ? `${agents.slice(0, 10).join(', ')}${agents.length > 10 ? ` and ${agents.length - 10} more` : ''}` : 'None';
+      callQueues.push([
+        q.name,
+        codeOf.get(q.site_id) ?? '—',
+        q.routing_method,
+        String(q.agent_alert_time),
+        agentText,
+        targetSummary(q.overflow as { action?: string; threshold?: number; target?: string | null } | null),
+        targetSummary(q.timeout as { action?: string; threshold?: number; target?: string | null } | null),
+        targetSummary(q.no_agent_action as { action?: string; threshold?: number; target?: string | null } | null),
+      ]);
+    }
+
+    return { users, caps, resourceAccounts, autoAttendants, callQueues, notLive };
   }
 }
