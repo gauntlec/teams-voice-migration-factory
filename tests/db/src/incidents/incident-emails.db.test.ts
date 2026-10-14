@@ -6,18 +6,15 @@ import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { platformDb } from '@tvmf/db';
 import { createIncidentSchema, type CreateIncidentInput } from '@tvmf/shared';
-import { AuditService } from '../../../../apps/api/src/common/audit.service';
-import type { AppConfig } from '../../../../apps/api/src/common/config';
-import type { EnqueueMailInput, MailService } from '../../../../apps/api/src/mail/mail.service';
-import { FilesService } from '../../../../apps/api/src/modules/files/files.service';
-import { IncidentNotifier } from '../../../../apps/api/src/modules/incidents/incident-notifier';
+import type { EnqueueMailInput } from '../../../../apps/api/src/mail/mail.service';
 import { signIncidentLink, verifyIncidentLink } from '../../../../apps/api/src/modules/incidents/incident-links';
-import { IncidentResponseService } from '../../../../apps/api/src/modules/incidents/incident-response.service';
-import { IncidentsService } from '../../../../apps/api/src/modules/incidents/incidents.service';
+import type { IncidentResponseService } from '../../../../apps/api/src/modules/incidents/incident-response.service';
+import type { IncidentsService } from '../../../../apps/api/src/modules/incidents/incidents.service';
+import { TEST_SECRET, incidentServices } from './services';
 import { seedCustomer, seedSite, seedUser, useDb, type TestCustomer } from '../helpers';
 
 const handle = useDb();
-const SECRET = 'incident-secret-for-tests-0123456789';
+const SECRET = TEST_SECRET;
 let c: TestCustomer;
 let svc: IncidentsService;
 let response: IncidentResponseService;
@@ -67,10 +64,8 @@ beforeAll(async () => {
       sent.push(i);
       return { id: 'm' };
     },
-  } as unknown as MailService;
-  const cfg = { WEB_ORIGIN: 'https://app.test/', JWT_REFRESH_SECRET: SECRET } as AppConfig;
-  svc = new IncidentsService(handle.db, new AuditService(handle.db), new FilesService(handle.db, { write: async () => {}, read: async () => Buffer.alloc(0), delete: async () => {}, exists: async () => true }), new IncidentNotifier(handle.db, mail, cfg));
-  response = new IncidentResponseService(handle.db, cfg, svc);
+  };
+  ({ svc, response } = incidentServices(handle, mail));
 });
 
 beforeEach(() => {

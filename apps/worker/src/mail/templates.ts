@@ -8,7 +8,9 @@ import {
   type EmailTemplate,
   type IncidentActivityContext,
   type IncidentCreatedContext,
+  type IncidentMajorContext,
   type IncidentMessageContext,
+  type IncidentReviewContext,
   type IncidentResolvedContext,
   type IncidentStatusChangedContext,
   type FeatureRequestStatusChangedContext,
@@ -75,6 +77,10 @@ export function renderEmail(template: string, context: Record<string, unknown>, 
       return incidentResolved(context as unknown as IncidentResolvedContext, branding);
     case 'incident_activity':
       return incidentActivity(context as unknown as IncidentActivityContext, branding);
+    case 'incident_major':
+      return incidentMajor(context as unknown as IncidentMajorContext, branding);
+    case 'incident_review':
+      return incidentReview(context as unknown as IncidentReviewContext, branding);
     default:
       throw new Error(`unknown email template: ${template}`);
   }
@@ -565,15 +571,66 @@ function incidentActivity(c: IncidentActivityContext, branding?: EmailBranding):
     confirmed: { subject: `${c.reference} confirmed fixed`, lead: `${who} confirmed the fix, so the incident is closed.` },
     sla_warning: { subject: `${c.reference} is about to miss a target`, lead: 'This incident is close to missing a target:' },
     sla_breached: { subject: `${c.reference} has missed a target`, lead: 'This incident has missed a target:' },
+    update_due: { subject: `${c.reference}: customer update due`, lead: 'The next customer update on this major incident is due now. Post it from the incident page:' },
+    update_overdue: { subject: `${c.reference}: customer update is late`, lead: 'The customer update on this major incident is late, and the comms owner has not posted it:' },
+    major_assigned: { subject: `${c.reference}: you are on a major incident`, lead: `${who} made you ${c.body ?? 'part of the response'} on this major incident.` },
   };
   const w = what[c.kind];
   const layout: LayoutInput = {
     previewText: w.lead,
     eyebrow: `Incident · ${c.customerName}`,
     heading: `${c.reference} — ${c.title}`,
-    intro: [`${c.priorityLabel} · ${c.categoryLabel}`, w.lead, ...(c.body ? [c.body] : [])],
+    intro: [`${c.priorityLabel} · ${c.categoryLabel}`, w.lead, ...(c.body && c.kind !== 'major_assigned' ? [c.body] : [])],
     cta: { label: 'Open the incident', url: c.runUrl },
     outro: ["You are receiving this because you work on this customer's incidents."],
   };
   return { subject: w.subject, html: renderHtml(layout, branding), text: renderText(layout) };
+}
+
+/** A major incident: to the customer side as it is declared, updated and resolved; to the team when it is declared. */
+function incidentMajor(c: IncidentMajorContext, branding?: EmailBranding): RenderedEmail {
+  const team = c.audience === 'team';
+  const lead: Record<IncidentMajorContext['kind'], { subject: string; eyebrow: string; text: string }> = {
+    declared: {
+      subject: team ? `MAJOR INCIDENT ${c.reference} — ${c.customerName}` : `We're aware of a problem: ${c.reference} — ${c.title}`,
+      eyebrow: 'Major incident',
+      text: team ? `${c.lead} has declared this a major incident and is leading the response.` : "We're aware of a serious problem and have a team working on it.",
+    },
+    update: { subject: `Update on ${c.reference} — ${c.title}`, eyebrow: 'Major incident update', text: 'Here is the latest on the problem we are working on:' },
+    resolved: { subject: `Resolved: ${c.reference} — ${c.title}`, eyebrow: 'Major incident resolved', text: 'The problem is resolved. Thank you for your patience.' },
+  };
+  const l = lead[c.kind];
+  const layout: LayoutInput = {
+    previewText: c.body.slice(0, 120),
+    eyebrow: `${l.eyebrow}${team ? ` · ${c.customerName}` : ''}`,
+    heading: `${c.reference} — ${c.title}`,
+    intro: [
+      l.text,
+      ...(c.siteLabel ? [`Site: ${c.siteLabel}`] : ['Affects: all sites']),
+      ...(team ? [`Priority: ${c.priorityLabel}`] : []),
+      c.body,
+      ...(c.nextUpdateText ? [c.nextUpdateText] : []),
+    ],
+    cta: { label: team ? 'Open the incident' : 'View the incident', url: c.runUrl },
+    outro: [team ? "You are receiving this because you work on this customer's incidents." : 'You are receiving this because you raised, follow, or are a named contact for incidents on this service.'],
+  };
+  return { subject: l.subject, html: renderHtml(layout, branding), text: renderText(layout) };
+}
+
+/** A post-incident review shared with the customer. */
+function incidentReview(c: IncidentReviewContext, branding?: EmailBranding): RenderedEmail {
+  const layout: LayoutInput = {
+    previewText: `The review of ${c.reference} is ready.`,
+    eyebrow: 'Post-incident review',
+    heading: `${c.reference} — ${c.title}`,
+    intro: [
+      'We have reviewed what happened and what we are doing about it.',
+      ...(c.summary ? [`What happened: ${c.summary}`] : []),
+      ...(c.cause ? [`Why it happened: ${c.cause}`] : []),
+      ...(c.actions.length ? ['What we are doing about it:', ...c.actions.map((a) => `• ${a.text}${a.owner ? ` (${a.owner}` : ''}${a.due ? `${a.owner ? ', ' : ' ('}by ${a.due}` : ''}${a.owner || a.due ? ')' : ''}`)] : []),
+    ],
+    cta: { label: 'Read the full review', url: c.runUrl },
+    outro: ['You are receiving this because you raised, follow, or are a named contact for incidents on this service.'],
+  };
+  return { subject: `Review: ${c.reference} — ${c.title}`, html: renderHtml(layout, branding), text: renderText(layout) };
 }

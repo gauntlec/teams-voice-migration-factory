@@ -2,7 +2,7 @@
 // the customer side and for the team, and never put HTML from a customer's text
 // into the page.
 import { describe, expect, it } from 'vitest';
-import type { IncidentActivityContext, IncidentCreatedContext, IncidentMessageContext, IncidentResolvedContext, IncidentStatusChangedContext } from '@tvmf/shared';
+import type { IncidentActivityContext, IncidentCreatedContext, IncidentMajorContext, IncidentMessageContext, IncidentResolvedContext, IncidentReviewContext, IncidentStatusChangedContext } from '@tvmf/shared';
 import { renderEmail } from '../../../../apps/worker/src/mail/templates';
 
 const base = { customerName: 'Contoso', reference: 'INC-0042', title: 'No audio on inbound calls', runUrl: 'https://app.test/incidents/abc' };
@@ -54,14 +54,15 @@ describe('incident emails', () => {
   });
 
   it('tell the team what happened and why they are being told', () => {
-    const kinds: IncidentActivityContext['kind'][] = ['comment', 'replied', 'internal_note', 'assigned', 'reopened', 'cancelled', 'confirmed', 'sla_warning', 'sla_breached'];
+    const kinds: IncidentActivityContext['kind'][] = ['comment', 'replied', 'internal_note', 'assigned', 'reopened', 'cancelled', 'confirmed', 'sla_warning', 'sla_breached', 'update_due', 'update_overdue', 'major_assigned'];
     const subjects = kinds.map((kind) => {
       const r = renderEmail('incident_activity', { ...base, categoryLabel: 'Call quality', priorityLabel: 'P1 Critical', kind, author: 'Cara', body: 'Still no audio' } as never);
       expect(r.text).toContain('P1 Critical · Call quality');
       return r.subject;
     });
     expect(new Set(subjects).size).toBe(kinds.length);
-    expect(subjects.at(-1)).toBe('INC-0042 has missed a target');
+    expect(subjects.at(-1)).toBe('INC-0042: you are on a major incident');
+    expect(subjects).toContain('INC-0042 has missed a target');
   });
 
   it("never lets a customer's text become HTML", () => {
@@ -69,5 +70,42 @@ describe('incident emails', () => {
     expect(r.html).not.toContain('<script>');
     expect(r.html).toContain('&lt;script&gt;');
     expect(r.html).not.toContain('<b>Mallory</b>');
+  });
+});
+
+describe('major incident and review emails', () => {
+  const major: IncidentMajorContext = { ...base, audience: 'customer', kind: 'declared', priorityLabel: 'critical', siteLabel: 'RDG01 — Reading', lead: 'Lee Lead', body: 'Calls at Reading are failing; we are checking the SBC.', nextUpdateText: "We'll update you again by 14:30 UTC.", customerName: 'Contoso' };
+
+  it('tell the customer we know, then update them, then say it is over', () => {
+    const declared = renderEmail('incident_major', major as never);
+    expect(declared.subject).toBe("We're aware of a problem: INC-0042 — No audio on inbound calls");
+    expect(declared.text).toContain('Site: RDG01 — Reading');
+    expect(declared.text).toContain("We'll update you again by 14:30 UTC.");
+    expect(declared.text).not.toContain('Priority:');
+    const update = renderEmail('incident_major', { ...major, kind: 'update', body: 'Carrier engaged.' } as never);
+    expect(update.subject).toBe('Update on INC-0042 — No audio on inbound calls');
+    const done = renderEmail('incident_major', { ...major, kind: 'resolved', body: 'Trunk restored.', nextUpdateText: null } as never);
+    expect(done.subject).toBe('Resolved: INC-0042 — No audio on inbound calls');
+    expect(done.text).not.toContain("We'll update you again");
+    expect(done.text).toContain('Trunk restored.');
+  });
+
+  it('tell the team who is leading, and say "all sites" for a customer-wide one', () => {
+    const team = renderEmail('incident_major', { ...major, audience: 'team', siteLabel: null } as never);
+    expect(team.subject).toBe('MAJOR INCIDENT INC-0042 — Contoso');
+    expect(team.text).toContain('Lee Lead has declared this a major incident');
+    expect(team.text).toContain('Affects: all sites');
+    expect(team.text).toContain('Priority: critical');
+  });
+
+  it('summarise a shared review with its actions', () => {
+    const c: IncidentReviewContext = { ...base, summary: 'Calls failed for 90 minutes.', cause: 'The certificate expired.', actions: [{ text: 'Renew 30 days early', owner: 'Ed', due: '2026-11-01' }, { text: 'Alert on expiry' }] };
+    const r = renderEmail('incident_review', c as never);
+    expect(r.subject).toBe('Review: INC-0042 — No audio on inbound calls');
+    expect(r.text).toContain('What happened: Calls failed for 90 minutes.');
+    expect(r.text).toContain('Why it happened: The certificate expired.');
+    expect(r.text).toContain('• Renew 30 days early (Ed, by 2026-11-01)');
+    expect(r.text).toContain('• Alert on expiry');
+    expect(r.html).toContain(base.runUrl);
   });
 });

@@ -4,14 +4,10 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { platformDb } from '@tvmf/db';
 import { createIncidentSchema, type CreateIncidentInput } from '@tvmf/shared';
-import { AuditService } from '../../../../apps/api/src/common/audit.service';
-import type { AppConfig } from '../../../../apps/api/src/common/config';
-import type { MailService } from '../../../../apps/api/src/mail/mail.service';
-import { FilesService } from '../../../../apps/api/src/modules/files/files.service';
-import { IncidentNotifier } from '../../../../apps/api/src/modules/incidents/incident-notifier';
-import { IncidentsService } from '../../../../apps/api/src/modules/incidents/incidents.service';
+import type { IncidentsService } from '../../../../apps/api/src/modules/incidents/incidents.service';
 import { sweepIncidents } from '../../../../apps/worker/src/incidents';
 import { seedCustomer, seedSite, seedUser, useDb, type TestCustomer } from '../helpers';
+import { incidentServices } from './services';
 
 const handle = useDb();
 let c: TestCustomer;
@@ -61,8 +57,7 @@ beforeAll(async () => {
     .execute();
   siteId = (await seedSite(c.s, { sitecode: 'RDG01' })).id;
   await c.s.updateTable('discovery_sites').set({ mode: 'operations' } as never).where('id', '=', siteId).execute();
-  const mail = { enqueue: async () => ({ id: 'm' }) } as unknown as MailService; // the API's own mail isn't under test here
-  svc = new IncidentsService(handle.db, new AuditService(handle.db), new FilesService(handle.db, { write: async () => {}, read: async () => Buffer.alloc(0), delete: async () => {}, exists: async () => true }), new IncidentNotifier(handle.db, mail, { WEB_ORIGIN: 'https://app.test', JWT_REFRESH_SECRET: 'x'.repeat(32) } as AppConfig));
+  svc = incidentServices(handle).svc; // the API's own mail isn't under test here
 });
 
 beforeEach(() => {

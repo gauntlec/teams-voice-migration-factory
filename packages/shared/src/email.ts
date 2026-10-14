@@ -23,6 +23,8 @@ export const EMAIL_TEMPLATES = [
   'incident_message',
   'incident_resolved',
   'incident_activity',
+  'incident_major',
+  'incident_review',
 ] as const;
 export type EmailTemplate = (typeof EMAIL_TEMPLATES)[number];
 
@@ -329,9 +331,44 @@ export interface IncidentActivityContext {
     | 'cancelled' // the customer cancelled it
     | 'confirmed' // the customer confirmed it is fixed
     | 'sla_warning' // a target is about to be missed
-    | 'sla_breached'; // ... or has been
+    | 'sla_breached' // ... or has been
+    | 'update_due' // a major incident's customer update is due (to the comms owner)
+    | 'update_overdue' // ... and is late (to the lead and the team)
+    | 'major_assigned'; // you are the lead or comms owner of a major incident
   author: string | null;
   body: string | null;
+  runUrl: string;
+}
+
+/**
+ * `incident_major`: a major incident - declared, updated, or over. To the customer side
+ * (the reporter, followers, the customer's stakeholders and the reporters of its child
+ * incidents); the team is told when it is declared.
+ */
+export interface IncidentMajorContext {
+  audience: 'customer' | 'team';
+  customerName: string;
+  reference: string;
+  title: string;
+  kind: 'declared' | 'update' | 'resolved';
+  priorityLabel: string;
+  siteLabel: string | null;
+  lead: string;
+  /** The update itself (or, when it is over, what fixed it). */
+  body: string;
+  /** "We'll update you again by 15:30." Null when it is over. */
+  nextUpdateText: string | null;
+  runUrl: string;
+}
+
+/** `incident_review`: a post-incident review was shared with the customer. */
+export interface IncidentReviewContext {
+  customerName: string;
+  reference: string;
+  title: string;
+  summary: string;
+  cause: string;
+  actions: { text: string; owner?: string; due?: string }[];
   runUrl: string;
 }
 

@@ -2,6 +2,7 @@ import { sql, type Kysely } from 'kysely';
 import { platformDb, tenantDb, type DB } from '@tvmf/db';
 import {
   INC_AUTOCLOSE_DAYS,
+  INC_MAJOR_ESCALATE_AFTER_MINUTES,
   INC_PRIORITY_LABELS,
   INC_WAITING_MAX_REMINDERS,
   INC_WAITING_REMINDER_DAYS,
@@ -25,12 +26,14 @@ type Person = { id: string; email: string; display_name: string };
  * - Targets: email the team once when a response, restoration or resolution
  *   target is at risk and once when it is missed - to the assignee, or the whole
  *   team when nobody has it. Held incidents (paused clocks) are skipped.
+ * - Major incidents: when a customer update is due, remind the comms owner; if it is
+ *   INC_MAJOR_ESCALATE_AFTER_MINUTES late, tell the lead and the whole team.
  * - Auto-close: a Resolved incident with no reply for INC_AUTOCLOSE_DAYS closes
  *   by itself, and the reporter and followers are told.
  * Every action claims the row first (compare-and-set), so two workers never both act.
  * `opts.tenantId` limits it to one customer (tests).
  */
-export async function sweepIncidents(db: Kysely<DB>, enqueueMail: MailEnqueuer, opts: { tenantId?: string } = {}): Promise<{ reminders: number; targetEmails: number; closed: number }> {
+export async function sweepIncidents(db: Kysely<DB>, enqueueMail: MailEnqueuer, opts: { tenantId?: string } = {}): Promise<{ reminders: number; targetEmails: number; closed: number; majorReminders: number }> {
   const webOrigin = (process.env.WEB_ORIGIN ?? '').replace(/\/+$/, '');
   let q = platformDb(db)
     .selectFrom('tenants')
@@ -39,21 +42,22 @@ export async function sweepIncidents(db: Kysely<DB>, enqueueMail: MailEnqueuer, 
     .where('status', '=', 'active');
   if (opts.tenantId) q = q.where('id', '=', opts.tenantId);
   const tenants = await q.execute();
-  const total = { reminders: 0, targetEmails: 0, closed: 0 };
+  const total = { reminders: 0, targetEmails: 0, closed: 0, majorReminders: 0 };
   for (const tenant of tenants) {
     try {
       const ctx = { db, enqueueMail, tenant, webOrigin };
       total.reminders += await remindWaiting(ctx);
       total.targetEmails += await sweepTargets(ctx);
       total.closed += await autoClose(ctx);
+      total.majorReminders += await remindMajorUpdates(ctx);
     } catch (e) {
       // eslint-disable-next-line no-console
       console.warn(`[incidents] sweep failed for ${tenant.schema_name}: ${(e as Error).message}`);
     }
   }
-  if (total.reminders || total.targetEmails || total.closed) {
+  if (total.reminders || total.targetEmails || total.closed || total.majorReminders) {
     // eslint-disable-next-line no-console
-    console.log(`incident sweep: ${total.reminders} reminder(s), ${total.targetEmails} target email(s), ${total.closed} auto-closed`);
+    console.log(`incident sweep: ${total.reminders} reminder(s), ${total.targetEmails} target email(s), ${total.closed} auto-closed, ${total.majorReminders} major update reminder(s)`);
   }
   return total;
 }
@@ -264,4 +268,60 @@ async function autoClose(c: Ctx): Promise<number> {
     closed++;
   }
   return closed;
+}
+
+/**
+ * A live major incident whose customer update is due: the comms owner is reminded once; if it is still
+ * not posted INC_MAJOR_ESCALATE_AFTER_MINUTES later, the lead and the whole team are told once.
+ * Posting an update (or changing the cadence) sets a new due time, which starts the cycle again.
+ */
+async function remindMajorUpdates(c: Ctx): Promise<number> {
+  const s = tenantDb(c.db, c.tenant.schema_name);
+  const now = Date.now();
+  const due = await s
+    .selectFrom('incidents')
+    .select(['id', 'number', 'title', 'category', 'subcategory', 'priority', 'lead_id', 'comms_id', 'next_update_due_at', 'update_reminded_at', 'update_escalated_at'])
+    .where('major', '=', true)
+    .where('major_ended_at', 'is', null)
+    .where('status', 'in', ['new', 'in_progress', 'on_hold', 'restored'])
+    .where('next_update_due_at', '<=', new Date(now).toISOString())
+    .execute();
+  let sent = 0;
+  let team: Person[] | null = null;
+  for (const r of due) {
+    const dueAt = new Date(r.next_update_due_at!).getTime();
+    const mark = new Date(now).toISOString();
+    const context = (kind: 'update_due' | 'update_overdue', minutesLate: number): IncidentActivityContext => ({
+      customerName: c.tenant.name,
+      reference: incReference(r.number),
+      title: r.title,
+      categoryLabel: incCategoryLabel(r.category, r.subcategory),
+      priorityLabel: INC_PRIORITY_LABELS[r.priority],
+      kind,
+      author: null,
+      body: kind === 'update_due' ? 'The customer is waiting for the next update.' : `The update was due ${minutesLate} minutes ago.`,
+      runUrl: link(c, r.id),
+    });
+    // Claim each step first (the due time must still be the one we read), so two workers never both send.
+    if (!r.update_reminded_at || new Date(r.update_reminded_at).getTime() < dueAt) {
+      const claimed = await s.updateTable('incidents').set({ update_reminded_at: mark }).where('id', '=', r.id).where('next_update_due_at', '=', r.next_update_due_at!).returning('id').executeTakeFirst();
+      if (claimed) {
+        team ??= await teamOf(c);
+        const to = team.filter((m) => m.id === r.comms_id);
+        await send(c, 'incident_activity', to, context('update_due', 0), r.id);
+        sent += to.length;
+      }
+    }
+    if (now >= dueAt + INC_MAJOR_ESCALATE_AFTER_MINUTES * 60_000 && (!r.update_escalated_at || new Date(r.update_escalated_at).getTime() < dueAt)) {
+      const claimed = await s.updateTable('incidents').set({ update_escalated_at: mark }).where('id', '=', r.id).where('next_update_due_at', '=', r.next_update_due_at!).returning('id').executeTakeFirst();
+      if (claimed) {
+        team ??= await teamOf(c);
+        // The lead first, then everyone else on the team: this one is late.
+        const to = team;
+        await send(c, 'incident_activity', to, context('update_overdue', Math.round((now - dueAt) / 60_000)), r.id);
+        sent += to.length;
+      }
+    }
+  }
+  return sent;
 }

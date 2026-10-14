@@ -16,6 +16,9 @@ import {
   type IncSettings,
   type IncidentActivityContext,
   type IncidentCreatedContext,
+  type IncidentMajorContext,
+  type IncidentReviewContext,
+  type IncReviewAction,
   type IncidentMessageContext,
   type IncidentResolvedContext,
   type IncidentStatusChangedContext,
@@ -225,5 +228,74 @@ export class IncidentNotifier {
     };
     const to = (await this.staff(t)).filter((m) => m.id === assigneeId);
     await this.send(t, 'incident_activity', to, ctx, row.id, actor.id);
+  }
+
+  /* ------------------------------ major incidents ------------------------------ */
+
+  /**
+   * Everyone on the customer side of a major incident: the reporter and followers, the
+   * customer's named stakeholders, and the reporters of its child incidents. Each once.
+   */
+  async majorAudience(t: TenantContext, row: NotifiableIncident): Promise<{ id: string; email: string; display_name: string }[]> {
+    const s = tenantDb(this.db, t.schema);
+    const [watchers, children, settings] = await Promise.all([
+      s.selectFrom('incident_watchers').select('user_id').where('incident_id', '=', row.id).execute(),
+      s.selectFrom('incidents').select('reporter_id').where('parent_id', '=', row.id).execute(),
+      platformDb(this.db).selectFrom('tenants').select('inc_settings').where('id', '=', t.id).executeTakeFirst(),
+    ]);
+    const stakeholders = ((settings?.inc_settings ?? {}) as IncSettings).stakeholders ?? [];
+    const ids = [...new Set([row.reporter_id, ...watchers.map((w) => w.user_id), ...children.map((c) => c.reporter_id), ...stakeholders])];
+    return platformDb(this.db).selectFrom('users').select(['id', 'email', 'display_name']).where('id', 'in', ids).where('status', '=', 'active').execute();
+  }
+
+  private majorContext(t: TenantContext, row: NotifiableIncident, c: { kind: IncidentMajorContext['kind']; audience: IncidentMajorContext['audience']; siteLabel: string | null; lead: string; body: string; nextUpdateAt: Date | null }): IncidentMajorContext {
+    return {
+      audience: c.audience,
+      customerName: t.name,
+      reference: incReference(row.number),
+      title: row.title,
+      kind: c.kind,
+      priorityLabel: c.audience === 'team' ? INC_PRIORITY_LABELS[row.priority] : INC_PRIORITY_CUSTOMER_TEXT[row.priority],
+      siteLabel: c.siteLabel,
+      lead: c.lead,
+      body: c.body,
+      nextUpdateText: c.nextUpdateAt ? `We'll update you again by ${c.nextUpdateAt.toISOString().slice(11, 16)} UTC.` : null,
+      runUrl: this.url(row.id),
+    };
+  }
+
+  /** Declared: the customer side hears we are aware, the team hears who is leading. */
+  async majorDeclared(t: TenantContext, actor: AuthedUser, row: NotifiableIncident, c: { siteLabel: string | null; lead: string; summary: string; nextUpdateAt: Date }) {
+    const ctx = (audience: 'customer' | 'team') => this.majorContext(t, row, { kind: 'declared', audience, siteLabel: c.siteLabel, lead: c.lead, body: c.summary, nextUpdateAt: c.nextUpdateAt });
+    await this.send(t, 'incident_major', await this.majorAudience(t, row), ctx('customer'), row.id, actor.id);
+    await this.send(t, 'incident_major', (await this.staff(t)).filter((m) => m.id !== actor.id), ctx('team'), row.id, actor.id);
+  }
+
+  async majorUpdated(t: TenantContext, actor: AuthedUser, row: NotifiableIncident, c: { siteLabel: string | null; lead: string; body: string; nextUpdateAt: Date }) {
+    await this.send(t, 'incident_major', await this.majorAudience(t, row), this.majorContext(t, row, { kind: 'update', audience: 'customer', ...c }), row.id, actor.id);
+  }
+
+  async majorResolved(t: TenantContext, actor: AuthedUser, row: NotifiableIncident, c: { siteLabel: string | null; lead: string; body: string }) {
+    await this.send(t, 'incident_major', await this.majorAudience(t, row), this.majorContext(t, row, { kind: 'resolved', audience: 'customer', nextUpdateAt: null, ...c }), row.id, actor.id);
+  }
+
+  /** You were made the lead or comms owner of a major incident. */
+  async majorRoleAssigned(t: TenantContext, actor: AuthedUser, row: NotifiableIncident, userIds: string[], role: string) {
+    if (userIds.length === 0) return;
+    const ctx: IncidentActivityContext = {
+      ...this.base(t, row),
+      categoryLabel: incCategoryLabel(row.category, row.subcategory),
+      priorityLabel: INC_PRIORITY_LABELS[row.priority],
+      kind: 'major_assigned',
+      author: actor.displayName,
+      body: role,
+    };
+    await this.send(t, 'incident_activity', (await this.staff(t)).filter((m) => userIds.includes(m.id) && m.id !== actor.id), ctx, row.id, actor.id);
+  }
+
+  /** A review was shared: the customer side and the named stakeholders. */
+  async reviewShared(t: TenantContext, actor: AuthedUser, row: NotifiableIncident, r: { summary: string; cause: string; actions: IncReviewAction[] }) {
+    const ctx: IncidentReviewContext = { ...this.base(t, row), summary: r.summary, cause: r.cause, actions: r.actions.map(({ text, owner, due }) => ({ text, owner, due })) };
+    await this.send(t, 'incident_review', await this.majorAudience(t, row), ctx, row.id, actor.id);
   }
 }

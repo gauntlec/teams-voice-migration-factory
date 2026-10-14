@@ -23,6 +23,7 @@ import {
   incPriority,
   incReference,
   incCategoryLabel,
+  incMajorUpdateClock,
   incRespondText,
   type CreateIncidentInput,
   type IncDetails,
@@ -44,6 +45,7 @@ import type { AuthedUser, TenantContext } from '../../common/request';
 import { InjectDb, type Db } from '../../db/db.module';
 import { assertSiteInScope, isSiteScoped } from '../data-collection/site-scope';
 import { FilesService } from '../files/files.service';
+import { IncidentMajorService } from './incident-major.service';
 import { IncidentNotifier, type StaffMember } from './incident-notifier';
 
 /** The pause columns as the database takes them (pause_log is jsonb, written as a JSON string). */
@@ -69,6 +71,7 @@ export class IncidentsService {
     private readonly audit: AuditService,
     private readonly files: FilesService,
     private readonly notify: IncidentNotifier,
+    private readonly major: IncidentMajorService,
   ) {}
 
   private assertEnabled(t: TenantContext) {
@@ -117,7 +120,10 @@ export class IncidentsService {
   async settings(t: TenantContext) {
     this.assertEnabled(t);
     const raw = await this.settingsRaw(t);
+    const stakeholderIds = raw.stakeholders ?? [];
+    const names = await this.names(stakeholderIds);
     return {
+      stakeholders: stakeholderIds.map((id) => ({ id, display_name: names.get(id) ?? 'Unknown user' })),
       targets: incEffectiveTargets(raw),
       matrix: incEffectiveMatrix(raw),
       calendar: raw.calendar ?? null,
@@ -138,6 +144,22 @@ export class IncidentsService {
     if (input.matrix !== undefined) next.matrix = input.matrix as IncSettings['matrix'];
     if (input.calendar !== undefined) next.calendar = input.calendar;
     if (input.cover !== undefined) next.cover = input.cover as IncSettings['cover'];
+    if (input.stakeholders !== undefined) {
+      const ids = [...new Set(input.stakeholders)];
+      if (ids.length) {
+        const ok = await platformDb(this.db)
+          .selectFrom('users as u')
+          .innerJoin('tenant_memberships as m', 'm.user_id', 'u.id')
+          .select('u.id')
+          .where('m.tenant_id', '=', t.id)
+          .where('u.role', '=', 'CUSTOMER')
+          .where('u.status', '=', 'active')
+          .where('u.id', 'in', ids)
+          .execute();
+        if (ok.length !== ids.length) throw new BadRequestException('Named contacts must be active customer users on this customer.');
+      }
+      next.stakeholders = ids;
+    }
     await platformDb(this.db).updateTable('tenants').set({ inc_settings: JSON.stringify(next) }).where('id', '=', t.id).execute();
     await this.audit.tenant(t.schema, 'incident.settings_changed', {
       actor: { id: user.id, email: user.email },
@@ -197,6 +219,11 @@ export class IncidentsService {
         'i.paused_since as paused_since',
         'i.paused_seconds as paused_seconds',
         'i.pause_log as pause_log',
+        'i.major as major',
+        'i.major_ended_at as major_ended_at',
+        'i.next_update_due_at as next_update_due_at',
+        'i.parent_id as parent_id',
+        'i.problem_id as problem_id',
       ])
       .orderBy('i.number', 'desc')
       .limit(q.limit);
@@ -220,6 +247,7 @@ export class IncidentsService {
     return rows.map((r) => ({
       ...r,
       sla: incNextClock(incSlaFor(r, settings, now)),
+      major_clock: incMajorUpdateClock(r, now),
       reference: incReference(r.number),
       category_label: incCategoryLabel(r.category, r.subcategory),
       reporter_name: names.get(r.reporter_id) ?? null,
@@ -274,7 +302,7 @@ export class IncidentsService {
     const settings = await this.settingsRaw(t);
     const own = row.reporter_id === viewerId;
     const watching = watcherIds.includes(viewerId);
-    const { dedup_key: _dedup, sla_notified: _notified, assigned_agent_id: _agent, ...visible } = row;
+    const { dedup_key: _dedup, sla_notified: _notified, assigned_agent_id: _agent, lead_id: _lead, comms_id: _comms, update_interval_minutes: _interval, update_reminded_at: _reminded, update_escalated_at: _escalated, major_declared_by: _declaredBy, problem_id: _problem, ...visible } = row;
     return {
       incident: {
         ...(canManage ? row : visible),
@@ -294,6 +322,7 @@ export class IncidentsService {
       },
       watching,
       watchers: canManage ? watcherIds.map((uid) => ({ id: uid, display_name: names.get(uid) ?? 'Unknown user' })) : undefined,
+      ...(await this.major.details(t, row, canManage)),
       items,
       // The reason for a priority change stays with the team.
       events: events.map((e) => ({
@@ -473,6 +502,20 @@ export class IncidentsService {
       detail: { reference: incReference(row.number), from, to, kind, holdReason },
     });
     await this.notify.moved(t, user, updated, kind, { staff: canManage, note, holdReason });
+    // A major incident that is finished stops being live; its children can be finished with it.
+    if (row.major && !row.major_ended_at && (kind === 'resolve' || kind === 'cancel' || kind === 'duplicate')) {
+      await this.major.end(t, user, updated, kind, note);
+      if (kind === 'resolve' && input.resolveChildren) {
+        for (const child of await this.major.liveChildren(t, id)) {
+          try {
+            await this.move(t, user, child.id, { to: 'resolved', note: note ?? undefined }, canManage);
+          } catch (e) {
+            // eslint-disable-next-line no-console
+            console.warn(`[incidents] could not resolve child ${incReference(child.number)} of ${incReference(row.number)}: ${(e as Error).message}`);
+          }
+        }
+      }
+    }
     return { ...updated, reference: incReference(row.number) };
   }
 
