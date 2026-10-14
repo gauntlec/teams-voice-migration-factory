@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button, Card, Field, Input, Link, Select, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text } from '@fluentui/react-components';
 import { INC_CATEGORIES, INC_CATEGORY_BY_KEY, INC_PRIORITIES, INC_PRIORITY_LABELS, INC_STATUSES, INC_STATUS_CUSTOMER_LABELS, INC_STATUS_LABELS } from '@tvmf/shared';
 import { api } from '../api';
@@ -35,6 +35,12 @@ export function Incidents() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [reportsOpen, setReportsOpen] = useState(false);
   const staff = can('inc:manage');
+  const qc = useQueryClient();
+  const sandbox = me?.tenants.find((t) => t.id === activeTenantId)?.sandbox ?? false;
+  const demo = useMutation({
+    mutationFn: () => api(`/t/${activeTenantId}/incidents/demo`, { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['incidents'] }),
+  });
 
   const enabled = me?.tenants.find((t) => t.id === activeTenantId)?.managedServices ?? false;
   const base = `/t/${activeTenantId}/incidents`;
@@ -81,6 +87,11 @@ export function Incidents() {
             <Button onClick={() => navigate('/incidents/problems')}>Problems</Button>
           )}
           {staff && <KnowledgeButton base={base} />}
+          {can('intake:manage') && sandbox && (
+            <Button disabled={demo.isPending} title={demo.error ? (demo.error as Error).message : 'Adds six example incidents to this test customer'} onClick={() => window.confirm('Add six demo incidents to this test customer? Their emails go to the test address.') && demo.mutate()}>
+              {demo.isError ? 'Demo incidents: ' + (demo.error as Error).message.slice(0, 60) : 'Add demo incidents'}
+            </Button>
+          )}
           <Button onClick={() => setSettingsOpen(true)}>{staff ? 'Settings' : 'Our targets'}</Button>
           {can('inc:create') && (
             <Button appearance="primary" onClick={() => navigate('/incidents/new')}>

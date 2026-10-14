@@ -5,6 +5,7 @@ import type { AuthedUser, IntakePrincipal, TenantContext } from '../../common/re
 import { ZodBody } from '../../common/zod.pipe';
 import { RequirePermission } from '../../rbac/require-permission.decorator';
 import { TenantGuard } from '../../rbac/tenant.guard';
+import { IncidentDemoService } from './incident-demo.service';
 import { IncidentIntakeService } from './incident-intake.service';
 import { IntakeAdminService } from './intake-admin.service';
 import { IntakeAuthGuard } from './intake-auth.guard';
@@ -33,36 +34,46 @@ export class IntakeController {
 }
 
 /** Managing a customer's alert sources. Registered before IncidentsController so `intake-sources` isn't read as an incident id. */
-@Controller('t/:tenantId/incidents/intake-sources')
+@Controller('t/:tenantId/incidents')
 @UseGuards(TenantGuard)
 export class IntakeAdminController {
-  constructor(private readonly svc: IntakeAdminService) {}
+  constructor(
+    private readonly svc: IntakeAdminService,
+    private readonly demo: IncidentDemoService,
+  ) {}
 
-  @Get()
+  @Get('intake-sources')
   @RequirePermission('inc:manage')
   list(@TenantCtx() t: TenantContext) {
     return this.svc.list(t);
   }
 
-  @Post()
+  /** Demo incidents for a test customer. */
+  @Post('demo')
+  @RequirePermission('intake:manage')
+  seedDemo(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser) {
+    return this.demo.seed(t, user);
+  }
+
+  @Post('intake-sources')
   @RequirePermission('intake:manage')
   create(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Body(new ZodBody(intakeSourceCreateSchema)) body: IntakeSourceCreateInput) {
     return this.svc.create(t, user, body);
   }
 
-  @Patch(':id')
+  @Patch('intake-sources/:id')
   @RequirePermission('intake:manage')
   update(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id', ParseUUIDPipe) id: string, @Body(new ZodBody(intakeSourceUpdateSchema)) body: IntakeSourceUpdateInput) {
     return this.svc.update(t, user, id, body);
   }
 
-  @Post(':id/rotate')
+  @Post('intake-sources/:id/rotate')
   @RequirePermission('intake:manage')
   rotate(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id', ParseUUIDPipe) id: string) {
     return this.svc.rotate(t, user, id);
   }
 
-  @Delete(':id')
+  @Delete('intake-sources/:id')
   @RequirePermission('intake:manage')
   remove(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id', ParseUUIDPipe) id: string) {
     return this.svc.remove(t, user, id);

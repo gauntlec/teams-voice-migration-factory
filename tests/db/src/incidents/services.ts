@@ -19,6 +19,7 @@ import { IncidentIntakeService } from '../../../../apps/api/src/modules/incident
 import { IntakeAdminService } from '../../../../apps/api/src/modules/incidents/intake-admin.service';
 import { IntakeAuthGuard } from '../../../../apps/api/src/modules/incidents/intake-auth.guard';
 import { IncidentKnowledgeService } from '../../../../apps/api/src/modules/incidents/incident-knowledge.service';
+import { IncidentDemoService } from '../../../../apps/api/src/modules/incidents/incident-demo.service';
 import { MspNotifier } from '../../../../apps/api/src/modules/incidents/msp-notifier';
 import { IncidentMajorService } from '../../../../apps/api/src/modules/incidents/incident-major.service';
 import { IncidentNotifier } from '../../../../apps/api/src/modules/incidents/incident-notifier';
@@ -70,6 +71,7 @@ export function incidentServices(handle: DbHandle, mail: Pick<MailService, 'enqu
     intake: new IncidentIntakeService(handle.db, svc),
     replies,
     inbound: new InboundEmailService(handle.db, svc, replies, cfg),
+    demo: new IncidentDemoService(handle.db, svc, major, knowledge),
     intakeAdmin: new IntakeAdminService(handle.db, audit),
     intakeGuard: new IntakeAuthGuard(handle.db),
     builtin: new BuiltinAgentsService(handle.db, agentApi, events),

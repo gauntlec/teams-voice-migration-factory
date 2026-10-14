@@ -211,3 +211,21 @@ describe('alerts', () => {
     expect(row.description).toContain('Site NOWHERE is not known');
   });
 });
+
+describe('demo incidents', () => {
+  it('are refused for a real customer, built for a test customer once, and leave a believable spread', async () => {
+    await expect(s.demo.seed(c.t, admin)).rejects.toThrow(/only be added to a test customer/);
+    const demo = await seedCustomer(handle, { managedServices: true });
+    await platformDb(handle.db).updateTable('tenants').set({ sandbox: true } as never).where('id', '=', demo.t.id).execute();
+    await expect(s.demo.seed(demo.t, admin)).rejects.toThrow(/Move a site to operations/);
+    await seedSite(demo.s, { sitecode: 'HQ01' });
+    await demo.s.updateTable('discovery_sites').set({ mode: 'operations' } as never).execute();
+    expect(await s.demo.seed(demo.t, admin)).toEqual({ created: 6 });
+    const rows = await demo.s.selectFrom('incidents').select(['status', 'priority', 'major', 'major_ended_at']).execute();
+    expect(rows).toHaveLength(6);
+    expect(rows.filter((r) => r.major && !r.major_ended_at)).toHaveLength(1);
+    expect(new Set(rows.map((r) => r.status))).toEqual(new Set(['new', 'in_progress', 'on_hold', 'resolved', 'closed']));
+    expect((await demo.s.selectFrom('incident_knowledge').select('id').execute())).toHaveLength(1);
+    await expect(s.demo.seed(demo.t, admin)).rejects.toThrow(/already has demo incidents/);
+  });
+});
