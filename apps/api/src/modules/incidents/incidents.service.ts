@@ -172,6 +172,7 @@ export class IncidentsService {
       customTargets: Object.keys(raw.targets ?? {}),
       customMatrix: !!raw.matrix,
       customCover: Object.keys(raw.cover ?? {}),
+      emailIntake: !!raw.emailIntake,
     };
   }
 
@@ -185,6 +186,7 @@ export class IncidentsService {
     if (input.matrix !== undefined) next.matrix = input.matrix as IncSettings['matrix'];
     if (input.calendar !== undefined) next.calendar = input.calendar;
     if (input.cover !== undefined) next.cover = input.cover as IncSettings['cover'];
+    if (input.emailIntake !== undefined) next.emailIntake = input.emailIntake;
     if (input.stakeholders !== undefined) {
       const ids = [...new Set(input.stakeholders)];
       if (ids.length) {

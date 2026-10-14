@@ -1,4 +1,5 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { sql } from 'kysely';
 import { platformDb, tenantDb } from '@tvmf/db';
 import {
   INC_AUTOCLOSE_DAYS,
@@ -28,6 +29,7 @@ import type { AuthedUser, TenantContext } from '../../common/request';
 import { InjectDb, type Db } from '../../db/db.module';
 import { MailService } from '../../mail/mail.service';
 import { customerFacingName } from './agent-actor';
+import { InboundReplyService } from './inbound-reply.service';
 import { signIncidentLink } from './incident-links';
 
 /** Mail rows record who caused them; an agent is not a user, so it is recorded as nobody. */
@@ -65,6 +67,7 @@ export class IncidentNotifier {
     @InjectDb() private readonly db: Db,
     private readonly mail: MailService,
     @Inject(APP_CONFIG) private readonly cfg: AppConfig,
+    @Optional() private readonly replies?: InboundReplyService,
   ) {}
 
   private url(id: string) {
@@ -105,9 +108,16 @@ export class IncidentNotifier {
     return to.filter((m) => m.id !== exceptUserId);
   }
 
+  /** The customer-side emails a person can answer by replying (the team's own are for the app, where internal and public are not mixed up). */
+  private replyable(template: EmailTemplate, context: object): boolean {
+    if (template === 'incident_message' || template === 'incident_status_changed' || template === 'incident_resolved') return true;
+    return template === 'incident_created' && (context as { audience?: string }).audience === 'reporter';
+  }
+
   private async send(t: TenantContext, template: EmailTemplate, to: { email: string; display_name: string }[], context: object, incidentId: string, createdBy: string | null) {
     for (const r of to) {
       try {
+        const replyTo = this.replies?.enabled() && this.replyable(template, context) ? await this.replyAddress(t.id, incidentId, r.email) : undefined;
         await this.mail.enqueue({
           template,
           to: { email: r.email, name: r.display_name },
@@ -115,12 +125,18 @@ export class IncidentNotifier {
           related: { type: 'incident', id: incidentId },
           createdBy,
           tenantId: t.id,
+          ...(replyTo ? { replyTo } : {}),
         });
       } catch (e) {
         // eslint-disable-next-line no-console
         console.warn(`[incidents] could not queue ${template} for ${incidentId}: ${(e as Error).message}`);
       }
     }
+  }
+
+  private async replyAddress(tenantId: string, incidentId: string, email: string): Promise<string | undefined> {
+    const u = await platformDb(this.db).selectFrom('users').select('id').where(sql`lower(email)`, '=', email.toLowerCase()).executeTakeFirst();
+    return u ? this.replies!.replyTo(tenantId, incidentId, u.id) : undefined;
   }
 
   private base(t: TenantContext, row: NotifiableIncident) {

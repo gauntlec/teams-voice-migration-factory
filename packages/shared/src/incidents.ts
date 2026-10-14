@@ -611,6 +611,8 @@ export interface IncSettings {
   cover?: Partial<Record<IncPriority, IncCover>>;
   /** Customer users who are told about every major incident and every shared review, whether or not they follow it. */
   stakeholders?: string[];
+  /** People at this customer can raise an incident by emailing the incidents address (docs/INTAKE.md). */
+  emailIntake?: boolean;
 }
 
 /** With a calendar: P1 and P2 run around the clock, P3 and P4 in working hours. */
@@ -1073,6 +1075,7 @@ export const incidentSettingsSchema = z
       .strict()
       .optional(),
     stakeholders: z.array(z.string().uuid()).max(30).optional(),
+    emailIntake: z.boolean().optional(),
   })
   .strict();
 export type IncidentSettingsInput = z.infer<typeof incidentSettingsSchema>;

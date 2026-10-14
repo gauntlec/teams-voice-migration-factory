@@ -13,6 +13,8 @@ import { IncidentAgentView } from '../../../../apps/api/src/modules/incidents/in
 import { IncidentAgentsService } from '../../../../apps/api/src/modules/incidents/incident-agents.service';
 import { IncidentClaimsService } from '../../../../apps/api/src/modules/incidents/incident-claims.service';
 import { IncidentDiagnosticsService } from '../../../../apps/api/src/modules/incidents/incident-diagnostics.service';
+import { InboundEmailService } from '../../../../apps/api/src/modules/incidents/inbound-email.service';
+import { InboundReplyService } from '../../../../apps/api/src/modules/incidents/inbound-reply.service';
 import { IncidentIntakeService } from '../../../../apps/api/src/modules/incidents/incident-intake.service';
 import { IntakeAdminService } from '../../../../apps/api/src/modules/incidents/intake-admin.service';
 import { IntakeAuthGuard } from '../../../../apps/api/src/modules/incidents/intake-auth.guard';
@@ -31,10 +33,11 @@ export const TEST_SECRET = 'incident-secret-for-tests-0123456789';
  * The incident services wired the way the API wires them, with the mail queue swapped
  * for whatever `mail` is (a recorder, or a no-op) and file storage held in memory.
  */
-export function incidentServices(handle: DbHandle, mail: Pick<MailService, 'enqueue'> = { enqueue: async () => ({ id: 'm' }) }) {
-  const cfg = { WEB_ORIGIN: 'https://app.test/', JWT_REFRESH_SECRET: TEST_SECRET } as AppConfig;
+export function incidentServices(handle: DbHandle, mail: Pick<MailService, 'enqueue'> = { enqueue: async () => ({ id: 'm' }) }, opts: { inbound?: boolean } = {}) {
+  const cfg = { WEB_ORIGIN: 'https://app.test/', JWT_REFRESH_SECRET: TEST_SECRET, INBOUND_EMAIL_ADDRESS: opts.inbound === false ? '' : 'incidents@mail.test', INBOUND_EMAIL_SECRET: opts.inbound === false ? '' : 'inbound-secret-for-tests' } as AppConfig;
   const audit = new AuditService(handle.db);
-  const notifier = new IncidentNotifier(handle.db, mail as MailService, cfg);
+  const replies = new InboundReplyService(handle.db, cfg);
+  const notifier = new IncidentNotifier(handle.db, mail as MailService, cfg, replies);
   const events = new AgentEventsService(handle.db);
   const claims = new IncidentClaimsService(handle.db, events, notifier);
   const agentView = new IncidentAgentView(handle.db, claims);
@@ -61,6 +64,8 @@ export function incidentServices(handle: DbHandle, mail: Pick<MailService, 'enqu
     humanAgents: new IncidentAgentsService(handle.db, audit, claims, svc, events),
     agentApi,
     intake: new IncidentIntakeService(handle.db, svc),
+    replies,
+    inbound: new InboundEmailService(handle.db, svc, replies, cfg),
     intakeAdmin: new IntakeAdminService(handle.db, audit),
     intakeGuard: new IntakeAuthGuard(handle.db),
     builtin: new BuiltinAgentsService(handle.db, agentApi, events),

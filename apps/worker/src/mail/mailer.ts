@@ -32,6 +32,7 @@ export interface OutgoingMail {
   subject: string;
   html: string;
   text: string;
+  replyTo?: string | null;
 }
 
 /** Send one email. Throws on any SMTP failure so the caller can retry. */
@@ -39,6 +40,7 @@ export async function sendMail(m: OutgoingMail): Promise<string> {
   const info = await transport().sendMail({
     from: `"${FROM_NAME}" <${FROM_ADDR}>`,
     to: m.toName ? `"${m.toName}" <${m.to}>` : m.to,
+    ...(m.replyTo ? { replyTo: m.replyTo } : {}),
     subject: m.subject,
     text: m.text,
     html: m.html,

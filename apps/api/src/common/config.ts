@@ -24,6 +24,10 @@ const schema = z.object({
   // Handover are future producers). Mounted as a Docker volume in
   // production - see docker-compose.yml / deploy/dockge/compose.yaml.
   FILES_DIR: z.string().default('/data/files'),
+  // Incidents by email (docs/INTAKE.md). Both empty = off. The address replies and new incidents are sent to, and the secret the mail forwarder
+  // presents when it posts a message to /api/public/inbound-email.
+  INBOUND_EMAIL_ADDRESS: z.string().default(''),
+  INBOUND_EMAIL_SECRET: z.string().default(''),
 });
 
 export type AppConfig = z.infer<typeof schema> & { REFRESH_COOKIE: string };

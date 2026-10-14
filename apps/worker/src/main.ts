@@ -992,7 +992,7 @@ async function handleMail(job: Job) {
   const { id } = job.data as { id: string };
   const row = await platformDb(db)
     .selectFrom('email_messages')
-    .select(['id', 'to_email', 'to_name', 'template', 'context', 'status', 'tenant_id', 'msp_id', 'created_by', 'original_to_email'])
+    .select(['id', 'to_email', 'to_name', 'template', 'context', 'status', 'tenant_id', 'msp_id', 'created_by', 'original_to_email', 'reply_to'])
     .where('id', '=', id)
     .executeTakeFirst();
   if (!row) {
@@ -1045,6 +1045,7 @@ async function handleMail(job: Job) {
       subject: delivery.subject,
       html: rendered.html,
       text: rendered.text,
+      replyTo: row.reply_to,
     });
     await platformDb(db)
       .updateTable('email_messages')

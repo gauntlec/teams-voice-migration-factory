@@ -91,6 +91,8 @@ export interface EmailMessagesTable {
   /** Which MSP this email is for, when the recipient is MSP staff - drives branding at render time (see loadEmailBranding in apps/worker/src/main.ts). Mutually exclusive with tenant_id in practice. */
   msp_id: string | null;
   created_by: string | null;
+  /** 0022_inbound_email.sql - the Reply-To an incident email carries, so a reply comes back to the incident. */
+  reply_to: ColumnType<string | null, string | null | undefined, string | null>;
   created_at: Ts;
   sent_at: string | null;
   /** Set when a test customer's email was redirected: who it was really for (to_email is where it went) - see 0015_release_safety.sql. */
@@ -1229,6 +1231,27 @@ export interface TenantAuditLogTable {
 /* ------------------------------ agents (platform) ------------------------------ */
 
 /** An AI agent that works incidents - see 0017_agents.sql and docs/AGENTS.md. */
+export interface InboundReplyTokensTable {
+  token: string;
+  tenant_id: string;
+  incident_id: string;
+  user_id: string;
+  created_at: Ts;
+  expires_at: string;
+}
+
+export interface InboundEmailLogTable {
+  id: Generated<string>;
+  message_id: string;
+  from_email: string;
+  subject: ColumnType<string, string | undefined, string>;
+  outcome: string;
+  detail: ColumnType<string, string | undefined, string>;
+  tenant_id: ColumnType<string | null, string | null | undefined, string | null>;
+  incident_id: ColumnType<string | null, string | null | undefined, string | null>;
+  created_at: Ts;
+}
+
 export interface IntakeSourcesTable {
   id: Generated<string>;
   tenant_id: string;
@@ -1351,6 +1374,8 @@ export interface DB {
   maintenance_notice: MaintenanceNoticeTable;
   agents: AgentsTable;
   intake_sources: IntakeSourcesTable;
+  inbound_reply_tokens: InboundReplyTokensTable;
+  inbound_email_log: InboundEmailLogTable;
   agent_tokens: AgentTokensTable;
   agent_customer_policy: AgentCustomerPolicyTable;
   agent_kill_switch: AgentKillSwitchTable;

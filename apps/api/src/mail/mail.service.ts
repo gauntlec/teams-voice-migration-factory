@@ -15,6 +15,8 @@ export interface EnqueueMailInput {
   tenantId?: string | null;
   /** Which MSP this email is for, when the recipient is MSP staff - drives branding at render time. Mutually exclusive with tenantId in practice. */
   mspId?: string | null;
+  /** Where a reply goes (an incident's reply address), if not to the sender. */
+  replyTo?: string | null;
 }
 
 /** BullMQ options: retry a handful of times with growing backoff. */
@@ -51,6 +53,7 @@ export class MailService {
         tenant_id: input.tenantId ?? null,
         msp_id: input.mspId ?? null,
         created_by: input.createdBy ?? null,
+        reply_to: input.replyTo ?? null,
       })
       .returning('id')
       .executeTakeFirstOrThrow();

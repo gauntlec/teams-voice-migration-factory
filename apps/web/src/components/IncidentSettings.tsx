@@ -61,6 +61,7 @@ export interface IncidentSettingsData {
   matrix: IncMatrix;
   calendar: IncCalendar | null;
   cover: Record<IncPriority, IncCover>;
+  emailIntake?: boolean;
 }
 
 export function useIncidentSettings(base: string, enabled = true) {
@@ -82,7 +83,7 @@ export function IncidentSettingsDialog({ base, onClose }: { base: string; onClos
   const editable = me?.role === 'SUPER_ADMIN';
   const settings = useIncidentSettings(base);
 
-  const [draft, setDraft] = useState<{ targets: IncSlaTargets; matrix: IncMatrix; calendarOn: boolean; calendar: IncCalendar; cover: Record<IncPriority, IncCover>; holidays: string; stakeholders: string[] } | null>(null);
+  const [draft, setDraft] = useState<{ targets: IncSlaTargets; matrix: IncMatrix; calendarOn: boolean; calendar: IncCalendar; cover: Record<IncPriority, IncCover>; holidays: string; stakeholders: string[]; emailIntake: boolean } | null>(null);
   const customers = useQuery({
     queryKey: ['incident-customer-users', base],
     enabled: can('inc:manage'),
@@ -100,6 +101,7 @@ export function IncidentSettingsDialog({ base, onClose }: { base: string; onClos
       cover: settings.data.cover,
       holidays: (cal?.holidays ?? []).join('\n'),
       stakeholders: (settings.data.stakeholders ?? []).map((x) => x.id),
+      emailIntake: !!settings.data.emailIntake,
     };
   }, [draft, settings.data]);
   const set = (patch: Partial<NonNullable<typeof d>>) => d && setDraft({ ...d, ...patch });
@@ -118,7 +120,7 @@ export function IncidentSettingsDialog({ base, onClose }: { base: string; onClos
       for (const p of INC_PRIORITIES) if (JSON.stringify(d!.targets[p]) !== JSON.stringify(defaults[p])) targets[p] = d!.targets[p];
       const matrix: Record<string, Record<string, IncPriority>> = {};
       for (const i of INC_IMPACTS) for (const u of INC_URGENCIES) if (d!.matrix[i][u] !== INC_DEFAULT_MATRIX[i][u]) (matrix[i] ??= {})[u] = d!.matrix[i][u];
-      return api(`${base}/settings`, { method: 'PUT', body: JSON.stringify({ targets, matrix, calendar, cover, stakeholders: d!.stakeholders }) });
+      return api(`${base}/settings`, { method: 'PUT', body: JSON.stringify({ targets, matrix, calendar, cover, stakeholders: d!.stakeholders, emailIntake: d!.emailIntake }) });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['incident-settings'] });
@@ -300,6 +302,15 @@ export function IncidentSettingsDialog({ base, onClose }: { base: string; onClos
                 </DataTable>
                 <Text size={200} className={s.muted}>
                   Emergency calling problems are always P1, whatever this says.
+                </Text>
+                <Checkbox
+                  checked={d.emailIntake}
+                  disabled={!editable}
+                  onChange={(_, x) => set({ emailIntake: !!x.checked })}
+                  label="People at this customer can raise an incident by emailing the incidents address"
+                />
+                <Text size={200} className={s.muted}>
+                  Replies to Voxshift&apos;s emails become comments whatever this says. This switch is only for new incidents sent to the incidents address. It needs the inbound mailbox to be connected (docs/INTAKE.md).
                 </Text>
                 {can('inc:manage') && <IntakeSources base={base} editable={editable} />}
                 {save.isError && <Text className={s.error}>{errorText(save.error, 'Could not save the settings')}</Text>}
