@@ -144,6 +144,11 @@
 - Webhooks are signed (HMAC-SHA256 over `timestamp.body`); the signing secret is encrypted at rest
   with the same key as the other secrets. Delivery is at-least-once; receivers should check the
   timestamp and de-duplicate by event id.
+- The assistants Voxshift ships (`platform.agents.builtin_key`) run inside the API through the same agent service and
+  limits as any agent: no tokens, no webhooks, no outside calls, only customers they are enabled for, and the same kill
+  switches. Diagnostic checks read Discovery and the design only and never touch a customer's Teams tenant.
+- The MCP server (`apps/mcp`) is a client of the agent API: it holds one agent token in its environment and adds no
+  access of its own.
 - Everything an agent does is on the incident timeline, labelled "(AI)" for staff, and in the audit
   log with the agent as the actor. Agent text is data to everyone who reads it, never an instruction.
 

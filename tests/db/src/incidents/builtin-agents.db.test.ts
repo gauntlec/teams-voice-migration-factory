@@ -290,3 +290,68 @@ describe('releasing an incident through the API', () => {
     void agentProposalSchema;
   });
 });
+
+describe('asking an assistant', () => {
+  const ask = (key: keyof typeof agent | string, incidentId: string, question: string) => s.builtin.ask(c.t, eng, incidentId, { agentId: agent[key as keyof typeof agent] ?? key, question });
+
+  it('Diagnose runs what the question names, straight away, and says so on the timeline', async () => {
+    await setLevels('diagnose', { triage: 3, internal_note: 3, diagnostic_read: 3 });
+    const i = await raise({ category: 'devices', subcategory: 'client', title: 'Teams app slow', answers: { started: 'Today 09:00', device: 'Teams desktop app', affected_user: 'The whole team' }, description: 'The Teams app feels slow today.' } as never);
+    const r = await ask('diagnose', i.id, 'Please check anna@contoso.com and cleo@contoso.com');
+    expect(r.delivered).toBe('builtin');
+    expect(r.message).toMatch(/^Diagnose ran \d checks/);
+    const diags = await c.s.selectFrom('incident_diagnostics').select(['runbook', 'subject']).where('incident_id', '=', i.id).execute();
+    expect(diags.filter((d) => d.runbook === 'user_voice').map((d) => d.subject).sort()).toEqual(['anna@contoso.com', 'cleo@contoso.com']);
+    const asked = (await events(i.id)).find((e) => e.body?.startsWith('Asked Voxshift Diagnose (AI):'))!;
+    expect(asked).toMatchObject({ internal: true, actor_type: 'user', author_id: eng.id });
+    const feed = await platformDb(handle.db).selectFrom('agent_events').selectAll().where('incident_id', '=', i.id).where('kind', '=', 'incident.assist_requested').execute();
+    expect(feed).toHaveLength(1);
+    expect(feed[0]).toMatchObject({ agent_id: agent.diagnose, payload: { question: 'Please check anna@contoso.com and cleo@contoso.com', askedBy: 'Eve Engineer' } });
+    // It let go afterwards.
+    expect(await s.claims.current(c.t, i.id)).toBeNull();
+    expect((await row(i.id)).assigned_agent_id).toBeNull();
+  });
+
+  it('Triage can be asked again for the same incident, and Comms drafts on request even below urgent', async () => {
+    await setLevels('triage', { triage: 1, internal_note: 1 });
+    await setLevels('comms', { customer_update: 2 });
+    const i = await raise();
+    expect((await ask('triage', i.id, 'Take another look')).message).toBe('Triage left its note on the timeline.');
+    await ask('triage', i.id, 'And again');
+    expect(await mine(i.id, 'triage')).toHaveLength(2);
+    expect((await row(i.id)).priority).toMatch(/^p[34]$/);
+    expect((await ask('comms', i.id, 'Draft an update')).message).toContain('Comms drafted an update');
+    expect((await proposals(i.id)).some((p) => p.kind === 'customer_update' && p.state === 'proposed')).toBe(true);
+  });
+
+  it('tells the person plainly when the assistant is not allowed to help', async () => {
+    await setLevels('diagnose', { diagnostic_read: 0, internal_note: 0 });
+    const i = await raise();
+    expect((await ask('diagnose', i.id, 'Check things')).message).toContain('set to observe only for diagnostics');
+    await expect(ask('triage', i.id, 'Look')).rejects.toThrow(/not allowed on this customer/); // policy off in beforeEach
+    await setLevels('triage', { triage: 3, internal_note: 3 });
+    await platformDb(handle.db).updateTable('agents').set({ status: 'paused' }).where('id', '=', agent.triage).execute();
+    await expect(ask('triage', i.id, 'Look')).rejects.toThrow(/is paused/);
+    await platformDb(handle.db).updateTable('agents').set({ status: 'active' }).where('id', '=', agent.triage).execute();
+    await c.s.updateTable('incidents').set({ agent_hold: true } as never).where('id', '=', i.id).execute();
+    await expect(ask('triage', i.id, 'Look')).rejects.toThrow(/took this incident over/);
+    await c.s.updateTable('incidents').set({ agent_hold: false, status: 'cancelled', hold_reason: null, cancelled_at: new Date().toISOString() } as never).where('id', '=', i.id).execute();
+    await expect(ask('triage', i.id, 'Look')).rejects.toThrow(/finished/);
+  });
+
+  it('sends the request to an outside agent through its events feed', async () => {
+    const other = await s.agentAdmin.create(admin, { name: `Outside-${Date.now() % 100000}`, kind: 'general' } as never);
+    await s.agentAdmin.setPolicy(admin, other.id, c.t.id, { enabled: true, autonomy: { internal_note: 1 } });
+    const p = { agentId: other.id, tokenId: 't', name: other.name, kind: 'general' as const, scopes: ['read'] as 'read'[] };
+    const i = await raise();
+    const r = await s.builtin.ask(c.t, eng, i.id, { agentId: other.id, question: 'Is this the carrier again?' });
+    expect(r).toEqual({ delivered: 'event', message: `Sent to ${other.name} (AI). It will reply on the timeline.` });
+    const feed = await s.agentApi.feed(p, { after: 0, limit: 500 });
+    const got = feed.events.find((e: Record<string, unknown>) => e.kind === 'incident.assist_requested' && e.incident_id === i.id);
+    expect(got).toMatchObject({ question: 'Is this the carrier again?', askedBy: 'Eve Engineer' });
+    // Another assistant does not see it.
+    const bystander = { ...p, agentId: agent.triage };
+    await setLevels('triage', { triage: 1 });
+    expect((await s.agentApi.feed(bystander, { after: 0, limit: 500 })).events.some((e: Record<string, unknown>) => e.kind === 'incident.assist_requested' && e.incident_id === i.id)).toBe(false);
+  });
+});

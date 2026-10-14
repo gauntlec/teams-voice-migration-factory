@@ -112,7 +112,7 @@ export class IncidentsService {
     return p
       .selectFrom('agents as a')
       .innerJoin('agent_customer_policy as cp', (j) => j.onRef('cp.agent_id', '=', 'a.id').on('cp.tenant_id', '=', t.id).on('cp.enabled', '=', true))
-      .select(['a.id as id', 'a.name as name', 'a.kind as kind'])
+      .select(['a.id as id', 'a.name as name', 'a.kind as kind', 'a.builtin_key as builtin_key'])
       .where('a.status', '=', 'active')
       .orderBy('a.name')
       .execute();

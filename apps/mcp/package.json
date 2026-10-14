@@ -1,0 +1,26 @@
+{
+  "name": "@tvmf/mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MCP server for the Voxshift agent API: lets Claude and other MCP clients work incidents as an assistant.",
+  "type": "commonjs",
+  "main": "dist/main.js",
+  "bin": {
+    "voxshift-mcp": "dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "@tvmf/shared": "0.1.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.15",
+    "typescript": "5.5.4"
+  }
+}

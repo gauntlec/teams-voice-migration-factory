@@ -125,7 +125,7 @@ platform:operate
 | bug:read / bug:create | ✓ | ✓ | ✓ | |
 | bug:manage (move / edit / delete cards) | ✓ | | | |
 | inc:read / inc:create (Incidents: see, raise, comment) | ✓ | ✓ | ✓ | ✓ (own sites if scoped) |
-| inc:manage (triage, assign, move, priority, internal notes) | ✓ | | ✓ | |
+| inc:manage (triage, assign, move, priority, internal notes, run diagnostic checks, ask an assistant, decide assistants' proposals) | ✓ | | ✓ | |
 | inc:msp (MSP incident queue) | ✓ | ✓ | ✓ | |
 | agent:manage (Administration -> Assistants: create agents, tokens, customer policies, webhooks, kill switches) | ✓ | | | |
 | tenantdiscovery:read / run (Discovery: connect to the customer's live Teams tenant) | ✓ | | ✓ | |

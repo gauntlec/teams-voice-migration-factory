@@ -690,6 +690,39 @@ rules in `packages/shared/src/agents.ts`; the API reference is [AGENTS.md](AGENT
 - **Not in this chunk**: agents raising incidents and monitoring intake (chunk 8), first-party
   agents, runbook diagnostics and the MCP server (chunk 6), service-request automation (chunk 7).
 
+## Chunk 6 as built
+
+Diagnostics, the assistants Voxshift ships, and MCP. Migrations tenant `0051_incident_diagnostics.sql` and
+platform `0018_builtin_agents.sql`. Detail in [DIAGNOSTICS.md](DIAGNOSTICS.md),
+[BUILTIN-AGENTS.md](BUILTIN-AGENTS.md) and [MCP.md](MCP.md).
+
+- **Diagnostic runbooks**: six read-only checks (user voice setup, phone number, call queue or auto attendant,
+  routes and gateways, emergency setup, recent changes) over **what Discovery and the design hold**, never the
+  live tenant, so they are instant, safe, and each result says how old its data is. Rules in
+  `packages/shared/src/diagnostics.ts`; facts gathered by `incident-diagnostics.service.ts`; stored in
+  `incident_diagnostics` and noted on the timeline (internal; running one does not change the incident). A
+  **Checks** card on the incident page (suggested checks from the category, items and answers; run any check;
+  results with who ran them). Assistants run them through `POST /agent/v1/incidents/:t/:id/diagnostics`
+  (level 3 directly; level 2 only for an approved `external` proposal).
+- **Built-in assistants**: Voxshift **Triage** (note, known-error and duplicate proposals, acknowledge or propose
+  it), **Diagnose** (runs the suggested checks, hands over with a packet when it finds a problem) and **Comms**
+  (templated P1/P2 customer updates, always approved by a person). Ordinary agents run by the API every 30
+  seconds through the same agent API and limits; added on Administration -> Assistants, no tokens, nothing until
+  allowed on a customer. Their brain is rules and templates (no outside AI service).
+- **MCP server** (`apps/mcp`, stdio): the agent API as 17 tools and a `work_incident` prompt, with advice on
+  refusals; tested end to end over an in-memory transport.
+- **Ask an assistant**: engineers ask on the incident page; built-ins act straight away within their autonomy,
+  others get an `incident.assist_requested` event; the request is on the timeline.
+- **Agent API change**: letting go of an incident (`DELETE .../claim`) now clears the assistant as assignee, so a
+  released incident is back in the queue. The reference agent remembers what it has handled for that reason.
+- **Tests**: 28 + 10 rules tests, 22 diagnostics, 19 built-in assistant, and 9 MCP tests (plus the earlier
+  suites). The compiler runs out of memory on the MCP SDK's generic inference with this many tools, so the
+  registration helpers in `apps/mcp/src/server.ts` take their schemas loosely (zod checks them at run time).
+- **Decisions taken**: no outside AI model yet. First-party assistants work from rules, so they run with no key,
+  no cost and no customer data leaving Voxshift, and say why they did what they did; a model-backed brain is a
+  later, opt-in step behind the same autonomy limits. Live checks (presence, SBC and trunk health, certificate
+  expiry, CQD) are not guessed at: they need a live connection or a feed (chunks 7 and 8).
+
 ## Build log
 
 | Chunk | Status | Commit / notes |
@@ -700,6 +733,6 @@ rules in `packages/shared/src/agents.ts`; the API reference is [AGENTS.md](AGENT
 | 3 Email workflows and SLA engine | Built and deployed 2026-10-14 (8a6ad5a), verified live (migration 0048 on all 5 customer schemas) | See "Chunk 3 as built" |
 | 4 MSP console, major incidents, problems, reports | Built and deployed 2026-10-14 (a75e4a4), verified live (migration 0049 on all 5 customer schemas) | See "Chunk 4 as built" |
 | 5 Agent platform | Built and deployed 2026-10-14 (5cdeda4), verified live (agent API and /api/agents answer 401, web bundle has the Assistants page; migrations platform 0017 + tenant 0050 applied because the api started) | See "Chunk 5 as built" |
-| 6 First-party agents, diagnostics, MCP | Not started | |
+| 6 First-party agents, diagnostics, MCP | Built 2026-10-14, awaiting deploy | See "Chunk 6 as built" |
 | 7 Bots completing service requests | Not started | |
 | 8 Inbound email, integrations, polish | Not started | |

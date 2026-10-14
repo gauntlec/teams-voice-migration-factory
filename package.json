@@ -13,7 +13,7 @@
   },
   "scripts": {
     "build:packages": "npm run build --workspace @tvmf/shared && npm run build --workspace @tvmf/db",
-    "build": "npm run build:packages && npm run build --workspace @tvmf/api && npm run build --workspace @tvmf/worker && npm run build --workspace @tvmf/web",
+    "build": "npm run build:packages && npm run build --workspace @tvmf/api && npm run build --workspace @tvmf/worker && npm run build --workspace @tvmf/mcp && npm run build --workspace @tvmf/web",
     "dev:api": "npm run dev --workspace @tvmf/api",
     "dev:web": "npm run dev --workspace @tvmf/web",
     "dev:worker": "npm run dev --workspace @tvmf/worker",

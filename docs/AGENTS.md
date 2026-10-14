@@ -128,7 +128,8 @@ Proposal states: `proposed`, `approved`, `rejected`, `running`, `done`, `failed`
 
 Every event has `id` (increasing), `tenant_id`, `incident_id`, `kind`, `created_at` plus context in the payload.
 Kinds: `incident.created`, `incident.updated`, `incident.message`, `incident.assigned`, `incident.major_declared`,
-`claim.revoked`, `claim.expired`, `proposal.decided`, `proposal.expired`, `sla.at_risk`, `sla.breached`.
+`claim.revoked`, `claim.expired`, `proposal.decided`, `proposal.expired`, `sla.at_risk`, `sla.breached`,
+`incident.assist_requested` (a person asked this assistant to look at an incident: payload `question`, `askedBy`).
 
 Only customers the agent is enabled for are included. Events are kept 14 days; an agent that has been away longer
 reads the queue again.
@@ -155,4 +156,4 @@ admin routes; engineers decide proposals and take over.
 
 Agents creating incidents and monitoring intake with de-duplication keys (chunk 8) and agents completing
 service requests (chunk 7). The diagnostic runbooks ([DIAGNOSTICS.md](DIAGNOSTICS.md)) and the assistants Voxshift
-ships ([BUILTIN-AGENTS.md](BUILTIN-AGENTS.md)) exist; the MCP server is the rest of chunk 6.
+ships ([BUILTIN-AGENTS.md](BUILTIN-AGENTS.md)) exist, and the same API is available as MCP tools ([MCP.md](MCP.md)).

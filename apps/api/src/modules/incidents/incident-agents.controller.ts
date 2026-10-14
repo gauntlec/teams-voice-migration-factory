@@ -1,11 +1,12 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
-import { handBackSchema, proposalDecisionSchema, type HandBackInput, type ProposalDecisionInput } from '@tvmf/shared';
+import { askAssistantSchema, handBackSchema, proposalDecisionSchema, type AskAssistantInput, type HandBackInput, type ProposalDecisionInput } from '@tvmf/shared';
 import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
 import type { AuthedUser, TenantContext } from '../../common/request';
 import { ZodBody } from '../../common/zod.pipe';
 import { RequirePermission } from '../../rbac/require-permission.decorator';
 import { TenantGuard } from '../../rbac/tenant.guard';
 import { IncidentProposalsService } from './agent-proposals.service';
+import { BuiltinAgentsService } from './builtin-agents.service';
 import { IncidentAgentsService } from './incident-agents.service';
 
 /**
@@ -19,6 +20,7 @@ export class IncidentAgentsController {
   constructor(
     private readonly agents: IncidentAgentsService,
     private readonly proposals: IncidentProposalsService,
+    private readonly builtin: BuiltinAgentsService,
   ) {}
 
   @Get('agents')
@@ -31,6 +33,13 @@ export class IncidentAgentsController {
   @RequirePermission('inc:manage')
   decide(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string, @Param('proposalId') proposalId: string, @Body(new ZodBody(proposalDecisionSchema)) body: ProposalDecisionInput) {
     return this.proposals.decide(t, user, id, proposalId, body);
+  }
+
+  /** Ask an assistant to look at this incident now. */
+  @Post(':id/ask')
+  @RequirePermission('inc:manage')
+  ask(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string, @Body(new ZodBody(askAssistantSchema)) body: AskAssistantInput) {
+    return this.builtin.ask(t, user, id, body);
   }
 
   @Post(':id/takeover')

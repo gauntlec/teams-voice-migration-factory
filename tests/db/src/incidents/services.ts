@@ -57,7 +57,7 @@ export function incidentServices(handle: DbHandle, mail: Pick<MailService, 'enqu
     response: new IncidentResponseService(handle.db, cfg, svc),
     humanAgents: new IncidentAgentsService(handle.db, audit, claims, svc, events),
     agentApi,
-    builtin: new BuiltinAgentsService(handle.db, agentApi),
+    builtin: new BuiltinAgentsService(handle.db, agentApi, events),
     agentAdmin: new AgentAdminService(handle.db, audit),
     agentGuard: new AgentAuthGuard(handle.db),
   };

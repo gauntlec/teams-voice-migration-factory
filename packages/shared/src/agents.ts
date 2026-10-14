@@ -276,6 +276,7 @@ export const AGENT_EVENT_KINDS = [
   'proposal.expired',
   'sla.at_risk',
   'sla.breached',
+  'incident.assist_requested',
 ] as const;
 export type AgentEventKind = (typeof AGENT_EVENT_KINDS)[number];
 
@@ -452,6 +453,10 @@ export const createAgentWebhookSchema = z
   })
   .strict();
 export type CreateAgentWebhookInput = z.infer<typeof createAgentWebhookSchema>;
+
+/** POST .../incidents/:id/ask - a person asks an assistant to look at an incident now. */
+export const askAssistantSchema = z.object({ agentId: z.string().uuid(), question: z.string().trim().min(3, 'Say what you want it to look at').max(1000) }).strict();
+export type AskAssistantInput = z.infer<typeof askAssistantSchema>;
 
 /** POST /agents/builtin - add one of the assistants Voxshift ships. */
 export const createBuiltinAgentSchema = z.object({ key: z.enum(['triage', 'diagnose', 'comms']) }).strict();

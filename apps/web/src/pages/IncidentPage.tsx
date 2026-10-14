@@ -58,7 +58,7 @@ import {
 import { api, apiDownload, apiUpload } from '../api';
 import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
-import { IncidentAssistantCard, type AssistantInfo } from '../components/IncidentAssistant';
+import { AskAssistantCard, IncidentAssistantCard, type AssistantInfo } from '../components/IncidentAssistant';
 import { IncidentChecks } from '../components/IncidentChecks';
 import { IncidentMajorSection, type ChildIncident, type MajorInfo, type ParentIncident } from '../components/IncidentMajor';
 import { IncidentProblemCard, type LinkedProblem } from '../components/IncidentProblemCard';
@@ -393,6 +393,8 @@ function Overview({ base, data }: { base: string; data: IncidentPayload }) {
       {staff && data.agent && <IncidentAssistantCard base={base} incidentId={id} agent={data.agent} assignedAgentName={r.assigned_agent_name ?? null} onChanged={refresh} />}
 
       {staff && <IncidentChecks base={base} incidentId={id} />}
+
+      {staff && !['resolved', 'closed', 'cancelled', 'duplicate'].includes(r.status) && <AskAssistantCard base={base} incidentId={id} onChanged={refresh} />}
 
       <IncidentMajorSection base={base} incident={r} major={data.major} children={data.children} parent={data.parent} staff={staff} onChanged={refresh} />
 

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Card, Field, Input, Select, Text, makeStyles, shorthands, tokens } from '@fluentui/react-components';
+import { Badge, Button, Card, Field, Input, MessageBar, MessageBarBody, Select, Text, Textarea, makeStyles, shorthands, tokens } from '@fluentui/react-components';
 import { AGENT_PROPOSAL_STATE_LABELS, agentLabel, type AgentProposalState } from '@tvmf/shared';
 import { api } from '../api';
 import { errorText, when } from '../pages/ServiceRequests';
@@ -169,6 +169,71 @@ export function IncidentAssistantCard({ base, incidentId, agent, assignedAgentNa
         </div>
       )}
       {error && <Text className={s.error}>{errorText(error, 'That did not work')}</Text>}
+    </Card>
+  );
+}
+
+/**
+ * Ask an assistant to look at this incident now. A built-in assistant (Triage, Diagnose, Comms) does its job straight away,
+ * within what you allowed it for this customer; any other assistant gets the request in its events feed and replies on
+ * the timeline. Hidden when no assistant is available on the customer.
+ */
+export function AskAssistantCard({ base, incidentId, onChanged }: { base: string; incidentId: string; onChanged: () => void }) {
+  const s = useStyles();
+  const qc = useQueryClient();
+  const agents = useQuery({ queryKey: ['incident-agents', base], queryFn: () => api<{ id: string; name: string; builtin_key: string | null }[]>(`${base}/agents`) });
+  const [agentId, setAgentId] = useState('');
+  const [question, setQuestion] = useState('');
+  const send = useMutation({
+    mutationFn: () => api<{ delivered: 'builtin' | 'event'; message: string }>(`${base}/${incidentId}/ask`, { method: 'POST', body: JSON.stringify({ agentId: agentId || agents.data![0]!.id, question: question.trim() }) }),
+    onSuccess: () => {
+      setQuestion('');
+      qc.invalidateQueries({ queryKey: ['incident', base, incidentId] });
+      qc.invalidateQueries({ queryKey: ['incident-diagnostics', base, incidentId] });
+      onChanged();
+    },
+  });
+  if (!agents.data?.length) return null;
+  const chosen = agents.data.find((a) => a.id === (agentId || agents.data![0]!.id));
+  return (
+    <Card className={s.card}>
+      <div>
+        <Text weight="semibold">Ask an assistant</Text>
+        <div className={s.muted}>
+          <Text size={200}>
+            {chosen?.builtin_key === 'diagnose'
+              ? 'Diagnose runs the checks this incident points at, and any email address or phone number you mention.'
+              : chosen?.builtin_key === 'triage'
+                ? 'Triage looks again for known errors, duplicates and a wider problem, and leaves a note.'
+                : chosen?.builtin_key === 'comms'
+                  ? 'Comms drafts a customer update for you to approve. Nothing reaches the customer until you do.'
+                  : 'The request goes to the assistant as an event. It replies on the timeline.'}
+          </Text>
+        </div>
+      </div>
+      <div className={s.row} style={{ alignItems: 'flex-end' }}>
+        <Field label="Assistant">
+          <Select value={agentId || agents.data[0]!.id} onChange={(_, d) => setAgentId(d.value)}>
+            {agents.data.map((a) => (
+              <option key={a.id} value={a.id}>
+                {agentLabel(a.name)}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="What should it look at?" style={{ flexGrow: 1, minWidth: 260 }}>
+          <Textarea value={question} rows={2} onChange={(_, d) => setQuestion(d.value)} placeholder="For example: check anna@contoso.com, and is this the carrier again?" />
+        </Field>
+        <Button appearance="primary" disabled={send.isPending || question.trim().length < 3} onClick={() => send.mutate()}>
+          {send.isPending ? 'Asking…' : 'Ask'}
+        </Button>
+      </div>
+      {send.isError && <Text className={s.error}>{errorText(send.error, 'Could not ask.')}</Text>}
+      {send.data && (
+        <MessageBar intent="success">
+          <MessageBarBody>{send.data.message}</MessageBarBody>
+        </MessageBar>
+      )}
     </Card>
   );
 }

@@ -59,9 +59,17 @@ until a full cadence has passed since its last draft, approved or not.
 - Letting go of an incident clears the assistant as assignee (this applies to every agent, not just
   these: a released incident is nobody's, not "owned" by an assistant that has stopped).
 
+## Asking one
+
+On an incident, engineers can **Ask an assistant**. A built-in assistant does its job straight away, within
+its autonomy for the customer: Diagnose runs the checks the incident points at and any email address or number in
+the question, Triage looks again and leaves another note, Comms drafts an update for approval. A request is noted
+on the timeline (internal) and sent to the assistant as an `incident.assist_requested` event. If the assistant is
+set to observe only, the person is told so rather than nothing happening.
+
 ## Not built (by design, for now)
 
 No outside AI model is called. A model-backed brain (better wording, free-text understanding) is an
 optional later step behind the same autonomy limits, off unless a customer opts in. Meanwhile an
 outside agent can be connected through the REST API ([AGENTS.md](AGENTS.md)) or the MCP server
-([MCP.md](MCP.md) once built).
+([MCP.md](MCP.md)).
