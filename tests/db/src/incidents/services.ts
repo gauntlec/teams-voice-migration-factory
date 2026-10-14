@@ -11,6 +11,7 @@ import { IncidentProposalsService } from '../../../../apps/api/src/modules/incid
 import { IncidentAgentView } from '../../../../apps/api/src/modules/incidents/incident-agent-view.service';
 import { IncidentAgentsService } from '../../../../apps/api/src/modules/incidents/incident-agents.service';
 import { IncidentClaimsService } from '../../../../apps/api/src/modules/incidents/incident-claims.service';
+import { IncidentDiagnosticsService } from '../../../../apps/api/src/modules/incidents/incident-diagnostics.service';
 import { IncidentMajorService } from '../../../../apps/api/src/modules/incidents/incident-major.service';
 import { IncidentNotifier } from '../../../../apps/api/src/modules/incidents/incident-notifier';
 import { IncidentReportService } from '../../../../apps/api/src/modules/incidents/incident-report.service';
@@ -37,6 +38,7 @@ export function incidentServices(handle: DbHandle, mail: Pick<MailService, 'enqu
   const files = new FilesService(handle.db, { write: async () => {}, read: async () => Buffer.alloc(0), delete: async () => {}, exists: async () => true });
   const svc = new IncidentsService(handle.db, audit, files, notifier, major, events, claims, agentView);
   const problems = new ProblemsService(handle.db, audit, notifier);
+  const diagnostics = new IncidentDiagnosticsService(handle.db);
   const proposals = new IncidentProposalsService(handle.db, audit, svc, major, problems, claims, events, notifier);
   return {
     svc,
@@ -46,12 +48,13 @@ export function incidentServices(handle: DbHandle, mail: Pick<MailService, 'enqu
     events,
     claims,
     proposals,
+    diagnostics,
     reviews: new IncidentReviewService(handle.db, audit, notifier),
     reports: new IncidentReportService(handle.db),
     msp: new MspIncidentsService(handle.db, svc),
     response: new IncidentResponseService(handle.db, cfg, svc),
     humanAgents: new IncidentAgentsService(handle.db, audit, claims, svc, events),
-    agentApi: new AgentApiService(handle.db, svc, claims, proposals, events, problems, notifier),
+    agentApi: new AgentApiService(handle.db, svc, claims, proposals, events, problems, notifier, diagnostics),
     agentAdmin: new AgentAdminService(handle.db, audit),
     agentGuard: new AgentAuthGuard(handle.db),
   };

@@ -30,6 +30,7 @@ Rate limit: 240 requests a minute per token.
 | `GET /incidents/:tenantId/:id` | The incident, its whole timeline (internal notes too), items, `knownErrors`, up to 5 `similar` open incidents, the current claim, proposals, and `autonomy` (your level per action class). |
 | `GET /events?after=<id>&limit=` | The events feed (section 8): `{events, next}`. Keep `next` and send it as `after`. |
 | `GET /incidents/:tenantId/:id/proposals` | Your proposals on the incident and their state. |
+| `GET /incidents/:tenantId/:id/diagnostics` | Checks already run on the incident, and the checks worth running. (The incident itself also carries the latest as `diagnostics` and `suggestedChecks`.) |
 
 ## 3. What an agent may do: autonomy
 
@@ -81,6 +82,7 @@ the body allows it, `expectedVersion` (the incident `version` you last read; `40
 | `POST .../status` | triage, or resolve for restored / resolved / closed | `{to, note?, holdReason?, duplicateOf?, expectedVersion?}` |
 | `POST .../priority` | triage | `{priority, reason, expectedVersion?}` |
 | `POST .../items` | triage | `{kind, ref, label?}` link an affected item |
+| `POST .../diagnostics` | diagnostic_read | `{runbook, input?, proposalId?}` - a read-only check ([DIAGNOSTICS.md](DIAGNOSTICS.md)); level 3 directly, level 2 only for an approved proposal |
 | `POST .../handoff` | - | see below |
 
 A direct write needs level **3** for its class. Below that the call fails with `403` code `propose_instead` and
@@ -151,6 +153,6 @@ admin routes; engineers decide proposals and take over.
 
 ## 10. Not yet built
 
-Agents creating incidents and monitoring intake with de-duplication keys (chunk 8), the MCP server and the
-first-party Triage / Diagnose / Comms agents with runbook diagnostics (chunk 6), and agents completing service
-requests (chunk 7).
+Agents creating incidents and monitoring intake with de-duplication keys (chunk 8) and agents completing
+service requests (chunk 7). The diagnostic runbooks exist ([DIAGNOSTICS.md](DIAGNOSTICS.md)); the first-party
+Triage / Diagnose / Comms assistants and the MCP server are the rest of chunk 6.

@@ -554,6 +554,7 @@ export const INC_EVENT_KINDS = [
   'handoff',
   'proposal',
   'proposal_decided',
+  'diagnostic',
 ] as const;
 export type IncEventKind = (typeof INC_EVENT_KINDS)[number];
 

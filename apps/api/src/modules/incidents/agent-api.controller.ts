@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Headers, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
 import {
   agentClaimSchema,
+  agentDiagnosticSchema,
   agentEventsQuerySchema,
   agentHandoffSchema,
   agentHeartbeatSchema,
@@ -12,6 +13,7 @@ import {
   agentProposalSchema,
   agentStatusSchema,
   type AgentClaimInput,
+  type AgentDiagnosticInput,
   type AgentEventsQuery,
   type AgentHandoffInput,
   type AgentHeartbeatInput,
@@ -110,6 +112,16 @@ export class AgentApiController {
     @Body(new ZodBody(agentProposalResultSchema)) body: AgentProposalResultInput,
   ) {
     return this.svc.proposalResult(agent, tenantId, id, proposalId, body);
+  }
+
+  @Get('incidents/:tenantId/:id/diagnostics')
+  listDiagnostics(@CurrentAgent() agent: AgentPrincipal, @Param('tenantId', ParseUUIDPipe) tenantId: string, @Param('id', ParseUUIDPipe) id: string) {
+    return this.svc.listDiagnostics(agent, tenantId, id);
+  }
+
+  @Post('incidents/:tenantId/:id/diagnostics')
+  diagnostic(@CurrentAgent() agent: AgentPrincipal, @Param('tenantId', ParseUUIDPipe) tenantId: string, @Param('id', ParseUUIDPipe) id: string, @Body(new ZodBody(agentDiagnosticSchema)) body: AgentDiagnosticInput, @Headers('idempotency-key') key?: string) {
+    return this.svc.diagnostic(agent, tenantId, id, body, key);
   }
 
   @Post('incidents/:tenantId/:id/handoff')

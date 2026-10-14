@@ -6,6 +6,7 @@ import {
   agentEffectiveAutonomy,
   agentLabel,
   agentLevel,
+  agentMayExecuteApproved,
   agentMayActDirectly,
   agentMayNote,
   agentProposalClass,
@@ -16,6 +17,7 @@ import {
   type AgentActionClass,
   type AgentAutonomy,
   type AgentClaimInput,
+  type AgentDiagnosticInput,
   type AgentEventsQuery,
   type AgentHandoffInput,
   type AgentHeartbeatInput,
@@ -36,6 +38,7 @@ import { agentActor } from './agent-actor';
 import { AgentEventsService } from './agent-events.service';
 import { IncidentProposalsService } from './agent-proposals.service';
 import { IncidentClaimsService } from './incident-claims.service';
+import { IncidentDiagnosticsService } from './incident-diagnostics.service';
 import { IncidentNotifier } from './incident-notifier';
 import { IncidentsService } from './incidents.service';
 import { ProblemsService } from './problems.service';
@@ -62,6 +65,7 @@ export class AgentApiService {
     private readonly events: AgentEventsService,
     private readonly problems: ProblemsService,
     private readonly notify: IncidentNotifier,
+    private readonly diagnostics: IncidentDiagnosticsService,
   ) {}
 
   /* ------------------------------ checks ------------------------------ */
@@ -216,6 +220,8 @@ export class AgentApiService {
       tenant: { id: t.id, name: t.name },
       ...base,
       knownErrors: known,
+      diagnostics: await this.diagnostics.list(t, id, 10),
+      suggestedChecks: await this.diagnostics.suggest(t, id),
       similar: similar.map((s) => ({ ...s, reference: incReference(s.number) })),
       autonomy: agentEffectiveAutonomy(autonomy),
     };
@@ -305,6 +311,41 @@ export class AgentApiService {
       const item = await this.incidents.addItem(t, agentActor(ref(agent)), id, input);
       return { id: item.id };
     });
+  }
+
+  /**
+   * A read-only check (docs/DIAGNOSTICS.md). At "act alone" an agent just runs it; below that, the check has to be a
+   * step a person approved (an `external` proposal of the diagnostics class), named by `proposalId`. Either way the
+   * agent holds the incident, and the result goes on the timeline.
+   */
+  async diagnostic(agent: AgentPrincipal, tenantId: string, id: string, input: AgentDiagnosticInput, key?: string) {
+    this.scope(agent, 'note');
+    const { t, autonomy } = await this.tenantFor(agent, tenantId);
+    const level = agentLevel(autonomy, 'diagnostic_read');
+    if (level < 1) throw new ForbiddenException('Your autonomy for "diagnostic_read" on this customer is "observe".');
+    if (!agentMayActDirectly(level) && !(input.proposalId && agentMayExecuteApproved(level))) {
+      throw new ForbiddenException({ message: `Your autonomy for "diagnostic_read" on this customer is ${level}, below "act alone" (3). Propose the check as an "external" step (actionClass "diagnostic_read") and run it once a person approves it, naming the proposal in "proposalId".`, code: 'propose_instead' });
+    }
+    return this.once(agent.agentId, key, async () => {
+      const row = await this.load(t, id);
+      this.writable(row);
+      await this.claims.requireHeld(t, id, agent.agentId);
+      if (input.proposalId && !agentMayActDirectly(level)) {
+        const p = await tenantDb(this.db, t.schema).selectFrom('incident_actions').select(['agent_id', 'kind', 'action_class', 'state']).where('id', '=', input.proposalId).where('incident_id', '=', id).executeTakeFirst();
+        if (!p || p.agent_id !== agent.agentId || p.kind !== 'external' || p.action_class !== 'diagnostic_read') throw new NotFoundException('proposal not found');
+        if (p.state !== 'approved' && p.state !== 'running') throw new ConflictException(p.state === 'proposed' ? 'A person has not approved this yet.' : `This proposal is already ${p.state}.`);
+      }
+      const r = await this.diagnostics.run(t, agentActor(ref(agent)), id, { runbook: input.runbook, input: input.input }, { proposalId: input.proposalId });
+      if (input.proposalId) await this.proposals.reportResult(t, ref(agent), autonomy, id, input.proposalId, { state: 'done', result: { diagnosticId: r.id, status: r.status, summary: r.summary } }).catch(() => undefined);
+      return r;
+    });
+  }
+
+  async listDiagnostics(agent: AgentPrincipal, tenantId: string, id: string) {
+    this.scope(agent, 'read');
+    const { t } = await this.tenantFor(agent, tenantId);
+    await this.load(t, id);
+    return { results: await this.diagnostics.list(t, id), suggestions: await this.diagnostics.suggest(t, id) };
   }
 
   /* ------------------------------ proposals and handoff ------------------------------ */

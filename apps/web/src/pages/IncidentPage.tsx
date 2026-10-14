@@ -59,6 +59,7 @@ import { api, apiDownload, apiUpload } from '../api';
 import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
 import { IncidentAssistantCard, type AssistantInfo } from '../components/IncidentAssistant';
+import { IncidentChecks } from '../components/IncidentChecks';
 import { IncidentMajorSection, type ChildIncident, type MajorInfo, type ParentIncident } from '../components/IncidentMajor';
 import { IncidentProblemCard, type LinkedProblem } from '../components/IncidentProblemCard';
 import { IncidentReviewCard, type ReviewInfo } from '../components/IncidentReview';
@@ -390,6 +391,8 @@ function Overview({ base, data }: { base: string; data: IncidentPayload }) {
       )}
 
       {staff && data.agent && <IncidentAssistantCard base={base} incidentId={id} agent={data.agent} assignedAgentName={r.assigned_agent_name ?? null} onChanged={refresh} />}
+
+      {staff && <IncidentChecks base={base} incidentId={id} />}
 
       <IncidentMajorSection base={base} incident={r} major={data.major} children={data.children} parent={data.parent} staff={staff} onChanged={refresh} />
 
@@ -790,6 +793,7 @@ function eventText(e: IncidentEvent, staff: boolean): string {
     case 'handoff':
     case 'proposal':
     case 'proposal_decided':
+    case 'diagnostic':
       return e.body ?? '';
     case 'comment':
       return e.body ?? '';

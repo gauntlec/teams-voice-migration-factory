@@ -12,6 +12,8 @@ import { IncidentAgentView } from './incident-agent-view.service';
 import { IncidentAgentsController } from './incident-agents.controller';
 import { IncidentAgentsService } from './incident-agents.service';
 import { IncidentClaimsService } from './incident-claims.service';
+import { IncidentDiagnosticsController } from './incident-diagnostics.controller';
+import { IncidentDiagnosticsService } from './incident-diagnostics.service';
 import { IncidentMajorController } from './incident-major.controller';
 import { IncidentMajorService } from './incident-major.service';
 import { IncidentNotifier } from './incident-notifier';
@@ -29,8 +31,8 @@ import { IncidentsService } from './incidents.service';
   // FilesModule: incident attachments. MailModule: incident emails.
   imports: [FilesModule, MailModule],
   // IncidentAgentsController and IncidentMajorController first: their fixed paths (problems, report, notices ...) must win over IncidentsController's :id.
-  controllers: [IncidentAgentsController, IncidentMajorController, IncidentsController, IncidentResponseController, MspIncidentsController, AgentApiController, AgentAdminController],
-  providers: [IncidentsService, IncidentNotifier, IncidentResponseService, IncidentMajorService, ProblemsService, IncidentReviewService, IncidentReportService, MspIncidentsService, AgentEventsService, IncidentClaimsService, IncidentAgentView, IncidentProposalsService, IncidentAgentsService, AgentApiService, AgentAdminService, AgentAuthGuard],
+  controllers: [IncidentAgentsController, IncidentDiagnosticsController, IncidentMajorController, IncidentsController, IncidentResponseController, MspIncidentsController, AgentApiController, AgentAdminController],
+  providers: [IncidentsService, IncidentNotifier, IncidentResponseService, IncidentMajorService, ProblemsService, IncidentReviewService, IncidentReportService, MspIncidentsService, AgentEventsService, IncidentClaimsService, IncidentAgentView, IncidentProposalsService, IncidentAgentsService, IncidentDiagnosticsService, AgentApiService, AgentAdminService, AgentAuthGuard],
   exports: [IncidentsService, IncidentNotifier],
 })
 export class IncidentsModule {}

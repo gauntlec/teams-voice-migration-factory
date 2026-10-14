@@ -5,6 +5,7 @@
  * past), what a proposal may be, the shape of a token, and the claim lease.
  */
 import { z } from 'zod';
+import { DIAG_RUNBOOK_KEYS } from './diagnostics';
 import { INC_HOLD_REASONS, INC_ITEM_KINDS, INC_PRIORITIES, INC_STATUSES } from './incidents';
 
 /* ------------------------------ identity ------------------------------ */
@@ -375,6 +376,12 @@ export const agentProposalResultSchema = z
   })
   .strict();
 export type AgentProposalResultInput = z.infer<typeof agentProposalResultSchema>;
+
+/** POST .../diagnostics - run a read-only check. `proposalId` is the approved proposal this carries out (needed below "act alone"). */
+export const agentDiagnosticSchema = z
+  .object({ runbook: z.enum(DIAG_RUNBOOK_KEYS), input: z.string().trim().max(200).optional(), proposalId: z.string().uuid().optional() })
+  .strict();
+export type AgentDiagnosticInput = z.infer<typeof agentDiagnosticSchema>;
 
 export const agentEventsQuerySchema = z.object({ after: z.coerce.number().int().min(0).default(0), limit: z.coerce.number().int().min(1).max(500).default(100) }).strict();
 export type AgentEventsQuery = z.infer<typeof agentEventsQuerySchema>;

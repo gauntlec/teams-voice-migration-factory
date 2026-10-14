@@ -1042,6 +1042,22 @@ export interface IncidentReviewsTable {
 }
 
 /** A lease on an incident: who is working it right now - see 0050_incident_agents.sql. */
+export interface IncidentDiagnosticsTable {
+  id: Generated<string>;
+  incident_id: string;
+  runbook: import('@tvmf/shared').DiagRunbookKey;
+  input: ColumnType<string, string | undefined, string>;
+  subject: ColumnType<string, string | undefined, string>;
+  status: import('@tvmf/shared').DiagOutcome;
+  summary: ColumnType<string, string | undefined, string>;
+  findings: ColumnType<import('@tvmf/shared').DiagFinding[], string, string>;
+  data_as_of: string | null;
+  actor_type: ColumnType<'user' | 'agent' | 'system', 'user' | 'agent' | 'system' | undefined, 'user' | 'agent' | 'system'>;
+  run_by: string | null;
+  proposal_id: string | null;
+  created_at: Ts;
+}
+
 export interface IncidentClaimsTable {
   id: Generated<string>;
   incident_id: string;
@@ -1329,6 +1345,7 @@ export interface DB {
   problems: ProblemsTable;
   incident_reviews: IncidentReviewsTable;
   incident_claims: IncidentClaimsTable;
+  incident_diagnostics: IncidentDiagnosticsTable;
   incident_actions: IncidentActionsTable;
   files: FilesTable;
   audit_log: TenantAuditLogTable;
