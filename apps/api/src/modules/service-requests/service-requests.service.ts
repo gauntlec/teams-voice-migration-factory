@@ -60,6 +60,7 @@ import {
   srBuildHref,
   srDetailLines,
   srReference,
+  incReference,
   srToBuildDraft,
   suggestCapUpn,
   type CreateServiceRequestInput,
@@ -318,9 +319,49 @@ export class ServiceRequestsService {
         assigned_agent_name: row.assigned_agent_id ? agentName(row.assigned_agent_id) : null,
       },
       // The assistants' side of the story is for the team.
-      ...(canManage ? { agent: await this.agentView.details(t, row) } : {}),
+      ...(canManage ? { agent: await this.agentView.details(t, row), incidents: await this.relatedIncidents(t, row) } : {}),
       events: events.map((e) => ({ ...e, author_name: e.actor_type === 'agent' ? agentName(e.author_id) : (names.get(e.author_id) ?? null) })),
     };
+  }
+
+  /** Incidents this request was raised for, or that name it among their affected items. */
+  private async relatedIncidents(t: TenantContext, row: { id: string; number: number; incident_id: string | null }) {
+    const s = tenantDb(this.db, t.schema);
+    const linked = await s.selectFrom('incident_items').select('incident_id').where('kind', '=', 'service_request').where('ref', 'in', [row.id, srReference(row.number)]).execute();
+    const ids = [...new Set([...(row.incident_id ? [row.incident_id] : []), ...linked.map((l) => l.incident_id)])];
+    if (!ids.length) return [];
+    const rows = await s.selectFrom('incidents').select(['id', 'number', 'title', 'status', 'priority']).where('id', 'in', ids).orderBy('number', 'desc').execute();
+    return rows.map((r) => ({ id: r.id, reference: incReference(r.number), title: r.title, status: r.status, priority: r.priority }));
+  }
+
+  /**
+   * Links this request to an incident (or removes the link): "the fix for INC-0042 is SR-0007". Shown on both sides: the incident
+   * lists the request among its items, and the request lists the incident.
+   */
+  async linkIncident(t: TenantContext, user: AuthedUser, id: string, incidentId: string | null) {
+    this.assertEnabled(t);
+    const row = await this.load(t, id);
+    const s = tenantDb(this.db, t.schema);
+    const reference = srReference(row.number);
+    if (incidentId) {
+      const inc = await s.selectFrom('incidents').select(['id', 'number', 'title']).where('id', '=', incidentId).executeTakeFirst();
+      if (!inc) throw new BadRequestException('That incident does not exist.');
+      await s.updateTable('service_requests').set({ incident_id: inc.id, updated_at: new Date().toISOString() }).where('id', '=', id).execute();
+      const added = await s
+        .insertInto('incident_items')
+        .values({ incident_id: inc.id, kind: 'service_request', ref: reference, label: row.title, created_by: user.agent ? null : user.id })
+        .onConflict((oc) => oc.columns(['incident_id', 'kind', 'ref']).doNothing())
+        .returning('id')
+        .executeTakeFirst();
+      if (added) await s.insertInto('incident_events').values({ incident_id: inc.id, kind: 'link', body: `${reference} ${row.title}`, internal: true, author_id: user.id, actor_type: user.agent ? 'agent' : 'user', meta: JSON.stringify({ kind: 'service_request', ref: reference }) }).execute();
+      await s.insertInto('service_request_events').values({ request_id: id, kind: 'comment', body: `Linked to ${incReference(inc.number)}: ${inc.title}`, internal: true, author_id: user.id, actor_type: user.agent ? 'agent' : 'user' }).execute();
+    } else {
+      const was = row.incident_id;
+      await s.updateTable('service_requests').set({ incident_id: null, updated_at: new Date().toISOString() }).where('id', '=', id).execute();
+      if (was) await s.deleteFrom('incident_items').where('incident_id', '=', was).where('kind', '=', 'service_request').where('ref', '=', reference).execute();
+    }
+    await this.audit.tenant(t.schema, 'service_request.incident_linked', { actor: { id: user.id, email: user.email }, targetType: 'service_request', targetId: id, detail: { reference, incidentId } });
+    return { linked: !!incidentId };
   }
 
   /* ------------------------------ settings ------------------------------ */
@@ -470,10 +511,18 @@ export class ServiceRequestsService {
       else age.over7d++;
     }
 
+    // Who got the deployed ones over the line: an assistant (a verified deployment it ran as a person approved) or a person.
+    const deployedIds = rows.filter((r) => r.status === 'deployed').map((r) => r.id);
+    const doneBy = deployedIds.length
+      ? await s.selectFrom('service_request_events').select(['request_id', 'actor_type']).where('request_id', 'in', deployedIds).where('kind', '=', 'status_changed').where('to_status', '=', 'deployed').execute()
+      : [];
+    const byAssistants = new Set(doneBy.filter((e) => e.actor_type === 'agent').map((e) => e.request_id)).size;
+
     return {
       from: start.toISOString(),
       to: end.toISOString(),
       raised: rows.length,
+      completedBy: { assistants: byAssistants, people: Math.max(0, deployedIds.length - byAssistants) },
       deployed: byStatus.deployed ?? 0,
       byType,
       byStatus,

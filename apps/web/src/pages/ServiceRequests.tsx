@@ -86,6 +86,9 @@ export interface RequestRow {
   requested_by_name: string | null;
   assigned_to: string | null;
   assigned_to_name: string | null;
+  /** An assistant holds or is assigned the request: "Name (AI)" for staff, "Voxshift assistant" for customers. */
+  assigned_agent_name?: string | null;
+  assigned_agent_id?: string | null;
   target_date: string | null;
   created_at: string;
   /** Set while the team is waiting for the customer's reply. */
@@ -109,7 +112,7 @@ export interface RequestDetail extends RequestRow {
 
 export interface RequestEvent {
   id: string;
-  kind: 'created' | 'status_changed' | 'assigned' | 'comment' | 'build_drafted' | 'deployment' | 'waiting' | 'resumed' | 'approval' | 'attachment';
+  kind: 'created' | 'status_changed' | 'assigned' | 'comment' | 'build_drafted' | 'deployment' | 'waiting' | 'resumed' | 'approval' | 'attachment' | 'claim_started' | 'claim_released' | 'handoff' | 'proposal' | 'proposal_decided' | 'whatif';
   from_status: SrStatus | null;
   to_status: SrStatus | null;
   body: string | null;
@@ -336,7 +339,7 @@ export function ServiceRequests() {
                       <SlaBadge clock={r.sla.clock} which={r.sla.which} />
                     </TableCell>
                   )}
-                  <TableCell>{r.assigned_to_name ?? '—'}</TableCell>
+                  <TableCell>{r.assigned_agent_name ?? r.assigned_to_name ?? '—'}</TableCell>
                   <TableCell>
                     {r.requested_by_name ?? '—'}
                     <Text size={100} block>

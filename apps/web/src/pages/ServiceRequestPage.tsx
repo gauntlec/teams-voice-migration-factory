@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link as RouterLink, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { RequestAssistantCard, type SrAssistantInfo } from '../components/RequestAssistant';
+import { agentLabel } from '@tvmf/shared';
 import {
   Badge,
   Button,
@@ -178,6 +180,10 @@ interface RequestPayload {
   checks: string[];
   /** Staff only: the customer's change window. */
   changeWindow: SrChangeWindow | null;
+  /** Staff only: assistants on this request. */
+  agent?: SrAssistantInfo;
+  /** Staff only: incidents this request is linked to. */
+  incidents?: { id: string; reference: string; title: string; status: string; priority: string }[];
 }
 
 export function ServiceRequestPage() {
@@ -330,8 +336,14 @@ function Overview({
       refresh();
     },
   });
+  const agents = useQuery({
+    queryKey: ['sr-agents', base],
+    enabled: canManage,
+    queryFn: () => api<{ id: string; name: string }[]>(`${base}/agents`),
+  });
   const assign = useMutation({
-    mutationFn: (userId: string | null) => api(`${base}/${id}/assign`, { method: 'POST', body: JSON.stringify({ userId }) }),
+    // "u:<id>" a person, "a:<id>" an assistant, "" nobody.
+    mutationFn: (who: string) => api(`${base}/${id}/assign`, { method: 'POST', body: JSON.stringify(who.startsWith('a:') ? { agentId: who.slice(2) } : { userId: who.startsWith('u:') ? who.slice(2) : null }) }),
     onSuccess: refresh,
   });
   const addComment = useMutation({
@@ -411,6 +423,7 @@ function Overview({
           )}
         </div>
       )}
+      {canManage && data.agent && <RequestAssistantCard base={base} requestId={id} status={r.status} agent={data.agent} assignedAgentName={r.assigned_agent_name ?? null} onChanged={refresh} />}
       <Card className={ps.card}>
         <div className={cs.facts}>
           <Text className={cs.factLabel}>Status</Text>
@@ -443,18 +456,29 @@ function Overview({
           </Text>
           <Text className={cs.factLabel}>Assigned to</Text>
           {canManage && (r.status === 'new' || r.status === 'planned' || r.status === 'built') ? (
-            <Select size="small" value={r.assigned_to ?? ''} disabled={assign.isPending} onChange={(_, d) => assign.mutate(d.value || null)}>
+            <Select size="small" value={r.assigned_agent_id ? `a:${r.assigned_agent_id}` : r.assigned_to ? `u:${r.assigned_to}` : ''} disabled={assign.isPending} onChange={(_, d) => assign.mutate(d.value)}>
               <option value="">Unassigned</option>
               {(assignees.data ?? []).map((a) => (
-                <option key={a.id} value={a.id}>
+                <option key={a.id} value={`u:${a.id}`}>
                   {a.display_name}
                 </option>
               ))}
+              {(agents.data ?? []).length > 0 && (
+                <optgroup label="Assistants (AI)">
+                  {(agents.data ?? []).map((a) => (
+                    <option key={a.id} value={`a:${a.id}`}>
+                      {agentLabel(a.name)}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </Select>
           ) : (
-            <Text>{r.assigned_to_name ?? 'Unassigned'}</Text>
+            <Text>{r.assigned_agent_name ?? r.assigned_to_name ?? 'Unassigned'}</Text>
           )}
         </div>
+
+        {canManage && <RelatedIncidents base={base} requestId={id} incidents={data.incidents ?? []} onChanged={refresh} />}
 
         <div className={cs.section}>
           <Text weight="semibold">Request details</Text>
@@ -636,6 +660,12 @@ function eventText(e: RequestEvent, staff: boolean): string {
     case 'comment':
     case 'build_drafted':
     case 'deployment':
+    case 'claim_started':
+    case 'claim_released':
+    case 'handoff':
+    case 'proposal':
+    case 'proposal_decided':
+    case 'whatif':
       return e.body ?? '';
   }
 }
@@ -1388,5 +1418,62 @@ function NumbersDesign({ base, request: r, design, onDone }: { base: string; req
       )}
       {add.error && <Text className={cs.error}>{errorText(add.error, 'Could not add the numbers')}</Text>}
     </Card>
+  );
+}
+
+/* ------------------------------ related incidents ------------------------------ */
+
+/** Incidents this request is linked to (staff): "the fix for INC-0042 is this request". The incident lists the request among its items too. */
+function RelatedIncidents({ base, requestId, incidents, onChanged }: { base: string; requestId: string; incidents: { id: string; reference: string; title: string; status: string; priority: string }[]; onChanged: () => void }) {
+  const { activeTenantId } = useAuth();
+  const qc = useQueryClient();
+  const [pick, setPick] = useState('');
+  const open = useQuery({
+    queryKey: ['incidents', 'open-for-link', activeTenantId],
+    enabled: !!activeTenantId,
+    queryFn: () => api<{ id: string; reference: string; title: string }[]>(`/t/${activeTenantId}/incidents?status=open`),
+  });
+  const link = useMutation({
+    mutationFn: (incidentId: string | null) => api(`${base}/${requestId}/incident`, { method: 'POST', body: JSON.stringify({ incidentId }) }),
+    onSuccess: () => {
+      setPick('');
+      qc.invalidateQueries({ queryKey: ['service-request', base, requestId] });
+      qc.invalidateQueries({ queryKey: ['incident'] });
+      onChanged();
+    },
+  });
+  const candidates = (open.data ?? []).filter((i) => !incidents.some((x) => x.id === i.id));
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', rowGap: 6 }}>
+      <Text weight="semibold">Related incidents</Text>
+      {incidents.length === 0 && <Text size={200}>None linked.</Text>}
+      {incidents.map((i) => (
+        <div key={i.id} style={{ display: 'flex', columnGap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <RouterLink to={`/incidents/${i.id}`}>
+            {i.reference} · {i.title}
+          </RouterLink>
+          <Badge appearance="tint">{i.status.replace('_', ' ')}</Badge>
+          <Button size="small" disabled={link.isPending} onClick={() => link.mutate(null)}>
+            Unlink
+          </Button>
+        </div>
+      ))}
+      {candidates.length > 0 && (
+        <div style={{ display: 'flex', columnGap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <Select size="small" value={pick} onChange={(_, d) => setPick(d.value)} aria-label="Link an incident">
+            <option value="">Link an incident…</option>
+            {candidates.map((i) => (
+              <option key={i.id} value={i.id}>
+                {i.reference} · {i.title}
+              </option>
+            ))}
+          </Select>
+          <Button size="small" disabled={!pick || link.isPending} onClick={() => link.mutate(pick)}>
+            Link
+          </Button>
+        </div>
+      )}
+      {link.error && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{errorText(link.error, 'Could not link it.')}</Text>}
+    </div>
   );
 }

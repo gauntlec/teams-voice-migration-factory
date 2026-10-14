@@ -276,6 +276,7 @@ export function SettingsDialog({ base, onClose }: { base: string; onClose: () =>
 interface Report {
   raised: number;
   deployed: number;
+  completedBy?: { assistants: number; people: number };
   byType: Record<string, number>;
   byStatus: Record<string, number>;
   medianHoursToDeploy: number | null;
@@ -313,6 +314,7 @@ export function ReportsDialog({ base, onClose }: { base: string; onClose: () => 
     ? [
         { label: 'Raised', value: String(r.raised) },
         { label: 'Completed', value: String(r.deployed) },
+        ...(r.completedBy?.assistants ? [{ label: 'Done by assistants', value: `${r.completedBy.assistants} of ${r.completedBy.assistants + r.completedBy.people}` }] : []),
         { label: 'Median time to complete', value: r.medianHoursToDeploy === null ? '—' : r.medianHoursToDeploy >= 48 ? `${Math.round(r.medianHoursToDeploy / 24)} days` : `${r.medianHoursToDeploy}h` },
         { label: 'First response on time', value: pct(r.responseMetPct, r.responseMeasured) },
         { label: 'Completed on time', value: pct(r.resolutionMetPct, r.resolutionMeasured) },

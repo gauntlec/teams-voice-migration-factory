@@ -6,6 +6,7 @@ import {
   createServiceRequestSchema,
   listServiceRequestsQuerySchema,
   serviceRequestAssignSchema,
+  serviceRequestIncidentLinkSchema,
   serviceRequestBuildDraftSchema,
   serviceRequestCommentSchema,
   serviceRequestDeploySchema,
@@ -162,6 +163,13 @@ export class ServiceRequestsController {
   @RequirePermission('sr:manage')
   resume(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string) {
     return this.svc.stopWaitingOnCustomer(t, user, id);
+  }
+
+  /** Link the request to an incident (or remove the link with incidentId null). */
+  @Post(':id/incident')
+  @RequirePermission('sr:manage')
+  linkIncident(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string, @Body(new ZodBody(serviceRequestIncidentLinkSchema)) body: { incidentId: string | null }) {
+    return this.svc.linkIncident(t, user, id, body.incidentId);
   }
 
   @Post(':id/assign')

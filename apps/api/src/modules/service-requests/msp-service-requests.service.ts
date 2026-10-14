@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { platformDb, tenantDb, tenantSchemaName } from '@tvmf/db';
 import {
   SR_OPEN_STATUSES,
+  agentLabel,
   can,
   srEffectiveTargets,
   srNextClock,
@@ -132,6 +133,7 @@ export class MspServiceRequestsService {
             'ds.sitecode as sitecode',
             'sr.requested_by as requested_by',
             'sr.assigned_to as assigned_to',
+            'sr.assigned_agent_id as assigned_agent_id',
             'sr.target_date as target_date',
             'sr.created_at as created_at',
             'sr.waiting_since as waiting_since',
@@ -163,6 +165,8 @@ export class MspServiceRequestsService {
     );
     const items = perTenant.flat().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
 
+    const agentIds = [...new Set(items.map((i) => i.assigned_agent_id).filter((v): v is string => !!v))];
+    const agentNames = new Map((agentIds.length ? await platformDb(this.db).selectFrom('agents').select(['id', 'name']).where('id', 'in', agentIds).execute() : []).map((a) => [a.id, a.name]));
     const ids = [...new Set(items.flatMap((i) => [i.requested_by, i.assigned_to]).filter((v): v is string => !!v))];
     const names = ids.length ? new Map((await p.selectFrom('users').select(['id', 'display_name']).where('id', 'in', ids).execute()).map((u) => [u.id, u.display_name])) : new Map<string, string>();
 
@@ -174,6 +178,7 @@ export class MspServiceRequestsService {
         ...i,
         requested_by_name: names.get(i.requested_by) ?? null,
         assigned_to_name: i.assigned_to ? (names.get(i.assigned_to) ?? null) : null,
+        assigned_agent_name: i.assigned_agent_id ? agentLabel(agentNames.get(i.assigned_agent_id) ?? 'Assistant') : null,
       })),
     };
   }

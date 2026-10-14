@@ -48,6 +48,7 @@ interface QueueItem {
   requested_by_name: string | null;
   assigned_to: string | null;
   assigned_to_name: string | null;
+  assigned_agent_name?: string | null;
   created_at: string;
   waiting_since: string | null;
   /** The target that matters now. */
@@ -238,7 +239,7 @@ export function MspServiceRequests() {
                   <TableCell>
                     <SlaBadge clock={i.sla.clock} which={i.sla.which} />
                   </TableCell>
-                  <TableCell>{i.assigned_to_name ?? '—'}</TableCell>
+                  <TableCell>{i.assigned_agent_name ?? i.assigned_to_name ?? '—'}</TableCell>
                   <TableCell>
                     {i.requested_by_name ?? '—'}
                     <Text size={100} block className={cs.muted}>

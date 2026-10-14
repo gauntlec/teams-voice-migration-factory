@@ -175,3 +175,46 @@ describe('housekeeping', () => {
     expect((await sweepAgents(handle.db, enqueue, { tenantId: c.t.id })).lapsed).toBe(0);
   });
 });
+
+describe('reporting and incident links', () => {
+  it('counts what assistants and people got deployed', async () => {
+    const before = await s.requests.report(c.t, new Date(Date.now() - 86_400_000).toISOString(), new Date(Date.now() + 86_400_000).toISOString());
+    const x = await deploying();
+    await run(x);
+    await finish(x, clean);
+    const upn = `lee${++n}-${randomUUID().slice(0, 4)}@contoso.test`;
+    await s.build.createUser(c.t, eng, { site_id: siteId, upn } as never);
+    const sr = await s.requests.create(c.t, cara, createServiceRequestSchema.parse({ type: 'change_user', title: `By hand ${upn}`, siteId, details: { user: { upn, name: 'Lee' }, changes: ['Voicemail'], voicemail: 'Turn on' } }));
+    await s.requests.move(c.t, eng, sr.id, { to: 'planned' }, true);
+    await s.requests.draftInBuild(c.t, eng, sr.id, {} as never);
+    await s.requests.move(c.t, eng, sr.id, { to: 'built' }, true);
+    await s.requests.move(c.t, eng, sr.id, { to: 'deployed' }, true);
+    const after = await s.requests.report(c.t, new Date(Date.now() - 86_400_000).toISOString(), new Date(Date.now() + 86_400_000).toISOString());
+    expect(after.completedBy.assistants - before.completedBy.assistants).toBe(1);
+    expect(after.completedBy.people - before.completedBy.people).toBe(1);
+    expect(after.deployed - before.deployed).toBe(2);
+  });
+
+  it('links a request and an incident both ways, and unlinks them', async () => {
+    const upn = `ann${++n}-${randomUUID().slice(0, 4)}@contoso.test`;
+    const sr = await s.requests.create(c.t, cara, createServiceRequestSchema.parse({ type: 'change_user', title: `For the incident ${upn}`, siteId, details: { user: { upn, name: 'Ann' }, changes: ['Voicemail'], voicemail: 'Turn on' } }));
+    const inc = await c.s
+      .insertInto('incidents')
+      .values({ title: 'Voicemail broken', description: 'Voicemail greeting is wrong for the whole team', category: 'users', subcategory: 'voicemail', impact: 'team', urgency: 'degraded', priority: 'p3', reporter_id: cara.id, details: JSON.stringify({ answers: {}, example_calls: [] }) } as never)
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    await s.requests.linkIncident(c.t, eng, sr.id, inc.id);
+    const got = await s.requests.get(c.t, sr.id, true);
+    expect(got.incidents).toMatchObject([{ id: inc.id, title: 'Voicemail broken' }]);
+    const items = await c.s.selectFrom('incident_items').selectAll().where('incident_id', '=', inc.id).execute();
+    expect(items).toMatchObject([{ kind: 'service_request', ref: got.request.reference }]);
+    // Twice is harmless, and a customer never sees it.
+    await s.requests.linkIncident(c.t, eng, sr.id, inc.id);
+    expect(await c.s.selectFrom('incident_items').selectAll().where('incident_id', '=', inc.id).execute()).toHaveLength(1);
+    expect(await s.requests.get(c.t, sr.id, false, cara.id)).not.toHaveProperty('incidents');
+    await expect(s.requests.linkIncident(c.t, eng, sr.id, randomUUID())).rejects.toThrow(/does not exist/);
+    await s.requests.linkIncident(c.t, eng, sr.id, null);
+    expect((await s.requests.get(c.t, sr.id, true)).incidents).toEqual([]);
+    expect(await c.s.selectFrom('incident_items').selectAll().where('incident_id', '=', inc.id).execute()).toHaveLength(0);
+  });
+});

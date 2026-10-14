@@ -1570,6 +1570,9 @@ export const serviceRequestAssignSchema = z
   .refine((v) => v.userId !== undefined || !!v.agentId, { message: 'Pick a person, an assistant, or nobody.' });
 export type ServiceRequestAssignInput = z.infer<typeof serviceRequestAssignSchema>;
 
+/** POST /service-requests/:id/incident - link a request to an incident, or remove the link. */
+export const serviceRequestIncidentLinkSchema = z.object({ incidentId: z.string().uuid().nullable() }).strict();
+
 export const serviceRequestCommentSchema = z.object({
   body: z.string().trim().min(1, 'Write a comment').max(4000),
   /** Staff-only note the customer never sees. */
