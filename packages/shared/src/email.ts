@@ -237,7 +237,11 @@ export interface ServiceRequestActivityContext {
     | 'sla_breached' // ... or has been
     | 'approval_needed' // (phase 4) a customer approver must approve it
     | 'approved'
-    | 'rejected';
+    | 'rejected'
+    | 'agent_proposal' // an assistant proposed a step that needs a decision
+    | 'agent_lapsed' // an assistant stopped working the request
+    | 'agent_handoff' // an assistant handed the request over
+    | 'agent_deploy_check'; // an assistant's deployment did not verify, or did not finish cleanly
   author: string | null;
   body: string | null;
   runUrl: string;

@@ -21,6 +21,7 @@ export * from './incident-major';
 export * from './agents';
 export * from './diagnostics';
 export * from './builtin-agents';
+export * from './service-request-agents';
 export * from './wizard-convert';
 export * from './progress';
 export * from './release-safety';

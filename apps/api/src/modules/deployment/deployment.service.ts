@@ -631,7 +631,7 @@ export class DeploymentService {
     input: CreateDeploymentInput,
     can: (p: 'deployment:execute') => boolean,
     /** Set by a service request's Deploy tab: a clean live run moves that request to Deployed (see the worker). */
-    link?: { serviceRequestId: string },
+    link?: { serviceRequestId: string; agentId?: string; proposalId?: string },
   ) {
     if (input.mode === 'execute' && !can('deployment:execute')) {
       throw new ForbiddenException('Missing permission: deployment:execute');
@@ -689,7 +689,7 @@ export class DeploymentService {
     // re-validated against the request schema, so the extra key is safe.
     // serviceRequestId likewise never comes from the client's own scope - only
     // ServiceRequestsService.deploy passes `link`, after its own checks.
-    const scope = { ...input.scope, sheets, rowIds, autoIncludedRowIds, ...(link ? { serviceRequestId: link.serviceRequestId } : {}) };
+    const scope = { ...input.scope, sheets, rowIds, autoIncludedRowIds, ...(link ? { serviceRequestId: link.serviceRequestId, ...(link.agentId ? { agentId: link.agentId, proposalId: link.proposalId } : {}) } : {}) };
 
     const dep = await s
       .insertInto('deployments')

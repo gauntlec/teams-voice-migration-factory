@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { platformDb } from '@tvmf/db';
-import { incReference, type AgentEventKind, type IncPriority, type IncStatus } from '@tvmf/shared';
+import { incReference, srReference, type AgentEventKind, type IncPriority, type IncStatus } from '@tvmf/shared';
 import { InjectDb, type Db } from '../../db/db.module';
 
 /** The incident columns an event is built from. */
@@ -47,6 +47,23 @@ export class AgentEventsService {
     }
   }
 
+  /** A service request event, for the assistants allowed on the customer (or one in particular). */
+  async emitRequest(tenantId: string, row: { id: string; number: number; type: string; status: string; priority: string }, kind: AgentEventKind, extra: Record<string, unknown> = {}, agentId: string | null = null): Promise<void> {
+    try {
+      if (!agentId) {
+        const any = await platformDb(this.db).selectFrom('agent_customer_policy').select('agent_id').where('tenant_id', '=', tenantId).where('enabled', '=', true).limit(1).executeTakeFirst();
+        if (!any) return;
+      }
+      await platformDb(this.db)
+        .insertInto('agent_events')
+        .values({ tenant_id: tenantId, request_id: row.id, kind, agent_id: agentId, payload: JSON.stringify({ reference: srReference(row.number), type: row.type, status: row.status, priority: row.priority, ...extra }) })
+        .execute();
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn(`[agents] could not record ${kind} for request ${row.id}: ${(e as Error).message}`);
+    }
+  }
+
   /**
    * Events after a cursor, for the customers this agent may work: the ones for everyone and the ones
    * for it alone, oldest first. `next` is the cursor to send back next time.
@@ -56,7 +73,7 @@ export class AgentEventsService {
       .selectFrom('agent_events as e')
       .innerJoin('agent_customer_policy as p', (j) => j.onRef('p.tenant_id', '=', 'e.tenant_id').on('p.agent_id', '=', agentId).on('p.enabled', '=', true))
       .innerJoin('tenants as t', 't.id', 'e.tenant_id')
-      .select(['e.id as id', 'e.tenant_id as tenant_id', 'e.incident_id as incident_id', 'e.kind as kind', 'e.payload as payload', 'e.created_at as created_at'])
+      .select(['e.id as id', 'e.tenant_id as tenant_id', 'e.incident_id as incident_id', 'e.request_id as request_id', 'e.kind as kind', 'e.payload as payload', 'e.created_at as created_at'])
       .where('t.agents_enabled', '=', true)
       .where('e.id', '>', String(after) as never)
       .where((eb) => eb.or([eb('e.agent_id', 'is', null), eb('e.agent_id', '=', agentId)]))
@@ -64,7 +81,7 @@ export class AgentEventsService {
       .limit(limit)
       .execute();
     // The payload is context; the event's own fields always win.
-    const events = rows.map((r) => ({ ...(r.payload as Record<string, unknown>), id: Number(r.id), tenant_id: r.tenant_id, incident_id: r.incident_id, kind: r.kind, created_at: r.created_at }));
+    const events = rows.map((r) => ({ ...(r.payload as Record<string, unknown>), id: Number(r.id), tenant_id: r.tenant_id, incident_id: r.incident_id, request_id: r.request_id, kind: r.kind, created_at: r.created_at }));
     return { events, next: events.length ? events[events.length - 1]!.id : after };
   }
 }

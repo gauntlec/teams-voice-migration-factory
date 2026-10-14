@@ -3,6 +3,8 @@ import { sql } from 'kysely';
 import { platformDb, tenantDb } from '@tvmf/db';
 import type { ZodType, ZodTypeDef } from 'zod';
 import {
+  AGENT_CUSTOMER_LABEL,
+  agentLabel,
   NUMBER_NEED_KEEP,
   NUMBER_NEED_NEW,
   SITE_MODE_LABELS,
@@ -94,6 +96,10 @@ import { DeploymentService } from '../deployment/deployment.service';
 import { expandRange } from '../data-collection/data-collection.telephony.service';
 import { FilesService } from '../files/files.service';
 import { assertSiteInScope, isSiteScoped } from '../data-collection/site-scope';
+import { agentActor } from '../incidents/agent-actor';
+import { AgentEventsService } from '../incidents/agent-events.service';
+import { SrAgentView } from './sr-agent-view.service';
+import { SrClaimsService } from './sr-claims.service';
 
 /** When each status was reached. */
 const REACHED_AT: Partial<Record<SrStatus, 'planned_at' | 'built_at' | 'deployed_at' | 'cancelled_at' | 'declined_at'>> = {
@@ -131,6 +137,9 @@ export class ServiceRequestsService {
     private readonly dataCollection: DataCollectionService,
     private readonly deployment: DeploymentService,
     private readonly files: FilesService,
+    private readonly claims: SrClaimsService,
+    private readonly agentView: SrAgentView,
+    private readonly agentEvents: AgentEventsService,
   ) {}
 
   private assertEnabled(t: TenantContext) {
@@ -147,6 +156,18 @@ export class ServiceRequestsService {
     if (unique.length === 0) return new Map<string, string>();
     const rows = await platformDb(this.db).selectFrom('users').select(['id', 'display_name']).where('id', 'in', unique).execute();
     return new Map(rows.map((r) => [r.id, r.display_name]));
+  }
+
+  private async agentNames(ids: (string | null | undefined)[]) {
+    const unique = [...new Set(ids.filter((v): v is string => !!v))];
+    if (unique.length === 0) return new Map<string, string>();
+    const rows = await platformDb(this.db).selectFrom('agents').select(['id', 'name']).where('id', 'in', unique).execute();
+    return new Map(rows.map((r) => [r.id, r.name]));
+  }
+
+  /** Tells the team something about a request (assistant proposals, hand-offs, a deployment to check). Same recipients as any team email. */
+  notifyTeam(t: TenantContext, row: { id: string; number: number; title: string; type: SrType; assigned_to: string | null }, kind: ServiceRequestActivityContext['kind'], authorName: string | null, body: string | null) {
+    return this.emailTeam(t, row, kind, authorName ? { id: '', displayName: authorName } : null, body);
   }
 
   /**
@@ -187,7 +208,7 @@ export class ServiceRequestsService {
     return row;
   }
 
-  async list(t: TenantContext, q: ListServiceRequestsQuery) {
+  async list(t: TenantContext, q: ListServiceRequestsQuery, staff = false) {
     this.assertEnabled(t);
     let query = tenantDb(this.db, t.schema)
       .selectFrom('service_requests as sr')
@@ -203,6 +224,8 @@ export class ServiceRequestsService {
         'ds.sitecode as sitecode',
         'sr.requested_by as requested_by',
         'sr.assigned_to as assigned_to',
+        'sr.assigned_agent_id as assigned_agent_id',
+        'sr.incident_id as incident_id',
         'sr.target_date as target_date',
         'sr.created_at as created_at',
         'sr.updated_at as updated_at',
@@ -222,10 +245,12 @@ export class ServiceRequestsService {
     if (isSiteScoped(t)) query = query.where('sr.site_id', 'in', t.siteScope);
     const rows = await query.execute();
     const names = await this.names(rows.flatMap((r) => [r.requested_by, r.assigned_to]));
+    const agents = await this.agentNames(rows.map((r) => r.assigned_agent_id));
     const targets = srEffectiveTargets(await this.settingsRaw(t));
     const now = Date.now();
     return rows.map((r) => ({
       ...r,
+      assigned_agent_name: r.assigned_agent_id ? (staff ? agentLabel(agents.get(r.assigned_agent_id) ?? 'Assistant') : AGENT_CUSTOMER_LABEL) : null,
       // The target that matters now (response, then resolution) - see service-request-sla.ts.
       sla: srNextClock(srSla(r, targets, now)),
       reference: srReference(r.number),
@@ -248,7 +273,9 @@ export class ServiceRequestsService {
         .orderBy('created_at')
         .execute(),
     ]);
-    const names = await this.names([row.requested_by, row.assigned_to, ...events.map((e) => e.author_id)]);
+    const names = await this.names([row.requested_by, row.assigned_to, ...events.filter((e) => e.actor_type !== 'agent').map((e) => e.author_id)]);
+    const agents = await this.agentNames([row.assigned_agent_id, ...events.filter((e) => e.actor_type === 'agent').map((e) => e.author_id)]);
+    const agentName = (id: string) => (canManage ? agentLabel(agents.get(id) ?? 'Assistant') : AGENT_CUSTOMER_LABEL);
     // Staff only: whether "Create in Design & Build" applies, and a suggested
     // UPN for a common area phone (the customer isn't asked for one).
     const buildKind = SR_BUILD_KIND[row.type];
@@ -288,8 +315,11 @@ export class ServiceRequestsService {
         site_name: site?.name ?? null,
         requested_by_name: names.get(row.requested_by) ?? null,
         assigned_to_name: row.assigned_to ? (names.get(row.assigned_to) ?? null) : null,
+        assigned_agent_name: row.assigned_agent_id ? agentName(row.assigned_agent_id) : null,
       },
-      events: events.map((e) => ({ ...e, author_name: names.get(e.author_id) ?? null })),
+      // The assistants' side of the story is for the team.
+      ...(canManage ? { agent: await this.agentView.details(t, row) } : {}),
+      events: events.map((e) => ({ ...e, author_name: e.actor_type === 'agent' ? agentName(e.author_id) : (names.get(e.author_id) ?? null) })),
     };
   }
 
@@ -674,7 +704,7 @@ export class ServiceRequestsService {
         })
         .returningAll()
         .executeTakeFirstOrThrow();
-      await s.insertInto('service_request_events').values({ request_id: created.id, kind: 'created', to_status: 'new', author_id: user.id }).execute();
+      await s.insertInto('service_request_events').values({ request_id: created.id, kind: 'created', to_status: 'new', author_id: user.id, actor_type: user.agent ? 'agent' : 'user' }).execute();
       return created;
     });
 
@@ -759,11 +789,11 @@ export class ServiceRequestsService {
       .returningAll()
       .executeTakeFirst();
     if (!updated) throw new ConflictException('Someone has just decided this request. Refresh and try again.');
-    await s.insertInto('service_request_events').values({ request_id: id, kind: 'approval', body: `${input.approve ? 'Approved' : 'Rejected'}${note ? `: ${note}` : '.'}`, author_id: user.id }).execute();
+    await s.insertInto('service_request_events').values({ request_id: id, kind: 'approval', body: `${input.approve ? 'Approved' : 'Rejected'}${note ? `: ${note}` : '.'}`, author_id: user.id, actor_type: user.agent ? 'agent' : 'user' }).execute();
     if (!input.approve) {
-      await s.insertInto('service_request_events').values({ request_id: id, kind: 'status_changed', from_status: 'new', to_status: 'declined', body: note, author_id: user.id }).execute();
+      await s.insertInto('service_request_events').values({ request_id: id, kind: 'status_changed', from_status: 'new', to_status: 'declined', body: note, author_id: user.id, actor_type: user.agent ? 'agent' : 'user' }).execute();
       const context: ServiceRequestStatusChangedContext = { ...this.emailBase(t, row), fromStatus: 'new', toStatus: 'declined', moveKind: 'decline', note };
-      await this.emailRequester(t, row, user.id, 'service_request_status_changed', context);
+      await this.emailRequester(t, row, user.agent ? null : user.id, 'service_request_status_changed', context);
     }
     await this.emailTeam(t, row, input.approve ? 'approved' : 'rejected', user, note);
     await this.audit.tenant(t.schema, input.approve ? 'service_request.approved' : 'service_request.rejected', {
@@ -925,7 +955,7 @@ export class ServiceRequestsService {
   private async emailRequester(
     t: TenantContext,
     row: { id: string; requested_by: string },
-    authorId: string,
+    authorId: string | null,
     template: 'service_request_status_changed' | 'service_request_message',
     context: ServiceRequestStatusChangedContext | ServiceRequestMessageContext,
   ) {
@@ -955,7 +985,7 @@ export class ServiceRequestsService {
     t: TenantContext,
     row: { id: string; number: number; title: string; type: SrType; assigned_to: string | null },
     kind: ServiceRequestActivityContext['kind'],
-    author: { id: string; displayName: string } | null,
+    author: { id: string; displayName: string; agent?: unknown } | null,
     body: string | null,
     opts: { assigneeOnly?: boolean } = {},
   ) {
@@ -970,7 +1000,7 @@ export class ServiceRequestsService {
         to: { email: m.email, name: m.display_name },
         context: context as unknown as Record<string, unknown>,
         related: { type: 'service_request', id: row.id },
-        createdBy: author?.id ?? null,
+        createdBy: author && !author.agent ? author.id || null : null,
         tenantId: t.id,
       });
     }
@@ -1045,7 +1075,7 @@ export class ServiceRequestsService {
 
     await tenantDb(this.db, t.schema)
       .insertInto('service_request_events')
-      .values({ request_id: id, kind: 'status_changed', from_status: from, to_status: to, body: note, author_id: user.id })
+      .values({ request_id: id, kind: 'status_changed', from_status: from, to_status: to, body: note, author_id: user.id, actor_type: user.agent ? 'agent' : 'user' })
       .execute();
     const reference = srReference(row.number);
     await this.audit.tenant(t.schema, 'service_request.status_changed', {
@@ -1058,40 +1088,67 @@ export class ServiceRequestsService {
     // The customer hears about every move except an internal send-back.
     if (kind !== 'send_back' && SR_CUSTOMER_NOTIFY_STATUSES.includes(to)) {
       const context: ServiceRequestStatusChangedContext = { ...this.emailBase(t, row), fromStatus: from, toStatus: to, moveKind: kind, note };
-      await this.emailRequester(t, row, user.id, 'service_request_status_changed', context);
+      await this.emailRequester(t, row, user.agent ? null : user.id, 'service_request_status_changed', context);
     }
     // The team hears when the customer acts.
     if (!canManage && (kind === 'reopen' || kind === 'cancel')) {
       await this.emailTeam(t, row, kind === 'reopen' ? 'reopened' : 'cancelled', user, note);
     }
+    await this.agentEvents.emitRequest(t.id, updated, 'sr.updated', { change: 'status', from, to, by: user.agent ? 'agent' : 'person' });
     return { ...updated, reference };
   }
 
-  async assign(t: TenantContext, user: AuthedUser, id: string, assigneeId: string | null) {
+  /** Assistants that can be given requests on this customer (for the assign picker). */
+  async assignableAgents(t: TenantContext) {
+    const p = platformDb(this.db);
+    const [tenant, kill] = await Promise.all([
+      p.selectFrom('tenants').select('agents_enabled').where('id', '=', t.id).executeTakeFirst(),
+      p.selectFrom('agent_kill_switch').select('all_disabled').where('id', '=', 1).executeTakeFirst(),
+    ]);
+    if (!tenant?.agents_enabled || kill?.all_disabled) return [];
+    return p
+      .selectFrom('agents as a')
+      .innerJoin('agent_customer_policy as cp', (j) => j.onRef('cp.agent_id', '=', 'a.id').on('cp.tenant_id', '=', t.id).on('cp.enabled', '=', true))
+      .select(['a.id as id', 'a.name as name', 'a.kind as kind', 'a.builtin_key as builtin_key'])
+      .where('a.status', '=', 'active')
+      .orderBy('a.name')
+      .execute();
+  }
+
+  /** Gives the request to a person, to an assistant (`agentId`), or to nobody. A person taking it from an assistant ends the assistant's lease. */
+  async assign(t: TenantContext, user: AuthedUser, id: string, assigneeId: string | null, agentId?: string) {
     this.assertEnabled(t);
     const row = await this.load(t, id);
     let assigneeName = 'Unassigned';
-    if (assigneeId) {
+    let agent: { id: string; name: string } | undefined;
+    if (agentId) {
+      agent = (await this.assignableAgents(t)).find((a) => a.id === agentId);
+      if (!agent) throw new BadRequestException('That assistant is not available on this customer. A Super Admin allows it from Administration -> Assistants.');
+      assigneeName = agentLabel(agent.name);
+    } else if (assigneeId) {
       const member = (await this.staff(t)).find((m) => m.id === assigneeId);
       if (!member) throw new BadRequestException('Requests can only be assigned to an engineer on this customer, or a Super Admin.');
       assigneeName = member.display_name;
     }
+    // Someone else taking the request from an assistant ends its lease (a person's take-over is `SrAgentsService.takeOver`).
+    if (row.assigned_agent_id && row.assigned_agent_id !== agent?.id) await this.claims.revoke(t, row, user, { hold: false });
     const s = tenantDb(this.db, t.schema);
     const updated = await s
       .updateTable('service_requests')
-      .set({ assigned_to: assigneeId, updated_at: new Date().toISOString() })
+      .set({ assigned_to: agent ? null : assigneeId, assigned_agent_id: agent?.id ?? null, ...(agent ? { agent_hold: false } : {}), updated_at: new Date().toISOString() })
       .where('id', '=', id)
       .returningAll()
       .executeTakeFirstOrThrow();
-    await s.insertInto('service_request_events').values({ request_id: id, kind: 'assigned', body: assigneeName, author_id: user.id }).execute();
+    await s.insertInto('service_request_events').values({ request_id: id, kind: 'assigned', body: assigneeName, author_id: user.id, actor_type: user.agent ? 'agent' : 'user' }).execute();
     await this.audit.tenant(t.schema, 'service_request.assigned', {
       actor: { id: user.id, email: user.email },
       targetType: 'service_request',
       targetId: id,
-      detail: { reference: srReference(row.number), assigneeId },
+      detail: { reference: srReference(row.number), assigneeId, agentId: agent?.id ?? null },
     });
+    await this.agentEvents.emitRequest(t.id, updated, 'sr.assigned', { assignedTo: assigneeName }, agent?.id ?? null);
     // Tell the new assignee (not when you pick yourself).
-    if (assigneeId && assigneeId !== user.id && assigneeId !== row.assigned_to) {
+    if (!agent && assigneeId && assigneeId !== user.id && assigneeId !== row.assigned_to) {
       await this.emailTeam(t, { ...row, assigned_to: assigneeId }, 'assigned', user, null, { assigneeOnly: true });
     }
     return { ...updated, reference: srReference(row.number) };
@@ -1117,7 +1174,7 @@ export class ServiceRequestsService {
     const question = !!input.waitForReply;
     const event = await s
       .insertInto('service_request_events')
-      .values({ request_id: id, kind: question ? 'waiting' : 'comment', body: input.body, internal: !!input.internal, author_id: user.id })
+      .values({ request_id: id, kind: question ? 'waiting' : 'comment', body: input.body, internal: !!input.internal, author_id: user.id, actor_type: user.agent ? 'agent' : 'user' })
       .returningAll()
       .executeTakeFirstOrThrow();
 
@@ -1130,12 +1187,12 @@ export class ServiceRequestsService {
     if (replied) Object.assign(set, this.stopWaiting(row, now));
     await s.updateTable('service_requests').set(set).where('id', '=', id).execute();
     if (replied) {
-      await s.insertInto('service_request_events').values({ request_id: id, kind: 'resumed', author_id: user.id }).execute();
+      await s.insertInto('service_request_events').values({ request_id: id, kind: 'resumed', author_id: user.id, actor_type: user.agent ? 'agent' : 'user' }).execute();
     }
 
     if (publicFromTeam) {
       const context: ServiceRequestMessageContext = { ...this.emailBase(t, row), kind: question ? 'question' : 'comment', author: user.displayName, body: input.body };
-      await this.emailRequester(t, row, user.id, 'service_request_message', context);
+      await this.emailRequester(t, row, user.agent ? null : user.id, 'service_request_message', context);
     } else if (input.internal) {
       await this.emailTeam(t, row, 'internal_note', user, input.body, { assigneeOnly: true });
     } else {
@@ -1152,7 +1209,7 @@ export class ServiceRequestsService {
     const s = tenantDb(this.db, t.schema);
     const now = new Date().toISOString();
     await s.updateTable('service_requests').set({ ...this.stopWaiting(row, now), updated_at: now }).where('id', '=', id).execute();
-    await s.insertInto('service_request_events').values({ request_id: id, kind: 'resumed', author_id: user.id }).execute();
+    await s.insertInto('service_request_events').values({ request_id: id, kind: 'resumed', author_id: user.id, actor_type: user.agent ? 'agent' : 'user' }).execute();
     return { ok: true };
   }
 
@@ -1248,7 +1305,7 @@ export class ServiceRequestsService {
     ].join('\n');
     await s
       .insertInto('service_request_events')
-      .values({ request_id: id, kind: 'build_drafted', body, internal: true, links: JSON.stringify(created), author_id: user.id })
+      .values({ request_id: id, kind: 'build_drafted', body, internal: true, links: JSON.stringify(created), author_id: user.id, actor_type: user.agent ? 'agent' : 'user' })
       .execute();
     await s.updateTable('service_requests').set({ updated_at: new Date().toISOString() }).where('id', '=', id).execute();
     await this.audit.tenant(t.schema, 'service_request.build_drafted', {
@@ -1457,6 +1514,12 @@ export class ServiceRequestsService {
     return { siteId, sheets: srItemSheets(kinds), rowIds };
   }
 
+  /** The scope a Deploy of this request runs with: its own rows (and what they depend on), never anything else. */
+  async deployScopeFor(t: TenantContext, id: string) {
+    this.assertEnabled(t);
+    return this.deployScope(t, await this.load(t, id));
+  }
+
   /** What What-If / Deploy would do for this request right now (no connection needed). */
   async deployPreview(t: TenantContext, id: string) {
     this.assertEnabled(t);
@@ -1500,7 +1563,7 @@ export class ServiceRequestsService {
     if (outside) {
       await tenantDb(this.db, t.schema)
         .insertInto('service_request_events')
-        .values({ request_id: id, kind: 'comment', internal: true, body: `Deployed outside the change window (${srChangeWindowText(window!)}): ${input.outsideWindowReason}`, author_id: user.id })
+        .values({ request_id: id, kind: 'comment', internal: true, body: `Deployed outside the change window (${srChangeWindowText(window!)}): ${input.outsideWindowReason}`, author_id: user.id, actor_type: user.agent ? 'agent' : 'user' })
         .execute();
     }
     await tenantDb(this.db, t.schema).updateTable('service_requests').set({ updated_at: new Date().toISOString() }).where('id', '=', id).execute();
@@ -1579,7 +1642,7 @@ export class ServiceRequestsService {
         internal: true,
         links: JSON.stringify([...created, ...existing].slice(0, 50)),
         body: [`Created ${created.length} user${created.length === 1 ? '' : 's'} in Design & Build${existing.length ? `, linked ${existing.length} already there` : ''}.`, ...warnings].join('\n'),
-        author_id: user.id,
+        author_id: user.id, actor_type: user.agent ? 'agent' : 'user',
       })
       .execute();
     await s.updateTable('service_requests').set({ updated_at: new Date().toISOString() }).where('id', '=', row.id).execute();
@@ -1634,7 +1697,7 @@ export class ServiceRequestsService {
         kind: 'build_drafted',
         internal: true,
         body: `Added ${result.range.range_start} – ${result.range.range_end} to ${site.sitecode}: ${result.added} new number${result.added === 1 ? '' : 's'}${e164s.length - result.added ? `, ${e164s.length - result.added} already in the inventory` : ''}.`,
-        author_id: user.id,
+        author_id: user.id, actor_type: user.agent ? 'agent' : 'user',
       })
       .execute();
     await s.updateTable('service_requests').set({ updated_at: new Date().toISOString() }).where('id', '=', id).execute();
@@ -1674,7 +1737,7 @@ export class ServiceRequestsService {
       uploadedBy: user.id,
     });
     const s = tenantDb(this.db, t.schema);
-    await s.insertInto('service_request_events').values({ request_id: id, kind: 'attachment', body: stored.filename, author_id: user.id }).execute();
+    await s.insertInto('service_request_events').values({ request_id: id, kind: 'attachment', body: stored.filename, author_id: user.id, actor_type: user.agent ? 'agent' : 'user' }).execute();
     await s.updateTable('service_requests').set({ updated_at: new Date().toISOString() }).where('id', '=', id).execute();
     return stored;
   }
@@ -1804,7 +1867,7 @@ export class ServiceRequestsService {
     ].join('\n');
     await s
       .insertInto('service_request_events')
-      .values({ request_id: row.id, kind: 'build_drafted', body, internal: true, links: JSON.stringify([link]), author_id: user.id })
+      .values({ request_id: row.id, kind: 'build_drafted', body, internal: true, links: JSON.stringify([link]), author_id: user.id, actor_type: user.agent ? 'agent' : 'user' })
       .execute();
     await s.updateTable('service_requests').set({ updated_at: new Date().toISOString() }).where('id', '=', row.id).execute();
     await this.audit.tenant(t.schema, 'service_request.change_applied', {

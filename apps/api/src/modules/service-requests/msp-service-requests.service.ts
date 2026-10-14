@@ -76,8 +76,8 @@ export class MspServiceRequestsService {
     return this.requests.staff(await this.contextFor(user, tenantId));
   }
 
-  async assign(user: AuthedUser, tenantId: string, id: string, assigneeId: string | null) {
-    return this.requests.assign(await this.contextFor(user, tenantId), user, id, assigneeId);
+  async assign(user: AuthedUser, tenantId: string, id: string, assigneeId: string | null, agentId?: string) {
+    return this.requests.assign(await this.contextFor(user, tenantId), user, id, assigneeId, agentId);
   }
 
   async comment(user: AuthedUser, tenantId: string, id: string, input: ServiceRequestCommentInput) {

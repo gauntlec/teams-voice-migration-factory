@@ -53,8 +53,8 @@ export class ServiceRequestsController {
 
   @Get()
   @RequirePermission('sr:read')
-  list(@TenantCtx() t: TenantContext, @Query(new ZodBody(listServiceRequestsQuerySchema)) q: ListServiceRequestsQuery) {
-    return this.svc.list(t, q);
+  list(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Query(new ZodBody(listServiceRequestsQuerySchema)) q: ListServiceRequestsQuery) {
+    return this.svc.list(t, q, can(user.role, 'sr:manage'));
   }
 
   /** Who a request can be assigned to. Declared before :id so it isn't read as an id. */
@@ -172,7 +172,7 @@ export class ServiceRequestsController {
     @Param('id') id: string,
     @Body(new ZodBody(serviceRequestAssignSchema)) body: ServiceRequestAssignInput,
   ) {
-    return this.svc.assign(t, user, id, body.userId);
+    return this.svc.assign(t, user, id, body.userId ?? null, body.agentId);
   }
 
   /** "Create in Design & Build": the draft row(s) the request asks for. Engineers and admins, New or Planned requests only. */

@@ -422,6 +422,10 @@ function serviceRequestActivity(c: ServiceRequestActivityContext, branding?: Ema
     approval_needed: { subject: `${c.reference} needs your approval`, lead: `${who} raised a request that needs your approval before the team can start.` },
     approved: { subject: `${c.reference} approved`, lead: `${who} approved this request. You can now plan it.` },
     rejected: { subject: `${c.reference} rejected by the approver`, lead: `${who} rejected this request:` },
+    agent_proposal: { subject: `${c.reference}: an assistant needs a decision`, lead: `${who} proposed a next step. Open the request to approve or reject it:` },
+    agent_lapsed: { subject: `${c.reference}: an assistant stopped working on it`, lead: `${who} stopped working on this request, so it is back in the queue:` },
+    agent_handoff: { subject: `${c.reference}: handed over by an assistant`, lead: `${who} handed this request over to the team:` },
+    agent_deploy_check: { subject: `${c.reference}: check this deployment`, lead: `${who} deployed this request but the result needs a person to look at it:` },
   };
   const w = what[c.kind];
   const layout: LayoutInput = {

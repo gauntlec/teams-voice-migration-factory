@@ -66,13 +66,14 @@ export const AGENT_TOKEN_MAX_DAYS = 365;
 /* ------------------------------ autonomy ------------------------------ */
 
 /** The kinds of thing an agent does, each with its own level of freedom. */
-export const AGENT_ACTION_CLASSES = ['triage', 'internal_note', 'customer_update', 'diagnostic_read', 'change_whatif', 'change_deploy', 'resolve'] as const;
+export const AGENT_ACTION_CLASSES = ['triage', 'internal_note', 'customer_update', 'diagnostic_read', 'change_design', 'change_whatif', 'change_deploy', 'resolve'] as const;
 export type AgentActionClass = (typeof AGENT_ACTION_CLASSES)[number];
 export const AGENT_ACTION_CLASS_LABELS: Record<AgentActionClass, string> = {
   triage: 'Triage (acknowledge, assign, hold, link, change priority)',
   internal_note: 'Internal notes',
   customer_update: 'Customer-visible updates and questions',
   diagnostic_read: 'Read-only diagnostics',
+  change_design: 'Applying a service request to the design',
   change_whatif: 'What-If on a change',
   change_deploy: 'Deploying a change',
   resolve: 'Restoring, resolving and closing',
@@ -103,6 +104,7 @@ export const AGENT_LEVEL_CAPS: Record<AgentActionClass, AgentLevel> = {
   internal_note: 3,
   customer_update: 2,
   diagnostic_read: 3,
+  change_design: 3,
   change_whatif: 3,
   change_deploy: 2,
   resolve: 3,
@@ -114,6 +116,7 @@ export const AGENT_DEFAULT_AUTONOMY: Record<AgentActionClass, AgentLevel> = {
   internal_note: 1,
   customer_update: 1,
   diagnostic_read: 1,
+  change_design: 0,
   change_whatif: 0,
   change_deploy: 0,
   resolve: 1,
@@ -277,6 +280,13 @@ export const AGENT_EVENT_KINDS = [
   'sla.at_risk',
   'sla.breached',
   'incident.assist_requested',
+  'sr.created',
+  'sr.updated',
+  'sr.assigned',
+  'sr.message',
+  'sr.proposal.decided',
+  'sr.claim.revoked',
+  'sr.claim.expired',
 ] as const;
 export type AgentEventKind = (typeof AGENT_EVENT_KINDS)[number];
 

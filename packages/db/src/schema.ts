@@ -926,12 +926,16 @@ export interface ServiceRequestsTable {
   approval_by: ColumnType<string | null, string | null | undefined, string | null>;
   approval_at: ColumnType<string | null, string | null | undefined, string | null>;
   approval_note: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0052_sr_agents.sql */
+  assigned_agent_id: ColumnType<string | null, string | null | undefined, string | null>;
+  agent_hold: ColumnType<boolean, boolean | undefined, boolean>;
+  incident_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 export interface ServiceRequestEventsTable {
   id: Generated<string>;
   request_id: string;
-  kind: 'created' | 'status_changed' | 'assigned' | 'comment' | 'build_drafted' | 'deployment' | 'waiting' | 'resumed' | 'approval' | 'attachment';
+  kind: 'created' | 'status_changed' | 'assigned' | 'comment' | 'build_drafted' | 'deployment' | 'waiting' | 'resumed' | 'approval' | 'attachment' | 'claim_started' | 'claim_released' | 'handoff' | 'proposal' | 'proposal_decided' | 'whatif';
   from_status: string | null;
   to_status: string | null;
   body: string | null;
@@ -942,6 +946,9 @@ export interface ServiceRequestEventsTable {
   /** 'deployment' only: the run that finished - see 0038_sr_design_items.sql. */
   deployment_id: ColumnType<string | null, string | null | undefined, string | null>;
   author_id: string;
+  /** 0052_sr_agents.sql */
+  actor_type: ColumnType<'user' | 'agent' | 'system', 'user' | 'agent' | 'system' | undefined, 'user' | 'agent' | 'system'>;
+  meta: ColumnType<Record<string, unknown>, string | undefined, string>;
   created_at: Ts;
 }
 
@@ -1042,6 +1049,39 @@ export interface IncidentReviewsTable {
 }
 
 /** A lease on an incident: who is working it right now - see 0050_incident_agents.sql. */
+export interface ServiceRequestClaimsTable {
+  id: Generated<string>;
+  request_id: string;
+  agent_id: string;
+  note: ColumnType<string, string | undefined, string>;
+  started_at: Ts;
+  expires_at: string;
+  released_at: string | null;
+  release_reason: 'released' | 'expired' | 'revoked' | 'handed_off' | null;
+}
+
+export interface ServiceRequestActionsTable {
+  id: Generated<string>;
+  request_id: string;
+  agent_id: string;
+  kind: string;
+  action_class: string;
+  params: ColumnType<Record<string, unknown>, string | undefined, string>;
+  rationale: ColumnType<string, string | undefined, string>;
+  risk: ColumnType<'low' | 'medium' | 'high', 'low' | 'medium' | 'high' | undefined, 'low' | 'medium' | 'high'>;
+  state: ColumnType<import('@tvmf/shared').AgentProposalState, import('@tvmf/shared').AgentProposalState | undefined, import('@tvmf/shared').AgentProposalState>;
+  decided_by: ColumnType<string | null, string | null | undefined, string | null>;
+  decided_at: ColumnType<string | null, string | null | undefined, string | null>;
+  decision_note: ColumnType<string | null, string | null | undefined, string | null>;
+  connection_id: ColumnType<string | null, string | null | undefined, string | null>;
+  fingerprint: ColumnType<string | null, string | null | undefined, string | null>;
+  result: ColumnType<Record<string, unknown> | null, string | null | undefined, string | null>;
+  error: ColumnType<string | null, string | null | undefined, string | null>;
+  created_at: Ts;
+  expires_at: string;
+  finished_at: ColumnType<string | null, string | null | undefined, string | null>;
+}
+
 export interface IncidentDiagnosticsTable {
   id: Generated<string>;
   incident_id: string;
@@ -1242,6 +1282,8 @@ export interface AgentEventsTable {
   id: Generated<string>;
   tenant_id: string;
   incident_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0019 - a service request event */
+  request_id: ColumnType<string | null, string | null | undefined, string | null>;
   kind: string;
   agent_id: ColumnType<string | null, string | null | undefined, string | null>;
   payload: ColumnType<Record<string, unknown>, string | undefined, string>;
@@ -1348,6 +1390,8 @@ export interface DB {
   incident_reviews: IncidentReviewsTable;
   incident_claims: IncidentClaimsTable;
   incident_diagnostics: IncidentDiagnosticsTable;
+  service_request_claims: ServiceRequestClaimsTable;
+  service_request_actions: ServiceRequestActionsTable;
   incident_actions: IncidentActionsTable;
   files: FilesTable;
   audit_log: TenantAuditLogTable;

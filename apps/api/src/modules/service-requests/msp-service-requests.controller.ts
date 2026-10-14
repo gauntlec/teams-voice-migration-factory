@@ -48,7 +48,7 @@ export class MspServiceRequestsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodBody(serviceRequestAssignSchema)) body: ServiceRequestAssignInput,
   ) {
-    return this.svc.assign(user, tenantId, id, body.userId);
+    return this.svc.assign(user, tenantId, id, body.userId ?? null, body.agentId);
   }
 
   @Post(':tenantId/:id/comments')

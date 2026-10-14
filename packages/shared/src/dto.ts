@@ -1565,7 +1565,9 @@ export const serviceRequestStatusSchema = z.object({
 });
 export type ServiceRequestStatusInput = z.infer<typeof serviceRequestStatusSchema>;
 
-export const serviceRequestAssignSchema = z.object({ userId: z.string().uuid().nullable() });
+export const serviceRequestAssignSchema = z
+  .object({ userId: z.string().uuid().nullable().optional(), agentId: z.string().uuid().optional() })
+  .refine((v) => v.userId !== undefined || !!v.agentId, { message: 'Pick a person, an assistant, or nobody.' });
 export type ServiceRequestAssignInput = z.infer<typeof serviceRequestAssignSchema>;
 
 export const serviceRequestCommentSchema = z.object({
