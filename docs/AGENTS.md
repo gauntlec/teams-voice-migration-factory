@@ -8,6 +8,8 @@ agent needs. A tested example is `docs/agents/reference-triage-agent.mjs`.
 Base path: `/api/agent/v1`. JSON in, JSON out. Everything is relative to a customer (`tenantId`) the agent has
 been enabled for.
 
+> Setting one up end to end: [AI-BOT-SETUP.md](AI-BOT-SETUP.md). The skill that teaches a bot how to behave: [agents/voxshift-assistant/SKILL.md](agents/voxshift-assistant/SKILL.md).
+
 ## 1. Getting an agent
 
 A Super Admin creates it on **Administration > Assistants**: name, kind (triage, diagnostics, resolver,
