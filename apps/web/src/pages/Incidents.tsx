@@ -1,20 +1,22 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Card, Field, Input, Link, Select, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text } from '@fluentui/react-components';
+import { Button, Card, Field, Input, Link, Menu, MenuItem, MenuList, MenuPopover, MenuTrigger, Select, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text } from '@fluentui/react-components';
 import { INC_CATEGORIES, INC_CATEGORY_BY_KEY, INC_PRIORITIES, INC_PRIORITY_LABELS, INC_STATUSES, INC_STATUS_CUSTOMER_LABELS, INC_STATUS_LABELS } from '@tvmf/shared';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
-import { IncidentNotices, PastNoticesButton } from '../components/IncidentNotices';
-import { KnowledgeButton } from '../components/IncidentKnowledge';
+import { IncidentNotices, PastNoticesDialog } from '../components/IncidentNotices';
+import { KnowledgeDialog } from '../components/IncidentKnowledge';
 import { IncidentReportsDialog } from '../components/IncidentReports';
 import { IncidentSettingsDialog } from '../components/IncidentSettings';
 import { IncQueueTiles, IncSlaBadge, IncStatusBadge, MajorBadge, MajorClockBadge, PriorityBadge, incQueueFilter, type IncQueueFilter, type IncidentRow } from '../components/IncidentBits';
 import { Page } from '../components/Page';
 import { EmptyState, TableSkeleton } from '../components/states';
 import { LoadError, NoTenant } from '../components/records';
+import { MoreHorizontalRegular } from '@fluentui/react-icons';
 import { useDebounced } from '../hooks/useDebounced';
+import { useNotify } from '../hooks/useNotify';
 import { useSort } from '../lib/sort';
 import { useSrStyles } from './ServiceRequests';
 
@@ -36,12 +38,19 @@ export function Incidents() {
   const [tile, setTile] = useState<IncQueueFilter>('all');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [reportsOpen, setReportsOpen] = useState(false);
+  const [noticesOpen, setNoticesOpen] = useState(false);
+  const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   const staff = can('inc:manage');
   const qc = useQueryClient();
   const sandbox = me?.tenants.find((t) => t.id === activeTenantId)?.sandbox ?? false;
+  const notify = useNotify();
   const demo = useMutation({
     mutationFn: () => api(`/t/${activeTenantId}/incidents/demo`, { method: 'POST' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['incidents'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['incidents'] });
+      notify('Six demo incidents added');
+    },
+    onError: (e) => notify('Could not add demo incidents', { intent: 'error', body: e instanceof Error ? e.message : undefined }),
   });
 
   const enabled = me?.tenants.find((t) => t.id === activeTenantId)?.managedServices ?? false;
@@ -94,23 +103,35 @@ export function Incidents() {
       subtitle="Something not working, or not working well? Raise an incident and follow it here. You're emailed as it moves on."
       actions={
         <div className={cs.actions}>
-          <Button appearance="subtle" onClick={() => setReportsOpen(true)}>Reports</Button>
-          <PastNoticesButton base={base} enabled={enabled} />
-          {staff && (
-            <Button appearance="subtle" onClick={() => navigate('/incidents/problems')}>Problems</Button>
-          )}
-          {staff && <KnowledgeButton base={base} />}
-          {can('intake:manage') && sandbox && (
-            <Button appearance="subtle" disabled={demo.isPending} title={demo.error ? (demo.error as Error).message : 'Adds six example incidents to this test customer'} onClick={() => window.confirm('Add six demo incidents to this test customer? Their emails go to the test address.') && demo.mutate()}>
-              {demo.isError ? 'Demo incidents: ' + (demo.error as Error).message.slice(0, 60) : 'Add demo incidents'}
-            </Button>
-          )}
-          <Button appearance="subtle" onClick={() => setSettingsOpen(true)}>{staff ? 'Settings' : 'Our targets'}</Button>
           {can('inc:create') && (
             <Button appearance="primary" onClick={() => navigate('/incidents/new')}>
               Raise an incident
             </Button>
           )}
+          <Menu>
+            <MenuTrigger disableButtonEnhancement>
+              <Button icon={<MoreHorizontalRegular />} aria-label="More incident tools">
+                More
+              </Button>
+            </MenuTrigger>
+            <MenuPopover>
+              <MenuList>
+                <MenuItem onClick={() => setReportsOpen(true)}>Reports</MenuItem>
+                <MenuItem onClick={() => setNoticesOpen(true)}>Past notices</MenuItem>
+                {staff && <MenuItem onClick={() => navigate('/incidents/problems')}>Problems</MenuItem>}
+                {staff && <MenuItem onClick={() => setKnowledgeOpen(true)}>Knowledge</MenuItem>}
+                <MenuItem onClick={() => setSettingsOpen(true)}>{staff ? 'Settings' : 'Our targets'}</MenuItem>
+                {can('intake:manage') && sandbox && (
+                  <MenuItem
+                    disabled={demo.isPending}
+                    onClick={() => window.confirm('Add six demo incidents to this test customer? Their emails go to the test address.') && demo.mutate()}
+                  >
+                    Add demo incidents
+                  </MenuItem>
+                )}
+              </MenuList>
+            </MenuPopover>
+          </Menu>
         </div>
       }
     >
@@ -236,6 +257,8 @@ export function Incidents() {
           </DataTable>
         )}
       </Card>
+      {noticesOpen && <PastNoticesDialog base={base} enabled={enabled} onClose={() => setNoticesOpen(false)} />}
+      {knowledgeOpen && <KnowledgeDialog base={base} onClose={() => setKnowledgeOpen(false)} />}
       {settingsOpen && <IncidentSettingsDialog base={base} onClose={() => setSettingsOpen(false)} />}
       {reportsOpen && <IncidentReportsDialog base={base} onClose={() => setReportsOpen(false)} />}
     </Page>

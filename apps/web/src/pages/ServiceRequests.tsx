@@ -7,6 +7,11 @@ import {
   Badge,
   Button,
   Card,
+  Menu,
+  MenuItem,
+  MenuList,
+  MenuPopover,
+  MenuTrigger,
   Checkbox,
   Combobox,
   Dialog,
@@ -72,6 +77,8 @@ import { useSort } from '../lib/sort';
 import { Page } from '../components/Page';
 import { EmptyState, TableSkeleton } from '../components/states';
 import { LoadError, NoTenant } from './DataCollection';
+import { DangerText } from '../components/ui';
+import { MoreHorizontalRegular } from '@fluentui/react-icons';
 
 export interface RequestRow {
   id: string;
@@ -273,18 +280,25 @@ export function ServiceRequests() {
       subtitle="Ask for new users, numbers, sites, phones, call queues and auto attendants. Each request is planned, designed and built, then deployed, and you're emailed as it moves on."
       actions={
         <div className={cs.actions}>
-          <Button appearance="subtle" onClick={() => setReportsOpen(true)}>Reports</Button>
-          <Button appearance="subtle" onClick={() => setSettingsOpen(true)}>{staff ? 'Settings' : 'Our targets'}</Button>
-          {can('sr:manage') && (
-            <Button appearance="subtle" onClick={() => setModesOpen(true)}>
-              Site modes
-            </Button>
-          )}
           {can('sr:create') && (
             <Button appearance="primary" onClick={() => setCreating(true)}>
               New request
             </Button>
           )}
+          <Menu>
+            <MenuTrigger disableButtonEnhancement>
+              <Button icon={<MoreHorizontalRegular />} aria-label="More request tools">
+                More
+              </Button>
+            </MenuTrigger>
+            <MenuPopover>
+              <MenuList>
+                <MenuItem onClick={() => setReportsOpen(true)}>Reports</MenuItem>
+                <MenuItem onClick={() => setSettingsOpen(true)}>{staff ? 'Settings' : 'Our targets'}</MenuItem>
+                {can('sr:manage') && <MenuItem onClick={() => setModesOpen(true)}>Site modes</MenuItem>}
+              </MenuList>
+            </MenuPopover>
+          </Menu>
         </div>
       }
     >
@@ -635,11 +649,11 @@ function FieldInput({
       const list = spec.numberSource === 'available' ? (options?.availableNumbers ?? []) : (options?.siteNumbers ?? []);
       if (options && list.length === 0) {
         return (
-          <Text size={200} style={{ color: tokens.colorPaletteRedForeground1 }}>
+          <DangerText size={200}>
             {spec.numberSource === 'available'
               ? 'There are no free numbers at this site. Raise a "New phone numbers" request first, or keep an existing number.'
               : 'This site has no numbers recorded yet.'}
-          </Text>
+          </DangerText>
         );
       }
       return (
@@ -1010,7 +1024,7 @@ function SiteModesDialog({ base, sites, onClose }: { base: string; sites: SiteOp
                 </TableBody>
               </DataTable>
             )}
-            {set.isError && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{errorText(set.error, 'Could not change the mode')}</Text>}
+            {set.isError && <DangerText>{errorText(set.error, 'Could not change the mode')}</DangerText>}
           </DialogContent>
           <DialogActions>
             <Button appearance="secondary" onClick={onClose}>

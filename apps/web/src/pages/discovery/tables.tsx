@@ -11,6 +11,7 @@ import { LoadError } from '../../components/records';
 import { useDebounced } from '../../hooks/useDebounced';
 import { useStyles, fmt, Pager, JsonDialog, str, fetchAllPages } from './discoveryShared';
 import { HistoryButton } from './history';
+import { TableSkeleton } from '../../components/states';
 
 function LiveCallFlowDialog({ base, type, row, onClose }: { base: string; type: 'auto_attendant' | 'call_queue'; row: TenantObject; onClose: () => void }) {
   const s = useStyles();
@@ -157,7 +158,7 @@ export function ObjectsTable({
         </div>
       </div>
       {list.isLoading ? (
-        <Spinner size="tiny" />
+        <TableSkeleton rows={4} cols={5} />
       ) : list.isError ? (
         <LoadError message={(list.error as Error).message} />
       ) : items.length === 0 ? (
@@ -259,7 +260,7 @@ export function PoliciesTable({ base }: { base: string }) {
         </div>
       </div>
       {list.isLoading ? (
-        <Spinner size="tiny" />
+        <TableSkeleton rows={4} cols={5} />
       ) : list.isError ? (
         <LoadError message={(list.error as Error).message} />
       ) : items.length === 0 ? (
@@ -384,7 +385,7 @@ export function UsersTable({ base, canImport, onImported }: { base: string; canI
         </div>
       </div>
       {list.isLoading ? (
-        <Spinner size="tiny" />
+        <TableSkeleton rows={4} cols={5} />
       ) : list.isError ? (
         <LoadError message={(list.error as Error).message} />
       ) : items.length === 0 ? (
@@ -764,7 +765,7 @@ export function GroupsTable({ base }: { base: string }) {
         />
       </div>
       {list.isLoading ? (
-        <Spinner size="tiny" />
+        <TableSkeleton rows={4} cols={5} />
       ) : list.isError ? (
         <LoadError message={(list.error as Error).message} />
       ) : items.length === 0 ? (

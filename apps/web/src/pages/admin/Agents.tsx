@@ -55,6 +55,7 @@ import { DataTable } from '../../components/DataTable';
 import { Page } from '../../components/Page';
 import { LoadError } from '../../components/records';
 import { errorText, when } from '../ServiceRequests';
+import { TableSkeleton } from '../../components/states';
 
 const useStyles = makeStyles({
   stack: { display: 'flex', flexDirection: 'column', rowGap: tokens.spacingVerticalM },
@@ -176,7 +177,7 @@ export function AdminAgents() {
       )}
       <Card>
         {list.isLoading ? (
-          <Spinner size="tiny" />
+          <TableSkeleton rows={4} cols={5} />
         ) : (list.data ?? []).length === 0 ? (
           <Text>No assistants yet. Create one, give it a token, and allow it on a customer to let it start suggesting.</Text>
         ) : (

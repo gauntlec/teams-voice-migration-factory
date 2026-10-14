@@ -6,6 +6,7 @@ import { TENANT_DISCOVERY_STEPS, TENANT_DISCOVERY_STEP_LABELS, TENANT_DISCOVERY_
 import { api, ApiError } from '../../api';
 import { LoadError } from '../../components/records';
 import { useStyles, fmt, changeCountsOf, totalChanges, CopyButton } from './discoveryShared';
+import { DangerText } from '../../components/ui';
 
 interface Connection {
   id: string;
@@ -651,9 +652,9 @@ export function RunCard({ base, summary }: { base: string; summary: TenantDiscov
                     </Text>
                   )}
                   {errs.length > 0 && (
-                    <Text size={200} style={{ color: tokens.colorPaletteRedForeground1 }} title={errs.map((e) => e.message).join('\n')}>
+                    <DangerText size={200} title={errs.map((e) => e.message).join('\n')}>
                       · {errs.length} error{errs.length === 1 ? '' : 's'}
-                    </Text>
+                    </DangerText>
                   )}
                 </div>
               );

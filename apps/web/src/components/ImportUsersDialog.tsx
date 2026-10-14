@@ -24,6 +24,7 @@ import { ArrowDownloadRegular, ArrowUploadRegular } from '@fluentui/react-icons'
 import { normalizeVoicemailLanguage } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { DataTable } from './DataTable';
+import { DangerText } from './ui';
 
 /**
  * Import users into a Data Collection site from an xlsx/csv. Parsing and the
@@ -351,7 +352,7 @@ export function ImportUsersDialog({
               </div>
 
               {err && (
-                <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{err}</Text>
+                <DangerText>{err}</DangerText>
               )}
 
               {result && (

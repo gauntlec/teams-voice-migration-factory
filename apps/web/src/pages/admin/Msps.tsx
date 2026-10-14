@@ -32,6 +32,8 @@ import { Page } from '../../components/Page';
 import { Wordmark } from '../../components/Logo';
 import { useDebounced } from '../../hooks/useDebounced';
 import { LoadError } from '../DataCollection';
+import { DangerText, MutedText } from '../../components/ui';
+import { TableSkeleton } from '../../components/states';
 
 const DEFAULT_ACCENT = '#4657D2';
 
@@ -135,7 +137,7 @@ export function AdminMsps() {
             Create
           </Button>
         </div>
-        {err && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{err}</Text>}
+        {err && <DangerText>{err}</DangerText>}
       </Card>
 
       <Card>
@@ -147,7 +149,7 @@ export function AdminMsps() {
           style={{ maxWidth: 320 }}
         />
         {list.isLoading ? (
-          <Spinner size="tiny" />
+          <TableSkeleton rows={4} cols={5} />
         ) : list.isError ? (
           <LoadError message={(list.error as Error).message} />
         ) : (
@@ -192,9 +194,9 @@ export function AdminMsps() {
                         </Button>
                       ) : (
                         m.branding && (
-                          <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+                          <MutedText size={200}>
                             Branded
-                          </Text>
+                          </MutedText>
                         )
                       )}
                     </div>
@@ -331,7 +333,7 @@ function EditMspDialog({ msp, onClose, onSaved }: { msp: Msp; onClose: () => voi
               <Field label="Domains" hint="comma or newline separated, e.g. contoso.com, intl.contoso.com">
                 <Input value={domainsRaw} onChange={(_, d) => setDomainsRaw(d.value)} />
               </Field>
-              {err && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{err}</Text>}
+              {err && <DangerText>{err}</DangerText>}
             </div>
           </DialogContent>
           <DialogActions>
@@ -389,9 +391,9 @@ function BrandingDialog({ msp, onClose, onSaved }: { msp: Msp; onClose: () => vo
                 ) : (
                   <Wordmark size={18} />
                 )}
-                <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+                <MutedText size={200}>
                   {previewUrl ? 'Current logo' : 'No logo set - default Voxshift mark shown everywhere'}
-                </Text>
+                </MutedText>
               </div>
               <Field label="Replace logo" hint="PNG or JPEG - WebP isn't supported by classic Outlook desktop">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -425,7 +427,7 @@ function BrandingDialog({ msp, onClose, onSaved }: { msp: Msp; onClose: () => vo
                   style={{ width: 40, height: 32, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
                 />
               </Field>
-              {err && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{err}</Text>}
+              {err && <DangerText>{err}</DangerText>}
             </div>
           </DialogContent>
           <DialogActions>
@@ -476,7 +478,7 @@ function TeamsDialog({ msp, onClose }: { msp: Msp; onClose: () => void }) {
             {(['incidents', 'major', 'sla'] as const).map((k) => (
               <Checkbox key={k} checked={n[k]} onChange={(_, d) => setNotify({ ...n, [k]: !!d.checked })} label={k === 'incidents' ? 'A P1 or P2 incident is raised' : k === 'major' ? 'A major incident is declared or ends' : 'A response or resolution target is missed'} />
             ))}
-            {error && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{error instanceof Error ? error.message : 'That did not work.'}</Text>}
+            {error && <DangerText>{error instanceof Error ? error.message : 'That did not work.'}</DangerText>}
             {test.isSuccess && <Text>A test message is on its way: look in the channel in a few seconds.</Text>}
           </DialogContent>
           <DialogActions>

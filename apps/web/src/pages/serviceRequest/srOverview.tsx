@@ -13,6 +13,7 @@ import { PRIORITY_LABEL, STATUS_COLOR, day, errorText, useSrStyles, when, type R
 import { usePageStyles, type PageTab, type RequestPayload } from './srShared';
 import { BuildDraftSection, BuildLinks } from './srDesign';
 import { ApprovalBanner } from './srDeploy';
+import { DangerText } from '../../components/ui';
 
 export function Overview({
   base,
@@ -505,7 +506,7 @@ function RelatedIncidents({ base, requestId, incidents, onChanged }: { base: str
           </Button>
         </div>
       )}
-      {link.error && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{errorText(link.error, 'Could not link it.')}</Text>}
+      {link.error && <DangerText>{errorText(link.error, 'Could not link it.')}</DangerText>}
     </div>
   );
 }

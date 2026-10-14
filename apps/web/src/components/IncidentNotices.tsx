@@ -78,15 +78,13 @@ interface PastNotice {
 const duration = (m: number | null) => (m === null ? '' : m < 60 ? `${m} min` : m < 1440 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${Math.floor(m / 1440)}d ${Math.floor((m % 1440) / 60)}h`);
 
 /** The notices that have ended, for looking back: what the customer was told, where, for how long, and how it ended. */
-export function PastNoticesButton({ base, enabled }: { base: string; enabled: boolean }) {
-  const [open, setOpen] = useState(false);
+export function PastNoticesDialog({ base, enabled, onClose }: { base: string; enabled: boolean; onClose: () => void }) {
   const [days, setDays] = useState('90');
-  const q = useQuery({ queryKey: ['incident-notice-history', base, days], enabled: enabled && open, queryFn: () => api<PastNotice[]>(`${base}/notices/history?days=${days}`) });
+  const q = useQuery({ queryKey: ['incident-notice-history', base, days], enabled, queryFn: () => api<PastNotice[]>(`${base}/notices/history?days=${days}`) });
   return (
     <>
-      <Button appearance="subtle" onClick={() => setOpen(true)}>Past notices</Button>
-      {open && (
-        <Dialog open onOpenChange={(_, d) => !d.open && setOpen(false)}>
+      {(
+        <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
           <DialogSurface style={{ maxWidth: '720px', width: '94vw' }}>
             <DialogBody>
               <DialogTitle>Past service notices</DialogTitle>
@@ -123,7 +121,7 @@ export function PastNoticesButton({ base, enabled }: { base: string; enabled: bo
                 ))}
               </DialogContent>
               <DialogActions>
-                <Button appearance="primary" onClick={() => setOpen(false)}>
+                <Button appearance="primary" onClick={onClose}>
                   Close
                 </Button>
               </DialogActions>

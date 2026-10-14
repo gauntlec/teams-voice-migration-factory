@@ -32,6 +32,7 @@ import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
 import { Page } from '../components/Page';
 import { LoadError, NoTenant, useRecordStyles } from '../components/records';
+import { TableSkeleton } from '../components/states';
 
 /**
  * "LOA Data Collection and Tracking" - one page per site, gated internally by
@@ -241,7 +242,7 @@ function DocumentCatalogCard({ base }: { base: string }) {
       </div>
 
       {list.isLoading ? (
-        <Spinner size="tiny" />
+        <TableSkeleton rows={4} cols={5} />
       ) : (
         <DataTable size="small" minWidth={480}>
           <TableHeader>
@@ -335,7 +336,7 @@ function SiteEnablementCard({ base, tid, siteId }: { base: string; tid: string; 
         </Text>
       </div>
       {list.isLoading ? (
-        <Spinner size="tiny" />
+        <TableSkeleton rows={4} cols={5} />
       ) : (
         <div className={s.chips}>
           {(list.data ?? []).map((row) => (

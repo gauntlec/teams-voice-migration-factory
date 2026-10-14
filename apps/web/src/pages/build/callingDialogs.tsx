@@ -6,6 +6,7 @@ import { BUSY_ON_BUSY_OPTIONS, CALL_FORWARDING_TYPES, CALL_GROUP_ORDERS, CALL_TA
 import { api, ApiError } from '../../api';
 import { UpnAutocomplete } from '../../components/UpnAutocomplete';
 import { type Choice, type Row } from '../../components/records';
+import { DangerText } from '../../components/ui';
 
 interface CallingPolicyMapRow {
   discoveryCallingPolicyId: string;
@@ -386,9 +387,9 @@ export function CallingSettingsDialog({
               </div>
 
               {err && (
-                <Text block style={{ color: tokens.colorPaletteRedForeground1 }}>
+                <DangerText block>
                   {err}
-                </Text>
+                </DangerText>
               )}
             </div>
           </DialogContent>

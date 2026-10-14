@@ -24,6 +24,7 @@ import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
 import { Page } from '../components/Page';
 import { LoadError, NoTenant, useRecordStyles } from '../components/records';
+import { TableSkeleton } from '../components/states';
 
 const useStyles = makeStyles({
   row: { display: 'flex', ...shorthands.gap('8px'), flexWrap: 'wrap', alignItems: 'center' },
@@ -130,7 +131,7 @@ export function DeploymentSites() {
           )}
         </div>
         {connections.isLoading ? (
-          <Spinner size="tiny" />
+          <TableSkeleton rows={4} cols={5} />
         ) : (
           <>
             <div className={cs.row} style={{ marginBottom: 4 }}>

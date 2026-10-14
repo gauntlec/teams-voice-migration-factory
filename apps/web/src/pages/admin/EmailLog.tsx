@@ -23,6 +23,7 @@ import { DataTable } from '../../components/DataTable';
 import { Page } from '../../components/Page';
 import { useDebounced } from '../../hooks/useDebounced';
 import { LoadError } from '../../components/records';
+import { DangerText, MutedText } from '../../components/ui';
 
 interface EmailMessage {
   id: string;
@@ -117,11 +118,11 @@ export function AdminEmailLog() {
             </MessageBarBody>
           </MessageBar>
         )}
-        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+        <MutedText size={200}>
           The rows below are the delivery record — one per message, with the last SMTP error and
           the retry count. Lower-level SMTP conversation logs are in the worker container
           (<code style={mono}>docker logs</code> on the Docker host).
-        </Text>
+        </MutedText>
       </Card>
 
       <Card>
@@ -157,12 +158,12 @@ export function AdminEmailLog() {
                   <TableCell title={m.to_email}>
                     {m.to_email}
                     {m.original_to_email && (
-                      <Text size={200} block style={{ color: tokens.colorNeutralForeground3 }}>
+                      <MutedText size={200} block>
                         <Badge appearance="tint" color="warning" size="small">
                           Test customer
                         </Badge>{' '}
                         would have gone to {m.original_to_email}
-                      </Text>
+                      </MutedText>
                     )}
                   </TableCell>
                   <TableCell>{m.template}</TableCell>
@@ -175,14 +176,14 @@ export function AdminEmailLog() {
                     {m.status === 'sent' ? (
                       <Text size={200}>sent {fmt(m.sent_at)}</Text>
                     ) : m.status === 'failed' ? (
-                      <Text size={200} style={{ color: tokens.colorPaletteRedForeground1 }}>
+                      <DangerText size={200}>
                         {m.error || 'failed'} · {m.attempts} {m.attempts === 1 ? 'try' : 'tries'}
-                      </Text>
+                      </DangerText>
                     ) : (
-                      <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+                      <MutedText size={200}>
                         {m.status === 'queued' ? 'waiting' : m.status}
                         {m.attempts > 0 ? ` · ${m.attempts} tries` : ''}
-                      </Text>
+                      </MutedText>
                     )}
                   </TableCell>
                   <TableCell>

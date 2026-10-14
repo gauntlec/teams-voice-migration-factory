@@ -50,6 +50,7 @@ import {
 import { compareSorted, type Paginated } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { DataTable } from './DataTable';
+import { DangerText } from './ui';
 
 /* ------------------------------ shared bits ------------------------------ */
 
@@ -585,7 +586,7 @@ export function RecordDialog({
                 </Fragment>
                 );
               })}
-              {error && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{error}</Text>}
+              {error && <DangerText>{error}</DangerText>}
             </div>
           </DialogContent>
           <DialogActions>

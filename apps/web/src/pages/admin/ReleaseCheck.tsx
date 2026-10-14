@@ -24,6 +24,8 @@ import { api } from '../../api';
 import { DataTable } from '../../components/DataTable';
 import { Page } from '../../components/Page';
 import { LoadError } from '../../components/records';
+import { DangerText, MutedText } from '../../components/ui';
+import { TableSkeleton } from '../../components/states';
 
 const fmt = (iso: string) => new Date(iso).toLocaleString();
 const fmtTime = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -115,7 +117,7 @@ export function AdminReleaseCheck() {
     >
       <Card>
         {q.isLoading ? (
-          <Spinner size="tiny" />
+          <TableSkeleton rows={4} cols={5} />
         ) : q.isError ? (
           <LoadError message={(q.error as Error).message} />
         ) : data!.safe ? (
@@ -228,19 +230,19 @@ export function AdminReleaseCheck() {
           </>
         )}
         {data && (
-          <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+          <MutedText size={200}>
             Checked {fmt(data.checkedAt)} - refreshes every 15 seconds.
-          </Text>
+          </MutedText>
         )}
       </Card>
 
       <Card>
         <Text weight="semibold">Maintenance notice</Text>
-        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+        <MutedText size={200}>
           Shown as a banner to every signed-in staff member. For the final {MAINTENANCE_FREEZE_MINUTES} minutes before the time
           (and until you clear it, or 30 minutes after), nobody can start a new deployment run, discovery run or customer-tenant
           sign-in - so nothing new is cut off by the release. Clear it once the release is done.
-        </Text>
+        </MutedText>
         {notice && (
           <MessageBar intent={notice.phase === 'freeze' ? 'warning' : 'info'}>
             <MessageBarBody>
@@ -268,7 +270,7 @@ export function AdminReleaseCheck() {
             </Button>
           )}
         </div>
-        {err && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{err}</Text>}
+        {err && <DangerText>{err}</DangerText>}
       </Card>
     </Page>
   );

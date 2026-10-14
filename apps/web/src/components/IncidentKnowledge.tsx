@@ -170,12 +170,11 @@ export function SaveKnowledgeButton({ base, incidentId }: { base: string; incide
 }
 
 /** Everything the team has saved: read, edit the wording, take things out. */
-export function KnowledgeButton({ base }: { base: string }) {
+export function KnowledgeDialog({ base, onClose }: { base: string; onClose: () => void }) {
   const s = useStyles();
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Snippet | null>(null);
-  const list = useQuery({ queryKey: ['incident-knowledge', base], enabled: open, queryFn: () => api<Snippet[]>(`${base}/knowledge`) });
+  const list = useQuery({ queryKey: ['incident-knowledge', base], queryFn: () => api<Snippet[]>(`${base}/knowledge`) });
   const refresh = () => qc.invalidateQueries({ queryKey: ['incident-knowledge'] });
   const save = useMutation({
     mutationFn: (k: Snippet) => api(`${base}/knowledge/${k.id}`, { method: 'PATCH', body: JSON.stringify({ title: k.title, fix: k.fix, symptoms: k.symptoms, customerText: k.customer_text }) }),
@@ -185,9 +184,8 @@ export function KnowledgeButton({ base }: { base: string }) {
   const label = (k: Snippet) => INC_CATEGORIES.find((c) => c.key === k.category)?.label ?? k.category;
   return (
     <>
-      <Button appearance="subtle" onClick={() => setOpen(true)}>Knowledge</Button>
-      {open && (
-        <Dialog open onOpenChange={(_, x) => !x.open && setOpen(false)}>
+      {(
+        <Dialog open onOpenChange={(_, x) => !x.open && onClose()}>
           <DialogSurface style={{ maxWidth: '820px', width: '94vw' }}>
             <DialogBody>
               <DialogTitle>Knowledge</DialogTitle>
@@ -244,7 +242,7 @@ export function KnowledgeButton({ base }: { base: string }) {
                 {(save.error || remove.error) && <Text className={s.error}>{errorText(save.error ?? remove.error, 'That did not work.')}</Text>}
               </DialogContent>
               <DialogActions>
-                <Button appearance="primary" onClick={() => setOpen(false)}>
+                <Button appearance="primary" onClick={onClose}>
                   Close
                 </Button>
               </DialogActions>

@@ -37,6 +37,8 @@ import { DataTable } from '../components/DataTable';
 import { useSort } from '../lib/sort';
 import { Page } from '../components/Page';
 import { LoadError } from './DataCollection';
+import { DangerText } from '../components/ui';
+import { TableSkeleton } from '../components/states';
 
 interface QueueItem {
   id: string;
@@ -188,7 +190,7 @@ export function MspServiceRequests() {
       {status === 'open' && q.data && q.data.customers.length > 0 && <QueueTiles items={inCustomer} filter={tile} onFilter={setTile} />}
       <Card>
         {q.isLoading ? (
-          <Spinner size="tiny" />
+          <TableSkeleton rows={4} cols={5} />
         ) : !superAdmin && !q.data?.msp ? (
           <Text>
             Your account isn&apos;t linked to an MSP, so there&apos;s no queue to show. A Super Admin can add your email domain to an MSP, or link your
@@ -338,7 +340,7 @@ function QuickActionDialog({ item, onClose }: { item: QueueItem; onClose: () => 
               <Radio value="internal" label="Internal note" />
             </RadioGroup>
             {reply.isSuccess && <Text>Sent.</Text>}
-            {error && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{error instanceof ApiError ? error.message : 'That did not work'}</Text>}
+            {error && <DangerText>{error instanceof ApiError ? error.message : 'That did not work'}</DangerText>}
           </DialogContent>
           <DialogActions>
             <Button appearance="secondary" onClick={onClose}>

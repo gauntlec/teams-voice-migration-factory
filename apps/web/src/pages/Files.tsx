@@ -28,6 +28,7 @@ import { DataTable } from '../components/DataTable';
 import { Page } from '../components/Page';
 import { useDebounced } from '../hooks/useDebounced';
 import { LoadError, NoTenant, useRecordStyles } from '../components/records';
+import { MutedText } from '../components/ui';
 
 const CATEGORY_LABEL: Record<string, string> = {
   deployment_change_document: 'Deployment change document',
@@ -84,9 +85,9 @@ function ColumnFilter({
         />
         <div style={{ maxHeight: '240px', overflowY: 'auto', display: 'grid', gap: '2px' }}>
           {shown.length === 0 ? (
-            <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+            <MutedText size={200}>
               No matches.
-            </Text>
+            </MutedText>
           ) : (
             shown.map((o) => (
               <Checkbox

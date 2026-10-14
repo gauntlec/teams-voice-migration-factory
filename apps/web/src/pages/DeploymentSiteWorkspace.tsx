@@ -41,6 +41,7 @@ import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
 import { Page } from '../components/Page';
 import { LoadError, NoTenant, useRecordStyles } from '../components/records';
+import { DangerText } from '../components/ui';
 
 const useStyles = makeStyles({
   row: { display: 'flex', ...shorthands.gap('8px'), flexWrap: 'wrap', alignItems: 'center' },
@@ -589,7 +590,7 @@ export function DeploymentSiteWorkspace() {
             <Text weight="semibold" size={400}>
               Run history
             </Text>
-            {rollbackError && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{rollbackError}</Text>}
+            {rollbackError && <DangerText>{rollbackError}</DangerText>}
             <DataTable size="small" minWidth={1000}>
               <TableHeader>
                 <TableRow>

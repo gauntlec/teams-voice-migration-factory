@@ -38,6 +38,8 @@ import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
 import { Page } from '../components/Page';
 import { LoadError, NoTenant } from './DataCollection';
+import { DangerText } from '../components/ui';
+import { TableSkeleton } from '../components/states';
 
 interface PackSource {
   siteCodes?: string[];
@@ -166,7 +168,7 @@ export function Handover() {
       {actionError && <LoadError message={actionError} />}
       <Card>
         {packs.isLoading ? (
-          <Spinner size="tiny" />
+          <TableSkeleton rows={4} cols={5} />
         ) : (packs.data?.length ?? 0) === 0 ? (
           <Text size={200}>No handover packs generated yet.</Text>
         ) : (
@@ -333,7 +335,7 @@ function GenerateDialog({
             <Field label="Internal note (optional)" hint="Kept with the pack in Voxshift. It isn't printed in the document.">
               <Textarea value={notes} maxLength={2000} onChange={(_, d) => setNotes(d.value)} resize="vertical" />
             </Field>
-            {generate.isError && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{errorMessage(generate.error, 'Could not generate the pack')}</Text>}
+            {generate.isError && <DangerText>{errorMessage(generate.error, 'Could not generate the pack')}</DangerText>}
           </DialogContent>
           <DialogActions>
             <Button appearance="secondary" onClick={onClose}>
@@ -433,7 +435,7 @@ function NotesDialog({ tenantId, sites, onClose }: { tenantId: string; sites: Si
                 <Textarea value={body} maxLength={20000} rows={8} resize="vertical" onChange={(_, d) => setDraft(d.value)} />
               )}
             </Field>
-            {save.isError && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{errorMessage(save.error, 'Could not save the note')}</Text>}
+            {save.isError && <DangerText>{errorMessage(save.error, 'Could not save the note')}</DangerText>}
           </DialogContent>
           <DialogActions>
             <Button appearance="secondary" onClick={close}>

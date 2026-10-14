@@ -12,6 +12,7 @@ import { Page } from '../components/Page';
 import { ProblemDialog, type ProblemFields } from '../components/ProblemDialog';
 import { LoadError, NoTenant } from '../components/records';
 import { useSrStyles, when } from './ServiceRequests';
+import { TableSkeleton } from '../components/states';
 
 interface ProblemRow {
   id: string;
@@ -85,7 +86,7 @@ export function Problems() {
       {list.isError && <LoadError message={(list.error as Error).message} />}
       <Card>
         {list.isLoading ? (
-          <Spinner size="tiny" />
+          <TableSkeleton rows={4} cols={5} />
         ) : (list.data ?? []).length === 0 ? (
           <Text size={200}>No problems here. Create one from an incident when you find a cause worth tracking.</Text>
         ) : (

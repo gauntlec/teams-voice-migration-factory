@@ -7,6 +7,7 @@ import { jsPDF } from 'jspdf';
 import { Button, Text, Tooltip, tokens } from '@fluentui/react-components';
 import { ArrowDownloadRegular, ArrowDownRegular, ArrowRightRegular } from '@fluentui/react-icons';
 import type { CallFlowBranch, CallFlowGraph, CallFlowNode, CallFlowNodeKind } from '@tvmf/shared';
+import { MutedText } from './ui';
 
 type Direction = 'LR' | 'TB';
 
@@ -319,9 +320,9 @@ export function CallFlowDiagram({ graph, exportFilename }: { graph: CallFlowGrap
 
   if (graph.nodes.length === 0) {
     return (
-      <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+      <MutedText size={200}>
         Nothing to draw yet.
-      </Text>
+      </MutedText>
     );
   }
 

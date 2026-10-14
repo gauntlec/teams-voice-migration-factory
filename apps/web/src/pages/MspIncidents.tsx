@@ -38,6 +38,8 @@ import { IncQueueTiles, IncSlaBadge, IncStatusBadge, MajorBadge, MajorClockBadge
 import { useSort } from '../lib/sort';
 import { Page } from '../components/Page';
 import { LoadError } from '../components/records';
+import { DangerText } from '../components/ui';
+import { TableSkeleton } from '../components/states';
 
 type QueueItem = Omit<IncidentRow, 'impact' | 'urgency' | 'updated_at' | 'site_id'> & {
   tenant_id: string;
@@ -207,7 +209,7 @@ export function MspIncidents() {
           {status === 'open' && q.data && q.data.customers.length > 0 && <IncQueueTiles items={inCustomer} filter={tile} onFilter={setTile} />}
           <Card>
             {q.isLoading ? (
-              <Spinner size="tiny" />
+              <TableSkeleton rows={4} cols={5} />
             ) : !superAdmin && !q.data?.msp ? (
               <Text>Your account isn&apos;t linked to an MSP, so there&apos;s no queue to show. A Super Admin can add your email domain to an MSP, or link your account to one.</Text>
             ) : (q.data?.customers.length ?? 0) === 0 ? (
@@ -294,7 +296,7 @@ export function MspIncidents() {
         <>
           {board.isError && <LoadError message={(board.error as Error).message} />}
           {board.isLoading ? (
-            <Spinner size="tiny" />
+            <TableSkeleton rows={4} cols={5} />
           ) : majors.length === 0 ? (
             <Card>
               <Text>No live major incidents. Declare one from an incident page when a problem is serious enough to need a lead and regular customer updates.</Text>
@@ -412,7 +414,7 @@ function QuickActionDialog({ item, onClose }: { item: QueueItem; onClose: () => 
               <Radio value="internal" label="Internal note" />
             </RadioGroup>
             {reply.isSuccess && <Text>Sent.</Text>}
-            {error && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{error instanceof ApiError ? error.message : 'That did not work'}</Text>}
+            {error && <DangerText>{error instanceof ApiError ? error.message : 'That did not work'}</DangerText>}
           </DialogContent>
           <DialogActions>
             <Button appearance="secondary" onClick={onClose}>

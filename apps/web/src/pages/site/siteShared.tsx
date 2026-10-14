@@ -6,6 +6,7 @@ import { LinkRegular } from '@fluentui/react-icons';
 import { type DiscoverySiteOverview } from '@tvmf/shared';
 import { api, ApiError } from '../../api';
 import { type Row } from '../../components/records';
+import { MutedText } from '../../components/ui';
 
 export interface StaffMember {
   id: string;
@@ -115,9 +116,9 @@ export function RelinkUsersButton({
         {relink.isPending ? 'Linking…' : 'Link to tenant'}
       </Button>
       {msg && (
-        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+        <MutedText size={200}>
           {msg}
-        </Text>
+        </MutedText>
       )}
     </>
   );

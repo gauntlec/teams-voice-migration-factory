@@ -16,6 +16,7 @@ import { CallingPolicyMapDialog, CallingSettingsDialog } from './build/callingDi
 import { TemplatesDialog } from './build/templatesDialog';
 import { CallQueueSettingsDialog } from './build/callQueueSettingsDialog';
 import { AutoAttendantSettingsDialog } from './build/autoAttendantDialogs';
+import { DangerText } from '../components/ui';
 
 export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } = {}) {
   const s = useRecordStyles();
@@ -332,9 +333,9 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
         )}
       </div>
       {populateError && (
-        <Text block style={{ color: tokens.colorPaletteRedForeground1 }}>
+        <DangerText block>
           {populateError}
-        </Text>
+        </DangerText>
       )}
 
       <Dialog open={resetOpen} onOpenChange={(_, d) => setResetOpen(d.open)}>

@@ -7,6 +7,7 @@ import { api, ApiError } from '../../api';
 import { GroupAutocomplete } from '../../components/GroupAutocomplete';
 import { UpnAutocomplete } from '../../components/UpnAutocomplete';
 import { PagedSection, type FieldDef, type Row } from '../../components/records';
+import { DangerText } from '../../components/ui';
 
 /**
  * Agents/overflow/timeout/linked resource accounts for one build_call_queues
@@ -271,9 +272,9 @@ export function CallQueueSettingsDialog({
               </div>
 
               {err && (
-                <Text block style={{ color: tokens.colorPaletteRedForeground1 }}>
+                <DangerText block>
                   {err}
-                </Text>
+                </DangerText>
               )}
             </div>
           </DialogContent>

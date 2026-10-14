@@ -58,6 +58,7 @@ import { LoadError } from '../../components/records';
 import { useDebounced } from '../../hooks/useDebounced';
 import { useNotify } from '../../hooks/useNotify';
 import { useSort } from '../../lib/sort';
+import { DangerText, MutedText } from '../../components/ui';
 
 const useStyles = makeStyles({
   actions: { display: 'flex', ...shorthands.gap('4px'), flexWrap: 'nowrap' },
@@ -483,12 +484,12 @@ export function AdminUsers() {
             </Field>
           )}
         </div>
-        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+        <MutedText size={200}>
           The user is emailed a temporary password and must set their own password, then set up
           two-factor authentication, on first sign-in. Change their customers and site access any
           time with <b>Manage</b> below.
-        </Text>
-        {err && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{err}</Text>}
+        </MutedText>
+        {err && <DangerText>{err}</DangerText>}
             </DialogContent>
             <DialogActions>
               <Button appearance="secondary" onClick={() => setCreating(false)}>
@@ -835,7 +836,7 @@ function MembershipRow({
         ) : (
           <Text size={200}>Whole customer</Text>
         )}
-        {err && <Text size={200} style={{ color: tokens.colorPaletteRedForeground1 }}>{err}</Text>}
+        {err && <DangerText size={200}>{err}</DangerText>}
       </TableCell>
       <TableCell>
         <Button
@@ -892,9 +893,9 @@ function AddMembershipRow({
 
   if (isCustomer && taken.size >= 1) {
     return (
-      <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+      <MutedText size={200}>
         Customer users belong to a single customer. Remove the current one first to move them.
-      </Text>
+      </MutedText>
     );
   }
 
@@ -960,7 +961,7 @@ function AddMembershipRow({
       >
         Add
       </Button>
-      {err && <Text size={200} style={{ color: tokens.colorPaletteRedForeground1 }}>{err}</Text>}
+      {err && <DangerText size={200}>{err}</DangerText>}
     </div>
   );
 }

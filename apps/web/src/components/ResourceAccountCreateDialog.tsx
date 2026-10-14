@@ -18,6 +18,7 @@ import {
 } from '@fluentui/react-components';
 import type { Paginated } from '@tvmf/shared';
 import { api, ApiError } from '../api';
+import { DangerText } from './ui';
 
 /**
  * "Set up a new resource account" - a small nested dialog used by the AA/CQ
@@ -130,9 +131,9 @@ export function ResourceAccountCreateDialog({
               </Dropdown>
             </Field>
             {error && (
-              <Text block style={{ color: tokens.colorPaletteRedForeground1 }}>
+              <DangerText block>
                 {error}
-              </Text>
+              </DangerText>
             )}
           </DialogContent>
           <DialogActions>

@@ -7,6 +7,7 @@ import { api, ApiError } from '../../api';
 import { GroupAutocomplete } from '../../components/GroupAutocomplete';
 import { UpnAutocomplete } from '../../components/UpnAutocomplete';
 import { type Row } from '../../components/records';
+import { DangerText, MutedText } from '../../components/ui';
 
 /** A menu-option target (New-CsAutoAttendantCallableEntity) - same-site AA/CQ by name, a person by UPN, or a raw external number. */
 function CallableEntityEditor({
@@ -180,9 +181,9 @@ function MenuOptionRow({
         </Field>
       )}
       {value.action === 'TransferCallToOperator' && (
-        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+        <MutedText size={200}>
           Goes to this Auto Attendant&apos;s operator (set in the Operator section).
-        </Text>
+        </MutedText>
       )}
     </div>
   );
@@ -279,9 +280,9 @@ function CallFlowEditor({
             />
           ))}
           {value.menu.options.length === 0 && (
-            <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+            <MutedText size={200}>
               No menu options yet - callers hear the greeting then silence.
-            </Text>
+            </MutedText>
           )}
         </div>
       </div>
@@ -562,9 +563,9 @@ export function AutoAttendantSettingsDialog({
                     </Card>
                   ))}
                   {holidays.length === 0 && (
-                    <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+                    <MutedText size={200}>
                       No holiday call flows yet.
-                    </Text>
+                    </MutedText>
                   )}
                 </div>
               </div>
@@ -592,9 +593,9 @@ export function AutoAttendantSettingsDialog({
               </div>
 
               {err && (
-                <Text block style={{ color: tokens.colorPaletteRedForeground1 }}>
+                <DangerText block>
                   {err}
-                </Text>
+                </DangerText>
               )}
             </div>
           </DialogContent>

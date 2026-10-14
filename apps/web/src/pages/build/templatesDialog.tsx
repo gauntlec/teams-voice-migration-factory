@@ -5,6 +5,7 @@ import { DeleteRegular } from '@fluentui/react-icons';
 import { POLICY_KINDS, VOICEMAIL_PROMPT_LANGUAGES, type PolicyKey } from '@tvmf/shared';
 import { api, ApiError } from '../../api';
 import { type Choice } from '../../components/records';
+import { DangerText } from '../../components/ui';
 
 interface BuildTemplateRow {
   id: string;
@@ -252,9 +253,9 @@ export function TemplatesDialog({
                   onChange={(_, d) => setForm((p) => ({ ...p, is_default: !!d.checked }))}
                 />
                 {error && (
-                  <Text block style={{ color: tokens.colorPaletteRedForeground1 }}>
+                  <DangerText block>
                     {error}
-                  </Text>
+                  </DangerText>
                 )}
                 <div style={{ display: 'flex', gap: 8 }}>
                   <Button appearance="primary" disabled={!form.name.trim() || save.isPending} onClick={() => save.mutate()}>

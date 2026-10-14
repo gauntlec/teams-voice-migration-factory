@@ -35,6 +35,8 @@ import { Page } from '../../components/Page';
 import { Wordmark } from '../../components/Logo';
 import { useDebounced } from '../../hooks/useDebounced';
 import { LoadError } from '../DataCollection';
+import { DangerText, MutedText } from '../../components/ui';
+import { TableSkeleton } from '../../components/states';
 
 const DEFAULT_ACCENT = '#4657D2';
 
@@ -192,7 +194,7 @@ export function AdminTenants() {
             Create
           </Button>
         </div>
-        {err && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{err}</Text>}
+        {err && <DangerText>{err}</DangerText>}
       </Card>
 
       <Card>
@@ -204,7 +206,7 @@ export function AdminTenants() {
           style={{ maxWidth: 320 }}
         />
         {list.isLoading ? (
-          <Spinner size="tiny" />
+          <TableSkeleton rows={4} cols={5} />
         ) : list.isError ? (
           <LoadError message={(list.error as Error).message} />
         ) : (
@@ -244,9 +246,9 @@ export function AdminTenants() {
                         </Button>
                       ) : (
                         t.branding && (
-                          <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+                          <MutedText size={200}>
                             Branded
-                          </Text>
+                          </MutedText>
                         )
                       )}
                     </div>
@@ -339,17 +341,17 @@ export function AdminTenants() {
             </TableBody>
           </DataTable>
         )}
-        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+        <MutedText size={200}>
           When Teams read-only is on, the platform can never send a write cmdlet to that customer's
           live Microsoft Teams tenant - every deployment run is forced to dry-run, no matter what
           mode is requested. Discovery and validation (read-only) are unaffected.
-        </Text>
-        {sandboxErr && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{sandboxErr}</Text>}
-        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+        </MutedText>
+        {sandboxErr && <DangerText>{sandboxErr}</DangerText>}
+        <MutedText size={200}>
           A test customer never emails its real recipients: every email for it goes to the person who
           triggered it, with the subject starting "[TEST - would have gone to ...]". Emails nobody
           triggered (reminders) go to the fallback address, or aren't sent if it's empty.
-        </Text>
+        </MutedText>
       </Card>
 
       {brandingFor && (
@@ -416,9 +418,9 @@ function BrandingDialog({
                 ) : (
                   <Wordmark size={18} />
                 )}
-                <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+                <MutedText size={200}>
                   {previewUrl ? 'Current logo' : 'No logo set - default Voxshift mark shown everywhere'}
-                </Text>
+                </MutedText>
               </div>
               <Field label="Replace logo" hint="PNG or JPEG - WebP isn't supported by classic Outlook desktop">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -452,7 +454,7 @@ function BrandingDialog({
                   style={{ width: 40, height: 32, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
                 />
               </Field>
-              {err && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{err}</Text>}
+              {err && <DangerText>{err}</DangerText>}
             </div>
           </DialogContent>
           <DialogActions>
@@ -612,7 +614,7 @@ function CustomerMembers({ tenants }: { tenants: Tenant[] }) {
           Add
         </Button>
       </div>
-      {err && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{err}</Text>}
+      {err && <DangerText>{err}</DangerText>}
 
       {scopeFor && (
         <ScopeDialog
@@ -695,7 +697,7 @@ function ScopeDialog({
                   </Dropdown>
                 </Field>
               )}
-              {err && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{err}</Text>}
+              {err && <DangerText>{err}</DangerText>}
             </div>
           </DialogContent>
           <DialogActions>
