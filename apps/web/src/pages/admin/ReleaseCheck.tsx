@@ -17,6 +17,9 @@ import {
   TableRow,
   Text,
   tokens,
+
+  makeStyles,
+  shorthands,
 } from '@fluentui/react-components';
 import { ArrowClockwiseRegular } from '@fluentui/react-icons';
 import { MAINTENANCE_FREEZE_MINUTES, type MaintenanceNoticeView, type ReleaseCheck } from '@tvmf/shared';
@@ -26,6 +29,14 @@ import { Page } from '../../components/Page';
 import { LoadError } from '../../components/records';
 import { DangerText, MutedText } from '../../components/ui';
 import { TableSkeleton } from '../../components/states';
+
+const useLocalStyles = makeStyles({
+  gridGap6: { display: "grid", ...shorthands.gap('6px') },
+  flexWrapItemsFlexendGap12: { display: "flex", ...shorthands.gap('12px'), alignItems: "flex-end", flexWrap: "wrap" },
+  minW220: { minWidth: '220px' },
+  minW280Flex1: { flex: 1, minWidth: '280px' },
+});
+
 
 const fmt = (iso: string) => new Date(iso).toLocaleString();
 const fmtTime = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -56,9 +67,10 @@ function Owner({ name, email }: { name: string | null; email: string | null }) {
 }
 
 function Section({ title, count, children }: { title: string; count: number; children: ReactNode }) {
+  const ls = useLocalStyles();
   if (count === 0) return null;
   return (
-    <div style={{ display: 'grid', gap: 6 }}>
+    <div className={ls.gridGap6}>
       <Text weight="semibold">
         {title} ({count})
       </Text>
@@ -68,6 +80,7 @@ function Section({ title, count, children }: { title: string; count: number; chi
 }
 
 export function AdminReleaseCheck() {
+  const ls = useLocalStyles();
   const qc = useQueryClient();
   const q = useQuery({
     queryKey: ['release-check'],
@@ -254,11 +267,11 @@ export function AdminReleaseCheck() {
             </MessageBarBody>
           </MessageBar>
         )}
-        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-          <Field label="Update time" style={{ minWidth: 220 }}>
+        <div className={ls.flexWrapItemsFlexendGap12}>
+          <Field label="Update time" className={ls.minW220}>
             <Input type="datetime-local" value={when} onChange={(_, d) => setWhen(d.value)} />
           </Field>
-          <Field label="Message" style={{ flex: 1, minWidth: 280 }}>
+          <Field label="Message" className={ls.minW280Flex1}>
             <Input value={message} maxLength={300} onChange={(_, d) => setMessage(d.value)} />
           </Field>
           <Button appearance="primary" disabled={setNotice.isPending || !message.trim() || !when} onClick={() => setNotice.mutate()}>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Link, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, Textarea } from '@fluentui/react-components';
+import { Badge, Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Link, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, Textarea , makeStyles, mergeClasses } from '@fluentui/react-components';
 import { WarningRegular } from '@fluentui/react-icons';
 import { srInChangeWindow, srChangeWindowText, type DeploymentPreviewRow, type SrChangeWindow, type SrDeploymentRun, type SrDesignSummary } from '@tvmf/shared';
 import { api } from '../../api';
@@ -10,6 +10,16 @@ import { DataTable } from '../../components/DataTable';
 import { LoadError } from '../../components/records';
 import { errorText, useSrStyles, when, type RequestDetail } from '../ServiceRequests';
 import { OBJECT_TYPE_LABEL, GROUP_ORDER, RESULT_BADGE_COLOR, usePageStyles, type RequestPayload } from './srShared';
+
+const useLocalStyles = makeStyles({
+  justifySpacebetween: { justifyContent: "space-between" },
+  ml6: { marginLeft: '6px' },
+  mt2: { flexShrink: 0, marginTop: '2px' },
+  maxW420PreWrap: { maxWidth: '420px', whiteSpace: "pre-wrap" },
+  mt12: { marginTop: '12px' },
+  colItemsStretch: { flexDirection: "column", alignItems: "stretch" },
+});
+
 
 interface Connection {
   id: string;
@@ -46,6 +56,7 @@ export function DeployTab({
   design: SrDesignSummary | undefined;
   changeWindow: SrChangeWindow | null;
 }) {
+  const ls = useLocalStyles();
   const ps = usePageStyles();
   const cs = useSrStyles();
   const qc = useQueryClient();
@@ -117,7 +128,7 @@ export function DeployTab({
   return (
     <>
       <Card className={ps.card}>
-        <div className={cs.actions} style={{ justifyContent: 'space-between' }}>
+        <div className={mergeClasses(cs.actions, ls.justifySpacebetween)}>
           <Text weight="semibold" size={400}>
             Changes for {r.reference} <span className={ps.muted}>({rows.length})</span>
           </Text>
@@ -182,7 +193,7 @@ export function DeployTab({
                       <TableCell>
                         {x.upn}
                         {x.autoIncluded && (
-                          <Badge appearance="tint" color="brand" style={{ marginLeft: 6 }} title="Not on the request itself: included because a call queue or auto attendant on it routes to this user.">
+                          <Badge appearance="tint" color="brand" className={ls.ml6} title="Not on the request itself: included because a call queue or auto attendant on it routes to this user.">
                             included automatically
                           </Badge>
                         )}
@@ -191,7 +202,7 @@ export function DeployTab({
                         {x.renderedCommands.length > 0 && <pre className={ps.commands}>{x.renderedCommands.join('\n')}</pre>}
                         {x.warnings.map((w) => (
                           <div key={w} className={ps.warningRow}>
-                            <WarningRegular style={{ flexShrink: 0, marginTop: 2 }} />
+                            <WarningRegular className={ls.mt2} />
                             <span>{w}</span>
                           </div>
                         ))}
@@ -275,7 +286,7 @@ export function DeployTab({
                       </Badge>
                     </TableCell>
                     <TableCell className={ps.mono}>
-                      <div style={{ maxWidth: 420, whiteSpace: 'pre-wrap' }}>{c.message ?? ''}</div>
+                      <div className={ls.maxW420PreWrap}>{c.message ?? ''}</div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -298,7 +309,7 @@ export function DeployTab({
                   label="Why can't this wait for the change window?"
                   required
                   hint={`The customer's change window is ${srChangeWindowText(changeWindow)}. Your reason is noted on the request.`}
-                  style={{ marginTop: 12 }}
+                  className={ls.mt12}
                 >
                   <Textarea value={outsideReason} maxLength={1000} onChange={(_, d) => setOutsideReason(d.value)} />
                 </Field>
@@ -327,6 +338,7 @@ export function DeployTab({
 /* -------------------------------- approval -------------------------------- */
 
 export function ApprovalBanner({ base, id, approval, onDone }: { base: string; id: string; approval: NonNullable<RequestPayload['approval']>; onDone: () => void }) {
+  const ls = useLocalStyles();
   const ps = usePageStyles();
   const cs = useSrStyles();
   const [note, setNote] = useState('');
@@ -344,7 +356,7 @@ export function ApprovalBanner({ base, id, approval, onDone }: { base: string; i
     );
   }
   return (
-    <div className={ps.waiting} style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+    <div className={mergeClasses(ps.waiting, ls.colItemsStretch)}>
       <Text>
         <b>Waiting for approval</b> from {approval.approvers.join(' or ') || 'the customer'}. The team can&apos;t start until it&apos;s approved.
       </Text>

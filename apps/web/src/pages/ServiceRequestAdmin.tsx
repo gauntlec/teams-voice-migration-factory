@@ -22,6 +22,8 @@ import {
   makeStyles,
   shorthands,
   tokens,
+
+  mergeClasses,
 } from '@fluentui/react-components';
 import {
   SR_PRIORITIES,
@@ -37,6 +39,14 @@ import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
 import { LoadError } from '../components/records';
 import { PRIORITY_LABEL, errorText } from './ServiceRequests';
+
+const useLocalStyles = makeStyles({
+  w94vwMaxW760: { maxWidth: "760px", width: "94vw" },
+  maxH72vhScroll: { maxHeight: "72vh", overflowY: "auto" },
+  w94vwMaxW820: { maxWidth: "820px", width: "94vw" },
+  maxH74vhScroll: { maxHeight: "74vh", overflowY: "auto" },
+});
+
 
 /**
  * Service Requests -> Settings (targets, approvals, change window; Super
@@ -81,6 +91,7 @@ export function useSrSettings(base: string, enabled = true) {
 }
 
 export function SettingsDialog({ base, onClose }: { base: string; onClose: () => void }) {
+  const ls = useLocalStyles();
   const cs = useStyles();
   const qc = useQueryClient();
   const { me, can } = useAuth();
@@ -131,10 +142,10 @@ export function SettingsDialog({ base, onClose }: { base: string; onClose: () =>
 
   return (
     <Dialog open onOpenChange={(_, x) => !x.open && onClose()}>
-      <DialogSurface style={{ maxWidth: '760px', width: '94vw' }}>
+      <DialogSurface className={ls.w94vwMaxW760}>
         <DialogBody>
           <DialogTitle>Managed Services settings</DialogTitle>
-          <DialogContent className={cs.stack} style={{ maxHeight: '72vh', overflowY: 'auto' }}>
+          <DialogContent className={mergeClasses(cs.stack, ls.maxH72vhScroll)}>
             {settings.isLoading && <Spinner size="tiny" />}
             {settings.isError && <LoadError message={(settings.error as Error).message} />}
             {d && (
@@ -300,6 +311,7 @@ function months(): { label: string; from: string; to: string }[] {
 }
 
 export function ReportsDialog({ base, onClose }: { base: string; onClose: () => void }) {
+  const ls = useLocalStyles();
   const cs = useStyles();
   const list = useMemo(months, []);
   const [pick, setPick] = useState(0);
@@ -322,10 +334,10 @@ export function ReportsDialog({ base, onClose }: { base: string; onClose: () => 
     : [];
   return (
     <Dialog open onOpenChange={(_, x) => !x.open && onClose()}>
-      <DialogSurface style={{ maxWidth: '820px', width: '94vw' }}>
+      <DialogSurface className={ls.w94vwMaxW820}>
         <DialogBody>
           <DialogTitle>Service request report</DialogTitle>
-          <DialogContent className={cs.stack} style={{ maxHeight: '74vh', overflowY: 'auto' }}>
+          <DialogContent className={mergeClasses(cs.stack, ls.maxH74vhScroll)}>
             <Field label="Month">
               <Select value={String(pick)} onChange={(_, d) => setPick(Number(d.value))}>
                 {list.map((x, i) => (

@@ -80,6 +80,25 @@ import { LoadError, NoTenant } from './DataCollection';
 import { DangerText } from '../components/ui';
 import { MoreHorizontalRegular } from '@fluentui/react-icons';
 
+const useLocalStyles = makeStyles({
+  ml4: { marginLeft: '4px' },
+  flexWrapItemsCenterGap8: { display: "flex", ...shorthands.gap('8px'), flexWrap: "wrap", alignItems: "center" },
+  minW320: { minWidth: '320px' },
+  flexColGap6: { display: "flex", flexDirection: "column", ...shorthands.gap('6px') },
+  flexWrapGap6: { display: "flex", ...shorthands.gap('6px'), flexWrap: "wrap" },
+  flexColGap8: { display: "flex", flexDirection: "column", ...shorthands.gap('8px') },
+  flexWrapItemsStartGap8: { display: "flex", ...shorthands.gap('8px'), alignItems: "start", flexWrap: "wrap" },
+  w90: { width: '90px' },
+  minW260Flex1: { flex: 1, minWidth: '260px' },
+  flexItemsCenterGap8: { display: "flex", ...shorthands.gap('8px'), alignItems: "center" },
+  flexCol: { display: "flex", flexDirection: "column" },
+  maxW680: { maxWidth: "680px" },
+  pl20Margin0: { ...shorthands.margin("0px"), paddingLeft: '20px' },
+  maxW720: { maxWidth: "720px" },
+  mb12: { marginBottom: '12px' },
+});
+
+
 export interface RequestRow {
   id: string;
   number: number;
@@ -218,6 +237,7 @@ export function when(iso: string | null) {
 }
 
 export function ServiceRequests() {
+  const ls = useLocalStyles();
   const { activeTenantId, can, me } = useAuth();
   const cs = useSrStyles();
   const [params] = useSearchParams();
@@ -372,12 +392,12 @@ export function ServiceRequests() {
                       {srStatusLabel(r.status, can('sr:manage'))}
                     </Badge>
                     {r.approval_status === 'pending' && (
-                      <Badge appearance="outline" color="brand" style={{ marginLeft: 4 }}>
+                      <Badge appearance="outline" color="brand" className={ls.ml4}>
                         Awaiting approval
                       </Badge>
                     )}
                     {r.waiting_since && (
-                      <Badge appearance="outline" color="warning" style={{ marginLeft: 4 }} title="The team asked a question and is waiting for a reply.">
+                      <Badge appearance="outline" color="warning" className={ls.ml4} title="The team asked a question and is waiting for a reply.">
                         {can('sr:manage') ? 'Waiting on customer' : 'Needs your reply'}
                       </Badge>
                     )}
@@ -423,6 +443,7 @@ export function ServiceRequests() {
 
 /** Search the customer's directory and pick one person. "Not listed" allows typing someone not synced yet. */
 function PersonPicker({ base, value, onChange, placeholder }: { base: string; value?: SrPerson; onChange: (p: SrPerson | undefined) => void; placeholder?: string }) {
+  const ls = useLocalStyles();
   const [text, setText] = useState(value ? `${value.name} (${value.upn})` : '');
   const [manual, setManual] = useState(false);
   const term = useDebounced(text);
@@ -437,7 +458,7 @@ function PersonPicker({ base, value, onChange, placeholder }: { base: string; va
 
   if (manual) {
     return (
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+      <div className={ls.flexWrapItemsCenterGap8}>
         <Input placeholder="Name" value={value?.name ?? ''} onChange={(_, d) => onChange({ name: d.value, upn: value?.upn ?? '' })} />
         <Input placeholder="name@company.com" value={value?.upn ?? ''} onChange={(_, d) => onChange({ name: value?.name ?? '', upn: d.value })} />
         <Link onClick={() => setManual(false)}>Search the directory instead</Link>
@@ -445,12 +466,12 @@ function PersonPicker({ base, value, onChange, placeholder }: { base: string; va
     );
   }
   return (
-    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+    <div className={ls.flexWrapItemsCenterGap8}>
       <Combobox
         freeform
         placeholder={placeholder ?? 'Type a name or sign-in address'}
         value={text}
-        style={{ minWidth: 320 }}
+        className={ls.minW320}
         onChange={(e) => {
           setText(e.target.value);
           if (value) onChange(undefined);
@@ -481,6 +502,7 @@ function PersonPicker({ base, value, onChange, placeholder }: { base: string; va
 
 /** Several people from the directory. */
 function PeoplePicker({ base, value, onChange }: { base: string; value: SrPerson[]; onChange: (p: SrPerson[]) => void }) {
+  const ls = useLocalStyles();
   const [adding, setAdding] = useState<SrPerson | undefined>();
   useEffect(() => {
     if (adding && adding.upn && adding.name && !value.some((p) => p.upn.toLowerCase() === adding.upn.toLowerCase())) {
@@ -489,9 +511,9 @@ function PeoplePicker({ base, value, onChange }: { base: string; value: SrPerson
     }
   }, [adding]);
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <div className={ls.flexColGap6}>
       {value.length > 0 && (
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <div className={ls.flexWrapGap6}>
           {value.map((p) => (
             <Badge key={p.upn} appearance="outline" size="large">
               {p.name}&nbsp;
@@ -509,9 +531,10 @@ function PeoplePicker({ base, value, onChange }: { base: string; value: SrPerson
 
 /** Where a call goes: a queue or auto attendant at the site, a person, voicemail, or disconnect. */
 function TargetPicker({ base, options, value, onChange }: { base: string; options?: FormOptions; value?: SrTarget; onChange: (t: SrTarget | undefined) => void }) {
+  const ls = useLocalStyles();
   const key = !value ? '' : value.kind === 'call_queue' || value.kind === 'auto_attendant' ? `${value.kind}:${value.id}` : value.kind;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <div className={ls.flexColGap6}>
       <Select
         value={key}
         onChange={(_, d) => {
@@ -554,16 +577,17 @@ function TargetPicker({ base, options, value, onChange }: { base: string; option
 
 /** Auto attendant key presses, each to a target. */
 function MenuEditor({ base, options, value, onChange }: { base: string; options?: FormOptions; value: SrMenuOption[]; onChange: (m: SrMenuOption[]) => void }) {
+  const ls = useLocalStyles();
   const used = new Set(value.map((o) => o.key));
   const nextKey = SR_MENU_KEYS.find((k) => !used.has(k));
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div className={ls.flexColGap8}>
       {value.map((o, i) => (
-        <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'start', flexWrap: 'wrap' }}>
+        <div key={i} className={ls.flexWrapItemsStartGap8}>
           <Select
             aria-label="Key"
             value={o.key}
-            style={{ width: 90 }}
+            className={ls.w90}
             onChange={(_, d) => onChange(value.map((x, j) => (j === i ? { ...x, key: d.value as SrMenuOption['key'] } : x)))}
           >
             {SR_MENU_KEYS.filter((k) => k === o.key || !used.has(k)).map((k) => (
@@ -572,7 +596,7 @@ function MenuEditor({ base, options, value, onChange }: { base: string; options?
               </option>
             ))}
           </Select>
-          <div style={{ flex: 1, minWidth: 260 }}>
+          <div className={ls.minW260Flex1}>
             <TargetPicker
               base={base}
               options={options}
@@ -611,6 +635,7 @@ function FieldInput({
   options?: FormOptions;
   siteChosen: boolean;
 }) {
+  const ls = useLocalStyles();
   const [otherModel, setOtherModel] = useState(false);
   switch (spec.kind) {
     case 'textarea':
@@ -696,7 +721,7 @@ function FieldInput({
       const known = !value || models.includes(value as string);
       if (models.length === 0 || otherModel || !known) {
         return (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div className={ls.flexItemsCenterGap8}>
             <Input value={(value as string) ?? ''} maxLength={120} placeholder="e.g. Poly CCX 400" onChange={(_, d) => onChange(d.value)} />
             {models.length > 0 && (
               <Link
@@ -734,7 +759,7 @@ function FieldInput({
     case 'choices': {
       const picked = (value as string[] | undefined) ?? [];
       return (
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
+        <div className={ls.flexCol}>
           {(spec.options ?? []).map((o) => (
             <Checkbox
               key={o}
@@ -795,6 +820,7 @@ function isBlank(v: unknown) {
 }
 
 function NewRequestDialog({ base, sites, onClose, onCreated }: { base: string; sites: SiteOption[]; onClose: () => void; onCreated: (id: string) => void }) {
+  const ls = useLocalStyles();
   const cs = useSrStyles();
   const qc = useQueryClient();
   const operational = sites.filter((s) => s.mode === 'operations');
@@ -870,7 +896,7 @@ function NewRequestDialog({ base, sites, onClose, onCreated }: { base: string; s
 
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: '680px' }}>
+      <DialogSurface className={ls.maxW680}>
         <DialogBody>
           <DialogTitle>New service request</DialogTitle>
           <DialogContent className={cs.stack}>
@@ -944,7 +970,7 @@ function NewRequestDialog({ base, sites, onClose, onCreated }: { base: string; s
             {(checks.data ?? []).length > 0 && (
               <div className={cs.section}>
                 <Text weight="semibold">Worth checking</Text>
-                <ul style={{ margin: 0, paddingLeft: 20 }}>
+                <ul className={ls.pl20Margin0}>
                   {checks.data!.map((w) => (
                     <li key={w}>
                       <Text size={200}>{w}</Text>
@@ -979,6 +1005,7 @@ function NewRequestDialog({ base, sites, onClose, onCreated }: { base: string; s
 
 /** Engineers and admins: a site takes service requests only once it is in operations mode. */
 function SiteModesDialog({ base, sites, onClose }: { base: string; sites: SiteOption[]; onClose: () => void }) {
+  const ls = useLocalStyles();
   const qc = useQueryClient();
   const set = useMutation({
     mutationFn: ({ id, mode }: { id: string; mode: SiteMode }) => api(`${base}/sites/${id}/mode`, { method: 'PATCH', body: JSON.stringify({ mode }) }),
@@ -986,11 +1013,11 @@ function SiteModesDialog({ base, sites, onClose }: { base: string; sites: SiteOp
   });
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: '720px' }}>
+      <DialogSurface className={ls.maxW720}>
         <DialogBody>
           <DialogTitle>Site modes</DialogTitle>
           <DialogContent>
-            <Text block style={{ marginBottom: 12 }}>
+            <Text block className={ls.mb12}>
               A site stays in <b>project</b> mode while it is being migrated. Move it to <b>operations</b> once it is live, and the customer can then raise
               service requests for it.
             </Text>

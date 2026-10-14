@@ -6,6 +6,13 @@ import { WarningRegular } from '@fluentui/react-icons';
 import { api } from '../api';
 import { useAuth } from '../auth';
 
+const useLocalStyles = makeStyles({
+  preWrap: { whiteSpace: "pre-wrap" },
+  w94vwMaxW720: { maxWidth: "720px", width: "94vw" },
+  flexColRowGap12MaxH70vhScroll: { display: "flex", flexDirection: "column", rowGap: '12px', maxHeight: "70vh", overflowY: "auto" },
+});
+
+
 const useStyles = makeStyles({
   notice: {
     display: 'flex',
@@ -32,6 +39,7 @@ interface Notice {
 
 /** "We're aware of a problem": live major incidents, as the customer is told about them. Nothing renders when there are none. */
 export function IncidentNotices({ base, enabled }: { base: string; enabled: boolean }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const { activeTenantId } = useAuth();
   const q = useQuery({ queryKey: ['incident-notices', activeTenantId], enabled: enabled && !!activeTenantId, refetchInterval: 60_000, queryFn: () => api<Notice[]>(`${base}/notices`) });
@@ -47,7 +55,7 @@ export function IncidentNotices({ base, enabled }: { base: string; enabled: bool
               We&apos;re aware of a problem{n.sitecode ? ` at ${n.sitecode}` : ' affecting all sites'}: {n.title}
             </Text>
             {n.latest_update?.body && (
-              <Text block style={{ whiteSpace: 'pre-wrap' }}>
+              <Text block className={ls.preWrap}>
                 {n.latest_update.body}
               </Text>
             )}
@@ -79,16 +87,17 @@ const duration = (m: number | null) => (m === null ? '' : m < 60 ? `${m} min` : 
 
 /** The notices that have ended, for looking back: what the customer was told, where, for how long, and how it ended. */
 export function PastNoticesDialog({ base, enabled, onClose }: { base: string; enabled: boolean; onClose: () => void }) {
+  const ls = useLocalStyles();
   const [days, setDays] = useState('90');
   const q = useQuery({ queryKey: ['incident-notice-history', base, days], enabled, queryFn: () => api<PastNotice[]>(`${base}/notices/history?days=${days}`) });
   return (
     <>
       {(
         <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-          <DialogSurface style={{ maxWidth: '720px', width: '94vw' }}>
+          <DialogSurface className={ls.w94vwMaxW720}>
             <DialogBody>
               <DialogTitle>Past service notices</DialogTitle>
-              <DialogContent style={{ display: 'flex', flexDirection: 'column', rowGap: 12, maxHeight: '70vh', overflowY: 'auto' }}>
+              <DialogContent className={ls.flexColRowGap12MaxH70vhScroll}>
                 <Select value={days} onChange={(_, d) => setDays(d.value)} aria-label="How far back">
                   <option value="30">Last 30 days</option>
                   <option value="90">Last 90 days</option>
@@ -113,7 +122,7 @@ export function PastNoticesDialog({ base, enabled, onClose }: { base: string; en
                       )}
                     </Text>
                     {n.outcome && (
-                      <Text size={200} style={{ whiteSpace: 'pre-wrap' }}>
+                      <Text size={200} className={ls.preWrap}>
                         {n.outcome}
                       </Text>
                     )}

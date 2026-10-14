@@ -60,6 +60,26 @@ import { useNotify } from '../../hooks/useNotify';
 import { useSort } from '../../lib/sort';
 import { DangerText, MutedText } from '../../components/ui';
 
+const useLocalStyles = makeStyles({
+  danger: { color: tokens.colorPaletteRedForeground1 },
+  blockMt8Danger: { color: tokens.colorPaletteRedForeground1, display: "block", marginTop: '8px' },
+  dangerFill: { backgroundColor: tokens.colorPaletteRedBackground3 },
+  minW160: { minWidth: '160px' },
+  filledPad2px6: { fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", backgroundColor: tokens.colorNeutralBackground3, ...shorthands.padding("2px", "6px"), ...shorthands.borderRadius("4px") },
+  maxW780: { maxWidth: '780px' },
+  flexWrapItemsEndGap12: { display: "flex", ...shorthands.gap('12px'), flexWrap: "wrap", alignItems: "end" },
+  minW220: { minWidth: '220px' },
+  minW200: { minWidth: '200px' },
+  maxW320: { maxWidth: '320px' },
+  maxW640: { maxWidth: '640px' },
+  gridGap14MinW520: { display: "grid", ...shorthands.gap('14px'), minWidth: '520px' },
+  flexWrapItemsCenterGap8: { display: "flex", ...shorthands.gap('8px'), alignItems: "center", flexWrap: "wrap" },
+  minW140: { minWidth: '140px' },
+  minW190: { minWidth: '190px' },
+  flexWrapItemsEndGap8: { display: "flex", ...shorthands.gap('8px'), alignItems: "end", flexWrap: "wrap" },
+});
+
+
 const useStyles = makeStyles({
   actions: { display: 'flex', ...shorthands.gap('4px'), flexWrap: 'nowrap' },
 });
@@ -143,6 +163,7 @@ const useSites = (tenantId: string) =>
 
 /** Hard-delete an account, behind a confirmation dialog. SUPER_ADMIN only. */
 function DeleteUserButton({ user, onDeleted }: { user: UserRow; onDeleted: () => void }) {
+  const ls = useLocalStyles();
   const [open, setOpen] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -161,7 +182,7 @@ function DeleteUserButton({ user, onDeleted }: { user: UserRow; onDeleted: () =>
         size="small"
         appearance="subtle"
         icon={<DeleteRegular />}
-        style={{ color: tokens.colorPaletteRedForeground1 }}
+        className={ls.danger}
         title="Delete account"
         aria-label="Delete account"
         onClick={() => {
@@ -178,7 +199,7 @@ function DeleteUserButton({ user, onDeleted }: { user: UserRow; onDeleted: () =>
               enrolment and customer assignments are deleted with the account. This cannot be
               undone.
               {err && (
-                <Text style={{ color: tokens.colorPaletteRedForeground1, display: 'block', marginTop: 8 }}>{err}</Text>
+                <Text className={ls.blockMt8Danger}>{err}</Text>
               )}
             </DialogContent>
             <DialogActions>
@@ -187,7 +208,7 @@ function DeleteUserButton({ user, onDeleted }: { user: UserRow; onDeleted: () =>
               </Button>
               <Button
                 appearance="primary"
-                style={{ backgroundColor: tokens.colorPaletteRedBackground3 }}
+                className={ls.dangerFill}
                 disabled={del.isPending}
                 onClick={() => del.mutate()}
               >
@@ -203,6 +224,7 @@ function DeleteUserButton({ user, onDeleted }: { user: UserRow; onDeleted: () =>
 
 /** The per-user MSP-branding fallback override - see auth.service.ts's resolveMspBranding. */
 function MspCell({ user, msps, canEdit }: { user: UserRow; msps: MspRow[]; canEdit: boolean }) {
+  const ls = useLocalStyles();
   const qc = useQueryClient();
   const [value, setValue] = useState(user.msp_id ?? '');
 
@@ -227,7 +249,7 @@ function MspCell({ user, msps, canEdit }: { user: UserRow; msps: MspRow[]; canEd
         setValue(next);
         save.mutate(next);
       }}
-      style={{ minWidth: 160 }}
+      className={ls.minW160}
     >
       <Option value="">None</Option>
       {msps.map((m) => (
@@ -240,6 +262,7 @@ function MspCell({ user, msps, canEdit }: { user: UserRow; msps: MspRow[]; canEd
 }
 
 export function AdminUsers() {
+  const ls = useLocalStyles();
   const s = useStyles();
   const qc = useQueryClient();
   const { can, me } = useAuth();
@@ -366,12 +389,7 @@ export function AdminUsers() {
             </MessageBarTitle>
             Temporary password:{' '}
             <code
-              style={{
-                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-                background: tokens.colorNeutralBackground3,
-                padding: '2px 6px',
-                borderRadius: 4,
-              }}
+              className={ls.filledPad2px6}
             >
               {invited.tempPassword}
             </code>
@@ -387,11 +405,11 @@ export function AdminUsers() {
         </MessageBar>
       )}
       <Dialog open={creating} onOpenChange={(_, d) => setCreating(d.open)}>
-        <DialogSurface style={{ maxWidth: 780 }}>
+        <DialogSurface className={ls.maxW780}>
           <DialogBody>
             <DialogTitle>New user</DialogTitle>
             <DialogContent>
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'end' }}>
+        <div className={ls.flexWrapItemsEndGap12}>
           <Field label="Email">
             <Input type="email" value={email} onChange={(_, d) => setEmail(d.value)} />
           </Field>
@@ -420,7 +438,7 @@ export function AdminUsers() {
                 placeholder="Select…"
                 selectedOptions={tenantIds}
                 onOptionSelect={(_, d) => setTenantIds(d.selectedOptions)}
-                style={{ minWidth: 220 }}
+                className={ls.minW220}
               >
                 {(tenants.data ?? []).map((t) => (
                   <Option key={t.id} value={t.id}>
@@ -437,7 +455,7 @@ export function AdminUsers() {
                 selectedOptions={mspId ? [mspId] : []}
                 value={msps.data?.find((m) => m.id === mspId)?.name ?? ''}
                 onOptionSelect={(_, d) => setMspId(d.optionValue ?? '')}
-                style={{ minWidth: 200 }}
+                className={ls.minW200}
               >
                 <Option value="">None</Option>
                 {(msps.data ?? []).map((m) => (
@@ -454,7 +472,7 @@ export function AdminUsers() {
                 value={siteScope === 'all' ? 'Whole customer' : 'Specific sites'}
                 selectedOptions={[siteScope]}
                 onOptionSelect={(_, d) => setSiteScope((d.optionValue as 'all' | 'sites') ?? 'all')}
-                style={{ minWidth: 200 }}
+                className={ls.minW200}
               >
                 <Option value="all">Whole customer</Option>
                 <Option value="sites">Specific sites</Option>
@@ -472,7 +490,7 @@ export function AdminUsers() {
                 selectedOptions={siteIds}
                 value={siteLabels(siteIds, sites.data ?? [])}
                 onOptionSelect={(_, d) => setSiteIds(d.selectedOptions)}
-                style={{ minWidth: 220 }}
+                className={ls.minW220}
               >
                 {(sites.data ?? []).map((st) => (
                   <Option key={st.id} value={st.id} text={st.sitecode}>
@@ -519,7 +537,7 @@ export function AdminUsers() {
           aria-label="Search users"
           value={searchInput}
           onChange={(_, d) => setSearchInput(d.value)}
-          style={{ maxWidth: 320 }}
+          className={ls.maxW320}
         />
         {users.isLoading ? (
           <Spinner size="tiny" />
@@ -676,6 +694,7 @@ function UserMembershipsDialog({
   tenants: TenantRow[];
   onClose: () => void;
 }) {
+  const ls = useLocalStyles();
   const qc = useQueryClient();
   const memberships = useQuery({
     queryKey: ['user-memberships', user.id],
@@ -689,7 +708,7 @@ function UserMembershipsDialog({
 
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: 640 }}>
+      <DialogSurface className={ls.maxW640}>
         <DialogBody>
           <DialogTitle>
             {user.display_name} — customer access{' '}
@@ -698,7 +717,7 @@ function UserMembershipsDialog({
             </Badge>
           </DialogTitle>
           <DialogContent>
-            <div style={{ display: 'grid', gap: 14, minWidth: 520 }}>
+            <div className={ls.gridGap14MinW520}>
               {memberships.isLoading ? (
                 <Spinner size="tiny" />
               ) : memberships.isError ? (
@@ -760,6 +779,7 @@ function MembershipRow({
   m: Membership;
   onChanged: () => void;
 }) {
+  const ls = useLocalStyles();
   const isCustomer = user.role === 'CUSTOMER';
   const sites = useSites(isCustomer ? m.tenantId : '');
   const [mode, setMode] = useState<'all' | 'sites'>(m.siteIds.length ? 'sites' : 'all');
@@ -793,13 +813,13 @@ function MembershipRow({
       <TableCell>{m.tenantName}</TableCell>
       <TableCell>
         {isCustomer ? (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div className={ls.flexWrapItemsCenterGap8}>
             <Dropdown
               size="small"
               value={mode === 'all' ? 'Whole customer' : 'Specific sites'}
               selectedOptions={[mode]}
               onOptionSelect={(_, d) => setMode((d.optionValue as 'all' | 'sites') ?? 'all')}
-              style={{ minWidth: 140 }}
+              className={ls.minW140}
             >
               <Option value="all">Whole customer</Option>
               <Option value="sites">Specific sites</Option>
@@ -812,7 +832,7 @@ function MembershipRow({
                 selectedOptions={ids}
                 value={siteLabels(ids, sites.data ?? [])}
                 onOptionSelect={(_, d) => setIds(d.selectedOptions)}
-                style={{ minWidth: 190 }}
+                className={ls.minW190}
               >
                 {(sites.data ?? []).map((st) => (
                   <Option key={st.id} value={st.id} text={st.sitecode}>
@@ -864,6 +884,7 @@ function AddMembershipRow({
   taken: Set<string>;
   onChanged: () => void;
 }) {
+  const ls = useLocalStyles();
   const isCustomer = user.role === 'CUSTOMER';
   const [tid, setTid] = useState('');
   const [mode, setMode] = useState<'all' | 'sites'>('all');
@@ -900,7 +921,7 @@ function AddMembershipRow({
   }
 
   return (
-    <div style={{ display: 'flex', gap: 8, alignItems: 'end', flexWrap: 'wrap' }}>
+    <div className={ls.flexWrapItemsEndGap8}>
       <Field label="Add to customer">
         <Dropdown
           placeholder={options.length ? 'Select…' : 'All customers assigned'}
@@ -911,7 +932,7 @@ function AddMembershipRow({
             setIds([]);
             setMode('all');
           }}
-          style={{ minWidth: 220 }}
+          className={ls.minW220}
         >
           {options.map((t) => (
             <Option key={t.id} value={t.id}>
@@ -927,7 +948,7 @@ function AddMembershipRow({
               value={mode === 'all' ? 'Whole customer' : 'Specific sites'}
               selectedOptions={[mode]}
               onOptionSelect={(_, d) => setMode((d.optionValue as 'all' | 'sites') ?? 'all')}
-              style={{ minWidth: 160 }}
+              className={ls.minW160}
             >
               <Option value="all">Whole customer</Option>
               <Option value="sites">Specific sites</Option>
@@ -941,7 +962,7 @@ function AddMembershipRow({
                 selectedOptions={ids}
                 value={siteLabels(ids, sites.data ?? [])}
                 onOptionSelect={(_, d) => setIds(d.selectedOptions)}
-                style={{ minWidth: 200 }}
+                className={ls.minW200}
               >
                 {(sites.data ?? []).map((st) => (
                   <Option key={st.id} value={st.id} text={st.sitecode}>

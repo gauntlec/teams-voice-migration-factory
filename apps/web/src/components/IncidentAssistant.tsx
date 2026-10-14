@@ -1,9 +1,19 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Card, Field, Input, MessageBar, MessageBarBody, Select, Text, Textarea, makeStyles, shorthands, tokens } from '@fluentui/react-components';
+import { Badge, Button, Card, Field, Input, MessageBar, MessageBarBody, Select, Text, Textarea, makeStyles, shorthands, tokens , mergeClasses } from '@fluentui/react-components';
 import { AGENT_PROPOSAL_STATE_LABELS, agentLabel, type AgentProposalState } from '@tvmf/shared';
 import { api } from '../api';
 import { errorText, when } from '../pages/ServiceRequests';
+
+const useLocalStyles = makeStyles({
+  flexColRowGap8: { display: "flex", flexDirection: "column", rowGap: '8px' },
+  preWrap: { whiteSpace: "pre-wrap" },
+  minW260: { minWidth: '260px' },
+  flexColRowGap6: { display: "flex", flexDirection: "column", rowGap: '6px' },
+  itemsFlexend: { alignItems: "flex-end" },
+  minW260Grow1: { flexGrow: 1, minWidth: '260px' },
+});
+
 
 const useStyles = makeStyles({
   card: { display: 'flex', flexDirection: 'column', rowGap: tokens.spacingVerticalM },
@@ -46,6 +56,7 @@ const RISK_COLOR = { low: 'success', medium: 'warning', high: 'danger' } as cons
  * locks the assistant out of writing, hand-back, and the next steps it proposes for you to approve or reject.
  */
 export function IncidentAssistantCard({ base, incidentId, agent, assignedAgentName, onChanged }: { base: string; incidentId: string; agent: AssistantInfo; assignedAgentName: string | null; onChanged: () => void }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const qc = useQueryClient();
   const [handBackTo, setHandBackTo] = useState('');
@@ -113,7 +124,7 @@ export function IncidentAssistantCard({ base, incidentId, agent, assignedAgentNa
       )}
 
       {pending.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', rowGap: 8 }}>
+        <div className={ls.flexColRowGap8}>
           <Text weight="semibold">Waiting for your decision ({pending.length})</Text>
           {pending.map((p) => (
             <div key={p.id} className={`${s.proposal} ${s.pending}`}>
@@ -126,13 +137,13 @@ export function IncidentAssistantCard({ base, incidentId, agent, assignedAgentNa
                   expires {new Date(p.expires_at).toLocaleString()}
                 </Text>
               </div>
-              <Text style={{ whiteSpace: 'pre-wrap' }}>{p.summary}</Text>
-              <Text size={200} className={s.muted} style={{ whiteSpace: 'pre-wrap' }}>
+              <Text className={ls.preWrap}>{p.summary}</Text>
+              <Text size={200} className={mergeClasses(s.muted, ls.preWrap)}>
                 Why: {p.rationale}
               </Text>
               <div className={s.row}>
                 <Field>
-                  <Input size="small" value={notes[p.id] ?? ''} maxLength={1000} placeholder="Note (optional)" onChange={(_, d) => setNotes({ ...notes, [p.id]: d.value })} style={{ minWidth: 260 }} />
+                  <Input size="small" value={notes[p.id] ?? ''} maxLength={1000} placeholder="Note (optional)" onChange={(_, d) => setNotes({ ...notes, [p.id]: d.value })} className={ls.minW260} />
                 </Field>
                 <Button appearance="primary" size="small" disabled={decide.isPending} onClick={() => decide.mutate({ id: p.id, decision: 'approve' })}>
                   Approve
@@ -146,7 +157,7 @@ export function IncidentAssistantCard({ base, incidentId, agent, assignedAgentNa
         </div>
       )}
       {earlier.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', rowGap: 6 }}>
+        <div className={ls.flexColRowGap6}>
           <Text weight="semibold" size={200}>
             Earlier proposals
           </Text>
@@ -179,6 +190,7 @@ export function IncidentAssistantCard({ base, incidentId, agent, assignedAgentNa
  * the timeline. Hidden when no assistant is available on the customer.
  */
 export function AskAssistantCard({ base, incidentId, onChanged }: { base: string; incidentId: string; onChanged: () => void }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const qc = useQueryClient();
   const agents = useQuery({ queryKey: ['incident-agents', base], queryFn: () => api<{ id: string; name: string; builtin_key: string | null }[]>(`${base}/agents`) });
@@ -211,7 +223,7 @@ export function AskAssistantCard({ base, incidentId, onChanged }: { base: string
           </Text>
         </div>
       </div>
-      <div className={s.row} style={{ alignItems: 'flex-end' }}>
+      <div className={mergeClasses(s.row, ls.itemsFlexend)}>
         <Field label="Assistant">
           <Select value={agentId || agents.data[0]!.id} onChange={(_, d) => setAgentId(d.value)}>
             {agents.data.map((a) => (
@@ -221,7 +233,7 @@ export function AskAssistantCard({ base, incidentId, onChanged }: { base: string
             ))}
           </Select>
         </Field>
-        <Field label="What should it look at?" style={{ flexGrow: 1, minWidth: 260 }}>
+        <Field label="What should it look at?" className={ls.minW260Grow1}>
           <Textarea value={question} rows={2} onChange={(_, d) => setQuestion(d.value)} placeholder="For example: check anna@contoso.com, and is this the carrier again?" />
         </Field>
         <Button appearance="primary" disabled={send.isPending || question.trim().length < 3} onClick={() => send.mutate()}>

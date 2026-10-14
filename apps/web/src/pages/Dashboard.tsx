@@ -17,6 +17,12 @@ import { useAuth } from '../auth';
 import { Page } from '../components/Page';
 import { LoadError, useRecordStyles } from '../components/records';
 
+const useLocalStyles = makeStyles({
+  pl0: { justifySelf: "start", paddingLeft: '0px' },
+  maxW320: { maxWidth: '320px' },
+});
+
+
 const useStyles = makeStyles({
   summary: { display: 'flex', flexWrap: 'wrap', ...shorthands.gap('8px', '24px'), alignItems: 'center' },
   list: { display: 'grid', ...shorthands.gap('6px'), ...shorthands.margin(0), ...shorthands.padding(0), listStyleType: 'none' },
@@ -138,6 +144,7 @@ export function Dashboard() {
 }
 
 function ProgressView({ data, tenant, can }: { data: CustomerProgress; tenant: MeTenant | undefined; can: (p: Permission) => boolean }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const rs = useRecordStyles();
   const [search, setSearch] = useState('');
@@ -204,7 +211,7 @@ function ProgressView({ data, tenant, can }: { data: CustomerProgress; tenant: M
           </ul>
         )}
         {attention.length > ATTENTION_PREVIEW && (
-          <Button appearance="transparent" size="small" onClick={() => setShowAll((v) => !v)} style={{ justifySelf: 'start', paddingLeft: 0 }}>
+          <Button appearance="transparent" size="small" onClick={() => setShowAll((v) => !v)} className={ls.pl0}>
             {showAll ? 'Show fewer' : `Show all ${attention.length}`}
           </Button>
         )}
@@ -236,7 +243,7 @@ function ProgressView({ data, tenant, can }: { data: CustomerProgress; tenant: M
             placeholder="Search by sitecode or name…"
             value={search}
             onChange={(_, d) => setSearch(d.value)}
-            style={{ maxWidth: 320 }}
+            className={ls.maxW320}
           />
         )}
         {data.sites.length === 0 ? (

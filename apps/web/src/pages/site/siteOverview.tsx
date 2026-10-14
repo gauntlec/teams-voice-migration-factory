@@ -1,11 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Badge, Button, Card, Dropdown, Field, Input, Option, Spinner, Text, Textarea } from '@fluentui/react-components';
+import { Badge, Button, Card, Dropdown, Field, Input, Option, Spinner, Text, Textarea , makeStyles } from '@fluentui/react-components';
 import { LICENSING_MODELS, SITE_REGIONS, type DiscoverySiteOverview, type Paginated } from '@tvmf/shared';
 import { api, ApiError } from '../../api';
 import { NetworkDiagram, type NetworkRow } from '../../components/NetworkDiagram';
 import { LoadError, PagedSection, useRecordStyles, type FieldDef } from '../../components/records';
 import { type StaffMember } from './siteShared';
+
+const useLocalStyles = makeStyles({
+  styled: { gridColumn: "1 / -1" },
+});
+
 
 const OVERVIEW_FIELDS: FieldDef[] = [
   { key: 'migrationId', label: 'Migration ID' },
@@ -47,6 +52,7 @@ export function OverviewTab({
   locked: boolean;
   onSaved: () => void;
 }) {
+  const ls = useLocalStyles();
   const s = useRecordStyles();
   const editable = canEdit && !locked;
   const initial = () =>
@@ -159,7 +165,7 @@ export function OverviewTab({
           </Field>
         ))}
 
-        <Field label="Assigned staff" hint="Engineers / project managers watching this site" style={{ gridColumn: '1 / -1' }}>
+        <Field label="Assigned staff" hint="Engineers / project managers watching this site" className={ls.styled}>
           {!editable ? (
             <div className={s.chips}>
               {assignedStaff.length === 0 ? (

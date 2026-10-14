@@ -14,6 +14,13 @@ import {
 import { useAuth } from '../auth';
 import { Wordmark } from '../components/Logo';
 
+const useLocalStyles = makeStyles({
+  gridGap14: { display: "grid", ...shorthands.gap('14px') },
+  danger: { color: tokens.colorPaletteRedForeground1 },
+  flexGap8: { display: "flex", ...shorthands.gap('8px') },
+});
+
+
 const useStyles = makeStyles({
   root: {
     display: 'grid',
@@ -27,6 +34,7 @@ const useStyles = makeStyles({
 const MIN = 12;
 
 export function SetPassword() {
+  const ls = useLocalStyles();
   const s = useStyles();
   const { changePassword, logout } = useAuth();
   const [pw, setPw] = useState('');
@@ -61,7 +69,7 @@ export function SetPassword() {
           Your account was created with a temporary password. Choose your own password to
           continue — next you&rsquo;ll set up two-factor authentication.
         </Body1>
-        <form onSubmit={submit} style={{ display: 'grid', gap: 14 }}>
+        <form onSubmit={submit} className={ls.gridGap14}>
           <Field
             label="New password"
             required
@@ -90,8 +98,8 @@ export function SetPassword() {
               autoComplete="new-password"
             />
           </Field>
-          {error && <Body1 style={{ color: tokens.colorPaletteRedForeground1 }}>{error}</Body1>}
-          <div style={{ display: 'flex', gap: 8 }}>
+          {error && <Body1 className={ls.danger}>{error}</Body1>}
+          <div className={ls.flexGap8}>
             <Button appearance="primary" type="submit" disabled={!canSubmit}>
               {busy ? <Spinner size="tiny" /> : 'Save & continue'}
             </Button>

@@ -15,10 +15,18 @@ import {
   Option,
   Text,
   tokens,
+
+  makeStyles,
+  shorthands,
 } from '@fluentui/react-components';
 import type { Paginated } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { DangerText } from './ui';
+
+const useLocalStyles = makeStyles({
+  gridGap12: { display: "grid", ...shorthands.gap('12px') },
+});
+
 
 /**
  * "Set up a new resource account" - a small nested dialog used by the AA/CQ
@@ -57,6 +65,7 @@ export function ResourceAccountCreateDialog({
   kind: 'auto_attendant' | 'call_queue';
   onCreated: (row?: { id: string; name: string }) => void;
 }) {
+  const ls = useLocalStyles();
   const qc = useQueryClient();
   const [name, setName] = useState('');
   const [phoneNumberId, setPhoneNumberId] = useState('');
@@ -112,7 +121,7 @@ export function ResourceAccountCreateDialog({
       <DialogSurface>
         <DialogBody>
           <DialogTitle>New resource account</DialogTitle>
-          <DialogContent style={{ display: 'grid', gap: 12 }}>
+          <DialogContent className={ls.gridGap12}>
             <Field label="Name of service" required>
               <Input value={name} placeholder="Sales Line" onChange={(_, d) => setName(d.value)} />
             </Field>

@@ -3,7 +3,7 @@ import { Link as RouterLink } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RequestAssistantCard } from '../../components/RequestAssistant';
 import { agentLabel } from '@tvmf/shared';
-import { Badge, Button, Card, Field, Radio, RadioGroup, Link, Select, Text, Textarea, tokens } from '@fluentui/react-components';
+import { Badge, Button, Card, Field, Radio, RadioGroup, Link, Select, Text, Textarea, tokens , makeStyles, shorthands, mergeClasses } from '@fluentui/react-components';
 import { SR_NOTE_REQUIRED, SR_REOPEN_DAYS, canMoveSr, nextSrStatus, srCanReopen, srMoveKind, srStatusLabel, srDetailLines, type FileRow, type SrDesignSummary, type SrStatus } from '@tvmf/shared';
 import { api, apiDownload, apiUpload } from '../../api';
 import { useAuth } from '../../auth';
@@ -14,6 +14,16 @@ import { usePageStyles, type PageTab, type RequestPayload } from './srShared';
 import { BuildDraftSection, BuildLinks } from './srDesign';
 import { ApprovalBanner } from './srDeploy';
 import { DangerText } from '../../components/ui';
+
+const useLocalStyles = makeStyles({
+  pl20Margin0: { ...shorthands.margin("0px"), paddingLeft: '20px' },
+  preWrap: { whiteSpace: "pre-wrap" },
+  justifySpacebetween: { justifyContent: "space-between" },
+  none: { display: "none" },
+  flexColRowGap6: { display: "flex", flexDirection: "column", rowGap: '6px' },
+  flexWrapItemsCenter: { display: "flex", columnGap: '8px', alignItems: "center", flexWrap: "wrap" },
+});
+
 
 export function Overview({
   base,
@@ -30,6 +40,7 @@ export function Overview({
   design: SrDesignSummary | undefined;
   onOpenTab: (t: PageTab) => void;
 }) {
+  const ls = useLocalStyles();
   const cs = useSrStyles();
   const ps = usePageStyles();
   const qc = useQueryClient();
@@ -117,7 +128,7 @@ export function Overview({
         <div className={ps.waiting}>
           <div>
             <Text weight="semibold">Worth checking</Text>
-            <ul style={{ margin: 0, paddingLeft: 20 }}>
+            <ul className={ls.pl20Margin0}>
               {data.checks.map((c) => (
                 <li key={c}>
                   <Text size={200}>{c}</Text>
@@ -313,7 +324,7 @@ export function Overview({
               <b>{e.author_name ?? 'Someone'}</b> · {when(e.created_at)}
               {e.internal ? ' · internal note' : ''}
             </Text>
-            <Text style={{ whiteSpace: 'pre-wrap' }}>{eventText(e, canManage)}</Text>
+            <Text className={ls.preWrap}>{eventText(e, canManage)}</Text>
             {e.links && e.links.length > 0 && <BuildLinks links={e.links} />}
             {e.kind === 'deployment' && canDeployTab && <Link onClick={() => onOpenTab('deploy')}>See the run on the Deploy tab</Link>}
           </div>
@@ -345,11 +356,12 @@ export function Overview({
 }
 
 function FactRow({ label, value }: { label: string; value: string }) {
+  const ls = useLocalStyles();
   const cs = useSrStyles();
   return (
     <>
       <Text className={cs.factLabel}>{label}</Text>
-      <Text style={{ whiteSpace: 'pre-wrap' }}>{value}</Text>
+      <Text className={ls.preWrap}>{value}</Text>
     </>
   );
 }
@@ -397,6 +409,7 @@ function eventText(e: RequestEvent, staff: boolean): string {
 /* --------------------------------- design --------------------------------- */
 
 function Attachments({ base, id }: { base: string; id: string }) {
+  const ls = useLocalStyles();
   const ps = usePageStyles();
   const cs = useSrStyles();
   const qc = useQueryClient();
@@ -412,14 +425,14 @@ function Attachments({ base, id }: { base: string; id: string }) {
   });
   return (
     <Card className={ps.card}>
-      <div className={cs.actions} style={{ justifyContent: 'space-between' }}>
+      <div className={mergeClasses(cs.actions, ls.justifySpacebetween)}>
         <Text weight="semibold">Attachments</Text>
         {can('sr:create') && (
           <>
             <input
               ref={picker}
               type="file"
-              style={{ display: 'none' }}
+              className={ls.none}
               accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.pptx,.csv,.txt"
               onChange={(e) => {
                 const f = e.target.files?.[0];
@@ -438,7 +451,7 @@ function Attachments({ base, id }: { base: string; id: string }) {
           No files yet. Pictures, PDFs, Office documents, CSV and text files up to 10 MB.
         </Text>
       ) : (
-        <ul style={{ margin: 0, paddingLeft: 20 }}>
+        <ul className={ls.pl20Margin0}>
           {list.data!.map((f) => (
             <li key={f.id}>
               <Link onClick={() => apiDownload(`${base}/${id}/attachments/${f.id}`, f.filename)}>{f.filename}</Link>{' '}
@@ -458,6 +471,7 @@ function Attachments({ base, id }: { base: string; id: string }) {
 
 /** Incidents this request is linked to (staff): "the fix for INC-0042 is this request". The incident lists the request among its items too. */
 function RelatedIncidents({ base, requestId, incidents, onChanged }: { base: string; requestId: string; incidents: { id: string; reference: string; title: string; status: string; priority: string }[]; onChanged: () => void }) {
+  const ls = useLocalStyles();
   const { activeTenantId } = useAuth();
   const qc = useQueryClient();
   const [pick, setPick] = useState('');
@@ -477,11 +491,11 @@ function RelatedIncidents({ base, requestId, incidents, onChanged }: { base: str
   });
   const candidates = (open.data ?? []).filter((i) => !incidents.some((x) => x.id === i.id));
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', rowGap: 6 }}>
+    <div className={ls.flexColRowGap6}>
       <Text weight="semibold">Related incidents</Text>
       {incidents.length === 0 && <Text size={200}>None linked.</Text>}
       {incidents.map((i) => (
-        <div key={i.id} style={{ display: 'flex', columnGap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div key={i.id} className={ls.flexWrapItemsCenter}>
           <RouterLink to={`/incidents/${i.id}`}>
             {i.reference} · {i.title}
           </RouterLink>
@@ -492,7 +506,7 @@ function RelatedIncidents({ base, requestId, incidents, onChanged }: { base: str
         </div>
       ))}
       {candidates.length > 0 && (
-        <div style={{ display: 'flex', columnGap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div className={ls.flexWrapItemsCenter}>
           <Select size="small" value={pick} onChange={(_, d) => setPick(d.value)} aria-label="Link an incident">
             <option value="">Link an incident…</option>
             {candidates.map((i) => (

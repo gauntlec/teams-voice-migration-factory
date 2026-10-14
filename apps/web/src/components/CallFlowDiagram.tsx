@@ -4,10 +4,24 @@ import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
 import { toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
-import { Button, Text, Tooltip, tokens } from '@fluentui/react-components';
+import { Button, Text, Tooltip, tokens , makeStyles, shorthands } from '@fluentui/react-components';
 import { ArrowDownloadRegular, ArrowDownRegular, ArrowRightRegular } from '@fluentui/react-icons';
 import type { CallFlowBranch, CallFlowGraph, CallFlowNode, CallFlowNodeKind } from '@tvmf/shared';
 import { MutedText } from './ui';
+
+const useLocalStyles = makeStyles({
+  flexColItemsFlexendGap4: { display: "flex", flexDirection: "column", alignItems: "flex-end", ...shorthands.gap('4px') },
+  flexGap6: { display: "flex", ...shorthands.gap('6px') },
+  flexGap4: { display: "flex", ...shorthands.gap('4px') },
+  mt2: { fontSize: '10px', opacity: 0.7, marginTop: '2px' },
+  inlineblockMt4ColoredFilledPad1px7: { display: "inline-block", marginTop: '4px', fontSize: '9px', fontWeight: 600, letterSpacing: '0.3px', textTransform: "uppercase", color: "#166534", backgroundColor: "#DCFCE7", ...shorthands.border("1px", "solid", "#86EFAC"), ...shorthands.borderRadius("999px"), ...shorthands.padding("1px", "7px") },
+  colored: { position: "absolute", top: '7px', left: '12px', fontSize: '10px', fontWeight: 700, color: "#059669", letterSpacing: '0.4px', textTransform: "uppercase" },
+  gridGap8: { display: "grid", ...shorthands.gap('8px') },
+  w120H80: { width: '120px', height: '80px' },
+  flexWrapItemsCenterGap14: { display: "flex", ...shorthands.gap('14px'), flexWrap: "wrap", alignItems: "center" },
+  flexItemsCenterGap4: { display: "flex", alignItems: "center", ...shorthands.gap('4px') },
+});
+
 
 type Direction = 'LR' | 'TB';
 
@@ -129,6 +143,7 @@ async function captureDiagramPng(nodes: Node[]): Promise<{ dataUrl: string; widt
 
 /** Export-to-PNG/PDF buttons - a child of ReactFlow so useReactFlow can read the laid-out node positions/sizes. */
 function ExportControls({ filename }: { filename: string }) {
+  const ls = useLocalStyles();
   const { getNodes } = useReactFlow();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -155,8 +170,8 @@ function ExportControls({ filename }: { filename: string }) {
 
   return (
     <Panel position="top-right">
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-        <div style={{ display: 'flex', gap: 6 }}>
+      <div className={ls.flexColItemsFlexendGap4}>
+        <div className={ls.flexGap6}>
           <Tooltip content="Export this diagram as a PNG image" relationship="label">
             <Button size="small" icon={<ArrowDownloadRegular />} disabled={busy} onClick={() => runExport('png')}>
               PNG
@@ -180,9 +195,10 @@ function ExportControls({ filename }: { filename: string }) {
 
 /** Left-to-right / top-to-bottom layout toggle. */
 function DirectionControls({ direction, onChange }: { direction: Direction; onChange: (d: Direction) => void }) {
+  const ls = useLocalStyles();
   return (
     <Panel position="top-left">
-      <div style={{ display: 'flex', gap: 4 }}>
+      <div className={ls.flexGap4}>
         <Tooltip content="Lay out left to right" relationship="label">
           <Button size="small" appearance={direction === 'LR' ? 'primary' : 'secondary'} icon={<ArrowRightRegular />} onClick={() => onChange('LR')} />
         </Tooltip>
@@ -202,6 +218,7 @@ function DirectionControls({ direction, onChange }: { direction: Direction; onCh
  * chain.
  */
 export function CallFlowDiagram({ graph, exportFilename }: { graph: CallFlowGraph; exportFilename?: string }) {
+  const ls = useLocalStyles();
   const [direction, setDirection] = useState<Direction>('LR');
 
   const { nodes, edges } = useMemo(() => {
@@ -222,22 +239,10 @@ export function CallFlowDiagram({ graph, exportFilename }: { graph: CallFlowGrap
               <div>
                 {style.icon} {n.label}
               </div>
-              {n.sublabel && <div style={{ fontSize: 10, opacity: 0.7, marginTop: 2 }}>{n.sublabel}</div>}
+              {n.sublabel && <div className={ls.mt2}>{n.sublabel}</div>}
               {n.badge && (
                 <div
-                  style={{
-                    display: 'inline-block',
-                    marginTop: 4,
-                    fontSize: 9,
-                    fontWeight: 600,
-                    letterSpacing: 0.3,
-                    textTransform: 'uppercase',
-                    color: '#166534',
-                    background: '#DCFCE7',
-                    border: '1px solid #86EFAC',
-                    borderRadius: 999,
-                    padding: '1px 7px',
-                  }}
+                  className={ls.inlineblockMt4ColoredFilledPad1px7}
                 >
                   {n.badge}
                 </div>
@@ -285,7 +290,7 @@ export function CallFlowDiagram({ graph, exportFilename }: { graph: CallFlowGrap
           connectable: false,
           data: {
             label: (
-              <div style={{ position: 'absolute', top: 7, left: 12, fontSize: 10, fontWeight: 700, color: '#059669', letterSpacing: 0.4, textTransform: 'uppercase' as const }}>
+              <div className={ls.colored}>
                 Agents ({agentIds.length})
               </div>
             ),
@@ -327,7 +332,7 @@ export function CallFlowDiagram({ graph, exportFilename }: { graph: CallFlowGrap
   }
 
   return (
-    <div style={{ display: 'grid', gap: 8 }}>
+    <div className={ls.gridGap8}>
       {/* A diagram is a page of paper: it stays light (and its text dark) in the dark theme, like the PNG and PDF exports. */}
       <div style={{ height: '75vh', minHeight: 480, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: 8, background: '#ffffff', color: '#242424' }}>
         <ReactFlowProvider>
@@ -343,15 +348,15 @@ export function CallFlowDiagram({ graph, exportFilename }: { graph: CallFlowGrap
           >
             <Background />
             <Controls showInteractive={false} />
-            <MiniMap pannable zoomable style={{ width: 120, height: 80 }} />
+            <MiniMap pannable zoomable className={ls.w120H80} />
             <DirectionControls direction={direction} onChange={setDirection} />
             <ExportControls filename={exportFilename ?? 'call-flow'} />
           </ReactFlow>
         </ReactFlowProvider>
       </div>
-      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+      <div className={ls.flexWrapItemsCenterGap14}>
         {Object.entries(BRANCH_STYLE).map(([key, bs]) => (
-          <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <div key={key} className={ls.flexItemsCenterGap4}>
             <span style={{ display: 'inline-block', width: 18, height: 0, borderTop: `2px ${bs.dash ? 'dashed' : 'solid'} ${bs.color}` }} />
             <Text size={200}>{bs.label}</Text>
           </div>

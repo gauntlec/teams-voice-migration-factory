@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { AddRegular, DeleteRegular } from '@fluentui/react-icons';
-import { Button, Checkbox, Dropdown, Field, Input, Option, RadioGroup, Radio, Text } from '@fluentui/react-components';
+import { Button, Checkbox, Dropdown, Field, Input, Option, RadioGroup, Radio, Text , makeStyles, shorthands } from '@fluentui/react-components';
 import {
   AA_SUPPORTED_LANGUAGES,
   CALL_QUEUE_NO_AGENT_ACTIONS,
@@ -16,6 +16,19 @@ import { type Choice } from './records';
 import { ResourceAccountCreateDialog } from './ResourceAccountCreateDialog';
 import { UpnAutocomplete } from './UpnAutocomplete';
 import { WizardShell, type WizardStep } from './WizardShell';
+
+const useLocalStyles = makeStyles({
+  flexWrapItemsEndGap8: { display: "flex", ...shorthands.gap('8px'), alignItems: "end", flexWrap: "wrap" },
+  minW260: { minWidth: '260px' },
+  minW220: { minWidth: '220px' },
+  gridGap6: { display: "grid", ...shorthands.gap('6px') },
+  flexGap6: { display: "flex", ...shorthands.gap('6px') },
+  flex1: { flex: 1 },
+  w120: { width: '120px' },
+  mt8: { marginTop: '8px' },
+  flexItemsEndGap8: { display: "flex", ...shorthands.gap('8px'), alignItems: "end" },
+});
+
 
 const LANGUAGE_CHOICES: Choice[] = AA_SUPPORTED_LANGUAGES.map((l) => ({ value: l.code, label: l.label }));
 
@@ -78,13 +91,14 @@ function ActionAnswerEditor({
   tenantId: string;
   siteId: string;
 }) {
+  const ls = useLocalStyles();
   return (
-    <div style={{ display: 'flex', gap: 8, alignItems: 'end', flexWrap: 'wrap' }}>
+    <div className={ls.flexWrapItemsEndGap8}>
       <Dropdown
         value={labels[value.action]}
         selectedOptions={[value.action]}
         onOptionSelect={(_, d) => onChange({ action: d.optionValue ?? value.action, forwardTo: undefined })}
-        style={{ minWidth: 260 }}
+        className={ls.minW260}
       >
         {actions.map((a) => (
           <Option key={a} value={a}>
@@ -99,7 +113,7 @@ function ActionAnswerEditor({
             siteId={siteId}
             value={value.forwardTo ?? ''}
             onChange={(v) => onChange({ ...value, forwardTo: v })}
-            style={{ minWidth: 220 }}
+            className={ls.minW220}
           />
         </Field>
       )}
@@ -111,13 +125,13 @@ function ActionAnswerEditor({
             value={value.forwardTo ?? ''}
             onChange={(v) => onChange({ ...value, forwardTo: v })}
             placeholder="jane.doe@contoso.com"
-            style={{ minWidth: 220 }}
+            className={ls.minW220}
           />
         </Field>
       )}
       {value.action === 'SharedVoicemail' && (
         <Field label="Which shared mailbox or Microsoft 365 group?" hint="Your engineer will link the exact group.">
-          <Input value={value.forwardTo ?? ''} onChange={(_, d) => onChange({ ...value, forwardTo: d.value })} placeholder="Support team" style={{ minWidth: 220 }} />
+          <Input value={value.forwardTo ?? ''} onChange={(_, d) => onChange({ ...value, forwardTo: d.value })} placeholder="Support team" className={ls.minW220} />
         </Field>
       )}
     </div>
@@ -167,6 +181,7 @@ export function CallQueueWizard({
   /** Editing an already-saved wizard capture instead of creating a new one - PATCHes the existing flow row and shows "Save changes" instead of "Create". Render with `key={editing.id}` so each row gets its own fresh state. */
   editing?: CallQueueWizardEditing;
 }) {
+  const ls = useLocalStyles();
   const [name, setName] = useState(editing?.name ?? '');
   const [answers, setAnswers] = useState<CallQueueWizardAnswers>(editing?.answers ?? DEFAULT_ANSWERS);
   const [resourceAccountId, setResourceAccountId] = useState(editing?.resourceAccountId ?? '');
@@ -233,16 +248,16 @@ export function CallQueueWizard({
       content: (
         <>
           <Text block>Who should answer these calls? Add each person's name or email.</Text>
-          <div style={{ display: 'grid', gap: 6 }}>
+          <div className={ls.gridGap6}>
             {answers.agents.map((a, i) => (
-              <div key={i} style={{ display: 'flex', gap: 6 }}>
+              <div key={i} className={ls.flexGap6}>
                 <UpnAutocomplete
                   tenantId={tenantId}
                   siteId={siteId}
                   value={a}
                   onChange={(v) => setAgent(i, v)}
                   placeholder="jane.doe@contoso.com"
-                  style={{ flex: 1 }}
+                  className={ls.flex1}
                 />
                 <Button
                   icon={<DeleteRegular />}
@@ -284,7 +299,7 @@ export function CallQueueWizard({
               type="number"
               value={String(answers.agentAlertTime)}
               onChange={(_, d) => setAnswers((a) => ({ ...a, agentAlertTime: Number(d.value) || a.agentAlertTime }))}
-              style={{ width: 120 }}
+              className={ls.w120}
             />
           </Field>
         </>
@@ -300,7 +315,7 @@ export function CallQueueWizard({
               type="number"
               value={String(answers.overflowThreshold)}
               onChange={(_, d) => setAnswers((a) => ({ ...a, overflowThreshold: Number(d.value) || 0 }))}
-              style={{ width: 120 }}
+              className={ls.w120}
             />
           </Field>
           <Text block>When that limit is reached, what should happen to the extra calls?</Text>
@@ -325,7 +340,7 @@ export function CallQueueWizard({
               type="number"
               value={String(answers.timeoutThreshold)}
               onChange={(_, d) => setAnswers((a) => ({ ...a, timeoutThreshold: Number(d.value) || 0 }))}
-              style={{ width: 120 }}
+              className={ls.w120}
             />
           </Field>
           <Text block>What should happen then?</Text>
@@ -384,17 +399,17 @@ export function CallQueueWizard({
           <Text size={200} block>
             Nobody available: {NO_AGENT_LABELS[answers.noAgents.action]} ({APPLY_TO_LABELS[answers.noAgentsApplyTo]})
           </Text>
-          <Text size={200} block style={{ marginTop: 8 }}>
+          <Text size={200} block className={ls.mt8}>
             Note: Call queues don't have their own after-hours/holiday handling in Teams - put an Auto Attendant in front of
             this queue if you need that.
           </Text>
           <Field label="Which phone number/identity will answer this? (optional - can be set later)">
-            <div style={{ display: 'flex', gap: 8, alignItems: 'end' }}>
+            <div className={ls.flexItemsEndGap8}>
               <Dropdown
                 value={resourceAccountChoices.find((c) => c.value === resourceAccountId)?.label ?? '— not yet known —'}
                 selectedOptions={resourceAccountId ? [resourceAccountId] : []}
                 onOptionSelect={(_, d) => setResourceAccountId(d.optionValue ?? '')}
-                style={{ minWidth: 220 }}
+                className={ls.minW220}
               >
                 <Option value="">— not yet known —</Option>
                 {resourceAccountChoices.map((c) => (

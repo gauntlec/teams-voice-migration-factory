@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Card, Field, Input, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text } from '@fluentui/react-components';
+import { Badge, Button, Card, Field, Input, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text , makeStyles, shorthands, mergeClasses } from '@fluentui/react-components';
 import { SR_BUILD_KIND, SR_BUILD_KIND_LABELS, SR_ITEM_KIND_LABELS, SR_STATUS_LABELS, isSrChangeType, srDesignEditable, srHasNumbersDesign, type SrBuildDraftResult, type SrBuildKind, type SrBuildLink, type SrDesignSummary, type SrItem } from '@tvmf/shared';
 import { api, setDesigningServiceRequest } from '../../api';
 import { DataTable } from '../../components/DataTable';
@@ -9,6 +9,14 @@ import { LoadError } from '../../components/records';
 import { BuildSiteWorkspace } from '../BuildSiteWorkspace';
 import { errorText, useSrStyles, when, type RequestDetail } from '../ServiceRequests';
 import { BUILD_TAB_FOR, BUILD_LIST_KEYS, usePageStyles, type RequestPayload } from './srShared';
+
+const useLocalStyles = makeStyles({
+  ml6: { marginLeft: '6px' },
+  pl20Margin0: { ...shorthands.margin("0px"), paddingLeft: "20px" },
+  pl20Margin02: { ...shorthands.margin("0px"), paddingLeft: '20px' },
+  itemsEnd: { alignItems: "end" },
+});
+
 
 export function DesignTab({
   base,
@@ -21,6 +29,7 @@ export function DesignTab({
   design: SrDesignSummary | undefined;
   designError: unknown;
 }) {
+  const ls = useLocalStyles();
   const ps = usePageStyles();
   const cs = useSrStyles();
   const qc = useQueryClient();
@@ -89,7 +98,7 @@ export function DesignTab({
                       </Badge>
                     )}
                     {i.label && i.site_id && r.site_id && i.site_id !== r.site_id && i.kind !== 'site' && (
-                      <Badge appearance="tint" color="warning" style={{ marginLeft: 6 }} title="This row is on a different site from the request, so it can't be deployed from here.">
+                      <Badge appearance="tint" color="warning" className={ls.ml6} title="This row is on a different site from the request, so it can't be deployed from here.">
                         On another site
                       </Badge>
                     )}
@@ -166,6 +175,7 @@ export function BuildDraftSection({
   /** A change or removal: links the existing row and applies the request to it. */
   change?: boolean;
 }) {
+  const ls = useLocalStyles();
   const cs = useSrStyles();
   const [capUpn, setCapUpn] = useState(suggestedCapUpn ?? '');
   const draft = useMutation({
@@ -202,7 +212,7 @@ export function BuildDraftSection({
         {result && result.warnings.length > 0 && (
           <div>
             <Text weight="semibold">Still to do</Text>
-            <ul style={{ margin: 0, paddingLeft: '20px' }}>
+            <ul className={ls.pl20Margin0}>
               {result.warnings.map((w) => (
                 <li key={w}>
                   <Text size={200}>{w}</Text>
@@ -255,8 +265,9 @@ export function BuildDraftSection({
 }
 
 export function BuildLinks({ links }: { links: SrBuildLink[] }) {
+  const ls = useLocalStyles();
   return (
-    <ul style={{ margin: 0, paddingLeft: '20px' }}>
+    <ul className={ls.pl20Margin0}>
       {links.map((l) => (
         <li key={l.href + l.label}>
           <RouterLink to={l.href}>
@@ -272,6 +283,7 @@ export function BuildLinks({ links }: { links: SrBuildLink[] }) {
 
 /** Design for a "new phone numbers" request: add the carrier's range to the site's inventory. */
 function NumbersDesign({ base, request: r, design, onDone }: { base: string; request: RequestDetail; design: SrDesignSummary | undefined; onDone: () => void }) {
+  const ls = useLocalStyles();
   const ps = usePageStyles();
   const cs = useSrStyles();
   const editable = srDesignEditable(r.status);
@@ -304,7 +316,7 @@ function NumbersDesign({ base, request: r, design, onDone }: { base: string; req
             : `Locked because the request is ${SR_STATUS_LABELS[r.status]}.`}
       </Text>
       {ranges.length > 0 ? (
-        <ul style={{ margin: 0, paddingLeft: 20 }}>
+        <ul className={ls.pl20Margin02}>
           {ranges.map((i) => (
             <li key={i.row_id}>
               <Text>{i.label ?? 'Range deleted from the inventory'}</Text>
@@ -315,7 +327,7 @@ function NumbersDesign({ base, request: r, design, onDone }: { base: string; req
         <Text size={200}>No numbers added yet.</Text>
       )}
       {editable && (
-        <div className={cs.actions} style={{ alignItems: 'end' }}>
+        <div className={mergeClasses(cs.actions, ls.itemsEnd)}>
           <Field label="First number">
             <Input value={start} placeholder="+442079460100" onChange={(_, d) => setStart(d.value)} />
           </Field>

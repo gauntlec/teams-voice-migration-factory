@@ -1,4 +1,11 @@
 import { NETWORK_LOCATIONS } from '@tvmf/shared';
+import { makeStyles, shorthands } from '@fluentui/react-components';
+
+const useLocalStyles = makeStyles({
+  w100ColoredFilled: { width: "100%", overflowX: "auto", backgroundColor: "#ffffff", color: "#242424", ...shorthands.borderRadius("8px") },
+  blockMinW640: { minWidth: '640px', display: "block" },
+});
+
 
 /**
  * Live network diagram for the Network (E911) tab. Redraws from the subnet rows
@@ -162,6 +169,7 @@ function VlanNode({
 }
 
 export function NetworkDiagram({ rows }: { rows: NetworkRow[] }) {
+  const ls = useLocalStyles();
   const pick = (loc: string) => rows.filter((r) => r.location === loc);
   const external = pick('External Subnet');
   const user = pick('User VLAN');
@@ -185,8 +193,8 @@ export function NetworkDiagram({ rows }: { rows: NetworkRow[] }) {
   const wStartX = 500 - ((wireless.length - 1) * 150) / 2;
 
   return (
-    <div style={{ width: '100%', overflowX: 'auto', background: '#ffffff', color: '#242424', borderRadius: 8 }}>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ minWidth: 640, display: 'block' }} role="img" aria-label="Network diagram">
+    <div className={ls.w100ColoredFilled}>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" className={ls.blockMinW640} role="img" aria-label="Network diagram">
         {/* external subnet connectors */}
         {external.slice(0, shownExt).map((r, i) => {
           const off = (i - (shownExt - 1) / 2) * 30;

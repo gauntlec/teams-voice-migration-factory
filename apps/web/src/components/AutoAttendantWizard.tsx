@@ -16,6 +16,9 @@ import {
   RadioGroup,
   Text,
   Textarea,
+
+  makeStyles,
+  shorthands,
 } from '@fluentui/react-components';
 import {
   AA_SUPPORTED_LANGUAGES,
@@ -31,6 +34,24 @@ import { type Choice } from './records';
 import { ResourceAccountCreateDialog } from './ResourceAccountCreateDialog';
 import { TargetPicker, type TeamChoice } from './TargetPicker';
 import { WizardShell, type WizardStep } from './WizardShell';
+
+const useLocalStyles = makeStyles({
+  gridGap6: { display: "grid", ...shorthands.gap('6px') },
+  flexItemsCenterGap8: { display: "flex", ...shorthands.gap('8px'), alignItems: "center" },
+  w90: { width: '90px' },
+  w120: { width: '120px' },
+  gridGap12: { display: "grid", ...shorthands.gap('12px') },
+  gridGap8: { display: "grid", ...shorthands.gap('8px') },
+  pad10: { ...shorthands.padding("10px") },
+  flexWrapItemsEndGap8: { display: "flex", ...shorthands.gap('8px'), alignItems: "end", flexWrap: "wrap" },
+  w56: { width: '56px' },
+  gridGap10: { display: "grid", ...shorthands.gap('10px') },
+  gridGap8Pad10: { ...shorthands.padding("10px"), display: "grid", ...shorthands.gap('8px') },
+  gridGap2: { display: "grid", ...shorthands.gap('2px') },
+  flexItemsEndGap8: { display: "flex", ...shorthands.gap('8px'), alignItems: "end" },
+  minW220: { minWidth: '220px' },
+});
+
 
 const AA_LANGUAGE_CHOICES: Choice[] = AA_SUPPORTED_LANGUAGES.map((l) => ({ value: l.code, label: l.label }));
 const AA_TIME_ZONE_CHOICES: Choice[] = AA_TIME_ZONES.map((z) => ({ value: z.id, label: z.label }));
@@ -60,13 +81,14 @@ const STANDARD_9_TO_5: WizardWeeklyHours = {
 };
 
 function WeeklyHoursEditor({ value, onChange }: { value: WizardWeeklyHours; onChange: (v: WizardWeeklyHours) => void }) {
+  const ls = useLocalStyles();
   return (
-    <div style={{ display: 'grid', gap: 6 }}>
+    <div className={ls.gridGap6}>
       {DAYS.map((d) => {
         const range = value[d][0];
         return (
-          <div key={d} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <div style={{ width: 90 }}>
+          <div key={d} className={ls.flexItemsCenterGap8}>
+            <div className={ls.w90}>
               <Text size={200}>{DAY_LABELS[d]}</Text>
             </div>
             <Checkbox
@@ -80,14 +102,14 @@ function WeeklyHoursEditor({ value, onChange }: { value: WizardWeeklyHours; onCh
                   type="time"
                   value={range.start}
                   onChange={(_, ev) => onChange({ ...value, [d]: [{ ...range, start: ev.value }] })}
-                  style={{ width: 120 }}
+                  className={ls.w120}
                 />
                 <Text size={200}>to</Text>
                 <Input
                   type="time"
                   value={range.end}
                   onChange={(_, ev) => onChange({ ...value, [d]: [{ ...range, end: ev.value }] })}
-                  style={{ width: 120 }}
+                  className={ls.w120}
                 />
               </>
             )}
@@ -125,6 +147,7 @@ function CallFlowEditor({
   teamChoices: TeamChoice[];
   onFlowCreated: () => void;
 }) {
+  const ls = useLocalStyles();
   const options = value.options ?? [];
   const updateOption = (i: number, next: WizardMenuOption) => onChange({ ...value, options: options.map((o, idx) => (idx === i ? next : o)) });
   const addOption = () =>
@@ -132,7 +155,7 @@ function CallFlowEditor({
   const removeOption = (i: number) => onChange({ ...value, options: options.filter((_, idx) => idx !== i) });
 
   return (
-    <div style={{ display: 'grid', gap: 12 }}>
+    <div className={ls.gridGap12}>
       <Field label="What should we say when they call? (optional)">
         <Textarea
           value={value.greeting ?? ''}
@@ -146,17 +169,17 @@ function CallFlowEditor({
         {allowVoicemail && <Radio value="voicemail" label="Send every call to voicemail" />}
       </RadioGroup>
       {value.mode === 'menu' && (
-        <div style={{ display: 'grid', gap: 8 }}>
+        <div className={ls.gridGap8}>
           <Checkbox
             checked={!!value.allowDialByName}
             label="Let callers reach someone by saying or typing their name"
             onChange={(_, d) => onChange({ ...value, allowDialByName: !!d.checked })}
           />
           {options.map((opt, i) => (
-            <Card key={i} style={{ padding: 10 }}>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'end', flexWrap: 'wrap' }}>
+            <Card key={i} className={ls.pad10}>
+              <div className={ls.flexWrapItemsEndGap8}>
                 <Field label="Button">
-                  <Input value={opt.key} style={{ width: 56 }} maxLength={1} onChange={(_, d) => updateOption(i, { ...opt, key: d.value.slice(0, 1) })} />
+                  <Input value={opt.key} className={ls.w56} maxLength={1} onChange={(_, d) => updateOption(i, { ...opt, key: d.value.slice(0, 1) })} />
                 </Field>
                 <Field label="Option name">
                   <Input value={opt.label} placeholder="Sales" onChange={(_, d) => updateOption(i, { ...opt, label: d.value })} />
@@ -273,6 +296,7 @@ export function AutoAttendantWizard({
   /** Editing an already-saved wizard capture instead of creating a new one - PATCHes the existing flow row and shows "Save changes" instead of "Create". Render with `key={editing.id}` so each row gets its own fresh state. */
   editing?: AutoAttendantWizardEditing;
 }) {
+  const ls = useLocalStyles();
   const [name, setName] = useState(editing?.name ?? '');
   const [answers, setAnswers] = useState<AutoAttendantWizardAnswers>(editing?.answers ?? DEFAULT_ANSWERS);
   const [resourceAccountId, setResourceAccountId] = useState(editing?.resourceAccountId ?? '');
@@ -426,10 +450,10 @@ export function AutoAttendantWizard({
             onChange={(_, d) => setAnswers((a) => ({ ...a, holidaysEnabled: !!d.checked }))}
           />
           {answers.holidaysEnabled && (
-            <div style={{ display: 'grid', gap: 10 }}>
+            <div className={ls.gridGap10}>
               {(answers.holidays ?? []).map((h, i) => (
-                <Card key={i} style={{ padding: 10, display: 'grid', gap: 8 }}>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'end', flexWrap: 'wrap' }}>
+                <Card key={i} className={ls.gridGap8Pad10}>
+                  <div className={ls.flexWrapItemsEndGap8}>
                     <Field label="Holiday name">
                       <Input
                         value={h.name}
@@ -504,7 +528,7 @@ export function AutoAttendantWizard({
       title: 'Review',
       content: (
         <>
-          <div style={{ display: 'grid', gap: 2 }}>
+          <div className={ls.gridGap2}>
             {flowSummary(answers.businessFlow, 'Business hours').map((l, i) => (
               <Text key={i} size={200} block>
                 {l}
@@ -523,12 +547,12 @@ export function AutoAttendantWizard({
             )}
           </div>
           <Field label="Which phone number/identity will answer this? (optional - can be set later)">
-            <div style={{ display: 'flex', gap: 8, alignItems: 'end' }}>
+            <div className={ls.flexItemsEndGap8}>
               <Dropdown
                 value={resourceAccountChoices.find((c) => c.value === resourceAccountId)?.label ?? '— not yet known —'}
                 selectedOptions={resourceAccountId ? [resourceAccountId] : []}
                 onOptionSelect={(_, d) => setResourceAccountId(d.optionValue ?? '')}
-                style={{ minWidth: 220 }}
+                className={ls.minW220}
               >
                 <Option value="">— not yet known —</Option>
                 {resourceAccountChoices.map((c) => (

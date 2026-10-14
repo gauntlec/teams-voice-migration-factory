@@ -1,7 +1,12 @@
-import { Badge, Tab } from '@fluentui/react-components';
+import { Badge, Tab , makeStyles } from '@fluentui/react-components';
 import { CheckmarkCircleRegular, WarningRegular } from '@fluentui/react-icons';
 import { AA_SUPPORTED_LANGUAGES, AA_TIME_ZONES, VOICEMAIL_PROMPT_LANGUAGES, type BuildRowValidation, type CallDelegate, type CallForwardingSettings, type PickupGroupSettings } from '@tvmf/shared';
 import { type Choice, type ColumnDef, type Row } from '../../components/records';
+
+const useLocalStyles = makeStyles({
+  ml6: { marginLeft: '6px' },
+});
+
 
 /** Last 10 significant digits, for loose number matching (same rule Data Collection uses). */
 export const numKey = (v: string | null | undefined): string => String(v ?? '').replace(/\D/g, '').slice(-10);
@@ -103,11 +108,12 @@ export interface BuildEmbedding {
 
 /** The SR-0042 tags on a row designed for a service request. */
 function SrTags({ refs }: { refs: unknown }) {
+  const ls = useLocalStyles();
   if (!Array.isArray(refs) || refs.length === 0) return null;
   return (
     <>
       {(refs as string[]).map((ref) => (
-        <Badge key={ref} size="small" appearance="tint" color="brand" style={{ marginLeft: 6 }} title={`Designed for service request ${ref}`}>
+        <Badge key={ref} size="small" appearance="tint" color="brand" className={ls.ml6} title={`Designed for service request ${ref}`}>
           {ref}
         </Badge>
       ))}

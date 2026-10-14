@@ -41,6 +41,12 @@ import { LoadError, NoTenant } from './DataCollection';
 import { DangerText } from '../components/ui';
 import { TableSkeleton } from '../components/states';
 
+const useLocalStyles = makeStyles({
+  w92vwMaxW1100: { maxWidth: "1100px", width: "92vw" },
+  maxH70vhScroll: { maxHeight: "70vh", overflowY: "auto" },
+});
+
+
 interface PackSource {
   siteCodes?: string[];
   sectionKeys?: string[];
@@ -454,6 +460,7 @@ function NotesDialog({ tenantId, sites, onClose }: { tenantId: string; sites: Si
 /* ------------------------------ preview ------------------------------ */
 
 function PreviewDialog({ tenantId, packId, onClose }: { tenantId: string; packId: string; onClose: () => void }) {
+  const ls = useLocalStyles();
   const cs = useStyles();
   const q = useQuery({
     queryKey: ['handover-pack', tenantId, packId],
@@ -462,12 +469,12 @@ function PreviewDialog({ tenantId, packId, onClose }: { tenantId: string; packId
 
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: '1100px', width: '92vw' }}>
+      <DialogSurface className={ls.w92vwMaxW1100}>
         <DialogBody>
           <DialogTitle>
             {q.data ? `Pack v${q.data.pack.version} — ${handoverScopeLabel(q.data.pack.source?.siteCodes)}` : 'Pack preview'}
           </DialogTitle>
-          <DialogContent style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+          <DialogContent className={ls.maxH70vhScroll}>
             {q.isLoading && <Spinner size="tiny" />}
             {q.isError && <LoadError message={(q.error as Error).message} />}
             {q.data?.sections.map((s) => (

@@ -5,6 +5,11 @@ import { INC_CATEGORIES, INC_CATEGORY_BY_KEY, INC_PROBLEM_STATUSES, INC_PROBLEM_
 import { api } from '../api';
 import { errorText } from '../pages/ServiceRequests';
 
+const useLocalStyles = makeStyles({
+  w94vwMaxW680: { maxWidth: "680px", width: "94vw" },
+});
+
+
 const useStyles = makeStyles({
   stack: { display: 'flex', flexDirection: 'column', rowGap: tokens.spacingVerticalM, maxHeight: '68vh', overflowY: 'auto' },
   error: { color: tokens.colorPaletteRedForeground1 },
@@ -29,6 +34,7 @@ export interface ProblemFields {
  * if there's a customer note, customers see that note before raising one).
  */
 export function ProblemDialog({ base, problem, prefill, incidentId, onClose, onSaved }: { base: string; problem?: ProblemFields; prefill?: Partial<ProblemFields>; incidentId?: string; onClose: () => void; onSaved: () => void }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const [d, setD] = useState<ProblemFields>(
     problem ?? { title: '', description: '', category: null, subcategory: null, status: 'investigating', root_cause: '', workaround: '', customer_note: '', owner_id: null, ...prefill },
@@ -46,7 +52,7 @@ export function ProblemDialog({ base, problem, prefill, incidentId, onClose, onS
   const knownError = (d.status === 'known_error' || d.status === 'fix_planned') && d.workaround.trim();
   return (
     <Dialog open onOpenChange={(_, x) => !x.open && onClose()}>
-      <DialogSurface style={{ maxWidth: '680px', width: '94vw' }}>
+      <DialogSurface className={ls.w94vwMaxW680}>
         <DialogBody>
           <DialogTitle>{problem?.id ? 'Problem' : 'New problem'}</DialogTitle>
           <DialogContent className={s.stack}>

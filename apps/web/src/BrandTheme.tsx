@@ -1,8 +1,13 @@
 import { useMemo, type ReactNode } from 'react';
-import { FluentProvider } from '@fluentui/react-components';
+import { FluentProvider , makeStyles } from '@fluentui/react-components';
 import { useAuth } from './auth';
 import { buildTenantTheme } from './theme';
 import { useThemeMode } from './ThemeMode';
+
+const useLocalStyles = makeStyles({
+  minH100vh: { minHeight: "100vh" },
+});
+
 
 /**
  * Re-themes the authenticated app to the active tenant's branding, when set.
@@ -22,6 +27,7 @@ import { useThemeMode } from './ThemeMode';
  * at. SUPER_ADMIN always gets `me.mspBranding === null`, i.e. default.
  */
 export function BrandThemeProvider({ children }: { children: ReactNode }) {
+  const ls = useLocalStyles();
   const { status, me, activeTenantId } = useAuth();
   const accentColor =
     status === 'authenticated' && me
@@ -35,7 +41,7 @@ export function BrandThemeProvider({ children }: { children: ReactNode }) {
 
   if (!theme) return <>{children}</>;
   return (
-    <FluentProvider theme={theme} style={{ minHeight: '100vh' }}>
+    <FluentProvider theme={theme} className={ls.minH100vh}>
       {children}
     </FluentProvider>
   );

@@ -17,6 +17,9 @@ import {
   TabList,
   Tab,
   Text,
+
+  makeStyles,
+  shorthands,
 } from '@fluentui/react-components';
 import { ArrowRightRegular, ListRegular, MapRegular } from '@fluentui/react-icons';
 import { api } from '../api';
@@ -25,6 +28,13 @@ import { DataTable } from '../components/DataTable';
 import { Page } from '../components/Page';
 import { LoadError, NoTenant, useRecordStyles, type Row } from '../components/records';
 import { SitesMap, type MapSite } from '../components/SitesMap';
+
+const useLocalStyles = makeStyles({
+  flexGap8: { display: "flex", ...shorthands.gap('8px') },
+  flexWrapItemsCenterGap10: { display: "flex", ...shorthands.gap('10px'), alignItems: "center", flexWrap: "wrap" },
+  maxW320: { maxWidth: '320px' },
+});
+
 
 export { NoTenant, LoadError } from '../components/records';
 
@@ -61,6 +71,7 @@ const STATUS_COLOR: Record<string, 'informative' | 'warning' | 'success'> = {
 };
 
 export function DataCollection() {
+  const ls = useLocalStyles();
   const s = useRecordStyles();
   const navigate = useNavigate();
   const { activeTenantId, can, me } = useAuth();
@@ -120,7 +131,7 @@ export function DataCollection() {
       title="Data Collection"
       subtitle="Pick a site to capture its overview, numbers, users, CAPs and resource accounts."
       actions={
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className={ls.flexGap8}>
           {canWrite && status === 'draft' && !siteScoped && (
             <Button appearance="primary" disabled={action.isPending} onClick={() => action.mutate('submit')}>
               Submit for review
@@ -139,7 +150,7 @@ export function DataCollection() {
         </div>
       }
     >
-      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+      <div className={ls.flexWrapItemsCenterGap10}>
         <Text>Status:</Text>
         <Badge appearance="tint" color={STATUS_COLOR[status]}>
           {status}
@@ -209,7 +220,7 @@ export function DataCollection() {
             placeholder="Search by sitecode or name…"
             value={search}
             onChange={(_, ev) => setSearch(ev.value)}
-            style={{ maxWidth: 320 }}
+            className={ls.maxW320}
           />
         )}
 

@@ -26,6 +26,8 @@ import {
   makeStyles,
   shorthands,
   tokens,
+
+  mergeClasses,
 } from '@fluentui/react-components';
 import { ArrowLeftRegular, CheckmarkCircleRegular, WarningRegular } from '@fluentui/react-icons';
 import {
@@ -42,6 +44,16 @@ import { DataTable } from '../components/DataTable';
 import { Page } from '../components/Page';
 import { LoadError, NoTenant, useRecordStyles } from '../components/records';
 import { DangerText } from '../components/ui';
+
+const useLocalStyles = makeStyles({
+  justifySpacebetween: { justifyContent: "space-between" },
+  mt8: { marginTop: '8px' },
+  colored: { color: "var(--colorPaletteRedForeground1)" },
+  flexWrapGap6: { display: "flex", ...shorthands.gap('6px'), flexWrap: "wrap" },
+  flexColGap4: { display: "flex", flexDirection: "column", ...shorthands.gap('4px') },
+  maxW420PreWrap: { maxWidth: '420px', whiteSpace: "pre-wrap" },
+});
+
 
 const useStyles = makeStyles({
   row: { display: 'flex', ...shorthands.gap('8px'), flexWrap: 'wrap', alignItems: 'center' },
@@ -243,6 +255,7 @@ const OBJECT_TYPE_LABEL: Record<DeploymentPreviewRow['objectType'], string> = {
 const GROUP_ORDER: DeploymentPreviewRow['objectType'][] = ['user', 'cap', 'resource_account', 'shared_calling_policy', 'call_queue', 'auto_attendant'];
 
 export function DeploymentSiteWorkspace() {
+  const ls = useLocalStyles();
   const cs = useStyles();
   const s = useRecordStyles();
   const { siteId = '' } = useParams();
@@ -425,7 +438,7 @@ export function DeploymentSiteWorkspace() {
 
       {tab === 'changes' && (
         <Card className={s.card}>
-          <div className={cs.row} style={{ justifyContent: 'space-between' }}>
+          <div className={mergeClasses(cs.row, ls.justifySpacebetween)}>
             <Text weight="semibold" size={400}>
               Planned changes <span className={s.muted}>({rows.length})</span>
             </Text>
@@ -477,7 +490,7 @@ export function DeploymentSiteWorkspace() {
                     across users, common area phones, resource accounts, call queues and auto attendants for{' '}
                     {site.name || site.sitecode}.
                   </Text>
-                  <Text block style={{ marginTop: 8 }}>
+                  <Text block className={ls.mt8}>
                     Select specific rows first if you meant to deploy only some of them.
                   </Text>
                 </DialogContent>
@@ -500,7 +513,7 @@ export function DeploymentSiteWorkspace() {
             </DialogSurface>
           </Dialog>
           {generateDoc.isError && (
-            <Text size={200} style={{ color: 'var(--colorPaletteRedForeground1)' }}>
+            <Text size={200} className={ls.colored}>
               {generateDoc.error instanceof ApiError ? generateDoc.error.message : 'Could not generate the document'}
             </Text>
           )}
@@ -616,7 +629,7 @@ export function DeploymentSiteWorkspace() {
                     </TableCell>
                     <TableCell>
                       {Object.keys(d.summary ?? {}).length ? (
-                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <div className={ls.flexWrapGap6}>
                           {Object.entries(d.summary ?? {}).map(([k, v]) => (
                             <Badge
                               key={k}
@@ -651,7 +664,7 @@ export function DeploymentSiteWorkspace() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <div className={ls.flexColGap4}>
                         <Link onClick={() => setSelectedDeployment(d.id)}>View changes</Link>
                         {d.mode === 'execute' && (d.status === 'completed' || d.status === 'failed') && (d.summary?.applied ?? 0) > 0 && (
                           <Link
@@ -710,7 +723,7 @@ export function DeploymentSiteWorkspace() {
                           </Badge>
                         </TableCell>
                         <TableCell className={cs.mono}>
-                          <div style={{ maxWidth: 420, whiteSpace: 'pre-wrap' }}>{c.message ?? ''}</div>
+                          <div className={ls.maxW420PreWrap}>{c.message ?? ''}</div>
                         </TableCell>
                       </TableRow>
                     ))}

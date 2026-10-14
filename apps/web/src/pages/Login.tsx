@@ -14,6 +14,12 @@ import { useAuth } from '../auth';
 import { ApiError } from '../api';
 import { Wordmark } from '../components/Logo';
 
+const useLocalStyles = makeStyles({
+  gridGap14: { display: "grid", ...shorthands.gap('14px') },
+  danger: { color: tokens.colorPaletteRedForeground1 },
+});
+
+
 const useStyles = makeStyles({
   root: {
     display: 'grid',
@@ -26,6 +32,7 @@ const useStyles = makeStyles({
 });
 
 export function Login() {
+  const ls = useLocalStyles();
   const s = useStyles();
   const { login } = useAuth();
   const [email, setEmail] = useState('');
@@ -61,7 +68,7 @@ export function Login() {
       <Card className={s.card}>
         <Wordmark size={24} />
         <Body1>Sign in to continue.</Body1>
-        <form onSubmit={submit} style={{ display: 'grid', gap: 14 }}>
+        <form onSubmit={submit} className={ls.gridGap14}>
           <Field label="Email" required>
             <Input type="email" value={email} onChange={(_, d) => setEmail(d.value)} autoFocus />
           </Field>
@@ -81,7 +88,7 @@ export function Login() {
               />
             </Field>
           )}
-          {error && <Body1 style={{ color: tokens.colorPaletteRedForeground1 }}>{error}</Body1>}
+          {error && <Body1 className={ls.danger}>{error}</Body1>}
           <Button appearance="primary" type="submit" disabled={busy}>
             {busy ? <Spinner size="tiny" /> : 'Sign in'}
           </Button>

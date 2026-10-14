@@ -24,6 +24,9 @@ import {
   TableRow,
   Text,
   Textarea,
+
+  makeStyles,
+  shorthands,
 } from '@fluentui/react-components';
 import { AddRegular, ArrowLeftRegular, ArrowUploadRegular, DeleteRegular } from '@fluentui/react-icons';
 import type { Paginated } from '@tvmf/shared';
@@ -33,6 +36,16 @@ import { DataTable } from '../components/DataTable';
 import { Page } from '../components/Page';
 import { LoadError, NoTenant, useRecordStyles } from '../components/records';
 import { TableSkeleton } from '../components/states';
+
+const useLocalStyles = makeStyles({
+  colored: { color: "var(--colorPaletteRedForeground1)" },
+  gridGap8: { display: "grid", ...shorthands.gap('8px') },
+  flexItemsCenterGap8: { display: "flex", ...shorthands.gap('8px'), alignItems: "center" },
+  flex1: { flex: 1 },
+  gridGap6: { display: "grid", ...shorthands.gap('6px') },
+  flexWrapItemsCenterGap8: { display: "flex", ...shorthands.gap('8px'), alignItems: "center", flexWrap: "wrap" },
+});
+
 
 /**
  * "LOA Data Collection and Tracking" - one page per site, gated internally by
@@ -188,6 +201,7 @@ export function NumberPorting() {
 /* ----------------------------- admin: catalog ---------------------------- */
 
 function DocumentCatalogCard({ base }: { base: string }) {
+  const ls = useLocalStyles();
   const s = useRecordStyles();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -282,7 +296,7 @@ function DocumentCatalogCard({ base }: { base: string }) {
                 <Field label="Label">
                   <Input value={label} onChange={(_, d) => setLabel(d.value)} />
                 </Field>
-                {error && <Text style={{ color: 'var(--colorPaletteRedForeground1)' }}>{error}</Text>}
+                {error && <Text className={ls.colored}>{error}</Text>}
               </div>
             </DialogContent>
             <DialogActions>
@@ -373,6 +387,7 @@ function RangeChecklistCard({
   enabledTypes: SiteDocumentType[];
   enabledTypesLoading: boolean;
 }) {
+  const ls = useLocalStyles();
   const s = useRecordStyles();
   const qc = useQueryClient();
   const [checked, setChecked] = useState<Set<string> | null>(null);
@@ -481,7 +496,7 @@ function RangeChecklistCard({
       ) : (
         <>
           {canReview && request?.status !== 'complete' && (
-            <div style={{ display: 'grid', gap: 8 }}>
+            <div className={ls.gridGap8}>
               <Text size={200} className={s.muted}>
                 Checklist — pick the documents this port needs (only site-enabled types shown).
               </Text>
@@ -495,7 +510,7 @@ function RangeChecklistCard({
                 enabledTypes.map((t) => {
                   const existing = itemByType.get(t.id);
                   return (
-                    <div key={t.id} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <div key={t.id} className={ls.flexItemsCenterGap8}>
                       <Checkbox
                         label={t.label}
                         checked={checkedSet.has(t.id)}
@@ -509,7 +524,7 @@ function RangeChecklistCard({
                       <Input
                         placeholder="Note (optional)"
                         size="small"
-                        style={{ flex: 1 }}
+                        className={ls.flex1}
                         value={notesState[t.id] ?? ''}
                         disabled={!checkedSet.has(t.id)}
                         onChange={(_, d) => setNotes((v) => ({ ...v, [t.id]: d.value }))}
@@ -536,7 +551,7 @@ function RangeChecklistCard({
           )}
 
           {request && request.status !== 'draft' && (
-            <div style={{ display: 'grid', gap: 6 }}>
+            <div className={ls.gridGap6}>
               {items.length === 0 ? (
                 <Text size={200} className={s.muted}>
                   No documents were requested for this port.
@@ -545,7 +560,7 @@ function RangeChecklistCard({
                 items.map((item) => (
                   <div
                     key={item.id}
-                    style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}
+                    className={ls.flexWrapItemsCenterGap8}
                   >
                     <Badge appearance="tint" color={ITEM_STATUS_COLOR[item.status]}>
                       {ITEM_STATUS_LABEL[item.status]}
@@ -557,7 +572,7 @@ function RangeChecklistCard({
                       </Text>
                     )}
                     {item.status === 'rejected' && item.reject_reason && (
-                      <Text size={200} style={{ color: 'var(--colorPaletteRedForeground1)' }}>
+                      <Text size={200} className={ls.colored}>
                         {item.reject_reason}
                       </Text>
                     )}

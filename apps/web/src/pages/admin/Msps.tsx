@@ -22,6 +22,9 @@ import {
   TableRow,
   Text,
   tokens,
+
+  makeStyles,
+  shorthands,
 } from '@fluentui/react-components';
 import { DeleteRegular } from '@fluentui/react-icons';
 import type { Branding } from '@tvmf/shared';
@@ -34,6 +37,23 @@ import { useDebounced } from '../../hooks/useDebounced';
 import { LoadError } from '../DataCollection';
 import { DangerText, MutedText } from '../../components/ui';
 import { TableSkeleton } from '../../components/states';
+
+const useLocalStyles = makeStyles({
+  flexWrapItemsEndGap12: { display: "flex", ...shorthands.gap('12px'), flexWrap: "wrap", alignItems: "end" },
+  w40H32FilledPad0: { width: '40px', height: '32px', ...shorthands.padding("0px"), ...shorthands.border("0"), backgroundColor: "none", cursor: "pointer" },
+  maxW320: { maxWidth: '320px' },
+  flexItemsCenterGap8: { display: "flex", alignItems: "center", ...shorthands.gap('8px') },
+  blockWAutoH20: { height: '20px', width: "auto", display: "block" },
+  danger: { color: tokens.colorPaletteRedForeground1 },
+  blockMt8Danger: { color: tokens.colorPaletteRedForeground1, display: "block", marginTop: '8px' },
+  dangerFill: { backgroundColor: tokens.colorPaletteRedBackground3 },
+  gridGap12MinW380: { display: "grid", ...shorthands.gap('12px'), minWidth: '380px' },
+  flexItemsCenterGap12: { display: "flex", alignItems: "center", ...shorthands.gap('12px') },
+  wAutoH40: { height: '40px', width: "auto" },
+  w94vwMaxW640: { maxWidth: "640px", width: "94vw" },
+  flexColRowGap12: { display: "flex", flexDirection: "column", rowGap: '12px' },
+});
+
 
 const DEFAULT_ACCENT = '#4657D2';
 
@@ -56,6 +76,7 @@ function splitDomains(raw: string): string[] {
 }
 
 export function AdminMsps() {
+  const ls = useLocalStyles();
   const qc = useQueryClient();
   const { can } = useAuth();
   const [name, setName] = useState('');
@@ -105,7 +126,7 @@ export function AdminMsps() {
     >
       <Card>
         <Text weight="semibold">New MSP</Text>
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'end' }}>
+        <div className={ls.flexWrapItemsEndGap12}>
           <Field label="Name">
             <Input value={name} onChange={(_, d) => setName(d.value)} />
           </Field>
@@ -123,7 +144,7 @@ export function AdminMsps() {
               type="color"
               value={accentColor}
               onChange={(e) => setAccentColor(e.target.value)}
-              style={{ width: 40, height: 32, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
+              className={ls.w40H32FilledPad0}
             />
           </Field>
           <Field label="Logo (optional)" hint="PNG or JPEG - WebP isn't supported by classic Outlook desktop">
@@ -146,7 +167,7 @@ export function AdminMsps() {
           placeholder="Search by name or slug…"
           value={searchInput}
           onChange={(_, d) => setSearchInput(d.value)}
-          style={{ maxWidth: 320 }}
+          className={ls.maxW320}
         />
         {list.isLoading ? (
           <TableSkeleton rows={4} cols={5} />
@@ -170,7 +191,7 @@ export function AdminMsps() {
                   <TableCell>{m.name}</TableCell>
                   <TableCell>{m.slug}</TableCell>
                   <TableCell>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div className={ls.flexItemsCenterGap8}>
                       <span>{m.domains.length ? m.domains.join(', ') : '—'}</span>
                       {can('msp:update') && (
                         <Button size="small" appearance="subtle" onClick={() => setEditFor(m)}>
@@ -180,12 +201,12 @@ export function AdminMsps() {
                     </div>
                   </TableCell>
                   <TableCell>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div className={ls.flexItemsCenterGap8}>
                       {m.branding?.logo && (
                         <img
                           src={`/api/public/msps/${m.id}/logo?v=${m.branding.logo.version}`}
                           alt=""
-                          style={{ height: 20, width: 'auto', display: 'block' }}
+                          className={ls.blockWAutoH20}
                         />
                       )}
                       {can('msp:update') ? (
@@ -248,6 +269,7 @@ export function AdminMsps() {
 /* -------------------------------- delete --------------------------------- */
 
 function DeleteMspButton({ msp, onDeleted }: { msp: Msp; onDeleted: () => void }) {
+  const ls = useLocalStyles();
   const [open, setOpen] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -266,7 +288,7 @@ function DeleteMspButton({ msp, onDeleted }: { msp: Msp; onDeleted: () => void }
         size="small"
         appearance="subtle"
         icon={<DeleteRegular />}
-        style={{ color: tokens.colorPaletteRedForeground1 }}
+        className={ls.danger}
         title="Delete MSP"
         aria-label="Delete MSP"
         onClick={() => {
@@ -281,7 +303,7 @@ function DeleteMspButton({ msp, onDeleted }: { msp: Msp; onDeleted: () => void }
             <DialogContent>
               This permanently removes the MSP and its branding. Any user whose MSP override
               pointed here falls back to domain match / default branding. This cannot be undone.
-              {err && <Text style={{ color: tokens.colorPaletteRedForeground1, display: 'block', marginTop: 8 }}>{err}</Text>}
+              {err && <Text className={ls.blockMt8Danger}>{err}</Text>}
             </DialogContent>
             <DialogActions>
               <Button appearance="secondary" onClick={() => setOpen(false)}>
@@ -289,7 +311,7 @@ function DeleteMspButton({ msp, onDeleted }: { msp: Msp; onDeleted: () => void }
               </Button>
               <Button
                 appearance="primary"
-                style={{ backgroundColor: tokens.colorPaletteRedBackground3 }}
+                className={ls.dangerFill}
                 disabled={del.isPending}
                 onClick={() => del.mutate()}
               >
@@ -306,6 +328,7 @@ function DeleteMspButton({ msp, onDeleted }: { msp: Msp; onDeleted: () => void }
 /* --------------------------------- edit ---------------------------------- */
 
 function EditMspDialog({ msp, onClose, onSaved }: { msp: Msp; onClose: () => void; onSaved: () => void }) {
+  const ls = useLocalStyles();
   const [name, setName] = useState(msp.name);
   const [domainsRaw, setDomainsRaw] = useState(msp.domains.join(', '));
   const [err, setErr] = useState<string | null>(null);
@@ -326,7 +349,7 @@ function EditMspDialog({ msp, onClose, onSaved }: { msp: Msp; onClose: () => voi
         <DialogBody>
           <DialogTitle>Edit — {msp.name}</DialogTitle>
           <DialogContent>
-            <div style={{ display: 'grid', gap: 12, minWidth: 380 }}>
+            <div className={ls.gridGap12MinW380}>
               <Field label="Name">
                 <Input value={name} onChange={(_, d) => setName(d.value)} />
               </Field>
@@ -355,6 +378,7 @@ function EditMspDialog({ msp, onClose, onSaved }: { msp: Msp; onClose: () => voi
 /* ------------------------------- branding ------------------------------- */
 
 function BrandingDialog({ msp, onClose, onSaved }: { msp: Msp; onClose: () => void; onSaved: () => void }) {
+  const ls = useLocalStyles();
   const [accentColor, setAccentColor] = useState(msp.branding?.accentColor ?? DEFAULT_ACCENT);
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoRemoved, setLogoRemoved] = useState(false);
@@ -384,10 +408,10 @@ function BrandingDialog({ msp, onClose, onSaved }: { msp: Msp; onClose: () => vo
         <DialogBody>
           <DialogTitle>Branding — {msp.name}</DialogTitle>
           <DialogContent>
-            <div style={{ display: 'grid', gap: 12, minWidth: 380 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div className={ls.gridGap12MinW380}>
+              <div className={ls.flexItemsCenterGap12}>
                 {previewUrl ? (
-                  <img src={previewUrl} alt="" style={{ height: 40, width: 'auto' }} />
+                  <img src={previewUrl} alt="" className={ls.wAutoH40} />
                 ) : (
                   <Wordmark size={18} />
                 )}
@@ -396,7 +420,7 @@ function BrandingDialog({ msp, onClose, onSaved }: { msp: Msp; onClose: () => vo
                 </MutedText>
               </div>
               <Field label="Replace logo" hint="PNG or JPEG - WebP isn't supported by classic Outlook desktop">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div className={ls.flexItemsCenterGap8}>
                   <input
                     type="file"
                     accept="image/png,image/jpeg"
@@ -424,7 +448,7 @@ function BrandingDialog({ msp, onClose, onSaved }: { msp: Msp; onClose: () => vo
                   type="color"
                   value={accentColor}
                   onChange={(e) => setAccentColor(e.target.value)}
-                  style={{ width: 40, height: 32, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
+                  className={ls.w40H32FilledPad0}
                 />
               </Field>
               {err && <DangerText>{err}</DangerText>}
@@ -448,6 +472,7 @@ function BrandingDialog({ msp, onClose, onSaved }: { msp: Msp; onClose: () => vo
 
 /** Connects the MSP's Teams channel (a Workflows webhook address, never shown again) and chooses what it is told. */
 function TeamsDialog({ msp, onClose }: { msp: Msp; onClose: () => void }) {
+  const ls = useLocalStyles();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['msp-teams', msp.id], queryFn: () => api<{ configured: boolean; notify: { incidents: boolean; major: boolean; sla: boolean } }>(`/msps/${msp.id}/teams`) });
   const [url, setUrl] = useState('');
@@ -463,10 +488,10 @@ function TeamsDialog({ msp, onClose }: { msp: Msp; onClose: () => void }) {
   const error = save.error ?? remove.error ?? test.error;
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: '640px', width: '94vw' }}>
+      <DialogSurface className={ls.w94vwMaxW640}>
         <DialogBody>
           <DialogTitle>Teams channel — {msp.name}</DialogTitle>
-          <DialogContent style={{ display: 'flex', flexDirection: 'column', rowGap: 12 }}>
+          <DialogContent className={ls.flexColRowGap12}>
             <Text size={200}>
               Tell a Teams channel about P1 and P2 incidents, major incidents and missed targets. In Teams, add a Workflow to the channel with the trigger &ldquo;When a Teams webhook request is received&rdquo; and
               paste its address here. The address is stored encrypted and is not shown again.

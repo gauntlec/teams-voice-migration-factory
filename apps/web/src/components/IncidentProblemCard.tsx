@@ -6,6 +6,12 @@ import { api } from '../api';
 import { errorText } from '../pages/ServiceRequests';
 import { ProblemDialog } from './ProblemDialog';
 
+const useLocalStyles = makeStyles({
+  preWrap: { whiteSpace: "pre-wrap" },
+  mt6: { marginTop: '6px' },
+});
+
+
 const useStyles = makeStyles({
   card: { display: 'flex', flexDirection: 'column', rowGap: tokens.spacingVerticalM },
   row: { display: 'flex', columnGap: tokens.spacingHorizontalS, flexWrap: 'wrap', alignItems: 'center' },
@@ -37,6 +43,7 @@ interface KnownError {
  * incident to a problem means the fix for the cause is tracked once, not once per incident.
  */
 export function IncidentProblemCard({ base, incident, problem, onChanged }: { base: string; incident: { id: string; title: string; category: string; subcategory: string | null }; problem: LinkedProblem | null; onChanged: () => void }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const qc = useQueryClient();
   const [picked, setPicked] = useState('');
@@ -74,13 +81,13 @@ export function IncidentProblemCard({ base, incident, problem, onChanged }: { ba
             {problem.root_cause && (
               <>
                 <Text className={s.muted}>Root cause</Text>
-                <Text style={{ whiteSpace: 'pre-wrap' }}>{problem.root_cause}</Text>
+                <Text className={ls.preWrap}>{problem.root_cause}</Text>
               </>
             )}
             {problem.workaround && (
               <>
                 <Text className={s.muted}>Workaround</Text>
-                <Text style={{ whiteSpace: 'pre-wrap' }}>{problem.workaround}</Text>
+                <Text className={ls.preWrap}>{problem.workaround}</Text>
               </>
             )}
           </div>
@@ -93,7 +100,7 @@ export function IncidentProblemCard({ base, incident, problem, onChanged }: { ba
                 Known errors that may explain this
               </Text>
               {known.data!.map((k) => (
-                <div key={k.id} style={{ marginTop: 6 }}>
+                <div key={k.id} className={ls.mt6}>
                   <div className={s.row}>
                     <Text>
                       {k.reference} · {k.title}
@@ -102,7 +109,7 @@ export function IncidentProblemCard({ base, incident, problem, onChanged }: { ba
                       This is it
                     </Button>
                   </div>
-                  <Text size={200} block style={{ whiteSpace: 'pre-wrap' }}>
+                  <Text size={200} block className={ls.preWrap}>
                     Workaround: {k.workaround}
                   </Text>
                 </div>

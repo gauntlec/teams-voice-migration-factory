@@ -22,6 +22,8 @@ import {
   Textarea,
   makeStyles,
   tokens,
+
+  mergeClasses,
 } from '@fluentui/react-components';
 import {
   INC_DEFAULT_COVER,
@@ -45,6 +47,12 @@ import { DataTable } from './DataTable';
 import { LoadError } from './records';
 import { IntakeSources } from './IntakeSources';
 import { errorText } from '../pages/ServiceRequests';
+
+const useLocalStyles = makeStyles({
+  w94vwMaxW860: { maxWidth: "860px", width: "94vw" },
+  maxH72vhScroll: { maxHeight: "72vh", overflowY: "auto" },
+});
+
 
 const useStyles = makeStyles({
   // Children keep their height and the dialog scrolls, instead of the tables being squashed to fit.
@@ -77,6 +85,7 @@ const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
  * value keeps following the defaults.
  */
 export function IncidentSettingsDialog({ base, onClose }: { base: string; onClose: () => void }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const qc = useQueryClient();
   const { me, can } = useAuth();
@@ -143,10 +152,10 @@ export function IncidentSettingsDialog({ base, onClose }: { base: string; onClos
 
   return (
     <Dialog open onOpenChange={(_, x) => !x.open && onClose()}>
-      <DialogSurface style={{ maxWidth: '860px', width: '94vw' }}>
+      <DialogSurface className={ls.w94vwMaxW860}>
         <DialogBody>
           <DialogTitle>{editable ? 'Incident settings' : 'Our incident targets'}</DialogTitle>
-          <DialogContent className={s.stack} style={{ maxHeight: '72vh', overflowY: 'auto' }}>
+          <DialogContent className={mergeClasses(s.stack, ls.maxH72vhScroll)}>
             {settings.isLoading && <Spinner size="tiny" />}
             {settings.isError && <LoadError message={(settings.error as Error).message} />}
             {d && (

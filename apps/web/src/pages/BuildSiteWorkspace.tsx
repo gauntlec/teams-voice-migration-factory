@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { Badge, Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Spinner, Tab, TabList, Text, tokens } from '@fluentui/react-components';
+import { Badge, Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Spinner, Tab, TabList, Text, tokens , makeStyles } from '@fluentui/react-components';
 import { ArrowLeftRegular } from '@fluentui/react-icons';
 import { CALL_QUEUE_ROUTING_METHODS, NUMBER_TYPES, POLICY_KIND_TO_TENANT_TYPE, POLICY_KINDS, RESOURCE_ACCOUNT_KINDS, type AutoAttendantCallFlow, type BuildRowValidation, type BuildSiteRollup, type CallQueueActionSettings, type FileRow, type Paginated, type TenantPolicySummary } from '@tvmf/shared';
 import { api, apiDownload, ApiError } from '../api';
@@ -18,7 +18,14 @@ import { CallQueueSettingsDialog } from './build/callQueueSettingsDialog';
 import { AutoAttendantSettingsDialog } from './build/autoAttendantDialogs';
 import { DangerText } from '../components/ui';
 
+const useLocalStyles = makeStyles({
+  mt8: { marginTop: '8px' },
+  mt8Danger: { marginTop: '8px', color: tokens.colorPaletteRedForeground1 },
+});
+
+
 export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } = {}) {
+  const ls = useLocalStyles();
   const s = useRecordStyles();
   const params = useParams();
   const siteId = embedded?.siteId ?? params.siteId ?? '';
@@ -352,11 +359,11 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
                 affected - Populate from Discovery brings back what came from there, but anything designed by hand
                 here is lost.
               </Text>
-              <Text block weight="semibold" style={{ marginTop: 8 }}>
+              <Text block weight="semibold" className={ls.mt8}>
                 This cannot be undone.
               </Text>
               {resetError && (
-                <Text block style={{ marginTop: 8, color: tokens.colorPaletteRedForeground1 }}>
+                <Text block className={ls.mt8Danger}>
                   {resetError}
                 </Text>
               )}

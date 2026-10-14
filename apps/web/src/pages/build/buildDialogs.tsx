@@ -1,12 +1,19 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Dropdown, Field, Option, Spinner, Text } from '@fluentui/react-components';
+import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Dropdown, Field, Option, Spinner, Text , makeStyles, shorthands } from '@fluentui/react-components';
 import { api, ApiError } from '../../api';
 import { LoadError } from '../../components/records';
 
+const useLocalStyles = makeStyles({
+  gridGap16: { display: "grid", ...shorthands.gap('16px') },
+  gridGap12: { display: "grid", ...shorthands.gap('12px') },
+});
+
+
 export function EmbeddedShell({ children }: { title: string; subtitle?: string; actions?: ReactNode; children: ReactNode }) {
-  return <div style={{ display: 'grid', gap: 16 }}>{children}</div>;
+  const ls = useLocalStyles();
+  return <div className={ls.gridGap16}>{children}</div>;
 }
 
 /**
@@ -29,6 +36,7 @@ export function LinkDiscoveredResourceAccountDialog({
   onClose: () => void;
   onDone: () => void;
 }) {
+  const ls = useLocalStyles();
   const [objectId, setObjectId] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const preview = useQuery({
@@ -59,7 +67,7 @@ export function LinkDiscoveredResourceAccountDialog({
         <DialogBody>
           <DialogTitle>Link discovered resource account</DialogTitle>
           <DialogContent>
-            <div style={{ display: 'grid', gap: 12 }}>
+            <div className={ls.gridGap12}>
               <Text size={200}>
                 Pulls one live resource account that isn't in Data Collection yet straight into this
                 site - creates its Data Collection row and populates it here in one step.

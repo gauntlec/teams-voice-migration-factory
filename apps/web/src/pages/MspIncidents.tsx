@@ -41,6 +41,16 @@ import { LoadError } from '../components/records';
 import { DangerText } from '../components/ui';
 import { TableSkeleton } from '../components/states';
 
+const useLocalStyles = makeStyles({
+  preWrap: { whiteSpace: "pre-wrap" },
+  maxW620: { maxWidth: "620px" },
+  flexColRowGap12: { display: "flex", flexDirection: "column", rowGap: '12px' },
+  mt4: { marginTop: '4px' },
+  flex: { display: "flex", columnGap: '8px' },
+  grow1: { flexGrow: 1 },
+});
+
+
 type QueueItem = Omit<IncidentRow, 'impact' | 'urgency' | 'updated_at' | 'site_id'> & {
   tenant_id: string;
   tenant_name: string;
@@ -91,6 +101,7 @@ const useStyles = makeStyles({
  * are read-only here. Mirrors the service-request admin.
  */
 export function MspIncidents() {
+  const ls = useLocalStyles();
   const cs = useStyles();
   const navigate = useNavigate();
   const { me, setActiveTenant } = useAuth();
@@ -331,7 +342,7 @@ export function MspIncidents() {
                     <Text className={cs.muted}>Child incidents</Text>
                     <Text>{m.children === 0 ? 'None linked' : `${m.open_children} open of ${m.children}`}</Text>
                     <Text className={cs.muted}>Latest update</Text>
-                    <Text style={{ whiteSpace: 'pre-wrap' }}>
+                    <Text className={ls.preWrap}>
                       {m.latest_update?.body ?? '—'}
                       {m.latest_update && (
                         <Text size={100} block className={cs.muted}>
@@ -353,6 +364,7 @@ export function MspIncidents() {
 
 /** Acknowledge, assign or reply to an incident without switching to its customer. */
 function QuickActionDialog({ item, onClose }: { item: QueueItem; onClose: () => void }) {
+  const ls = useLocalStyles();
   const qc = useQueryClient();
   const base = `/msp/incidents/${item.tenant_id}`;
   const [assignee, setAssignee] = useState(item.assigned_to ?? '');
@@ -373,26 +385,26 @@ function QuickActionDialog({ item, onClose }: { item: QueueItem; onClose: () => 
   const canAck = item.status === 'new';
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: '620px' }}>
+      <DialogSurface className={ls.maxW620}>
         <DialogBody>
           <DialogTitle>
             {item.reference} · {item.tenant_name}
           </DialogTitle>
-          <DialogContent style={{ display: 'flex', flexDirection: 'column', rowGap: 12 }}>
+          <DialogContent className={ls.flexColRowGap12}>
             <Text>{item.title}</Text>
             {canAck && (
               <div>
                 <Button appearance="primary" disabled={ack.isPending || ack.isSuccess} onClick={() => ack.mutate()}>
                   {ack.isSuccess ? 'Acknowledged' : 'Acknowledge'}
                 </Button>
-                <Text size={200} block style={{ marginTop: 4 }}>
+                <Text size={200} block className={ls.mt4}>
                   You become the assignee if nobody has it.
                 </Text>
               </div>
             )}
             <Field label="Assigned to">
-              <div style={{ display: 'flex', columnGap: 8 }}>
-                <Select value={assignee} onChange={(_, d) => setAssignee(d.value)} style={{ flexGrow: 1 }}>
+              <div className={ls.flex}>
+                <Select value={assignee} onChange={(_, d) => setAssignee(d.value)} className={ls.grow1}>
                   <option value="">Unassigned</option>
                   {(staff.data ?? []).map((m) => (
                     <option key={m.id} value={m.id}>

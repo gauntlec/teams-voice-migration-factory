@@ -7,6 +7,11 @@ import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png';
 import shadowUrl from 'leaflet/dist/images/marker-shadow.png';
 import { Button, Text, makeStyles, shorthands, tokens } from '@fluentui/react-components';
 
+const useLocalStyles = makeStyles({
+  w100H100: { height: "100%", width: "100%" },
+});
+
+
 // Vite serves these as hashed asset URLs; wire them into Leaflet's default icon
 // so markers render without the library's broken relative paths.
 L.Icon.Default.mergeOptions({ iconUrl, iconRetinaUrl, shadowUrl });
@@ -50,6 +55,7 @@ export function SitesMap({
   sites: MapSite[];
   onOpen: (siteId: string) => void;
 }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const placed = sites.filter(
     (x) => typeof x.latitude === 'number' && typeof x.longitude === 'number',
@@ -61,7 +67,7 @@ export function SitesMap({
       <MapContainer
         center={points[0] ?? [39.5, -98.35]}
         zoom={points.length ? 6 : 3}
-        style={{ height: '100%', width: '100%' }}
+        className={ls.w100H100}
         scrollWheelZoom
       >
         <TileLayer

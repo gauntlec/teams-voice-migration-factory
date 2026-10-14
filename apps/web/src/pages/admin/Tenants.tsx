@@ -26,6 +26,9 @@ import {
   TableRow,
   Text,
   tokens,
+
+  makeStyles,
+  shorthands,
 } from '@fluentui/react-components';
 import type { Branding } from '@tvmf/shared';
 import { api, apiUpload } from '../../api';
@@ -37,6 +40,24 @@ import { useDebounced } from '../../hooks/useDebounced';
 import { LoadError } from '../DataCollection';
 import { DangerText, MutedText } from '../../components/ui';
 import { TableSkeleton } from '../../components/states';
+
+const useLocalStyles = makeStyles({
+  flexWrapItemsEndGap12: { display: "flex", ...shorthands.gap('12px'), flexWrap: "wrap", alignItems: "end" },
+  w40H32FilledPad0: { width: '40px', height: '32px', ...shorthands.padding("0px"), ...shorthands.border("0"), backgroundColor: "none", cursor: "pointer" },
+  maxW320: { maxWidth: '320px' },
+  flexItemsCenterGap8: { display: "flex", alignItems: "center", ...shorthands.gap('8px') },
+  blockWAutoH20: { height: '20px', width: "auto", display: "block" },
+  gridGap4: { display: "grid", ...shorthands.gap('4px') },
+  gridGap12MinW380: { display: "grid", ...shorthands.gap('12px'), minWidth: '380px' },
+  flexItemsCenterGap12: { display: "flex", alignItems: "center", ...shorthands.gap('12px') },
+  wAutoH40: { height: '40px', width: "auto" },
+  flexWrapItemsEndGap122: { display: "flex", ...shorthands.gap('12px'), alignItems: "end", flexWrap: "wrap" },
+  minW220: { minWidth: '220px' },
+  flexWrapGap4: { display: "flex", ...shorthands.gap('4px'), flexWrap: "wrap" },
+  flexWrapItemsEndGap8: { display: "flex", ...shorthands.gap('8px'), alignItems: "end", flexWrap: "wrap" },
+  minW260: { minWidth: '260px' },
+});
+
 
 const DEFAULT_ACCENT = '#4657D2';
 
@@ -74,6 +95,7 @@ interface PlatformUser {
 }
 
 export function AdminTenants() {
+  const ls = useLocalStyles();
   const qc = useQueryClient();
   const { refreshMe, setActiveTenant, can } = useAuth();
   const [name, setName] = useState('');
@@ -162,7 +184,7 @@ export function AdminTenants() {
     >
       <Card>
         <Text weight="semibold">New customer</Text>
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'end' }}>
+        <div className={ls.flexWrapItemsEndGap12}>
           <Field label="Name">
             <Input value={name} onChange={(_, d) => setName(d.value)} />
           </Field>
@@ -180,7 +202,7 @@ export function AdminTenants() {
               type="color"
               value={accentColor}
               onChange={(e) => setAccentColor(e.target.value)}
-              style={{ width: 40, height: 32, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
+              className={ls.w40H32FilledPad0}
             />
           </Field>
           <Field label="Logo (optional)" hint="PNG or JPEG - WebP isn't supported by classic Outlook desktop">
@@ -203,7 +225,7 @@ export function AdminTenants() {
           placeholder="Search by name, slug or domain…"
           value={searchInput}
           onChange={(_, d) => setSearchInput(d.value)}
-          style={{ maxWidth: 320 }}
+          className={ls.maxW320}
         />
         {list.isLoading ? (
           <TableSkeleton rows={4} cols={5} />
@@ -232,12 +254,12 @@ export function AdminTenants() {
                   <TableCell>{t.primary_domain ?? '—'}</TableCell>
                   <TableCell>{t.status}</TableCell>
                   <TableCell>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div className={ls.flexItemsCenterGap8}>
                       {t.branding?.logo && (
                         <img
                           src={`/api/public/tenants/${t.id}/logo?v=${t.branding.logo.version}`}
                           alt=""
-                          style={{ height: 20, width: 'auto', display: 'block' }}
+                          className={ls.blockWAutoH20}
                         />
                       )}
                       {can('tenant:update') ? (
@@ -306,7 +328,7 @@ export function AdminTenants() {
                   </TableCell>
                   <TableCell>
                     {can('tenant:update') ? (
-                      <div style={{ display: 'grid', gap: 4 }}>
+                      <div className={ls.gridGap4}>
                         <Checkbox
                           checked={t.sandbox}
                           disabled={setSandbox.isPending}
@@ -382,6 +404,7 @@ function BrandingDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const ls = useLocalStyles();
   const [accentColor, setAccentColor] = useState(tenant.branding?.accentColor ?? DEFAULT_ACCENT);
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoRemoved, setLogoRemoved] = useState(false);
@@ -411,10 +434,10 @@ function BrandingDialog({
         <DialogBody>
           <DialogTitle>Branding — {tenant.name}</DialogTitle>
           <DialogContent>
-            <div style={{ display: 'grid', gap: 12, minWidth: 380 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div className={ls.gridGap12MinW380}>
+              <div className={ls.flexItemsCenterGap12}>
                 {previewUrl ? (
-                  <img src={previewUrl} alt="" style={{ height: 40, width: 'auto' }} />
+                  <img src={previewUrl} alt="" className={ls.wAutoH40} />
                 ) : (
                   <Wordmark size={18} />
                 )}
@@ -423,7 +446,7 @@ function BrandingDialog({
                 </MutedText>
               </div>
               <Field label="Replace logo" hint="PNG or JPEG - WebP isn't supported by classic Outlook desktop">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div className={ls.flexItemsCenterGap8}>
                   <input
                     type="file"
                     accept="image/png,image/jpeg"
@@ -451,7 +474,7 @@ function BrandingDialog({
                   type="color"
                   value={accentColor}
                   onChange={(e) => setAccentColor(e.target.value)}
-                  style={{ width: 40, height: 32, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
+                  className={ls.w40H32FilledPad0}
                 />
               </Field>
               {err && <DangerText>{err}</DangerText>}
@@ -476,6 +499,7 @@ function BrandingDialog({
 /* --------------------------- members + site scope --------------------------- */
 
 function CustomerMembers({ tenants }: { tenants: Tenant[] }) {
+  const ls = useLocalStyles();
   const qc = useQueryClient();
   const [sel, setSel] = useState<string>(tenants[0]?.id ?? '');
   useEffect(() => {
@@ -522,14 +546,14 @@ function CustomerMembers({ tenants }: { tenants: Tenant[] }) {
 
   return (
     <Card>
-      <div style={{ display: 'flex', gap: 12, alignItems: 'end', flexWrap: 'wrap' }}>
+      <div className={ls.flexWrapItemsEndGap122}>
         <Text weight="semibold">Members &amp; site access</Text>
         <Field label="Customer">
           <Dropdown
             value={tenants.find((t) => t.id === sel)?.name ?? ''}
             selectedOptions={[sel]}
             onOptionSelect={(_, d) => d.optionValue && setSel(d.optionValue)}
-            style={{ minWidth: 220 }}
+            className={ls.minW220}
           >
             {tenants.map((t) => (
               <Option key={t.id} value={t.id} text={t.name}>
@@ -571,7 +595,7 @@ function CustomerMembers({ tenants }: { tenants: Tenant[] }) {
                         Whole customer
                       </Badge>
                     ) : (
-                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      <div className={ls.flexWrapGap4}>
                         {ids.map((id) => (
                           <Badge key={id} appearance="tint" color="brand">
                             {siteLabel(id)}
@@ -594,14 +618,14 @@ function CustomerMembers({ tenants }: { tenants: Tenant[] }) {
         </DataTable>
       )}
 
-      <div style={{ display: 'flex', gap: 8, alignItems: 'end', flexWrap: 'wrap' }}>
+      <div className={ls.flexWrapItemsEndGap8}>
         <Field label="Add an existing customer user">
           <Dropdown
             placeholder={eligible.length ? 'Select a user…' : 'No unassigned customer users'}
             selectedOptions={addUserId ? [addUserId] : []}
             value={eligible.find((u) => u.id === addUserId)?.email ?? ''}
             onOptionSelect={(_, d) => setAddUserId(d.optionValue ?? '')}
-            style={{ minWidth: 260 }}
+            className={ls.minW260}
           >
             {eligible.map((u) => (
               <Option key={u.id} value={u.id} text={u.email}>
@@ -645,6 +669,7 @@ function ScopeDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const ls = useLocalStyles();
   const initial = member.siteIds ?? [];
   const [mode, setMode] = useState<'all' | 'sites'>(initial.length ? 'sites' : 'all');
   const [ids, setIds] = useState<string[]>(initial);
@@ -666,7 +691,7 @@ function ScopeDialog({
         <DialogBody>
           <DialogTitle>Site access — {member.displayName}</DialogTitle>
           <DialogContent>
-            <div style={{ display: 'grid', gap: 12, minWidth: 380 }}>
+            <div className={ls.gridGap12MinW380}>
               <Field label="Access">
                 <Dropdown
                   value={mode === 'all' ? 'Whole customer' : 'Specific sites'}

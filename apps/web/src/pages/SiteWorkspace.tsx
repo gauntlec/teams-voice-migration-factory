@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Spinner, Tab, TabList, Text } from '@fluentui/react-components';
+import { Badge, Button, Spinner, Tab, TabList, Text , makeStyles, shorthands } from '@fluentui/react-components';
 import { ArrowLeftRegular, ArrowUploadRegular, WarningRegular } from '@fluentui/react-icons';
 import { CALLER_ID_OPTIONS, FLOW_KINDS, NETWORK_LOCATIONS, NETWORK_SCOPES, NETWORK_TYPES, NUMBER_RANGE_KINDS, RESOURCE_ACCOUNT_KINDS, VOICEMAIL_PROMPT_LANGUAGES, type AutoAttendantWizardAnswers, type CallQueueWizardAnswers, type Paginated, type TenantUserSummary } from '@tvmf/shared';
 import { api, ApiError } from '../api';
@@ -16,7 +16,14 @@ import { RelinkUsersButton, TAB_LABEL, isFlowStale, TABS, numKey, type SiteSumma
 import { OverviewTab, NetworkDiagramCard } from './site/siteOverview';
 import { NumberInventory, FlowImportButton, RaNumbersButton } from './site/siteNumbers';
 
+const useLocalStyles = makeStyles({
+  inlineFlexItemsCenterGap6: { display: "inline-flex", ...shorthands.gap('6px'), alignItems: "center" },
+  flexWrapGap4: { display: "flex", ...shorthands.gap('4px'), flexWrap: "wrap" },
+});
+
+
 export function SiteWorkspace() {
+  const ls = useLocalStyles();
   const s = useRecordStyles();
   const { siteId = '' } = useParams();
   const { activeTenantId, can } = useAuth();
@@ -334,7 +341,7 @@ export function SiteWorkspace() {
                   numKey(requested) !== numKey(linked ?? '') &&
                   numKey(requested) !== '';
                 return (
-                  <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                  <span className={ls.inlineFlexItemsCenterGap6}>
                     {linked ?? '—'}
                     {mismatch && (
                       <Badge
@@ -599,7 +606,7 @@ export function SiteWorkspace() {
               label: 'Source',
               render: (r) =>
                 r.wizard_answers ? (
-                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  <div className={ls.flexWrapGap4}>
                     <Badge appearance="tint" color="brand">Wizard</Badge>
                     {isFlowStale(r) && (
                       <Badge appearance="tint" color="warning" title="Edited since it was last imported into Design & Build">

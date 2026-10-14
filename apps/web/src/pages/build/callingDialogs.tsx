@@ -1,12 +1,33 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Dropdown, Field, Option, Spinner, Text, tokens } from '@fluentui/react-components';
+import { Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Dropdown, Field, Option, Spinner, Text, tokens , makeStyles, shorthands } from '@fluentui/react-components';
 import { DeleteRegular } from '@fluentui/react-icons';
 import { BUSY_ON_BUSY_OPTIONS, CALL_FORWARDING_TYPES, CALL_GROUP_ORDERS, CALL_TARGET_TYPES, type CallDelegate, type CallForwardingSettings, type PickupGroupSettings } from '@tvmf/shared';
 import { api, ApiError } from '../../api';
 import { UpnAutocomplete } from '../../components/UpnAutocomplete';
 import { type Choice, type Row } from '../../components/records';
 import { DangerText } from '../../components/ui';
+
+const useLocalStyles = makeStyles({
+  mb12: { marginBottom: '12px' },
+  gridGap8: { display: "grid", ...shorthands.gap('8px') },
+  flexItemsCenterGap8: { display: "flex", alignItems: "center", ...shorthands.gap('8px') },
+  w160: { width: '160px' },
+  minW260Flex1: { minWidth: '260px', flex: 1 },
+  minW140: { minWidth: '140px' },
+  maxW640: { maxWidth: '640px' },
+  gridGap16MinW560: { display: "grid", ...shorthands.gap('16px'), minWidth: '560px' },
+  flexWrapItemsEndGap8Mt6: { display: "flex", ...shorthands.gap('8px'), flexWrap: "wrap", alignItems: "end", marginTop: '6px' },
+  minW220: { minWidth: '220px' },
+  maxW260: { maxWidth: '260px' },
+  flexItemsCenterJustifySpacebetween: { display: "flex", justifyContent: "space-between", alignItems: "center" },
+  mt6: { marginTop: '6px' },
+  maxW200: { maxWidth: '200px' },
+  flexItemsCenterGap8Mt6: { display: "flex", ...shorthands.gap('8px'), alignItems: "center", marginTop: '6px' },
+  blockMt6Muted: { color: tokens.colorNeutralForeground3, display: "block", marginTop: '6px' },
+  flexWrapItemsCenterGap8Mt6: { display: "flex", ...shorthands.gap('8px'), flexWrap: "wrap", alignItems: "center", marginTop: '6px' },
+});
+
 
 interface CallingPolicyMapRow {
   discoveryCallingPolicyId: string;
@@ -38,6 +59,7 @@ export function CallingPolicyMapDialog({
   siteId: string;
   callingPolicyChoices: Choice[];
 }) {
+  const ls = useLocalStyles();
   const qc = useQueryClient();
   const rowsQ = useQuery({
     queryKey: ['calling-policy-map', base, siteId],
@@ -56,7 +78,7 @@ export function CallingPolicyMapDialog({
         <DialogBody>
           <DialogTitle>Calling policy map</DialogTitle>
           <DialogContent>
-            <Text size={200} block style={{ marginBottom: 12 }}>
+            <Text size={200} block className={ls.mb12}>
               Which real tenant Voice Routing Policy each Data Collection calling policy means for this site -
               that's the Teams policy that actually governs local/national/international dialing, not the Teams
               Calling Policy. "International" here might be a different real policy on a US site than on a Belgium
@@ -67,17 +89,17 @@ export function CallingPolicyMapDialog({
             ) : (rowsQ.data ?? []).length === 0 ? (
               <Text size={200}>No calling policies defined in Data Collection yet.</Text>
             ) : (
-              <div style={{ display: 'grid', gap: 8 }}>
+              <div className={ls.gridGap8}>
                 {(rowsQ.data ?? []).map((r) => (
-                  <div key={r.discoveryCallingPolicyId} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Text style={{ width: 160 }}>{r.name}</Text>
+                  <div key={r.discoveryCallingPolicyId} className={ls.flexItemsCenterGap8}>
+                    <Text className={ls.w160}>{r.name}</Text>
                     {r.inUse && !r.tenantPolicyId && (
                       <Badge appearance="tint" color="danger" size="small">
                         in use, unmapped
                       </Badge>
                     )}
                     <Dropdown
-                      style={{ minWidth: 260, flex: 1 }}
+                      className={ls.minW260Flex1}
                       placeholder="Select the real tenant policy…"
                       value={callingPolicyChoices.find((c) => c.value === r.tenantPolicyId)?.label ?? ''}
                       selectedOptions={r.tenantPolicyId ? [r.tenantPolicyId] : []}
@@ -127,6 +149,7 @@ export function CallingSettingsDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const ls = useLocalStyles();
   const cf = (row.call_forwarding as CallForwardingSettings | null) ?? null;
   const pg = (row.pickup_group as PickupGroupSettings | null) ?? null;
 
@@ -218,7 +241,7 @@ export function CallingSettingsDialog({
       value={value === 'on' ? 'On' : value === 'off' ? 'Off' : '— not set —'}
       selectedOptions={[value]}
       onOptionSelect={(_, d) => onChange((d.optionValue as TriState) ?? 'unset')}
-      style={{ minWidth: 140 }}
+      className={ls.minW140}
     >
       <Option value="unset">— not set —</Option>
       <Option value="off">Off</Option>
@@ -228,14 +251,14 @@ export function CallingSettingsDialog({
 
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: 640 }}>
+      <DialogSurface className={ls.maxW640}>
         <DialogBody>
           <DialogTitle>Calling settings — {String(row.upn)}</DialogTitle>
           <DialogContent>
-            <div style={{ display: 'grid', gap: 16, minWidth: 560 }}>
+            <div className={ls.gridGap16MinW560}>
               <div>
                 <Text weight="semibold">Forwarding</Text>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end', marginTop: 6 }}>
+                <div className={ls.flexWrapItemsEndGap8Mt6}>
                   <Field label="Status">{triStateDropdown(fwdMode, setFwdMode)}</Field>
                   {fwdMode === 'on' && (
                     <>
@@ -263,7 +286,7 @@ export function CallingSettingsDialog({
                       </Field>
                       {fwdTargetType === 'SingleTarget' && (
                         <Field label="Target (user, SIP address or number)">
-                          <UpnAutocomplete tenantId={tenantId} value={fwdTarget} onChange={setFwdTarget} style={{ minWidth: 220 }} />
+                          <UpnAutocomplete tenantId={tenantId} value={fwdTarget} onChange={setFwdTarget} className={ls.minW220} />
                         </Field>
                       )}
                     </>
@@ -273,7 +296,7 @@ export function CallingSettingsDialog({
 
               <div>
                 <Text weight="semibold">Unanswered calls</Text>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end', marginTop: 6 }}>
+                <div className={ls.flexWrapItemsEndGap8Mt6}>
                   <Field label="Status">{triStateDropdown(unaMode, setUnaMode)}</Field>
                   {unaMode === 'on' && (
                     <>
@@ -305,7 +328,7 @@ export function CallingSettingsDialog({
                       </Field>
                       {unaTargetType === 'SingleTarget' && (
                         <Field label="Target (user, SIP address or number)">
-                          <UpnAutocomplete tenantId={tenantId} value={unaTarget} onChange={setUnaTarget} style={{ minWidth: 220 }} />
+                          <UpnAutocomplete tenantId={tenantId} value={unaTarget} onChange={setUnaTarget} className={ls.minW220} />
                         </Field>
                       )}
                     </>
@@ -318,7 +341,7 @@ export function CallingSettingsDialog({
                   value={BUSY_ON_BUSY_OPTIONS.find((o) => o === busyOnBusy) ?? '— not set —'}
                   selectedOptions={[busyOnBusy || 'unset']}
                   onOptionSelect={(_, d) => setBusyOnBusy(d.optionValue === 'unset' ? '' : d.optionValue ?? '')}
-                  style={{ maxWidth: 260 }}
+                  className={ls.maxW260}
                 >
                   <Option value="unset">— not set —</Option>
                   {BUSY_ON_BUSY_OPTIONS.map((o) => (
@@ -330,15 +353,15 @@ export function CallingSettingsDialog({
               </Field>
 
               <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div className={ls.flexItemsCenterJustifySpacebetween}>
                   <Text weight="semibold">Pickup group (call group)</Text>
                   <Button size="small" appearance="subtle" disabled={pgTargets.length >= 25} onClick={addPgTarget}>
                     Add member
                   </Button>
                 </div>
-                <div style={{ marginTop: 6 }}>
+                <div className={ls.mt6}>
                   <Field label="Order">
-                    <Dropdown value={pgOrder} selectedOptions={[pgOrder]} onOptionSelect={(_, d) => setPgOrder(d.optionValue ?? '')} style={{ maxWidth: 200 }}>
+                    <Dropdown value={pgOrder} selectedOptions={[pgOrder]} onOptionSelect={(_, d) => setPgOrder(d.optionValue ?? '')} className={ls.maxW200}>
                       {CALL_GROUP_ORDERS.map((o) => (
                         <Option key={o} value={o}>
                           {o}
@@ -348,33 +371,33 @@ export function CallingSettingsDialog({
                   </Field>
                 </div>
                 {pgTargets.map((t, i) => (
-                  <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
-                    <UpnAutocomplete tenantId={tenantId} value={t} onChange={(v) => updatePgTarget(i, v)} style={{ minWidth: 220 }} />
+                  <div key={i} className={ls.flexItemsCenterGap8Mt6}>
+                    <UpnAutocomplete tenantId={tenantId} value={t} onChange={(v) => updatePgTarget(i, v)} className={ls.minW220} />
                     <Button size="small" appearance="subtle" icon={<DeleteRegular />} onClick={() => removePgTarget(i)} />
                   </div>
                 ))}
                 {pgTargets.length === 0 && (
-                  <Text size={200} style={{ color: tokens.colorNeutralForeground3, display: 'block', marginTop: 6 }}>
+                  <Text size={200} className={ls.blockMt6Muted}>
                     No members - saving now will clear a previously-saved group on next deploy.
                   </Text>
                 )}
               </div>
 
               <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div className={ls.flexItemsCenterJustifySpacebetween}>
                   <Text weight="semibold">Delegates</Text>
                   <Button size="small" appearance="subtle" disabled={delegates.length >= 25} onClick={addDelegate}>
                     Add delegate
                   </Button>
                 </div>
                 {delegates.map((d, i) => (
-                  <div key={i} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}>
+                  <div key={i} className={ls.flexWrapItemsCenterGap8Mt6}>
                     <UpnAutocomplete
                       tenantId={tenantId}
                       value={d.delegateUpn}
                       onChange={(v) => updateDelegate(i, { delegateUpn: v })}
                       placeholder="delegate@contoso.com"
-                      style={{ minWidth: 220 }}
+                      className={ls.minW220}
                     />
                     <Checkbox label="Make calls" checked={d.makeCalls} onChange={(_, ev) => updateDelegate(i, { makeCalls: !!ev.checked })} />
                     <Checkbox label="Receive calls" checked={d.receiveCalls} onChange={(_, ev) => updateDelegate(i, { receiveCalls: !!ev.checked })} />

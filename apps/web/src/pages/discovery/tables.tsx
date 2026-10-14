@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
-import { Badge, Button, Card, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Dropdown, Field, MessageBar, MessageBarBody, Option, SearchBox, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text } from '@fluentui/react-components';
+import { Badge, Button, Card, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Dropdown, Field, MessageBar, MessageBarBody, Option, SearchBox, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text , makeStyles, shorthands, mergeClasses } from '@fluentui/react-components';
 import { EyeRegular } from '@fluentui/react-icons';
 import { buildAutoAttendantFlowGraphFromLive, buildCallQueueFlowGraphFromLive, TENANT_OBJECT_TYPE_LABELS, TENANT_POLICY_TYPE_LABELS, TENANT_POLICY_TYPES, type Paginated, type TenantEndpoint, type TenantObject, type TenantObjectType, type TenantPolicySummary, type TenantPolicyType, type TenantUserSummary, type TenantGroupSummary } from '@tvmf/shared';
 import { api, ApiError } from '../../api';
@@ -13,7 +13,21 @@ import { useStyles, fmt, Pager, JsonDialog, str, fetchAllPages } from './discove
 import { HistoryButton } from './history';
 import { TableSkeleton } from '../../components/states';
 
+const useLocalStyles = makeStyles({
+  w95vwMaxW95vw: { maxWidth: "95vw", width: "95vw" },
+  blockMb10: { display: "block", marginBottom: '10px' },
+  minW220: { minWidth: '220px' },
+  minW200: { minWidth: '200px' },
+  minW170: { minWidth: '170px' },
+  minW260: { minWidth: '260px' },
+  gridGap12: { display: "grid", ...shorthands.gap('12px') },
+  flexGap8: { display: "flex", ...shorthands.gap('8px') },
+  gridGap10: { display: "grid", ...shorthands.gap('10px') },
+});
+
+
 function LiveCallFlowDialog({ base, type, row, onClose }: { base: string; type: 'auto_attendant' | 'call_queue'; row: TenantObject; onClose: () => void }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const needsSiblings = type === 'auto_attendant';
   // Every page, not just the first 200: on a big tenant a menu option or
@@ -71,11 +85,11 @@ function LiveCallFlowDialog({ base, type, row, onClose }: { base: string; type: 
 
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: '95vw', width: '95vw' }}>
+      <DialogSurface className={ls.w95vwMaxW95vw}>
         <DialogBody>
           <DialogTitle>Call flow: {row.display_name ?? row.object_key}</DialogTitle>
           <DialogContent>
-            <Text size={200} className={s.muted} style={{ display: 'block', marginBottom: 10 }}>
+            <Text size={200} className={mergeClasses(s.muted, ls.blockMb10)}>
               {type === 'auto_attendant'
                 ? "Business hours, after hours and holiday routing, from this tenant's live configuration - including every Auto Attendant a menu option hands off to, followed all the way through. \"Front door\" marks an Auto Attendant with a phone number attached."
                 : 'What happens to a call in this queue - overflow, timeout and no-agent routing, from live configuration.'}
@@ -121,6 +135,7 @@ export function ObjectsTable({
   /** Extra toolbar content (e.g. an Import button) rendered after the search box. */
   actions?: ReactNode;
 }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const [qInput, setQInput] = useState('');
   const q = useDebounced(qInput);
@@ -153,7 +168,7 @@ export function ObjectsTable({
           {title ?? TENANT_OBJECT_TYPE_LABELS[type]} <span className={s.muted}>({total.toLocaleString()})</span>
         </Text>
         <div className={s.row}>
-          <SearchBox size="small" placeholder="Search…" value={qInput} onChange={(_, d) => setQInput(d.value)} style={{ minWidth: 220 }} />
+          <SearchBox size="small" placeholder="Search…" value={qInput} onChange={(_, d) => setQInput(d.value)} className={ls.minW220} />
           {actions}
         </div>
       </div>
@@ -211,6 +226,7 @@ export function ObjectsTable({
 }
 
 export function PoliciesTable({ base }: { base: string }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const [type, setType] = useState<TenantPolicyType | ''>('');
   const [qInput, setQInput] = useState('');
@@ -245,7 +261,7 @@ export function PoliciesTable({ base }: { base: string }) {
             selectedOptions={type ? [type] : []}
             value={type ? TENANT_POLICY_TYPE_LABELS[type] : ''}
             onOptionSelect={(_, d) => setType((d.optionValue ?? '') as TenantPolicyType | '')}
-            style={{ minWidth: 220 }}
+            className={ls.minW220}
           >
             <Option value="" text="All policy types">
               All policy types
@@ -256,7 +272,7 @@ export function PoliciesTable({ base }: { base: string }) {
               </Option>
             ))}
           </Dropdown>
-          <SearchBox size="small" placeholder="Search…" value={qInput} onChange={(_, d) => setQInput(d.value)} style={{ minWidth: 200 }} />
+          <SearchBox size="small" placeholder="Search…" value={qInput} onChange={(_, d) => setQInput(d.value)} className={ls.minW200} />
         </div>
       </div>
       {list.isLoading ? (
@@ -328,6 +344,7 @@ export function PoliciesTable({ base }: { base: string }) {
 const ACCOUNT_TYPES = ['User', 'ResourceAccount', 'Guest', 'IneligibleUser', 'SfbOnPremUser', 'Unknown'] as const;
 
 export function UsersTable({ base, canImport, onImported }: { base: string; canImport: boolean; onImported: () => void }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const [qInput, setQInput] = useState('');
   const q = useDebounced(qInput);
@@ -364,7 +381,7 @@ export function UsersTable({ base, canImport, onImported }: { base: string; canI
             selectedOptions={acctType ? [acctType] : []}
             value={acctType}
             onOptionSelect={(_, d) => setAcctType(d.optionValue ?? '')}
-            style={{ minWidth: 170 }}
+            className={ls.minW170}
           >
             <Option value="" text="All account types">
               All account types
@@ -376,7 +393,7 @@ export function UsersTable({ base, canImport, onImported }: { base: string; canI
             ))}
           </Dropdown>
           <Checkbox size="medium" label="Voice-enabled only" checked={evOnly} onChange={(_, d) => setEvOnly(!!d.checked)} />
-          <SearchBox size="small" placeholder="Search UPN, name, number, department…" value={qInput} onChange={(_, d) => setQInput(d.value)} style={{ minWidth: 260 }} />
+          <SearchBox size="small" placeholder="Search UPN, name, number, department…" value={qInput} onChange={(_, d) => setQInput(d.value)} className={ls.minW260} />
           {canImport && (
             <Button size="small" appearance="primary" onClick={() => setImportOpen(true)}>
               Import into Data Collection…
@@ -540,6 +557,7 @@ function ImportDialog({
   onClose: () => void;
   onDone: () => void;
 }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const { activeTenantId } = useAuth();
   const [evOnly, setEvOnly] = useState(true);
@@ -601,7 +619,7 @@ function ImportDialog({
                 </MessageBarBody>
               </MessageBar>
             ) : (
-              <div style={{ display: 'grid', gap: 12 }}>
+              <div className={ls.gridGap12}>
                 <Text size={200}>
                   {kind === 'user'
                     ? 'Creates a Data Collection user for every discovered tenant user that is not captured yet (matched on UPN). Existing users are never overwritten; unlinked matches are linked.'
@@ -617,13 +635,13 @@ function ImportDialog({
                   />
                 )}
                 <Field label="Set all rows to">
-                  <div style={{ display: 'flex', gap: 8 }}>
+                  <div className={ls.flexGap8}>
                     <Dropdown
                       placeholder={sites.isLoading ? 'Loading sites…' : 'Select a site'}
                       selectedOptions={bulkSiteId ? [bulkSiteId] : []}
                       value={bulkSiteId ? siteLabel(bulkSiteId) : ''}
                       onOptionSelect={(_, d) => setBulkSiteId(d.optionValue ?? '')}
-                      style={{ minWidth: 220 }}
+                      className={ls.minW220}
                     >
                       {siteList.map((x) => (
                         <Option key={x.id} value={x.id} text={`${x.sitecode} · ${x.name ?? ''}`}>
@@ -675,7 +693,7 @@ function ImportDialog({
                                 onOptionSelect={(_, d) =>
                                   setRowSiteId((prev) => ({ ...prev, [c.id]: d.optionValue === SKIP ? '' : d.optionValue ?? '' }))
                                 }
-                                style={{ minWidth: 200 }}
+                                className={ls.minW200}
                               >
                                 {/* A suggested row could not be left out before - every row had a site. */}
                                 <Option value={SKIP} text="Don't import">
@@ -731,6 +749,7 @@ function ImportDialog({
  * picker - not a `tenant_objects` type, so no change history here.
  */
 export function GroupsTable({ base }: { base: string }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const [qInput, setQInput] = useState('');
   const q = useDebounced(qInput);
@@ -761,7 +780,7 @@ export function GroupsTable({ base }: { base: string }) {
           placeholder="Search name, mail, object ID…"
           value={qInput}
           onChange={(_, d) => setQInput(d.value)}
-          style={{ minWidth: 260 }}
+          className={ls.minW260}
         />
       </div>
       {list.isLoading ? (
@@ -810,6 +829,7 @@ export function GroupsTable({ base }: { base: string }) {
  * serial / firmware to show.)
  */
 export function EndpointsTable({ base }: { base: string }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const list = useQuery({
     queryKey: ['tdisc', 'endpoints', base],
@@ -818,7 +838,7 @@ export function EndpointsTable({ base }: { base: string }) {
   const items = list.data?.items ?? [];
 
   return (
-    <div style={{ display: 'grid', gap: 10 }}>
+    <div className={ls.gridGap10}>
       <MessageBar intent="info">
         <MessageBarBody>
           Common Area Phones and phone-enabled resource accounts found in the tenant. Microsoft

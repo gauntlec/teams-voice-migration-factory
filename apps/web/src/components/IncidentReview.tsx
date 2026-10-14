@@ -1,10 +1,18 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Text, Textarea, makeStyles, tokens } from '@fluentui/react-components';
+import { Badge, Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Text, Textarea, makeStyles, tokens , mergeClasses } from '@fluentui/react-components';
 import { DeleteRegular } from '@fluentui/react-icons';
 import { INC_REVIEW_SECTIONS, type IncReviewAction } from '@tvmf/shared';
 import { api } from '../api';
 import { errorText, when } from '../pages/ServiceRequests';
+
+const useLocalStyles = makeStyles({
+  w94vwMaxW780: { maxWidth: "780px", width: "94vw" },
+  preWrap: { whiteSpace: "pre-wrap" },
+  minW150: { minWidth: '150px' },
+  mt8: { marginTop: '8px' },
+});
+
 
 const useStyles = makeStyles({
   card: { display: 'flex', flexDirection: 'column', rowGap: tokens.spacingVerticalM },
@@ -71,6 +79,7 @@ export function IncidentReviewCard({ base, incident, review, staff, show }: { ba
 }
 
 function ReviewDialog({ base, incident, staff, onClose }: { base: string; incident: { id: string; reference: string }; staff: boolean; onClose: () => void }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['incident-review', base, incident.id], queryFn: () => api<ReviewPayload>(`${base}/${incident.id}/review`) });
@@ -101,7 +110,7 @@ function ReviewDialog({ base, incident, staff, onClose }: { base: string; incide
 
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: '780px', width: '94vw' }}>
+      <DialogSurface className={ls.w94vwMaxW780}>
         <DialogBody>
           <DialogTitle>Post-incident review · {incident.reference}</DialogTitle>
           <DialogContent className={s.stack}>
@@ -114,7 +123,7 @@ function ReviewDialog({ base, incident, staff, onClose }: { base: string; incide
                     {editable ? (
                       <Textarea value={values[sec.key]} maxLength={4000} rows={3} resize="vertical" onChange={(_, d) => setValue(sec.key, d.value)} />
                     ) : (
-                      <Text style={{ whiteSpace: 'pre-wrap' }}>{values[sec.key] || '—'}</Text>
+                      <Text className={ls.preWrap}>{values[sec.key] || '—'}</Text>
                     )}
                   </Field>
                 ))}
@@ -122,7 +131,7 @@ function ReviewDialog({ base, incident, staff, onClose }: { base: string; incide
                   <Text weight="semibold">What happened, in order</Text>
                   {q.data.timeline.map((e, i) => (
                     <div key={i} className={s.event}>
-                      <Text size={200} className={s.muted} style={{ minWidth: 150 }}>
+                      <Text size={200} className={mergeClasses(s.muted, ls.minW150)}>
                         {when(e.at)}
                       </Text>
                       <Text size={200}>{timelineText(e)}</Text>
@@ -134,7 +143,7 @@ function ReviewDialog({ base, incident, staff, onClose }: { base: string; incide
                   {f.actions.length === 0 && <Text size={200} block>{editable ? 'No actions yet.' : 'None.'}</Text>}
                   {f.actions.map((a, i) =>
                     editable ? (
-                      <div key={i} className={s.action} style={{ marginTop: 8 }}>
+                      <div key={i} className={mergeClasses(s.action, ls.mt8)}>
                         <Field label={i === 0 ? 'Action' : undefined}>
                           <Input value={a.text} maxLength={300} onChange={(_, d) => setAction(i, { text: d.value })} />
                         </Field>
@@ -154,7 +163,7 @@ function ReviewDialog({ base, incident, staff, onClose }: { base: string; incide
                     ),
                   )}
                   {editable && (
-                    <div style={{ marginTop: 8 }}>
+                    <div className={ls.mt8}>
                       <Button size="small" disabled={f.actions.length >= 20} onClick={() => setF((p) => ({ ...p, actions: [...p.actions, { text: '' }] }))}>
                         Add an action
                       </Button>

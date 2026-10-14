@@ -1,10 +1,16 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Spinner, Text } from '@fluentui/react-components';
+import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Spinner, Text , makeStyles, mergeClasses } from '@fluentui/react-components';
 import { buildAutoAttendantFlowGraphFromDesign, buildCallQueueFlowGraphFromDesign, type AutoAttendantCallableEntity, type AutoAttendantCallFlow, type AutoAttendantHolidayCallFlow, type CallQueueActionSettings, type DesignAutoAttendantInput, type DesignCallQueueInput, type Paginated } from '@tvmf/shared';
 import { api } from '../../api';
 import { CallFlowDiagram } from '../../components/CallFlowDiagram';
 import { LoadError, useRecordStyles, type Row } from '../../components/records';
+
+const useLocalStyles = makeStyles({
+  w95vwMaxW95vw: { maxWidth: "95vw", width: "95vw" },
+  blockMb10: { display: "block", marginBottom: '10px' },
+});
+
 
 /** Maps a Design & Build Call Queue row to the shape buildCallQueueFlowGraphFromDesign/buildAutoAttendantFlowGraphFromDesign need. */
 function toDesignCqInput(r: Row): DesignCallQueueInput {
@@ -49,16 +55,17 @@ function toDesignAaInput(r: Row, hasPhoneNumberById?: Map<string, boolean>): Des
  * diagram" button was clicked from already carries everything.
  */
 export function CallQueueFlowDialog({ row, onClose }: { row: Row; onClose: () => void }) {
+  const ls = useLocalStyles();
   const s = useRecordStyles();
   const graph = useMemo(() => buildCallQueueFlowGraphFromDesign(toDesignCqInput(row)), [row]);
 
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: '95vw', width: '95vw' }}>
+      <DialogSurface className={ls.w95vwMaxW95vw}>
         <DialogBody>
           <DialogTitle>Call flow: {String(row.name)}</DialogTitle>
           <DialogContent>
-            <Text size={200} className={s.muted} style={{ display: 'block', marginBottom: 10 }}>
+            <Text size={200} className={mergeClasses(s.muted, ls.blockMb10)}>
               What happens to a call in this queue - overflow, timeout and no-agent routing, as currently configured here - not yet deployed.
             </Text>
             <CallFlowDiagram graph={graph} exportFilename={`call-flow-${String(row.name)}`} />
@@ -87,6 +94,7 @@ export function CallQueueFlowDialog({ row, onClose }: { row: Row; onClose: () =>
  * tenant_objects directly instead.
  */
 export function AutoAttendantFlowDialog({ tid, base, siteId, row, onClose }: { tid: string; base: string; siteId: string; row: Row; onClose: () => void }) {
+  const ls = useLocalStyles();
   const s = useRecordStyles();
   const aaQ = useQuery({
     queryKey: ['auto-attendants', tid, siteId, 'call-flow'],
@@ -122,11 +130,11 @@ export function AutoAttendantFlowDialog({ tid, base, siteId, row, onClose }: { t
 
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: '95vw', width: '95vw' }}>
+      <DialogSurface className={ls.w95vwMaxW95vw}>
         <DialogBody>
           <DialogTitle>Call flow: {String(row.name)}</DialogTitle>
           <DialogContent>
-            <Text size={200} className={s.muted} style={{ display: 'block', marginBottom: 10 }}>
+            <Text size={200} className={mergeClasses(s.muted, ls.blockMb10)}>
               Business hours, after hours and holiday routing, as currently configured here - not yet deployed - including every Auto Attendant a menu
               option hands off to, followed all the way through. "Front door" marks an Auto Attendant with a phone number attached.
             </Text>

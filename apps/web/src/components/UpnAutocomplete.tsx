@@ -30,6 +30,7 @@ export function UpnAutocomplete({
   onChange,
   placeholder,
   style,
+  className,
 }: {
   tenantId: string;
   /** Also suggest this site's own Data Collection Users tab entries, not just the live tenant sync. */
@@ -38,6 +39,7 @@ export function UpnAutocomplete({
   onChange: (value: string) => void;
   placeholder?: string;
   style?: React.CSSProperties;
+  className?: string;
 }) {
   const term = useDebounced(value);
 
@@ -68,6 +70,7 @@ export function UpnAutocomplete({
       value={value}
       placeholder={placeholder}
       style={style}
+      className={className}
       onChange={(e) => onChange(e.target.value)}
       onOptionSelect={(_, data) => onChange(data.optionText ?? data.optionValue ?? '')}
     >

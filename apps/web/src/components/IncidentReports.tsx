@@ -7,6 +7,12 @@ import { useAuth } from '../auth';
 import { DataTable } from './DataTable';
 import { LoadError } from './records';
 
+const useLocalStyles = makeStyles({
+  w95vwMaxW920: { maxWidth: "920px", width: "95vw" },
+  maxW200: { maxWidth: '200px' },
+});
+
+
 const useStyles = makeStyles({
   stack: { display: 'flex', flexDirection: 'column', rowGap: tokens.spacingVerticalM, maxHeight: '70vh', overflowY: 'auto' },
   tiles: { display: 'flex', flexWrap: 'wrap', columnGap: tokens.spacingHorizontalM, rowGap: tokens.spacingVerticalM },
@@ -47,6 +53,7 @@ const dur = (v: number | null, unit: string) => (v === null ? '—' : `${v} ${un
 
 /** A month at a time: how many incidents, how fast we acknowledged and restored, how often targets were met, where they come from. */
 export function IncidentReportsDialog({ base, onClose }: { base: string; onClose: () => void }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const { can } = useAuth();
   const [month, setMonth] = useState(thisMonth());
@@ -56,12 +63,12 @@ export function IncidentReportsDialog({ base, onClose }: { base: string; onClose
   const pct = (k: keyof Report['on_time']) => (r?.on_time[k].percent === null || !r ? '—' : `${r.on_time[k].percent}%`);
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: '920px', width: '95vw' }}>
+      <DialogSurface className={ls.w95vwMaxW920}>
         <DialogBody>
           <DialogTitle>Incident report</DialogTitle>
           <DialogContent className={s.stack}>
             <Field label="Month">
-              <Input type="month" value={month} max={thisMonth()} onChange={(_, d) => d.value && setMonth(d.value)} style={{ maxWidth: 200 }} />
+              <Input type="month" value={month} max={thisMonth()} onChange={(_, d) => d.value && setMonth(d.value)} className={ls.maxW200} />
             </Field>
             {q.isLoading && <Spinner size="tiny" />}
             {q.isError && <LoadError message={(q.error as Error).message} />}

@@ -1,10 +1,19 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Card, Field, Input, Select, Text, makeStyles, shorthands, tokens } from '@fluentui/react-components';
+import { Badge, Button, Card, Field, Input, Select, Text, makeStyles, shorthands, tokens , mergeClasses } from '@fluentui/react-components';
 import { AGENT_PROPOSAL_STATE_LABELS, SR_DEPLOY_GUARDRAILS, agentLabel, type AgentProposalState, type SrAutomation } from '@tvmf/shared';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { errorText, when } from '../pages/ServiceRequests';
+
+const useLocalStyles = makeStyles({
+  flexColRowGap8: { display: "flex", flexDirection: "column", rowGap: '8px' },
+  preWrap: { whiteSpace: "pre-wrap" },
+  minW260: { minWidth: '260px' },
+  flexColRowGap6: { display: "flex", flexDirection: "column", rowGap: '6px' },
+  pl20Margin0: { ...shorthands.margin("0px"), paddingLeft: '20px' },
+});
+
 
 const useStyles = makeStyles({
   card: { display: 'flex', flexDirection: 'column', rowGap: tokens.spacingVerticalM },
@@ -52,6 +61,7 @@ const RISK_COLOR = { low: 'success', medium: 'warning', high: 'danger' } as cons
  * commands and is approved onto one of your own signed-in tenant sessions: that is the one approval.
  */
 export function RequestAssistantCard({ base, requestId, status, agent, assignedAgentName, onChanged }: { base: string; requestId: string; status: string; agent: SrAssistantInfo; assignedAgentName: string | null; onChanged: () => void }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const qc = useQueryClient();
   const { activeTenantId } = useAuth();
@@ -151,7 +161,7 @@ export function RequestAssistantCard({ base, requestId, status, agent, assignedA
       )}
 
       {pending.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', rowGap: 8 }}>
+        <div className={ls.flexColRowGap8}>
           <Text weight="semibold">Waiting for your decision ({pending.length})</Text>
           {pending.map((p) => {
             const deploy = p.action_class === 'change_deploy';
@@ -167,8 +177,8 @@ export function RequestAssistantCard({ base, requestId, status, agent, assignedA
                     expires {new Date(p.expires_at).toLocaleString()}
                   </Text>
                 </div>
-                <Text style={{ whiteSpace: 'pre-wrap' }}>{p.summary}</Text>
-                <Text size={200} className={s.muted} style={{ whiteSpace: 'pre-wrap' }}>
+                <Text className={ls.preWrap}>{p.summary}</Text>
+                <Text size={200} className={mergeClasses(s.muted, ls.preWrap)}>
                   Why: {p.rationale}
                 </Text>
                 {deploy && (
@@ -194,7 +204,7 @@ export function RequestAssistantCard({ base, requestId, status, agent, assignedA
                 )}
                 <div className={s.row}>
                   <Field>
-                    <Input size="small" value={notes[p.id] ?? ''} maxLength={1000} placeholder="Note (optional)" onChange={(_, d) => setNotes({ ...notes, [p.id]: d.value })} style={{ minWidth: 260 }} />
+                    <Input size="small" value={notes[p.id] ?? ''} maxLength={1000} placeholder="Note (optional)" onChange={(_, d) => setNotes({ ...notes, [p.id]: d.value })} className={ls.minW260} />
                   </Field>
                   <Button appearance="primary" size="small" disabled={decide.isPending || (deploy && !live.length)} onClick={() => decide.mutate({ p, decision: 'approve' })}>
                     {deploy ? 'Approve and deploy' : 'Approve'}
@@ -209,7 +219,7 @@ export function RequestAssistantCard({ base, requestId, status, agent, assignedA
         </div>
       )}
       {earlier.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', rowGap: 6 }}>
+        <div className={ls.flexColRowGap6}>
           <Text weight="semibold" size={200}>
             Earlier proposals
           </Text>
@@ -239,7 +249,7 @@ export function RequestAssistantCard({ base, requestId, status, agent, assignedA
         <summary>
           <Text size={200}>What keeps an assistant&apos;s deployment safe</Text>
         </summary>
-        <ul style={{ margin: 0, paddingLeft: 20 }}>
+        <ul className={ls.pl20Margin0}>
           {SR_DEPLOY_GUARDRAILS.map((g) => (
             <li key={g}>
               <Text size={200}>{g}</Text>

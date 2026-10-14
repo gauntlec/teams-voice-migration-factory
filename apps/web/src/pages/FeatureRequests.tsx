@@ -56,6 +56,13 @@ import { api, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { Page } from '../components/Page';
 
+const useLocalStyles = makeStyles({
+  flexGap2: { display: "flex", ...shorthands.gap('2px') },
+  maxW320Mb8: { maxWidth: '320px', marginBottom: '8px' },
+  dangerFill: { backgroundColor: tokens.colorPaletteRedBackground3 },
+});
+
+
 /* --------------------------------- styles --------------------------------- */
 
 const useStyles = makeStyles({
@@ -697,6 +704,7 @@ function RequestCard({
   onMove: (status: FeatureStatus) => void;
   onDelete: () => void;
 }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const [copied, setCopied] = useState(false);
 
@@ -749,7 +757,7 @@ function RequestCard({
         <Text className={s.meta}>
           {f.submitted_by_name ?? 'Unknown'} · {timeAgo(f.created_at)}
         </Text>
-        <div style={{ display: 'flex', gap: 2 }}>
+        <div className={ls.flexGap2}>
           <Button
             size="small"
             appearance="subtle"
@@ -796,6 +804,7 @@ function RequestCard({
 /* --------------------------------- page ---------------------------------- */
 
 export function FeatureRequests() {
+  const ls = useLocalStyles();
   const s = useStyles();
   const qc = useQueryClient();
   const { can } = useAuth();
@@ -859,7 +868,7 @@ export function FeatureRequests() {
         placeholder="Search by title or problem…"
         value={search}
         onChange={(_, d) => setSearch(d.value)}
-        style={{ maxWidth: 320, marginBottom: 8 }}
+        className={ls.maxW320Mb8}
       />
       {list.isLoading ? (
         <Spinner size="tiny" />
@@ -956,7 +965,7 @@ export function FeatureRequests() {
                 </DialogTrigger>
                 <Button
                   appearance="primary"
-                  style={{ backgroundColor: tokens.colorPaletteRedBackground3 }}
+                  className={ls.dangerFill}
                   disabled={remove.isPending}
                   onClick={() => remove.mutate(confirmDelete.id)}
                 >

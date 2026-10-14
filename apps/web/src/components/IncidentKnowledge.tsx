@@ -1,9 +1,18 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Select, Spinner, Text, Textarea, makeStyles, shorthands, tokens } from '@fluentui/react-components';
+import { Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Select, Spinner, Text, Textarea, makeStyles, shorthands, tokens , mergeClasses } from '@fluentui/react-components';
 import { INC_CATEGORIES } from '@tvmf/shared';
 import { api } from '../api';
 import { errorText } from '../pages/ServiceRequests';
+
+const useLocalStyles = makeStyles({
+  preWrap: { whiteSpace: "pre-wrap" },
+  w94vwMaxW720: { maxWidth: "720px", width: "94vw" },
+  maxH70vhScroll: { maxHeight: "70vh", overflowY: "auto" },
+  w94vwMaxW820: { maxWidth: "820px", width: "94vw" },
+  maxH72vhScroll: { maxHeight: "72vh", overflowY: "auto" },
+});
+
 
 const useStyles = makeStyles({
   card: { display: 'flex', flexDirection: 'column', rowGap: tokens.spacingVerticalS },
@@ -28,6 +37,7 @@ interface Snippet {
 
 /** For engineers: what was learned fixing something like this before, with "this helped" feedback. Nothing renders when nothing matches. */
 export function KnowledgeSuggestions({ base, incidentId }: { base: string; incidentId: string }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['incident-knowledge-for', base, incidentId], queryFn: () => api<Snippet[]>(`${base}/knowledge/for/${incidentId}`) });
@@ -50,11 +60,11 @@ export function KnowledgeSuggestions({ base, incidentId }: { base: string; incid
         <div key={k.id} className={s.item}>
           <Text weight="semibold">{k.title}</Text>
           {k.symptoms && (
-            <Text size={200} className={s.muted} style={{ whiteSpace: 'pre-wrap' }}>
+            <Text size={200} className={mergeClasses(s.muted, ls.preWrap)}>
               Seen as: {k.symptoms.slice(0, 300)}
             </Text>
           )}
-          <Text style={{ whiteSpace: 'pre-wrap' }}>{k.fix}</Text>
+          <Text className={ls.preWrap}>{k.fix}</Text>
           <div className={s.row}>
             {voted[k.id] === undefined ? (
               <>
@@ -80,6 +90,7 @@ export function KnowledgeSuggestions({ base, incidentId }: { base: string; incid
 
 /** A tip written for customers, shown on the raise form when what they are describing matches. */
 export function KnowledgeTips({ base, category, subcategory, text, enabled }: { base: string; category: string; subcategory: string; text: string; enabled: boolean }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const q = useQuery({
     queryKey: ['incident-knowledge-tips', base, category, subcategory, text.slice(0, 200)],
@@ -91,7 +102,7 @@ export function KnowledgeTips({ base, category, subcategory, text, enabled }: { 
     <Card className={s.card}>
       <Text weight="semibold">A quick thing to try first</Text>
       {q.data.map((k) => (
-        <Text key={k.id} style={{ whiteSpace: 'pre-wrap' }}>
+        <Text key={k.id} className={ls.preWrap}>
           {k.customer_text}
         </Text>
       ))}
@@ -114,6 +125,7 @@ interface Draft {
 
 /** Saves what fixed an incident as knowledge (engineers): starts from the incident and the note that resolved it. */
 export function SaveKnowledgeButton({ base, incidentId }: { base: string; incidentId: string }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -137,10 +149,10 @@ export function SaveKnowledgeButton({ base, incidentId }: { base: string; incide
       {start.error && <Text className={s.error}>{errorText(start.error, 'Could not start.')}</Text>}
       {open && d && (
         <Dialog open onOpenChange={(_, x) => !x.open && setOpen(false)}>
-          <DialogSurface style={{ maxWidth: '720px', width: '94vw' }}>
+          <DialogSurface className={ls.w94vwMaxW720}>
             <DialogBody>
               <DialogTitle>Save what fixed it</DialogTitle>
-              <DialogContent className={s.stack} style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+              <DialogContent className={mergeClasses(s.stack, ls.maxH70vhScroll)}>
                 <Field label="Title" required>
                   <Input value={d.title} onChange={(_, x) => set({ title: x.value })} />
                 </Field>
@@ -171,6 +183,7 @@ export function SaveKnowledgeButton({ base, incidentId }: { base: string; incide
 
 /** Everything the team has saved: read, edit the wording, take things out. */
 export function KnowledgeDialog({ base, onClose }: { base: string; onClose: () => void }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const qc = useQueryClient();
   const [editing, setEditing] = useState<Snippet | null>(null);
@@ -186,10 +199,10 @@ export function KnowledgeDialog({ base, onClose }: { base: string; onClose: () =
     <>
       {(
         <Dialog open onOpenChange={(_, x) => !x.open && onClose()}>
-          <DialogSurface style={{ maxWidth: '820px', width: '94vw' }}>
+          <DialogSurface className={ls.w94vwMaxW820}>
             <DialogBody>
               <DialogTitle>Knowledge</DialogTitle>
-              <DialogContent className={s.stack} style={{ maxHeight: '72vh', overflowY: 'auto' }}>
+              <DialogContent className={mergeClasses(s.stack, ls.maxH72vhScroll)}>
                 <Text size={200} className={s.muted}>
                   Saved from incidents that were fixed (Save as knowledge on a resolved incident). Suggested on new incidents of the same kind, and read by assistants.
                 </Text>
@@ -227,7 +240,7 @@ export function KnowledgeDialog({ base, onClose }: { base: string; onClose: () =
                           {label(k)} · {k.helpful} helped · {k.not_helpful} did not{k.customer_text ? ' · has a customer tip' : ''}
                         </Text>
                       </div>
-                      <Text style={{ whiteSpace: 'pre-wrap' }}>{k.fix}</Text>
+                      <Text className={ls.preWrap}>{k.fix}</Text>
                       <div className={s.row}>
                         <Button size="small" onClick={() => setEditing(k)}>
                           Edit

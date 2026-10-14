@@ -1,11 +1,24 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Dropdown, Field, Input, Option, Spinner, Text, tokens } from '@fluentui/react-components';
+import { Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Dropdown, Field, Input, Option, Spinner, Text, tokens , makeStyles, shorthands } from '@fluentui/react-components';
 import { DeleteRegular } from '@fluentui/react-icons';
 import { POLICY_KINDS, VOICEMAIL_PROMPT_LANGUAGES, type PolicyKey } from '@tvmf/shared';
 import { api, ApiError } from '../../api';
 import { type Choice } from '../../components/records';
 import { DangerText } from '../../components/ui';
+
+const useLocalStyles = makeStyles({
+  maxW760: { maxWidth: '760px' },
+  mb12: { marginBottom: '12px' },
+  gridGap8Mb12: { display: "grid", ...shorthands.gap('8px'), marginBottom: '12px' },
+  flexItemsCenterGap8: { display: "flex", alignItems: "center", ...shorthands.gap('8px') },
+  flex1: { flex: 1 },
+  ml6: { marginLeft: '6px' },
+  mb8Danger: { color: tokens.colorPaletteRedForeground1, marginBottom: '8px' },
+  gridGap12: { display: "grid", gridTemplateColumns: "1fr 1fr", ...shorthands.gap('12px') },
+  flexGap8: { display: "flex", ...shorthands.gap('8px') },
+});
+
 
 interface BuildTemplateRow {
   id: string;
@@ -60,6 +73,7 @@ export function TemplatesDialog({
   selectedIds: Set<string>;
   onApplied: () => void;
 }) {
+  const ls = useLocalStyles();
   const qc = useQueryClient();
   const [editing, setEditing] = useState<BuildTemplateRow | 'new' | null>(null);
   const [form, setForm] = useState<{
@@ -147,24 +161,24 @@ export function TemplatesDialog({
 
   return (
     <Dialog open={open} onOpenChange={(_, d) => onOpenChange(d.open)}>
-      <DialogSurface style={{ maxWidth: 760 }}>
+      <DialogSurface className={ls.maxW760}>
         <DialogBody>
           <DialogTitle>{kindLabel} templates</DialogTitle>
           <DialogContent>
-            <Text size={200} block style={{ marginBottom: 12 }}>
+            <Text size={200} block className={ls.mb12}>
               A named preset applied automatically to new rows Populate creates for this site (the one marked
               Default), or on demand to the rows selected in the table below.
             </Text>
             {rowsQ.isLoading ? (
               <Spinner size="tiny" label="Loading…" />
             ) : (
-              <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
+              <div className={ls.gridGap8Mb12}>
                 {(rowsQ.data ?? []).map((tpl) => (
-                  <div key={tpl.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Text weight={tpl.is_default ? 'semibold' : 'regular'} style={{ flex: 1 }}>
+                  <div key={tpl.id} className={ls.flexItemsCenterGap8}>
+                    <Text weight={tpl.is_default ? 'semibold' : 'regular'} className={ls.flex1}>
                       {tpl.name}
                       {tpl.is_default && (
-                        <Badge appearance="tint" color="brand" size="small" style={{ marginLeft: 6 }}>
+                        <Badge appearance="tint" color="brand" size="small" className={ls.ml6}>
                           Default
                         </Badge>
                       )}
@@ -189,7 +203,7 @@ export function TemplatesDialog({
               </div>
             )}
             {applyError && (
-              <Text block style={{ color: tokens.colorPaletteRedForeground1, marginBottom: 8 }}>
+              <Text block className={ls.mb8Danger}>
                 {applyError}
               </Text>
             )}
@@ -199,7 +213,7 @@ export function TemplatesDialog({
                 <Field label="Name">
                   <Input value={form.name} placeholder="Standard User Template" onChange={(_, d) => setForm((p) => ({ ...p, name: d.value }))} />
                 </Field>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div className={ls.gridGap12}>
                   {TEMPLATE_POLICY_KEYS.map((k) => {
                     const label = POLICY_KINDS.find((p) => p.key === k)?.label ?? k;
                     const choices = policyChoicesByKey[k] ?? [];
@@ -257,7 +271,7 @@ export function TemplatesDialog({
                     {error}
                   </DangerText>
                 )}
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div className={ls.flexGap8}>
                   <Button appearance="primary" disabled={!form.name.trim() || save.isPending} onClick={() => save.mutate()}>
                     {save.isPending ? 'Saving…' : 'Save'}
                   </Button>

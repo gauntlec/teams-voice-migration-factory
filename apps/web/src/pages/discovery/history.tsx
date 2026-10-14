@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Dropdown, Option, SearchBox, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text } from '@fluentui/react-components';
+import { Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Dropdown, Option, SearchBox, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text , makeStyles, shorthands, mergeClasses } from '@fluentui/react-components';
 import { EyeRegular, HistoryRegular } from '@fluentui/react-icons';
 import { TENANT_OBJECT_TYPES, TENANT_OBJECT_TYPE_LABELS, type Paginated, type TenantDiscoveryRun, type TenantObjectType, type TenantObjectVersion } from '@tvmf/shared';
 import { api } from '../../api';
@@ -8,6 +8,18 @@ import { DataTable } from '../../components/DataTable';
 import { LoadError } from '../../components/records';
 import { useDebounced } from '../../hooks/useDebounced';
 import { useStyles, fmt, ChangeBadge, Pager } from './discoveryShared';
+
+const useLocalStyles = makeStyles({
+  w94vwMaxW980: { maxWidth: '980px', width: "94vw" },
+  mb8: { marginBottom: '8px' },
+  w92vwMaxW720: { maxWidth: '720px', width: "92vw" },
+  gridGap6: { display: "grid", ...shorthands.gap('6px') },
+  justifySpacebetween: { justifyContent: "space-between" },
+  minW240: { minWidth: '240px' },
+  minW150: { minWidth: '150px' },
+  minW200: { minWidth: '200px' },
+});
+
 
 type DiffLine = { text: string; kind: 'same' | 'added' | 'removed' };
 
@@ -62,6 +74,7 @@ function splitDiffLines(beforeText: string | null, afterText: string | null): { 
 
 /** Before / after JSON for one recorded change - green for new/changed lines, red for removed ones. */
 function DiffDialog({ version, onClose }: { version: TenantObjectVersion; onClose: () => void }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const beforeText = version.before ? JSON.stringify(version.before, null, 2) : null;
   const afterText = version.after ? JSON.stringify(version.after, null, 2) : null;
@@ -73,13 +86,13 @@ function DiffDialog({ version, onClose }: { version: TenantObjectVersion; onClos
     kind === 'added' ? s.diffLineAdded : kind === 'removed' ? s.diffLineRemoved : s.diffLineSame;
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: 980, width: '94vw' }}>
+      <DialogSurface className={ls.w94vwMaxW980}>
         <DialogBody>
           <DialogTitle>
             {version.display_name ?? version.object_key} · <ChangeBadge kind={version.change_kind} />
           </DialogTitle>
           <DialogContent>
-            <Text size={200} className={s.muted} block style={{ marginBottom: 8 }}>
+            <Text size={200} className={mergeClasses(s.muted, ls.mb8)} block>
               {TENANT_OBJECT_TYPE_LABELS[version.object_type]} · {fmt(version.changed_at)}
               {version.changed_fields.length > 0 && (
                 <> · changed: {version.changed_fields.join(', ')}</>
@@ -145,6 +158,7 @@ function DiffDialog({ version, onClose }: { version: TenantObjectVersion; onClos
 
 /** "History" button + dialog: the change timeline for one discovered object. */
 export function HistoryButton({ base, objectId, title }: { base: string; objectId: string; title: string }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const [open, setOpen] = useState(false);
   const [diff, setDiff] = useState<TenantObjectVersion | null>(null);
@@ -166,7 +180,7 @@ export function HistoryButton({ base, objectId, title }: { base: string; objectI
         History
       </Button>
       <Dialog open={open} onOpenChange={(_, d) => setOpen(d.open)}>
-        <DialogSurface style={{ maxWidth: 720, width: '92vw' }}>
+        <DialogSurface className={ls.w92vwMaxW720}>
           <DialogBody>
             <DialogTitle>History · {title}</DialogTitle>
             <DialogContent>
@@ -179,9 +193,9 @@ export function HistoryButton({ base, objectId, title }: { base: string; objectI
                   No recorded changes — this item has looked the same in every sync.
                 </Text>
               ) : (
-                <div style={{ display: 'grid', gap: 6 }}>
+                <div className={ls.gridGap6}>
                   {(list.data ?? []).map((v) => (
-                    <div key={v.id} className={s.row} style={{ justifyContent: 'space-between' }}>
+                    <div key={v.id} className={mergeClasses(s.row, ls.justifySpacebetween)}>
                       <div className={s.row}>
                         <ChangeBadge kind={v.change_kind} />
                         <Text size={200}>{fmt(v.changed_at)}</Text>
@@ -215,6 +229,7 @@ export function HistoryButton({ base, objectId, title }: { base: string; objectI
 
 /** The "what changed in this sync" log, with a run picker and type filter. */
 export function ChangesTab({ base }: { base: string }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const [runId, setRunId] = useState<string>('');
   const [type, setType] = useState<TenantObjectType | ''>('');
@@ -260,7 +275,7 @@ export function ChangesTab({ base }: { base: string }) {
         <div className={s.row}>
           <Dropdown
             size="small"
-            style={{ minWidth: 240 }}
+            className={ls.minW240}
             placeholder={runs.isLoading ? 'Loading runs…' : 'Pick a run'}
             selectedOptions={activeRun ? [activeRun] : []}
             value={runList.find((r) => r.id === activeRun) ? runLabel(runList.find((r) => r.id === activeRun)!) : ''}
@@ -274,7 +289,7 @@ export function ChangesTab({ base }: { base: string }) {
           </Dropdown>
           <Dropdown
             size="small"
-            style={{ minWidth: 150 }}
+            className={ls.minW150}
             placeholder="All types"
             selectedOptions={type ? [type] : []}
             value={type ? TENANT_OBJECT_TYPE_LABELS[type] : ''}
@@ -294,7 +309,7 @@ export function ChangesTab({ base }: { base: string }) {
             placeholder="Search name or key…"
             value={qInput}
             onChange={(_, d) => setQInput(d.value)}
-            style={{ minWidth: 200 }}
+            className={ls.minW200}
           />
         </div>
       </div>

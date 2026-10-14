@@ -25,6 +25,8 @@ import {
   makeStyles,
   shorthands,
   tokens,
+
+  mergeClasses,
 } from '@fluentui/react-components';
 import {
   ClipboardTaskListLtr24Regular,
@@ -56,6 +58,17 @@ import { useAuth } from '../auth';
 import { TOASTER_ID } from '../hooks/useNotify';
 import { useThemeMode } from '../ThemeMode';
 import { Wordmark } from './Logo';
+
+const useLocalStyles = makeStyles({
+  inlineFlexItemsCenterGap8: { display: "inline-flex", alignItems: "center", ...shorthands.gap('8px') },
+  onBrand: { color: tokens.colorNeutralForegroundOnBrand, opacity: 0.7 },
+  onBrand2: { color: tokens.colorNeutralForegroundOnBrand, opacity: 0.85 },
+  ml6: { marginLeft: '6px' },
+  onBrand3: { color: tokens.colorNeutralForegroundOnBrand, opacity: 0.8 },
+  styled: { outline: "none" },
+  mb16: { marginBottom: '16px' },
+});
+
 
 const useStyles = makeStyles({
   root: { display: 'grid', gridTemplateRows: '48px 1fr', height: '100vh', backgroundColor: tokens.colorNeutralBackground2 },
@@ -213,6 +226,7 @@ const ADMIN_GROUPS: { label: string; items: NavDef[] }[] = [
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const navigate = useNavigate();
   const { me, can, activeTenantId, setActiveTenant, logout } = useAuth();
@@ -305,8 +319,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           />
           <Wordmark tone="onDark" size={18} logoUrl={logoUrl} />
           {logoUrl && (
-            <span className={s.hideSmall} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-              <Text size={100} style={{ color: tokens.colorNeutralForegroundOnBrand, opacity: 0.7 }}>
+            <span className={mergeClasses(s.hideSmall, ls.inlineFlexItemsCenterGap8)}>
+              <Text size={100} className={ls.onBrand}>
                 Powered by
               </Text>
               <Wordmark tone="onDark" size={11} />
@@ -315,7 +329,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
         <div className={s.headerRight}>
           {activeTenant?.siteScoped && (
-            <Text size={200} className={s.hideSmall} style={{ color: tokens.colorNeutralForegroundOnBrand, opacity: 0.85 }}>
+            <Text size={200} className={mergeClasses(s.hideSmall, ls.onBrand2)}>
               Site contact
             </Text>
           )}
@@ -341,7 +355,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <Option key={t.id} value={t.id} text={t.name}>
                   {t.name}
                   {t.sandbox && (
-                    <Badge appearance="tint" color="warning" size="small" style={{ marginLeft: 6 }}>
+                    <Badge appearance="tint" color="warning" size="small" className={ls.ml6}>
                       Test customer
                     </Badge>
                   )}
@@ -358,7 +372,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               Add a customer
             </Button>
           ) : (
-            <Text size={200} style={{ color: tokens.colorNeutralForegroundOnBrand, opacity: 0.8 }}>
+            <Text size={200} className={ls.onBrand3}>
               No customers assigned
             </Text>
           )}
@@ -422,9 +436,9 @@ export function AppShell({ children }: { children: ReactNode }) {
             </>
           )}
         </nav>
-        <main id="main" tabIndex={-1} className={s.content} style={{ outline: 'none' }}>
+        <main id="main" tabIndex={-1} className={mergeClasses(s.content, ls.styled)}>
           {maintenance.data && (
-            <MessageBar intent={maintenance.data.phase === 'freeze' ? 'warning' : 'info'} style={{ marginBottom: 16 }}>
+            <MessageBar intent={maintenance.data.phase === 'freeze' ? 'warning' : 'info'} className={ls.mb16}>
               <MessageBarBody>
                 <MessageBarTitle>
                   {maintenance.data.phase === 'freeze'

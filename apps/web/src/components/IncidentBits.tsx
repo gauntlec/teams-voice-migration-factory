@@ -15,6 +15,11 @@ import {
   type IncUrgency,
 } from '@tvmf/shared';
 
+const useLocalStyles = makeStyles({
+  ml4: { marginLeft: '4px' },
+});
+
+
 /**
  * Incident badges, summary tiles and the row/payload types shared by the
  * Incidents list, the raise form and the incident page. The rules themselves
@@ -86,13 +91,14 @@ export function PriorityBadge({ priority, staff = true }: { priority: IncPriorit
 
 /** Status, with what it is on hold for when it is. */
 export function IncStatusBadge({ status, hold, staff }: { status: IncStatus; hold: IncHoldReason | null; staff: boolean }) {
+  const ls = useLocalStyles();
   return (
     <>
       <Badge appearance="tint" color={INC_STATUS_COLOR[status]}>
         {(staff ? INC_STATUS_LABELS : INC_STATUS_CUSTOMER_LABELS)[status]}
       </Badge>
       {status === 'on_hold' && hold && (
-        <Badge appearance="outline" color="warning" style={{ marginLeft: 4 }}>
+        <Badge appearance="outline" color="warning" className={ls.ml4}>
           {(staff ? INC_HOLD_LABELS : INC_HOLD_CUSTOMER_LABELS)[hold]}
         </Badge>
       )}
@@ -238,10 +244,11 @@ export function IncQueueTiles({ items, filter, onFilter }: { items: IncQueueRow[
 
 /** "Major" on a live major incident; "Part of INC-0040" is shown by the pages that know the parent. */
 export function MajorBadge({ row }: { row: { major?: boolean; major_ended_at?: string | null; status: IncStatus } }) {
+  const ls = useLocalStyles();
   if (!row.major) return null;
   const live = !row.major_ended_at && ['new', 'in_progress', 'on_hold', 'restored'].includes(row.status);
   return (
-    <Badge appearance={live ? 'filled' : 'outline'} color="danger" style={{ marginLeft: 4 }} title={live ? 'A live major incident' : 'Was a major incident'}>
+    <Badge appearance={live ? 'filled' : 'outline'} color="danger" className={ls.ml4} title={live ? 'A live major incident' : 'Was a major incident'}>
       Major
     </Badge>
   );

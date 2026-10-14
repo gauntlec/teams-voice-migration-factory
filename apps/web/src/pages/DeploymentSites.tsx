@@ -16,6 +16,8 @@ import {
   Text,
   makeStyles,
   shorthands,
+
+  mergeClasses,
 } from '@fluentui/react-components';
 import { ArrowRightRegular, ChevronDownRegular, ChevronLeftRegular, ChevronRightRegular, ChevronUpRegular } from '@fluentui/react-icons';
 import type { DeploymentSiteRollup } from '@tvmf/shared';
@@ -25,6 +27,14 @@ import { DataTable } from '../components/DataTable';
 import { Page } from '../components/Page';
 import { LoadError, NoTenant, useRecordStyles } from '../components/records';
 import { TableSkeleton } from '../components/states';
+
+const useLocalStyles = makeStyles({
+  justifySpacebetween: { justifyContent: "space-between" },
+  mb4: { marginBottom: '4px' },
+  justifyFlexstartMt8Pl0: { marginTop: '8px', paddingLeft: '0px', justifyContent: "flex-start" },
+  maxW320: { maxWidth: '320px' },
+});
+
 
 const useStyles = makeStyles({
   row: { display: 'flex', ...shorthands.gap('8px'), flexWrap: 'wrap', alignItems: 'center' },
@@ -56,6 +66,7 @@ interface Connection {
 }
 
 export function DeploymentSites() {
+  const ls = useLocalStyles();
   const cs = useStyles();
   const s = useRecordStyles();
   const navigate = useNavigate();
@@ -120,7 +131,7 @@ export function DeploymentSites() {
       subtitle="Sign in to the customer tenant live, then pick a site to review its planned changes, run them, and generate a change-recording document. No customer credentials are stored."
     >
       <Card className={s.card}>
-        <div className={s.cardHead} style={{ justifyContent: 'space-between' }}>
+        <div className={mergeClasses(s.cardHead, ls.justifySpacebetween)}>
           <Text weight="semibold" size={400}>
             Tenant connection
           </Text>
@@ -134,7 +145,7 @@ export function DeploymentSites() {
           <TableSkeleton rows={4} cols={5} />
         ) : (
           <>
-            <div className={cs.row} style={{ marginBottom: 4 }}>
+            <div className={mergeClasses(cs.row, ls.mb4)}>
               {activeConn ? (
                 <Badge appearance="tint" color="success">
                   Connected as {activeConn.upn ?? 'unknown'}
@@ -178,7 +189,7 @@ export function DeploymentSites() {
                   icon={historyOpen ? <ChevronUpRegular /> : <ChevronDownRegular />}
                   iconPosition="after"
                   onClick={() => setHistoryOpen((o) => !o)}
-                  style={{ marginTop: 8, paddingLeft: 0, justifyContent: 'flex-start' }}
+                  className={ls.justifyFlexstartMt8Pl0}
                 >
                   {historyOpen ? 'Hide' : 'View'} connection history ({connTotal})
                 </Button>
@@ -266,7 +277,7 @@ export function DeploymentSites() {
           placeholder="Search by sitecode or name…"
           value={search}
           onChange={(_, d) => setSearch(d.value)}
-          style={{ maxWidth: 320 }}
+          className={ls.maxW320}
         />
 
         {allSites.length === 0 ? (

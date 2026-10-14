@@ -16,6 +16,9 @@ import {
   TableRow,
   Text,
   tokens,
+
+  makeStyles,
+  shorthands,
 } from '@fluentui/react-components';
 import { ArrowClockwiseRegular } from '@fluentui/react-icons';
 import { api } from '../../api';
@@ -24,6 +27,12 @@ import { Page } from '../../components/Page';
 import { useDebounced } from '../../hooks/useDebounced';
 import { LoadError } from '../../components/records';
 import { DangerText, MutedText } from '../../components/ui';
+
+const useLocalStyles = makeStyles({
+  flexItemsCenterJustifySpacebetweenGap12: { display: "flex", alignItems: "center", justifyContent: "space-between", ...shorthands.gap('12px') },
+  maxW320: { maxWidth: '320px' },
+});
+
 
 interface EmailMessage {
   id: string;
@@ -68,6 +77,7 @@ const mono: React.CSSProperties = {
 };
 
 export function AdminEmailLog() {
+  const ls = useLocalStyles();
   const qc = useQueryClient();
 
   const [searchInput, setSearchInput] = useState('');
@@ -92,7 +102,7 @@ export function AdminEmailLog() {
       subtitle="Queued and sent messages, with per-message SMTP delivery status."
     >
       <Card>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <div className={ls.flexItemsCenterJustifySpacebetweenGap12}>
           <Text weight="semibold">SMTP relay</Text>
           <Button
             size="small"
@@ -131,7 +141,7 @@ export function AdminEmailLog() {
           placeholder="Search by recipient, subject or template…"
           value={searchInput}
           onChange={(_, d) => setSearchInput(d.value)}
-          style={{ maxWidth: 320 }}
+          className={ls.maxW320}
         />
         {q.isLoading ? (
           <Spinner size="tiny" />

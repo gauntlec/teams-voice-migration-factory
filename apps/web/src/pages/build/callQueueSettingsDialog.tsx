@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Dropdown, Field, Input, Option, Spinner, Text, tokens } from '@fluentui/react-components';
+import { Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Dropdown, Field, Input, Option, Spinner, Text, tokens , makeStyles, shorthands } from '@fluentui/react-components';
 import { DeleteRegular } from '@fluentui/react-icons';
 import { CALL_QUEUE_NO_AGENT_ACTIONS, CALL_QUEUE_NO_AGENT_APPLY_TO, CALL_QUEUE_OVERFLOW_ACTIONS, CALL_QUEUE_TIMEOUT_ACTIONS, type CallQueueActionSettings, type Paginated } from '@tvmf/shared';
 import { api, ApiError } from '../../api';
@@ -8,6 +8,21 @@ import { GroupAutocomplete } from '../../components/GroupAutocomplete';
 import { UpnAutocomplete } from '../../components/UpnAutocomplete';
 import { PagedSection, type FieldDef, type Row } from '../../components/records';
 import { DangerText } from '../../components/ui';
+
+const useLocalStyles = makeStyles({
+  minW180: { minWidth: '180px' },
+  maxW640: { maxWidth: '640px' },
+  gridGap16MinW560: { display: "grid", ...shorthands.gap('16px'), minWidth: '560px' },
+  flexItemsCenterJustifySpacebetween: { display: "flex", justifyContent: "space-between", alignItems: "center" },
+  flexItemsCenterGap8Mt6: { display: "flex", ...shorthands.gap('8px'), alignItems: "center", marginTop: '6px' },
+  minW220: { minWidth: '220px' },
+  blockMt6Muted: { color: tokens.colorNeutralForeground3, display: "block", marginTop: '6px' },
+  flexWrapItemsEndGap8Mt6: { display: "flex", ...shorthands.gap('8px'), flexWrap: "wrap", alignItems: "end", marginTop: '6px' },
+  w120: { width: '120px' },
+  paletteMarigoldForeground2: { color: tokens.colorPaletteMarigoldForeground2 },
+  gridGap4Mt6: { display: "grid", ...shorthands.gap('4px'), marginTop: '6px' },
+});
+
 
 /**
  * Agents/overflow/timeout/linked resource accounts for one build_call_queues
@@ -30,6 +45,7 @@ export function CallQueueSettingsDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const ls = useLocalStyles();
   const overflowInit = (row.overflow as CallQueueActionSettings | null) ?? null;
   const timeoutInit = (row.timeout as CallQueueActionSettings | null) ?? null;
   const noAgentInit = (row.no_agent_action as CallQueueActionSettings | null) ?? null;
@@ -113,7 +129,7 @@ export function CallQueueSettingsDialog({
         value={value || '— not set —'}
         selectedOptions={[value || 'unset']}
         onOptionSelect={(_, d) => onChange(d.optionValue === 'unset' ? '' : (d.optionValue ?? ''))}
-        style={{ minWidth: 180 }}
+        className={ls.minW180}
       >
         <Option value="unset">— not set —</Option>
         {options.map((o) => (
@@ -127,26 +143,26 @@ export function CallQueueSettingsDialog({
 
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: 640 }}>
+      <DialogSurface className={ls.maxW640}>
         <DialogBody>
           <DialogTitle>Call queue settings — {String(row.name)}</DialogTitle>
           <DialogContent>
-            <div style={{ display: 'grid', gap: 16, minWidth: 560 }}>
+            <div className={ls.gridGap16MinW560}>
               <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div className={ls.flexItemsCenterJustifySpacebetween}>
                   <Text weight="semibold">Agents</Text>
                   <Button size="small" appearance="subtle" disabled={agents.length >= 200} onClick={addAgent}>
                     Add agent
                   </Button>
                 </div>
                 {agents.map((a, i) => (
-                  <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
-                    <UpnAutocomplete tenantId={tenantId} value={a} onChange={(v) => updateAgent(i, v)} style={{ minWidth: 220 }} />
+                  <div key={i} className={ls.flexItemsCenterGap8Mt6}>
+                    <UpnAutocomplete tenantId={tenantId} value={a} onChange={(v) => updateAgent(i, v)} className={ls.minW220} />
                     <Button size="small" appearance="subtle" icon={<DeleteRegular />} onClick={() => removeAgent(i)} />
                   </div>
                 ))}
                 {agents.length === 0 && (
-                  <Text size={200} style={{ color: tokens.colorNeutralForeground3, display: 'block', marginTop: 6 }}>
+                  <Text size={200} className={ls.blockMt6Muted}>
                     No agents yet.
                   </Text>
                 )}
@@ -154,7 +170,7 @@ export function CallQueueSettingsDialog({
 
               <div>
                 <Text weight="semibold">Overflow (queue full)</Text>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end', marginTop: 6 }}>
+                <div className={ls.flexWrapItemsEndGap8Mt6}>
                   {actionDropdown('Action', overflowAction, (v) => { setOverflowAction(v); setOverflowTarget(''); }, CALL_QUEUE_OVERFLOW_ACTIONS)}
                   {overflowAction && (
                     <>
@@ -163,22 +179,22 @@ export function CallQueueSettingsDialog({
                           type="number"
                           value={overflowThreshold}
                           onChange={(_, d) => setOverflowThreshold(d.value)}
-                          style={{ width: 120 }}
+                          className={ls.w120}
                         />
                       </Field>
                       {overflowAction === 'SharedVoicemail' && (
                         <Field label="Target (M365 group)">
-                          <GroupAutocomplete tenantId={tenantId} value={overflowTarget} onChange={setOverflowTarget} style={{ minWidth: 220 }} />
+                          <GroupAutocomplete tenantId={tenantId} value={overflowTarget} onChange={setOverflowTarget} className={ls.minW220} />
                         </Field>
                       )}
                       {overflowAction === 'Forward' && (
                         <Field label="Target">
-                          <UpnAutocomplete tenantId={tenantId} value={overflowTarget} onChange={setOverflowTarget} style={{ minWidth: 220 }} />
+                          <UpnAutocomplete tenantId={tenantId} value={overflowTarget} onChange={setOverflowTarget} className={ls.minW220} />
                         </Field>
                       )}
                       {overflowAction === 'Voicemail' && (
                         <Field label="Whose voicemail">
-                          <UpnAutocomplete tenantId={tenantId} value={overflowTarget} onChange={setOverflowTarget} style={{ minWidth: 220 }} />
+                          <UpnAutocomplete tenantId={tenantId} value={overflowTarget} onChange={setOverflowTarget} className={ls.minW220} />
                         </Field>
                       )}
                     </>
@@ -188,7 +204,7 @@ export function CallQueueSettingsDialog({
 
               <div>
                 <Text weight="semibold">Timeout (waited too long)</Text>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end', marginTop: 6 }}>
+                <div className={ls.flexWrapItemsEndGap8Mt6}>
                   {actionDropdown('Action', timeoutAction, (v) => { setTimeoutAction(v); setTimeoutTarget(''); }, CALL_QUEUE_TIMEOUT_ACTIONS)}
                   {timeoutAction && (
                     <>
@@ -197,22 +213,22 @@ export function CallQueueSettingsDialog({
                           type="number"
                           value={timeoutThreshold}
                           onChange={(_, d) => setTimeoutThreshold(d.value)}
-                          style={{ width: 120 }}
+                          className={ls.w120}
                         />
                       </Field>
                       {timeoutAction === 'SharedVoicemail' && (
                         <Field label="Target (M365 group)">
-                          <GroupAutocomplete tenantId={tenantId} value={timeoutTarget} onChange={setTimeoutTarget} style={{ minWidth: 220 }} />
+                          <GroupAutocomplete tenantId={tenantId} value={timeoutTarget} onChange={setTimeoutTarget} className={ls.minW220} />
                         </Field>
                       )}
                       {timeoutAction === 'Forward' && (
                         <Field label="Target">
-                          <UpnAutocomplete tenantId={tenantId} value={timeoutTarget} onChange={setTimeoutTarget} style={{ minWidth: 220 }} />
+                          <UpnAutocomplete tenantId={tenantId} value={timeoutTarget} onChange={setTimeoutTarget} className={ls.minW220} />
                         </Field>
                       )}
                       {timeoutAction === 'Voicemail' && (
                         <Field label="Whose voicemail">
-                          <UpnAutocomplete tenantId={tenantId} value={timeoutTarget} onChange={setTimeoutTarget} style={{ minWidth: 220 }} />
+                          <UpnAutocomplete tenantId={tenantId} value={timeoutTarget} onChange={setTimeoutTarget} className={ls.minW220} />
                         </Field>
                       )}
                     </>
@@ -222,21 +238,21 @@ export function CallQueueSettingsDialog({
 
               <div>
                 <Text weight="semibold">No agents (zero opted in)</Text>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end', marginTop: 6 }}>
+                <div className={ls.flexWrapItemsEndGap8Mt6}>
                   {actionDropdown('Action', noAgentAction, (v) => { setNoAgentAction(v); setNoAgentTarget(''); }, CALL_QUEUE_NO_AGENT_ACTIONS)}
                   {noAgentAction === 'SharedVoicemail' && (
                     <Field label="Target (M365 group)">
-                      <GroupAutocomplete tenantId={tenantId} value={noAgentTarget} onChange={setNoAgentTarget} style={{ minWidth: 220 }} />
+                      <GroupAutocomplete tenantId={tenantId} value={noAgentTarget} onChange={setNoAgentTarget} className={ls.minW220} />
                     </Field>
                   )}
                   {noAgentAction === 'Forward' && (
                     <Field label="Target">
-                      <UpnAutocomplete tenantId={tenantId} value={noAgentTarget} onChange={setNoAgentTarget} style={{ minWidth: 220 }} />
+                      <UpnAutocomplete tenantId={tenantId} value={noAgentTarget} onChange={setNoAgentTarget} className={ls.minW220} />
                     </Field>
                   )}
                   {noAgentAction === 'Voicemail' && (
                     <Field label="Whose voicemail">
-                      <UpnAutocomplete tenantId={tenantId} value={noAgentTarget} onChange={setNoAgentTarget} style={{ minWidth: 220 }} />
+                      <UpnAutocomplete tenantId={tenantId} value={noAgentTarget} onChange={setNoAgentTarget} className={ls.minW220} />
                     </Field>
                   )}
                   {noAgentAction && actionDropdown('Applies to', noAgentApplyTo, setNoAgentApplyTo, CALL_QUEUE_NO_AGENT_APPLY_TO)}
@@ -244,7 +260,7 @@ export function CallQueueSettingsDialog({
               </div>
 
               {(overflowAction === 'SharedVoicemail' || timeoutAction === 'SharedVoicemail' || noAgentAction === 'SharedVoicemail') && (
-                <Text size={200} style={{ color: tokens.colorPaletteMarigoldForeground2 }}>
+                <Text size={200} className={ls.paletteMarigoldForeground2}>
                   Shared Voicemail needs a Language ID set on this row - edit it from the table's Edit form.
                 </Text>
               )}
@@ -254,11 +270,11 @@ export function CallQueueSettingsDialog({
                 {raQ.isLoading ? (
                   <Spinner size="tiny" label="Loading…" />
                 ) : raChoices.length === 0 ? (
-                  <Text size={200} style={{ color: tokens.colorNeutralForeground3, display: 'block', marginTop: 6 }}>
+                  <Text size={200} className={ls.blockMt6Muted}>
                     No Call Queue-kind resource accounts on this site yet - add one on the Resource accounts tab.
                   </Text>
                 ) : (
-                  <div style={{ display: 'grid', gap: 4, marginTop: 6 }}>
+                  <div className={ls.gridGap4Mt6}>
                     {raChoices.map((r) => (
                       <Checkbox
                         key={String(r.id)}

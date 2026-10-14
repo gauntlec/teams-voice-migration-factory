@@ -1,11 +1,19 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Combobox, Dropdown, Field, Input, Option, Text, Textarea } from '@fluentui/react-components';
+import { Combobox, Dropdown, Field, Input, Option, Text, Textarea , makeStyles, shorthands } from '@fluentui/react-components';
 import type { Paginated, WizardTarget } from '@tvmf/shared';
 import { api } from '../api';
 import { CallQueueWizard } from './CallQueueWizard';
 import { UpnAutocomplete } from './UpnAutocomplete';
 import type { Choice } from './records';
+
+const useLocalStyles = makeStyles({
+  flexWrapItemsEndGap8: { display: "flex", ...shorthands.gap('8px'), flexWrap: "wrap", alignItems: "end" },
+  minW220: { minWidth: '220px' },
+  minW260: { minWidth: '260px' },
+  minW200: { minWidth: '200px' },
+});
+
 
 /** A `Choice` for the "team" destination picker - `flowId` is set when this points at a not-yet-imported planned capture (linked by id, see wizard-convert.ts's resolveFlow) rather than an already-built row (matched later by name). Defined here (not WizardTiles.tsx, which imports AutoAttendantWizard which imports this file) to avoid a module cycle. */
 export interface TeamChoice extends Choice {
@@ -74,6 +82,7 @@ export function TargetPicker({
   /** Called after the nested "Set up a new call queue" wizard creates a row, so the caller can refresh its own Call flows list the same way the top-level wizard tiles already do. */
   onFlowCreated?: () => void;
 }) {
+  const ls = useLocalStyles();
   const kind = value?.kind ?? '';
   const needsLabel = kind === 'person' || kind === 'team' || kind === 'message' || kind === 'external';
   const canCreateCallQueue = !!(base && tenantId && siteId);
@@ -94,7 +103,7 @@ export function TargetPicker({
   const [prevValue, setPrevValue] = useState<WizardTarget | undefined>(undefined);
 
   return (
-    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end' }}>
+    <div className={ls.flexWrapItemsEndGap8}>
       <Field label="Where should this go?">
         <Dropdown
           value={kind ? TARGET_KIND_LABELS[kind as WizardTarget['kind']] : allowNone ? '— none —' : '— choose —'}
@@ -109,7 +118,7 @@ export function TargetPicker({
             }
             onChange(k ? { kind: k, label: '' } : undefined);
           }}
-          style={{ minWidth: 220 }}
+          className={ls.minW220}
         >
           {allowNone && <Option value="">— none —</Option>}
           {offeredKinds.map((k) => (
@@ -128,7 +137,7 @@ export function TargetPicker({
           <Textarea
             value={value?.label ?? ''}
             onChange={(_, d) => onChange({ kind: 'message', label: d.value })}
-            style={{ minWidth: 260 }}
+            className={ls.minW260}
           />
         </Field>
       ) : kind === 'person' && tenantId ? (
@@ -138,7 +147,7 @@ export function TargetPicker({
             siteId={siteId}
             value={value?.label ?? ''}
             onChange={(v) => onChange({ kind: 'person', label: v })}
-            style={{ minWidth: 220 }}
+            className={ls.minW220}
           />
         </Field>
       ) : kind === 'team' && teamChoices?.length ? (
@@ -146,7 +155,7 @@ export function TargetPicker({
           <Combobox
             freeform
             value={value?.label ?? ''}
-            style={{ minWidth: 220 }}
+            className={ls.minW220}
             onChange={(e) => onChange({ kind: 'team', label: e.target.value })}
             onOptionSelect={(_, d) => {
               const picked = teamChoices.find((c) => c.value === d.optionValue);
@@ -167,7 +176,7 @@ export function TargetPicker({
             value={value?.label ?? ''}
             placeholder={kind === 'external' ? '+1 555 123 4567' : undefined}
             onChange={(_, d) => onChange({ kind: kind as WizardTarget['kind'], label: d.value })}
-            style={{ minWidth: 200 }}
+            className={ls.minW200}
           />
         </Field>
       ) : null}

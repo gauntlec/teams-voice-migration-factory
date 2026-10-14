@@ -22,12 +22,14 @@ export function GroupAutocomplete({
   onChange,
   placeholder,
   style,
+  className,
 }: {
   tenantId: string;
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
   style?: React.CSSProperties;
+  className?: string;
 }) {
   const term = useDebounced(value);
 
@@ -45,6 +47,7 @@ export function GroupAutocomplete({
       value={value}
       placeholder={placeholder ?? '00000000-0000-0000-0000-000000000000'}
       style={style}
+      className={className}
       onChange={(e) => onChange(e.target.value)}
       onOptionSelect={(_, data) => {
         const picked = options.find((g) => g.object_id === data.optionValue);

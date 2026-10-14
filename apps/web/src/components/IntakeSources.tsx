@@ -1,9 +1,16 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Checkbox, Field, Input, Select, Spinner, Text, makeStyles, shorthands, tokens } from '@fluentui/react-components';
+import { Badge, Button, Checkbox, Field, Input, Select, Spinner, Text, makeStyles, shorthands, tokens , mergeClasses } from '@fluentui/react-components';
 import { INTAKE_KINDS, INTAKE_KIND_LABELS, INTAKE_SEVERITIES, INTAKE_SEVERITY_LABELS, type IntakeConfig, type IntakeKind, type IntakeSeverity } from '@tvmf/shared';
 import { api } from '../api';
 import { errorText, when } from '../pages/ServiceRequests';
+
+const useLocalStyles = makeStyles({
+  justifySpacebetween: { justifyContent: "space-between" },
+  flexMlAuto: { marginLeft: "auto", display: "flex", columnGap: '6px' },
+  colItemsStretch: { flexDirection: "column", alignItems: "stretch" },
+});
+
 
 const useStyles = makeStyles({
   box: { display: 'flex', flexDirection: 'column', rowGap: tokens.spacingVerticalS },
@@ -31,6 +38,7 @@ interface Source {
  * shown once, when it is made.
  */
 export function IntakeSources({ base, editable }: { base: string; editable: boolean }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const qc = useQueryClient();
   const list = useQuery({ queryKey: ['intake-sources', base], queryFn: () => api<Source[]>(`${base}/intake-sources`) });
@@ -62,7 +70,7 @@ export function IntakeSources({ base, editable }: { base: string; editable: bool
 
   return (
     <div className={s.box}>
-      <div className={s.row} style={{ justifyContent: 'space-between' }}>
+      <div className={mergeClasses(s.row, ls.justifySpacebetween)}>
         <Text weight="semibold">Alert sources</Text>
         {editable && !adding && (
           <Button size="small" onClick={() => setAdding(true)}>
@@ -103,7 +111,7 @@ export function IntakeSources({ base, editable }: { base: string; editable: bool
             {x.config.siteCode ? ` · site ${x.config.siteCode}` : ''}
           </Text>
           {editable && (
-            <span style={{ marginLeft: 'auto', display: 'flex', columnGap: 6 }}>
+            <span className={ls.flexMlAuto}>
               <Button size="small" disabled={toggle.isPending} onClick={() => toggle.mutate({ id: x.id, enabled: !x.enabled })}>
                 {x.enabled ? 'Switch off' : 'Switch on'}
               </Button>
@@ -118,7 +126,7 @@ export function IntakeSources({ base, editable }: { base: string; editable: bool
         </div>
       ))}
       {adding && (
-        <div className={s.item} style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+        <div className={mergeClasses(s.item, ls.colItemsStretch)}>
           <div className={s.row}>
             <Field label="Name" required>
               <Input value={name} onChange={(_, d) => setName(d.value)} placeholder="SBC monitoring" />

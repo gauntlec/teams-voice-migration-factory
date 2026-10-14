@@ -52,6 +52,16 @@ import { api, ApiError } from '../api';
 import { DataTable } from './DataTable';
 import { DangerText } from './ui';
 
+const useLocalStyles = makeStyles({
+  mb12: { marginBottom: '12px' },
+  gridGap12: { display: "grid", gridTemplateColumns: "1fr 1fr", ...shorthands.gap('12px') },
+  mt8Danger: { color: tokens.colorPaletteRedForeground1, marginTop: '8px' },
+  gridGap4: { gridColumn: "1 / -1", display: "grid", ...shorthands.gap('4px') },
+  minW200: { minWidth: '200px' },
+  gridGap122: { display: "grid", ...shorthands.gap('12px') },
+});
+
+
 /* ------------------------------ shared bits ------------------------------ */
 
 export function NoTenant() {
@@ -236,6 +246,7 @@ export function BulkEditDialog({
   error: string | null;
   onSave: (payload: Record<string, unknown>) => void;
 }) {
+  const ls = useLocalStyles();
   const [values, setValues] = useState<Record<string, string>>({});
   useEffect(() => {
     if (open) setValues({});
@@ -252,11 +263,11 @@ export function BulkEditDialog({
             Bulk edit {kindLabel} ({count} selected)
           </DialogTitle>
           <DialogContent>
-            <Text size={200} block style={{ marginBottom: 12 }}>
+            <Text size={200} block className={ls.mb12}>
               Only the fields you set below will change. Leave a field on “— leave unchanged —” (or blank) to skip
               it - every other selected row's value for that field stays exactly as it is.
             </Text>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div className={ls.gridGap12}>
               {fields.map((f) => {
                 const value = values[f.key] ?? '';
                 const wide = f.full ? { gridColumn: '1 / -1' } : undefined;
@@ -318,7 +329,7 @@ export function BulkEditDialog({
               })}
             </div>
             {error && (
-              <Text block style={{ color: tokens.colorPaletteRedForeground1, marginTop: 8 }}>
+              <Text block className={ls.mt8Danger}>
                 {error}
               </Text>
             )}
@@ -378,6 +389,7 @@ export function RecordDialog({
   geocode?: GeocodeConfig;
   suggest?: SuggestConfig;
 }) {
+  const ls = useLocalStyles();
   const s = useRecordStyles();
   const [values, setValues] = useState<Record<string, string>>({});
   const [geoBusy, setGeoBusy] = useState(false);
@@ -567,7 +579,7 @@ export function RecordDialog({
                   </Text>
                 )}
                 {geocode && f.key === geocode.addressField && (
-                  <div style={{ gridColumn: '1 / -1', display: 'grid', gap: 4 }}>
+                  <div className={ls.gridGap4}>
                     <Button
                       size="small"
                       appearance="secondary"
@@ -786,6 +798,7 @@ export function PagedSection({
    */
   bulkDelete?: { noun: string; plural: string; note?: string };
 }) {
+  const ls = useLocalStyles();
   const s = useRecordStyles();
   const qc = useQueryClient();
   // Selection: the caller's (bulk edit) if it has one, otherwise our own for bulk delete.
@@ -875,7 +888,7 @@ export function PagedSection({
             placeholder="Search…"
             value={qInput}
             onChange={(_, d) => setQInput(d.value)}
-            style={{ minWidth: 200 }}
+            className={ls.minW200}
           />
           {headerActions}
           {bulkDelete && !readOnly && sel.size > 0 && (
@@ -1008,6 +1021,7 @@ function BulkDeleteDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const ls = useLocalStyles();
   const [typed, setTyped] = useState('');
   const label = `${count.toLocaleString()} ${count === 1 ? noun : plural}`;
   const needsWord = what === 'all';
@@ -1017,7 +1031,7 @@ function BulkDeleteDialog({
         <DialogBody>
           <DialogTitle>{what === 'all' ? `Delete all ${plural} on this site?` : `Delete ${label}?`}</DialogTitle>
           <DialogContent>
-            <div style={{ display: 'grid', gap: 12 }}>
+            <div className={ls.gridGap122}>
               <Text>
                 {what === 'all' ? `All ${label} will be deleted.` : `The ${label} you selected will be deleted.`} This can't be undone.
               </Text>

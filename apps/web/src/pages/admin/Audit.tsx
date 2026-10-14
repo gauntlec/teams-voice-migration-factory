@@ -9,12 +9,19 @@ import {
   TableHeader,
   TableHeaderCell,
   TableRow,
+
+  makeStyles,
 } from '@fluentui/react-components';
 import { api } from '../../api';
 import { DataTable } from '../../components/DataTable';
 import { Page } from '../../components/Page';
 import { useDebounced } from '../../hooks/useDebounced';
 import { LoadError } from '../DataCollection';
+
+const useLocalStyles = makeStyles({
+  maxW320: { maxWidth: '320px' },
+});
+
 
 interface Entry {
   id: string;
@@ -27,6 +34,7 @@ interface Entry {
 }
 
 export function AdminAudit() {
+  const ls = useLocalStyles();
   const [searchInput, setSearchInput] = useState('');
   const search = useDebounced(searchInput);
   const entries = useQuery({
@@ -43,7 +51,7 @@ export function AdminAudit() {
           placeholder="Search by actor, action or target…"
           value={searchInput}
           onChange={(_, d) => setSearchInput(d.value)}
-          style={{ maxWidth: 320 }}
+          className={ls.maxW320}
         />
         {entries.isLoading ? (
           <Spinner size="tiny" />

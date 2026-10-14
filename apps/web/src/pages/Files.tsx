@@ -19,6 +19,9 @@ import {
   TableRow,
   Text,
   tokens,
+
+  makeStyles,
+  shorthands,
 } from '@fluentui/react-components';
 import { FilterRegular } from '@fluentui/react-icons';
 import type { FileRow } from '@tvmf/shared';
@@ -29,6 +32,14 @@ import { Page } from '../components/Page';
 import { useDebounced } from '../hooks/useDebounced';
 import { LoadError, NoTenant, useRecordStyles } from '../components/records';
 import { MutedText } from '../components/ui';
+
+const useLocalStyles = makeStyles({
+  gridGap8W240: { display: "grid", ...shorthands.gap("8px"), width: "240px" },
+  gridGap2MaxH240Scroll: { maxHeight: "240px", overflowY: "auto", display: "grid", ...shorthands.gap("2px") },
+  maxW320: { maxWidth: '320px' },
+  flexItemsCenterGap4: { display: "flex", alignItems: "center", ...shorthands.gap("4px") },
+});
+
 
 const CATEGORY_LABEL: Record<string, string> = {
   deployment_change_document: 'Deployment change document',
@@ -53,6 +64,7 @@ function ColumnFilter({
   selected: Set<string>;
   onChange: (next: Set<string>) => void;
 }) {
+  const ls = useLocalStyles();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const active = selected.size > 0;
@@ -76,14 +88,14 @@ function ColumnFilter({
           aria-label={`Filter by ${label}`}
         />
       </PopoverTrigger>
-      <PopoverSurface style={{ display: 'grid', gap: '8px', width: '240px' }}>
+      <PopoverSurface className={ls.gridGap8W240}>
         <Input
           size="small"
           placeholder={`Search ${label.toLowerCase()}…`}
           value={query}
           onChange={(_, d) => setQuery(d.value)}
         />
-        <div style={{ maxHeight: '240px', overflowY: 'auto', display: 'grid', gap: '2px' }}>
+        <div className={ls.gridGap2MaxH240Scroll}>
           {shown.length === 0 ? (
             <MutedText size={200}>
               No matches.
@@ -111,6 +123,7 @@ function ColumnFilter({
 }
 
 export function Files() {
+  const ls = useLocalStyles();
   const s = useRecordStyles();
   const { activeTenantId: tid } = useAuth();
   const [downloadError, setDownloadError] = useState<string | null>(null);
@@ -206,7 +219,7 @@ export function Files() {
           placeholder="Search by filename…"
           value={searchInput}
           onChange={(_, d) => setSearchInput(d.value)}
-          style={{ maxWidth: 320 }}
+          className={ls.maxW320}
         />
 
         {downloadError && <LoadError message={downloadError} />}
@@ -225,13 +238,13 @@ export function Files() {
               <TableRow>
                 <TableHeaderCell>Filename</TableHeaderCell>
                 <TableHeaderCell>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <div className={ls.flexItemsCenterGap4}>
                     Site
                     <ColumnFilter label="site" options={siteOptions} selected={siteFilter} onChange={setSiteFilter} />
                   </div>
                 </TableHeaderCell>
                 <TableHeaderCell>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <div className={ls.flexItemsCenterGap4}>
                     Category
                     <ColumnFilter
                       label="category"

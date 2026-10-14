@@ -26,6 +26,11 @@ import { api, ApiError } from '../api';
 import { DataTable } from './DataTable';
 import { DangerText } from './ui';
 
+const useLocalStyles = makeStyles({
+  w94vwMaxW900: { maxWidth: '900px', width: "94vw" },
+});
+
+
 /**
  * Import users into a Data Collection site from an xlsx/csv. Parsing and the
  * template are done in the browser with a lazy-loaded SheetJS - the API only
@@ -122,6 +127,7 @@ export function ImportUsersDialog({
   onClose: () => void;
   onDone: () => void;
 }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const fileRef = useRef<HTMLInputElement>(null);
   const [parsing, setParsing] = useState(false);
@@ -302,7 +308,7 @@ export function ImportUsersDialog({
 
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: 900, width: '94vw' }}>
+      <DialogSurface className={ls.w94vwMaxW900}>
         <DialogBody>
           <DialogTitle>Import users from a spreadsheet</DialogTitle>
           <DialogContent>

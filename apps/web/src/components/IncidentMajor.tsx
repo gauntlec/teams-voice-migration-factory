@@ -20,12 +20,25 @@ import {
   makeStyles,
   shorthands,
   tokens,
+
+  mergeClasses,
 } from '@fluentui/react-components';
 import { DeleteRegular } from '@fluentui/react-icons';
 import { INC_MAJOR_DEFAULT_INTERVAL, INC_MAJOR_MAX_INTERVAL, INC_MAJOR_MIN_INTERVAL, type IncMajorClock, type IncPriority, type IncStatus } from '@tvmf/shared';
 import { api } from '../api';
 import { errorText } from '../pages/ServiceRequests';
 import { IncStatusBadge, MajorClockBadge, PriorityBadge, type IncidentRow } from './IncidentBits';
+
+const useLocalStyles = makeStyles({
+  mt6: { marginTop: '6px' },
+  pl20Margin0: { ...shorthands.margin("0px"), paddingLeft: '20px' },
+  w90: { width: '90px' },
+  maxW620: { maxWidth: "620px" },
+  maxW480: { maxWidth: "480px" },
+  maxW640: { maxWidth: "640px" },
+  maxH60vhScroll: { maxHeight: "60vh", overflowY: "auto" },
+});
+
 
 /** The major-incident parts of an incident page payload (see IncidentMajorService.details). */
 export interface MajorInfo {
@@ -82,6 +95,7 @@ interface Props {
  * a customer sees that it is a major incident, who is leading, and when we'll next update.
  */
 export function IncidentMajorSection({ base, incident, major, children, parent, staff, onChanged }: Props) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const qc = useQueryClient();
   const id = incident.id;
@@ -118,7 +132,7 @@ export function IncidentMajorSection({ base, incident, major, children, parent, 
         . Updates on that incident cover this one too.
       </Text>
       {staff && (
-        <div style={{ marginTop: 6 }}>
+        <div className={ls.mt6}>
           <Button size="small" onClick={() => api(`${base}/${parent.id}/children/${id}`, { method: 'DELETE' }).then(refresh)}>
             Unlink from it
           </Button>
@@ -150,7 +164,7 @@ export function IncidentMajorSection({ base, incident, major, children, parent, 
         {children.length > 0 && (
           <Card className={s.card}>
             <Text weight="semibold">Incidents covered by this one</Text>
-            <ul style={{ margin: 0, paddingLeft: 20 }}>
+            <ul className={ls.pl20Margin0}>
               {children.map((c) => (
                 <li key={c.id}>
                   {c.reference} · {c.title}
@@ -218,7 +232,7 @@ export function IncidentMajorSection({ base, incident, major, children, parent, 
               {post.isPending ? 'Posting…' : 'Post update'}
             </Button>
             <Field label="Next update (min)" orientation="horizontal">
-              <Input type="number" size="small" style={{ width: 90 }} min={INC_MAJOR_MIN_INTERVAL} max={INC_MAJOR_MAX_INTERVAL} placeholder={String(major.interval_minutes ?? INC_MAJOR_DEFAULT_INTERVAL[incident.priority])} value={interval} onChange={(_, d) => setIntervalMinutes(d.value)} />
+              <Input type="number" size="small" className={ls.w90} min={INC_MAJOR_MIN_INTERVAL} max={INC_MAJOR_MAX_INTERVAL} placeholder={String(major.interval_minutes ?? INC_MAJOR_DEFAULT_INTERVAL[incident.priority])} value={interval} onChange={(_, d) => setIntervalMinutes(d.value)} />
             </Field>
           </div>
           {post.error && <Text className={s.error}>{errorText(post.error, 'Could not post the update')}</Text>}
@@ -235,7 +249,7 @@ export function IncidentMajorSection({ base, incident, major, children, parent, 
                 Nothing linked yet. Incidents raised because of this problem can be grouped under it, so one update reaches all of their reporters.
               </Text>
             ) : (
-              <ul style={{ margin: 0, paddingLeft: 20 }}>
+              <ul className={ls.pl20Margin0}>
                 {children.map((c) => (
                   <li key={c.id}>
                     <RouterLink to={`/incidents/${c.id}`}>{c.reference}</RouterLink> · {c.title}
@@ -262,6 +276,7 @@ function useStaff(base: string) {
 }
 
 function DeclareDialog({ base, incident, onClose, onDone }: { base: string; incident: { id: string; reference: string; priority: IncPriority }; onClose: () => void; onDone: () => void }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const { data: staff = [] } = useStaff(base);
   const [leadId, setLeadId] = useState('');
@@ -274,7 +289,7 @@ function DeclareDialog({ base, incident, onClose, onDone }: { base: string; inci
   });
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: '620px' }}>
+      <DialogSurface className={ls.maxW620}>
         <DialogBody>
           <DialogTitle>Declare {incident.reference} a major incident</DialogTitle>
           <DialogContent className={s.stack}>
@@ -322,6 +337,7 @@ function DeclareDialog({ base, incident, onClose, onDone }: { base: string; inci
 }
 
 function RolesDialog({ base, id, lead, comms, onClose, onDone }: { base: string; id: string; lead: string; comms: string; onClose: () => void; onDone: () => void }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const { data: staff = [] } = useStaff(base);
   const [leadId, setLeadId] = useState(lead);
@@ -337,7 +353,7 @@ function RolesDialog({ base, id, lead, comms, onClose, onDone }: { base: string;
   ));
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: '480px' }}>
+      <DialogSurface className={ls.maxW480}>
         <DialogBody>
           <DialogTitle>Lead and comms owner</DialogTitle>
           <DialogContent className={s.stack}>
@@ -368,6 +384,7 @@ function RolesDialog({ base, id, lead, comms, onClose, onDone }: { base: string;
 }
 
 function LinkDialog({ base, id, linked, onClose, onDone }: { base: string; id: string; linked: string[]; onClose: () => void; onDone: () => void }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const list = useQuery({ queryKey: ['incident-link-candidates', base], queryFn: () => api<IncidentRow[]>(`${base}?status=open&limit=500`) });
@@ -375,10 +392,10 @@ function LinkDialog({ base, id, linked, onClose, onDone }: { base: string; id: s
   const link = useMutation({ mutationFn: () => api(`${base}/${id}/children`, { method: 'POST', body: JSON.stringify({ childIds: [...picked] }) }), onSuccess: onDone });
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: '640px' }}>
+      <DialogSurface className={ls.maxW640}>
         <DialogBody>
           <DialogTitle>Link incidents under this one</DialogTitle>
-          <DialogContent className={s.stack} style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+          <DialogContent className={mergeClasses(s.stack, ls.maxH60vhScroll)}>
             <Text size={200}>Pick the open incidents caused by this problem. Their reporters then get this incident&apos;s updates, and you can resolve them together.</Text>
             {list.isLoading ? <Text>Loading…</Text> : candidates.length === 0 ? <Text>No other open incidents to link.</Text> : null}
             {candidates.map((i) => (

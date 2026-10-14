@@ -54,6 +54,13 @@ import { api, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { Page } from '../components/Page';
 
+const useLocalStyles = makeStyles({
+  flexGap2: { display: "flex", ...shorthands.gap('2px') },
+  maxW320Mb8: { maxWidth: '320px', marginBottom: '8px' },
+  dangerFill: { backgroundColor: tokens.colorPaletteRedBackground3 },
+});
+
+
 /* --------------------------------- styles --------------------------------- */
 // Mirrors apps/web/src/pages/FeatureRequests.tsx's board/card/dialog layout -
 // same board pattern, bug-shaped fields.
@@ -623,6 +630,7 @@ function BugCard({
   onMove: (status: BugStatus) => void;
   onDelete: () => void;
 }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const [copied, setCopied] = useState(false);
 
@@ -675,7 +683,7 @@ function BugCard({
         <Text className={s.meta}>
           {b.reported_by_name ?? 'Unknown'} · {timeAgo(b.created_at)}
         </Text>
-        <div style={{ display: 'flex', gap: 2 }}>
+        <div className={ls.flexGap2}>
           <Button
             size="small"
             appearance="subtle"
@@ -722,6 +730,7 @@ function BugCard({
 /* --------------------------------- page ---------------------------------- */
 
 export function BugReports() {
+  const ls = useLocalStyles();
   const s = useStyles();
   const qc = useQueryClient();
   const { can } = useAuth();
@@ -785,7 +794,7 @@ export function BugReports() {
         placeholder="Search by title or affected customer…"
         value={search}
         onChange={(_, d) => setSearch(d.value)}
-        style={{ maxWidth: 320, marginBottom: 8 }}
+        className={ls.maxW320Mb8}
       />
       {list.isLoading ? (
         <Spinner size="tiny" />
@@ -877,7 +886,7 @@ export function BugReports() {
                 </DialogTrigger>
                 <Button
                   appearance="primary"
-                  style={{ backgroundColor: tokens.colorPaletteRedBackground3 }}
+                  className={ls.dangerFill}
                   disabled={remove.isPending}
                   onClick={() => remove.mutate(confirmDelete.id)}
                 >

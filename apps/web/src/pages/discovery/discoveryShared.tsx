@@ -6,6 +6,12 @@ import { api } from '../../api';
 import { JsonTree } from '../../components/JsonTree';
 import { Page } from '../../components/Page';
 
+const useLocalStyles = makeStyles({
+  w94vwMaxW820: { maxWidth: '820px', width: "94vw" },
+  mb8: { marginBottom: '8px' },
+});
+
+
 export const useStyles = makeStyles({
   grid: { display: 'grid', gridTemplateColumns: '1fr 1fr', ...shorthands.gap('16px') },
   card: { ...shorthands.padding('16px'), display: 'grid', ...shorthands.gap('10px'), alignContent: 'start' },
@@ -171,12 +177,13 @@ export function Pager({
 }
 
 export function JsonDialog({ title, data, onClose }: { title: string; data: unknown; onClose: () => void }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const [view, setView] = useState<'formatted' | 'raw'>('formatted');
   const text = JSON.stringify(data, null, 2);
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: 820, width: '94vw' }}>
+      <DialogSurface className={ls.w94vwMaxW820}>
         <DialogBody>
           <DialogTitle>{title}</DialogTitle>
           <DialogContent>
@@ -184,7 +191,7 @@ export function JsonDialog({ title, data, onClose }: { title: string; data: unkn
               size="small"
               selectedValue={view}
               onTabSelect={(_, d) => setView(d.value as 'formatted' | 'raw')}
-              style={{ marginBottom: 8 }}
+              className={ls.mb8}
             >
               <Tab value="formatted">Formatted</Tab>
               <Tab value="raw">Raw JSON</Tab>

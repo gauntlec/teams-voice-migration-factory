@@ -16,6 +16,13 @@ import { api } from '../api';
 import { useAuth } from '../auth';
 import { Wordmark } from '../components/Logo';
 
+const useLocalStyles = makeStyles({
+  gridGap12: { display: "grid", ...shorthands.gap('12px') },
+  danger: { color: tokens.colorPaletteRedForeground1 },
+  flexGap8: { display: "flex", ...shorthands.gap('8px') },
+});
+
+
 const useStyles = makeStyles({
   root: { display: 'grid', placeItems: 'center', minHeight: '100vh', backgroundColor: tokens.colorNeutralBackground2 },
   card: { width: '440px', ...shorthands.padding('28px'), ...shorthands.gap('16px') },
@@ -46,6 +53,7 @@ interface EnrolData {
 }
 
 export function EnrolTotp() {
+  const ls = useLocalStyles();
   const s = useStyles();
   const { confirmEnrol, logout } = useAuth();
   const [data, setData] = useState<EnrolData | null>(null);
@@ -94,7 +102,7 @@ export function EnrolTotp() {
                 <div className={s.secret}>{data.secret}</div>
               </Field>
             )}
-            <form onSubmit={confirm} style={{ display: 'grid', gap: 12 }}>
+            <form onSubmit={confirm} className={ls.gridGap12}>
               <Field label="Authenticator code" required>
                 <Input
                   value={code}
@@ -103,8 +111,8 @@ export function EnrolTotp() {
                   autoFocus
                 />
               </Field>
-              {error && <Body1 style={{ color: tokens.colorPaletteRedForeground1 }}>{error}</Body1>}
-              <div style={{ display: 'flex', gap: 8 }}>
+              {error && <Body1 className={ls.danger}>{error}</Body1>}
+              <div className={ls.flexGap8}>
                 <Button appearance="primary" type="submit" disabled={busy || code.length !== 6}>
                   {busy ? <Spinner size="tiny" /> : 'Verify & continue'}
                 </Button>
@@ -115,7 +123,7 @@ export function EnrolTotp() {
             </form>
           </>
         )}
-        {error && !data && <Body1 style={{ color: tokens.colorPaletteRedForeground1 }}>{error}</Body1>}
+        {error && !data && <Body1 className={ls.danger}>{error}</Body1>}
       </Card>
     </div>
   );

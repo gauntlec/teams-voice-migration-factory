@@ -30,6 +30,14 @@ import { Page } from '../components/Page';
 import { NoTenant } from '../components/records';
 import { errorText, useSrStyles } from './ServiceRequests';
 
+const useLocalStyles = makeStyles({
+  pl20Margin8px00: { ...shorthands.margin("8px", "0", "0"), paddingLeft: '20px' },
+  preWrap: { whiteSpace: "pre-wrap" },
+  none: { display: "none" },
+  pl20Margin0: { ...shorthands.margin("0px"), paddingLeft: '20px' },
+});
+
+
 const useStyles = makeStyles({
   cats: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', columnGap: tokens.spacingHorizontalM, rowGap: tokens.spacingVerticalM },
   cat: {
@@ -131,6 +139,7 @@ function QuestionInput({ spec, value, onChange }: { spec: SrFieldSpec; value: un
 
 /** The guided "raise an incident" form: what's wrong, where, who's affected, details, example calls. */
 export function IncidentNew() {
+  const ls = useLocalStyles();
   const { activeTenantId, can, me } = useAuth();
   const s = useStyles();
   const cs = useSrStyles();
@@ -318,15 +327,15 @@ export function IncidentNew() {
               <Text weight="semibold" block>
                 {staff ? 'Known errors for this kind of incident' : 'Known issue'}
               </Text>
-              <ul style={{ margin: '8px 0 0', paddingLeft: 20 }}>
+              <ul className={ls.pl20Margin8px00}>
                 {knownQ.data!.map((k) => (
                   <li key={k.id}>
                     {staff ? (
                       <>
-                        {k.reference} · {k.title}: <Text style={{ whiteSpace: 'pre-wrap' }}>{k.workaround}</Text>
+                        {k.reference} · {k.title}: <Text className={ls.preWrap}>{k.workaround}</Text>
                       </>
                     ) : (
-                      <Text style={{ whiteSpace: 'pre-wrap' }}>{k.customer_note}</Text>
+                      <Text className={ls.preWrap}>{k.customer_note}</Text>
                     )}
                   </li>
                 ))}
@@ -342,7 +351,7 @@ export function IncidentNew() {
               <Text size={200} block>
                 If one of these is your problem, follow it instead and you&apos;ll get every update. Otherwise carry on below.
               </Text>
-              <ul style={{ margin: '8px 0 0', paddingLeft: 20 }}>
+              <ul className={ls.pl20Margin8px00}>
                 {similarQ.data!.map((i) => (
                   <li key={i.id}>
                     <Link href={`/incidents/${i.id}`} target="_blank">
@@ -487,7 +496,7 @@ export function IncidentNew() {
               ref={picker}
               type="file"
               multiple
-              style={{ display: 'none' }}
+              className={ls.none}
               accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.pptx,.csv,.txt"
               onChange={(e) => {
                 setFiles((prev) => [...prev, ...Array.from(e.target.files ?? [])].slice(0, 10));
@@ -501,7 +510,7 @@ export function IncidentNew() {
               </Text>
             </div>
             {files.length > 0 && (
-              <ul style={{ margin: 0, paddingLeft: 20 }}>
+              <ul className={ls.pl20Margin0}>
                 {files.map((f, i) => (
                   <li key={`${f.name}-${i}`}>
                     {f.name}{' '}

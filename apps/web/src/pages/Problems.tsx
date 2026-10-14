@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Link, Select, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text } from '@fluentui/react-components';
+import { Badge, Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Link, Select, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text , makeStyles, shorthands } from '@fluentui/react-components';
 import { ArrowLeftRegular } from '@fluentui/react-icons';
 import { INC_CATEGORY_BY_KEY, INC_PROBLEM_STATUSES, INC_PROBLEM_STATUS_LABELS, type IncPriority, type IncProblemStatus, type IncStatus } from '@tvmf/shared';
 import { api } from '../api';
@@ -13,6 +13,15 @@ import { ProblemDialog, type ProblemFields } from '../components/ProblemDialog';
 import { LoadError, NoTenant } from '../components/records';
 import { useSrStyles, when } from './ServiceRequests';
 import { TableSkeleton } from '../components/states';
+
+const useLocalStyles = makeStyles({
+  ml4: { marginLeft: '4px' },
+  w94vwMaxW720: { maxWidth: "720px", width: "94vw" },
+  flexColRowGap12MaxH64vhScroll: { display: "flex", flexDirection: "column", rowGap: '12px', maxHeight: "64vh", overflowY: "auto" },
+  preWrap: { whiteSpace: "pre-wrap" },
+  pl20Margin0: { ...shorthands.margin("0px"), paddingLeft: '20px' },
+});
+
 
 interface ProblemRow {
   id: string;
@@ -34,6 +43,7 @@ interface ProblemDetail extends ProblemFields {
 
 /** Problem records for the customer: the causes behind incidents, and the known errors engineers can use. Engineers and admins only. */
 export function Problems() {
+  const ls = useLocalStyles();
   const { activeTenantId, me } = useAuth();
   const cs = useSrStyles();
   const qc = useQueryClient();
@@ -114,7 +124,7 @@ export function Problems() {
                       {INC_PROBLEM_STATUS_LABELS[p.status]}
                     </Badge>
                     {p.known_error && (
-                      <Badge appearance="outline" color="brand" style={{ marginLeft: 4 }} title="Offered to engineers on new incidents of this kind">
+                      <Badge appearance="outline" color="brand" className={ls.ml4} title="Offered to engineers on new incidents of this kind">
                         Known error
                       </Badge>
                     )}
@@ -134,10 +144,10 @@ export function Problems() {
 
       {viewing && (
         <Dialog open onOpenChange={(_, d) => !d.open && setViewing(null)}>
-          <DialogSurface style={{ maxWidth: '720px', width: '94vw' }}>
+          <DialogSurface className={ls.w94vwMaxW720}>
             <DialogBody>
               <DialogTitle>{detail.data ? `${detail.data.reference} · ${detail.data.title}` : 'Problem'}</DialogTitle>
-              <DialogContent style={{ display: 'flex', flexDirection: 'column', rowGap: 12, maxHeight: '64vh', overflowY: 'auto' }}>
+              <DialogContent className={ls.flexColRowGap12MaxH64vhScroll}>
                 {detail.isLoading && <Spinner size="tiny" />}
                 {detail.data && (
                   <>
@@ -152,7 +162,7 @@ export function Problems() {
                           <Text weight="semibold" size={200} block>
                             {label}
                           </Text>
-                          <Text style={{ whiteSpace: 'pre-wrap' }}>{value}</Text>
+                          <Text className={ls.preWrap}>{value}</Text>
                         </div>
                       ) : null,
                     )}
@@ -162,7 +172,7 @@ export function Problems() {
                     {detail.data.incidents.length === 0 ? (
                       <Text size={200}>None linked yet.</Text>
                     ) : (
-                      <ul style={{ margin: 0, paddingLeft: 20 }}>
+                      <ul className={ls.pl20Margin0}>
                         {detail.data.incidents.map((i) => (
                           <li key={i.id}>
                             <RouterLink to={`/incidents/${i.id}`}>{i.reference}</RouterLink> · {i.title}

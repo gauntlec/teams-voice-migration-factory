@@ -1,12 +1,30 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Card, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Link, ProgressBar, Spinner, Text, tokens } from '@fluentui/react-components';
+import { Badge, Button, Card, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Link, ProgressBar, Spinner, Text, tokens , makeStyles, shorthands, mergeClasses } from '@fluentui/react-components';
 import { ArrowSyncRegular, CheckmarkRegular, ChevronDownRegular, ChevronRightRegular, DeleteRegular, PlugConnectedRegular } from '@fluentui/react-icons';
 import { TENANT_DISCOVERY_STEPS, TENANT_DISCOVERY_STEP_LABELS, TENANT_DISCOVERY_STEP_TYPES, TENANT_OBJECT_TYPE_LABELS, type TenantConnectionInfo, type TenantDiscoveryRun, type TenantDiscoveryStep, type TenantDiscoverySummary, type TenantObjectType } from '@tvmf/shared';
 import { api, ApiError } from '../../api';
 import { LoadError } from '../../components/records';
 import { useStyles, fmt, changeCountsOf, totalChanges, CopyButton } from './discoveryShared';
 import { DangerText } from '../../components/ui';
+
+const useLocalStyles = makeStyles({
+  inlineblockW24: { width: '24px', display: "inline-block" },
+  mt4Pl28: { paddingLeft: '28px', marginTop: '4px' },
+  mt6: { marginTop: '6px' },
+  gridGap4: { display: "grid", ...shorthands.gap('4px') },
+  gridGap8: { display: "grid", ...shorthands.gap('8px') },
+  filled: { backgroundColor: "transparent" },
+  gridGap6: { display: "grid", ...shorthands.gap('6px') },
+  paletteYellowForeground1: { color: tokens.colorPaletteYellowForeground1 },
+  paletteGreenForeground2: { color: tokens.colorPaletteGreenForeground2 },
+  inlineblockW16: { width: '16px', display: "inline-block" },
+  mt8: { marginTop: '8px' },
+  danger: { color: tokens.colorPaletteRedForeground1 },
+  blockMt8Danger: { color: tokens.colorPaletteRedForeground1, display: "block", marginTop: '8px' },
+  dangerFill: { backgroundColor: tokens.colorPaletteRedBackground3 },
+});
+
 
 interface Connection {
   id: string;
@@ -51,6 +69,7 @@ function ScopePicker({
   onRun: () => void;
   disabled: boolean;
 }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const [expanded, setExpanded] = useState<Set<TenantDiscoveryStep>>(new Set());
 
@@ -93,7 +112,7 @@ function ScopePicker({
                   aria-label={isOpen ? 'Collapse' : 'Expand'}
                 />
               ) : (
-                <span style={{ width: 24, display: 'inline-block' }} />
+                <span className={ls.inlineblockW24} />
               )}
               <Checkbox
                 label={TENANT_DISCOVERY_STEP_LABELS[st]}
@@ -117,7 +136,7 @@ function ScopePicker({
         );
       })}
       {selected.has('user') && (
-        <div className={s.scopeTypes} style={{ paddingLeft: 28, marginTop: 4 }}>
+        <div className={mergeClasses(s.scopeTypes, ls.mt4Pl28)}>
           <Checkbox
             label="Include disabled accounts"
             checked={includeDisabled}
@@ -135,7 +154,7 @@ function ScopePicker({
         Teams-voice migration candidates. Tick the boxes above to widen it. If the tenant returns no
         licence data the filter is skipped automatically and every enabled user is stored.
       </Text>
-      <div className={s.row} style={{ marginTop: 6 }}>
+      <div className={mergeClasses(s.row, ls.mt6)}>
         <Button appearance="primary" icon={<ArrowSyncRegular />} disabled={disabled} onClick={onRun}>
           Sync selected{selected.size ? ` (${selected.size})` : ''}
         </Button>
@@ -158,6 +177,7 @@ export function ConnectCard({
   canRun: boolean;
   onChanged: () => void;
 }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const canManage = !!summary?.canManageConnections;
   const sessions = summary?.activeConnections ?? [];
@@ -263,7 +283,7 @@ export function ConnectCard({
       </Text>
 
       {canManage && sessions.length > 0 && (
-        <div style={{ display: 'grid', gap: 4 }}>
+        <div className={ls.gridGap4}>
           <Text size={200} className={s.muted}>
             Active sessions — pick the one a sync runs on.
           </Text>
@@ -330,7 +350,7 @@ export function ConnectCard({
           )}
         </div>
       ) : c.status === 'pending' ? (
-        <div style={{ display: 'grid', gap: 8 }}>
+        <div className={ls.gridGap8}>
           {focusedForeign ? (
             <div className={s.row}>
               <Spinner size="tiny" />
@@ -364,7 +384,7 @@ export function ConnectCard({
           )}
         </div>
       ) : (
-        <div style={{ display: 'grid', gap: 8 }}>
+        <div className={ls.gridGap8}>
           <div className={s.row}>
             <Badge appearance="tint" color="success">
               Connected
@@ -412,7 +432,7 @@ export function ConnectCard({
               lets Design & Build search M365 groups instead of typing a raw
               Object ID into the Shared Voicemail groupId field. */}
           {!focusedForeign && (
-            <div className={s.sessionPanel} style={{ background: 'transparent' }}>
+            <div className={mergeClasses(s.sessionPanel, ls.filled)}>
               {c.graph_status === 'active' ? (
                 <div className={s.row}>
                   <Badge appearance="tint" color="success">
@@ -425,7 +445,7 @@ export function ConnectCard({
                 </div>
               ) : c.graph_status === 'pending' ? (
                 c.graph_user_code ? (
-                  <div style={{ display: 'grid', gap: 6 }}>
+                  <div className={ls.gridGap6}>
                     <Text size={200}>
                       Second sign-in for group lookup — open{' '}
                       <Link
@@ -487,6 +507,7 @@ export function ConnectCard({
 }
 
 export function RunCard({ base, summary }: { base: string; summary: TenantDiscoverySummary | undefined }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const qc = useQueryClient();
   const filterUsers = summary?.settings?.filterUsers ?? true;
@@ -613,7 +634,7 @@ export function RunCard({ base, summary }: { base: string; summary: TenantDiscov
             </div>
           )}
           {filterDisabledReason && (
-            <Text size={200} style={{ color: tokens.colorPaletteYellowForeground1 }}>
+            <Text size={200} className={ls.paletteYellowForeground1}>
               {filterDisabledReason}
             </Text>
           )}
@@ -637,11 +658,11 @@ export function RunCard({ base, summary }: { base: string; summary: TenantDiscov
               return (
                 <div key={st} className={s.step}>
                   {isDone ? (
-                    <CheckmarkRegular style={{ color: tokens.colorPaletteGreenForeground2 }} />
+                    <CheckmarkRegular className={ls.paletteGreenForeground2} />
                   ) : isCur ? (
                     <Spinner size="extra-tiny" />
                   ) : (
-                    <span style={{ width: 16, display: 'inline-block' }} />
+                    <span className={ls.inlineblockW16} />
                   )}
                   <span style={{ color: isDone || isCur ? undefined : tokens.colorNeutralForeground3 }}>
                     {TENANT_DISCOVERY_STEP_LABELS[st]}
@@ -663,7 +684,7 @@ export function RunCard({ base, summary }: { base: string; summary: TenantDiscov
           {run.error && <LoadError message={run.error} />}
         </>
       )}
-      <div className={s.row} style={{ marginTop: 8 }}>
+      <div className={mergeClasses(s.row, ls.mt8)}>
         <Checkbox
           label="Filter users to Teams-licensed accounts (recommended for large tenants)"
           checked={filterUsers}
@@ -676,7 +697,7 @@ export function RunCard({ base, summary }: { base: string; summary: TenantDiscov
           ? 'Runs store only enabled users licensed for Teams. Turn this off for a small customer to store every enabled user.'
           : 'Runs store every enabled user for this customer. A run can still be narrowed with “Sync part of the tenant”.'}
       </Text>
-      <div className={s.row} style={{ marginTop: 8 }}>
+      <div className={mergeClasses(s.row, ls.mt8)}>
         <Checkbox
           label="Email the person who started a run when it finishes"
           checked={notifyOnComplete}
@@ -705,6 +726,7 @@ export function PurgeCard({
   canRun: boolean;
   onPurged: () => void;
 }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const [open, setOpen] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -744,7 +766,7 @@ export function PurgeCard({
         <Button
           appearance="secondary"
           icon={<DeleteRegular />}
-          style={{ color: tokens.colorPaletteRedForeground1 }}
+          className={ls.danger}
           disabled={!hasData}
           onClick={() => {
             setErr(null);
@@ -772,12 +794,12 @@ export function PurgeCard({
               {summary?.lastRun ? ' and the run history' : ''}. Any Data Collection users stay, but
               lose their link to a discovered identity. This cannot be undone.
               {running && (
-                <Text style={{ color: tokens.colorPaletteRedForeground1, display: 'block', marginTop: 8 }}>
+                <Text className={ls.blockMt8Danger}>
                   A discovery is running — wait for it to finish first.
                 </Text>
               )}
               {err && (
-                <Text style={{ color: tokens.colorPaletteRedForeground1, display: 'block', marginTop: 8 }}>{err}</Text>
+                <Text className={ls.blockMt8Danger}>{err}</Text>
               )}
             </DialogContent>
             <DialogActions>
@@ -786,7 +808,7 @@ export function PurgeCard({
               </Button>
               <Button
                 appearance="primary"
-                style={{ backgroundColor: tokens.colorPaletteRedBackground3 }}
+                className={ls.dangerFill}
                 disabled={purge.isPending || running}
                 onClick={() => purge.mutate()}
               >

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Badge, Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Dropdown, Field, Option, SearchBox, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text } from '@fluentui/react-components';
+import { Badge, Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Dropdown, Field, Option, SearchBox, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text , makeStyles, shorthands } from '@fluentui/react-components';
 import { DeleteRegular } from '@fluentui/react-icons';
 import { type Paginated } from '@tvmf/shared';
 import { api, ApiError } from '../../api';
@@ -9,6 +9,16 @@ import { DataTable } from '../../components/DataTable';
 import { Page } from '../../components/Page';
 import { LoadError, useRecordStyles, type Choice, type Row } from '../../components/records';
 import { isFlowStale } from './siteShared';
+
+const useLocalStyles = makeStyles({
+  minW180: { minWidth: '180px' },
+  minW130: { minWidth: '130px' },
+  styled: { fontFamily: "ui-monospace, monospace" },
+  flexGap8: { display: "flex", ...shorthands.gap('8px') },
+  flex1: { flex: 1 },
+  gridGap4: { display: "grid", ...shorthands.gap('4px') },
+});
+
 
 interface PhoneNumber {
   id: string;
@@ -31,6 +41,7 @@ export function NumberInventory({
   locked: boolean;
   onChanged: () => void;
 }) {
+  const ls = useLocalStyles();
   const s = useRecordStyles();
   const [statusFilter, setStatusFilter] = useState<'all' | 'available' | 'reserved' | 'assigned'>('all');
   const [qInput, setQInput] = useState('');
@@ -85,7 +96,7 @@ export function NumberInventory({
             placeholder="Search number…"
             value={qInput}
             onChange={(_, d) => setQInput(d.value)}
-            style={{ minWidth: 180 }}
+            className={ls.minW180}
           />
           <Dropdown
             size="small"
@@ -95,7 +106,7 @@ export function NumberInventory({
               setStatusFilter((d.optionValue as typeof statusFilter) ?? 'all');
               setPage(1);
             }}
-            style={{ minWidth: 130 }}
+            className={ls.minW130}
           >
             {['all', 'available', 'reserved', 'assigned'].map((o) => (
               <Option key={o} value={o}>
@@ -128,7 +139,7 @@ export function NumberInventory({
               <TableBody>
                 {items.map((n) => (
                   <TableRow key={n.id}>
-                    <TableCell style={{ fontFamily: 'ui-monospace, monospace' }}>{n.e164}</TableCell>
+                    <TableCell className={ls.styled}>{n.e164}</TableCell>
                     <TableCell>
                       {n.range_start
                         ? n.range_end && n.range_end !== n.range_start
@@ -215,6 +226,7 @@ export function RaNumbersButton({
   base: string;
   onChanged: () => void;
 }) {
+  const ls = useLocalStyles();
   const s = useRecordStyles();
   const [open, setOpen] = useState(false);
   const [pick, setPick] = useState('');
@@ -270,13 +282,13 @@ export function RaNumbersButton({
                   ))}
                 </div>
                 <Field label="Attach an available number">
-                  <div style={{ display: 'flex', gap: 8 }}>
+                  <div className={ls.flexGap8}>
                     <Dropdown
                       placeholder="Select…"
                       selectedOptions={pick ? [pick] : []}
                       value={available.find((c) => c.value === pick)?.label ?? ''}
                       onOptionSelect={(_, d) => setPick(d.optionValue ?? '')}
-                      style={{ flex: 1 }}
+                      className={ls.flex1}
                     >
                       {available.map((c) => (
                         <Option key={c.value} value={c.value}>
@@ -329,6 +341,7 @@ export function FlowImportButton({
   siteId: string;
   onChanged: () => void;
 }) {
+  const ls = useLocalStyles();
   const [warnings, setWarnings] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const doImport = useMutation({
@@ -383,7 +396,7 @@ export function FlowImportButton({
               {error && <Text block>{error}</Text>}
               {warnings && warnings.length === 0 && <Text block>Everything resolved cleanly - no follow-up needed.</Text>}
               {warnings && warnings.length > 0 && (
-                <div style={{ display: 'grid', gap: 4 }}>
+                <div className={ls.gridGap4}>
                   <Text block>This needs a quick check in Design & Build:</Text>
                   {warnings.map((w, i) => (
                     <Text key={i} size={200} block>

@@ -40,6 +40,15 @@ import { LoadError } from './DataCollection';
 import { DangerText } from '../components/ui';
 import { TableSkeleton } from '../components/states';
 
+const useLocalStyles = makeStyles({
+  ml4: { marginLeft: '4px' },
+  maxW620: { maxWidth: "620px" },
+  flexColRowGap12: { display: "flex", flexDirection: "column", rowGap: '12px' },
+  flex: { display: "flex", columnGap: '8px' },
+  grow1: { flexGrow: 1 },
+});
+
+
 interface QueueItem {
   id: string;
   reference: string;
@@ -89,6 +98,7 @@ const useStyles = makeStyles({
  * actioned as usual; customers you're not on the team for are read-only here.
  */
 export function MspServiceRequests() {
+  const ls = useLocalStyles();
   const cs = useStyles();
   const navigate = useNavigate();
   const { me, setActiveTenant } = useAuth();
@@ -246,7 +256,7 @@ export function MspServiceRequests() {
                       {SR_STATUS_LABELS[i.status]}
                     </Badge>
                     {i.waiting_since && (
-                      <Badge appearance="outline" color="warning" style={{ marginLeft: 4 }}>
+                      <Badge appearance="outline" color="warning" className={ls.ml4}>
                         Waiting on customer
                       </Badge>
                     )}
@@ -281,6 +291,7 @@ export function MspServiceRequests() {
 
 /** Assign a request or reply to it without switching to its customer. */
 function QuickActionDialog({ item, onClose }: { item: QueueItem; onClose: () => void }) {
+  const ls = useLocalStyles();
   const qc = useQueryClient();
   const base = `/msp/service-requests/${item.tenant_id}`;
   const [assignee, setAssignee] = useState(item.assigned_to ?? '');
@@ -309,16 +320,16 @@ function QuickActionDialog({ item, onClose }: { item: QueueItem; onClose: () => 
   const error = assign.error ?? reply.error;
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: '620px' }}>
+      <DialogSurface className={ls.maxW620}>
         <DialogBody>
           <DialogTitle>
             {item.reference} · {item.tenant_name}
           </DialogTitle>
-          <DialogContent style={{ display: 'flex', flexDirection: 'column', rowGap: 12 }}>
+          <DialogContent className={ls.flexColRowGap12}>
             <Text>{item.title}</Text>
             <Field label="Assigned to">
-              <div style={{ display: 'flex', columnGap: 8 }}>
-                <Select value={assignee} onChange={(_, d) => setAssignee(d.value)} style={{ flexGrow: 1 }}>
+              <div className={ls.flex}>
+                <Select value={assignee} onChange={(_, d) => setAssignee(d.value)} className={ls.grow1}>
                   <option value="">Unassigned</option>
                   {(staff.data ?? []).map((m) => (
                     <option key={m.id} value={m.id}>

@@ -10,7 +10,13 @@
  * login screen, which never has tenant context.
  */
 
-import { tokens } from '@fluentui/react-components';
+import { tokens , makeStyles, shorthands } from '@fluentui/react-components';
+
+const useLocalStyles = makeStyles({
+  inlineFlexItemsCenter: { display: "inline-flex", alignItems: "center" },
+  inlineFlexItemsCenterGap9: { display: "inline-flex", alignItems: "center", ...shorthands.gap('9px') },
+});
+
 
 const BRAND = '#4657D2';
 const ACCENT = '#5B5FC7';
@@ -48,9 +54,10 @@ export function Wordmark({
   size?: number;
   logoUrl?: string | null;
 }) {
+  const ls = useLocalStyles();
   if (logoUrl) {
     return (
-      <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+      <span className={ls.inlineFlexItemsCenter}>
         <Logo size={size + 2} tone={tone} logoUrl={logoUrl} />
       </span>
     );
@@ -58,7 +65,7 @@ export function Wordmark({
   const text = tone === 'onDark' ? '#ffffff' : tokens.colorNeutralForeground1;
   const accent = tone === 'onDark' ? 'rgba(255,255,255,0.88)' : ACCENT;
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 9 }}>
+    <span className={ls.inlineFlexItemsCenterGap9}>
       <Logo size={size + 2} tone={tone} />
       <span
         style={{

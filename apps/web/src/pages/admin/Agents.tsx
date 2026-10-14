@@ -28,6 +28,8 @@ import {
   makeStyles,
   shorthands,
   tokens,
+
+  mergeClasses,
 } from '@fluentui/react-components';
 import {
   AGENT_ACTION_CLASSES,
@@ -56,6 +58,19 @@ import { Page } from '../../components/Page';
 import { LoadError } from '../../components/records';
 import { errorText, when } from '../ServiceRequests';
 import { TableSkeleton } from '../../components/states';
+
+const useLocalStyles = makeStyles({
+  styled: { cursor: "pointer" },
+  ml8: { marginLeft: '8px' },
+  maxW520: { maxWidth: "520px" },
+  w95vwMaxW900: { maxWidth: "900px", width: "95vw" },
+  maxH72vhScroll: { maxHeight: "72vh", overflowY: "auto" },
+  w100: { width: '100px' },
+  justifySpacebetween: { justifyContent: "space-between" },
+  ml4: { marginLeft: '4px' },
+  mt12: { marginTop: '12px' },
+});
+
 
 const useStyles = makeStyles({
   stack: { display: 'flex', flexDirection: 'column', rowGap: tokens.spacingVerticalM },
@@ -99,6 +114,7 @@ const STATUS_COLOR: Record<AgentStatus, 'success' | 'warning' | 'subtle'> = { ac
  * customers they may work and how far on each kind of action, their webhooks, and the kill switches. See docs/AGENTS.md.
  */
 export function AdminAgents() {
+  const ls = useLocalStyles();
   const s = useStyles();
   const qc = useQueryClient();
   const [open, setOpen] = useState<string | null>(null);
@@ -194,11 +210,11 @@ export function AdminAgents() {
             </TableHeader>
             <TableBody>
               {list.data!.map((a) => (
-                <TableRow key={a.id} onClick={() => setOpen(a.id)} style={{ cursor: 'pointer' }}>
+                <TableRow key={a.id} onClick={() => setOpen(a.id)} className={ls.styled}>
                   <TableCell>
                     <Link onClick={() => setOpen(a.id)}>{a.name}</Link>
                     {a.builtin_key && (
-                      <Badge appearance="outline" size="small" style={{ marginLeft: 8 }}>
+                      <Badge appearance="outline" size="small" className={ls.ml8}>
                         Built in
                       </Badge>
                     )}
@@ -239,6 +255,7 @@ export function AdminAgents() {
 }
 
 function CreateDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => void }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const [name, setName] = useState('');
   const [kind, setKind] = useState<AgentKind>('triage');
@@ -247,7 +264,7 @@ function CreateDialog({ onClose, onCreated }: { onClose: () => void; onCreated: 
   const create = useMutation({ mutationFn: () => api<{ id: string }>('/agents', { method: 'POST', body: JSON.stringify({ name, kind, description, modelLabel }) }), onSuccess: (r) => onCreated(r.id) });
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: '520px' }}>
+      <DialogSurface className={ls.maxW520}>
         <DialogBody>
           <DialogTitle>New assistant</DialogTitle>
           <DialogContent className={s.stack}>
@@ -286,6 +303,7 @@ function CreateDialog({ onClose, onCreated }: { onClose: () => void; onCreated: 
 }
 
 function AgentDialog({ id, onClose }: { id: string; onClose: () => void }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const qc = useQueryClient();
   const [tab, setTab] = useState<'overview' | 'tokens' | 'customers' | 'webhooks'>('overview');
@@ -298,10 +316,10 @@ function AgentDialog({ id, onClose }: { id: string; onClose: () => void }) {
   const a = q.data?.agent;
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface style={{ maxWidth: '900px', width: '95vw' }}>
+      <DialogSurface className={ls.w95vwMaxW900}>
         <DialogBody>
           <DialogTitle>{a ? a.name : 'Assistant'}</DialogTitle>
-          <DialogContent className={s.stack} style={{ maxHeight: '72vh', overflowY: 'auto' }}>
+          <DialogContent className={mergeClasses(s.stack, ls.maxH72vhScroll)}>
             {q.isLoading && <Spinner size="tiny" />}
             {q.isError && <LoadError message={(q.error as Error).message} />}
             {q.data && a && (
@@ -371,6 +389,7 @@ function AgentDialog({ id, onClose }: { id: string; onClose: () => void }) {
 }
 
 function TokensTab({ id, data, onChanged }: { id: string; data: AgentDetail; onChanged: () => void }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const [name, setName] = useState('');
   const [scopes, setScopes] = useState<AgentScope[]>(AGENT_DEFAULT_SCOPES);
@@ -434,7 +453,7 @@ function TokensTab({ id, data, onChanged }: { id: string; data: AgentDetail; onC
           <Input value={name} maxLength={60} placeholder="e.g. Triage runner" onChange={(_, d) => setName(d.value)} />
         </Field>
         <Field label="Expires in (days)">
-          <Input type="number" min={1} max={365} style={{ width: 100 }} value={days} onChange={(_, d) => setDays(d.value)} />
+          <Input type="number" min={1} max={365} className={ls.w100} value={days} onChange={(_, d) => setDays(d.value)} />
         </Field>
         <Field label="Only from these addresses (optional)">
           <Input value={ips} placeholder="203.0.113.7, 198.51.100.0/24" onChange={(_, d) => setIps(d.value)} />
@@ -456,6 +475,7 @@ function TokensTab({ id, data, onChanged }: { id: string; data: AgentDetail; onC
 }
 
 function CustomersTab({ id, data, onChanged }: { id: string; data: AgentDetail; onChanged: () => void }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const [editing, setEditing] = useState<string | null>(null);
   return (
@@ -466,7 +486,7 @@ function CustomersTab({ id, data, onChanged }: { id: string; data: AgentDetail; 
       {data.customers.length === 0 && <Text>No customers have Managed Services switched on.</Text>}
       {data.customers.map((c) => (
         <Card key={c.tenant_id}>
-          <div className={s.row} style={{ justifyContent: 'space-between' }}>
+          <div className={mergeClasses(s.row, ls.justifySpacebetween)}>
             <div>
               <Text weight="semibold">{c.name}</Text>{' '}
               {c.allowed && (
@@ -475,7 +495,7 @@ function CustomersTab({ id, data, onChanged }: { id: string; data: AgentDetail; 
                 </Badge>
               )}
               {!c.agents_enabled && (
-                <Badge appearance="tint" color="warning" style={{ marginLeft: 4 }} title="Every assistant is switched off on this customer">
+                <Badge appearance="tint" color="warning" className={ls.ml4} title="Every assistant is switched off on this customer">
                   Assistants off for this customer
                 </Badge>
               )}
@@ -492,6 +512,7 @@ function CustomersTab({ id, data, onChanged }: { id: string; data: AgentDetail; 
 }
 
 function PolicyEditor({ agentId, customer, caps, onDone }: { agentId: string; customer: AgentDetail['customers'][number]; caps: Record<AgentActionClass, AgentLevel>; onDone: () => void }) {
+  const ls = useLocalStyles();
   const s = useStyles();
   const qc = useQueryClient();
   const [enabled, setEnabled] = useState(customer.allowed ? customer.enabled : true);
@@ -500,7 +521,7 @@ function PolicyEditor({ agentId, customer, caps, onDone }: { agentId: string; cu
   const remove = useMutation({ mutationFn: () => api(`/agents/${agentId}/policies/${customer.tenant_id}`, { method: 'DELETE' }), onSuccess: onDone });
   const tenantSwitch = useMutation({ mutationFn: (on: boolean) => api(`/agents/customers/${customer.tenant_id}`, { method: 'PUT', body: JSON.stringify({ enabled: on }) }), onSuccess: () => (qc.invalidateQueries({ queryKey: ['agents'] }), onDone()) });
   return (
-    <div className={s.stack} style={{ marginTop: 12 }}>
+    <div className={mergeClasses(s.stack, ls.mt12)}>
       <Checkbox checked={enabled} label="Allowed on this customer" onChange={(_, d) => setEnabled(!!d.checked)} />
       <div className={s.levels}>
         {AGENT_ACTION_CLASSES.map((cls) => (

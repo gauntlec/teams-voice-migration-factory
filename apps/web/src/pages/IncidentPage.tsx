@@ -23,6 +23,8 @@ import {
   makeStyles,
   shorthands,
   tokens,
+
+  mergeClasses,
 } from '@fluentui/react-components';
 import { ArrowLeftRegular, CheckmarkRegular, ChevronRightRegular, DeleteRegular, WarningRegular } from '@fluentui/react-icons';
 import {
@@ -68,6 +70,15 @@ import { INC_STATUS_COLOR, IncSlaBadge, IncStatusBadge, PriorityBadge, type Inci
 import { Page } from '../components/Page';
 import { LoadError, NoTenant } from '../components/records';
 import { errorText, useSrStyles, when } from './ServiceRequests';
+
+const useLocalStyles = makeStyles({
+  preWrap: { whiteSpace: "pre-wrap" },
+  pl20Margin0: { ...shorthands.margin("0px"), paddingLeft: '20px' },
+  styled: { gridTemplateColumns: "170px minmax(0, 1fr) 160px" },
+  justifySpacebetween: { justifyContent: "space-between" },
+  none: { display: "none" },
+});
+
 
 const usePageStyles = makeStyles({
   steps: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: tokens.spacingHorizontalXS, rowGap: tokens.spacingVerticalXS },
@@ -244,6 +255,7 @@ export function IncidentPage() {
 }
 
 function Overview({ base, data }: { base: string; data: IncidentPayload }) {
+  const ls = useLocalStyles();
   const cs = useSrStyles();
   const ps = usePageStyles();
   const qc = useQueryClient();
@@ -502,7 +514,7 @@ function Overview({ base, data }: { base: string; data: IncidentPayload }) {
 
         <div className={cs.section}>
           <Text weight="semibold">What was reported</Text>
-          <Text style={{ whiteSpace: 'pre-wrap' }}>{r.description}</Text>
+          <Text className={ls.preWrap}>{r.description}</Text>
           {lines.length > 0 && (
             <div className={cs.facts}>
               {lines.map((l) => (
@@ -548,7 +560,7 @@ function Overview({ base, data }: { base: string; data: IncidentPayload }) {
                 Nothing linked yet.
               </Text>
             ) : (
-              <ul style={{ margin: 0, paddingLeft: 20 }}>
+              <ul className={ls.pl20Margin0}>
                 {data.items.map((i) => (
                   <li key={i.id}>
                     <Text size={200} className={ps.muted}>
@@ -664,7 +676,7 @@ function Overview({ base, data }: { base: string; data: IncidentPayload }) {
             )}
           </div>
           {staff && live && (
-            <div className={ps.twoCol} style={{ gridTemplateColumns: '170px minmax(0, 1fr) 160px' }}>
+            <div className={mergeClasses(ps.twoCol, ls.styled)}>
               <Field label="Change priority">
                 <Select value={newPriority} onChange={(_, d) => setNewPriority(d.value as IncPriority | '')}>
                   <option value="">Choose…</option>
@@ -700,7 +712,7 @@ function Overview({ base, data }: { base: string; data: IncidentPayload }) {
               <b>{e.actor_type === 'agent' ? `${e.author_name ?? 'Assistant'} (AI)` : (e.author_name ?? 'Someone')}</b> · {when(e.created_at)}
               {e.internal ? ' · internal note' : ''}
             </Text>
-            <Text style={{ whiteSpace: 'pre-wrap' }}>{eventText(e, staff)}</Text>
+            <Text className={ls.preWrap}>{eventText(e, staff)}</Text>
           </div>
         ))}
         {can('inc:create') && (r.status !== 'closed' || staff) && (
@@ -729,11 +741,12 @@ function Overview({ base, data }: { base: string; data: IncidentPayload }) {
 }
 
 function FactRow({ label, value }: { label: string; value: string }) {
+  const ls = useLocalStyles();
   const cs = useSrStyles();
   return (
     <>
       <Text className={cs.factLabel}>{label}</Text>
-      <Text style={{ whiteSpace: 'pre-wrap' }}>{value}</Text>
+      <Text className={ls.preWrap}>{value}</Text>
     </>
   );
 }
@@ -808,6 +821,7 @@ function eventText(e: IncidentEvent, staff: boolean): string {
 }
 
 function Attachments({ base, id }: { base: string; id: string }) {
+  const ls = useLocalStyles();
   const ps = usePageStyles();
   const cs = useSrStyles();
   const qc = useQueryClient();
@@ -823,14 +837,14 @@ function Attachments({ base, id }: { base: string; id: string }) {
   });
   return (
     <Card className={ps.card}>
-      <div className={cs.actions} style={{ justifyContent: 'space-between' }}>
+      <div className={mergeClasses(cs.actions, ls.justifySpacebetween)}>
         <Text weight="semibold">Attachments</Text>
         {can('inc:create') && (
           <>
             <input
               ref={picker}
               type="file"
-              style={{ display: 'none' }}
+              className={ls.none}
               accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.pptx,.csv,.txt"
               onChange={(e) => {
                 const f = e.target.files?.[0];
@@ -849,7 +863,7 @@ function Attachments({ base, id }: { base: string; id: string }) {
           No files yet. Screenshots, call traces and logs help - pictures, PDFs, Office documents, CSV and text files up to 10 MB.
         </Text>
       ) : (
-        <ul style={{ margin: 0, paddingLeft: 20 }}>
+        <ul className={ls.pl20Margin0}>
           {list.data!.map((f) => (
             <li key={f.id}>
               <Link onClick={() => apiDownload(`${base}/${id}/attachments/${f.id}`, f.filename)}>{f.filename}</Link>{' '}
