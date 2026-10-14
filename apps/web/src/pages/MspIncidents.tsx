@@ -35,6 +35,7 @@ import { api, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
 import { IncQueueTiles, IncSlaBadge, IncStatusBadge, MajorBadge, MajorClockBadge, PriorityBadge, incQueueFilter, type IncQueueFilter, type IncidentRow } from '../components/IncidentBits';
+import { useSort } from '../lib/sort';
 import { Page } from '../components/Page';
 import { LoadError } from '../components/records';
 
@@ -121,6 +122,18 @@ export function MspIncidents() {
 
   const inCustomer = (q.data?.items ?? []).filter((i) => !customer || i.tenant_id === customer);
   const items = inCustomer.filter(incQueueFilter(status === 'open' ? tile : 'all'));
+  const { sorted: sortedItems, header } = useSort(items, {
+    customer: (i) => i.tenant_name,
+    ref: (i) => i.reference,
+    title: (i) => i.title,
+    category: (i) => INC_CATEGORY_BY_KEY[i.category]?.label ?? i.category,
+    site: (i) => i.sitecode,
+    priority: (i) => i.priority,
+    status: (i) => i.status,
+    target: (i) => i.sla.clock.leftMs,
+    assigned: (i) => i.assigned_agent_name ?? i.assigned_to_name,
+    raised: (i) => i.created_at,
+  });
   const majors = (board.data?.items ?? []).filter((i) => !customer || i.tenant_id === customer);
   const subtitle = superAdmin ? 'Every incident across all customers with Managed Services switched on.' : q.data?.msp ? `Every incident across ${q.data.msp.name}'s customers.` : "Every incident across your MSP's customers.";
 
@@ -205,21 +218,21 @@ export function MspIncidents() {
               <DataTable size="small" minWidth={1100}>
                 <TableHeader>
                   <TableRow>
-                    <TableHeaderCell>Customer</TableHeaderCell>
-                    <TableHeaderCell>Ref</TableHeaderCell>
-                    <TableHeaderCell>Title</TableHeaderCell>
-                    <TableHeaderCell>Category</TableHeaderCell>
-                    <TableHeaderCell>Site</TableHeaderCell>
-                    <TableHeaderCell>Priority</TableHeaderCell>
-                    <TableHeaderCell>Status</TableHeaderCell>
-                    <TableHeaderCell>Next target</TableHeaderCell>
-                    <TableHeaderCell>Assigned to</TableHeaderCell>
-                    <TableHeaderCell>Raised</TableHeaderCell>
+                    <TableHeaderCell {...header('customer')}>Customer</TableHeaderCell>
+                    <TableHeaderCell {...header('ref')}>Ref</TableHeaderCell>
+                    <TableHeaderCell {...header('title')}>Title</TableHeaderCell>
+                    <TableHeaderCell {...header('category')}>Category</TableHeaderCell>
+                    <TableHeaderCell {...header('site')}>Site</TableHeaderCell>
+                    <TableHeaderCell {...header('priority')}>Priority</TableHeaderCell>
+                    <TableHeaderCell {...header('status')}>Status</TableHeaderCell>
+                    <TableHeaderCell {...header('target')}>Next target</TableHeaderCell>
+                    <TableHeaderCell {...header('assigned')}>Assigned to</TableHeaderCell>
+                    <TableHeaderCell {...header('raised')}>Raised</TableHeaderCell>
                     <TableHeaderCell />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {items.map((i) => (
+                  {sortedItems.map((i) => (
                     <TableRow key={`${i.tenant_id}:${i.id}`}>
                       <TableCell>
                         {i.tenant_name}

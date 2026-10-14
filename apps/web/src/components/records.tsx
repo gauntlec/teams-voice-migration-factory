@@ -15,6 +15,11 @@ import {
   Dropdown,
   Field,
   Input,
+  Menu,
+  MenuItemCheckbox,
+  MenuList,
+  MenuPopover,
+  MenuTrigger,
   MessageBar,
   MessageBarBody,
   Option,
@@ -40,8 +45,9 @@ import {
   ChevronRightRegular,
   DeleteRegular,
   EditRegular,
+  TableSettingsRegular,
 } from '@fluentui/react-icons';
-import type { Paginated } from '@tvmf/shared';
+import { compareSorted, type Paginated } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { DataTable } from './DataTable';
 
@@ -85,6 +91,10 @@ export interface ColumnDef {
   key: string;
   label: string;
   render?: (r: Row) => ReactNode;
+  /** What to sort this column by when it shows something other than the row's own `key` value. Leave out to sort by the raw value. */
+  sortValue?: (r: Row) => string | number | boolean | null | undefined;
+  /** Set false to stop a column being sortable (it is sortable when the rows hold a plain value to sort by). */
+  sortable?: boolean;
 }
 
 /**
@@ -110,6 +120,10 @@ export const useRecordStyles = makeStyles({
   dialogForm: { display: 'grid', ...shorthands.gap('12px'), minWidth: '440px' },
   rowActions: { display: 'flex', ...shorthands.gap('4px'), justifyContent: 'flex-end' },
   muted: { color: tokens.colorNeutralForeground3 },
+  tableTools: { display: 'flex', justifyContent: 'flex-end', ...shorthands.margin('0', '0', '4px') },
+  // The row's identifier (and its checkbox) stay put while the rest of a wide grid scrolls sideways.
+  stickyCheck: { position: 'sticky', left: 0, zIndex: 2, backgroundColor: tokens.colorNeutralBackground1, width: '40px', minWidth: '40px', maxWidth: '40px' },
+  stickyFirst: { position: 'sticky', zIndex: 1, backgroundColor: tokens.colorNeutralBackground1, boxShadow: `inset -1px 0 0 ${tokens.colorNeutralStroke2}` },
   chips: { display: 'flex', ...shorthands.gap('6px'), flexWrap: 'wrap' },
   summary: { display: 'flex', ...shorthands.gap('16px'), flexWrap: 'wrap' },
   pager: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', ...shorthands.gap('8px') },
@@ -675,6 +689,7 @@ export function CrudSection({
         </Text>
       ) : (
         <RecordTable
+          tableId={title}
           rows={rows}
           columns={columns}
           readOnly={readOnly}
@@ -900,6 +915,7 @@ export function PagedSection({
       ) : (
         <>
           <RecordTable
+            tableId={title}
             rows={items}
             columns={columns}
             readOnly={readOnly}
@@ -1028,7 +1044,44 @@ function BulkDeleteDialog({
 
 /* ------------------------------ the table ------------------------------ */
 
+/** The value a column sorts by: its own `sortValue`, or the row's plain value for it. */
+function sortValueOf(c: ColumnDef, r: Row): string | number | boolean | null | undefined {
+  if (c.sortValue) return c.sortValue(r);
+  const v = r[c.key];
+  return typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean' ? v : null;
+}
+const columnSortable = (c: ColumnDef, rows: Row[]) => c.sortable !== false && rows.some((r) => sortValueOf(c, r) != null);
+/** Which columns a person has hidden on a table, remembered in this browser (the first column, the identifier, is always shown). */
+function useColumnPrefs(tableId: string | undefined, columns: ColumnDef[]) {
+  const storageKey = tableId ? `voxshift.columns.${tableId}` : null;
+  const [hidden, setHidden] = useState<Set<string>>(() => {
+    if (!storageKey) return new Set();
+    try {
+      const raw = localStorage.getItem(storageKey);
+      return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+    } catch {
+      return new Set();
+    }
+  });
+  const known = new Set(columns.map((c) => c.key));
+  const hiddenKeys = new Set([...hidden].filter((k) => known.has(k) && k !== columns[0]?.key));
+  const visible = columns.filter((c) => !hiddenKeys.has(c.key));
+  const setVisibleKeys = (keys: string[]) => {
+    const next = new Set(columns.filter((c, i) => i !== 0 && !keys.includes(c.key)).map((c) => c.key));
+    setHidden(next);
+    if (storageKey) {
+      try {
+        localStorage.setItem(storageKey, JSON.stringify([...next]));
+      } catch {
+        /* storage blocked: the choice lasts until reload */
+      }
+    }
+  };
+  return { visible, hiddenKeys, setVisibleKeys };
+}
+
 function RecordTable({
+  tableId,
   rows,
   columns,
   readOnly,
@@ -1040,6 +1093,8 @@ function RecordTable({
   selected,
   onSelectedChange,
 }: {
+  /** Names this table for remembering which columns a person hid. */
+  tableId?: string;
   rows: Row[];
   columns: ColumnDef[];
   readOnly: boolean;
@@ -1054,7 +1109,16 @@ function RecordTable({
   const s = useRecordStyles();
   // Delete asks once, in the row itself - a stray click used to remove the row (and free its number) outright.
   const [confirming, setConfirming] = useState<string | null>(null);
-  const minWidth = Math.max(560, columns.length * 132 + (readOnly ? 0 : 96) + (selectable ? 40 : 0));
+  const { visible, hiddenKeys, setVisibleKeys } = useColumnPrefs(tableId, columns);
+  const [sort, setSort] = useState<{ key: string; dir: 'ascending' | 'descending' } | null>(null);
+  const sortedRows = useMemo(() => {
+    const col = sort && columns.find((c) => c.key === sort.key);
+    if (!sort || !col) return rows;
+    const sign = sort.dir === 'ascending' ? (1 as const) : (-1 as const);
+    return [...rows].sort((a, b) => compareSorted(sortValueOf(col, a), sortValueOf(col, b), sign));
+  }, [rows, columns, sort]);
+  const stickyIdentifier = columns.length >= 6;
+  const minWidth = Math.max(560, visible.length * 132 + (readOnly ? 0 : 96) + (selectable ? 40 : 0));
   const allOnPageSelected = selectable && rows.length > 0 && rows.every((r) => selected?.has(r.id));
   const someOnPageSelected = selectable && rows.some((r) => selected?.has(r.id));
   const toggleAll = () => {
@@ -1072,11 +1136,35 @@ function RecordTable({
     onSelectedChange(next);
   };
   return (
+    <>
+      {columns.length > 6 && (
+        <div className={s.tableTools}>
+          <Menu
+            checkedValues={{ columns: visible.map((c) => c.key) }}
+            onCheckedValueChange={(_, d) => setVisibleKeys(d.checkedItems)}
+          >
+            <MenuTrigger disableButtonEnhancement>
+              <Button size="small" appearance="subtle" icon={<TableSettingsRegular />}>
+                Columns{hiddenKeys.size > 0 ? ` (${columns.length - hiddenKeys.size} of ${columns.length})` : ''}
+              </Button>
+            </MenuTrigger>
+            <MenuPopover>
+              <MenuList>
+                {columns.map((c, i) => (
+                  <MenuItemCheckbox key={c.key} name="columns" value={c.key} disabled={i === 0}>
+                    {c.label}
+                  </MenuItemCheckbox>
+                ))}
+              </MenuList>
+            </MenuPopover>
+          </Menu>
+        </div>
+      )}
     <DataTable size="small" minWidth={minWidth}>
       <TableHeader>
         <TableRow>
           {selectable && (
-            <TableHeaderCell>
+            <TableHeaderCell className={stickyIdentifier ? s.stickyCheck : undefined}>
               <Checkbox
                 checked={allOnPageSelected ? true : someOnPageSelected ? 'mixed' : false}
                 onChange={toggleAll}
@@ -1084,17 +1172,31 @@ function RecordTable({
               />
             </TableHeaderCell>
           )}
-          {columns.map((c) => (
-            <TableHeaderCell key={c.key}>{c.label}</TableHeaderCell>
-          ))}
+          {visible.map((c, i) => {
+            const canSort = columnSortable(c, rows);
+            const dir = sort?.key === c.key ? sort.dir : undefined;
+            return (
+              <TableHeaderCell
+                key={c.key}
+                className={stickyIdentifier && i === 0 ? s.stickyFirst : undefined}
+                style={stickyIdentifier && i === 0 ? { left: selectable ? 40 : 0 } : undefined}
+                sortable={canSort}
+                sortDirection={dir}
+                onClick={canSort ? () => setSort(dir === 'ascending' ? { key: c.key, dir: 'descending' } : dir === 'descending' ? null : { key: c.key, dir: 'ascending' }) : undefined}
+                title={canSort ? 'Sorts the rows on this page' : undefined}
+              >
+                {c.label}
+              </TableHeaderCell>
+            );
+          })}
           {!readOnly && <TableHeaderCell />}
         </TableRow>
       </TableHeader>
       <TableBody>
-          {rows.map((r) => (
+          {sortedRows.map((r) => (
             <TableRow key={r.id}>
               {selectable && (
-                <TableCell>
+                <TableCell className={stickyIdentifier ? s.stickyCheck : undefined}>
                   <Checkbox
                     checked={selected?.has(r.id) ?? false}
                     onChange={() => toggleOne(r.id)}
@@ -1102,10 +1204,15 @@ function RecordTable({
                   />
                 </TableCell>
               )}
-              {columns.map((c) => {
+              {visible.map((c, i) => {
                 const content = c.render ? c.render(r) : ((r[c.key] as string) ?? '—') || '—';
                 return (
-                  <TableCell key={c.key} title={typeof content === 'string' ? content : undefined}>
+                  <TableCell
+                    key={c.key}
+                    className={stickyIdentifier && i === 0 ? s.stickyFirst : undefined}
+                    style={stickyIdentifier && i === 0 ? { left: selectable ? 40 : 0 } : undefined}
+                    title={typeof content === 'string' ? content : undefined}
+                  >
                     {content}
                   </TableCell>
                 );
@@ -1155,5 +1262,6 @@ function RecordTable({
           ))}
       </TableBody>
     </DataTable>
+    </>
   );
 }

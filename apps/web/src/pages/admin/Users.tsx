@@ -57,6 +57,7 @@ import { Page } from '../../components/Page';
 import { LoadError } from '../../components/records';
 import { useDebounced } from '../../hooks/useDebounced';
 import { useNotify } from '../../hooks/useNotify';
+import { useSort } from '../../lib/sort';
 
 const useStyles = makeStyles({
   actions: { display: 'flex', ...shorthands.gap('4px'), flexWrap: 'nowrap' },
@@ -262,6 +263,14 @@ export function AdminUsers() {
   const users = useQuery({
     queryKey: ['users', search],
     queryFn: () => api<UserRow[]>(`/users${search ? `?q=${encodeURIComponent(search)}` : ''}`),
+  });
+  const { sorted: sortedUsers, header: uh } = useSort(users.data ?? [], {
+    name: (u) => u.display_name,
+    email: (u) => u.email,
+    role: (u) => u.role,
+    customers: (u) => (u.role === 'SUPER_ADMIN' ? 'all' : (u.tenants ?? []).map((t) => t.name).join(', ')),
+    status: (u) => u.status,
+    mfa: (u) => (u.totp_enrolled ? 'enrolled' : ''),
   });
   const tenants = useQuery({ queryKey: ['tenants'], queryFn: () => api<TenantRow[]>('/tenants') });
   const msps = useQuery({
@@ -519,18 +528,18 @@ export function AdminUsers() {
           <DataTable size="small" minWidth={1040}>
             <TableHeader>
               <TableRow>
-                <TableHeaderCell>Name</TableHeaderCell>
-                <TableHeaderCell>Email</TableHeaderCell>
-                <TableHeaderCell>Role</TableHeaderCell>
-                <TableHeaderCell>Customers</TableHeaderCell>
+                <TableHeaderCell {...uh('name')}>Name</TableHeaderCell>
+                <TableHeaderCell {...uh('email')}>Email</TableHeaderCell>
+                <TableHeaderCell {...uh('role')}>Role</TableHeaderCell>
+                <TableHeaderCell {...uh('customers')}>Customers</TableHeaderCell>
                 {can('msp:read') && <TableHeaderCell>MSP</TableHeaderCell>}
-                <TableHeaderCell>Status</TableHeaderCell>
-                <TableHeaderCell>MFA</TableHeaderCell>
+                <TableHeaderCell {...uh('status')}>Status</TableHeaderCell>
+                <TableHeaderCell {...uh('mfa')}>MFA</TableHeaderCell>
                 <TableHeaderCell>Actions</TableHeaderCell>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {users.data!.map((u) => {
+              {sortedUsers.map((u) => {
                 const customers =
                   u.role === 'SUPER_ADMIN'
                     ? 'all'

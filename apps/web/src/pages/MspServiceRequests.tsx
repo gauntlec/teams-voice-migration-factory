@@ -29,11 +29,12 @@ import {
   makeStyles,
   tokens,
 } from '@fluentui/react-components';
-import { SR_STATUS_LABELS, SR_STATUSES, SR_TYPE_DEFS, type SrClock, type SrPriority, type SrStatus, type SrType } from '@tvmf/shared';
+import { SR_PRIORITIES, SR_STATUS_LABELS, SR_STATUSES, SR_TYPE_DEFS, type SrClock, type SrPriority, type SrStatus, type SrType } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { QueueTiles, SlaBadge, queueFilter, type QueueFilter } from '../components/SrTarget';
 import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
+import { useSort } from '../lib/sort';
 import { Page } from '../components/Page';
 import { LoadError } from './DataCollection';
 
@@ -120,6 +121,18 @@ export function MspServiceRequests() {
   const items = inCustomer
     .filter(queueFilter(status === 'open' ? tile : 'all'))
     .sort((a, b) => rank(a) - rank(b) || (a.sla.clock.leftMs ?? Infinity) - (b.sla.clock.leftMs ?? Infinity));
+  const { sorted: sortedItems, header } = useSort(items, {
+    customer: (i) => i.tenant_name,
+    ref: (i) => i.reference,
+    title: (i) => i.title,
+    type: (i) => i.type,
+    site: (i) => i.sitecode,
+    priority: (i) => SR_PRIORITIES.indexOf(i.priority),
+    status: (i) => i.status,
+    target: (i) => i.sla.clock.leftMs,
+    assigned: (i) => i.assigned_agent_name ?? i.assigned_to_name,
+    raised: (i) => i.created_at,
+  });
   const subtitle = superAdmin
     ? 'Every service request across all customers with Managed Services switched on.'
     : q.data?.msp
@@ -189,21 +202,21 @@ export function MspServiceRequests() {
           <DataTable size="small" minWidth={1000}>
             <TableHeader>
               <TableRow>
-                <TableHeaderCell>Customer</TableHeaderCell>
-                <TableHeaderCell>Ref</TableHeaderCell>
-                <TableHeaderCell>Title</TableHeaderCell>
-                <TableHeaderCell>Type</TableHeaderCell>
-                <TableHeaderCell>Site</TableHeaderCell>
-                <TableHeaderCell>Priority</TableHeaderCell>
-                <TableHeaderCell>Status</TableHeaderCell>
-                <TableHeaderCell>Target</TableHeaderCell>
-                <TableHeaderCell>Assigned to</TableHeaderCell>
-                <TableHeaderCell>Raised</TableHeaderCell>
+                <TableHeaderCell {...header('customer')}>Customer</TableHeaderCell>
+                <TableHeaderCell {...header('ref')}>Ref</TableHeaderCell>
+                <TableHeaderCell {...header('title')}>Title</TableHeaderCell>
+                <TableHeaderCell {...header('type')}>Type</TableHeaderCell>
+                <TableHeaderCell {...header('site')}>Site</TableHeaderCell>
+                <TableHeaderCell {...header('priority')}>Priority</TableHeaderCell>
+                <TableHeaderCell {...header('status')}>Status</TableHeaderCell>
+                <TableHeaderCell {...header('target')}>Target</TableHeaderCell>
+                <TableHeaderCell {...header('assigned')}>Assigned to</TableHeaderCell>
+                <TableHeaderCell {...header('raised')}>Raised</TableHeaderCell>
                 <TableHeaderCell />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {items.map((i) => (
+              {sortedItems.map((i) => (
                 <TableRow key={`${i.tenant_id}:${i.id}`}>
                   <TableCell>
                     {i.tenant_name}

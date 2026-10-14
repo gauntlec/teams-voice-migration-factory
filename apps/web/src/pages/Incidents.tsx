@@ -15,6 +15,7 @@ import { Page } from '../components/Page';
 import { EmptyState, TableSkeleton } from '../components/states';
 import { LoadError, NoTenant } from '../components/records';
 import { useDebounced } from '../hooks/useDebounced';
+import { useSort } from '../lib/sort';
 import { useSrStyles } from './ServiceRequests';
 
 /**
@@ -60,6 +61,18 @@ export function Incidents() {
 
   const open = (id: string) => navigate(`/incidents/${id}`);
 
+  const filtered = (list.data ?? []).filter(incQueueFilter(staff && status === 'open' ? tile : 'all'));
+  const { sorted: rows, header } = useSort(filtered, {
+    ref: (r) => r.reference,
+    title: (r) => r.title,
+    category: (r) => INC_CATEGORY_BY_KEY[r.category]?.label ?? r.category,
+    site: (r) => r.sitecode,
+    priority: (r) => r.priority,
+    status: (r) => INC_STATUS_LABELS[r.status],
+    assigned: (r) => r.assigned_agent_name ?? r.assigned_to_name,
+    raised: (r) => r.created_at,
+  });
+
   if (!activeTenantId) return <NoTenant />;
   if (!enabled) {
     return (
@@ -73,7 +86,6 @@ export function Incidents() {
     );
   }
 
-  const rows = (list.data ?? []).filter(incQueueFilter(staff && status === 'open' ? tile : 'all'));
   const statusLabel = staff ? INC_STATUS_LABELS : INC_STATUS_CUSTOMER_LABELS;
 
   return (
@@ -176,15 +188,15 @@ export function Incidents() {
           <DataTable size="small" minWidth={980}>
             <TableHeader>
               <TableRow>
-                <TableHeaderCell>Ref</TableHeaderCell>
-                <TableHeaderCell>Title</TableHeaderCell>
-                <TableHeaderCell>Category</TableHeaderCell>
-                <TableHeaderCell>Site</TableHeaderCell>
-                <TableHeaderCell>Priority</TableHeaderCell>
-                <TableHeaderCell>Status</TableHeaderCell>
+                <TableHeaderCell {...header('ref')}>Ref</TableHeaderCell>
+                <TableHeaderCell {...header('title')}>Title</TableHeaderCell>
+                <TableHeaderCell {...header('category')}>Category</TableHeaderCell>
+                <TableHeaderCell {...header('site')}>Site</TableHeaderCell>
+                <TableHeaderCell {...header('priority')}>Priority</TableHeaderCell>
+                <TableHeaderCell {...header('status')}>Status</TableHeaderCell>
                 {staff && <TableHeaderCell>Next target</TableHeaderCell>}
-                <TableHeaderCell>Assigned to</TableHeaderCell>
-                <TableHeaderCell>Raised</TableHeaderCell>
+                <TableHeaderCell {...header('assigned')}>Assigned to</TableHeaderCell>
+                <TableHeaderCell {...header('raised')}>Raised</TableHeaderCell>
               </TableRow>
             </TableHeader>
             <TableBody>

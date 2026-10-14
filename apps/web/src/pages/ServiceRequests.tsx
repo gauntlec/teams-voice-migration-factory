@@ -68,6 +68,7 @@ import { api, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
 import { useDebounced } from '../hooks/useDebounced';
+import { useSort } from '../lib/sort';
 import { Page } from '../components/Page';
 import { EmptyState, TableSkeleton } from '../components/states';
 import { LoadError, NoTenant } from './DataCollection';
@@ -238,6 +239,17 @@ export function ServiceRequests() {
   const [reportsOpen, setReportsOpen] = useState(false);
   const [tile, setTile] = useState<QueueFilter>('all');
   const staff = can('sr:manage');
+  const filteredRows = (list.data ?? []).filter(queueFilter(staff && status === 'open' ? tile : 'all'));
+  const { sorted: sortedRows, header } = useSort(filteredRows, {
+    ref: (r) => r.reference,
+    title: (r) => r.title,
+    type: (r) => SR_TYPE_DEFS[r.type].label,
+    site: (r) => r.sitecode,
+    priority: (r) => SR_PRIORITIES.indexOf(r.priority),
+    status: (r) => r.status,
+    assigned: (r) => r.assigned_agent_name ?? r.assigned_to_name,
+    raised: (r) => r.created_at,
+  });
 
   const open = (id: string) => navigate(`/service-requests/${id}`);
 
@@ -320,19 +332,19 @@ export function ServiceRequests() {
           <DataTable size="small" minWidth={900}>
             <TableHeader>
               <TableRow>
-                <TableHeaderCell>Ref</TableHeaderCell>
-                <TableHeaderCell>Title</TableHeaderCell>
-                <TableHeaderCell>Type</TableHeaderCell>
-                <TableHeaderCell>Site</TableHeaderCell>
-                <TableHeaderCell>Priority</TableHeaderCell>
-                <TableHeaderCell>Status</TableHeaderCell>
+                <TableHeaderCell {...header('ref')}>Ref</TableHeaderCell>
+                <TableHeaderCell {...header('title')}>Title</TableHeaderCell>
+                <TableHeaderCell {...header('type')}>Type</TableHeaderCell>
+                <TableHeaderCell {...header('site')}>Site</TableHeaderCell>
+                <TableHeaderCell {...header('priority')}>Priority</TableHeaderCell>
+                <TableHeaderCell {...header('status')}>Status</TableHeaderCell>
                 {staff && <TableHeaderCell>Target</TableHeaderCell>}
-                <TableHeaderCell>Assigned to</TableHeaderCell>
-                <TableHeaderCell>Raised</TableHeaderCell>
+                <TableHeaderCell {...header('assigned')}>Assigned to</TableHeaderCell>
+                <TableHeaderCell {...header('raised')}>Raised</TableHeaderCell>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {list.data!.filter(queueFilter(staff && status === 'open' ? tile : 'all')).map((r) => (
+              {sortedRows.map((r) => (
                 <TableRow key={r.id} className={cs.row} onClick={() => open(r.id)}>
                   <TableCell>
                     <Link onClick={() => open(r.id)}>{r.reference}</Link>
