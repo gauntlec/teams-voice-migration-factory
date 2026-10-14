@@ -124,10 +124,32 @@ export class IncidentReportService {
       });
     }
 
+    // Who fixed the incidents resolved in the period: an assistant alone, a person with an assistant's help, or a person alone.
+    const resolvedIds = resolved.map((r) => r.id);
+    const touched = resolvedIds.length
+      ? await s
+          .selectFrom('incident_events')
+          .select(['incident_id', 'kind', 'actor_type', 'meta', 'created_at'])
+          .where('incident_id', 'in', resolvedIds)
+          .where((eb) => eb.or([eb('actor_type', '=', 'agent'), eb.and([eb('kind', '=', 'status_changed'), eb('to_status', '=', 'resolved')])]))
+          .orderBy('created_at')
+          .execute()
+      : [];
+    const fixedBy = { agent: 0, person_with_agent: 0, person: 0 };
+    for (const r of resolved) {
+      const mine = touched.filter((e) => e.incident_id === r.id);
+      const resolver = [...mine].reverse().find((e) => e.kind === 'status_changed');
+      const agentWorked = mine.some((e) => e.actor_type === 'agent');
+      if (resolver?.actor_type === 'agent') fixedBy.agent++;
+      else if (agentWorked) fixedBy.person_with_agent++;
+      else fixedBy.person++;
+    }
+
     return {
       from,
       to,
       raised: raised.length,
+      fixed_by: fixedBy,
       resolved: resolved.length,
       reopened: rows.filter((r) => inWindow(r.reopened_at)).length,
       major: rows.filter((r) => r.major && inWindow(r.major_declared_at)).length,

@@ -708,3 +708,30 @@ describe('the events feed', () => {
     expect(await platformDb(handle.db).selectFrom('agent_events').select('id').where('incident_id', '=', ev.id).execute()).toEqual([]); // no agent may work that customer: nothing recorded
   });
 });
+
+describe('the report', () => {
+  it('says who fixed the incidents resolved in a period: an assistant alone, a person with its help, or a person alone', async () => {
+    const t = await seedCustomer(handle, { managedServices: true });
+    const site = (await seedSite(t.s, { sitecode: 'FIX01' })).id;
+    await t.s.updateTable('discovery_sites').set({ mode: 'operations' } as never).execute();
+    await platformDb(handle.db).insertInto('tenant_memberships').values([{ tenant_id: t.t.id, user_id: eng.id }] as never).execute();
+    const a = await s.agentAdmin.create(admin, createAgentSchema.parse({ name: `Fixer-${Date.now()}`, kind: 'resolver' }));
+    await s.agentAdmin.setPolicy(admin, a.id, t.t.id, { enabled: true, autonomy: { triage: 3, resolve: 3, internal_note: 3 } });
+    const p = { agentId: a.id, tokenId: 't', name: a.name, kind: 'resolver' as const, scopes: ['read', 'note', 'propose', 'act'] as ('read' | 'note' | 'propose' | 'act')[] };
+    const mk = () => s.svc.create(t.t, cara, call({ siteId: site }), false);
+    const alone = await mk();
+    await s.agentApi.claim(p, t.t.id, alone.id, { ttlSeconds: 600 });
+    await s.agentApi.status(p, t.t.id, alone.id, { to: 'in_progress' });
+    await s.agentApi.status(p, t.t.id, alone.id, { to: 'resolved', note: 'Fixed by the assistant' });
+    const helped = await mk();
+    await s.agentApi.note(p, t.t.id, helped.id, { body: 'It looks like a licence problem.' });
+    await s.svc.move(t.t, eng, helped.id, { to: 'resolved', note: 'Assigned the licence' }, true);
+    const human = await mk();
+    await s.svc.move(t.t, eng, human.id, { to: 'resolved', note: 'Fixed by a person' }, true);
+    const from = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    const to = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
+    const r = await s.reports.report(t.t, from, to, true);
+    expect(r.resolved).toBe(3);
+    expect(r.fixed_by).toEqual({ agent: 1, person_with_agent: 1, person: 1 });
+  });
+});

@@ -21,6 +21,7 @@ interface Report {
   to: string;
   raised: number;
   resolved: number;
+  fixed_by?: { agent: number; person_with_agent: number; person: number };
   reopened: number;
   major: number;
   by_priority: { priority: IncPriority; count: number }[];
@@ -119,6 +120,27 @@ export function IncidentReportsDialog({ base, onClose }: { base: string; onClose
                     </DataTable>
                   </div>
                 </div>
+                {r.fixed_by && r.resolved > 0 && (r.fixed_by.agent > 0 || r.fixed_by.person_with_agent > 0) && (
+                  <div>
+                    <Text weight="semibold">Who fixed them</Text>
+                    <DataTable size="small" minWidth={300}>
+                      <TableBody>
+                        <TableRow>
+                          <TableCell>An assistant on its own</TableCell>
+                          <TableCell>{r.fixed_by.agent}</TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell>A person, with an assistant&apos;s help</TableCell>
+                          <TableCell>{r.fixed_by.person_with_agent}</TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell>A person on their own</TableCell>
+                          <TableCell>{r.fixed_by.person}</TableCell>
+                        </TableRow>
+                      </TableBody>
+                    </DataTable>
+                  </div>
+                )}
                 <div className={s.two}>
                   <div>
                     <Text weight="semibold">By priority</Text>

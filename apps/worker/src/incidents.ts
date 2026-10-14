@@ -15,6 +15,7 @@ import {
   type IncidentMessageContext,
   type IncidentStatusChangedContext,
 } from '@tvmf/shared';
+import { emitAgentEvent } from './agents';
 import type { MailEnqueuer } from './mail/enqueue';
 
 type Person = { id: string; email: string; display_name: string };
@@ -159,7 +160,7 @@ async function sweepTargets(c: Ctx): Promise<number> {
     .selectFrom('incidents')
     .select([
       'id', 'number', 'title', 'category', 'subcategory', 'priority', 'status', 'assigned_to', 'created_at', 'acknowledged_at', 'restored_at', 'resolved_at',
-      'reopened_at', 'paused_since', 'paused_seconds', 'pause_log', 'sla_notified',
+      'reopened_at', 'paused_since', 'paused_seconds', 'pause_log', 'sla_notified', 'version',
     ])
     .where('status', 'in', ['new', 'in_progress', 'on_hold', 'restored'])
     .execute();
@@ -193,6 +194,8 @@ async function sweepTargets(c: Ctx): Promise<number> {
     if (!claimed) continue;
     team ??= await teamOf(c);
     const to = r.assigned_to ? team.filter((m) => m.id === r.assigned_to) : team;
+    // Agents hear about it too.
+    for (const d of due) await emitAgentEvent(c.db, c.tenant.id, { id: r.id, number: r.number, priority: r.priority, status: r.status, version: r.version, category: r.category }, d.kind === 'sla_warning' ? 'sla.at_risk' : 'sla.breached', { detail: d.body }, null);
     for (const d of due) {
       const context: IncidentActivityContext = {
         customerName: c.tenant.name,
