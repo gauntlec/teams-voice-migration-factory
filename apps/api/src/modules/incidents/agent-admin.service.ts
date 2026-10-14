@@ -4,12 +4,14 @@ import { platformDb } from '@tvmf/db';
 import {
   AGENT_ACTION_CLASSES,
   AGENT_LEVEL_CAPS,
+  BUILTIN_AGENTS,
   agentEffectiveAutonomy,
   agentTokenHint,
   formatAgentToken,
   type AgentKillSwitchInput,
   type AgentPolicyInput,
   type CreateAgentInput,
+  type CreateBuiltinAgentInput,
   type CreateAgentTokenInput,
   type CreateAgentWebhookInput,
   type UpdateAgentInput,
@@ -68,6 +70,23 @@ export class AgentAdminService {
     }
   }
 
+  /** Adds one of the assistants Voxshift ships. It runs inside the API, so it has no tokens; it starts with no customers. */
+  async createBuiltin(user: AuthedUser, input: CreateBuiltinAgentInput) {
+    const def = BUILTIN_AGENTS[input.key];
+    try {
+      const a = await platformDb(this.db)
+        .insertInto('agents')
+        .values({ name: def.name, kind: def.kind, description: def.description, model_label: def.modelLabel, builtin_key: input.key, created_by: user.id })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await this.audit.platform('agent.created', { actor: { id: user.id, email: user.email }, targetType: 'agent', targetId: a.id, detail: { name: a.name, kind: a.kind, builtin: input.key } });
+      return a;
+    } catch (e) {
+      if ((e as { code?: string }).code === '23505') throw new ConflictException(`${def.name} has already been added.`);
+      throw e;
+    }
+  }
+
   async get(id: string) {
     const p = platformDb(this.db);
     const a = await this.agent(id);
@@ -114,6 +133,7 @@ export class AgentAdminService {
   /** Makes a token. The full token is returned once and never stored: only a hash of its secret is. */
   async createToken(user: AuthedUser, id: string, input: CreateAgentTokenInput) {
     const a = await this.agent(id);
+    if (a.builtin_key) throw new BadRequestException('This assistant runs inside Voxshift. It has no tokens.');
     const secret = randomBytes(32).toString('base64url');
     const expires = new Date(Date.now() + input.expiresInDays * 86_400_000).toISOString();
     const row = await platformDb(this.db)
@@ -161,6 +181,7 @@ export class AgentAdminService {
   /** Adds a webhook. Its signing secret is returned once. */
   async createWebhook(user: AuthedUser, id: string, input: CreateAgentWebhookInput) {
     const a = await this.agent(id);
+    if (a.builtin_key) throw new BadRequestException('This assistant runs inside Voxshift. It has no webhooks.');
     const secret = `whsec_${randomBytes(32).toString('hex')}`;
     // Start from now: an agent isn't sent the whole backlog.
     const last = await platformDb(this.db).selectFrom('agent_events').select('id').orderBy('id', 'desc').limit(1).executeTakeFirst();

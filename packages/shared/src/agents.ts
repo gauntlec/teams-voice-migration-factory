@@ -453,6 +453,10 @@ export const createAgentWebhookSchema = z
   .strict();
 export type CreateAgentWebhookInput = z.infer<typeof createAgentWebhookSchema>;
 
+/** POST /agents/builtin - add one of the assistants Voxshift ships. */
+export const createBuiltinAgentSchema = z.object({ key: z.enum(['triage', 'diagnose', 'comms']) }).strict();
+export type CreateBuiltinAgentInput = z.infer<typeof createBuiltinAgentSchema>;
+
 export const agentKillSwitchSchema = z.object({ allDisabled: z.boolean(), note: z.string().trim().max(500).optional() }).strict();
 export type AgentKillSwitchInput = z.infer<typeof agentKillSwitchSchema>;
 

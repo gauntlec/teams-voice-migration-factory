@@ -102,10 +102,17 @@ export async function triage(api, inc) {
   }
 }
 
-/** One pass: triage every unassigned incident this agent may work. */
-export async function runOnce(api) {
+/**
+ * One pass: triage every unassigned incident this agent may work. Letting go of an incident returns it to the queue, so
+ * the agent remembers what it has handled (`handled`, kept between passes) instead of picking it up again.
+ */
+export async function runOnce(api, handled = new Set()) {
   const results = {};
-  for (const inc of await api.queue()) results[inc.reference] = await triage(api, inc).catch((e) => [`failed: ${e.message}`]);
+  for (const inc of await api.queue()) {
+    if (handled.has(inc.id)) continue;
+    handled.add(inc.id);
+    results[inc.reference] = await triage(api, inc).catch((e) => [`failed: ${e.message}`]);
+  }
   return results;
 }
 
@@ -118,9 +125,10 @@ if (process.argv[1] && import.meta.url === new URL(process.argv[1], 'file://').h
   }
   const api = client({ baseUrl, token });
   let after = 0;
+  const handled = new Set();
   // Poll the queue, and the events feed for anything that needs a second look. A webhook could replace the polling.
   for (;;) {
-    console.log(JSON.stringify(await runOnce(api)));
+    console.log(JSON.stringify(await runOnce(api, handled)));
     const feed = await api.events(after);
     for (const e of feed.events) console.log(`event ${e.id} ${e.kind} ${e.incident_id ?? ''}`);
     after = feed.next;

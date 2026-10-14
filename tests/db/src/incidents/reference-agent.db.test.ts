@@ -17,7 +17,7 @@ let admin: Awaited<ReturnType<typeof seedUser>>;
 let eng: Awaited<ReturnType<typeof seedUser>>;
 let cara: Awaited<ReturnType<typeof seedUser>>;
 let siteId: string;
-let agentLib: { client: (o: unknown) => Record<string, (...a: unknown[]) => Promise<unknown>>; triage: (api: unknown, inc: unknown) => Promise<string[]>; runOnce: (api: unknown) => Promise<Record<string, string[]>> };
+let agentLib: { client: (o: unknown) => Record<string, (...a: unknown[]) => Promise<unknown>>; triage: (api: unknown, inc: unknown) => Promise<string[]>; runOnce: (api: unknown, handled?: Set<string>) => Promise<Record<string, string[]>> };
 let n = 0;
 
 const call = (over: Partial<CreateIncidentInput> = {}) =>
@@ -132,11 +132,12 @@ describe('the reference triage agent', () => {
     const { api } = await bot({ triage: 3, internal_note: 3 });
     const a1 = await raise();
     const a2 = await raise();
-    const first = await agentLib.runOnce(api);
+    const handled = new Set<string>();
+    const first = await agentLib.runOnce(api, handled);
     const mine = Object.entries(first).filter(([ref]) => [a1, a2].some((x) => x.reference === ref));
     expect(mine).toHaveLength(2);
     expect(mine.every(([, steps]) => steps[0] === 'claimed')).toBe(true);
-    const second = await agentLib.runOnce(api);
+    const second = await agentLib.runOnce(api, handled);
     expect(Object.keys(second).filter((ref) => [a1, a2].some((x) => x.reference === ref))).toEqual([]);
   });
 });

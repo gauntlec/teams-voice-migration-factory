@@ -3,6 +3,7 @@ import {
   agentKillSwitchSchema,
   agentPolicySchema,
   createAgentSchema,
+  createBuiltinAgentSchema,
   createAgentTokenSchema,
   createAgentWebhookSchema,
   tenantAgentsSchema,
@@ -10,6 +11,7 @@ import {
   type AgentKillSwitchInput,
   type AgentPolicyInput,
   type CreateAgentInput,
+  type CreateBuiltinAgentInput,
   type CreateAgentTokenInput,
   type CreateAgentWebhookInput,
   type TenantAgentsInput,
@@ -41,6 +43,11 @@ export class AgentAdminController {
   }
 
   /* Fixed paths before :id. */
+
+  @Post('builtin')
+  createBuiltin(@CurrentUser() user: AuthedUser, @Body(new ZodBody(createBuiltinAgentSchema)) body: CreateBuiltinAgentInput) {
+    return this.svc.createBuiltin(user, body);
+  }
 
   @Get('kill-switch')
   killSwitch() {

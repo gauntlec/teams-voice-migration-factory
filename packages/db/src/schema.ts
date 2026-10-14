@@ -1201,6 +1201,8 @@ export interface AgentsTable {
   created_at: Ts;
   updated_at: Ts;
   last_seen_at: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0018_builtin_agents.sql - set for the assistants Voxshift runs itself. */
+  builtin_key: ColumnType<import('@tvmf/shared').BuiltinAgentKey | null, import('@tvmf/shared').BuiltinAgentKey | null | undefined, import('@tvmf/shared').BuiltinAgentKey | null>;
 }
 
 export interface AgentTokensTable {

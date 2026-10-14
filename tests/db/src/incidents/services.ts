@@ -8,6 +8,7 @@ import { AgentApiService } from '../../../../apps/api/src/modules/incidents/agen
 import { AgentAuthGuard } from '../../../../apps/api/src/modules/incidents/agent-auth.guard';
 import { AgentEventsService } from '../../../../apps/api/src/modules/incidents/agent-events.service';
 import { IncidentProposalsService } from '../../../../apps/api/src/modules/incidents/agent-proposals.service';
+import { BuiltinAgentsService } from '../../../../apps/api/src/modules/incidents/builtin-agents.service';
 import { IncidentAgentView } from '../../../../apps/api/src/modules/incidents/incident-agent-view.service';
 import { IncidentAgentsService } from '../../../../apps/api/src/modules/incidents/incident-agents.service';
 import { IncidentClaimsService } from '../../../../apps/api/src/modules/incidents/incident-claims.service';
@@ -40,6 +41,7 @@ export function incidentServices(handle: DbHandle, mail: Pick<MailService, 'enqu
   const problems = new ProblemsService(handle.db, audit, notifier);
   const diagnostics = new IncidentDiagnosticsService(handle.db);
   const proposals = new IncidentProposalsService(handle.db, audit, svc, major, problems, claims, events, notifier);
+  const agentApi = new AgentApiService(handle.db, svc, claims, proposals, events, problems, notifier, diagnostics);
   return {
     svc,
     notifier,
@@ -54,7 +56,8 @@ export function incidentServices(handle: DbHandle, mail: Pick<MailService, 'enqu
     msp: new MspIncidentsService(handle.db, svc),
     response: new IncidentResponseService(handle.db, cfg, svc),
     humanAgents: new IncidentAgentsService(handle.db, audit, claims, svc, events),
-    agentApi: new AgentApiService(handle.db, svc, claims, proposals, events, problems, notifier, diagnostics),
+    agentApi,
+    builtin: new BuiltinAgentsService(handle.db, agentApi),
     agentAdmin: new AgentAdminService(handle.db, audit),
     agentGuard: new AgentAuthGuard(handle.db),
   };

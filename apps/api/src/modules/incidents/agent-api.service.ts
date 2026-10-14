@@ -207,7 +207,7 @@ export class AgentApiService {
       tenantDb(this.db, t.schema)
         .selectFrom('incidents as i')
         .leftJoin('discovery_sites as ds', 'ds.id', 'i.site_id')
-        .select(['i.id as id', 'i.number as number', 'i.title as title', 'i.status as status', 'i.priority as priority', 'ds.sitecode as sitecode'])
+        .select(['i.id as id', 'i.number as number', 'i.title as title', 'i.status as status', 'i.priority as priority', 'i.created_at as created_at', 'ds.sitecode as sitecode'])
         .where('i.category', '=', inc.category)
         .where('i.id', '!=', id)
         .where('i.status', 'in', [...INC_OPEN_STATUSES])
@@ -253,7 +253,14 @@ export class AgentApiService {
   async release(agent: AgentPrincipal, tenantId: string, id: string) {
     this.scope(agent, 'note');
     const { t } = await this.tenantFor(agent, tenantId);
-    return { released: await this.claims.release(t, id, agent.agentId) };
+    const released = await this.claims.release(t, id, agent.agentId);
+    // Letting go means the incident is nobody's again, not an assistant's that is no longer working it.
+    const row = await tenantDb(this.db, t.schema).selectFrom('incidents').select(['id', 'version', 'assigned_agent_id']).where('id', '=', id).executeTakeFirst();
+    if (row?.assigned_agent_id === agent.agentId) {
+      await tenantDb(this.db, t.schema).updateTable('incidents').set({ assigned_agent_id: null, updated_at: new Date().toISOString(), version: row.version + 1 }).where('id', '=', id).where('assigned_agent_id', '=', agent.agentId).execute();
+      await this.events.emit(t.id, await this.load(t, id), 'incident.updated', { change: 'released', by: 'agent' });
+    }
+    return { released };
   }
 
   async note(agent: AgentPrincipal, tenantId: string, id: string, input: AgentNoteInput, key?: string) {

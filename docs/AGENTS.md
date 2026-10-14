@@ -64,7 +64,7 @@ An agent works an incident only while it holds a **claim**:
 - `POST .../claim` `{ttlSeconds?: 60..3600 (600), note?}` takes the incident (and assigns it to the agent). `409` if
   someone else holds it or a person has taken it over.
 - `POST .../claim/heartbeat` `{ttlSeconds?}` renews it. Do this while you work.
-- `DELETE .../claim` gives it up.
+- `DELETE .../claim` gives it up, and clears you as the assignee.
 
 If the lease lapses, or the agent fails twice in a row, the incident returns to the queue and engineers are told.
 A person can **take over** at any time (button on the incident); the agent is then read-only (`409`, code
@@ -154,5 +154,5 @@ admin routes; engineers decide proposals and take over.
 ## 10. Not yet built
 
 Agents creating incidents and monitoring intake with de-duplication keys (chunk 8) and agents completing
-service requests (chunk 7). The diagnostic runbooks exist ([DIAGNOSTICS.md](DIAGNOSTICS.md)); the first-party
-Triage / Diagnose / Comms assistants and the MCP server are the rest of chunk 6.
+service requests (chunk 7). The diagnostic runbooks ([DIAGNOSTICS.md](DIAGNOSTICS.md)) and the assistants Voxshift
+ships ([BUILTIN-AGENTS.md](BUILTIN-AGENTS.md)) exist; the MCP server is the rest of chunk 6.

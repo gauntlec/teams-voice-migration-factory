@@ -32,6 +32,9 @@ import {
 import {
   AGENT_ACTION_CLASSES,
   AGENT_ACTION_CLASS_LABELS,
+  BUILTIN_AGENTS,
+  BUILTIN_AGENT_KEYS,
+  type BuiltinAgentKey,
   AGENT_KINDS,
   AGENT_KIND_LABELS,
   AGENT_LEVELS,
@@ -61,6 +64,9 @@ const useStyles = makeStyles({
   kill: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', columnGap: tokens.spacingHorizontalM, rowGap: tokens.spacingVerticalS, ...shorthands.padding(tokens.spacingVerticalS, tokens.spacingHorizontalM), ...shorthands.borderRadius(tokens.borderRadiusMedium), ...shorthands.border('1px', 'solid', tokens.colorNeutralStroke2) },
   killOn: { ...shorthands.border('1px', 'solid', tokens.colorPaletteRedBorder1), backgroundColor: tokens.colorPaletteRedBackground1 },
   secret: { fontFamily: 'ui-monospace, Consolas, monospace', wordBreak: 'break-all', ...shorthands.padding(tokens.spacingVerticalS, tokens.spacingHorizontalM), ...shorthands.borderRadius(tokens.borderRadiusMedium), backgroundColor: tokens.colorNeutralBackground3 },
+  builtins: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', columnGap: tokens.spacingHorizontalM, rowGap: tokens.spacingVerticalM },
+  builtin: { display: 'flex', flexDirection: 'column', rowGap: tokens.spacingVerticalS },
+  does: { margin: 0, paddingLeft: tokens.spacingHorizontalXL, display: 'flex', flexDirection: 'column', rowGap: tokens.spacingVerticalXXS },
   levels: { display: 'grid', gridTemplateColumns: 'minmax(180px, 1.3fr) 150px', columnGap: tokens.spacingHorizontalS, rowGap: tokens.spacingVerticalXS, alignItems: 'center' },
 });
 
@@ -75,6 +81,7 @@ interface AgentRow {
   live_tokens: number;
   customers: number;
   last_seen_at: string | null;
+  builtin_key: BuiltinAgentKey | null;
 }
 interface AgentDetail {
   agent: AgentRow;
@@ -95,6 +102,13 @@ export function AdminAgents() {
   const qc = useQueryClient();
   const [open, setOpen] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const addBuiltin = useMutation({
+    mutationFn: (key: BuiltinAgentKey) => api<{ id: string }>('/agents/builtin', { method: 'POST', body: JSON.stringify({ key }) }),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['agents'] });
+      setOpen(r.id);
+    },
+  });
   const list = useQuery({ queryKey: ['agents'], queryFn: () => api<AgentRow[]>('/agents') });
   const kill = useQuery({ queryKey: ['agents', 'kill-switch'], queryFn: () => api<{ all_disabled: boolean; note: string | null; changed_at: string | null }>('/agents/kill-switch') });
   const setKill = useMutation({
@@ -105,7 +119,7 @@ export function AdminAgents() {
   return (
     <Page
       title="Assistants"
-      subtitle="AI agents that work incidents alongside your engineers. Each has its own identity and tokens, is allowed on named customers only, and starts at suggest-only: a person approves anything it proposes."
+      subtitle="AI assistants that work incidents alongside your engineers: the ones Voxshift ships, and your own. Each has its own identity, is allowed on named customers only, and starts at suggest-only: a person approves anything it proposes."
       actions={
         <Button appearance="primary" onClick={() => setCreating(true)}>
           New assistant
@@ -131,6 +145,35 @@ export function AdminAgents() {
         </Button>
       </div>
       {list.isError && <LoadError message={(list.error as Error).message} />}
+      {list.data && BUILTIN_AGENT_KEYS.some((k) => !list.data!.some((a) => a.builtin_key === k)) && (
+        <div className={s.stack}>
+          <Text weight="semibold">Built in to Voxshift</Text>
+          <div className={s.builtins}>
+            {BUILTIN_AGENT_KEYS.filter((k) => !list.data!.some((a) => a.builtin_key === k)).map((k) => (
+              <Card key={k} className={s.builtin}>
+                <Text weight="semibold">{BUILTIN_AGENTS[k].name}</Text>
+                <Text size={200}>{BUILTIN_AGENTS[k].description}</Text>
+                <ul className={s.does}>
+                  {BUILTIN_AGENTS[k].does.map((d) => (
+                    <li key={d}>
+                      <Text size={200}>{d}</Text>
+                    </li>
+                  ))}
+                </ul>
+                <div>
+                  <Button disabled={addBuiltin.isPending} onClick={() => addBuiltin.mutate(k)}>
+                    Add {BUILTIN_AGENTS[k].name}
+                  </Button>
+                </div>
+              </Card>
+            ))}
+          </div>
+          {addBuiltin.error && <Text className={s.error}>{errorText(addBuiltin.error, 'Could not add it')}</Text>}
+          <Text size={200} className={s.muted}>
+            They run inside Voxshift (no tokens, no outside service) and work nothing until you allow them on a customer.
+          </Text>
+        </div>
+      )}
       <Card>
         {list.isLoading ? (
           <Spinner size="tiny" />
@@ -153,6 +196,11 @@ export function AdminAgents() {
                 <TableRow key={a.id} onClick={() => setOpen(a.id)} style={{ cursor: 'pointer' }}>
                   <TableCell>
                     <Link onClick={() => setOpen(a.id)}>{a.name}</Link>
+                    {a.builtin_key && (
+                      <Badge appearance="outline" size="small" style={{ marginLeft: 8 }}>
+                        Built in
+                      </Badge>
+                    )}
                     {a.model_label && (
                       <Text size={100} block className={s.muted}>
                         {a.model_label}
@@ -166,7 +214,7 @@ export function AdminAgents() {
                     </Badge>
                   </TableCell>
                   <TableCell>{a.customers}</TableCell>
-                  <TableCell>{a.live_tokens}</TableCell>
+                  <TableCell>{a.builtin_key ? '-' : a.live_tokens}</TableCell>
                   <TableCell>{a.last_seen_at ? when(a.last_seen_at) : 'Never'}</TableCell>
                 </TableRow>
               ))}
@@ -259,9 +307,9 @@ function AgentDialog({ id, onClose }: { id: string; onClose: () => void }) {
               <>
                 <TabList selectedValue={tab} onTabSelect={(_, d) => setTab(d.value as typeof tab)}>
                   <Tab value="overview">Overview</Tab>
-                  <Tab value="tokens">Tokens ({q.data.tokens.filter((t) => !t.revoked_at).length})</Tab>
+                  {!a.builtin_key && <Tab value="tokens">Tokens ({q.data.tokens.filter((t) => !t.revoked_at).length})</Tab>}
                   <Tab value="customers">Customers ({q.data.customers.filter((c) => c.enabled).length})</Tab>
-                  <Tab value="webhooks">Webhooks ({q.data.webhooks.length})</Tab>
+                  {!a.builtin_key && <Tab value="webhooks">Webhooks ({q.data.webhooks.length})</Tab>}
                 </TabList>
                 {tab === 'overview' && (
                   <div className={s.stack}>
@@ -275,6 +323,24 @@ function AgentDialog({ id, onClose }: { id: string; onClose: () => void }) {
                       </Text>
                     </div>
                     {a.description && <Text>{a.description}</Text>}
+                    {a.builtin_key && (
+                      <div className={s.stack}>
+                        <ul className={s.does}>
+                          {BUILTIN_AGENTS[a.builtin_key].does.map((d) => (
+                            <li key={d}>
+                              <Text size={200}>{d}</Text>
+                            </li>
+                          ))}
+                        </ul>
+                        <Text size={200} className={s.muted}>
+                          Runs inside Voxshift every 30 seconds, only on customers you allow it on (Customers tab). A good starting point once you trust it:{' '}
+                          {Object.entries(BUILTIN_AGENTS[a.builtin_key].suggestedAutonomy)
+                            .map(([cls, lvl]) => `${AGENT_ACTION_CLASS_LABELS[cls as AgentActionClass].split(' (')[0]}: ${AGENT_LEVEL_LABELS[lvl as AgentLevel]}`)
+                            .join(', ')}
+                          . Nothing is applied for you.
+                        </Text>
+                      </div>
+                    )}
                     <Text size={200} className={s.muted}>
                       Last seen {a.last_seen_at ? when(a.last_seen_at) : 'never'}. <b>Paused</b>: it can read, but every change is refused. <b>Disabled</b>: its tokens stop working.
                     </Text>
