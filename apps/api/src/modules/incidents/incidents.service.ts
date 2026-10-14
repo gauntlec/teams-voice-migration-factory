@@ -6,6 +6,7 @@ import {
   INC_CATEGORY_BY_KEY,
   INC_LIVE_STATUSES,
   INC_NOTE_REQUIRED,
+  INC_OPEN_STATUSES,
   INC_STATUS_LABELS,
   SITE_MODE_LABELS,
   SR_ATTACHMENT_TYPES,
@@ -33,6 +34,7 @@ import {
   type IncidentStatusInput,
   type IncItemInput,
   type ListIncidentsQuery,
+  type SimilarIncidentsQuery,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
 import type { AuthedUser, TenantContext } from '../../common/request';
@@ -223,6 +225,38 @@ export class IncidentsService {
       reporter_name: names.get(r.reporter_id) ?? null,
       assigned_to_name: r.assigned_to ? (names.get(r.assigned_to) ?? null) : null,
     }));
+  }
+
+  /**
+   * Open incidents of the same category at the same site (or customer-wide), so
+   * someone about to raise one can follow what the team is already working on.
+   */
+  async similar(t: TenantContext, user: AuthedUser, q: SimilarIncidentsQuery) {
+    this.assertEnabled(t);
+    let query = tenantDb(this.db, t.schema)
+      .selectFrom('incidents as i')
+      .leftJoin('discovery_sites as ds', 'ds.id', 'i.site_id')
+      .select(['i.id as id', 'i.number as number', 'i.title as title', 'i.status as status', 'i.priority as priority', 'i.created_at as created_at', 'ds.sitecode as sitecode', 'i.reporter_id as reporter_id'])
+      .where('i.category', '=', q.category)
+      .where('i.status', 'in', [...INC_OPEN_STATUSES])
+      .orderBy('i.number', 'desc')
+      .limit(5);
+    if (q.siteId) query = query.where((eb) => eb.or([eb('i.site_id', '=', q.siteId!), eb('i.site_id', 'is', null)]));
+    if (isSiteScoped(t)) query = query.where('i.site_id', 'in', t.siteScope);
+    const rows = await query.execute();
+    const watching = rows.length
+      ? new Set(
+          (
+            await tenantDb(this.db, t.schema)
+              .selectFrom('incident_watchers')
+              .select('incident_id')
+              .where('user_id', '=', user.id)
+              .where('incident_id', 'in', rows.map((r) => r.id))
+              .execute()
+          ).map((w) => w.incident_id),
+        )
+      : new Set<string>();
+    return rows.map(({ reporter_id, ...r }) => ({ ...r, reference: incReference(r.number), following: reporter_id === user.id || watching.has(r.id) }));
   }
 
   async get(t: TenantContext, id: string, canManage: boolean, viewerId: string) {

@@ -385,6 +385,40 @@ describe('site contacts', () => {
   });
 });
 
+describe('similar incidents', () => {
+  it('finds open incidents of the same category at the site or customer-wide, and says whether you follow them', async () => {
+    const site = await seedCustomer(handle, { managedServices: true });
+    const lon = await seedSite(site.s, { sitecode: 'LON9' });
+    const rdg = await seedSite(site.s, { sitecode: 'RDG9' });
+    await site.s.updateTable('discovery_sites').set({ mode: 'operations' } as never).execute();
+    // Direct Routing is the one category that can also be customer-wide.
+    const dr = { category: 'direct_routing', subcategory: 'sbc_offline', answers: { symptom: ['All calls failing'], started: 'now' } } as const;
+    const mk = (siteId: string | null, over: Partial<CreateIncidentInput> = {}) => svc.create(site.t, dan, call({ siteId, ...dr, ...over }), false);
+    const here = await mk(lon.id);
+    const elsewhere = await mk(rdg.id);
+    const otherCategory = await mk(lon.id, { category: 'users', subcategory: 'voicemail', answers: { affected_user: 'Jo' } });
+    const wide = await mk(null);
+    const closed = await mk(lon.id);
+    await svc.move(site.t, engineer, closed.id, { to: 'resolved', note: 'Fixed' }, true);
+    await svc.move(site.t, engineer, closed.id, { to: 'closed' }, true);
+    const found = await svc.similar(site.t, cara, { category: 'direct_routing', siteId: lon.id });
+    const ids = found.map((f) => f.id);
+    expect(ids).toContain(here.id);
+    expect(ids).toContain(wide.id);
+    expect(ids).not.toContain(elsewhere.id);
+    expect(ids).not.toContain(otherCategory.id);
+    expect(ids).not.toContain(closed.id);
+    expect(found.find((f) => f.id === here.id)!.following).toBe(false);
+    await svc.watch(site.t, cara, here.id, undefined, false);
+    expect((await svc.similar(site.t, cara, { category: 'direct_routing', siteId: lon.id })).find((f) => f.id === here.id)!.following).toBe(true);
+    // The reporter already follows their own.
+    expect((await svc.similar(site.t, dan, { category: 'direct_routing', siteId: lon.id })).find((f) => f.id === here.id)!.following).toBe(true);
+    // A site contact never sees another site's, or a customer-wide one.
+    const scopedIds = (await svc.similar({ ...site.t, siteScope: [rdg.id] }, cara, { category: 'direct_routing' })).map((f) => f.id);
+    expect(scopedIds).toEqual([elsewhere.id]);
+  });
+});
+
 describe('watchers, items and settings', () => {
   it('adds a watcher once, lets staff add a customer user, and refuses a stranger', async () => {
     const r = await raise();

@@ -519,13 +519,46 @@ What exists after chunk 1 (API and rules only - no screens, no emails yet):
   Postgres: numbering, priority, workflow and who may make each move, pauses,
   visibility, site scoping, watchers, items, settings, attachments).
 
+## Chunk 2 as built
+
+Screens for customers and engineers (no emails yet - chunk 3; no MSP queue yet - chunk 4):
+
+- **Left nav**: **Incidents** (`inc:read`, only when Managed Services is on), above Service Requests.
+- **`/incidents`** (`pages/Incidents.tsx`): the list. Filters (not closed yet / each status / all,
+  category, priority, search by title or INC-number; staff also Assigned to me / Unassigned),
+  refreshes every 30 s. Staff get summary tiles (Open, Not acknowledged, Unassigned, On hold,
+  At risk, Overdue - click to filter) and a "next target" badge. Customers see plain status
+  names and "high / medium" priority wording.
+- **`/incidents/new`** (`pages/IncidentNew.tsx`): the guided form - choose what is wrong
+  (12 category cards, then sub-category), site (operations-mode sites only), who is
+  affected and what they cannot do (with "We'll treat this as high priority" worked out live),
+  the category's own questions, title and description, **example calls** (repeatable), optional
+  callback number and attachments. The emergency category shows the "use another phone if
+  anyone is in danger" warning. Before sending, open incidents of the same category at the
+  site (or customer-wide) are offered to **follow instead** (`GET /incidents/similar`). The
+  "Still needed before you can send it" list comes from the same `createIncidentSchema`
+  the API validates with, so the form cannot drift from the API. Staff can set the priority
+  themselves.
+- **`/incidents/:id`** (`pages/IncidentPage.tsx`): progress strip, banners (emergency, "the
+  team needs your reply", "the team says this is fixed"), facts and the three clocks with their
+  targets, what was reported, example calls, affected/linked items, then what you can do:
+  - Customer: **Yes, it's fixed**, **Still broken** (with what is wrong), cancel their own New
+    incident, follow / stop following, comment, attach files.
+  - Engineer: Acknowledge, Put on hold (with reason), Service restored, Mark resolved, Close,
+    Reopen, Mark as duplicate (of another incident), Cancel; change priority with a private
+    reason; assign; link items; public update, a question that waits on the customer, or an
+    internal note. The timeline labels AI actors "(AI)" ready for chunk 5.
+- **API addition**: `GET /incidents/similar?category=&siteId=` (36 database tests now).
+- **Checked** with the built app against a throwaway mock API (staff and customer roles, the
+  full raise flow); not yet against the live system.
+
 ## Build log
 
 | Chunk | Status | Commit / notes |
 |---|---|---|
 | 0 Research and design | Done 2026-10-14 | this document |
 | 1 Foundations | Built and deployed 2026-10-14 (073e661), verified live (migrations applied to all 5 customer schemas) | See "Chunk 1 as built" |
-| 2 Customer and engineer UI | Not started | |
+| 2 Customer and engineer UI | Built 2026-10-14 - committed, not yet deployed | See "Chunk 2 as built" |
 | 3 Email workflows and SLA engine | Not started | |
 | 4 MSP console, major incidents, problems, reports | Not started | |
 | 5 Agent platform | Not started | |

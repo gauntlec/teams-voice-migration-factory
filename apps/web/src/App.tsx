@@ -26,6 +26,9 @@ import { AdminAudit } from './pages/admin/Audit';
 import { AdminReleaseCheck } from './pages/admin/ReleaseCheck';
 import { FeatureRequests } from './pages/FeatureRequests';
 import { MspServiceRequests } from './pages/MspServiceRequests';
+import { IncidentNew } from './pages/IncidentNew';
+import { IncidentPage } from './pages/IncidentPage';
+import { Incidents } from './pages/Incidents';
 import { ServiceRequestPage } from './pages/ServiceRequestPage';
 import { ServiceRequests } from './pages/ServiceRequests';
 import { BugReports } from './pages/BugReports';
@@ -49,6 +52,9 @@ export function App() {
     <AppShell>
       <Routes>
         <Route path="/" element={<Dashboard />} />
+        <Route path="/incidents" element={<Incidents />} />
+        <Route path="/incidents/new" element={<IncidentNew />} />
+        <Route path="/incidents/:id" element={<IncidentPage />} />
         <Route path="/data-collection" element={<DataCollection />} />
         <Route path="/data-collection/policies" element={<DataCollectionPolicies />} />
         <Route path="/data-collection/sites/:siteId" element={<SiteWorkspace />} />

@@ -37,6 +37,7 @@ import {
   Bug24Regular,
   Search24Regular,
   TicketDiagonal24Regular,
+  AlertUrgent24Regular,
   TaskListSquareLtr24Regular,
   ShieldCheckmark24Regular,
 } from '@fluentui/react-icons';
@@ -109,6 +110,7 @@ interface NavDef {
 
 const MAIN: NavDef[] = [
   { to: '/', label: 'Dashboard', icon: <Home24Regular /> },
+  { to: '/incidents', label: 'Incidents', icon: <AlertUrgent24Regular />, permission: 'inc:read', requiresManagedServices: true },
   { to: '/service-requests', label: 'Service Requests', icon: <TicketDiagonal24Regular />, permission: 'sr:read', requiresManagedServices: true },
   { to: '/data-collection', label: 'Data Collection', icon: <ClipboardTaskListLtr24Regular />, permission: 'discovery:read' },
   { to: '/discovery', label: 'Discovery', icon: <Search24Regular />, permission: 'tenantdiscovery:read' },

@@ -13,6 +13,7 @@ import {
   incidentStatusSchema,
   incidentWatcherSchema,
   listIncidentsQuerySchema,
+  similarIncidentsQuerySchema,
   type CreateIncidentInput,
   type IncidentAssignInput,
   type IncidentCommentInput,
@@ -22,6 +23,7 @@ import {
   type IncidentWatcherInput,
   type IncItemInput,
   type ListIncidentsQuery,
+  type SimilarIncidentsQuery,
 } from '@tvmf/shared';
 import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
 import type { AuthedUser, TenantContext } from '../../common/request';
@@ -52,6 +54,13 @@ export class IncidentsController {
   @RequirePermission('inc:manage')
   async assignees(@TenantCtx() t: TenantContext) {
     return (await this.svc.staff(t)).map((m) => ({ id: m.id, display_name: m.display_name, role: m.role }));
+  }
+
+  /** Open incidents like the one being raised, to follow instead. Declared before :id. */
+  @Get('similar')
+  @RequirePermission('inc:read')
+  similar(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Query(new ZodBody(similarIncidentsQuerySchema)) q: SimilarIncidentsQuery) {
+    return this.svc.similar(t, user, q);
   }
 
   @Get('sites')

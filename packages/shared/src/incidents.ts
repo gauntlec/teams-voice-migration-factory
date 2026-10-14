@@ -113,7 +113,7 @@ export interface IncCategoryDef {
 
 const WHEN: SrFieldSpec = { key: 'started', label: 'When did it start?', kind: 'text', required: true, max: 120, hint: 'Date and time, with time zone if it is not obvious' };
 const ERROR_TEXT: SrFieldSpec = { key: 'error_message', label: 'Any error or message shown or heard', kind: 'text', max: 300 };
-const AFFECTED: SrFieldSpec = { key: 'affected_user', label: 'Who is affected', kind: 'text', required: true, max: 300, hint: 'Name or sign-in address; list several if needed' };
+const AFFECTED: SrFieldSpec = { key: 'affected_user', label: 'Which person or people', kind: 'text', required: true, max: 300, hint: 'Name or sign-in address; list several if needed' };
 const RECENT_CHANGE: SrFieldSpec = { key: 'recent_change', label: 'Has anything changed recently (phones, network, numbers, policies)?', kind: 'boolean' };
 
 export const INC_CATEGORIES: readonly IncCategoryDef[] = [
@@ -747,6 +747,15 @@ export const listIncidentsQuerySchema = z
   })
   .strict();
 export type ListIncidentsQuery = z.infer<typeof listIncidentsQuerySchema>;
+
+/** GET /incidents/similar - open incidents the reporter might subscribe to instead of raising another. */
+export const similarIncidentsQuerySchema = z
+  .object({
+    category: z.enum(INC_CATEGORY_KEYS),
+    siteId: z.string().uuid().optional(),
+  })
+  .strict();
+export type SimilarIncidentsQuery = z.infer<typeof similarIncidentsQuerySchema>;
 
 /** POST /incidents/:id/status */
 export const incidentStatusSchema = z
