@@ -56,6 +56,7 @@ export const PERMISSIONS = [
   'bug:manage', // move status, edit labels, delete - SUPER_ADMIN only
   'tenantdiscovery:read', // view the live-tenant Discovery inventory - admin & engineer only
   'tenantdiscovery:run', // connect to the customer tenant and run a discovery - admin & engineer only
+  'intake:manage', // monitoring alert sources and the inbound mailbox settings: create, tokens, per-customer switches - SUPER_ADMIN only
   'agent:manage', // AI agents: create, tokens, per-customer autonomy, webhooks, kill switches - SUPER_ADMIN only
   'platform:operate', // release check + maintenance notice - SUPER_ADMIN only
 ] as const;

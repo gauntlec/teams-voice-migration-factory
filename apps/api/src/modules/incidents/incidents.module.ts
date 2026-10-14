@@ -9,6 +9,10 @@ import { AgentAuthGuard } from './agent-auth.guard';
 import { AgentEventsService } from './agent-events.service';
 import { IncidentProposalsService } from './agent-proposals.service';
 import { BuiltinAgentsService } from './builtin-agents.service';
+import { IncidentIntakeService } from './incident-intake.service';
+import { IntakeController, IntakeAdminController } from './intake.controller';
+import { IntakeAdminService } from './intake-admin.service';
+import { IntakeAuthGuard } from './intake-auth.guard';
 import { IncidentAgentView } from './incident-agent-view.service';
 import { IncidentAgentsController } from './incident-agents.controller';
 import { IncidentAgentsService } from './incident-agents.service';
@@ -32,8 +36,8 @@ import { IncidentsService } from './incidents.service';
   // FilesModule: incident attachments. MailModule: incident emails.
   imports: [FilesModule, MailModule],
   // IncidentAgentsController and IncidentMajorController first: their fixed paths (problems, report, notices ...) must win over IncidentsController's :id.
-  controllers: [IncidentAgentsController, IncidentDiagnosticsController, IncidentMajorController, IncidentsController, IncidentResponseController, MspIncidentsController, AgentApiController, AgentAdminController],
-  providers: [IncidentsService, IncidentNotifier, IncidentResponseService, IncidentMajorService, ProblemsService, IncidentReviewService, IncidentReportService, MspIncidentsService, AgentEventsService, IncidentClaimsService, IncidentAgentView, IncidentProposalsService, IncidentAgentsService, IncidentDiagnosticsService, AgentApiService, BuiltinAgentsService, AgentAdminService, AgentAuthGuard],
+  controllers: [IncidentAgentsController, IncidentDiagnosticsController, IntakeAdminController, IntakeController, IncidentMajorController, IncidentsController, IncidentResponseController, MspIncidentsController, AgentApiController, AgentAdminController],
+  providers: [IncidentsService, IncidentNotifier, IncidentResponseService, IncidentMajorService, ProblemsService, IncidentReviewService, IncidentReportService, MspIncidentsService, AgentEventsService, IncidentClaimsService, IncidentAgentView, IncidentProposalsService, IncidentAgentsService, IncidentDiagnosticsService, AgentApiService, BuiltinAgentsService, IncidentIntakeService, IntakeAdminService, IntakeAuthGuard, AgentAdminService, AgentAuthGuard],
   exports: [IncidentsService, IncidentNotifier, AgentEventsService, AgentAuthGuard, BuiltinAgentsService],
 })
 export class IncidentsModule {}

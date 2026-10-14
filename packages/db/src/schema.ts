@@ -1229,6 +1229,22 @@ export interface TenantAuditLogTable {
 /* ------------------------------ agents (platform) ------------------------------ */
 
 /** An AI agent that works incidents - see 0017_agents.sql and docs/AGENTS.md. */
+export interface IntakeSourcesTable {
+  id: Generated<string>;
+  tenant_id: string;
+  name: string;
+  kind: ColumnType<import('@tvmf/shared').IntakeKind, import('@tvmf/shared').IntakeKind | undefined, import('@tvmf/shared').IntakeKind>;
+  config: ColumnType<import('@tvmf/shared').IntakeConfig, string | undefined, string>;
+  secret_hash: string;
+  last4: string;
+  ip_allow: ColumnType<string[], string[] | undefined, string[]>;
+  enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  created_by: ColumnType<string | null, string | null | undefined, string | null>;
+  created_at: Ts;
+  last_used_at: ColumnType<string | null, string | null | undefined, string | null>;
+  alerts_received: ColumnType<number, number | undefined, number>;
+}
+
 export interface AgentsTable {
   id: Generated<string>;
   name: string;
@@ -1334,6 +1350,7 @@ export interface DB {
   platform_audit_log: PlatformAuditLogTable;
   maintenance_notice: MaintenanceNoticeTable;
   agents: AgentsTable;
+  intake_sources: IntakeSourcesTable;
   agent_tokens: AgentTokensTable;
   agent_customer_policy: AgentCustomerPolicyTable;
   agent_kill_switch: AgentKillSwitchTable;

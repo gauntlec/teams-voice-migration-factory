@@ -16,6 +16,8 @@ export interface AuthedUser {
    * are attributed to the agent (not a person), and it never has an email or an account.
    */
   agent?: { id: string; name: string };
+  /** Set when this "user" is a monitoring alert source or the inbound mailbox (see intake-actor.ts): events are "system" ones, and it has no account or email. */
+  system?: { id: string; name: string };
 }
 
 export interface TenantContext {
@@ -44,7 +46,17 @@ export interface AgentPrincipal {
   scopes: import('@tvmf/shared').AgentScope[];
 }
 
+/** A monitoring alert source authenticated by its token (see IntakeAuthGuard). */
+export interface IntakePrincipal {
+  sourceId: string;
+  tenantId: string;
+  name: string;
+  kind: import('@tvmf/shared').IntakeKind;
+  config: import('@tvmf/shared').IntakeConfig;
+}
+
 export interface AppRequest extends Request {
+  intake?: IntakePrincipal;
   user?: AuthedUser;
   agent?: AgentPrincipal;
   tenant?: TenantContext;

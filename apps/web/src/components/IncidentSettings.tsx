@@ -43,6 +43,7 @@ import { api } from '../api';
 import { useAuth } from '../auth';
 import { DataTable } from './DataTable';
 import { LoadError } from './records';
+import { IntakeSources } from './IntakeSources';
 import { errorText } from '../pages/ServiceRequests';
 
 const useStyles = makeStyles({
@@ -300,6 +301,7 @@ export function IncidentSettingsDialog({ base, onClose }: { base: string; onClos
                 <Text size={200} className={s.muted}>
                   Emergency calling problems are always P1, whatever this says.
                 </Text>
+                {can('inc:manage') && <IntakeSources base={base} editable={editable} />}
                 {save.isError && <Text className={s.error}>{errorText(save.error, 'Could not save the settings')}</Text>}
               </>
             )}

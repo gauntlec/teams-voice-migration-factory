@@ -21,8 +21,8 @@ export function agentActor(agent: { id: string; name: string }): AuthedUser {
 }
 
 /** The author columns for an incident event. */
-export function actorCols(user: AuthedUser): { author_id: string; actor_type: 'user' | 'agent' } {
-  return { author_id: user.id, actor_type: user.agent ? 'agent' : 'user' };
+export function actorCols(user: AuthedUser): { author_id: string; actor_type: 'user' | 'agent' | 'system' } {
+  return { author_id: user.id, actor_type: user.agent ? 'agent' : user.system ? 'system' : 'user' };
 }
 
 /** What to call someone in front of a customer: an agent is always just "Voxshift assistant". */

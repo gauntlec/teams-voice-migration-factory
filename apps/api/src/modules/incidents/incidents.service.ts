@@ -31,6 +31,8 @@ import {
   type IncDetails,
   type IncHoldReason,
   type IncPriority,
+  type IncImpact,
+  type IncUrgency,
   type IncSettings,
   type IncStatus,
   type IncidentAssignInput,
@@ -91,7 +93,11 @@ export class IncidentsService {
     const unique = [...new Set(ids.filter((v): v is string => !!v))];
     if (unique.length === 0) return new Map<string, string>();
     const rows = await platformDb(this.db).selectFrom('users').select(['id', 'display_name']).where('id', 'in', unique).execute();
-    return new Map(rows.map((r) => [r.id, r.display_name]));
+    const out = new Map(rows.map((r) => [r.id, r.display_name]));
+    // Monitoring alert sources and the inbound mailbox author events too.
+    const rest = unique.filter((id) => !out.has(id));
+    if (rest.length) for (const r of await platformDb(this.db).selectFrom('intake_sources').select(['id', 'name']).where('id', 'in', rest).execute()) out.set(r.id, `${r.name} (monitoring)`);
+    return out;
   }
 
   private async agentNames(ids: (string | null | undefined)[]) {
@@ -448,6 +454,69 @@ export class IncidentsService {
       respondText: incRespondText(sla.target, sla.cover),
     });
     return { ...row, reference };
+  }
+
+  /**
+   * Raises an incident from a monitoring alert or an email (docs/INTAKE.md). The category's questions are not asked (a machine or
+   * a quick email cannot answer them); the team triages. A key de-duplicates: one open incident per key, and a second alert with it
+   * does not raise another (the unique index decides, so two at once cannot both win).
+   */
+  async createFromIntake(
+    t: TenantContext,
+    actor: AuthedUser,
+    input: { title: string; description: string; category: string; impact: IncImpact; urgency: IncUrgency; siteId: string | null; source: 'monitor' | 'email'; dedupKey: string | null; reporterId: string; staffRaised: boolean; details?: Record<string, unknown> },
+  ): Promise<{ created: boolean; row: Awaited<ReturnType<IncidentsService['load']>> & { reference: string } }> {
+    this.assertEnabled(t);
+    const settings = await this.settingsRaw(t);
+    const calc = incPriority(input.impact, input.urgency, input.category, incEffectiveMatrix(settings));
+    const details = { answers: {}, example_calls: [], ...(input.details ? { intake: input.details } : {}) } as unknown as IncDetails;
+    const s = tenantDb(this.db, t.schema);
+    let row;
+    try {
+      row = await this.db.transaction().execute(async (trx) => {
+        const x = tenantDb(trx, t.schema);
+        const created = await x
+          .insertInto('incidents')
+          .values({
+            title: input.title.slice(0, 160),
+            description: input.description,
+            category: input.category,
+            subcategory: null,
+            site_id: input.siteId,
+            impact: input.impact,
+            urgency: input.urgency,
+            priority: calc.priority,
+            priority_overridden: false,
+            source: input.source,
+            dedup_key: input.dedupKey,
+            details: JSON.stringify(details),
+            reporter_id: input.reporterId,
+          })
+          .returningAll()
+          .executeTakeFirstOrThrow();
+        await x.insertInto('incident_events').values({ incident_id: created.id, kind: 'created', to_status: 'new', ...actorCols(actor) }).execute();
+        return created;
+      });
+    } catch (e) {
+      // Another alert with the same key won the race: it is the incident.
+      if ((e as { code?: string }).code === '23505' && input.dedupKey) {
+        const existing = await s.selectFrom('incidents').selectAll().where('dedup_key', '=', input.dedupKey).where('status', 'in', ['new', 'in_progress', 'on_hold', 'restored', 'resolved']).executeTakeFirstOrThrow();
+        return { created: false, row: { ...existing, reference: incReference(existing.number) } };
+      }
+      throw e;
+    }
+    const reference = incReference(row.number);
+    await this.audit.tenant(t.schema, 'incident.created', { actor: { id: actor.id, email: actor.email }, targetType: 'incident', targetId: row.id, detail: { reference, category: row.category, priority: row.priority, source: input.source } });
+    const site = row.site_id ? await s.selectFrom('discovery_sites').select(['sitecode', 'name']).where('id', '=', row.site_id).executeTakeFirst() : undefined;
+    const sla = incSlaFor(row, settings);
+    await this.events.emit(t.id, row, 'incident.created', { site: site?.sitecode ?? null, by: input.source });
+    await this.notify.created(t, actor, { ...row, details }, {
+      siteLabel: site ? (site.name ? `${site.sitecode} — ${site.name}` : site.sitecode) : null,
+      staffRaised: input.staffRaised,
+      settings,
+      respondText: incRespondText(sla.target, sla.cover),
+    });
+    return { created: true, row: { ...row, reference } };
   }
 
   /* ------------------------------ workflow ------------------------------ */

@@ -31,7 +31,7 @@ import { customerFacingName } from './agent-actor';
 import { signIncidentLink } from './incident-links';
 
 /** Mail rows record who caused them; an agent is not a user, so it is recorded as nobody. */
-const createdBy = (a: AuthedUser) => (a.agent ? null : a.id);
+const createdBy = (a: AuthedUser) => (a.agent || a.system ? null : a.id);
 
 export interface StaffMember {
   id: string;

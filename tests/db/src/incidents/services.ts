@@ -13,6 +13,9 @@ import { IncidentAgentView } from '../../../../apps/api/src/modules/incidents/in
 import { IncidentAgentsService } from '../../../../apps/api/src/modules/incidents/incident-agents.service';
 import { IncidentClaimsService } from '../../../../apps/api/src/modules/incidents/incident-claims.service';
 import { IncidentDiagnosticsService } from '../../../../apps/api/src/modules/incidents/incident-diagnostics.service';
+import { IncidentIntakeService } from '../../../../apps/api/src/modules/incidents/incident-intake.service';
+import { IntakeAdminService } from '../../../../apps/api/src/modules/incidents/intake-admin.service';
+import { IntakeAuthGuard } from '../../../../apps/api/src/modules/incidents/intake-auth.guard';
 import { IncidentMajorService } from '../../../../apps/api/src/modules/incidents/incident-major.service';
 import { IncidentNotifier } from '../../../../apps/api/src/modules/incidents/incident-notifier';
 import { IncidentReportService } from '../../../../apps/api/src/modules/incidents/incident-report.service';
@@ -57,6 +60,9 @@ export function incidentServices(handle: DbHandle, mail: Pick<MailService, 'enqu
     response: new IncidentResponseService(handle.db, cfg, svc),
     humanAgents: new IncidentAgentsService(handle.db, audit, claims, svc, events),
     agentApi,
+    intake: new IncidentIntakeService(handle.db, svc),
+    intakeAdmin: new IntakeAdminService(handle.db, audit),
+    intakeGuard: new IntakeAuthGuard(handle.db),
     builtin: new BuiltinAgentsService(handle.db, agentApi, events),
     agentAdmin: new AgentAdminService(handle.db, audit),
     agentGuard: new AgentAuthGuard(handle.db),
