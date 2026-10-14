@@ -122,6 +122,7 @@ const MAIN: NavDef[] = [
 
 /** Cross-customer views for an MSP's own staff (and Super Admins). */
 const MSP_ITEMS: NavDef[] = [
+  { to: '/msp/incidents', label: 'Incident console', icon: <AlertUrgent24Regular />, permission: 'inc:msp' },
   { to: '/msp/service-requests', label: 'Service request admin', icon: <TaskListSquareLtr24Regular />, permission: 'sr:msp' },
 ];
 

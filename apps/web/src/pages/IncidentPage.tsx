@@ -5,6 +5,7 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   Field,
   Input,
   Link,
@@ -43,6 +44,7 @@ import {
   type FileRow,
   type IncClock,
   type IncDetails,
+  type IncEventKind,
   type IncHoldReason,
   type IncItemKind,
   type IncMoveKind,
@@ -55,6 +57,9 @@ import {
 import { api, apiDownload, apiUpload } from '../api';
 import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
+import { IncidentMajorSection, type ChildIncident, type MajorInfo, type ParentIncident } from '../components/IncidentMajor';
+import { IncidentProblemCard, type LinkedProblem } from '../components/IncidentProblemCard';
+import { IncidentReviewCard, type ReviewInfo } from '../components/IncidentReview';
 import { INC_STATUS_COLOR, IncSlaBadge, IncStatusBadge, PriorityBadge, type IncidentRow } from '../components/IncidentBits';
 import { Page } from '../components/Page';
 import { LoadError, NoTenant } from '../components/records';
@@ -85,7 +90,7 @@ const usePageStyles = makeStyles({
 
 interface IncidentEvent {
   id: string;
-  kind: 'created' | 'status_changed' | 'priority_changed' | 'assigned' | 'comment' | 'waiting' | 'resumed' | 'attachment' | 'link';
+  kind: IncEventKind;
   from_status: string | null;
   to_status: string | null;
   body: string | null;
@@ -114,6 +119,11 @@ interface IncidentPayload {
   can: { confirmFixed: boolean; reopen: boolean; cancel: boolean };
   watching: boolean;
   watchers?: { id: string; display_name: string }[];
+  major: MajorInfo | null;
+  children: ChildIncident[];
+  parent: ParentIncident | null;
+  problem: LinkedProblem | null;
+  review: ReviewInfo | null;
   items: { id: string; kind: IncItemKind; ref: string; label: string | null }[];
   events: IncidentEvent[];
 }
@@ -236,6 +246,7 @@ function Overview({ base, data }: { base: string; data: IncidentPayload }) {
   const id = r.id;
   const [note, setNote] = useState('');
   const [holdReason, setHoldReason] = useState<IncHoldReason | ''>('');
+  const [resolveChildren, setResolveChildren] = useState(false);
   const [duplicateOf, setDuplicateOf] = useState('');
   const [comment, setComment] = useState('');
   const [commentKind, setCommentKind] = useState<'public' | 'question' | 'internal'>('public');
@@ -266,12 +277,13 @@ function Overview({ base, data }: { base: string; data: IncidentPayload }) {
     mutationFn: (to: IncStatus) =>
       api(`${base}/${id}/status`, {
         method: 'POST',
-        body: JSON.stringify({ to, note: note.trim() || undefined, holdReason: to === 'on_hold' ? holdReason || undefined : undefined, duplicateOf: to === 'duplicate' ? duplicateOf || undefined : undefined }),
+        body: JSON.stringify({ to, note: note.trim() || undefined, holdReason: to === 'on_hold' ? holdReason || undefined : undefined, duplicateOf: to === 'duplicate' ? duplicateOf || undefined : undefined, resolveChildren: to === 'resolved' && resolveChildren ? true : undefined }),
       }),
     onSuccess: () => {
       setNote('');
       setHoldReason('');
       setDuplicateOf('');
+      setResolveChildren(false);
       refresh();
     },
   });
@@ -366,6 +378,8 @@ function Overview({ base, data }: { base: string; data: IncidentPayload }) {
           </div>
         </div>
       )}
+
+      <IncidentMajorSection base={base} incident={r} major={data.major} children={data.children} parent={data.parent} staff={staff} onChanged={refresh} />
 
       <Card className={ps.card}>
         <div className={cs.facts}>
@@ -577,6 +591,9 @@ function Overview({ base, data }: { base: string; data: IncidentPayload }) {
           )}
             </div>
           )}
+          {staff && data.major?.active && data.children.some((c) => ['new', 'in_progress', 'on_hold', 'restored'].includes(c.status)) && kindTo('resolved') && (
+            <Checkbox checked={resolveChildren} onChange={(_, d) => setResolveChildren(!!d.checked)} label={`When I mark it resolved, resolve its ${data.children.filter((c) => ['new', 'in_progress', 'on_hold', 'restored'].includes(c.status)).length} open linked incident(s) too, with the same note`} />
+          )}
           <div className={cs.actions}>
             {staffMoves.map(([to, appearance]) => {
               const k = kindTo(to as IncStatus)!;
@@ -630,6 +647,10 @@ function Overview({ base, data }: { base: string; data: IncidentPayload }) {
           )}
         </Card>
       )}
+
+      {staff && <IncidentProblemCard base={base} incident={{ id, title: r.title, category: r.category, subcategory: r.subcategory }} problem={data.problem} onChanged={refresh} />}
+
+      <IncidentReviewCard base={base} incident={{ id, reference: r.reference }} review={data.review} staff={staff} show={!!data.major || ['resolved', 'closed'].includes(r.status)} />
 
       <Attachments base={base} id={id} />
 
@@ -724,6 +745,18 @@ function eventText(e: IncidentEvent, staff: boolean): string {
       return e.body === 'Unassigned' ? 'Unassigned the incident.' : `Assigned to ${e.body}.`;
     case 'link':
       return `Linked ${e.body ?? 'an item'}.`;
+    case 'major_declared':
+      return `Declared a major incident. ${e.body ?? ''}`.trim();
+    case 'major_update':
+      return `Update: ${e.body ?? ''}`;
+    case 'major_ended':
+      return e.body ? `The major incident is over. ${e.body}` : 'The major incident is over.';
+    case 'child_linked':
+    case 'child_unlinked':
+    case 'problem_linked':
+      return e.body ?? '';
+    case 'review_shared':
+      return 'Shared the post-incident review.';
     case 'comment':
       return e.body ?? '';
   }

@@ -164,6 +164,11 @@ export function IncidentNew() {
     enabled: !!activeTenantId && enabled && !!category,
     queryFn: () => api<SimilarIncident[]>(`${base}/similar?category=${category}${siteId ? `&siteId=${siteId}` : ''}`),
   });
+  const knownQ = useQuery({
+    queryKey: ['incident-known-errors', activeTenantId, category, subcategory],
+    enabled: !!activeTenantId && enabled && !!category,
+    queryFn: () => api<{ id: string; reference: string; title: string; customer_note?: string; workaround?: string }[]>(`${base}/known-errors?category=${category}${subcategory ? `&subcategory=${subcategory}` : ''}`),
+  });
   const follow = useMutation({
     mutationFn: (id: string) => api(`${base}/${id}/watchers`, { method: 'POST', body: JSON.stringify({}) }),
     onSuccess: (_, id) => setFollowed((prev) => new Set(prev).add(id)),
@@ -305,6 +310,27 @@ export function IncidentNew() {
 
       {def && (
         <>
+          {(knownQ.data ?? []).length > 0 && (
+            <div className={s.notice}>
+              <Text weight="semibold" block>
+                {staff ? 'Known errors for this kind of incident' : 'Known issue'}
+              </Text>
+              <ul style={{ margin: '8px 0 0', paddingLeft: 20 }}>
+                {knownQ.data!.map((k) => (
+                  <li key={k.id}>
+                    {staff ? (
+                      <>
+                        {k.reference} · {k.title}: <Text style={{ whiteSpace: 'pre-wrap' }}>{k.workaround}</Text>
+                      </>
+                    ) : (
+                      <Text style={{ whiteSpace: 'pre-wrap' }}>{k.customer_note}</Text>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {(similarQ.data ?? []).length > 0 && (
             <div className={s.notice}>
               <Text weight="semibold" block>

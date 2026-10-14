@@ -222,6 +222,13 @@ nobody is assigned.
 | An internal note | `incident_activity` (`internal_note`) | The assignee only |
 | It is assigned to someone else | `incident_activity` (`assigned`) | The new assignee |
 | A target is at risk (20% left) or missed | `incident_activity` (`sla_warning` / `sla_breached`) | The team; once per target |
+| A major incident is declared | `incident_major` (`declared`, customer version: "we're aware", next update time) | Customer side, the customer's named contacts, reporters of child incidents |
+| ... and the team | `incident_major` (`declared`, team version) | The team, except whoever declared it |
+| You are made lead or comms owner | `incident_activity` (`major_assigned`) | That person |
+| A customer update on a major incident | `incident_major` (`update`) | Customer side, named contacts, child reporters |
+| A major incident is resolved | `incident_major` (`resolved`, with what fixed it) | Customer side, named contacts, child reporters (plus the usual "is it fixed?") |
+| A major incident's update is due / 15 minutes late | `incident_activity` (`update_due` / `update_overdue`) | The comms owner; then the lead and the whole team |
+| A post-incident review is shared | `incident_review` (summary, cause, actions) | Customer side and named contacts |
 
 A problem queueing mail is logged and never fails the change that caused it.
 

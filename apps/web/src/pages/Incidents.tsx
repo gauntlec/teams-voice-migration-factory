@@ -6,8 +6,10 @@ import { INC_CATEGORIES, INC_CATEGORY_BY_KEY, INC_PRIORITIES, INC_PRIORITY_LABEL
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
+import { IncidentNotices } from '../components/IncidentNotices';
+import { IncidentReportsDialog } from '../components/IncidentReports';
 import { IncidentSettingsDialog } from '../components/IncidentSettings';
-import { IncQueueTiles, IncSlaBadge, IncStatusBadge, PriorityBadge, incQueueFilter, type IncQueueFilter, type IncidentRow } from '../components/IncidentBits';
+import { IncQueueTiles, IncSlaBadge, IncStatusBadge, MajorBadge, MajorClockBadge, PriorityBadge, incQueueFilter, type IncQueueFilter, type IncidentRow } from '../components/IncidentBits';
 import { Page } from '../components/Page';
 import { LoadError, NoTenant } from '../components/records';
 import { useDebounced } from '../hooks/useDebounced';
@@ -30,6 +32,7 @@ export function Incidents() {
   const q = useDebounced(qInput);
   const [tile, setTile] = useState<IncQueueFilter>('all');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [reportsOpen, setReportsOpen] = useState(false);
   const staff = can('inc:manage');
 
   const enabled = me?.tenants.find((t) => t.id === activeTenantId)?.managedServices ?? false;
@@ -71,6 +74,10 @@ export function Incidents() {
       subtitle="Something not working, or not working well? Raise an incident and follow it here. You're emailed as it moves on."
       actions={
         <div className={cs.actions}>
+          <Button onClick={() => setReportsOpen(true)}>Reports</Button>
+          {staff && (
+            <Button onClick={() => navigate('/incidents/problems')}>Problems</Button>
+          )}
           <Button onClick={() => setSettingsOpen(true)}>{staff ? 'Settings' : 'Our targets'}</Button>
           {can('inc:create') && (
             <Button appearance="primary" onClick={() => navigate('/incidents/new')}>
@@ -125,6 +132,7 @@ export function Incidents() {
           <Input value={qInput} placeholder="Title or INC-0042" onChange={(_, d) => setQInput(d.value)} />
         </Field>
       </div>
+      <IncidentNotices base={base} enabled={enabled} />
       {list.isError && <LoadError message={(list.error as Error).message} />}
       {staff && status === 'open' && list.data && <IncQueueTiles items={list.data} filter={tile} onFilter={setTile} />}
       <Card>
@@ -155,7 +163,10 @@ export function Incidents() {
                   <TableCell>
                     <Link onClick={() => open(r.id)}>{r.reference}</Link>
                   </TableCell>
-                  <TableCell>{r.title}</TableCell>
+                  <TableCell>
+                    {r.title}
+                    <MajorBadge row={r} />
+                  </TableCell>
                   <TableCell>{INC_CATEGORY_BY_KEY[r.category]?.label ?? r.category}</TableCell>
                   <TableCell>{r.sitecode ?? '—'}</TableCell>
                   <TableCell>
@@ -167,6 +178,7 @@ export function Incidents() {
                   {staff && (
                     <TableCell>
                       <IncSlaBadge clock={r.sla.clock} which={r.sla.which} />
+                      {r.major && <MajorClockBadge clock={r.major_clock} />}
                     </TableCell>
                   )}
                   <TableCell>{r.assigned_to_name ?? (r.status === 'new' ? 'Not yet' : '—')}</TableCell>
@@ -183,6 +195,7 @@ export function Incidents() {
         )}
       </Card>
       {settingsOpen && <IncidentSettingsDialog base={base} onClose={() => setSettingsOpen(false)} />}
+      {reportsOpen && <IncidentReportsDialog base={base} onClose={() => setReportsOpen(false)} />}
     </Page>
   );
 }

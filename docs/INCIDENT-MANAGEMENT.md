@@ -588,6 +588,63 @@ Email, the SLA engine and the settings screen. Details of every email are in
 - **Tests**: 12 new rules tests (working hours), 19 notification and signed-link tests, 10 sweep
   tests, 6 template render tests (100 database-backed tests in total).
 
+## Chunk 4 as built
+
+The MSP console, major incidents, problems, post-incident reviews and reports. Migration
+`0049_incident_major_problems.sql`; shared rules in `packages/shared/src/incident-major.ts`.
+
+- **MSP console** (`/msp/incidents`, `inc:msp`; nav "Incident console"): one queue across the
+  customers of an MSP, built like the service-request admin. Live major incidents first, then
+  priority, then longest waiting; tiles (Open, Not acknowledged, Unassigned, On hold, At risk,
+  Overdue); filters (status, priority, customer, MSP for Super Admins, assigned to me). Someone on
+  a customer's team can **Work it** from the queue (acknowledge, assign, reply, ask and wait, internal
+  note); customers you're not on the team for are listed but can't be opened. A second tab is the
+  **major incident board**: live majors across customers with lead, comms owner, update clock,
+  child counts and the latest update. API: `GET /msp/incidents`, `/msp/incidents/major`,
+  `POST /msp/incidents/:tenantId/:id/assign|comments|status`.
+- **Major incidents**: an engineer declares one from the incident page (a lead, a comms owner who
+  defaults to the lead, a cadence - P1 30 min, P2 60 min unless changed - and the first customer
+  update). The customer side (reporter, followers, the customer's **named contacts**, the reporters
+  of child incidents) is emailed "we're aware"; the team is told who leads; the lead and comms
+  owner are told their role. The lead becomes the assignee if nobody was. **Customer updates**
+  (`POST /:id/major/updates`) go to the same audience and reset the clock. When the cadence is
+  missed the worker reminds the comms owner (due) then the lead and team (15 minutes late), once
+  each. Lead and comms owner can be changed. Resolving, cancelling or merging a major incident
+  **ends** it (clock stops, timeline entry); resolving tells the customer side what fixed it and can
+  **resolve the open child incidents too**, with the same note (the "Resolve children" box). A
+  major incident can be declared again if it is reopened.
+- **Child incidents**: link open incidents under a live major incident (not finished, not major
+  themselves, not already a parent; moving one between majors is allowed). Their reporters then get
+  the parent's updates; each child's page says it is part of the major incident.
+- **Customer notice**: a red "We're aware of a problem" banner on the Incidents page (everyone,
+  including site contacts - who only get a link to the ones at their own sites) with the latest
+  update and when the next is due. `GET /incidents/notices`.
+- **Problems** (`/incidents/problems`, engineers): PRB-0001 records with status (Investigating,
+  Known error, Fix planned, Resolved), root cause, workaround, owner, the kind of incident they
+  cause, and a note for customers. Link an incident to a problem (or create one from it); the
+  report shows the problems behind the month's incidents. A **known error** (known error or fix
+  planned, with a workaround) is offered on new incidents of its category: engineers see the
+  workaround on the raise form and the incident page ("This is it" links it); a customer sees only
+  the note written for them, and only if there is one. Customers never see problem records.
+- **Post-incident review**: any incident can have one (offered for every major incident): what
+  happened, why, what worked, what didn't, and actions with owner and date; the timeline is built
+  from the incident's public events so it can't drift. A draft is for the team; **Share** (needs
+  what happened and why) makes it visible, adds a timeline entry and emails the customer side and
+  named contacts.
+- **Report** (Incidents -> Reports, everyone; a site contact sees their sites): per month - raised,
+  resolved, reopened, majors, by priority/category/site, typical time to acknowledge, restore and
+  resolve (time on hold left out), how often each target was met (a target still running late
+  counts as missed), repeat incidents (same kind at the same place, 3 or more), the problems
+  behind them (staff only) and today's backlog by age. `GET /incidents/report?from&to`.
+- **Named contacts** (Incidents -> Settings): customer users emailed about every major incident
+  and shared review. Moved here from chunk 3; quiet hours were dropped (not worth the complexity).
+- **Emails**: `incident_major` (declared / update / resolved, customer and team versions) and
+  `incident_review`; `incident_activity` gained update due, update late and "you are on a major
+  incident". See [EMAIL.md](EMAIL.md#incident-emails).
+- **Tests**: 12 new rules tests, 47 new database tests (major incidents 20, problems and reviews
+  13, report and MSP console 11, plus templates), 147 database tests in total. A test caught raw
+  SQL in a problem subquery ignoring the customer's schema; it is now an ordinary Kysely subquery.
+
 ## Build log
 
 | Chunk | Status | Commit / notes |
@@ -596,7 +653,7 @@ Email, the SLA engine and the settings screen. Details of every email are in
 | 1 Foundations | Built and deployed 2026-10-14 (073e661), verified live (migrations applied to all 5 customer schemas) | See "Chunk 1 as built" |
 | 2 Customer and engineer UI | Built and deployed 2026-10-14 (1455aa6), verified live | See "Chunk 2 as built" |
 | 3 Email workflows and SLA engine | Built and deployed 2026-10-14 (8a6ad5a), verified live (migration 0048 on all 5 customer schemas) | See "Chunk 3 as built" |
-| 4 MSP console, major incidents, problems, reports | Not started | |
+| 4 MSP console, major incidents, problems, reports | Built 2026-10-14 - committed, not yet deployed | See "Chunk 4 as built" |
 | 5 Agent platform | Not started | |
 | 6 First-party agents, diagnostics, MCP | Not started | |
 | 7 Bots completing service requests | Not started | |

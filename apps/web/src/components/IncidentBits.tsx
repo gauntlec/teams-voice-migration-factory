@@ -7,6 +7,7 @@ import {
   INC_STATUS_LABELS,
   srDuration,
   type IncClock,
+  type IncMajorClock,
   type IncHoldReason,
   type IncImpact,
   type IncPriority,
@@ -45,6 +46,12 @@ export interface IncidentRow {
   acknowledged_at: string | null;
   /** The clock that matters now: response, then restoration, then resolution. */
   sla: { which: 'response' | 'restoration' | 'resolution'; clock: IncClock };
+  /** A major incident (declared; check major_clock / major_ended_at for whether it is still live). */
+  major?: boolean;
+  major_ended_at?: string | null;
+  parent_id?: string | null;
+  /** The cadence of customer updates on a live major incident. */
+  major_clock?: IncMajorClock;
 }
 
 export const INC_STATUS_COLOR: Record<IncStatus, 'informative' | 'brand' | 'warning' | 'success' | 'subtle' | 'danger'> = {
@@ -164,11 +171,19 @@ const useStyles = makeStyles({
 
 export type IncQueueFilter = 'all' | 'new' | 'unassigned' | 'on_hold' | 'at_risk' | 'overdue';
 
+/** What the queue tiles need from a row - shared by a customer's list and the MSP console. */
+export interface IncQueueRow {
+  status: IncStatus;
+  assigned_to: string | null;
+  assigned_agent_id: string | null;
+  sla: { clock: IncClock };
+}
+
 const OPEN: readonly IncStatus[] = ['new', 'in_progress', 'on_hold', 'restored'];
 
 /** Which rows a queue tile counts and filters to. */
 export function incQueueFilter(f: IncQueueFilter) {
-  return (i: IncidentRow) => {
+  return (i: IncQueueRow) => {
     if (f === 'all') return true;
     if (!OPEN.includes(i.status)) return false;
     switch (f) {
@@ -187,7 +202,7 @@ export function incQueueFilter(f: IncQueueFilter) {
 }
 
 /** Open / Not acknowledged / Unassigned / On hold / At risk / Overdue - click one to filter the list. */
-export function IncQueueTiles({ items, filter, onFilter }: { items: IncidentRow[]; filter: IncQueueFilter; onFilter: (f: IncQueueFilter) => void }) {
+export function IncQueueTiles({ items, filter, onFilter }: { items: IncQueueRow[]; filter: IncQueueFilter; onFilter: (f: IncQueueFilter) => void }) {
   const s = useStyles();
   const tiles: { key: IncQueueFilter; label: string; tone?: 'danger' | 'warning' }[] = [
     { key: 'all', label: 'Open' },
@@ -216,5 +231,33 @@ export function IncQueueTiles({ items, filter, onFilter }: { items: IncidentRow[
         );
       })}
     </div>
+  );
+}
+
+/** "Major" on a live major incident; "Part of INC-0040" is shown by the pages that know the parent. */
+export function MajorBadge({ row }: { row: { major?: boolean; major_ended_at?: string | null; status: IncStatus } }) {
+  if (!row.major) return null;
+  const live = !row.major_ended_at && ['new', 'in_progress', 'on_hold', 'restored'].includes(row.status);
+  return (
+    <Badge appearance={live ? 'filled' : 'outline'} color="danger" style={{ marginLeft: 4 }} title={live ? 'A live major incident' : 'Was a major incident'}>
+      Major
+    </Badge>
+  );
+}
+
+/** "Update due in 12m" / "Update due now" / "Update late 20m" for a live major incident. */
+export function MajorClockBadge({ clock }: { clock: IncMajorClock | undefined }) {
+  if (!clock || clock.state === 'none' || clock.leftMs === null) return null;
+  if (clock.state === 'on_track') {
+    return (
+      <Badge appearance="outline" color="informative" title={clock.dueAt ? `Next customer update due ${new Date(clock.dueAt).toLocaleString()}` : undefined}>
+        Update in {srDuration(clock.leftMs)}
+      </Badge>
+    );
+  }
+  return (
+    <Badge appearance="filled" color={clock.state === 'overdue' ? 'danger' : 'warning'} title="The next customer update is due">
+      {clock.state === 'overdue' ? `Update late ${srDuration(clock.leftMs)}` : 'Update due now'}
+    </Badge>
   );
 }

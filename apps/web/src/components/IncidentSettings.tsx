@@ -55,6 +55,7 @@ const useStyles = makeStyles({
 });
 
 export interface IncidentSettingsData {
+  stakeholders?: { id: string; display_name: string }[];
   targets: IncSlaTargets;
   matrix: IncMatrix;
   calendar: IncCalendar | null;
@@ -76,11 +77,16 @@ const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 export function IncidentSettingsDialog({ base, onClose }: { base: string; onClose: () => void }) {
   const s = useStyles();
   const qc = useQueryClient();
-  const { me } = useAuth();
+  const { me, can } = useAuth();
   const editable = me?.role === 'SUPER_ADMIN';
   const settings = useIncidentSettings(base);
 
-  const [draft, setDraft] = useState<{ targets: IncSlaTargets; matrix: IncMatrix; calendarOn: boolean; calendar: IncCalendar; cover: Record<IncPriority, IncCover>; holidays: string } | null>(null);
+  const [draft, setDraft] = useState<{ targets: IncSlaTargets; matrix: IncMatrix; calendarOn: boolean; calendar: IncCalendar; cover: Record<IncPriority, IncCover>; holidays: string; stakeholders: string[] } | null>(null);
+  const customers = useQuery({
+    queryKey: ['incident-customer-users', base],
+    enabled: can('inc:manage'),
+    queryFn: () => api<{ id: string; display_name: string; email: string }[]>(`${base}/customer-users`),
+  });
   const d = useMemo(() => {
     if (draft) return draft;
     if (!settings.data) return null;
@@ -92,6 +98,7 @@ export function IncidentSettingsDialog({ base, onClose }: { base: string; onClos
       calendar: cal ?? { days: [1, 2, 3, 4, 5], start: '08:00', end: '18:00', timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, holidays: [] },
       cover: settings.data.cover,
       holidays: (cal?.holidays ?? []).join('\n'),
+      stakeholders: (settings.data.stakeholders ?? []).map((x) => x.id),
     };
   }, [draft, settings.data]);
   const set = (patch: Partial<NonNullable<typeof d>>) => d && setDraft({ ...d, ...patch });
@@ -110,7 +117,7 @@ export function IncidentSettingsDialog({ base, onClose }: { base: string; onClos
       for (const p of INC_PRIORITIES) if (JSON.stringify(d!.targets[p]) !== JSON.stringify(defaults[p])) targets[p] = d!.targets[p];
       const matrix: Record<string, Record<string, IncPriority>> = {};
       for (const i of INC_IMPACTS) for (const u of INC_URGENCIES) if (d!.matrix[i][u] !== INC_DEFAULT_MATRIX[i][u]) (matrix[i] ??= {})[u] = d!.matrix[i][u];
-      return api(`${base}/settings`, { method: 'PUT', body: JSON.stringify({ targets, matrix, calendar, cover }) });
+      return api(`${base}/settings`, { method: 'PUT', body: JSON.stringify({ targets, matrix, calendar, cover, stakeholders: d!.stakeholders }) });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['incident-settings'] });
@@ -230,6 +237,29 @@ export function IncidentSettingsDialog({ base, onClose }: { base: string; onClos
                       <Textarea disabled={!editable} rows={3} resize="vertical" value={d.holidays} onChange={(_, x) => set({ holidays: x.value })} />
                     </Field>
                   </>
+                )}
+
+                <Text weight="semibold">Named contacts for major incidents</Text>
+                <Text size={200} className={s.muted}>
+                  These people are emailed about every major incident (declared, updated, resolved) and every post-incident review, whether or not they follow the incident.
+                </Text>
+                {editable ? (
+                  (customers.data ?? []).length === 0 ? (
+                    <Text size={200}>This customer has no users to name yet.</Text>
+                  ) : (
+                    <div className={s.row}>
+                      {(customers.data ?? []).map((u) => (
+                        <Checkbox
+                          key={u.id}
+                          label={`${u.display_name} (${u.email})`}
+                          checked={d.stakeholders.includes(u.id)}
+                          onChange={(_, x) => set({ stakeholders: x.checked ? [...d.stakeholders, u.id] : d.stakeholders.filter((v) => v !== u.id) })}
+                        />
+                      ))}
+                    </div>
+                  )
+                ) : (
+                  <Text size={200}>{(settings.data?.stakeholders ?? []).length ? settings.data!.stakeholders!.map((x) => x.display_name).join(', ') : 'None named.'}</Text>
                 )}
 
                 <Text weight="semibold">Priority from impact and urgency</Text>

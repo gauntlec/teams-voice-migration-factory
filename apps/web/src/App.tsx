@@ -25,11 +25,13 @@ import { AdminEmailLog } from './pages/admin/EmailLog';
 import { AdminAudit } from './pages/admin/Audit';
 import { AdminReleaseCheck } from './pages/admin/ReleaseCheck';
 import { FeatureRequests } from './pages/FeatureRequests';
+import { MspIncidents } from './pages/MspIncidents';
 import { MspServiceRequests } from './pages/MspServiceRequests';
 import { IncidentNew } from './pages/IncidentNew';
 import { IncidentPage } from './pages/IncidentPage';
 import { IncidentResponse } from './pages/IncidentResponse';
 import { Incidents } from './pages/Incidents';
+import { Problems } from './pages/Problems';
 import { ServiceRequestPage } from './pages/ServiceRequestPage';
 import { ServiceRequests } from './pages/ServiceRequests';
 import { BugReports } from './pages/BugReports';
@@ -59,6 +61,14 @@ export function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/incidents" element={<Incidents />} />
         <Route path="/incidents/new" element={<IncidentNew />} />
+        <Route
+          path="/incidents/problems"
+          element={
+            <RequirePermission permission="inc:manage">
+              <Problems />
+            </RequirePermission>
+          }
+        />
         <Route path="/incidents/:id" element={<IncidentPage />} />
         <Route path="/data-collection" element={<DataCollection />} />
         <Route path="/data-collection/policies" element={<DataCollectionPolicies />} />
@@ -174,6 +184,14 @@ export function App() {
           element={
             <RequirePermission permission="feature:read">
               <FeatureRequests />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="/msp/incidents"
+          element={
+            <RequirePermission permission="inc:msp">
+              <MspIncidents />
             </RequirePermission>
           }
         />

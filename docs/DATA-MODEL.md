@@ -146,7 +146,7 @@ current file, never the superseded draft.
 
 ### Incidents (Managed Services) — see [`INCIDENT-MANAGEMENT.md`](INCIDENT-MANAGEMENT.md)
 
-Tenant migrations `0047_incidents.sql` and `0048_incident_pause_log.sql` (`pause_log`: the closed pauses `[{from, to}]`, so working-hours clocks leave out only working time spent paused); platform `0016_tenant_inc_settings.sql` adds `tenants.inc_settings` (targets, the impact x urgency matrix, the working week `calendar` and per-priority `cover`).
+Tenant migrations `0047_incidents.sql`, `0048_incident_pause_log.sql` and `0049_incident_major_problems.sql` (`pause_log`: the closed pauses `[{from, to}]`, so working-hours clocks leave out only working time spent paused); platform `0016_tenant_inc_settings.sql` adds `tenants.inc_settings` (targets, the impact x urgency matrix, the working week `calendar` and per-priority `cover`).
 
 | Table | Purpose |
 |---|---|
@@ -154,6 +154,10 @@ Tenant migrations `0047_incidents.sql` and `0048_incident_pause_log.sql` (`pause
 | `incident_events` | The timeline: `kind` (`created`/`status_changed`/`priority_changed`/`assigned`/`comment`/`waiting`/`resumed`/`attachment`/`link`), from/to status, `body`, `internal` (staff-only), `actor_type` (`user`/`agent`/`system`), `author_id`, `meta` jsonb, `idempotency_key` (unique per incident, for agent retries) |
 | `incident_items` | What the incident is about or links to: `kind` (`site`/`user`/`number`/`call_queue`/`auto_attendant`/`cap`/`service_request`/`deployment`/`number_port`) and a text `ref`; unique per incident |
 | `incident_watchers` | Customer users who follow an incident |
+| `problems` | PRB-0001: `title`, `description`, `category`/`subcategory` (the kind of incident it causes), `status` (`investigating`/`known_error`/`fix_planned`/`resolved`), `root_cause`, `workaround` (team), `customer_note` (shown to customers before they raise a matching incident), `owner_id`, `resolved_at` |
+| `incident_reviews` | One per incident: `status` (`draft`/`shared`), `summary`, `cause`, `went_well`, `went_badly`, `actions` jsonb (`[{text, owner, due, serviceRequestId}]`), who wrote and shared it |
+
+`incidents` also gained (0049): `major`, `major_declared_at/_by`, `major_ended_at`, `lead_id`, `comms_id`, `update_interval_minutes`, `next_update_due_at`, `update_reminded_at`, `update_escalated_at`, `parent_id` (the major incident this is a child of) and `problem_id`; a major incident must have a lead and comms owner. New event kinds: `major_declared`, `major_update`, `major_ended`, `child_linked`, `child_unlinked`, `problem_linked`, `review_shared`. Platform `inc_settings.stakeholders` lists the customer's named contacts.
 
 Attachments use the `files` table (category `incident_attachment`, `source_type` `incident`).
 
