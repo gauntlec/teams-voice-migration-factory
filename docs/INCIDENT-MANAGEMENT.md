@@ -550,7 +550,7 @@ Screens for customers and engineers (no emails yet - chunk 3; no MSP queue yet -
     internal note. The timeline labels AI actors "(AI)" ready for chunk 5.
 - **API addition**: `GET /incidents/similar?category=&siteId=` (36 database tests now).
 - **Checked** with the built app against a throwaway mock API (staff and customer roles, the
-  full raise flow); not yet against the live system.
+  full raise flow); and then live on AT&T Voice Consult (list loads, no errors).
 
 ## Build log
 
@@ -558,7 +558,7 @@ Screens for customers and engineers (no emails yet - chunk 3; no MSP queue yet -
 |---|---|---|
 | 0 Research and design | Done 2026-10-14 | this document |
 | 1 Foundations | Built and deployed 2026-10-14 (073e661), verified live (migrations applied to all 5 customer schemas) | See "Chunk 1 as built" |
-| 2 Customer and engineer UI | Built 2026-10-14 - committed, not yet deployed | See "Chunk 2 as built" |
+| 2 Customer and engineer UI | Built and deployed 2026-10-14 (1455aa6), verified live | See "Chunk 2 as built" |
 | 3 Email workflows and SLA engine | Not started | |
 | 4 MSP console, major incidents, problems, reports | Not started | |
 | 5 Agent platform | Not started | |
