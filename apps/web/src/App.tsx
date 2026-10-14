@@ -1,5 +1,5 @@
 import { Spinner } from '@fluentui/react-components';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from './auth';
 import { AppShell } from './components/AppShell';
 import { RequirePermission } from './components/RequirePermission';
@@ -28,6 +28,7 @@ import { FeatureRequests } from './pages/FeatureRequests';
 import { MspServiceRequests } from './pages/MspServiceRequests';
 import { IncidentNew } from './pages/IncidentNew';
 import { IncidentPage } from './pages/IncidentPage';
+import { IncidentResponse } from './pages/IncidentResponse';
 import { Incidents } from './pages/Incidents';
 import { ServiceRequestPage } from './pages/ServiceRequestPage';
 import { ServiceRequests } from './pages/ServiceRequests';
@@ -36,6 +37,10 @@ import { Discovery } from './pages/Discovery';
 
 export function App() {
   const { status } = useAuth();
+  const { pathname } = useLocation();
+
+  // The "Is it fixed?" email links: answered signed out, so before any sign-in screen.
+  if (pathname === '/incident-response') return <IncidentResponse />;
 
   if (status === 'loading') {
     return (

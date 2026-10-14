@@ -18,6 +18,11 @@ export const EMAIL_TEMPLATES = [
   'service_request_status_changed',
   'service_request_message',
   'service_request_activity',
+  'incident_created',
+  'incident_status_changed',
+  'incident_message',
+  'incident_resolved',
+  'incident_activity',
 ] as const;
 export type EmailTemplate = (typeof EMAIL_TEMPLATES)[number];
 
@@ -231,6 +236,100 @@ export interface ServiceRequestActivityContext {
     | 'approval_needed' // (phase 4) a customer approver must approve it
     | 'approved'
     | 'rejected';
+  author: string | null;
+  body: string | null;
+  runUrl: string;
+}
+
+/**
+ * Incident emails (docs/INCIDENT-MANAGEMENT.md). Customer-side mail goes to the
+ * reporter and anyone following the incident; team-side mail goes to the
+ * assignee, or every engineer and Super Admin on the customer when nobody is.
+ */
+
+/** `incident_created`: to the reporter ("we've got it") and to the team. */
+export interface IncidentCreatedContext {
+  audience: 'reporter' | 'team';
+  customerName: string;
+  /** e.g. INC-0042 */
+  reference: string;
+  title: string;
+  categoryLabel: string;
+  siteLabel: string | null;
+  /** "P2 High" for the team, "high" for the customer */
+  priorityLabel: string;
+  raisedBy: string;
+  /** Reporter only: "We aim to respond within 1 hour." */
+  respondText: string | null;
+  /** The category's answers as label/value pairs. */
+  lines: { label: string; value: string }[];
+  runUrl: string;
+}
+
+/** `incident_status_changed`: to the reporter and followers - the incident moved on. */
+export interface IncidentStatusChangedContext {
+  customerName: string;
+  reference: string;
+  title: string;
+  kind: 'acknowledge' | 'hold' | 'restore' | 'close' | 'cancel' | 'duplicate' | 'reopen' | 'priority' | 'auto_close';
+  /** What it is on hold for, in customer words ("Waiting on your carrier"). */
+  holdLabel?: string | null;
+  /** The note shown to the customer. */
+  note?: string | null;
+  /** priority only: "high" */
+  priorityText?: string | null;
+  runUrl: string;
+}
+
+/**
+ * `incident_message`: to the reporter and followers - the team wrote to them.
+ *  comment  - a public update
+ *  question - the team needs something before it can carry on (the incident is on hold, waiting on them)
+ *  reminder - the question is still unanswered (worker, every few days)
+ */
+export interface IncidentMessageContext {
+  customerName: string;
+  reference: string;
+  title: string;
+  kind: 'comment' | 'question' | 'reminder';
+  author: string;
+  body: string;
+  runUrl: string;
+}
+
+/** `incident_resolved`: the team says it is fixed. The two links answer without signing in. */
+export interface IncidentResolvedContext {
+  customerName: string;
+  reference: string;
+  title: string;
+  author: string;
+  note: string | null;
+  /** Signed link: opens a page that confirms it is fixed. */
+  fixedUrl: string;
+  /** Signed link: opens a page that says it is still broken. */
+  brokenUrl: string;
+  /** Days until it closes by itself. */
+  autoCloseDays: number;
+  runUrl: string;
+}
+
+/** `incident_activity`: to the team - something happened on an incident they need to see. */
+export interface IncidentActivityContext {
+  customerName: string;
+  reference: string;
+  title: string;
+  categoryLabel: string;
+  priorityLabel: string;
+  kind:
+    | 'comment' // the customer commented
+    | 'replied' // the customer answered the team's question
+    | 'internal_note' // a colleague added an internal note
+    | 'assigned' // the incident was assigned to the recipient
+    | 'reopened' // the customer said it is still broken
+    | 'cancelled' // the customer cancelled it
+    | 'confirmed' // the customer confirmed it is fixed
+    | 'sla_warning' // a target is about to be missed
+    | 'sla_breached'; // ... or has been
   author: string | null;
   body: string | null;
   runUrl: string;

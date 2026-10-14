@@ -146,7 +146,7 @@ current file, never the superseded draft.
 
 ### Incidents (Managed Services) — see [`INCIDENT-MANAGEMENT.md`](INCIDENT-MANAGEMENT.md)
 
-Tenant migration `0047_incidents.sql`; platform `0016_tenant_inc_settings.sql` adds `tenants.inc_settings` (targets and the impact x urgency matrix).
+Tenant migrations `0047_incidents.sql` and `0048_incident_pause_log.sql` (`pause_log`: the closed pauses `[{from, to}]`, so working-hours clocks leave out only working time spent paused); platform `0016_tenant_inc_settings.sql` adds `tenants.inc_settings` (targets, the impact x urgency matrix, the working week `calendar` and per-priority `cover`).
 
 | Table | Purpose |
 |---|---|

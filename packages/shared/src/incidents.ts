@@ -561,19 +561,145 @@ export const INC_DEFAULT_TARGETS: IncSlaTargets = {
 /** Warn when this share of a target is left. */
 export const INC_SLA_WARN_FRACTION = 0.2;
 
+/** Whether a priority's clocks run around the clock or only in the customer's working hours. */
+export type IncCover = '24x7' | 'business';
+export const INC_COVERS: readonly IncCover[] = ['24x7', 'business'];
+
+/** The customer's working week: when "business hours" clocks run. */
+export interface IncCalendar {
+  /** 0 = Sunday ... 6 = Saturday */
+  days: number[];
+  /** "HH:mm" 24h, start < end */
+  start: string;
+  end: string;
+  /** IANA time zone, e.g. Europe/London */
+  timeZone: string;
+  /** Days off, "YYYY-MM-DD" (local date in timeZone). */
+  holidays: string[];
+}
+
 /** Per-customer incident settings (platform.tenants.inc_settings). Everything is optional. */
 export interface IncSettings {
   targets?: Partial<IncSlaTargets>;
   matrix?: { [I in IncImpact]?: Partial<Record<IncUrgency, IncPriority>> };
+  /** The working week. Without one, every clock runs around the clock. */
+  calendar?: IncCalendar | null;
+  /** Per priority; only means anything once there is a calendar. */
+  cover?: Partial<Record<IncPriority, IncCover>>;
 }
 
+/** With a calendar: P1 and P2 run around the clock, P3 and P4 in working hours. */
+export const INC_DEFAULT_COVER: Record<IncPriority, IncCover> = { p1: '24x7', p2: '24x7', p3: 'business', p4: 'business' };
+
+/** How a priority's clocks run for this customer. No calendar means 24x7 for everything. */
+export function incCoverFor(settings: IncSettings | null | undefined, priority: IncPriority): IncCover {
+  if (!settings?.calendar) return '24x7';
+  return settings.cover?.[priority] ?? INC_DEFAULT_COVER[priority];
+}
+
+/** The calendar a priority's clocks use, or null when they run around the clock. */
+export function incClockCalendar(settings: IncSettings | null | undefined, priority: IncPriority): IncCalendar | null {
+  return incCoverFor(settings, priority) === 'business' ? (settings?.calendar ?? null) : null;
+}
+
+/** Working-hour defaults, used for a priority on business cover until the customer sets its own. */
+export const INC_DEFAULT_BUSINESS_TARGETS: IncSlaTargets = {
+  p1: INC_DEFAULT_TARGETS.p1,
+  p2: { responseMinutes: 60, restoreHours: 4, resolveHours: 16 },
+  p3: { responseMinutes: 240, restoreHours: 8, resolveHours: 24 },
+  p4: { responseMinutes: 480, restoreHours: null, resolveHours: 40 },
+};
+
+/**
+ * The targets in force: the customer's own, else the default for how that
+ * priority is covered (calendar hours around the clock, working hours on
+ * business cover).
+ */
 export function incEffectiveTargets(settings: IncSettings | null | undefined): IncSlaTargets {
   const out = { ...INC_DEFAULT_TARGETS };
   for (const p of INC_PRIORITIES) {
-    const t = settings?.targets?.[p];
-    if (t) out[p] = t;
+    const custom = settings?.targets?.[p];
+    out[p] = custom ?? (incCoverFor(settings, p) === 'business' ? INC_DEFAULT_BUSINESS_TARGETS[p] : INC_DEFAULT_TARGETS[p]);
   }
   return out;
+}
+
+/* ------------------------------ working hours ------------------------------ */
+
+interface LocalDate {
+  y: number;
+  m: number; // 1-12
+  d: number;
+}
+
+function tzOffsetMs(ms: number, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' }).formatToParts(new Date(ms));
+  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value);
+  return Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second')) - Math.floor(ms / 1000) * 1000;
+}
+
+/** The instant a wall-clock time in `timeZone` happens. */
+function localToUtc(date: LocalDate, hhmm: string, timeZone: string): number {
+  const [hh, mm] = hhmm.split(':').map(Number) as [number, number];
+  const guess = Date.UTC(date.y, date.m - 1, date.d, hh, mm);
+  const first = guess - tzOffsetMs(guess, timeZone);
+  const second = guess - tzOffsetMs(first, timeZone);
+  return second;
+}
+
+function localDateOf(ms: number, timeZone: string): LocalDate & { weekday: number } {
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone, year: 'numeric', month: 'numeric', day: 'numeric', weekday: 'short' }).formatToParts(new Date(ms));
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+  return { y: Number(get('year')), m: Number(get('month')), d: Number(get('day')), weekday: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(get('weekday')) };
+}
+
+const nextDay = (d: LocalDate): LocalDate => {
+  const t = new Date(Date.UTC(d.y, d.m - 1, d.d + 1));
+  return { y: t.getUTCFullYear(), m: t.getUTCMonth() + 1, d: t.getUTCDate() };
+};
+const isoDate = (d: LocalDate) => `${d.y}-${String(d.m).padStart(2, '0')}-${String(d.d).padStart(2, '0')}`;
+const weekdayOf = (d: LocalDate) => new Date(Date.UTC(d.y, d.m - 1, d.d)).getUTCDay();
+
+/** The day's working interval as instants, or null on a day off. */
+function workingInterval(d: LocalDate, cal: IncCalendar): [number, number] | null {
+  if (!cal.days.includes(weekdayOf(d)) || cal.holidays.includes(isoDate(d))) return null;
+  return [localToUtc(d, cal.start, cal.timeZone), localToUtc(d, cal.end, cal.timeZone)];
+}
+
+/** How many days ahead we look before giving up (a calendar of nothing but days off). */
+const MAX_DAYS = 800;
+
+/** Milliseconds of working time in [from, to). */
+export function incWorkingMs(from: number, to: number, cal: IncCalendar): number {
+  if (to <= from) return 0;
+  let day: LocalDate = localDateOf(from, cal.timeZone);
+  let total = 0;
+  for (let i = 0; i < MAX_DAYS; i++, day = nextDay(day)) {
+    const w = workingInterval(day, cal);
+    if (w) {
+      if (w[0] >= to) break;
+      total += Math.max(0, Math.min(w[1], to) - Math.max(w[0], from));
+    } else if (localToUtc(day, '00:00', cal.timeZone) >= to) break;
+    if (localToUtc(nextDay(day), '00:00', cal.timeZone) >= to) break;
+  }
+  return total;
+}
+
+/** The instant `ms` of working time after `from` has gone by. */
+export function incAddWorkingMs(from: number, ms: number, cal: IncCalendar): number {
+  if (ms <= 0) return from;
+  let remaining = ms;
+  let day: LocalDate = localDateOf(from, cal.timeZone);
+  for (let i = 0; i < MAX_DAYS; i++, day = nextDay(day)) {
+    const w = workingInterval(day, cal);
+    if (!w) continue;
+    const begin = Math.max(w[0], from);
+    const room = w[1] - begin;
+    if (room <= 0) continue;
+    if (room >= remaining) return begin + remaining;
+    remaining -= room;
+  }
+  return from + ms; // no working time to be found: fall back to calendar time rather than never
 }
 
 /**
@@ -586,29 +712,39 @@ export function incHoldPauses(priority: IncPriority, status: IncStatus, holdReas
   return holdReason === 'customer' ? true : priority !== 'p1';
 }
 
+export interface IncPauseInterval {
+  from: string;
+  to: string;
+}
+
 export interface IncPauseState {
   paused_since: string | Date | null;
   paused_seconds: number;
+  /** Closed pauses, kept so working-hours clocks can leave out only the working time spent paused. */
+  pause_log?: IncPauseInterval[];
 }
 
 /**
  * The pause columns after a change of status, hold reason or priority: opens a
- * pause when a pausing hold begins, and adds the time to paused_seconds when it
- * ends (including when a priority change stops the hold pausing).
+ * pause when a pausing hold begins, and adds the time to paused_seconds (and the
+ * interval to pause_log) when it ends - including when a priority change stops
+ * the hold pausing.
  */
 export function incPause(
   prev: IncPauseState & { priority: IncPriority; status: IncStatus; hold_reason: IncHoldReason | null },
   next: { priority: IncPriority; status: IncStatus; hold_reason: IncHoldReason | null },
   nowIso: string,
-): { paused_since: string | null; paused_seconds: number } {
+): { paused_since: string | null; paused_seconds: number; pause_log: IncPauseInterval[] } {
   const wasPaused = !!prev.paused_since;
   const willPause = incHoldPauses(next.priority, next.status, next.hold_reason);
+  const log = prev.pause_log ?? [];
   if (wasPaused && !willPause) {
-    const elapsed = Math.max(0, Math.round((new Date(nowIso).getTime() - new Date(prev.paused_since!).getTime()) / 1000));
-    return { paused_since: null, paused_seconds: prev.paused_seconds + elapsed };
+    const from = new Date(prev.paused_since!).toISOString();
+    const elapsed = Math.max(0, Math.round((new Date(nowIso).getTime() - new Date(from).getTime()) / 1000));
+    return { paused_since: null, paused_seconds: prev.paused_seconds + elapsed, pause_log: [...log, { from, to: nowIso }] };
   }
-  if (!wasPaused && willPause) return { paused_since: nowIso, paused_seconds: prev.paused_seconds };
-  return { paused_since: prev.paused_since ? new Date(prev.paused_since).toISOString() : null, paused_seconds: prev.paused_seconds };
+  if (!wasPaused && willPause) return { paused_since: nowIso, paused_seconds: prev.paused_seconds, pause_log: log };
+  return { paused_since: prev.paused_since ? new Date(prev.paused_since).toISOString() : null, paused_seconds: prev.paused_seconds, pause_log: log };
 }
 
 export type IncClockState = 'met' | 'missed' | 'on_track' | 'at_risk' | 'overdue' | 'paused' | 'stopped' | 'none';
@@ -630,6 +766,7 @@ export interface IncSlaInput {
   resolved_at: string | Date | null;
   paused_since: string | Date | null;
   paused_seconds: number;
+  pause_log?: IncPauseInterval[];
   /** A reopened incident's restoration and resolution clocks restart from here. */
   reopened_at?: string | Date | null;
 }
@@ -638,18 +775,48 @@ const ms = (v: string | Date | null | undefined) => (v ? new Date(v).getTime() :
 
 /**
  * Where an incident stands against its three targets right now. Cancelled and
- * duplicate incidents stop every clock; a pausing hold shows "paused".
+ * duplicate incidents stop every clock; a pausing hold shows "paused". With a
+ * `calendar` (business cover) a target only counts working time, and so does the
+ * time spent paused.
  */
-export function incSla(r: IncSlaInput, targets: IncSlaTargets, now = Date.now()): { response: IncClock; restoration: IncClock; resolution: IncClock } {
+export function incSla(
+  r: IncSlaInput,
+  targets: IncSlaTargets,
+  now = Date.now(),
+  calendar: IncCalendar | null = null,
+): { response: IncClock; restoration: IncClock; resolution: IncClock } {
   const t = targets[r.priority] ?? INC_DEFAULT_TARGETS.p3;
   const created = ms(r.created_at)!;
   const reopened = ms(r.reopened_at);
   const pausedNow = r.paused_since ? Math.max(0, now - ms(r.paused_since)!) : 0;
   const pausedMs = r.paused_seconds * 1000 + pausedNow;
+  const log = (r.pause_log ?? []).map((p) => [new Date(p.from).getTime(), new Date(p.to).getTime()] as const);
+
+  /** Working time spent paused between `start` and `until`. */
+  const pausedWorking = (cal: IncCalendar, start: number, until: number) => {
+    let total = 0;
+    for (const [a, b] of log) total += incWorkingMs(Math.max(a, start), Math.min(b, until), cal);
+    if (r.paused_since) total += incWorkingMs(Math.max(ms(r.paused_since)!, start), until, cal);
+    return total;
+  };
 
   const clock = (limitMs: number | null, doneAt: number | null, start: number): IncClock => {
     if (r.status === 'cancelled' || r.status === 'duplicate') return { state: 'stopped', dueAt: null, leftMs: null };
     if (limitMs === null) return { state: 'none', dueAt: null, leftMs: null };
+
+    if (calendar) {
+      if (doneAt !== null) {
+        const used = incWorkingMs(start, doneAt, calendar) - pausedWorking(calendar, start, doneAt);
+        return { state: used <= limitMs ? 'met' : 'missed', dueAt: null, leftMs: null };
+      }
+      const due = incAddWorkingMs(start, limitMs + pausedWorking(calendar, start, now), calendar);
+      if (r.paused_since) return { state: 'paused', dueAt: new Date(due).toISOString(), leftMs: null };
+      const left = due - now;
+      const workingLeft = left >= 0 ? incWorkingMs(now, due, calendar) : -1;
+      const state: IncClockState = left < 0 ? 'overdue' : workingLeft <= limitMs * INC_SLA_WARN_FRACTION ? 'at_risk' : 'on_track';
+      return { state, dueAt: new Date(due).toISOString(), leftMs: left };
+    }
+
     const due = start + limitMs + pausedMs;
     if (doneAt !== null) return { state: doneAt <= due ? 'met' : 'missed', dueAt: null, leftMs: null };
     if (r.paused_since) return { state: 'paused', dueAt: new Date(due).toISOString(), leftMs: null };
@@ -666,6 +833,22 @@ export function incSla(r: IncSlaInput, targets: IncSlaTargets, now = Date.now())
     restoration: clock(t.restoreHours === null ? null : t.restoreHours * 3_600_000, restoredAt, restart),
     resolution: clock(t.resolveHours * 3_600_000, resolvedAt, restart),
   };
+}
+
+/**
+ * An incident's clocks and targets under the customer's settings: each priority
+ * uses its own targets and, on business cover, the customer's working calendar.
+ */
+export function incSlaFor(r: IncSlaInput, settings: IncSettings | null | undefined, now = Date.now()) {
+  const targets = incEffectiveTargets(settings);
+  return { ...incSla(r, targets, now, incClockCalendar(settings, r.priority)), target: targets[r.priority], cover: incCoverFor(settings, r.priority) };
+}
+
+/** "We aim to respond within 1 hour." - what the customer is told when they raise an incident. */
+export function incRespondText(target: IncSlaTarget, cover: IncCover): string {
+  const m = target.responseMinutes;
+  const span = m < 120 ? `${m} minutes` : m % 60 === 0 ? `${m / 60} hours` : `${Math.round((m / 60) * 10) / 10} hours`;
+  return `We aim to respond within ${span}${cover === 'business' ? ' of working time' : ''}.`;
 }
 
 /** The clock that matters now: response until acknowledged, then restoration, then resolution. */
@@ -783,6 +966,17 @@ export const incidentCommentSchema = z
   .strict();
 export type IncidentCommentInput = z.infer<typeof incidentCommentSchema>;
 
+/** POST /public/incident-response - answering "Is it fixed?" from the email link, without signing in. */
+export const incidentResponseSchema = z
+  .object({
+    t: z.string().min(20).max(1000),
+    action: z.enum(['fixed', 'broken']),
+    /** What is still wrong - needed for "broken". */
+    note: z.string().trim().max(4000).optional(),
+  })
+  .strict();
+export type IncidentResponseInput = z.infer<typeof incidentResponseSchema>;
+
 /** POST /incidents/:id/priority - staff only. */
 export const incidentPrioritySchema = z.object({ priority: priorityEnum, reason: z.string().trim().min(3, 'Say why').max(1000) }).strict();
 export type IncidentPriorityInput = z.infer<typeof incidentPrioritySchema>;
@@ -804,6 +998,29 @@ const targetSchema = z
   .refine((t) => t.restoreHours === null || t.resolveHours >= t.restoreHours, 'The resolution target must be at least the restoration target')
   .refine((t) => t.resolveHours * 60 >= t.responseMinutes, 'The resolution target must be at least the response target');
 
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const calendarSchema = z
+  .object({
+    days: z.array(z.number().int().min(0).max(6)).min(1).max(7),
+    start: z.string().regex(HHMM, 'Use HH:mm'),
+    end: z.string().regex(HHMM, 'Use HH:mm'),
+    timeZone: z
+      .string()
+      .min(1)
+      .max(64)
+      .refine((tz) => {
+        try {
+          new Intl.DateTimeFormat('en', { timeZone: tz });
+          return true;
+        } catch {
+          return false;
+        }
+      }, 'Unknown time zone'),
+    holidays: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD')).max(100).default([]),
+  })
+  .strict()
+  .refine((c) => c.start < c.end, 'The working day must end after it starts');
+
 /** PUT /incidents/settings - Super Admins only. */
 export const incidentSettingsSchema = z
   .object({
@@ -817,6 +1034,11 @@ export const incidentSettingsSchema = z
           INC_IMPACTS.map((i) => [i, z.object(Object.fromEntries(INC_URGENCIES.map((u) => [u, priorityEnum.optional()])) as Record<IncUrgency, z.ZodOptional<typeof priorityEnum>>).strict().optional()]),
         ) as Record<IncImpact, z.ZodOptional<z.ZodObject<Record<IncUrgency, z.ZodOptional<typeof priorityEnum>>, 'strict'>>>,
       )
+      .strict()
+      .optional(),
+    calendar: calendarSchema.nullable().optional(),
+    cover: z
+      .object(Object.fromEntries(INC_PRIORITIES.map((p) => [p, z.enum(['24x7', 'business']).optional()])) as Record<IncPriority, z.ZodOptional<z.ZodEnum<['24x7', 'business']>>>)
       .strict()
       .optional(),
   })

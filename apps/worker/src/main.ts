@@ -45,6 +45,7 @@ import type { EmailBranding } from './mail/layout';
 import { mailerConfigured, sendMail } from './mail/mailer';
 import { makeMailEnqueuer } from './mail/enqueue';
 import { planDelivery } from './mail/sandbox';
+import { sweepIncidents } from './incidents';
 import { recordServiceRequestRun, sweepServiceRequests } from './service-requests';
 
 const QUEUE_NAME = 'deployments';
@@ -280,6 +281,9 @@ void sweepPortDocumentReminders();
 // Managed Services: waiting-on-customer reminders (and, later, target warnings).
 setInterval(() => void sweepServiceRequests(db, enqueueMail).catch((e) => console.warn('service request sweep failed', e)), 15 * 60_000).unref();
 void sweepServiceRequests(db, enqueueMail).catch((e) => console.warn('service request sweep failed', e));
+// Incidents: waiting-on-customer reminders, target warnings and misses, auto-close of resolved ones.
+setInterval(() => void sweepIncidents(db, enqueueMail).catch((e) => console.warn('incident sweep failed', e)), 5 * 60_000).unref();
+void sweepIncidents(db, enqueueMail).catch((e) => console.warn('incident sweep failed', e));
 
 async function handleConnectionStart(job: Job) {
   const { schema, connectionId, tenantDomain } = job.data as {

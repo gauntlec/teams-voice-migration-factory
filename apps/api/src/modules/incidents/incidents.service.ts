@@ -12,15 +12,18 @@ import {
   SR_ATTACHMENT_TYPES,
   incCanReopen,
   incCleanAnswers,
+  incCoverFor,
   incEffectiveMatrix,
   incEffectiveTargets,
+  incSlaFor,
+  INC_PRIORITIES,
   incMoveKind,
   incNextClock,
   incPause,
   incPriority,
   incReference,
-  incSla,
   incCategoryLabel,
+  incRespondText,
   type CreateIncidentInput,
   type IncDetails,
   type IncHoldReason,
@@ -41,12 +44,11 @@ import type { AuthedUser, TenantContext } from '../../common/request';
 import { InjectDb, type Db } from '../../db/db.module';
 import { assertSiteInScope, isSiteScoped } from '../data-collection/site-scope';
 import { FilesService } from '../files/files.service';
+import { IncidentNotifier, type StaffMember } from './incident-notifier';
 
-interface StaffMember {
-  id: string;
-  email: string;
-  display_name: string;
-  role: string;
+/** The pause columns as the database takes them (pause_log is jsonb, written as a JSON string). */
+function pauseColumns(p: ReturnType<typeof incPause>) {
+  return { paused_since: p.paused_since, paused_seconds: p.paused_seconds, pause_log: JSON.stringify(p.pause_log) };
 }
 
 /**
@@ -66,6 +68,7 @@ export class IncidentsService {
     @InjectDb() private readonly db: Db,
     private readonly audit: AuditService,
     private readonly files: FilesService,
+    private readonly notify: IncidentNotifier,
   ) {}
 
   private assertEnabled(t: TenantContext) {
@@ -82,21 +85,7 @@ export class IncidentsService {
   /** The people who work this customer's incidents: its engineers and every Super Admin. */
   async staff(t: TenantContext): Promise<StaffMember[]> {
     this.assertEnabled(t);
-    const p = platformDb(this.db);
-    const [engineers, admins] = await Promise.all([
-      p
-        .selectFrom('tenant_memberships as m')
-        .innerJoin('users as u', 'u.id', 'm.user_id')
-        .select(['u.id as id', 'u.email as email', 'u.display_name as display_name', 'u.role as role'])
-        .where('m.tenant_id', '=', t.id)
-        .where('u.role', '=', 'ENGINEER')
-        .where('u.status', '=', 'active')
-        .execute(),
-      p.selectFrom('users').select(['id', 'email', 'display_name', 'role']).where('role', '=', 'SUPER_ADMIN').where('status', '=', 'active').execute(),
-    ]);
-    const byId = new Map<string, StaffMember>();
-    for (const u of [...engineers, ...admins]) byId.set(u.id, u);
-    return [...byId.values()].sort((a, b) => a.display_name.localeCompare(b.display_name));
+    return this.notify.staff(t);
   }
 
   private async load(t: TenantContext, id: string) {
@@ -128,7 +117,15 @@ export class IncidentsService {
   async settings(t: TenantContext) {
     this.assertEnabled(t);
     const raw = await this.settingsRaw(t);
-    return { targets: incEffectiveTargets(raw), matrix: incEffectiveMatrix(raw), customTargets: Object.keys(raw.targets ?? {}), customMatrix: !!raw.matrix };
+    return {
+      targets: incEffectiveTargets(raw),
+      matrix: incEffectiveMatrix(raw),
+      calendar: raw.calendar ?? null,
+      cover: Object.fromEntries(INC_PRIORITIES.map((p) => [p, incCoverFor(raw, p)])) as Record<IncPriority, ReturnType<typeof incCoverFor>>,
+      customTargets: Object.keys(raw.targets ?? {}),
+      customMatrix: !!raw.matrix,
+      customCover: Object.keys(raw.cover ?? {}),
+    };
   }
 
   /** Super Admins only: targets and matrix are part of the customer's service terms. */
@@ -139,6 +136,8 @@ export class IncidentsService {
     const next: IncSettings = { ...current };
     if (input.targets !== undefined) next.targets = input.targets as IncSettings['targets'];
     if (input.matrix !== undefined) next.matrix = input.matrix as IncSettings['matrix'];
+    if (input.calendar !== undefined) next.calendar = input.calendar;
+    if (input.cover !== undefined) next.cover = input.cover as IncSettings['cover'];
     await platformDb(this.db).updateTable('tenants').set({ inc_settings: JSON.stringify(next) }).where('id', '=', t.id).execute();
     await this.audit.tenant(t.schema, 'incident.settings_changed', {
       actor: { id: user.id, email: user.email },
@@ -197,6 +196,7 @@ export class IncidentsService {
         'i.reopened_at as reopened_at',
         'i.paused_since as paused_since',
         'i.paused_seconds as paused_seconds',
+        'i.pause_log as pause_log',
       ])
       .orderBy('i.number', 'desc')
       .limit(q.limit);
@@ -215,11 +215,11 @@ export class IncidentsService {
     if (isSiteScoped(t)) query = query.where('i.site_id', 'in', t.siteScope);
     const rows = await query.execute();
     const names = await this.names(rows.flatMap((r) => [r.reporter_id, r.assigned_to]));
-    const targets = incEffectiveTargets(await this.settingsRaw(t));
+    const settings = await this.settingsRaw(t);
     const now = Date.now();
     return rows.map((r) => ({
       ...r,
-      sla: incNextClock(incSla(r, targets, now)),
+      sla: incNextClock(incSlaFor(r, settings, now)),
       reference: incReference(r.number),
       category_label: incCategoryLabel(r.category, r.subcategory),
       reporter_name: names.get(r.reporter_id) ?? null,
@@ -272,7 +272,6 @@ export class IncidentsService {
     const watcherIds = watchers.map((w) => w.user_id);
     const names = await this.names([row.reporter_id, row.assigned_to, ...events.map((e) => e.author_id), ...(canManage ? watcherIds : [])]);
     const settings = await this.settingsRaw(t);
-    const targets = incEffectiveTargets(settings);
     const own = row.reporter_id === viewerId;
     const watching = watcherIds.includes(viewerId);
     const { dedup_key: _dedup, sla_notified: _notified, assigned_agent_id: _agent, ...visible } = row;
@@ -286,7 +285,7 @@ export class IncidentsService {
         reporter_name: names.get(row.reporter_id) ?? null,
         assigned_to_name: row.assigned_to ? (names.get(row.assigned_to) ?? null) : null,
       },
-      sla: { ...incSla(row, targets), target: targets[row.priority] },
+      sla: incSlaFor(row, settings),
       // What the viewer may do next, so the page does not have to re-derive the rules.
       can: {
         confirmFixed: !canManage && row.status === 'resolved' && (own || watching),
@@ -366,6 +365,14 @@ export class IncidentsService {
       targetId: row.id,
       detail: { reference, category: row.category, priority: row.priority, site: site?.sitecode ?? null, def: def.skill },
     });
+    const settings = await this.settingsRaw(t);
+    const sla = incSlaFor(row, settings);
+    await this.notify.created(t, user, { ...row, details }, {
+      siteLabel: site ? (site.name ? `${site.sitecode} — ${site.name}` : site.sitecode) : null,
+      staffRaised: canManage,
+      settings,
+      respondText: incRespondText(sla.target, sla.cover),
+    });
     return { ...row, reference };
   }
 
@@ -422,7 +429,7 @@ export class IncidentsService {
       // Any change of state ends the "waiting" reminders.
       waiting_reminded_at: null,
       waiting_reminders: 0,
-      ...incPause(row, { priority: row.priority, status: to, hold_reason: holdReason }, now),
+      ...pauseColumns(incPause(row, { priority: row.priority, status: to, hold_reason: holdReason }, now)),
     };
     // The team's first move is the acknowledgement the response target is measured to.
     if (canManage && !row.acknowledged_at) set.acknowledged_at = now;
@@ -436,7 +443,7 @@ export class IncidentsService {
       // A reopen starts the restoration and resolution clocks again (and their emails).
       const notified = { ...((row.sla_notified ?? {}) as Record<string, string>) };
       for (const k of Object.keys(notified)) if (k.startsWith('restoration_') || k.startsWith('resolution_')) delete notified[k];
-      Object.assign(set, { reopened_at: now, restored_at: null, resolved_at: null, closed_at: null, paused_seconds: 0, sla_notified: JSON.stringify(notified) });
+      Object.assign(set, { reopened_at: now, restored_at: null, resolved_at: null, closed_at: null, paused_seconds: 0, pause_log: '[]', sla_notified: JSON.stringify(notified) });
     }
     const updated = await tenantDb(this.db, t.schema)
       .updateTable('incidents')
@@ -465,6 +472,7 @@ export class IncidentsService {
       targetId: id,
       detail: { reference: incReference(row.number), from, to, kind, holdReason },
     });
+    await this.notify.moved(t, user, updated, kind, { staff: canManage, note, holdReason });
     return { ...updated, reference: incReference(row.number) };
   }
 
@@ -495,6 +503,7 @@ export class IncidentsService {
       targetId: id,
       detail: { reference: incReference(row.number), assigneeId: input.userId },
     });
+    if (input.userId !== row.assigned_to) await this.notify.assigned(t, user, updated, input.userId);
     return { ...updated, reference: incReference(row.number) };
   }
 
@@ -513,7 +522,7 @@ export class IncidentsService {
         priority_overridden: input.priority !== calc.priority,
         updated_at: now,
         version: row.version + 1,
-        ...incPause(row, { priority: input.priority, status: row.status, hold_reason: row.hold_reason }, now),
+        ...pauseColumns(incPause(row, { priority: input.priority, status: row.status, hold_reason: row.hold_reason }, now)),
       })
       .where('id', '=', id)
       .where('version', '=', row.version)
@@ -530,6 +539,7 @@ export class IncidentsService {
       targetId: id,
       detail: { reference: incReference(row.number), from: row.priority, to: input.priority, reason: input.reason },
     });
+    await this.notify.priorityChanged(t, user, updated);
     return { ...updated, reference: incReference(row.number) };
   }
 
@@ -565,15 +575,16 @@ export class IncidentsService {
     if (canManage && !input.internal && !row.acknowledged_at) set.acknowledged_at = now;
     let resumed = false;
     if (question && !(row.status === 'on_hold' && row.hold_reason === 'customer')) {
-      Object.assign(set, { status: 'on_hold', hold_reason: 'customer', waiting_reminded_at: null, waiting_reminders: 0 }, incPause(row, { priority: row.priority, status: 'on_hold', hold_reason: 'customer' }, now));
+      Object.assign(set, { status: 'on_hold', hold_reason: 'customer', waiting_reminded_at: null, waiting_reminders: 0 }, pauseColumns(incPause(row, { priority: row.priority, status: 'on_hold', hold_reason: 'customer' }, now)));
     } else if (!canManage && row.status === 'on_hold' && row.hold_reason === 'customer') {
       resumed = true;
-      Object.assign(set, { status: 'in_progress', hold_reason: null, waiting_reminded_at: null, waiting_reminders: 0 }, incPause(row, { priority: row.priority, status: 'in_progress', hold_reason: null }, now));
+      Object.assign(set, { status: 'in_progress', hold_reason: null, waiting_reminded_at: null, waiting_reminders: 0 }, pauseColumns(incPause(row, { priority: row.priority, status: 'in_progress', hold_reason: null }, now)));
     }
     await s.updateTable('incidents').set(set).where('id', '=', id).execute();
     if (resumed) {
       await s.insertInto('incident_events').values({ incident_id: id, kind: 'resumed', from_status: 'on_hold', to_status: 'in_progress', author_id: user.id }).execute();
     }
+    await this.notify.commented(t, user, row, { body: input.body, internal: !!input.internal, question, staff: canManage, resumed });
     return event;
   }
 

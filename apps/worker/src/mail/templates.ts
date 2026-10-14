@@ -6,6 +6,11 @@ import {
   type DeploymentCompletedContext,
   type DiscoveryCompletedContext,
   type EmailTemplate,
+  type IncidentActivityContext,
+  type IncidentCreatedContext,
+  type IncidentMessageContext,
+  type IncidentResolvedContext,
+  type IncidentStatusChangedContext,
   type FeatureRequestStatusChangedContext,
   type PortDocumentItemSummary,
   type PortDocumentsCompletedContext,
@@ -60,6 +65,16 @@ export function renderEmail(template: string, context: Record<string, unknown>, 
       return serviceRequestMessage(context as unknown as ServiceRequestMessageContext, branding);
     case 'service_request_activity':
       return serviceRequestActivity(context as unknown as ServiceRequestActivityContext, branding);
+    case 'incident_created':
+      return incidentCreated(context as unknown as IncidentCreatedContext, branding);
+    case 'incident_status_changed':
+      return incidentStatusChanged(context as unknown as IncidentStatusChangedContext, branding);
+    case 'incident_message':
+      return incidentMessage(context as unknown as IncidentMessageContext, branding);
+    case 'incident_resolved':
+      return incidentResolved(context as unknown as IncidentResolvedContext, branding);
+    case 'incident_activity':
+      return incidentActivity(context as unknown as IncidentActivityContext, branding);
     default:
       throw new Error(`unknown email template: ${template}`);
   }
@@ -414,6 +429,151 @@ function serviceRequestActivity(c: ServiceRequestActivityContext, branding?: Ema
         ? 'You are receiving this because you approve service requests for your organisation.'
         : 'You are receiving this because you work on this customer\'s service requests.',
     ],
+  };
+  return { subject: w.subject, html: renderHtml(layout, branding), text: renderText(layout) };
+}
+
+/* ------------------------------ incidents ------------------------------ */
+
+/** To the person who raised an incident ("we've got it"), and to the team ("new incident"). */
+function incidentCreated(c: IncidentCreatedContext, branding?: EmailBranding): RenderedEmail {
+  if (c.audience === 'reporter') {
+    const layout: LayoutInput = {
+      previewText: `We have ${c.reference} and the team has been told.`,
+      eyebrow: 'Incident received',
+      heading: `${c.reference} — ${c.title}`,
+      intro: [
+        `Thanks - we have your incident and the engineers looking after ${c.customerName} have been told.`,
+        `${c.categoryLabel}${c.siteLabel ? ` · ${c.siteLabel}` : ''}`,
+        `We're treating this as ${c.priorityLabel} priority.${c.respondText ? ` ${c.respondText}` : ''}`,
+        'If anything changes, or you have another example call, add it on the incident page.',
+      ],
+      cta: { label: 'View your incident', url: c.runUrl },
+      outro: ['You are receiving this because you raised this incident.'],
+    };
+    return { subject: `We've got it: ${c.reference} — ${c.title}`, html: renderHtml(layout, branding), text: renderText(layout) };
+  }
+  const layout: LayoutInput = {
+    previewText: `${c.raisedBy} raised ${c.reference}: ${c.title}`,
+    eyebrow: `Incident · ${c.customerName}`,
+    heading: `${c.reference} — ${c.title}`,
+    intro: [
+      `${c.customerName} has raised a ${c.priorityLabel} incident.`,
+      `Category: ${c.categoryLabel}`,
+      ...(c.siteLabel ? [`Site: ${c.siteLabel}`] : []),
+      `Raised by: ${c.raisedBy}`,
+      ...c.lines.map((l) => `${l.label}: ${l.value}`),
+    ],
+    cta: { label: 'Open the incident', url: c.runUrl },
+    outro: ['You are receiving this because you are an engineer or admin for this customer.'],
+  };
+  return { subject: `New ${c.priorityLabel} incident ${c.reference} — ${c.customerName}`, html: renderHtml(layout, branding), text: renderText(layout) };
+}
+
+/** To the reporter and followers: the incident moved on. */
+function incidentStatusChanged(c: IncidentStatusChangedContext, branding?: EmailBranding): RenderedEmail {
+  const lead: Record<IncidentStatusChangedContext['kind'], { subject: string; heading: string; text: string }> = {
+    acknowledge: { subject: `${c.reference} is being worked on`, heading: 'Being worked on', text: 'An engineer has picked up your incident and is working on it.' },
+    hold: {
+      subject: `${c.reference} is on hold`,
+      heading: 'On hold',
+      text: `Your incident is on hold${c.holdLabel ? `: ${c.holdLabel.toLowerCase()}` : ''}. We'll carry on as soon as we can.`,
+    },
+    restore: {
+      subject: `Service restored: ${c.reference}`,
+      heading: 'Service restored',
+      text: "Service is working again. We're keeping the incident open while we confirm the cause and make sure it holds.",
+    },
+    close: { subject: `${c.reference} is closed`, heading: 'Closed', text: 'Your incident is closed.' },
+    auto_close: {
+      subject: `${c.reference} is closed`,
+      heading: 'Closed',
+      text: "We haven't heard it is still a problem, so we've closed this incident. If it is still broken, reopen it from the incident page within a week.",
+    },
+    cancel: { subject: `${c.reference} was cancelled`, heading: 'Cancelled', text: 'This incident was cancelled.' },
+    duplicate: { subject: `${c.reference} is covered by another incident`, heading: 'Covered by another incident', text: "This is the same problem as another incident we're already working on, so we've combined them." },
+    reopen: { subject: `${c.reference} reopened`, heading: 'Reopened', text: 'Your incident has been reopened and the team is looking at it again.' },
+    priority: { subject: `${c.reference} priority changed`, heading: 'Priority changed', text: `The team has changed the priority of your incident to ${c.priorityText ?? 'a new level'}.` },
+  };
+  const l = lead[c.kind];
+  const layout: LayoutInput = {
+    previewText: l.text,
+    eyebrow: 'Incident update',
+    heading: `${c.reference} — ${l.heading}`,
+    intro: [c.title, l.text, ...(c.note ? [`Note from the team: ${c.note}`] : [])],
+    cta: { label: 'View your incident', url: c.runUrl },
+    outro: ['You are receiving this because you raised, or are following, this incident.'],
+  };
+  return { subject: `${l.subject} — ${c.title}`, html: renderHtml(layout, branding), text: renderText(layout) };
+}
+
+/** To the reporter and followers: a public update, a question that needs answering, or a reminder about one. */
+function incidentMessage(c: IncidentMessageContext, branding?: EmailBranding): RenderedEmail {
+  const subject =
+    c.kind === 'question'
+      ? `${c.reference} needs your reply — ${c.title}`
+      : c.kind === 'reminder'
+        ? `Reminder: ${c.reference} is waiting for your reply`
+        : `Update on ${c.reference} — ${c.title}`;
+  const lead =
+    c.kind === 'question'
+      ? `${c.author} needs some information before the team can carry on with your incident:`
+      : c.kind === 'reminder'
+        ? `The team is still waiting for your reply before it can carry on with your incident. ${c.author} asked:`
+        : `${c.author} has an update on your incident:`;
+  const layout: LayoutInput = {
+    previewText: c.body.slice(0, 120),
+    eyebrow: 'Incident',
+    heading: `${c.reference} — ${c.title}`,
+    intro: [lead, c.body, ...(c.kind === 'comment' ? [] : ['Reply on the incident page and the team will pick it up straight away.'])],
+    cta: { label: c.kind === 'comment' ? 'View your incident' : 'Reply now', url: c.runUrl },
+    outro: ['You are receiving this because you raised, or are following, this incident.'],
+  };
+  return { subject, html: renderHtml(layout, branding), text: renderText(layout) };
+}
+
+/** The team says it is fixed: the customer answers from the email, without signing in. */
+function incidentResolved(c: IncidentResolvedContext, branding?: EmailBranding): RenderedEmail {
+  const layout: LayoutInput = {
+    previewText: `${c.reference} is fixed - please confirm it is working for you.`,
+    eyebrow: 'Incident resolved',
+    heading: `${c.reference} — ${c.title}`,
+    intro: [
+      `${c.author} has marked your incident as resolved.`,
+      ...(c.note ? [`What was done: ${c.note}`] : []),
+      'Please check it is working for you.',
+    ],
+    cta: { label: "Yes, it's fixed", url: c.fixedUrl },
+    secondaryCta: { label: 'No, it is still broken', url: c.brokenUrl },
+    outro: [
+      `If we don't hear from you, we'll close the incident after ${c.autoCloseDays} days. You can still reopen it from the incident page for a week after it was resolved: ${c.runUrl}`,
+    ],
+  };
+  return { subject: `Is ${c.reference} fixed? — ${c.title}`, html: renderHtml(layout, branding), text: renderText(layout) };
+}
+
+/** To the team: the customer wrote, reopened or cancelled; it was assigned to you; a target is at risk or missed. */
+function incidentActivity(c: IncidentActivityContext, branding?: EmailBranding): RenderedEmail {
+  const who = c.author ?? 'Someone';
+  const what: Record<IncidentActivityContext['kind'], { subject: string; lead: string }> = {
+    comment: { subject: `${c.reference}: new comment from the customer`, lead: `${who} commented:` },
+    replied: { subject: `${c.reference}: the customer replied`, lead: `${who} answered your question, so the incident is no longer on hold:` },
+    internal_note: { subject: `${c.reference}: internal note`, lead: `${who} added an internal note:` },
+    assigned: { subject: `${c.reference} assigned to you`, lead: `${who} assigned this incident to you.` },
+    reopened: { subject: `${c.reference} reopened: still broken`, lead: `${who} says the incident is still broken:` },
+    cancelled: { subject: `${c.reference} cancelled by the customer`, lead: `${who} cancelled this incident.` },
+    confirmed: { subject: `${c.reference} confirmed fixed`, lead: `${who} confirmed the fix, so the incident is closed.` },
+    sla_warning: { subject: `${c.reference} is about to miss a target`, lead: 'This incident is close to missing a target:' },
+    sla_breached: { subject: `${c.reference} has missed a target`, lead: 'This incident has missed a target:' },
+  };
+  const w = what[c.kind];
+  const layout: LayoutInput = {
+    previewText: w.lead,
+    eyebrow: `Incident · ${c.customerName}`,
+    heading: `${c.reference} — ${c.title}`,
+    intro: [`${c.priorityLabel} · ${c.categoryLabel}`, w.lead, ...(c.body ? [c.body] : [])],
+    cta: { label: 'Open the incident', url: c.runUrl },
+    outro: ["You are receiving this because you work on this customer's incidents."],
   };
   return { subject: w.subject, html: renderHtml(layout, branding), text: renderText(layout) };
 }

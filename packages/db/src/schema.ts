@@ -979,6 +979,8 @@ export interface IncidentsTable {
   reopened_at: ColumnType<string | null, string | null | undefined, string | null>;
   paused_since: ColumnType<string | null, string | null | undefined, string | null>;
   paused_seconds: ColumnType<number, number | undefined, number>;
+  /** 0048_incident_pause_log.sql - closed pauses, for working-hours clocks. Written as JSON.stringify(...). */
+  pause_log: ColumnType<import('@tvmf/shared').IncPauseInterval[], string | undefined, string>;
   waiting_reminded_at: ColumnType<string | null, string | null | undefined, string | null>;
   waiting_reminders: ColumnType<number, number | undefined, number>;
   sla_notified: ColumnType<Record<string, string>, string | undefined, string>;

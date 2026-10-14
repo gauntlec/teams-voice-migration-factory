@@ -1,0 +1,73 @@
+// The five incident emails render with the right subject, wording and links, for
+// the customer side and for the team, and never put HTML from a customer's text
+// into the page.
+import { describe, expect, it } from 'vitest';
+import type { IncidentActivityContext, IncidentCreatedContext, IncidentMessageContext, IncidentResolvedContext, IncidentStatusChangedContext } from '@tvmf/shared';
+import { renderEmail } from '../../../../apps/worker/src/mail/templates';
+
+const base = { customerName: 'Contoso', reference: 'INC-0042', title: 'No audio on inbound calls', runUrl: 'https://app.test/incidents/abc' };
+
+describe('incident emails', () => {
+  it('thank the reporter and tell the team about a new incident', () => {
+    const c: IncidentCreatedContext = { ...base, audience: 'reporter', categoryLabel: 'Call quality', siteLabel: 'RDG01 — Reading', priorityLabel: 'high', raisedBy: 'Cara', respondText: 'We aim to respond within 1 hour.', lines: [] };
+    const reporter = renderEmail('incident_created', c as never);
+    expect(reporter.subject).toBe("We've got it: INC-0042 — No audio on inbound calls");
+    expect(reporter.text).toContain('We\'re treating this as high priority. We aim to respond within 1 hour.');
+    const team = renderEmail('incident_created', { ...c, audience: 'team', priorityLabel: 'P2 High', lines: [{ label: 'When did it start?', value: 'Today 09:00' }] } as never);
+    expect(team.subject).toBe('New P2 High incident INC-0042 — Contoso');
+    expect(team.text).toContain('When did it start?: Today 09:00');
+    expect(team.text).toContain('Raised by: Cara');
+  });
+
+  it('describe each way an incident moves', () => {
+    const subjects = (['acknowledge', 'hold', 'restore', 'close', 'auto_close', 'cancel', 'duplicate', 'reopen', 'priority'] as const).map((kind) => {
+      const c: IncidentStatusChangedContext = { ...base, kind, holdLabel: 'Waiting on your carrier', note: 'A note', priorityText: 'high' };
+      const r = renderEmail('incident_status_changed', c as never);
+      expect(r.html).toContain(base.runUrl);
+      return r.subject;
+    });
+    expect(new Set(subjects).size).toBeGreaterThanOrEqual(8);
+    expect(subjects[1]).toContain('on hold');
+    const hold = renderEmail('incident_status_changed', { ...base, kind: 'hold', holdLabel: 'Waiting on your carrier' } as never);
+    expect(hold.text).toContain('waiting on your carrier');
+    expect(renderEmail('incident_status_changed', { ...base, kind: 'priority', priorityText: 'critical' } as never).text).toContain('to critical');
+  });
+
+  it('send updates, questions and reminders to the customer', () => {
+    const m = (kind: IncidentMessageContext['kind']) => renderEmail('incident_message', { ...base, kind, author: 'Eve Engineer', body: 'Which handsets?' } as never);
+    expect(m('comment').subject).toBe('Update on INC-0042 — No audio on inbound calls');
+    expect(m('question').subject).toContain('needs your reply');
+    expect(m('question').text).toContain('Reply now');
+    expect(m('reminder').subject).toBe('Reminder: INC-0042 is waiting for your reply');
+  });
+
+  it('ask "Is it fixed?" with both answers one click away', () => {
+    const c: IncidentResolvedContext = { ...base, author: 'Eve Engineer', note: 'Replaced the certificate', fixedUrl: 'https://app.test/incident-response?t=T&a=fixed', brokenUrl: 'https://app.test/incident-response?t=T&a=broken', autoCloseDays: 5 };
+    const r = renderEmail('incident_resolved', c as never);
+    expect(r.subject).toBe('Is INC-0042 fixed? — No audio on inbound calls');
+    expect(r.html).toContain('href="https://app.test/incident-response?t=T&amp;a=fixed"');
+    expect(r.html).toContain('href="https://app.test/incident-response?t=T&amp;a=broken"');
+    expect(r.text).toContain("Yes, it's fixed: https://app.test/incident-response?t=T&a=fixed");
+    expect(r.text).toContain('No, it is still broken: https://app.test/incident-response?t=T&a=broken');
+    expect(r.text).toContain('close the incident after 5 days');
+    expect(r.text).toContain('What was done: Replaced the certificate');
+  });
+
+  it('tell the team what happened and why they are being told', () => {
+    const kinds: IncidentActivityContext['kind'][] = ['comment', 'replied', 'internal_note', 'assigned', 'reopened', 'cancelled', 'confirmed', 'sla_warning', 'sla_breached'];
+    const subjects = kinds.map((kind) => {
+      const r = renderEmail('incident_activity', { ...base, categoryLabel: 'Call quality', priorityLabel: 'P1 Critical', kind, author: 'Cara', body: 'Still no audio' } as never);
+      expect(r.text).toContain('P1 Critical · Call quality');
+      return r.subject;
+    });
+    expect(new Set(subjects).size).toBe(kinds.length);
+    expect(subjects.at(-1)).toBe('INC-0042 has missed a target');
+  });
+
+  it("never lets a customer's text become HTML", () => {
+    const r = renderEmail('incident_message', { ...base, kind: 'comment', author: '<b>Mallory</b>', body: '<script>alert(1)</script>' } as never);
+    expect(r.html).not.toContain('<script>');
+    expect(r.html).toContain('&lt;script&gt;');
+    expect(r.html).not.toContain('<b>Mallory</b>');
+  });
+});

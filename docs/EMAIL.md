@@ -194,3 +194,45 @@ Managed Services emails. `service_request_created` goes to the customer's
 engineers and every Super Admin when a request is raised; `service_request_status_changed`
 goes to the requester when their request is planned, designed & built, deployed
 or cancelled. Both use the customer's branding. See [SERVICE-REQUESTS.md](SERVICE-REQUESTS.md).
+
+## Incident emails
+
+Five templates, all with the customer's branding and a link to `/incidents/:id`
+(built by `IncidentNotifier` in the API and by the incident sweep in the worker; see
+[INCIDENT-MANAGEMENT.md](INCIDENT-MANAGEMENT.md)). **Customer side** means the
+reporter and anyone following the incident, never the person who just did the thing.
+**Team** means the assignee, or every engineer and Super Admin on the customer when
+nobody is assigned.
+
+| When | Template (`kind`) | To |
+|---|---|---|
+| A customer raises an incident | `incident_created` (`audience: reporter`, with "we aim to respond within ...") | The reporter |
+| Any incident is raised | `incident_created` (`audience: team`, with the answers to the category's questions) | The team, except whoever raised it |
+| An engineer acknowledges it | `incident_status_changed` (`acknowledge`) | Customer side |
+| It goes on hold on a carrier, Microsoft or a vendor | `incident_status_changed` (`hold`) | Customer side (a hold on the customer is announced by the question that caused it) |
+| Service is restored | `incident_status_changed` (`restore`, with the note) | Customer side |
+| Staff close, cancel, merge as a duplicate, or reopen it | `incident_status_changed` (`close` / `cancel` / `duplicate` / `reopen`) | Customer side |
+| It closes itself after 5 days resolved | `incident_status_changed` (`auto_close`) | Customer side |
+| Staff change the priority | `incident_status_changed` (`priority`; never says why) | Customer side |
+| The team posts a public update or asks a question | `incident_message` (`comment` / `question`) | Customer side |
+| A question is still unanswered after 3 days (up to 3 reminders) | `incident_message` (`reminder`) | The reporter |
+| It is resolved | `incident_resolved` - **Yes, it's fixed** and **No, it's still broken** links | Each person, with their own signed links |
+| The customer comments or replies | `incident_activity` (`comment` / `replied`) | The team |
+| The customer says it is still broken, cancels, or confirms it fixed | `incident_activity` (`reopened` / `cancelled` / `confirmed`) | The team |
+| An internal note | `incident_activity` (`internal_note`) | The assignee only |
+| It is assigned to someone else | `incident_activity` (`assigned`) | The new assignee |
+| A target is at risk (20% left) or missed | `incident_activity` (`sla_warning` / `sla_breached`) | The team; once per target |
+
+A problem queueing mail is logged and never fails the change that caused it.
+
+### "Is it fixed?" links
+
+The resolved email carries two links, `WEB_ORIGIN/incident-response?t=<token>&a=fixed|broken`.
+The token is an HMAC over the customer, incident, recipient and an expiry of 14 days
+(`apps/api/src/modules/incidents/incident-links.ts`, keyed from `JWT_REFRESH_SECRET`);
+it cannot be forged or aimed at another incident. The page it opens needs no sign-in and
+**changes nothing until a button is pressed**, so an email scanner opening the link is
+harmless. The answer goes through the normal rules (only the reporter or a follower; only
+while resolved, or within 7 days of resolving for "still broken"), answering twice is
+harmless, and the action is recorded as the person it was sent to. The two public routes are
+`GET|POST /api/public/incident-response`.

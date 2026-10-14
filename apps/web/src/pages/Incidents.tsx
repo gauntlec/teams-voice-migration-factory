@@ -6,6 +6,7 @@ import { INC_CATEGORIES, INC_CATEGORY_BY_KEY, INC_PRIORITIES, INC_PRIORITY_LABEL
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
+import { IncidentSettingsDialog } from '../components/IncidentSettings';
 import { IncQueueTiles, IncSlaBadge, IncStatusBadge, PriorityBadge, incQueueFilter, type IncQueueFilter, type IncidentRow } from '../components/IncidentBits';
 import { Page } from '../components/Page';
 import { LoadError, NoTenant } from '../components/records';
@@ -28,6 +29,7 @@ export function Incidents() {
   const [qInput, setQInput] = useState('');
   const q = useDebounced(qInput);
   const [tile, setTile] = useState<IncQueueFilter>('all');
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const staff = can('inc:manage');
 
   const enabled = me?.tenants.find((t) => t.id === activeTenantId)?.managedServices ?? false;
@@ -68,11 +70,14 @@ export function Incidents() {
       title="Incidents"
       subtitle="Something not working, or not working well? Raise an incident and follow it here. You're emailed as it moves on."
       actions={
-        can('inc:create') && (
-          <Button appearance="primary" onClick={() => navigate('/incidents/new')}>
-            Raise an incident
-          </Button>
-        )
+        <div className={cs.actions}>
+          <Button onClick={() => setSettingsOpen(true)}>{staff ? 'Settings' : 'Our targets'}</Button>
+          {can('inc:create') && (
+            <Button appearance="primary" onClick={() => navigate('/incidents/new')}>
+              Raise an incident
+            </Button>
+          )}
+        </div>
       }
     >
       <div className={cs.toolbar}>
@@ -177,6 +182,7 @@ export function Incidents() {
           </DataTable>
         )}
       </Card>
+      {settingsOpen && <IncidentSettingsDialog base={base} onClose={() => setSettingsOpen(false)} />}
     </Page>
   );
 }

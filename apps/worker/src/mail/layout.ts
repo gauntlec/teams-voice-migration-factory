@@ -30,6 +30,8 @@ export interface LayoutInput {
   /** optional highlighted block, e.g. a one-time password */
   callout?: { label: string; value: string };
   cta?: { label: string; url: string };
+  /** a quieter link under the button, e.g. "Still broken?" */
+  secondaryCta?: { label: string; url: string };
   /** body paragraphs after the CTA */
   outro?: string[];
 }
@@ -141,6 +143,10 @@ export function renderHtml(input: LayoutInput, branding?: EmailBranding): string
        )}</span></p>`
     : '';
 
+  const secondary = input.secondaryCta
+    ? `<p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:${TEXT};"><a href="${esc(input.secondaryCta.url)}" style="color:${BRAND};font-weight:600;">${esc(input.secondaryCta.label)}</a></p>`
+    : '';
+
   // Logo uploaded: show only the customer's own logo, no "voxshift" text
   // beside it. No logo yet (accent color only, or fully unbranded): the
   // usual equalizer mark + wordmark pair - already recolored to the tenant's
@@ -189,6 +195,7 @@ export function renderHtml(input: LayoutInput, branding?: EmailBranding): string
           ${intro}
           ${callout}
           ${cta}
+          ${secondary}
           ${outro}
         </td></tr>
         <tr><td style="padding:20px 32px 24px;border-top:1px solid ${BORDER};background:#fbfbfd;">
@@ -209,6 +216,7 @@ export function renderText(input: LayoutInput): string {
   for (const p of input.intro) lines.push(p, '');
   if (input.callout) lines.push(`${input.callout.label}: ${input.callout.value}`, '');
   if (input.cta) lines.push(`${input.cta.label}: ${input.cta.url}`, '');
+  if (input.secondaryCta) lines.push(`${input.secondaryCta.label}: ${input.secondaryCta.url}`, '');
   for (const p of input.outro ?? []) lines.push(p, '');
   lines.push('--', 'Automated message from Voxshift. Please do not reply.');
   return lines.join('\n');

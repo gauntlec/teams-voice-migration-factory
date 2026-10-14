@@ -3,6 +3,13 @@ import {
   INC_CATEGORIES,
   INC_DEFAULT_TARGETS,
   INC_STATUSES,
+  INC_DEFAULT_BUSINESS_TARGETS,
+  incAddWorkingMs,
+  incCoverFor,
+  incClockCalendar,
+  incSlaFor,
+  incWorkingMs,
+  type IncCalendar,
   createIncidentSchema,
   incCanReopen,
   incCleanAnswers,
@@ -146,13 +153,13 @@ describe('holds and pauses', () => {
   it('opens a pause when a pausing hold starts and banks the time when it ends', () => {
     const base = { priority: 'p3' as const, status: 'in_progress' as const, hold_reason: null, paused_since: null, paused_seconds: 60 };
     const held = incPause(base, { priority: 'p3', status: 'on_hold', hold_reason: 'customer' }, '2026-10-01T10:00:00.000Z');
-    expect(held).toEqual({ paused_since: '2026-10-01T10:00:00.000Z', paused_seconds: 60 });
+    expect(held).toEqual({ paused_since: '2026-10-01T10:00:00.000Z', paused_seconds: 60, pause_log: [] });
     const resumed = incPause({ ...base, ...held, status: 'on_hold', hold_reason: 'customer' }, { priority: 'p3', status: 'in_progress', hold_reason: null }, '2026-10-01T10:30:00.000Z');
-    expect(resumed).toEqual({ paused_since: null, paused_seconds: 60 + 1800 });
+    expect(resumed).toEqual({ paused_since: null, paused_seconds: 60 + 1800, pause_log: [{ from: '2026-10-01T10:00:00.000Z', to: '2026-10-01T10:30:00.000Z' }] });
   });
   it('stops pausing when a priority change makes the hold a running one', () => {
     const prev = { priority: 'p2' as const, status: 'on_hold' as const, hold_reason: 'carrier' as const, paused_since: '2026-10-01T10:00:00.000Z', paused_seconds: 0 };
-    expect(incPause(prev, { priority: 'p1', status: 'on_hold', hold_reason: 'carrier' }, '2026-10-01T11:00:00.000Z')).toEqual({ paused_since: null, paused_seconds: 3600 });
+    expect(incPause(prev, { priority: 'p1', status: 'on_hold', hold_reason: 'carrier' }, '2026-10-01T11:00:00.000Z')).toEqual({ paused_since: null, paused_seconds: 3600, pause_log: [{ from: '2026-10-01T10:00:00.000Z', to: '2026-10-01T11:00:00.000Z' }] });
   });
 });
 
@@ -218,6 +225,99 @@ describe('clocks', () => {
     expect(
       incNextClock(incSla(row({ status: 'restored', acknowledged_at: new Date(T0).toISOString(), restored_at: new Date(T0 + 3600_000).toISOString() }), INC_DEFAULT_TARGETS, at)).which,
     ).toBe('resolution');
+  });
+});
+
+describe('working hours', () => {
+  const CAL: IncCalendar = { days: [1, 2, 3, 4, 5], start: '08:00', end: '18:00', timeZone: 'Europe/London', holidays: [] };
+  const z = (iso: string) => Date.parse(iso);
+
+  it('adds working time across the evening', () => {
+    // Mon 16:30 BST + 3h = 1.5h that evening + 1.5h on Tue morning
+    expect(incAddWorkingMs(z('2026-10-12T15:30:00Z'), 3 * 3_600_000, CAL)).toBe(z('2026-10-13T08:30:00Z'));
+  });
+  it('skips the weekend, and the clocks going back', () => {
+    // Fri 17:00 BST + 2h = 1h Friday + 1h from Mon 08:00 GMT (the clocks went back on Sunday)
+    expect(incAddWorkingMs(z('2026-10-23T16:00:00Z'), 2 * 3_600_000, CAL)).toBe(z('2026-10-26T09:00:00Z'));
+  });
+  it('skips a holiday', () => {
+    const cal = { ...CAL, holidays: ['2026-10-13'] };
+    expect(incAddWorkingMs(z('2026-10-12T16:30:00Z'), 3_600_000, cal)).toBe(z('2026-10-14T07:30:00Z'));
+  });
+  it('counts only working time between two instants', () => {
+    expect(incWorkingMs(z('2026-10-24T10:00:00Z'), z('2026-10-26T09:00:00Z'), CAL)).toBe(3_600_000); // Sat noon to Mon 09:00 GMT
+    expect(incWorkingMs(z('2026-10-12T05:00:00Z'), z('2026-10-12T23:00:00Z'), CAL)).toBe(10 * 3_600_000);
+    expect(incWorkingMs(z('2026-10-12T10:00:00Z'), z('2026-10-12T09:00:00Z'), CAL)).toBe(0);
+  });
+  it('falls back to calendar time rather than looping forever when every day is off', () => {
+    const never = { ...CAL, days: [0], holidays: [] };
+    const cal = { ...never, days: [1], holidays: Array.from({ length: 1000 }, (_, i) => new Date(Date.UTC(2026, 0, 5 + 7 * i)).toISOString().slice(0, 10)) };
+    expect(incAddWorkingMs(z('2026-10-12T10:00:00Z'), 3_600_000, cal)).toBe(z('2026-10-12T11:00:00Z'));
+  });
+
+  const row = (over: Partial<IncSlaInput> = {}): IncSlaInput => ({
+    priority: 'p3',
+    status: 'new',
+    created_at: '2026-10-23T16:00:00Z', // Fri 17:00 BST
+    acknowledged_at: null,
+    restored_at: null,
+    resolved_at: null,
+    paused_since: null,
+    paused_seconds: 0,
+    ...over,
+  });
+  const targets = { ...INC_DEFAULT_TARGETS, p3: { responseMinutes: 240, restoreHours: 8, resolveHours: 24 } };
+
+  it('runs the response clock through working hours only', () => {
+    // 4h to respond: 1h on Friday, 3h on Monday from 08:00 GMT
+    const sla = incSla(row(), targets, z('2026-10-24T12:00:00Z'), CAL);
+    expect(sla.response.state).toBe('on_track');
+    expect(sla.response.dueAt).toBe('2026-10-26T11:00:00.000Z');
+    expect(incSla(row(), targets, z('2026-10-26T11:30:00Z'), CAL).response.state).toBe('overdue');
+    expect(incSla(row(), targets, z('2026-10-26T10:30:00Z'), CAL).response.state).toBe('at_risk');
+  });
+  it('is met by acknowledging in working time, however long it took on the clock', () => {
+    const sla = incSla(row({ acknowledged_at: '2026-10-26T10:00:00Z' }), targets, z('2026-10-27T10:00:00Z'), CAL);
+    expect(sla.response.state).toBe('met'); // 1h + 2h of working time
+    expect(incSla(row({ acknowledged_at: '2026-10-26T10:00:00Z' }), targets, z('2026-10-27T10:00:00Z')).response.state).toBe('missed'); // same incident on 24x7 cover
+  });
+  it('leaves out only the working time spent paused', () => {
+    const weekend = incSla(row({ pause_log: [{ from: '2026-10-24T08:00:00Z', to: '2026-10-25T08:00:00Z' }], paused_seconds: 86_400 }), targets, z('2026-10-24T12:00:00Z'), CAL);
+    expect(weekend.response.dueAt).toBe('2026-10-26T11:00:00.000Z'); // a pause over the weekend costs nothing
+    const monday = incSla(row({ pause_log: [{ from: '2026-10-26T08:30:00Z', to: '2026-10-26T09:30:00Z' }], paused_seconds: 3600 }), targets, z('2026-10-26T09:45:00Z'), CAL);
+    expect(monday.response.dueAt).toBe('2026-10-26T12:00:00.000Z'); // an hour of working time paused moves it an hour
+    const held = incSla(row({ paused_since: '2026-10-26T08:30:00Z' }), targets, z('2026-10-26T10:00:00Z'), CAL);
+    expect(held.response.state).toBe('paused');
+  });
+  it('picks cover per priority and only with a calendar', () => {
+    expect(incCoverFor({}, 'p3')).toBe('24x7');
+    expect(incCoverFor({ calendar: CAL }, 'p1')).toBe('24x7');
+    expect(incCoverFor({ calendar: CAL }, 'p3')).toBe('business');
+    expect(incCoverFor({ calendar: CAL, cover: { p3: '24x7', p2: 'business' } }, 'p3')).toBe('24x7');
+    expect(incCoverFor({ calendar: CAL, cover: { p2: 'business' } }, 'p2')).toBe('business');
+    expect(incClockCalendar({ calendar: CAL }, 'p3')).toBe(CAL);
+    expect(incClockCalendar({ calendar: CAL }, 'p1')).toBeNull();
+  });
+  it('uses working-hour target defaults on business cover until the customer sets their own', () => {
+    expect(incEffectiveTargets({}).p3).toEqual(INC_DEFAULT_TARGETS.p3);
+    expect(incEffectiveTargets({ calendar: CAL }).p3).toEqual(INC_DEFAULT_BUSINESS_TARGETS.p3);
+    expect(incEffectiveTargets({ calendar: CAL }).p1).toEqual(INC_DEFAULT_TARGETS.p1);
+    expect(incEffectiveTargets({ calendar: CAL, targets: { p3: { responseMinutes: 30, restoreHours: 2, resolveHours: 4 } } }).p3.responseMinutes).toBe(30);
+  });
+  it('gives clocks and targets together for an incident', () => {
+    const r = incSlaFor(row(), { calendar: CAL }, z('2026-10-24T12:00:00Z'));
+    expect(r.cover).toBe('business');
+    expect(r.target).toEqual(INC_DEFAULT_BUSINESS_TARGETS.p3);
+    expect(incSlaFor({ ...row(), priority: 'p1' }, { calendar: CAL }, z('2026-10-24T12:00:00Z')).cover).toBe('24x7');
+  });
+  it('validates the calendar and cover settings', () => {
+    const ok = { calendar: { days: [1, 2, 3, 4, 5], start: '08:00', end: '18:00', timeZone: 'Europe/London', holidays: ['2026-12-25'] }, cover: { p2: 'business' } };
+    expect(incidentSettingsSchema.safeParse(ok).success).toBe(true);
+    expect(incidentSettingsSchema.safeParse({ calendar: null }).success).toBe(true);
+    expect(incidentSettingsSchema.safeParse({ calendar: { ...ok.calendar, end: '07:00' } }).success).toBe(false);
+    expect(incidentSettingsSchema.safeParse({ calendar: { ...ok.calendar, timeZone: 'Mars/Base' } }).success).toBe(false);
+    expect(incidentSettingsSchema.safeParse({ calendar: { ...ok.calendar, holidays: ['25/12/2026'] } }).success).toBe(false);
+    expect(incidentSettingsSchema.safeParse({ cover: { p1: 'sometimes' } }).success).toBe(false);
   });
 });
 

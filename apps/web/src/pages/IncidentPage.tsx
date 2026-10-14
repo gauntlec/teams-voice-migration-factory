@@ -110,7 +110,7 @@ interface IncidentPayload {
     resolved_at: string | null;
     restored_at: string | null;
   };
-  sla: { response: IncClock; restoration: IncClock; resolution: IncClock; target: IncSlaTarget };
+  sla: { response: IncClock; restoration: IncClock; resolution: IncClock; target: IncSlaTarget; cover: 'business' | '24x7' };
   can: { confirmFixed: boolean; reopen: boolean; cancel: boolean };
   watching: boolean;
   watchers?: { id: string; display_name: string }[];
@@ -148,11 +148,11 @@ const MOVE_LABEL: Record<IncMoveKind, string> = {
   duplicate: 'Mark as duplicate',
 };
 
-function targetText(minutes: number) {
-  return minutes < 120 ? `${minutes} min` : `${Math.round(minutes / 60)} h`;
+function targetText(minutes: number, cover: 'business' | '24x7') {
+  return `${minutes < 120 ? `${minutes} min` : `${Math.round(minutes / 60)} h`}${cover === 'business' ? ' of working time' : ''}`;
 }
-function hoursText(h: number | null) {
-  return h === null ? 'none' : h < 48 ? `${h} h` : `${Math.round(h / 24)} days`;
+function hoursText(h: number | null, cover: 'business' | '24x7') {
+  return h === null ? 'none' : `${h < 48 || cover === 'business' ? `${h} h` : `${Math.round(h / 24)} days`}${cover === 'business' ? ' of working time' : ''}`;
 }
 
 /** One incident: what it is, where it stands, what the team has done, and what you can do next. */
@@ -387,21 +387,21 @@ function Overview({ base, data }: { base: string; data: IncidentPayload }) {
           <span>
             <IncSlaBadge clock={data.sla.response} />{' '}
             <Text size={200} className={ps.muted}>
-              target {targetText(target.responseMinutes)}
+              target {targetText(target.responseMinutes, data.sla.cover)}
             </Text>
           </span>
           <Text className={cs.factLabel}>Service restored</Text>
           <span>
             <IncSlaBadge clock={data.sla.restoration} />{' '}
             <Text size={200} className={ps.muted}>
-              target {hoursText(target.restoreHours)}
+              target {hoursText(target.restoreHours, data.sla.cover)}
             </Text>
           </span>
           <Text className={cs.factLabel}>Resolved</Text>
           <span>
             <IncSlaBadge clock={data.sla.resolution} />{' '}
             <Text size={200} className={ps.muted}>
-              target {hoursText(target.resolveHours)}
+              target {hoursText(target.resolveHours, data.sla.cover)}
             </Text>
           </span>
           <Text className={cs.factLabel}>Impact</Text>

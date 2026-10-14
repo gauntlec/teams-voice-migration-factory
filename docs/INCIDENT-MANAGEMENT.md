@@ -552,6 +552,42 @@ Screens for customers and engineers (no emails yet - chunk 3; no MSP queue yet -
 - **Checked** with the built app against a throwaway mock API (staff and customer roles, the
   full raise flow); and then live on AT&T Voice Consult (list loads, no errors).
 
+## Chunk 3 as built
+
+Email, the SLA engine and the settings screen. Details of every email are in
+[EMAIL.md](EMAIL.md#incident-emails).
+
+- **Emails**: five templates (`incident_created`, `incident_status_changed`,
+  `incident_message`, `incident_resolved`, `incident_activity`) and `IncidentNotifier`, which
+  decides who is told what (customer side vs team, never the person who acted, internal notes
+  only to the assignee, priority changes without the reason). The email layout gained a quieter
+  secondary link for "still broken".
+- **"Is it fixed?" without signing in**: signed links in the resolved email
+  (`incident-links.ts`) open `/incident-response`, a public page with two answers; it changes
+  nothing until a button is pressed. `GET|POST /api/public/incident-response`
+  (`IncidentResponseService` reuses the normal move rules).
+- **Business-hours cover** (new, `packages/shared/src/incidents.ts`): a customer can set a working
+  week (days, hours, time zone, days off) and choose per priority whether its clocks run around
+  the clock or only in working hours. Defaults once a calendar exists: P1 and P2 around the
+  clock, P3 and P4 working hours, with working-hour target defaults (P3: respond 4 h, restore 8 h,
+  resolve 24 h; P4: 8 h / none / 40 h). Without a calendar nothing changes: every clock is
+  calendar time. Pauses count only the working time they covered (`pause_log`, migration
+  `0048`). The incident page says "of working time" next to targets on business cover. Tested
+  across the clocks going back, weekends and holidays.
+- **Sweep** (`apps/worker/src/incidents.ts`, every 5 minutes): reminders while waiting on the
+  customer (every 3 days, up to 3, quoting the question); one "at risk" and one "missed" email per
+  target (response, restoration, resolution) to the assignee or the whole team, skipping paused
+  clocks; a Resolved incident closes itself after 5 days if nobody has written since (a system
+  entry on the timeline, the reporter and followers told). Each action claims the row first, so
+  two workers never both send.
+- **Settings screen** (Incidents -> Settings, or "Our targets" for customers): targets per
+  priority with their clock, the working week and days off, the impact x urgency matrix. A Super
+  Admin edits; everyone else reads. Only what differs from the defaults is stored.
+- **Not done here** (moved): stakeholder distribution lists by priority and quiet hours - they
+  belong with major incidents (chunk 4); inbound email replies (chunk 8).
+- **Tests**: 12 new rules tests (working hours), 19 notification and signed-link tests, 10 sweep
+  tests, 6 template render tests (100 database-backed tests in total).
+
 ## Build log
 
 | Chunk | Status | Commit / notes |
@@ -559,7 +595,7 @@ Screens for customers and engineers (no emails yet - chunk 3; no MSP queue yet -
 | 0 Research and design | Done 2026-10-14 | this document |
 | 1 Foundations | Built and deployed 2026-10-14 (073e661), verified live (migrations applied to all 5 customer schemas) | See "Chunk 1 as built" |
 | 2 Customer and engineer UI | Built and deployed 2026-10-14 (1455aa6), verified live | See "Chunk 2 as built" |
-| 3 Email workflows and SLA engine | Not started | |
+| 3 Email workflows and SLA engine | Built 2026-10-14 - committed, not yet deployed | See "Chunk 3 as built" |
 | 4 MSP console, major incidents, problems, reports | Not started | |
 | 5 Agent platform | Not started | |
 | 6 First-party agents, diagnostics, MCP | Not started | |

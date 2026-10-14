@@ -6,7 +6,10 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { createIncidentSchema, type CreateIncidentInput } from '@tvmf/shared';
 import { AuditService } from '../../../../apps/api/src/common/audit.service';
 import { FilesService } from '../../../../apps/api/src/modules/files/files.service';
+import { IncidentNotifier } from '../../../../apps/api/src/modules/incidents/incident-notifier';
 import { IncidentsService } from '../../../../apps/api/src/modules/incidents/incidents.service';
+import type { AppConfig } from '../../../../apps/api/src/common/config';
+import type { MailService } from '../../../../apps/api/src/mail/mail.service';
 import { seedCustomer, seedSite, seedUser, useDb, type TestCustomer } from '../helpers';
 
 const handle = useDb();
@@ -53,7 +56,10 @@ beforeAll(async () => {
   other = (await seedSite(c.s, { sitecode: 'LON01' })).id;
   project = (await seedSite(c.s, { sitecode: 'NEW01' })).id;
   await c.s.updateTable('discovery_sites').set({ mode: 'operations' } as never).where('id', 'in', [live, other]).execute();
-  svc = new IncidentsService(handle.db, new AuditService(handle.db), new FilesService(handle.db, { write: async () => {}, read: async () => Buffer.alloc(0), delete: async () => {}, exists: async () => true }));
+  // Mail isn't what these tests are about (incident-emails.db.test.ts is): swallow it.
+  const mail = { enqueue: async () => ({ id: 'm' }) } as unknown as MailService;
+  const notifier = new IncidentNotifier(handle.db, mail, { WEB_ORIGIN: 'https://app.test', JWT_REFRESH_SECRET: 'x'.repeat(32) } as AppConfig);
+  svc = new IncidentsService(handle.db, new AuditService(handle.db), new FilesService(handle.db, { write: async () => {}, read: async () => Buffer.alloc(0), delete: async () => {}, exists: async () => true }), notifier);
 });
 
 describe('raising an incident', () => {
