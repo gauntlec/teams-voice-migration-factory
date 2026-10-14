@@ -699,7 +699,7 @@ rules in `packages/shared/src/agents.ts`; the API reference is [AGENTS.md](AGENT
 | 2 Customer and engineer UI | Built and deployed 2026-10-14 (1455aa6), verified live | See "Chunk 2 as built" |
 | 3 Email workflows and SLA engine | Built and deployed 2026-10-14 (8a6ad5a), verified live (migration 0048 on all 5 customer schemas) | See "Chunk 3 as built" |
 | 4 MSP console, major incidents, problems, reports | Built and deployed 2026-10-14 (a75e4a4), verified live (migration 0049 on all 5 customer schemas) | See "Chunk 4 as built" |
-| 5 Agent platform | Built 2026-10-14, awaiting deploy | See "Chunk 5 as built" |
+| 5 Agent platform | Built and deployed 2026-10-14 (5cdeda4), verified live (agent API and /api/agents answer 401, web bundle has the Assistants page; migrations platform 0017 + tenant 0050 applied because the api started) | See "Chunk 5 as built" |
 | 6 First-party agents, diagnostics, MCP | Not started | |
 | 7 Bots completing service requests | Not started | |
 | 8 Inbound email, integrations, polish | Not started | |
