@@ -478,12 +478,53 @@ executive demo deck.
 6. Customer-visible agent text: **approval required** for P1/P2 and for any text not
    from an allow-listed template.
 
+## Chunk 1 as built
+
+What exists after chunk 1 (API and rules only - no screens, no emails yet):
+
+- **Rules** (`packages/shared/src/incidents.ts`, 29 unit tests): categories and their
+  questions (`INC_CATEGORIES`, reusing the service-request field specs so the chunk 2
+  form can reuse that renderer), impact/urgency/priority and the matrix
+  (`incPriority`, `incEffectiveMatrix`), status moves (`incMoveKind`), pauses
+  (`incHoldPauses`, `incPause`), the three clocks (`incSla`, `incNextClock`),
+  settings and all request DTOs. Permissions `inc:read`, `inc:create`, `inc:manage`,
+  `inc:msp` in `rbac.ts`.
+- **Data**: tenant migration `0047_incidents.sql` (incidents, incident_events,
+  incident_items, incident_watchers, `incident_attachment` file category) and platform
+  `0016_tenant_inc_settings.sql`. Columns for agents (`assigned_agent_id`,
+  `actor_type`, `idempotency_key`, `version`) are in place so chunk 5 needs no
+  reshaping.
+- **API** (`apps/api/src/modules/incidents/`), under `/t/:tenantId/incidents`:
+  `GET /` (filters: status, category, priority, site, assigned, q), `GET /sites`,
+  `GET /assignees`, `GET|PUT /settings` (PUT: Super Admin), `POST /`, `GET /:id`,
+  `POST /:id/status|assign|priority|comments|watchers|items`,
+  `DELETE /:id/watchers|items/:itemId`, `GET|POST /:id/attachments`,
+  `GET /:id/attachments/:fileId`.
+- **Behaviour worth knowing**
+  - Priority is calculated; only staff can set it at raise time or later (customers see
+    that it changed, never the reason). Emergency calling is always P1.
+  - A staff move, or the first public staff reply, is the acknowledgement the response
+    clock stops at (an internal note is not).
+  - A question (`waitForReply`) puts the incident **on hold, waiting on the customer**;
+    the customer's reply resumes it. Holds on the customer, and on a carrier / Microsoft
+    / vendor for P2-P4, pause the clocks; a P1 held on a third party keeps running.
+  - A reopen ("still broken", within 7 days) restarts the restoration and resolution
+    clocks and resets the pause total.
+  - Every change bumps `version` and writes with `WHERE version = :read`, so a racing
+    write is refused with 409.
+  - Only operations-mode sites take incidents; site contacts only see and raise their
+    own sites' incidents and cannot raise customer-wide ones.
+  - Nothing is emailed yet (chunk 3), and no page shows incidents yet (chunk 2).
+- **Tests**: `tests/db/src/incidents/incidents.db.test.ts` (35 tests against real
+  Postgres: numbering, priority, workflow and who may make each move, pauses,
+  visibility, site scoping, watchers, items, settings, attachments).
+
 ## Build log
 
 | Chunk | Status | Commit / notes |
 |---|---|---|
 | 0 Research and design | Done 2026-10-14 | this document |
-| 1 Foundations | Not started | |
+| 1 Foundations | Built 2026-10-14 (commit below) - not yet deployed | See "Chunk 1 as built" |
 | 2 Customer and engineer UI | Not started | |
 | 3 Email workflows and SLA engine | Not started | |
 | 4 MSP console, major incidents, problems, reports | Not started | |

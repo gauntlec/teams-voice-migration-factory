@@ -144,6 +144,19 @@ snapshot, nothing re-read) with "Issued by / Issued at", stores it as a new
 file and points `file_id` at it. Customers can only download an issued pack's
 current file, never the superseded draft.
 
+### Incidents (Managed Services) — see [`INCIDENT-MANAGEMENT.md`](INCIDENT-MANAGEMENT.md)
+
+Tenant migration `0047_incidents.sql`; platform `0016_tenant_inc_settings.sql` adds `tenants.inc_settings` (targets and the impact x urgency matrix).
+
+| Table | Purpose |
+|---|---|
+| `incidents` | One per problem: `number` (per-customer sequence, `INC-0001`), title, description, `category`/`subcategory` (keys in `INC_CATEGORIES`), `site_id` (null = customer-wide), `impact`, `urgency`, `priority` (`p1`-`p4`; `priority_overridden` when staff set it), `status` (`new`/`in_progress`/`on_hold`/`restored`/`resolved`/`closed`/`cancelled`/`duplicate`), `hold_reason` (set exactly when `on_hold`), `source`, `dedup_key` (one open incident per key), `details` jsonb (category answers, example calls, callback number), `reporter_id`, `assigned_to` / `assigned_agent_id` (reserved for AI agents), `duplicate_of`, `version` (bumped on every change; writes are refused when stale), clock stamps (`acknowledged_at`, `restored_at`, `resolved_at`, `closed_at`, `cancelled_at`, `reopened_at`), pause bookkeeping (`paused_since`, `paused_seconds`), waiting reminders, `sla_notified` |
+| `incident_events` | The timeline: `kind` (`created`/`status_changed`/`priority_changed`/`assigned`/`comment`/`waiting`/`resumed`/`attachment`/`link`), from/to status, `body`, `internal` (staff-only), `actor_type` (`user`/`agent`/`system`), `author_id`, `meta` jsonb, `idempotency_key` (unique per incident, for agent retries) |
+| `incident_items` | What the incident is about or links to: `kind` (`site`/`user`/`number`/`call_queue`/`auto_attendant`/`cap`/`service_request`/`deployment`/`number_port`) and a text `ref`; unique per incident |
+| `incident_watchers` | Customer users who follow an incident |
+
+Attachments use the `files` table (category `incident_attachment`, `source_type` `incident`).
+
 ### Common
 | Table | Notes |
 |-------|-------|

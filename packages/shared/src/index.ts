@@ -16,6 +16,7 @@ export * from './service-request-build';
 export * from './service-request-design';
 export * from './service-request-change';
 export * from './service-request-sla';
+export * from './incidents';
 export * from './wizard-convert';
 export * from './progress';
 export * from './release-safety';
@@ -439,7 +440,7 @@ export interface DeploymentPreviewRow {
 /** A row from the general-purpose per-tenant file store (see FilesTable). */
 export interface FileRow {
   id: string;
-  category: 'deployment_change_document' | 'number_port_document' | 'resource_account_request' | 'handover_pack' | 'service_request_attachment';
+  category: 'deployment_change_document' | 'number_port_document' | 'resource_account_request' | 'handover_pack' | 'service_request_attachment' | 'incident_attachment';
   sourceType: string;
   sourceId: string;
   siteId: string | null;

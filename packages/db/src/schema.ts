@@ -21,6 +21,8 @@ export interface TenantsTable {
   managed_services_enabled: ColumnType<boolean, boolean | undefined, boolean>;
   /** Managed Services settings: targets, approvals, change window - see 0014_tenant_sr_settings.sql. Written as JSON.stringify(...). */
   sr_settings: ColumnType<import('@tvmf/shared').SrSettings, string | undefined, string>;
+  /** Incident targets and impact x urgency matrix - see 0016_tenant_inc_settings.sql. Written as JSON.stringify(...). */
+  inc_settings: ColumnType<import('@tvmf/shared').IncSettings, string | undefined, string>;
   /** The MSP that looks after this customer - see 0013_tenant_msp.sql. */
   msp_id: string | null;
   /** A test customer: its emails go to whoever triggered them - see 0015_release_safety.sql. */
@@ -941,6 +943,79 @@ export interface ServiceRequestEventsTable {
   created_at: Ts;
 }
 
+
+/** Incident management - see 0047_incidents.sql and packages/shared/src/incidents.ts. */
+export interface IncidentsTable {
+  id: Generated<string>;
+  /** per-customer sequence, shown as INC-0001 */
+  number: Generated<number>;
+  title: string;
+  description: string;
+  category: string;
+  subcategory: string | null;
+  site_id: string | null;
+  impact: import('@tvmf/shared').IncImpact;
+  urgency: import('@tvmf/shared').IncUrgency;
+  priority: import('@tvmf/shared').IncPriority;
+  priority_overridden: ColumnType<boolean, boolean | undefined, boolean>;
+  status: ColumnType<import('@tvmf/shared').IncStatus, import('@tvmf/shared').IncStatus | undefined, import('@tvmf/shared').IncStatus>;
+  hold_reason: ColumnType<import('@tvmf/shared').IncHoldReason | null, import('@tvmf/shared').IncHoldReason | null | undefined, import('@tvmf/shared').IncHoldReason | null>;
+  source: ColumnType<import('@tvmf/shared').IncSource, import('@tvmf/shared').IncSource | undefined, import('@tvmf/shared').IncSource>;
+  dedup_key: ColumnType<string | null, string | null | undefined, string | null>;
+  // Written as JSON.stringify(...) like the other jsonb columns.
+  details: ColumnType<import('@tvmf/shared').IncDetails, string, string>;
+  reporter_id: string;
+  assigned_to: ColumnType<string | null, string | null | undefined, string | null>;
+  assigned_agent_id: ColumnType<string | null, string | null | undefined, string | null>;
+  duplicate_of: ColumnType<string | null, string | null | undefined, string | null>;
+  version: ColumnType<number, number | undefined, number>;
+  created_at: Ts;
+  updated_at: Ts;
+  acknowledged_at: ColumnType<string | null, string | null | undefined, string | null>;
+  restored_at: ColumnType<string | null, string | null | undefined, string | null>;
+  resolved_at: ColumnType<string | null, string | null | undefined, string | null>;
+  closed_at: ColumnType<string | null, string | null | undefined, string | null>;
+  cancelled_at: ColumnType<string | null, string | null | undefined, string | null>;
+  reopened_at: ColumnType<string | null, string | null | undefined, string | null>;
+  paused_since: ColumnType<string | null, string | null | undefined, string | null>;
+  paused_seconds: ColumnType<number, number | undefined, number>;
+  waiting_reminded_at: ColumnType<string | null, string | null | undefined, string | null>;
+  waiting_reminders: ColumnType<number, number | undefined, number>;
+  sla_notified: ColumnType<Record<string, string>, string | undefined, string>;
+}
+
+export interface IncidentEventsTable {
+  id: Generated<string>;
+  incident_id: string;
+  kind: import('@tvmf/shared').IncEventKind;
+  from_status: string | null;
+  to_status: string | null;
+  body: string | null;
+  internal: ColumnType<boolean, boolean | undefined, boolean>;
+  actor_type: ColumnType<import('@tvmf/shared').IncActorType, import('@tvmf/shared').IncActorType | undefined, import('@tvmf/shared').IncActorType>;
+  author_id: string | null;
+  meta: ColumnType<Record<string, unknown>, string | undefined, string>;
+  idempotency_key: ColumnType<string | null, string | null | undefined, string | null>;
+  created_at: Ts;
+}
+
+export interface IncidentItemsTable {
+  id: Generated<string>;
+  incident_id: string;
+  kind: import('@tvmf/shared').IncItemKind;
+  ref: string;
+  label: string | null;
+  created_by: string | null;
+  created_at: Ts;
+}
+
+export interface IncidentWatchersTable {
+  incident_id: string;
+  user_id: string;
+  added_by: string | null;
+  created_at: Ts;
+}
+
 /** Design & Build rows (or a new site) designed for a service request - see 0038_sr_design_items.sql. */
 export interface ServiceRequestItemsTable {
   request_id: string;
@@ -980,7 +1055,7 @@ export interface HandoverSectionsTable {
  */
 export interface FilesTable {
   id: Generated<string>;
-  category: 'deployment_change_document' | 'number_port_document' | 'resource_account_request' | 'handover_pack' | 'service_request_attachment';
+  category: 'deployment_change_document' | 'number_port_document' | 'resource_account_request' | 'handover_pack' | 'service_request_attachment' | 'incident_attachment';
   source_type: string;
   source_id: string;
   site_id: string | null;
@@ -1065,6 +1140,10 @@ export interface DB {
   service_requests: ServiceRequestsTable;
   service_request_events: ServiceRequestEventsTable;
   service_request_items: ServiceRequestItemsTable;
+  incidents: IncidentsTable;
+  incident_events: IncidentEventsTable;
+  incident_items: IncidentItemsTable;
+  incident_watchers: IncidentWatchersTable;
   files: FilesTable;
   audit_log: TenantAuditLogTable;
 }

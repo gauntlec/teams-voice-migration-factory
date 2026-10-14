@@ -20,6 +20,7 @@ import { BuildModule } from './modules/build/build.module';
 import { DeploymentModule } from './modules/deployment/deployment.module';
 import { HandoverModule } from './modules/handover/handover.module';
 import { ServiceRequestsModule } from './modules/service-requests/service-requests.module';
+import { IncidentsModule } from './modules/incidents/incidents.module';
 import { FilesModule } from './modules/files/files.module';
 import { TenantDiscoveryModule } from './modules/tenant-discovery/tenant-discovery.module';
 import { AuditReadModule } from './modules/audit/audit-read.module';
@@ -47,6 +48,7 @@ import { HealthController } from './health/health.controller';
     DeploymentModule,
     HandoverModule,
     ServiceRequestsModule,
+    IncidentsModule,
     FilesModule,
     TenantDiscoveryModule,
     AuditReadModule,

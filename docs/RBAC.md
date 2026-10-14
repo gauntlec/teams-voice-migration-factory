@@ -39,6 +39,16 @@ tenant only. **Design & Build and Deployment are not shown**; **cannot add or
 edit sites** (engineer/admin only). No access to users, tenants, or any other
 customer.
 
+### Managed Services (incidents)
+Incident management uses the same Managed Services switch. `inc:read` and
+`inc:create` let SUPER_ADMIN, PROJECT_MANAGER, ENGINEER and CUSTOMER see and raise
+incidents, comment, and (for the reporter or a watcher) confirm a fix or say it is
+still broken; `inc:manage` (SUPER_ADMIN and ENGINEER) acknowledges, assigns, moves,
+changes priority, adds internal notes and links items; `inc:msp` (SUPER_ADMIN,
+ENGINEER, PROJECT_MANAGER) is the MSP incident queue (a later chunk). A site contact
+only sees and raises incidents for their own sites. Targets and the priority matrix
+are changed by Super Admins only. See [INCIDENT-MANAGEMENT.md](INCIDENT-MANAGEMENT.md).
+
 ### Managed Services (service requests)
 When Managed Services is switched on for a customer, `sr:read` and `sr:create`
 let SUPER_ADMIN, PROJECT_MANAGER, ENGINEER and CUSTOMER see and raise service
@@ -114,6 +124,9 @@ platform:operate
 | feature:manage (move / edit / delete cards) | ✓ | | | |
 | bug:read / bug:create | ✓ | ✓ | ✓ | |
 | bug:manage (move / edit / delete cards) | ✓ | | | |
+| inc:read / inc:create (Incidents: see, raise, comment) | ✓ | ✓ | ✓ | ✓ (own sites if scoped) |
+| inc:manage (triage, assign, move, priority, internal notes) | ✓ | | ✓ | |
+| inc:msp (MSP incident queue) | ✓ | ✓ | ✓ | |
 | tenantdiscovery:read / run (Discovery: connect to the customer's live Teams tenant) | ✓ | | ✓ | |
 | platform:operate (Release check page, set/clear the maintenance notice) | ✓ | | | |
 
