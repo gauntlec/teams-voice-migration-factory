@@ -984,6 +984,57 @@ export interface IncidentsTable {
   waiting_reminded_at: ColumnType<string | null, string | null | undefined, string | null>;
   waiting_reminders: ColumnType<number, number | undefined, number>;
   sla_notified: ColumnType<Record<string, string>, string | undefined, string>;
+  /** 0049_incident_major_problems.sql - major incident, parent/child and problem link. */
+  major: ColumnType<boolean, boolean | undefined, boolean>;
+  major_declared_at: ColumnType<string | null, string | null | undefined, string | null>;
+  major_declared_by: ColumnType<string | null, string | null | undefined, string | null>;
+  major_ended_at: ColumnType<string | null, string | null | undefined, string | null>;
+  lead_id: ColumnType<string | null, string | null | undefined, string | null>;
+  comms_id: ColumnType<string | null, string | null | undefined, string | null>;
+  update_interval_minutes: ColumnType<number | null, number | null | undefined, number | null>;
+  next_update_due_at: ColumnType<string | null, string | null | undefined, string | null>;
+  update_reminded_at: ColumnType<string | null, string | null | undefined, string | null>;
+  update_escalated_at: ColumnType<string | null, string | null | undefined, string | null>;
+  parent_id: ColumnType<string | null, string | null | undefined, string | null>;
+  problem_id: ColumnType<string | null, string | null | undefined, string | null>;
+}
+
+/** A problem record: the cause behind one or more incidents - see 0049_incident_major_problems.sql. */
+export interface ProblemsTable {
+  id: Generated<string>;
+  /** per-customer sequence, shown as PRB-0001 */
+  number: Generated<number>;
+  title: string;
+  description: ColumnType<string, string | undefined, string>;
+  category: ColumnType<string | null, string | null | undefined, string | null>;
+  subcategory: ColumnType<string | null, string | null | undefined, string | null>;
+  status: ColumnType<import('@tvmf/shared').IncProblemStatus, import('@tvmf/shared').IncProblemStatus | undefined, import('@tvmf/shared').IncProblemStatus>;
+  root_cause: ColumnType<string, string | undefined, string>;
+  workaround: ColumnType<string, string | undefined, string>;
+  customer_note: ColumnType<string, string | undefined, string>;
+  owner_id: ColumnType<string | null, string | null | undefined, string | null>;
+  created_by: string;
+  created_at: Ts;
+  updated_at: Ts;
+  resolved_at: ColumnType<string | null, string | null | undefined, string | null>;
+}
+
+/** One post-incident review per incident. */
+export interface IncidentReviewsTable {
+  incident_id: string;
+  status: ColumnType<'draft' | 'shared', 'draft' | 'shared' | undefined, 'draft' | 'shared'>;
+  summary: ColumnType<string, string | undefined, string>;
+  cause: ColumnType<string, string | undefined, string>;
+  went_well: ColumnType<string, string | undefined, string>;
+  went_badly: ColumnType<string, string | undefined, string>;
+  // Written as JSON.stringify(...).
+  actions: ColumnType<import('@tvmf/shared').IncReviewAction[], string | undefined, string>;
+  created_by: string;
+  created_at: Ts;
+  updated_by: ColumnType<string | null, string | null | undefined, string | null>;
+  updated_at: Ts;
+  shared_at: ColumnType<string | null, string | null | undefined, string | null>;
+  shared_by: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 export interface IncidentEventsTable {
@@ -1146,6 +1197,8 @@ export interface DB {
   incident_events: IncidentEventsTable;
   incident_items: IncidentItemsTable;
   incident_watchers: IncidentWatchersTable;
+  problems: ProblemsTable;
+  incident_reviews: IncidentReviewsTable;
   files: FilesTable;
   audit_log: TenantAuditLogTable;
 }

@@ -595,7 +595,7 @@ Email, the SLA engine and the settings screen. Details of every email are in
 | 0 Research and design | Done 2026-10-14 | this document |
 | 1 Foundations | Built and deployed 2026-10-14 (073e661), verified live (migrations applied to all 5 customer schemas) | See "Chunk 1 as built" |
 | 2 Customer and engineer UI | Built and deployed 2026-10-14 (1455aa6), verified live | See "Chunk 2 as built" |
-| 3 Email workflows and SLA engine | Built 2026-10-14 - committed, not yet deployed | See "Chunk 3 as built" |
+| 3 Email workflows and SLA engine | Built and deployed 2026-10-14 (8a6ad5a), verified live (migration 0048 on all 5 customer schemas) | See "Chunk 3 as built" |
 | 4 MSP console, major incidents, problems, reports | Not started | |
 | 5 Agent platform | Not started | |
 | 6 First-party agents, diagnostics, MCP | Not started | |

@@ -532,7 +532,24 @@ export type IncSource = (typeof INC_SOURCES)[number];
 export const INC_ACTOR_TYPES = ['user', 'agent', 'system'] as const;
 export type IncActorType = (typeof INC_ACTOR_TYPES)[number];
 
-export const INC_EVENT_KINDS = ['created', 'status_changed', 'priority_changed', 'assigned', 'comment', 'waiting', 'resumed', 'attachment', 'link'] as const;
+export const INC_EVENT_KINDS = [
+  'created',
+  'status_changed',
+  'priority_changed',
+  'assigned',
+  'comment',
+  'waiting',
+  'resumed',
+  'attachment',
+  'link',
+  'major_declared',
+  'major_update',
+  'major_ended',
+  'child_linked',
+  'child_unlinked',
+  'problem_linked',
+  'review_shared',
+] as const;
 export type IncEventKind = (typeof INC_EVENT_KINDS)[number];
 
 export const INC_ITEM_KINDS = ['site', 'user', 'number', 'call_queue', 'auto_attendant', 'cap', 'service_request', 'deployment', 'number_port'] as const;
@@ -586,6 +603,8 @@ export interface IncSettings {
   calendar?: IncCalendar | null;
   /** Per priority; only means anything once there is a calendar. */
   cover?: Partial<Record<IncPriority, IncCover>>;
+  /** Customer users who are told about every major incident and every shared review, whether or not they follow it. */
+  stakeholders?: string[];
 }
 
 /** With a calendar: P1 and P2 run around the clock, P3 and P4 in working hours. */
@@ -947,6 +966,8 @@ export const incidentStatusSchema = z
     note: z.string().trim().max(4000).optional(),
     holdReason: z.enum(INC_HOLD_REASONS).optional(),
     duplicateOf: z.string().uuid().optional(),
+    /** Resolving a major incident: resolve its live child incidents too, with the same note. */
+    resolveChildren: z.boolean().optional(),
   })
   .strict();
 export type IncidentStatusInput = z.infer<typeof incidentStatusSchema>;
@@ -1041,6 +1062,7 @@ export const incidentSettingsSchema = z
       .object(Object.fromEntries(INC_PRIORITIES.map((p) => [p, z.enum(['24x7', 'business']).optional()])) as Record<IncPriority, z.ZodOptional<z.ZodEnum<['24x7', 'business']>>>)
       .strict()
       .optional(),
+    stakeholders: z.array(z.string().uuid()).max(30).optional(),
   })
   .strict();
 export type IncidentSettingsInput = z.infer<typeof incidentSettingsSchema>;
