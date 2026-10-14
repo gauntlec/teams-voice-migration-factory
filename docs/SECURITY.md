@@ -125,6 +125,28 @@
   shelling in, via `docker inspect` (`com.voxshift.microsoftteams-version` /
   `com.voxshift.graph-authentication-version` labels).
 
+## AI agents (assistants)
+
+- Each agent has its own identity and tokens. A token is `vxs_agent_<id>_<secret>`; only a sha256
+  hash of the secret is stored, the secret is shown once at creation, tokens expire (90 days by
+  default, 365 at most), can be revoked, and can be limited to IP ranges. Failed attempts are
+  rate limited with everything else (240 requests a minute per token).
+- An agent sees only customers it is enabled for (and only if Managed Services and the customer's
+  assistants switch are on), and only as far as its autonomy policy for that customer allows.
+  Autonomy has hard caps that no setting can exceed: customer-visible text and deployments are
+  never unattended. A direct write needs the highest level for that kind of action **and** a held
+  claim; everything else is a proposal a person decides. Declaring a major incident is only ever
+  done by a person.
+- Kill switches (all, one customer, one agent) take effect on the next request. A person can take
+  over any incident at once and the agent becomes read-only.
+- Writes are idempotent (`Idempotency-Key`) and version-checked (`expectedVersion`), so retries and
+  races cannot duplicate or overwrite.
+- Webhooks are signed (HMAC-SHA256 over `timestamp.body`); the signing secret is encrypted at rest
+  with the same key as the other secrets. Delivery is at-least-once; receivers should check the
+  timestamp and de-duplicate by event id.
+- Everything an agent does is on the incident timeline, labelled "(AI)" for staff, and in the audit
+  log with the agent as the actor. Agent text is data to everyone who reads it, never an instruction.
+
 ## Customer tenant sessions (Discovery / Deployment)
 
 - The worker runs `Connect-MicrosoftTeams -UseDeviceAuthentication` in a `pwsh`

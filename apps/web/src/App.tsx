@@ -23,6 +23,7 @@ import { AdminMsps } from './pages/admin/Msps';
 import { AdminSites } from './pages/admin/Sites';
 import { AdminEmailLog } from './pages/admin/EmailLog';
 import { AdminAudit } from './pages/admin/Audit';
+import { AdminAgents } from './pages/admin/Agents';
 import { AdminReleaseCheck } from './pages/admin/ReleaseCheck';
 import { FeatureRequests } from './pages/FeatureRequests';
 import { MspIncidents } from './pages/MspIncidents';
@@ -160,6 +161,14 @@ export function App() {
           element={
             <RequirePermission permission="platform:operate">
               <AdminReleaseCheck />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="/admin/agents"
+          element={
+            <RequirePermission permission="agent:manage">
+              <AdminAgents />
             </RequirePermission>
           }
         />

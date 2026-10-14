@@ -125,6 +125,7 @@ export function Incidents() {
               <option value="">Anyone</option>
               <option value="me">Assigned to me</option>
               <option value="none">Unassigned</option>
+              <option value="agent">With an assistant (AI)</option>
             </Select>
           </Field>
         )}
@@ -181,7 +182,7 @@ export function Incidents() {
                       {r.major && <MajorClockBadge clock={r.major_clock} />}
                     </TableCell>
                   )}
-                  <TableCell>{r.assigned_to_name ?? (r.status === 'new' ? 'Not yet' : '—')}</TableCell>
+                  <TableCell>{r.assigned_agent_name ? `${r.assigned_agent_name} (AI)` : (r.assigned_to_name ?? (r.status === 'new' ? 'Not yet' : '—'))}</TableCell>
                   <TableCell>
                     {r.reporter_name ?? '—'}
                     <Text size={100} block>

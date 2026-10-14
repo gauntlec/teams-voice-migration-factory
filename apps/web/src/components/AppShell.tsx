@@ -38,6 +38,7 @@ import {
   Search24Regular,
   TicketDiagonal24Regular,
   AlertUrgent24Regular,
+  BotSparkle24Regular,
   TaskListSquareLtr24Regular,
   ShieldCheckmark24Regular,
 } from '@fluentui/react-icons';
@@ -140,6 +141,7 @@ const ADMIN_GROUPS: { label: string; items: NavDef[] }[] = [
       { to: '/admin/tenants', label: 'Customers', icon: <BuildingMultiple24Regular />, permission: 'tenant:create' },
       { to: '/admin/msps', label: 'MSPs', icon: <BuildingMultiple24Regular />, permission: 'msp:read' },
       { to: '/admin/sites', label: 'Sites', icon: <Location24Regular />, permission: 'discovery:sites:manage' },
+      { to: '/admin/agents', label: 'Assistants', icon: <BotSparkle24Regular />, permission: 'agent:manage' },
     ],
   },
   {

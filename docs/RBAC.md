@@ -127,6 +127,7 @@ platform:operate
 | inc:read / inc:create (Incidents: see, raise, comment) | ✓ | ✓ | ✓ | ✓ (own sites if scoped) |
 | inc:manage (triage, assign, move, priority, internal notes) | ✓ | | ✓ | |
 | inc:msp (MSP incident queue) | ✓ | ✓ | ✓ | |
+| agent:manage (Administration -> Assistants: create agents, tokens, customer policies, webhooks, kill switches) | ✓ | | | |
 | tenantdiscovery:read / run (Discovery: connect to the customer's live Teams tenant) | ✓ | | ✓ | |
 | platform:operate (Release check page, set/clear the maintenance notice) | ✓ | | | |
 

@@ -645,6 +645,51 @@ The MSP console, major incidents, problems, post-incident reviews and reports. M
   13, report and MSP console 11, plus templates), 147 database tests in total. A test caught raw
   SQL in a problem subquery ignoring the customer's schema; it is now an ordinary Kysely subquery.
 
+## Chunk 5 as built
+
+The agent platform: AI agents (and any script) work incidents next to engineers, as colleagues
+with limits. Migrations `platform/0017_agents.sql` and `tenant/0050_incident_agents.sql`; shared
+rules in `packages/shared/src/agents.ts`; the API reference is [AGENTS.md](AGENTS.md).
+
+- **Identity and access**: `platform.agents` with their own tokens (`vxs_agent_<id>_<secret>`,
+  hashed, shown once, expiring), scopes (read / note / propose / act), optional IP allow-list, a
+  rate limit, and a status (active / paused = reads only / disabled). Created by a Super Admin on
+  Administration -> Assistants (`agent:manage`). Nothing is visible to an agent until it is enabled
+  for a customer, which also needs Managed Services and the customer's assistants switch on.
+- **Autonomy policy** per agent per customer, per action class (triage, internal note, customer
+  update, read-only diagnostics, What-If, deploy, resolve) at four levels (observe, suggest, act
+  with approval, act alone). Customer-visible text and deployments are capped at "act with
+  approval"; a new policy is suggest-only with no changes. A direct write needs level 3 and a held
+  claim; otherwise the API says `propose_instead`.
+- **Claims** (`incident_claims`): a lease (10 minutes by default, renewed by heartbeat). A person
+  can take over at once; the agent is then read-only until the person hands it back. A lapsed
+  lease, or two failures in a row, returns the incident to the queue and tells the engineers.
+- **Proposals** (`incident_actions`): an agent proposes a step (update the customer, ask a
+  question, change status or priority, assign, link, propose a major incident, or an `external`
+  step such as a diagnostic or What-If) and a person approves or rejects it on the incident's
+  Assistant card. The platform carries out approved platform steps as the agent (declaring a major
+  incident and linking a problem are carried out as the approver); `external` steps are carried
+  out by the agent, which reports back. Max 5 open per agent; they expire in 24 hours.
+- **Safe retries**: `Idempotency-Key` on every write (`platform.agent_requests`), and
+  `expectedVersion` so an agent cannot overwrite a change it has not seen.
+- **Events**: `platform.agent_events` outbox, polled with `GET /events?after=` or pushed to signed
+  webhooks (HMAC-SHA256, at-least-once, retried with backoff, switched off after 12 failures). The
+  worker also tells agents about SLA warnings and breaches, and sweeps expired leases and
+  proposals every minute.
+- **Kill switches**: global (all assistants), per customer, and per agent (paused / disabled).
+- **Labelling**: staff see "Name (AI)", customers see "Voxshift assistant"; agents are never an
+  email's sender. Agents appear as assignees and in the queue filter ("With an assistant"), in the
+  MSP console, and in the report ("Who fixed them", people versus assistants).
+- **Emails**: `incident_activity` gained `agent_proposal` (a step awaits a decision), `agent_lapsed`
+  and `agent_handoff` for the team. See [EMAIL.md](EMAIL.md#incident-emails).
+- **Reference agent**: `docs/agents/reference-triage-agent.mjs`, tested end to end by
+  `tests/db/src/incidents/reference-agent.db.test.ts`.
+- **Tests**: 18 rules tests, about 55 database tests (agent API and guard, claims, proposals,
+  events and webhooks, the worker sweeps, the reference agent). 259 unit and 206 database tests in
+  total.
+- **Not in this chunk**: agents raising incidents and monitoring intake (chunk 8), first-party
+  agents, runbook diagnostics and the MCP server (chunk 6), service-request automation (chunk 7).
+
 ## Build log
 
 | Chunk | Status | Commit / notes |
@@ -654,7 +699,7 @@ The MSP console, major incidents, problems, post-incident reviews and reports. M
 | 2 Customer and engineer UI | Built and deployed 2026-10-14 (1455aa6), verified live | See "Chunk 2 as built" |
 | 3 Email workflows and SLA engine | Built and deployed 2026-10-14 (8a6ad5a), verified live (migration 0048 on all 5 customer schemas) | See "Chunk 3 as built" |
 | 4 MSP console, major incidents, problems, reports | Built and deployed 2026-10-14 (a75e4a4), verified live (migration 0049 on all 5 customer schemas) | See "Chunk 4 as built" |
-| 5 Agent platform | Not started | |
+| 5 Agent platform | Built 2026-10-14, awaiting deploy | See "Chunk 5 as built" |
 | 6 First-party agents, diagnostics, MCP | Not started | |
 | 7 Bots completing service requests | Not started | |
 | 8 Inbound email, integrations, polish | Not started | |

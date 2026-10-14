@@ -159,6 +159,15 @@ Tenant migrations `0047_incidents.sql`, `0048_incident_pause_log.sql` and `0049_
 
 `incidents` also gained (0049): `major`, `major_declared_at/_by`, `major_ended_at`, `lead_id`, `comms_id`, `update_interval_minutes`, `next_update_due_at`, `update_reminded_at`, `update_escalated_at`, `parent_id` (the major incident this is a child of) and `problem_id`; a major incident must have a lead and comms owner. New event kinds: `major_declared`, `major_update`, `major_ended`, `child_linked`, `child_unlinked`, `problem_linked`, `review_shared`. Platform `inc_settings.stakeholders` lists the customer's named contacts.
 
+`incidents` also gained (0050): `agent_hold` (a person took the incident over; the agent is read-only until it is handed back). `assigned_agent_id` is now in use.
+
+| Table (per customer) | Notes |
+|---|---|
+| `incident_claims` | One live lease per incident (unique while `released_at` is null): `agent_id`, `note`, `started_at`, `expires_at` (a heartbeat pushes it out), `released_at`, `release_reason` (`released`/`expired`/`revoked` = a person took over/`handed_off`) |
+| `incident_actions` | An agent's proposals and what became of them: `agent_id`, `kind`, `action_class`, `params` jsonb, `rationale`, `risk`, `state` (`proposed`/`approved`/`rejected`/`running`/`done`/`failed`/`expired`), `decided_by`/`decided_at`/`decision_note`, `result` jsonb, `error`, `expires_at`, `finished_at` |
+
+Platform schema (`platform`, migration 0017): `agents` (name, kind, status, scopes), `agent_tokens` (sha256 hash of the secret, hint, scopes, expiry, IP allow-list, last used), `agent_customer_policy` (agent x customer: `enabled`, `autonomy` jsonb), `agent_kill_switch` (one row: all assistants off, note), `agent_events` (outbox: tenant, incident, kind, payload; kept 14 days), `agent_webhooks` (URL, encrypted signing secret, event kinds, active, `cursor`, consecutive `failures`, next attempt), `agent_requests` (idempotency keys with the stored response). `tenants.agents_enabled` is the per-customer switch.
+
 Attachments use the `files` table (category `incident_attachment`, `source_type` `incident`).
 
 ### Common

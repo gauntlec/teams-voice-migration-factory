@@ -254,7 +254,7 @@ export function MspIncidents() {
                         <IncSlaBadge clock={i.sla.clock} which={i.sla.which} />
                         {i.major && <MajorClockBadge clock={i.major_clock} />}
                       </TableCell>
-                      <TableCell>{i.assigned_to_name ?? '—'}</TableCell>
+                      <TableCell>{i.assigned_agent_name ? `${i.assigned_agent_name} (AI)` : (i.assigned_to_name ?? '—')}</TableCell>
                       <TableCell>
                         {i.reporter_name ?? '—'}
                         <Text size={100} block className={cs.muted}>

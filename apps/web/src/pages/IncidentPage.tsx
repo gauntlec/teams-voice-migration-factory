@@ -38,6 +38,7 @@ import {
   INC_STATUS_CUSTOMER_LABELS,
   INC_STATUS_LABELS,
   INC_URGENCY_LABELS,
+  agentLabel,
   incCategoryLabel,
   incDetailLines,
   incMoveKind,
@@ -57,6 +58,7 @@ import {
 import { api, apiDownload, apiUpload } from '../api';
 import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
+import { IncidentAssistantCard, type AssistantInfo } from '../components/IncidentAssistant';
 import { IncidentMajorSection, type ChildIncident, type MajorInfo, type ParentIncident } from '../components/IncidentMajor';
 import { IncidentProblemCard, type LinkedProblem } from '../components/IncidentProblemCard';
 import { IncidentReviewCard, type ReviewInfo } from '../components/IncidentReview';
@@ -103,6 +105,7 @@ interface IncidentEvent {
 
 interface IncidentPayload {
   incident: Omit<IncidentRow, 'sla' | 'reporter_name'> & {
+    assigned_agent_name?: string | null;
     description: string;
     details: IncDetails;
     impact: IncImpact;
@@ -124,6 +127,8 @@ interface IncidentPayload {
   parent: ParentIncident | null;
   problem: LinkedProblem | null;
   review: ReviewInfo | null;
+  /** Staff only: the AI assistant's claim, whether a person took over, and its proposals. */
+  agent?: AssistantInfo;
   items: { id: string; kind: IncItemKind; ref: string; label: string | null }[];
   events: IncidentEvent[];
 }
@@ -263,6 +268,11 @@ function Overview({ base, data }: { base: string; data: IncidentPayload }) {
     enabled: staff,
     queryFn: () => api<{ id: string; display_name: string }[]>(`${base}/assignees`),
   });
+  const assistants = useQuery({
+    queryKey: ['incident-agents', base],
+    enabled: staff,
+    queryFn: () => api<{ id: string; name: string }[]>(`${base}/agents`),
+  });
   const others = useQuery({
     queryKey: ['incident-others', base],
     enabled: staff && r.status !== 'closed',
@@ -287,7 +297,7 @@ function Overview({ base, data }: { base: string; data: IncidentPayload }) {
       refresh();
     },
   });
-  const assign = useMutation({ mutationFn: (userId: string | null) => api(`${base}/${id}/assign`, { method: 'POST', body: JSON.stringify({ userId }) }), onSuccess: refresh });
+  const assign = useMutation({ mutationFn: (who: { userId: string | null } | { agentId: string }) => api(`${base}/${id}/assign`, { method: 'POST', body: JSON.stringify(who) }), onSuccess: refresh });
   const setPriority = useMutation({
     mutationFn: () => api(`${base}/${id}/priority`, { method: 'POST', body: JSON.stringify({ priority: newPriority, reason: priorityReason }) }),
     onSuccess: () => {
@@ -379,6 +389,8 @@ function Overview({ base, data }: { base: string; data: IncidentPayload }) {
         </div>
       )}
 
+      {staff && data.agent && <IncidentAssistantCard base={base} incidentId={id} agent={data.agent} assignedAgentName={r.assigned_agent_name ?? null} onChanged={refresh} />}
+
       <IncidentMajorSection base={base} incident={r} major={data.major} children={data.children} parent={data.parent} staff={staff} onChanged={refresh} />
 
       <Card className={ps.card}>
@@ -434,16 +446,32 @@ function Overview({ base, data }: { base: string; data: IncidentPayload }) {
           )}
           <Text className={cs.factLabel}>Assigned to</Text>
           {staff && live ? (
-            <Select size="small" value={r.assigned_to ?? ''} disabled={assign.isPending} onChange={(_, d) => assign.mutate(d.value || null)}>
+            <Select
+              size="small"
+              value={r.assigned_agent_id ? `a:${r.assigned_agent_id}` : r.assigned_to ? `u:${r.assigned_to}` : ''}
+              disabled={assign.isPending}
+              onChange={(_, d) => assign.mutate(d.value.startsWith('a:') ? { agentId: d.value.slice(2) } : { userId: d.value.startsWith('u:') ? d.value.slice(2) : null })}
+            >
               <option value="">Unassigned</option>
-              {(assignees.data ?? []).map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.display_name}
-                </option>
-              ))}
+              <optgroup label="People">
+                {(assignees.data ?? []).map((a) => (
+                  <option key={a.id} value={`u:${a.id}`}>
+                    {a.display_name}
+                  </option>
+                ))}
+              </optgroup>
+              {(assistants.data ?? []).length > 0 && (
+                <optgroup label="Assistants (AI)">
+                  {assistants.data!.map((a) => (
+                    <option key={a.id} value={`a:${a.id}`}>
+                      {agentLabel(a.name)}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </Select>
           ) : (
-            <Text>{r.assigned_to_name ?? 'Not yet assigned'}</Text>
+            <Text>{r.assigned_agent_name ?? r.assigned_to_name ?? 'Not yet assigned'}</Text>
           )}
           <Text className={cs.factLabel}>Following</Text>
           <span className={cs.actions}>

@@ -158,11 +158,13 @@ export class MspIncidentsService {
     // The most urgent first: live majors, then priority, then the longest waiting.
     const items = perTenant.flat().sort((a, b) => Number(isLiveMajor(b)) - Number(isLiveMajor(a)) || a.priority.localeCompare(b.priority) || String(a.created_at).localeCompare(String(b.created_at)));
     const names = await this.names(items.flatMap((i) => [i.reporter_id, i.assigned_to]));
+    const agentIds = [...new Set(items.map((i) => i.assigned_agent_id).filter((v): v is string => !!v))];
+    const agentNames = agentIds.length ? new Map((await platformDb(this.db).selectFrom('agents').select(['id', 'name']).where('id', 'in', agentIds).execute()).map((a) => [a.id, a.name])) : new Map<string, string>();
     const msp = sc.mspId ? await platformDb(this.db).selectFrom('msps').select(['id', 'name']).where('id', '=', sc.mspId).executeTakeFirst() : null;
     return {
       msp: msp ?? null,
       customers: sc.tenants.map((t) => ({ id: t.id, name: t.name, msp_name: t.msp_name, can_open: sc.memberOf.has(t.id) })),
-      items: items.map(({ pause_log: _log, ...i }) => ({ ...i, reporter_name: names.get(i.reporter_id) ?? null, assigned_to_name: i.assigned_to ? (names.get(i.assigned_to) ?? null) : null })),
+      items: items.map(({ pause_log: _log, ...i }) => ({ ...i, reporter_name: names.get(i.reporter_id) ?? null, assigned_to_name: i.assigned_to ? (names.get(i.assigned_to) ?? null) : null, assigned_agent_name: i.assigned_agent_id ? (agentNames.get(i.assigned_agent_id) ?? 'Assistant') : null })),
     };
   }
 

@@ -229,8 +229,11 @@ nobody is assigned.
 | A major incident is resolved | `incident_major` (`resolved`, with what fixed it) | Customer side, named contacts, child reporters (plus the usual "is it fixed?") |
 | A major incident's update is due / 15 minutes late | `incident_activity` (`update_due` / `update_overdue`) | The comms owner; then the lead and the whole team |
 | A post-incident review is shared | `incident_review` (summary, cause, actions) | Customer side and named contacts |
+| An assistant proposes a step that needs a decision | `incident_activity` (`agent_proposal`) | The assignee, or the team when nobody is assigned |
+| An assistant's lease lapses or it keeps failing and the incident returns to the queue | `incident_activity` (`agent_lapsed`) | The team |
+| An assistant hands an incident over | `incident_activity` (`agent_handoff`, with what it tried, found and recommends) | The person it is handed to, else the team |
 
-A problem queueing mail is logged and never fails the change that caused it.
+Assistants are never the sender of an email, and customer-visible text from one goes out only after a person approves it (or, where the customer allows it, a template). A problem queueing mail is logged and never fails the change that caused it.
 
 ### "Is it fixed?" links
 

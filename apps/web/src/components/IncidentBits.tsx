@@ -41,6 +41,8 @@ export interface IncidentRow {
   assigned_to: string | null;
   assigned_to_name: string | null;
   assigned_agent_id: string | null;
+  /** The assistant's name, when an AI assistant has it. */
+  assigned_agent_name?: string | null;
   created_at: string;
   updated_at: string;
   acknowledged_at: string | null;
