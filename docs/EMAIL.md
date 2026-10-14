@@ -252,3 +252,10 @@ harmless. The answer goes through the normal rules (only the reporter or a follo
 while resolved, or within 7 days of resolving for "still broken"), answering twice is
 harmless, and the action is recorded as the person it was sent to. The two public routes are
 `GET|POST /api/public/incident-response`.
+
+### Replying by email, and raising by email
+
+Customer-side incident emails carry `Reply-To: incidents+<token>@<INBOUND_EMAIL_ADDRESS domain>` once inbound email is configured, so a
+reply becomes a comment on the incident. Mail to the incidents address can raise an incident for customers that switch it on. The
+mailbox, forwarder, header and payload are in [INTAKE.md](INTAKE.md); the log of what happened to each inbound message is
+`platform.inbound_email_log`.

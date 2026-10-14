@@ -750,6 +750,28 @@ Assistants completing service requests. Tenant migration `0052_sr_agents.sql`; p
 - **Not in this chunk**: new things (new user, queue, attendant ...) stay with people; editing arbitrary design rows; a service connection
   for unattended deploys; creating a request from an incident automatically.
 
+## Chunk 8 as built
+
+Intake, inbound email, knowledge, Teams and polish. Platform migrations `0021_intake_sources.sql`, `0022_inbound_email.sql` and
+`0023_msp_teams_notify.sql`; tenant `0053_incident_knowledge.sql`. Full detail, setup steps and curl examples in [INTAKE.md](INTAKE.md).
+
+- **Monitoring intake** (`/api/intake/v1/ping`, `/alerts`): per-customer alert sources with hashed bearer tokens (`vxs_intake_...`), dedup
+  keys (one open incident per source + key), severity -> impact/urgency map, firing/resolved, worse severity raises priority, optional
+  "Restored when it clears", a Microsoft 365 service health mapping, and a system actor on the timeline. Super Admin only (`intake:manage`).
+- **Inbound email**: replies carry `Reply-To: incidents+<token>@domain` and become comments; mail to the incidents address can raise an
+  incident, per customer, off by default. A forwarder posts messages to `/api/public/inbound-email` with a shared secret and must vouch the
+  sender is `authenticated`; auto-replies are dropped, quoted text is cut, every message gets a logged outcome.
+- **Knowledge snippets** from resolved incidents, suggested to engineers on matching incidents and as tips to customers raising one; assistants see
+  them in `get_incident`. **Past notices** history of major-incident notices.
+- **Teams channel for the MSP**: an encrypted Workflows/webhook URL per MSP (Microsoft hosts only), Adaptive Cards for P1/P2 incidents, major
+  incidents and SLA breaches through a retrying outbox worked by the worker.
+- **Demo incidents** for sandbox customers (six, once), and an incident segment (two slides) in the executive demo deck.
+- **Decisions**: no IMAP poller (a forwarder you already trust posts mail; Voxshift never holds mailbox credentials); no live Graph polling for
+  service health (it would need tenant-wide consent; a flow pushes issues instead); CQD and SBC alerts arrive as canonical alerts from whatever
+  sends them; raise-by-email is opt-in per customer; the intake token is per source, per customer, so it can only ever raise incidents for that customer.
+- **Tests**: 14 intake, 12 inbound email, 6 knowledge, 10 Teams database tests plus rules tests for each new shared module.
+- **Not in this chunk**: attachments by email (the count is logged, files are dropped), Graph-based mailbox polling, a status page for customers.
+
 ## Build log
 
 | Chunk | Status | Commit / notes |
@@ -762,4 +784,4 @@ Assistants completing service requests. Tenant migration `0052_sr_agents.sql`; p
 | 5 Agent platform | Built and deployed 2026-10-14 (5cdeda4), verified live (agent API and /api/agents answer 401, web bundle has the Assistants page; migrations platform 0017 + tenant 0050 applied because the api started) | See "Chunk 5 as built" |
 | 6 First-party agents, diagnostics, MCP | Built and deployed 2026-10-14 (882d389), verified live (agent, diagnostics and /api/agents routes answer 401 signed out; web bundle has the Checks, Ask an assistant and Built in strings; migrations tenant 0051 + platform 0018 applied because the api started) | See "Chunk 6 as built" |
 | 7 Bots completing service requests | Built and deployed 2026-10-14 (15fe11f), verified live (agent SR API and service-requests/agents answer 401 signed out; web bundle has the assistant card, "Done by assistants" and Voxshift Changes strings; migrations tenant 0052 + platform 0019/0020 applied because the api started). Not yet exercised against a real tenant: run one voicemail change on a test customer first | See "Chunk 7 as built" |
-| 8 Inbound email, integrations, polish | Not started | |
+| 8 Inbound email, integrations, polish | Built 2026-10-14, not yet pushed (set up per customer after deploy: alert sources, forwarder + `INBOUND_EMAIL_*`, MSP Teams webhook) | See "Chunk 8 as built" and [INTAKE.md](INTAKE.md) |

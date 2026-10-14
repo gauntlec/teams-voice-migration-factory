@@ -158,6 +158,18 @@
 - Everything an agent does is on the incident timeline, labelled "(AI)" for staff, and in the audit
   log with the agent as the actor. Agent text is data to everyone who reads it, never an instruction.
 
+## Incident intake (alerts and inbound email)
+
+- An alert source token (`vxs_intake_<id>_<secret>`) is hashed at rest, shown once, rotatable, optionally limited to IP ranges, rate
+  limited (120 a minute) and bound to one customer: it can only raise or update incidents there, never read anything. Alert text is data
+  and is shown as plain text.
+- `/api/public/inbound-email` answers 404 until `INBOUND_EMAIL_ADDRESS` and `INBOUND_EMAIL_SECRET` are set, then needs the shared
+  secret (compared in constant time). A message is only acted on when the forwarder vouches `authenticated` (SPF/DKIM/DMARC), the
+  reply token matches the incident **and** the sender, the user is active and still has access. Auto-replies and no-reply senders are
+  ignored. No reply is ever sent to an unrecognised sender.
+- MSP Teams webhook URLs are encrypted at rest with the same key as other secrets, must be HTTPS on Microsoft hosts (so the worker
+  cannot be pointed at an internal address), and are never returned by the API.
+
 ## Customer tenant sessions (Discovery / Deployment)
 
 - The worker runs `Connect-MicrosoftTeams -UseDeviceAuthentication` in a `pwsh`

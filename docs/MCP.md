@@ -34,7 +34,7 @@ version control. A token that is revoked, expired or paused stops working at onc
 | Tool | What it does | Needs |
 |---|---|---|
 | `list_incidents` | the queue across the customers it may work; `assigned` = `unassigned` or `me` | `read` |
-| `get_incident` | record, full timeline, items, known errors, similar incidents, checks run and worth running, claim, proposals, and **your autonomy** | `read` |
+| `get_incident` | record, full timeline, items, known errors, similar incidents, checks run and worth running, **knowledge snippets that match**, claim, proposals, and **your autonomy** | `read` |
 | `claim_incident` / `renew_claim` / `release_incident` | take, keep and give up the lease on an incident | `note`; triage >= Suggest |
 | `add_internal_note` | a note only the MSP team sees | `note`; internal notes >= Suggest |
 | `change_status` / `set_priority` / `link_item` | change the incident directly | `act`, a held lease, and "act alone" for that class; otherwise `propose_action` |
