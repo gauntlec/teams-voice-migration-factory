@@ -1,6 +1,6 @@
-# Built-in assistants: Triage, Diagnose, Comms
+# Built-in assistants: Triage, Diagnose, Comms, Changes
 
-Voxshift ships three assistants. They are ordinary agents ([AGENTS.md](AGENTS.md)): their own identity,
+Voxshift ships four assistants. They are ordinary agents ([AGENTS.md](AGENTS.md)): their own identity,
 a per-customer autonomy policy, claims, proposals, the kill switches, everything on the timeline as
 "Voxshift Triage (AI)". What makes them *built in* is that the API runs them itself (a pass every
 30 seconds), so they have **no tokens and no webhooks**, and their "brain" is rules and templates
@@ -47,6 +47,16 @@ proposes one `customer_update`. The text is a fixed template: the incident title
 come. It never guesses a cause or promises a fix. Because customer-visible text is capped at "act with
 approval", a person always approves it first; it expires after the cadence. It does not draft again
 until a full cadence has passed since its last draft, approved or not.
+
+**Changes** (kind: resolver). Works **service requests**, not incidents ([SERVICE-REQUEST-AGENTS.md](SERVICE-REQUEST-AGENTS.md)).
+For each open change or removal request nobody has (and nothing for a person to decide, no pending customer approval, not
+waiting on the customer, not held by a person) it takes a 5-minute lease and: moves it to Planned, **applies** it to the design,
+signs the design off, runs the **What-If**, and **proposes the deployment** with the exact commands. It never deploys on its own
+say-so: each pass it also looks for proposals a person approved (onto their own tenant session) and calls the deploy, which the
+platform re-checks end to end. Anything it cannot do cleanly (a warning, a design blocker, a What-If with nothing to do or a
+warning, a refusal at deploy time such as the change window) it hands over with what it tried and found. Does each request once.
+Needs "act alone" for triage, applying the design and What-If, "act with approval" for deploying, and internal notes at Suggest or
+better; below that it does nothing (at deploy level 0 it prepares and says so, without proposing). Not offered on incidents.
 
 ## Rules they follow like any agent
 

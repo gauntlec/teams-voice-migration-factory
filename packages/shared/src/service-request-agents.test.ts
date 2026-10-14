@@ -58,7 +58,7 @@ describe('What-If verdict', () => {
     expect(w.ok).toBe(false);
     expect(w.reasons[0]).toBe('The What-If has a warning: jo@contoso.com: no assignment type');
     expect(srWhatIfVerdict([row({ calls: [] })]).reasons).toEqual(['Nothing would change: what the request asks for is already in place.']);
-    expect(srWhatIfVerdict([]).reasons).toEqual(['There is nothing designed for this request.']);
+    expect(srWhatIfVerdict([]).reasons).toEqual(['Nothing would change: either nothing is designed for this request, or what it asks for is already in place.']);
     expect(srWhatIfVerdict([row({ warnings: ['a'] }), row({ warnings: ['b'] })]).reasons[0]).toContain('2 warnings');
   });
 });

@@ -32,8 +32,12 @@ export interface BuiltinStats {
   triage: number;
   diagnose: number;
   comms: number;
+  changes: number;
   errors: number;
 }
+
+/** A built-in assistant whose work lives outside this module (Voxshift Changes works service requests). */
+export type BuiltinRoutine = (p: AgentPrincipal, tenantId: string, schema: string, autonomy: AgentAutonomy, now: Date) => Promise<number>;
 
 const WEEK_MS = 7 * 86_400_000;
 
@@ -49,6 +53,7 @@ export class BuiltinAgentsService implements OnModuleInit, OnModuleDestroy {
   private readonly log = new Logger('BuiltinAgents');
   private timer?: NodeJS.Timeout;
   private running = false;
+  private readonly routines = new Map<string, BuiltinRoutine>();
 
   constructor(
     @InjectDb() private readonly db: Db,
@@ -63,13 +68,18 @@ export class BuiltinAgentsService implements OnModuleInit, OnModuleDestroy {
     this.timer.unref();
   }
 
+  /** Lets another module supply the work of a built-in assistant. */
+  register(key: BuiltinAgentKey, routine: BuiltinRoutine) {
+    this.routines.set(key, routine);
+  }
+
   onModuleDestroy() {
     if (this.timer) clearInterval(this.timer);
   }
 
   /** One pass over every customer each built-in assistant is allowed on. */
   async tick(opts: { tenantId?: string; now?: Date } = {}): Promise<BuiltinStats> {
-    const stats: BuiltinStats = { triage: 0, diagnose: 0, comms: 0, errors: 0 };
+    const stats: BuiltinStats = { triage: 0, diagnose: 0, comms: 0, changes: 0, errors: 0 };
     if (this.running) return stats;
     this.running = true;
     try {
@@ -97,7 +107,8 @@ export class BuiltinAgentsService implements OnModuleInit, OnModuleDestroy {
             const now = opts.now ?? new Date();
             if (key === 'triage') stats.triage += await this.triage(principal, t.id, t.schema, levels, now);
             else if (key === 'diagnose') stats.diagnose += await this.diagnose(principal, t.id, t.schema, levels, now);
-            else stats.comms += await this.comms(principal, t.id, t.schema, levels, now);
+            else if (key === 'comms') stats.comms += await this.comms(principal, t.id, t.schema, levels, now);
+            else stats.changes += (await this.routines.get(key)?.(principal, t.id, t.schema, (t.autonomy ?? {}) as AgentAutonomy, now)) ?? 0;
           } catch (e) {
             stats.errors++;
             this.log.warn(`${a.name} on ${t.id}: ${(e as Error).message}`);
@@ -321,6 +332,7 @@ export class BuiltinAgentsService implements OnModuleInit, OnModuleDestroy {
     const p = platformDb(this.db);
     const agent = await p.selectFrom('agents').select(['id', 'name', 'kind', 'status', 'builtin_key']).where('id', '=', input.agentId).executeTakeFirst();
     if (!agent) throw new BadRequestException('That assistant does not exist.');
+    if (agent.builtin_key === 'changes') throw new BadRequestException('Voxshift Changes works service requests. Assign a request to it from the request page.');
     const kill = await p.selectFrom('agent_kill_switch').select('all_disabled').where('id', '=', 1).executeTakeFirst();
     if (kill?.all_disabled) throw new BadRequestException('All assistants are switched off.');
     if (agent.status !== 'active') throw new BadRequestException(`${agentLabel(agent.name)} is ${agent.status}.`);

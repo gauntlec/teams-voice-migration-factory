@@ -723,6 +723,33 @@ platform `0018_builtin_agents.sql`. Detail in [DIAGNOSTICS.md](DIAGNOSTICS.md),
   later, opt-in step behind the same autonomy limits. Live checks (presence, SBC and trunk health, certificate
   expiry, CQD) are not guessed at: they need a live connection or a feed (chunks 7 and 8).
 
+## Chunk 7 as built
+
+Assistants completing service requests. Tenant migration `0052_sr_agents.sql`; platform `0019_agent_events_requests.sql` and
+`0020_builtin_changes.sql`. Full detail in [SERVICE-REQUEST-AGENTS.md](SERVICE-REQUEST-AGENTS.md).
+
+- **Automation profiles** (`srAutomation`, shared): change and removal requests that map completely onto Design & Build (a voicemail
+  change, queue agents added or removed, a leaver, a greeting or holiday closure) and leave nothing for a person to decide (no free
+  text notes, no timing, no forwarding, permissions, opening hours or menu). Everything else stays with people.
+- **Claims, proposals, take-over and hand-back on requests**, mirroring incidents; new action class `change_design`; the agent API under
+  `/agent/v1/service-requests` (list, get, claim, note, plan, apply, sign off, What-If, deploy, propose, hand off); events `sr.*`;
+  assistants as assignees; "Name (AI)" for staff, "Voxshift assistant" for customers; an **Assistant** card on the request page.
+- **One approval, command for command.** The server computes the plan and its SHA-256 fingerprint and refuses unless the What-If is
+  clean (zero warnings); a person approves onto **their own** tenant session; at deploy time the approval, the fingerprint, the change
+  window (never overridden by an assistant), read-only mode, customer approval and every other guardrail are checked again; it runs as the
+  approver. **A deploy is only "Deployed" after the live tenant is re-read and matches the design**; anything else leaves it Designed &
+  built, stops the assistant and tells the team. Decision: connection model (a) first (a human's session after approval); a service
+  connection for unattended work is not built.
+- **Voxshift Changes**: a fourth built-in assistant that does all of the preparation (plan, apply, sign off, What-If, propose the
+  deployment) and calls the deploy once a person has approved; hands over anything it cannot do cleanly.
+- **Incident <-> service request links** both ways (`POST /service-requests/:id/incident`); a deployment that needs checking also adds a
+  note to the linked incident. **Report**: how many completed requests an assistant got over the line.
+- **MCP**: 14 more tools (`list_service_requests` ... `deploy_request`) and a `work_service_request` prompt.
+- **Tests**: 26 rules tests, 35 database tests (the agent API and every guardrail, the worker's verification gate and sweeps, the Changes
+  assistant, links and the report), 1 more MCP test. 282 database tests in total.
+- **Not in this chunk**: new things (new user, queue, attendant ...) stay with people; editing arbitrary design rows; a service connection
+  for unattended deploys; creating a request from an incident automatically.
+
 ## Build log
 
 | Chunk | Status | Commit / notes |
@@ -734,5 +761,5 @@ platform `0018_builtin_agents.sql`. Detail in [DIAGNOSTICS.md](DIAGNOSTICS.md),
 | 4 MSP console, major incidents, problems, reports | Built and deployed 2026-10-14 (a75e4a4), verified live (migration 0049 on all 5 customer schemas) | See "Chunk 4 as built" |
 | 5 Agent platform | Built and deployed 2026-10-14 (5cdeda4), verified live (agent API and /api/agents answer 401, web bundle has the Assistants page; migrations platform 0017 + tenant 0050 applied because the api started) | See "Chunk 5 as built" |
 | 6 First-party agents, diagnostics, MCP | Built and deployed 2026-10-14 (882d389), verified live (agent, diagnostics and /api/agents routes answer 401 signed out; web bundle has the Checks, Ask an assistant and Built in strings; migrations tenant 0051 + platform 0018 applied because the api started) | See "Chunk 6 as built" |
-| 7 Bots completing service requests | Not started | |
+| 7 Bots completing service requests | Built 2026-10-14, awaiting deploy | See "Chunk 7 as built" |
 | 8 Inbound email, integrations, polish | Not started | |

@@ -34,6 +34,6 @@ import { IncidentsService } from './incidents.service';
   // IncidentAgentsController and IncidentMajorController first: their fixed paths (problems, report, notices ...) must win over IncidentsController's :id.
   controllers: [IncidentAgentsController, IncidentDiagnosticsController, IncidentMajorController, IncidentsController, IncidentResponseController, MspIncidentsController, AgentApiController, AgentAdminController],
   providers: [IncidentsService, IncidentNotifier, IncidentResponseService, IncidentMajorService, ProblemsService, IncidentReviewService, IncidentReportService, MspIncidentsService, AgentEventsService, IncidentClaimsService, IncidentAgentView, IncidentProposalsService, IncidentAgentsService, IncidentDiagnosticsService, AgentApiService, BuiltinAgentsService, AgentAdminService, AgentAuthGuard],
-  exports: [IncidentsService, IncidentNotifier, AgentEventsService, AgentAuthGuard],
+  exports: [IncidentsService, IncidentNotifier, AgentEventsService, AgentAuthGuard, BuiltinAgentsService],
 })
 export class IncidentsModule {}

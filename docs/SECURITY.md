@@ -149,6 +149,12 @@
   switches. Diagnostic checks read Discovery and the design only and never touch a customer's Teams tenant.
 - The MCP server (`apps/mcp`) is a client of the agent API: it holds one agent token in its environment and adds no
   access of its own.
+- **A live change by an assistant needs one human approval, command for command.** The assistant proposes; the server computes the
+  plan (the rendered commands and their SHA-256 fingerprint) and refuses unless the What-If is clean; a person approves onto **their
+  own** tenant session; at run time the approval, the fingerprint, the change window, read-only mode and every other guardrail are
+  checked again. It runs as the approver on their session (never a stored credential, never unattended), and the request is only
+  marked Deployed after the live tenant is re-read and matches the design (docs/SERVICE-REQUEST-AGENTS.md). `change_deploy` is
+  capped at "act with approval" in the policy itself.
 - Everything an agent does is on the incident timeline, labelled "(AI)" for staff, and in the audit
   log with the agent as the actor. Agent text is data to everyone who reads it, never an instruction.
 

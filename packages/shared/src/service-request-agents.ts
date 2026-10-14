@@ -27,6 +27,9 @@ export const SR_AUTOMATION_TYPES: readonly SrType[] = ['change_user', 'change_ca
  */
 const FOLLOW_UPS: readonly RegExp[] = [/^Once it is deployed, clear the phone number/, /^Keep the number on the row for now/, /^Check the holiday closure/];
 
+/** True for a to-do line that is only a follow-up after the change, not a decision before it. */
+export const srIsFollowUp = (line: string) => FOLLOW_UPS.some((re) => re.test(line));
+
 export interface SrAutomation {
   /** An assistant may apply, check and (with approval) deploy this request. */
   eligible: boolean;
@@ -87,7 +90,7 @@ export function srWhatIfVerdict(rows: Pick<DeploymentPreviewRow, 'upn' | 'calls'
   const calls = rows.reduce((n, r) => n + r.calls.length, 0);
   const warnings = rows.flatMap((r) => r.warnings.map((w) => `${r.upn}: ${w}`));
   const reasons: string[] = [];
-  if (!rows.length) reasons.push('There is nothing designed for this request.');
+  if (!rows.length) reasons.push('Nothing would change: either nothing is designed for this request, or what it asks for is already in place.');
   else if (!calls && !warnings.length) reasons.push('Nothing would change: what the request asks for is already in place.');
   if (warnings.length) reasons.push(`${warnings.length === 1 ? 'The What-If has a warning' : `The What-If has ${warnings.length} warnings`}: ${warnings.slice(0, 3).join('; ')}`);
   return { ok: reasons.length === 0, rows: rows.length, calls, warnings, reasons };

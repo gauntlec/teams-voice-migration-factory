@@ -7,10 +7,11 @@ import { parseAgentToken, agentProposalSchema, createAgentSchema, createAgentTok
 import type { AgentPrincipal, AppRequest } from '../../../../apps/api/src/common/request';
 import type { EnqueueMailInput } from '../../../../apps/api/src/mail/mail.service';
 import { ipAllowed } from '../../../../apps/api/src/modules/incidents/agent-auth.guard';
-import { seedCustomer, seedSite, seedUser, useDb, type TestCustomer } from '../helpers';
+import { useGlobalAgentLock, seedCustomer, seedSite, seedUser, useDb, type TestCustomer } from '../helpers';
 import { incidentServices } from './services';
 
 const handle = useDb();
+useGlobalAgentLock(handle);
 let c: TestCustomer;
 let other: TestCustomer; // a customer the agents are never allowed on
 let s: ReturnType<typeof incidentServices>;

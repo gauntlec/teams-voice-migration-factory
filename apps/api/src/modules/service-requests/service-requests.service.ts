@@ -1160,6 +1160,8 @@ export class ServiceRequestsService {
       .innerJoin('agent_customer_policy as cp', (j) => j.onRef('cp.agent_id', '=', 'a.id').on('cp.tenant_id', '=', t.id).on('cp.enabled', '=', true))
       .select(['a.id as id', 'a.name as name', 'a.kind as kind', 'a.builtin_key as builtin_key'])
       .where('a.status', '=', 'active')
+      // Triage, Diagnose and Comms work incidents, not service requests.
+      .where((eb) => eb.or([eb('a.builtin_key', 'is', null), eb('a.builtin_key', '=', 'changes')]))
       .orderBy('a.name')
       .execute();
   }

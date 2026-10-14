@@ -172,6 +172,15 @@ Platform schema (`platform`, migration 0017): `agents` (name, kind, status, scop
 
 Attachments use the `files` table (category `incident_attachment`, `source_type` `incident`).
 
+Service requests gained (0052): `assigned_agent_id`, `agent_hold`, `incident_id` (the incident it was raised for or is linked to); `service_request_events` gained `actor_type`, `meta` and the kinds `claim_started`/`claim_released`/`handoff`/`proposal`/`proposal_decided`/`whatif`.
+
+| Table (per customer) | Notes |
+|---|---|
+| `service_request_claims` | One live lease per request (unique while `released_at` is null): `agent_id`, `note`, `started_at`, `expires_at`, `released_at`, `release_reason` |
+| `service_request_actions` | An assistant's proposals on a request: `kind` (`comment`/`status`/`external`), `action_class`, `params`, `rationale`, `risk`, `state`, `decided_by`, `connection_id` (the approver's tenant session, for a deploy), `fingerprint` (SHA-256 of the exact commands approved), `result`, `error` |
+
+Platform: `agent_events.request_id` (0019); `agents.builtin_key` may be `changes` (0020).
+
 ### Common
 | Table | Notes |
 |-------|-------|

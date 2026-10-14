@@ -195,6 +195,12 @@ engineers and every Super Admin when a request is raised; `service_request_statu
 goes to the requester when their request is planned, designed & built, deployed
 or cancelled. Both use the customer's branding. See [SERVICE-REQUESTS.md](SERVICE-REQUESTS.md).
 
+## Service request emails from assistants
+
+`service_request_activity` has four more kinds for assistants working a request: `agent_proposal`, `agent_lapsed`, `agent_handoff` and
+`agent_deploy_check` (see [SERVICE-REQUESTS.md](SERVICE-REQUESTS.md#emails) and [SERVICE-REQUEST-AGENTS.md](SERVICE-REQUEST-AGENTS.md)).
+An assistant is never the sender of an email.
+
 ## Incident emails
 
 Five templates, all with the customer's branding and a link to `/incidents/:id`

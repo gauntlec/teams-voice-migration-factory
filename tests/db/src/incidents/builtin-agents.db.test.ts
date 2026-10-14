@@ -3,10 +3,11 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { platformDb } from '@tvmf/db';
 import { agentProposalSchema, createIncidentSchema, type AgentAutonomy, type CreateIncidentInput } from '@tvmf/shared';
-import { seedCustomer, seedSite, seedUser, useDb, type TestCustomer } from '../helpers';
+import { useGlobalAgentLock, seedCustomer, seedSite, seedUser, useDb, type TestCustomer } from '../helpers';
 import { incidentServices } from './services';
 
 const handle = useDb();
+useGlobalAgentLock(handle);
 let c: TestCustomer;
 let s: ReturnType<typeof incidentServices>;
 let admin: Awaited<ReturnType<typeof seedUser>>;
@@ -79,7 +80,7 @@ beforeEach(async () => {
 describe('adding them', () => {
   it('adds each once, with no tokens, and refuses tokens and webhooks for them', async () => {
     const list = await s.agentAdmin.list();
-    expect(list.filter((a) => a.builtin_key).map((a) => a.name).sort()).toEqual(['Voxshift Comms', 'Voxshift Diagnose', 'Voxshift Triage']);
+    expect(list.filter((a) => a.builtin_key).map((a) => a.name)).toEqual(expect.arrayContaining(['Voxshift Comms', 'Voxshift Diagnose', 'Voxshift Triage']));
     await expect(s.agentAdmin.createBuiltin(admin, { key: 'triage' })).rejects.toThrow(/already been added/);
     await expect(s.agentAdmin.createToken(admin, agent.triage, { name: 'x', scopes: ['read'], expiresInDays: 30, ipAllow: [] } as never)).rejects.toThrow(/runs inside Voxshift/);
     await expect(s.agentAdmin.createWebhook(admin, agent.triage, { url: 'https://example.com/h', kinds: [] } as never)).rejects.toThrow(/runs inside Voxshift/);

@@ -10,7 +10,7 @@ import type { DiagFinding, DiagResult } from './diagnostics';
 import { DIAG_RUNBOOKS } from './diagnostics';
 import type { IncHoldReason, IncPriority, IncStatus } from './incidents';
 
-export const BUILTIN_AGENT_KEYS = ['triage', 'diagnose', 'comms'] as const;
+export const BUILTIN_AGENT_KEYS = ['triage', 'diagnose', 'comms', 'changes'] as const;
 export type BuiltinAgentKey = (typeof BUILTIN_AGENT_KEYS)[number];
 
 export interface BuiltinAgentDef {
@@ -64,6 +64,20 @@ export const BUILTIN_AGENTS: Record<BuiltinAgentKey, BuiltinAgentDef> = {
       'Customer-visible text is always approved by a person first',
     ],
     suggestedAutonomy: { customer_update: 2 },
+  },
+  changes: {
+    key: 'changes',
+    name: 'Voxshift Changes',
+    kind: 'resolver',
+    description: 'Carries change and removal service requests through: applies what the customer asked for to the design, runs the What-If, and proposes the deployment for one person to approve.',
+    modelLabel: 'Built in (rules)',
+    does: [
+      'Takes change and removal requests that map completely onto Design & Build (a voicemail change, queue agents added or removed, a leaver, a greeting or holiday closure) and nothing a person has to decide',
+      'Plans the request, applies it to the design, signs the design off, and runs the What-If',
+      'Proposes the deployment with the exact commands: it runs only if you approve it, on your own tenant session, and only if the plan is unchanged',
+      'Hands over anything it cannot do cleanly, and never deploys outside the customer\'s change window',
+    ],
+    suggestedAutonomy: { triage: 3, internal_note: 3, change_design: 3, change_whatif: 3, change_deploy: 2 },
   },
 };
 

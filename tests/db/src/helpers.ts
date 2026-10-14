@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, inject } from 'vitest';
+import { afterAll, beforeAll, inject } from 'vitest';
 import { createDb, platformDb, provisionTenant, tenantDb, tenantSchemaName, type DbHandle } from '@tvmf/db';
 import type { Role } from '@tvmf/shared';
 import { quietly } from './quiet';
@@ -17,6 +17,22 @@ export function useDb(): DbHandle {
   // pool if Kysely itself ran a query, and provisionTenant uses the pool directly.
   afterAll(() => handle.pool.end());
   return handle;
+}
+
+/**
+ * The global agent state (the kill switch, which agents are built in) is shared by every test file, and files run in parallel. A
+ * file that changes it holds this lock for the whole file, so two such files never overlap. Call right after `useDb()`.
+ */
+export function useGlobalAgentLock(handle: DbHandle) {
+  let client: import('pg').PoolClient | undefined;
+  beforeAll(async () => {
+    client = await handle.pool.connect();
+    await client.query('select pg_advisory_lock(7101)');
+  }, 300_000);
+  afterAll(async () => {
+    await client?.query('select pg_advisory_unlock(7101)');
+    client?.release();
+  });
 }
 
 export interface TestCustomer {

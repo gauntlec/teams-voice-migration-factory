@@ -37,7 +37,10 @@ describe('the tools', () => {
     const { client } = await connect();
     const tools = (await client.listTools()).tools;
     expect(tools.map((t) => t.name).sort()).toEqual(
-      ['add_internal_note', 'change_status', 'claim_incident', 'get_events', 'get_incident', 'hand_off', 'link_item', 'list_diagnostics', 'list_incidents', 'list_proposals', 'list_runbooks', 'propose_action', 'release_incident', 'renew_claim', 'report_proposal_result', 'run_diagnostic', 'set_priority'].sort(),
+      [
+        'add_internal_note', 'change_status', 'claim_incident', 'get_events', 'get_incident', 'hand_off', 'link_item', 'list_diagnostics', 'list_incidents', 'list_proposals', 'list_runbooks', 'propose_action', 'release_incident', 'renew_claim', 'report_proposal_result', 'run_diagnostic', 'set_priority',
+        'add_request_note', 'apply_request', 'claim_request', 'deploy_request', 'get_service_request', 'hand_off_request', 'list_request_proposals', 'list_service_requests', 'move_request', 'propose_request_action', 'release_request', 'renew_request_claim', 'report_request_proposal_result', 'what_if_request',
+      ].sort(),
     );
     const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
     expect(byName.get_incident!.annotations?.readOnlyHint).toBe(true);
@@ -127,11 +130,49 @@ describe('the tools', () => {
 
   it('has a prompt that walks an assistant through an incident safely', async () => {
     const { client } = await connect();
-    expect((await client.listPrompts()).prompts.map((p) => p.name)).toEqual(['work_incident']);
+    expect((await client.listPrompts()).prompts.map((p) => p.name).sort()).toEqual(['work_incident', 'work_service_request']);
     const p = await client.getPrompt({ name: 'work_incident', arguments: { tenantId: T, incidentId: I } });
     const body = (p.messages[0]!.content as { text: string }).text;
     expect(body).toContain(I);
     expect(body).toContain('claim_incident');
     expect(body).toContain('Never tell the customer anything yourself');
+  });
+
+  it('works service requests through the service request endpoints, and tells the model a deploy is only ever approved', async () => {
+    const R = '44444444-4444-4444-8444-444444444444';
+    const { client, call, calls } = await connect(() => ({ json: { ok: true } }));
+    await call('list_service_requests', { automatable: true, assigned: 'unassigned' });
+    await call('get_service_request', { tenantId: T, requestId: R });
+    await call('apply_request', { tenantId: T, requestId: R });
+    await call('what_if_request', { tenantId: T, requestId: R, idempotencyKey: 'w1' });
+    await call('move_request', { tenantId: T, requestId: R, to: 'built' });
+    await call('propose_request_action', { tenantId: T, requestId: R, kind: 'external', params: { actionClass: 'change_deploy', title: 'Deploy SR-7' }, rationale: 'Clean What-If' });
+    await call('deploy_request', { tenantId: T, requestId: R, proposalId: '55555555-5555-4555-8555-555555555555' });
+    await call('hand_off_request', { tenantId: T, requestId: R, summary: { recommendation: 'Needs forwarding set up', confidence: 'high' } });
+    await call('release_request', { tenantId: T, requestId: R });
+    const base = 'https://voxshift.test/api/agent/v1/service-requests';
+    expect(calls.map((c) => `${c.method} ${c.url.replace(base, '').replace(T, 'T').replace(R, 'R')}`)).toEqual([
+      'GET ?status=open&assigned=unassigned&automatable=true',
+      'GET /T/R',
+      'POST /T/R/apply',
+      'POST /T/R/what-if',
+      'POST /T/R/status',
+      'POST /T/R/proposals',
+      'POST /T/R/deploy',
+      'POST /T/R/handoff',
+      'DELETE /T/R/claim',
+    ]);
+    expect(calls[3]!.headers['Idempotency-Key']).toBe('w1');
+    expect(calls[6]!.body).toEqual({ proposalId: '55555555-5555-4555-8555-555555555555' });
+    const deploy = (await client.listTools()).tools.find((t) => t.name === 'deploy_request')!;
+    expect(deploy.description).toContain('ONLY as a person approved it');
+    expect(deploy.annotations?.destructiveHint).toBe(true);
+    // A deploy needs a proposal.
+    const bad = (await client.callTool({ name: 'deploy_request', arguments: { tenantId: T, requestId: R } }).catch((e) => ({ isError: true, content: [{ text: String(e) }] }))) as { isError?: boolean };
+    expect(bad.isError).toBe(true);
+    const p = await client.getPrompt({ name: 'work_service_request', arguments: { tenantId: T, requestId: R } });
+    const body = (p.messages[0]!.content as { text: string }).text;
+    expect(body).toContain('automation.eligible');
+    expect(body).toContain('Do not look for ways around that');
   });
 });

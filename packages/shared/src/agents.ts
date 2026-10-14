@@ -469,7 +469,7 @@ export const askAssistantSchema = z.object({ agentId: z.string().uuid(), questio
 export type AskAssistantInput = z.infer<typeof askAssistantSchema>;
 
 /** POST /agents/builtin - add one of the assistants Voxshift ships. */
-export const createBuiltinAgentSchema = z.object({ key: z.enum(['triage', 'diagnose', 'comms']) }).strict();
+export const createBuiltinAgentSchema = z.object({ key: z.enum(['triage', 'diagnose', 'comms', 'changes']) }).strict();
 export type CreateBuiltinAgentInput = z.infer<typeof createBuiltinAgentSchema>;
 
 export const agentKillSwitchSchema = z.object({ allDisabled: z.boolean(), note: z.string().trim().max(500).optional() }).strict();

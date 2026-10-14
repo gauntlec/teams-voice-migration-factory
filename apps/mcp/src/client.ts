@@ -118,4 +118,53 @@ export class AgentApiClient {
   handoff(t: string, i: string, body: Json, key?: string) {
     return this.write('POST', `${this.at(t, i)}/handoff`, body, key);
   }
+
+  /* ------------------------------ service requests ------------------------------ */
+
+  private sr = (tenantId: string, requestId: string) => `/service-requests/${tenantId}/${requestId}`;
+
+  listRequests(q: { status?: string; assigned?: string; tenantId?: string; type?: string; automatable?: boolean; limit?: number }) {
+    const p = new URLSearchParams();
+    for (const [k, v] of Object.entries(q)) if (v !== undefined) p.set(k, String(v));
+    return this.request('GET', `/service-requests${p.size ? `?${p}` : ''}`);
+  }
+  getRequest(t: string, r: string) {
+    return this.request('GET', this.sr(t, r));
+  }
+  claimRequest(t: string, r: string, body: Json, key?: string) {
+    return this.write('POST', `${this.sr(t, r)}/claim`, body, key);
+  }
+  heartbeatRequest(t: string, r: string, body: Json) {
+    return this.request('POST', `${this.sr(t, r)}/claim/heartbeat`, body);
+  }
+  releaseRequest(t: string, r: string) {
+    return this.request('DELETE', `${this.sr(t, r)}/claim`);
+  }
+  requestNote(t: string, r: string, body: Json, key?: string) {
+    return this.write('POST', `${this.sr(t, r)}/notes`, body, key);
+  }
+  requestStatus(t: string, r: string, body: Json, key?: string) {
+    return this.write('POST', `${this.sr(t, r)}/status`, body, key);
+  }
+  applyRequest(t: string, r: string, body: Json, key?: string) {
+    return this.write('POST', `${this.sr(t, r)}/apply`, body, key);
+  }
+  requestWhatIf(t: string, r: string, body: Json, key?: string) {
+    return this.write('POST', `${this.sr(t, r)}/what-if`, body, key);
+  }
+  deployRequest(t: string, r: string, body: Json, key?: string) {
+    return this.write('POST', `${this.sr(t, r)}/deploy`, body, key);
+  }
+  proposeOnRequest(t: string, r: string, body: Json, key?: string) {
+    return this.write('POST', `${this.sr(t, r)}/proposals`, body, key);
+  }
+  requestProposals(t: string, r: string) {
+    return this.request('GET', `${this.sr(t, r)}/proposals`);
+  }
+  requestProposalResult(t: string, r: string, proposalId: string, body: Json) {
+    return this.request('POST', `${this.sr(t, r)}/proposals/${proposalId}/result`, body);
+  }
+  handoffRequest(t: string, r: string, body: Json, key?: string) {
+    return this.write('POST', `${this.sr(t, r)}/handoff`, body, key);
+  }
 }

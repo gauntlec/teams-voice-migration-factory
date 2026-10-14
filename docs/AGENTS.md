@@ -49,6 +49,7 @@ Each customer sets a level for each **action class**. A new policy is suggest-on
 | `internal_note` | 3 | 1 |
 | `customer_update` (anything the customer sees) | **2** | 1 |
 | `diagnostic_read` | 3 | 1 |
+| `change_design` (apply a service request to the design) | 3 | 0 |
 | `change_whatif` | 3 | 0 |
 | `change_deploy` | **2** | 0 |
 | `resolve` (restore, resolve, close) | 3 | 1 |
@@ -129,7 +130,8 @@ Proposal states: `proposed`, `approved`, `rejected`, `running`, `done`, `failed`
 Every event has `id` (increasing), `tenant_id`, `incident_id`, `kind`, `created_at` plus context in the payload.
 Kinds: `incident.created`, `incident.updated`, `incident.message`, `incident.assigned`, `incident.major_declared`,
 `claim.revoked`, `claim.expired`, `proposal.decided`, `proposal.expired`, `sla.at_risk`, `sla.breached`,
-`incident.assist_requested` (a person asked this assistant to look at an incident: payload `question`, `askedBy`).
+`sr.created`, `sr.updated`, `sr.assigned`, `sr.message`, `sr.proposal.decided`, `sr.claim.revoked`, `sr.claim.expired` (service requests;
+the event has `request_id`), and `incident.assist_requested` (a person asked this assistant to look at an incident: payload `question`, `askedBy`).
 
 Only customers the agent is enabled for are included. Events are kept 14 days; an agent that has been away longer
 reads the queue again.
@@ -152,8 +154,14 @@ if (!timingSafeEqual(Buffer.from(expected), Buffer.from(signatureHeader))) rejec
 `/api/agents` (create, tokens, policies, webhooks, kill switch). Permission `agent:manage` (Super Admin) for the
 admin routes; engineers decide proposals and take over.
 
-## 10. Not yet built
+## 10. Service requests
+
+Assistants can also carry change and removal service requests through, with one human approval for the deployment: see
+[SERVICE-REQUEST-AGENTS.md](SERVICE-REQUEST-AGENTS.md). Same token, claims, proposals, events and limits, under
+`/api/agent/v1/service-requests`.
+
+## 11. Not yet built
 
 Agents creating incidents and monitoring intake with de-duplication keys (chunk 8) and agents completing
-service requests (chunk 7). The diagnostic runbooks ([DIAGNOSTICS.md](DIAGNOSTICS.md)) and the assistants Voxshift
+The diagnostic runbooks ([DIAGNOSTICS.md](DIAGNOSTICS.md)) and the assistants Voxshift
 ships ([BUILTIN-AGENTS.md](BUILTIN-AGENTS.md)) exist, and the same API is available as MCP tools ([MCP.md](MCP.md)).

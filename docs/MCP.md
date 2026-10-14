@@ -41,6 +41,11 @@ version control. A token that is revoked, expired or paused stops working at onc
 | `list_runbooks` / `run_diagnostic` / `list_diagnostics` | the read-only checks ([DIAGNOSTICS.md](DIAGNOSTICS.md)) | `note`, a held lease; diagnostics at "act alone", or an approved proposal |
 | `propose_action` / `list_proposals` / `report_proposal_result` | put a step in front of a person; after approval of an `external` step, report on it | `propose` |
 | `hand_off` | release the lease and give the team what you tried, found, recommend and how sure you are | `note` |
+| `list_service_requests` / `get_service_request` | service requests across its customers, with `automatable` and, on one request, the design, `automation`, the current What-If and its fingerprint | `read` |
+| `claim_request` / `renew_request_claim` / `release_request` / `add_request_note` / `hand_off_request` | the same lease, note and hand-over for requests | `note` |
+| `move_request` / `apply_request` / `what_if_request` | plan it, apply it to the design, sign it off, run the What-If | `act` + "act alone" for the step, or an approved proposal |
+| `propose_request_action` / `list_request_proposals` / `report_request_proposal_result` | `comment`, `status`, or an `external` step (change_design / change_whatif / change_deploy) | `propose` |
+| `deploy_request` | deploy a change **only as a person approved it** onto their own tenant session; refused if anything changed; the request is Deployed only after a clean live re-check | `act` + "act with approval" |
 | `get_events` | what happened since the last event you saw (includes `incident.assist_requested`, a person asking you to look at an incident) | `read` |
 
 Every write sends an `Idempotency-Key` (the one you pass as `idempotencyKey`, or a fresh one), and the
@@ -48,7 +53,7 @@ Every write sends an `Idempotency-Key` (the one you pass as `idempotencyKey`, or
 tool result says why and what to do: `propose_instead` (use `propose_action`), `taken_over` (a person has
 it: stop), `stale` (read it again).
 
-There is one prompt, `work_incident` (arguments: `tenantId`, `incidentId`): a safe order of work for one
+There are two prompts: `work_service_request` (`tenantId`, `requestId`: prepare a change, then propose the deployment for approval) and `work_incident` (arguments: `tenantId`, `incidentId`): a safe order of work for one
 incident (read, claim, check, note, propose, hand off; never tell the customer anything directly).
 
 ## Asking an assistant from the incident page
@@ -61,5 +66,5 @@ on the timeline. The assistant answers with an internal note or a proposal.
 
 ## Not included
 
-Live tenant actions (nothing here touches the customer's Teams tenant), service-request tools (chunk 7), and an
+Direct access to the customer's Teams tenant (the only way anything reaches it is `deploy_request`, as approved), and an
 HTTP transport (stdio only for now; a remote MCP endpoint would sit behind the same token).

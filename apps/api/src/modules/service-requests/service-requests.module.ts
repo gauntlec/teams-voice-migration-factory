@@ -9,6 +9,7 @@ import { FilesModule } from '../files/files.module';
 import { IncidentsModule } from '../incidents/incidents.module';
 import { ServiceRequestsController } from './service-requests.controller';
 import { ServiceRequestsService } from './service-requests.service';
+import { SrBuiltinChangesService } from './sr-builtin-changes.service';
 import { SrAgentApiController } from './sr-agent-api.controller';
 import { SrAgentApiService } from './sr-agent-api.service';
 import { SrAgentView } from './sr-agent-view.service';
@@ -25,6 +26,6 @@ import { SrProposalsService } from './sr-proposals.service';
   imports: [MailModule, BuildModule, DataCollectionModule, DeploymentModule, FilesModule, IncidentsModule],
   // SrAgentsController first: its fixed paths (agents, :id/takeover ...) must win over ServiceRequestsController's :id.
   controllers: [SrAgentsController, ServiceRequestsController, MspServiceRequestsController, SrAgentApiController],
-  providers: [ServiceRequestsService, MspServiceRequestsService, SrClaimsService, SrAgentView, SrProposalsService, SrAgentsService, SrAgentApiService],
+  providers: [ServiceRequestsService, MspServiceRequestsService, SrClaimsService, SrAgentView, SrProposalsService, SrAgentsService, SrAgentApiService, SrBuiltinChangesService],
 })
 export class ServiceRequestsModule {}

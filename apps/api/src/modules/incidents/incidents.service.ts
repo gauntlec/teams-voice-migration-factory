@@ -114,6 +114,8 @@ export class IncidentsService {
       .innerJoin('agent_customer_policy as cp', (j) => j.onRef('cp.agent_id', '=', 'a.id').on('cp.tenant_id', '=', t.id).on('cp.enabled', '=', true))
       .select(['a.id as id', 'a.name as name', 'a.kind as kind', 'a.builtin_key as builtin_key'])
       .where('a.status', '=', 'active')
+      // Voxshift Changes works service requests, not incidents.
+      .where((eb) => eb.or([eb('a.builtin_key', 'is', null), eb('a.builtin_key', '!=', 'changes')]))
       .orderBy('a.name')
       .execute();
   }

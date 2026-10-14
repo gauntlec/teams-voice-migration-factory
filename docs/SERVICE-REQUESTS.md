@@ -190,6 +190,17 @@ or attendant routes to.
   one). What-If is never restricted.
 - A read-only tenant is shown up front and Deploy is disabled.
 
+## Assistants
+
+Change and removal requests that map completely onto Design & Build can be carried through by an AI assistant: it plans the
+request, applies it to the design, signs it off, runs the What-If and **proposes the deployment**; a person approves the exact
+commands onto their own tenant session; the request is only marked Deployed once the live tenant has been re-read and matches the
+design. Engineers see an **Assistant** card on the request (who holds it, take over, proposals) and can assign a request to an
+assistant. Customers see "Voxshift assistant". Nothing happens until a Super Admin allows an assistant on the customer
+(Administration -> Assistants) and gives it autonomy for these steps. See [SERVICE-REQUEST-AGENTS.md](SERVICE-REQUEST-AGENTS.md).
+A request can also be **linked to an incident** (`POST :id/incident`): the request page lists its incidents and the incident
+lists the request among its items.
+
 ## Targets (SLAs)
 
 Per customer, per priority, in **calendar hours** (`service-request-sla.ts`):
@@ -315,6 +326,8 @@ members of that customer** and **Super Admins**.
 | The team replies, asks, or the question is still unanswered | `service_request_message` (`comment` / `question` / `reminder`) | The person who raised it |
 | The customer comments, replies, reopens or cancels; it's approved or rejected | `service_request_activity` | The assignee, or the whole team when nobody is assigned |
 | An internal note; it's assigned to you | `service_request_activity` (`internal_note` / `assigned`) | The assignee |
+| An assistant proposes a step / stops working it / hands it over | `service_request_activity` (`agent_proposal` / `agent_lapsed` / `agent_handoff`) | The assignee, or the whole team |
+| An assistant's deployment did not finish cleanly, or its live re-check found differences | `service_request_activity` (`agent_deploy_check`) | The assignee, or the whole team |
 | A target is at risk or missed | `service_request_activity` (`sla_warning` / `sla_breached`) | The assignee, or the whole team |
 
 All use the customer's branding and link to the request (`/service-requests/:id`).
