@@ -2,6 +2,8 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UploadedFile,
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
   createMspSchema,
+  mspTeamsSchema,
+  type MspTeamsInput,
   searchQuerySchema,
   updateMspBrandingSchema,
   updateMspSchema,
@@ -47,6 +49,24 @@ export class MspsController {
     @CurrentUser() user: AuthedUser,
   ) {
     return this.msps.update(mspId, body, this.actor(user));
+  }
+
+  @Get(':mspId/teams')
+  @RequirePermission('msp:update')
+  teams(@Param('mspId') mspId: string) {
+    return this.msps.teams(mspId);
+  }
+
+  @Patch(':mspId/teams')
+  @RequirePermission('msp:update')
+  setTeams(@Param('mspId') mspId: string, @Body(new ZodBody(mspTeamsSchema)) body: MspTeamsInput, @CurrentUser() user: AuthedUser) {
+    return this.msps.setTeams(mspId, body, this.actor(user));
+  }
+
+  @Post(':mspId/teams/test')
+  @RequirePermission('msp:update')
+  testTeams(@Param('mspId') mspId: string, @CurrentUser() user: AuthedUser) {
+    return this.msps.testTeams(mspId, this.actor(user));
   }
 
   @Patch(':mspId/branding')

@@ -1,7 +1,8 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { platformDb } from '@tvmf/db';
-import type { Branding, CreateMspInput, UpdateMspBrandingInput, UpdateMspInput } from '@tvmf/shared';
+import { MSP_NOTIFY_DEFAULTS, isTeamsWebhookUrl, type Branding, type CreateMspInput, type MspNotifyConfig, type MspTeamsInput, type UpdateMspBrandingInput, type UpdateMspInput } from '@tvmf/shared';
+import { encryptSecret } from '../common/crypto';
 import { AuditService, type AuditActor } from '../common/audit.service';
 import { LOGO_CONTENT_TYPES, readImageDimensions } from '../common/logo-image.util';
 import { FILE_STORAGE_BACKEND, type FileStorageBackend } from '../modules/files/file-storage.interface';
@@ -175,5 +176,39 @@ export class MspsService {
       .executeTakeFirst();
     if (!m) throw new NotFoundException('MSP not found');
     return m;
+  }
+
+  /** Whether a Teams channel is connected, and what it is told about. The address itself is never returned. */
+  async teams(mspId: string) {
+    await this.getMspOrThrow(mspId);
+    const m = await platformDb(this.db).selectFrom('msps').select(['teams_webhook_enc', 'teams_notify']).where('id', '=', mspId).executeTakeFirstOrThrow();
+    return { configured: !!m.teams_webhook_enc, notify: { ...MSP_NOTIFY_DEFAULTS, ...((m.teams_notify ?? {}) as Partial<MspNotifyConfig>) } };
+  }
+
+  /** Connects (or disconnects) the MSP's Teams channel, and says what to tell it about. The address must be a genuine Teams webhook. */
+  async setTeams(mspId: string, input: MspTeamsInput, actor: AuditActor) {
+    await this.getMspOrThrow(mspId);
+    const set: Record<string, unknown> = {};
+    if (input.webhookUrl === null) set.teams_webhook_enc = null;
+    else if (input.webhookUrl !== undefined) {
+      if (!isTeamsWebhookUrl(input.webhookUrl)) throw new BadRequestException('That is not a Microsoft Teams webhook address. Copy it from the Workflows "When a Teams webhook request is received" trigger.');
+      set.teams_webhook_enc = encryptSecret(input.webhookUrl);
+    }
+    if (input.notify !== undefined) set.teams_notify = JSON.stringify(input.notify);
+    if (Object.keys(set).length) await platformDb(this.db).updateTable('msps').set(set).where('id', '=', mspId).execute();
+    await this.audit.platform('msp.teams_updated', { actor, targetType: 'msp', targetId: mspId, detail: { webhook: input.webhookUrl === undefined ? 'kept' : input.webhookUrl === null ? 'removed' : 'set', notify: input.notify } });
+    return this.teams(mspId);
+  }
+
+  /** Queues a test message to the channel, so the person setting it up can see it arrive. */
+  async testTeams(mspId: string, actor: AuditActor) {
+    const t = await this.teams(mspId);
+    if (!t.configured) throw new BadRequestException('Connect a Teams channel first.');
+    await platformDb(this.db)
+      .insertInto('msp_notifications')
+      .values({ msp_id: mspId, kind: 'test', card: JSON.stringify({ title: 'Voxshift is connected to this channel', body: 'You will be told here about P1 and P2 incidents, major incidents and missed targets, as you have chosen.', tone: 'good' }) })
+      .execute();
+    await this.audit.platform('msp.teams_tested', { actor, targetType: 'msp', targetId: mspId, detail: {} });
+    return { queued: true };
   }
 }

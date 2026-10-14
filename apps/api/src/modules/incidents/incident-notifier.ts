@@ -30,6 +30,7 @@ import { InjectDb, type Db } from '../../db/db.module';
 import { MailService } from '../../mail/mail.service';
 import { customerFacingName } from './agent-actor';
 import { InboundReplyService } from './inbound-reply.service';
+import { MspNotifier } from './msp-notifier';
 import { signIncidentLink } from './incident-links';
 
 /** Mail rows record who caused them; an agent is not a user, so it is recorded as nobody. */
@@ -68,6 +69,7 @@ export class IncidentNotifier {
     private readonly mail: MailService,
     @Inject(APP_CONFIG) private readonly cfg: AppConfig,
     @Optional() private readonly replies?: InboundReplyService,
+    @Optional() private readonly msp?: MspNotifier,
   ) {}
 
   private url(id: string) {
@@ -157,6 +159,15 @@ export class IncidentNotifier {
     }
     const teamCtx: IncidentCreatedContext = { ...common, audience: 'team', priorityLabel: INC_PRIORITY_LABELS[row.priority], respondText: null };
     await this.send(t, 'incident_created', (await this.staff(t)).filter((m) => m.id !== actor.id), teamCtx, row.id, createdBy(actor));
+    // P1 and P2 also go to the MSP's Teams channel, if one is connected.
+    if (row.priority === 'p1' || row.priority === 'p2') {
+      await this.msp?.enqueue(t.id, 'incident', {
+        title: `${INC_PRIORITY_LABELS[row.priority]} incident: ${incReference(row.number)} ${row.title}`,
+        facts: [{ title: 'Customer', value: t.name }, ...(opts.siteLabel ? [{ title: 'Site', value: opts.siteLabel }] : []), { title: 'Kind', value: incCategoryLabel(row.category, row.subcategory) }, { title: 'Raised by', value: actor.displayName }],
+        link: { label: `Open ${incReference(row.number)}`, url: this.url(row.id) },
+        tone: row.priority === 'p1' ? 'attention' : 'warning',
+      });
+    }
   }
 
   /** A status move: the customer side hears about the ones that matter to them, the team hears when the customer acts. */
@@ -289,6 +300,13 @@ export class IncidentNotifier {
     const ctx = (audience: 'customer' | 'team') => this.majorContext(t, row, { kind: 'declared', audience, siteLabel: c.siteLabel, lead: c.lead, body: c.summary, nextUpdateAt: c.nextUpdateAt });
     await this.send(t, 'incident_major', await this.majorAudience(t, row), ctx('customer'), row.id, createdBy(actor));
     await this.send(t, 'incident_major', (await this.staff(t)).filter((m) => m.id !== actor.id), ctx('team'), row.id, createdBy(actor));
+    await this.msp?.enqueue(t.id, 'major', {
+      title: `Major incident declared: ${incReference(row.number)} ${row.title}`,
+      body: c.summary.slice(0, 600),
+      facts: [{ title: 'Customer', value: t.name }, ...(c.siteLabel ? [{ title: 'Site', value: c.siteLabel }] : []), { title: 'Lead', value: c.lead }, { title: 'Next update', value: c.nextUpdateAt.toISOString().slice(11, 16) + ' UTC' }],
+      link: { label: `Open ${incReference(row.number)}`, url: this.url(row.id) },
+      tone: 'attention',
+    });
   }
 
   async majorUpdated(t: TenantContext, actor: AuthedUser, row: NotifiableIncident, c: { siteLabel: string | null; lead: string; body: string; nextUpdateAt: Date }) {
@@ -297,6 +315,13 @@ export class IncidentNotifier {
 
   async majorResolved(t: TenantContext, actor: AuthedUser, row: NotifiableIncident, c: { siteLabel: string | null; lead: string; body: string }) {
     await this.send(t, 'incident_major', await this.majorAudience(t, row), this.majorContext(t, row, { kind: 'resolved', audience: 'customer', nextUpdateAt: null, ...c }), row.id, createdBy(actor));
+    await this.msp?.enqueue(t.id, 'major', {
+      title: `Major incident over: ${incReference(row.number)} ${row.title}`,
+      body: c.body.slice(0, 600),
+      facts: [{ title: 'Customer', value: t.name }, ...(c.siteLabel ? [{ title: 'Site', value: c.siteLabel }] : []), { title: 'Lead', value: c.lead }],
+      link: { label: `Open ${incReference(row.number)}`, url: this.url(row.id) },
+      tone: 'good',
+    });
   }
 
   /** You were made the lead or comms owner of a major incident. */

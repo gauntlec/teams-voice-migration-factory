@@ -15,6 +15,7 @@ import {
   type IncidentMessageContext,
   type IncidentStatusChangedContext,
 } from '@tvmf/shared';
+import { queueMspNotification } from './msp-notify';
 import { emitAgentEvent } from './agents';
 import type { MailEnqueuer } from './mail/enqueue';
 
@@ -196,6 +197,18 @@ async function sweepTargets(c: Ctx): Promise<number> {
     const to = r.assigned_to ? team.filter((m) => m.id === r.assigned_to) : team;
     // Agents hear about it too.
     for (const d of due) await emitAgentEvent(c.db, c.tenant.id, { id: r.id, number: r.number, priority: r.priority, status: r.status, version: r.version, category: r.category }, d.kind === 'sla_warning' ? 'sla.at_risk' : 'sla.breached', { detail: d.body }, null);
+    // A missed target also goes to the MSP's Teams channel.
+    for (const d of due) {
+      if (d.kind === 'sla_breached') {
+        await queueMspNotification(c.db, c.tenant.id, 'sla', {
+          title: `Target missed: ${incReference(r.number)} ${r.title}`,
+          body: d.body,
+          facts: [{ title: 'Customer', value: c.tenant.name }, { title: 'Priority', value: INC_PRIORITY_LABELS[r.priority] }],
+          link: { label: `Open ${incReference(r.number)}`, url: link(c, r.id) },
+          tone: 'attention',
+        }).catch(() => undefined);
+      }
+    }
     for (const d of due) {
       const context: IncidentActivityContext = {
         customerName: c.tenant.name,

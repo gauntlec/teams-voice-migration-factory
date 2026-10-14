@@ -46,6 +46,7 @@ import { mailerConfigured, sendMail } from './mail/mailer';
 import { makeMailEnqueuer } from './mail/enqueue';
 import { planDelivery } from './mail/sandbox';
 import { deliverWebhooks, sweepAgents } from './agents';
+import { deliverMspNotifications } from './msp-notify';
 import { sweepIncidents } from './incidents';
 import { finishAgentDeployment, recordServiceRequestRun, sweepServiceRequests } from './service-requests';
 
@@ -287,6 +288,7 @@ setInterval(() => void sweepIncidents(db, enqueueMail).catch((e) => console.warn
 void sweepIncidents(db, enqueueMail).catch((e) => console.warn('incident sweep failed', e));
 // AI agents: expire proposals, put incidents back in the queue when a lease lapses, clear old events, and push events to webhooks.
 setInterval(() => void sweepAgents(db, enqueueMail).catch((e) => console.warn('agent sweep failed', e)), 60_000).unref();
+setInterval(() => void deliverMspNotifications(db).catch((e) => console.warn('MSP Teams delivery failed', e)), 15_000).unref();
 setInterval(() => void deliverWebhooks(db).catch((e) => console.warn('agent webhook delivery failed', e)), 15_000).unref();
 
 async function handleConnectionStart(job: Job) {

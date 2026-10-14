@@ -68,6 +68,9 @@ export interface MspsTable {
   branding: Json<import('@tvmf/shared').Branding> | null;
   created_by: string | null;
   created_at: Ts;
+  /** 0023_msp_teams_notify.sql - the Teams Workflows webhook (encrypted) and what to tell the channel about. */
+  teams_webhook_enc: ColumnType<string | null, string | null | undefined, string | null>;
+  teams_notify: ColumnType<import('@tvmf/shared').MspNotifyConfig, string | undefined, string>;
 }
 
 export interface EmailMessagesTable {
@@ -1269,6 +1272,20 @@ export interface InboundEmailLogTable {
   created_at: Ts;
 }
 
+export interface MspNotificationsTable {
+  id: Generated<string>;
+  msp_id: string;
+  tenant_id: ColumnType<string | null, string | null | undefined, string | null>;
+  kind: 'incident' | 'major' | 'sla' | 'test';
+  card: ColumnType<import('@tvmf/shared').MspNotifyCard, string, string>;
+  status: ColumnType<'queued' | 'sent' | 'failed', 'queued' | 'sent' | 'failed' | undefined, 'queued' | 'sent' | 'failed'>;
+  attempts: ColumnType<number, number | undefined, number>;
+  next_attempt_at: ColumnType<string, string | undefined, string>;
+  error: ColumnType<string | null, string | null | undefined, string | null>;
+  created_at: Ts;
+  sent_at: ColumnType<string | null, string | null | undefined, string | null>;
+}
+
 export interface IntakeSourcesTable {
   id: Generated<string>;
   tenant_id: string;
@@ -1391,6 +1408,7 @@ export interface DB {
   maintenance_notice: MaintenanceNoticeTable;
   agents: AgentsTable;
   intake_sources: IntakeSourcesTable;
+  msp_notifications: MspNotificationsTable;
   inbound_reply_tokens: InboundReplyTokensTable;
   inbound_email_log: InboundEmailLogTable;
   agent_tokens: AgentTokensTable;

@@ -19,6 +19,7 @@ import { IncidentIntakeService } from '../../../../apps/api/src/modules/incident
 import { IntakeAdminService } from '../../../../apps/api/src/modules/incidents/intake-admin.service';
 import { IntakeAuthGuard } from '../../../../apps/api/src/modules/incidents/intake-auth.guard';
 import { IncidentKnowledgeService } from '../../../../apps/api/src/modules/incidents/incident-knowledge.service';
+import { MspNotifier } from '../../../../apps/api/src/modules/incidents/msp-notifier';
 import { IncidentMajorService } from '../../../../apps/api/src/modules/incidents/incident-major.service';
 import { IncidentNotifier } from '../../../../apps/api/src/modules/incidents/incident-notifier';
 import { IncidentReportService } from '../../../../apps/api/src/modules/incidents/incident-report.service';
@@ -38,7 +39,7 @@ export function incidentServices(handle: DbHandle, mail: Pick<MailService, 'enqu
   const cfg = { WEB_ORIGIN: 'https://app.test/', JWT_REFRESH_SECRET: TEST_SECRET, INBOUND_EMAIL_ADDRESS: opts.inbound === false ? '' : 'incidents@mail.test', INBOUND_EMAIL_SECRET: opts.inbound === false ? '' : 'inbound-secret-for-tests' } as AppConfig;
   const audit = new AuditService(handle.db);
   const replies = new InboundReplyService(handle.db, cfg);
-  const notifier = new IncidentNotifier(handle.db, mail as MailService, cfg, replies);
+  const notifier = new IncidentNotifier(handle.db, mail as MailService, cfg, replies, new MspNotifier(handle.db));
   const events = new AgentEventsService(handle.db);
   const claims = new IncidentClaimsService(handle.db, events, notifier);
   const agentView = new IncidentAgentView(handle.db, claims);

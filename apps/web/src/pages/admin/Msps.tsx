@@ -10,6 +10,7 @@ import {
   DialogSurface,
   DialogTitle,
   DialogTrigger,
+  Checkbox,
   Field,
   Input,
   SearchBox,
@@ -61,6 +62,7 @@ export function AdminMsps() {
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [brandingFor, setBrandingFor] = useState<Msp | null>(null);
+  const [teamsFor, setTeamsFor] = useState<Msp | null>(null);
   const [editFor, setEditFor] = useState<Msp | null>(null);
 
   const [searchInput, setSearchInput] = useState('');
@@ -155,6 +157,7 @@ export function AdminMsps() {
                 <TableHeaderCell>Slug</TableHeaderCell>
                 <TableHeaderCell>Domains</TableHeaderCell>
                 <TableHeaderCell>Branding</TableHeaderCell>
+                <TableHeaderCell>Teams channel</TableHeaderCell>
                 <TableHeaderCell />
               </TableRow>
             </TableHeader>
@@ -196,6 +199,13 @@ export function AdminMsps() {
                     </div>
                   </TableCell>
                   <TableCell>
+                    {can('msp:update') && (
+                      <Button size="small" appearance="subtle" onClick={() => setTeamsFor(m)}>
+                        Teams channel
+                      </Button>
+                    )}
+                  </TableCell>
+                  <TableCell>
                     {can('msp:delete') && <DeleteMspButton msp={m} onDeleted={() => qc.invalidateQueries({ queryKey: ['msps'] })} />}
                   </TableCell>
                 </TableRow>
@@ -215,6 +225,8 @@ export function AdminMsps() {
           }}
         />
       )}
+
+      {teamsFor && <TeamsDialog msp={teamsFor} onClose={() => setTeamsFor(null)} />}
 
       {editFor && (
         <EditMspDialog
@@ -421,6 +433,63 @@ function BrandingDialog({ msp, onClose, onSaved }: { msp: Msp; onClose: () => vo
                 Cancel
               </Button>
             </DialogTrigger>
+            <Button appearance="primary" disabled={save.isPending} onClick={() => save.mutate()}>
+              Save
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  );
+}
+
+/** Connects the MSP's Teams channel (a Workflows webhook address, never shown again) and chooses what it is told. */
+function TeamsDialog({ msp, onClose }: { msp: Msp; onClose: () => void }) {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['msp-teams', msp.id], queryFn: () => api<{ configured: boolean; notify: { incidents: boolean; major: boolean; sla: boolean } }>(`/msps/${msp.id}/teams`) });
+  const [url, setUrl] = useState('');
+  const [notify, setNotify] = useState<{ incidents: boolean; major: boolean; sla: boolean } | null>(null);
+  const n = notify ?? q.data?.notify ?? { incidents: true, major: true, sla: true };
+  const done = () => qc.invalidateQueries({ queryKey: ['msp-teams', msp.id] });
+  const save = useMutation({
+    mutationFn: () => api(`/msps/${msp.id}/teams`, { method: 'PATCH', body: JSON.stringify({ ...(url.trim() ? { webhookUrl: url.trim() } : {}), notify: n }) }),
+    onSuccess: () => (setUrl(''), setNotify(null), done()),
+  });
+  const remove = useMutation({ mutationFn: () => api(`/msps/${msp.id}/teams`, { method: 'PATCH', body: JSON.stringify({ webhookUrl: null }) }), onSuccess: done });
+  const test = useMutation({ mutationFn: () => api(`/msps/${msp.id}/teams/test`, { method: 'POST' }) });
+  const error = save.error ?? remove.error ?? test.error;
+  return (
+    <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
+      <DialogSurface style={{ maxWidth: '640px', width: '94vw' }}>
+        <DialogBody>
+          <DialogTitle>Teams channel — {msp.name}</DialogTitle>
+          <DialogContent style={{ display: 'flex', flexDirection: 'column', rowGap: 12 }}>
+            <Text size={200}>
+              Tell a Teams channel about P1 and P2 incidents, major incidents and missed targets. In Teams, add a Workflow to the channel with the trigger &ldquo;When a Teams webhook request is received&rdquo; and
+              paste its address here. The address is stored encrypted and is not shown again.
+            </Text>
+            <Text weight="semibold">{q.data?.configured ? 'A channel is connected.' : 'No channel connected.'}</Text>
+            <Field label={q.data?.configured ? 'Replace the address (leave empty to keep it)' : 'Workflow address'}>
+              <Input value={url} onChange={(_, d) => setUrl(d.value)} placeholder="https://…logic.azure.com/…" type="password" />
+            </Field>
+            {(['incidents', 'major', 'sla'] as const).map((k) => (
+              <Checkbox key={k} checked={n[k]} onChange={(_, d) => setNotify({ ...n, [k]: !!d.checked })} label={k === 'incidents' ? 'A P1 or P2 incident is raised' : k === 'major' ? 'A major incident is declared or ends' : 'A response or resolution target is missed'} />
+            ))}
+            {error && <Text style={{ color: '#B10E1C' }}>{error instanceof Error ? error.message : 'That did not work.'}</Text>}
+            {test.isSuccess && <Text>A test message is on its way: look in the channel in a few seconds.</Text>}
+          </DialogContent>
+          <DialogActions>
+            {q.data?.configured && (
+              <>
+                <Button disabled={test.isPending} onClick={() => test.mutate()}>
+                  Send a test
+                </Button>
+                <Button disabled={remove.isPending} onClick={() => window.confirm('Disconnect the channel?') && remove.mutate()}>
+                  Disconnect
+                </Button>
+              </>
+            )}
+            <Button onClick={onClose}>Close</Button>
             <Button appearance="primary" disabled={save.isPending} onClick={() => save.mutate()}>
               Save
             </Button>
