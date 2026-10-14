@@ -109,16 +109,20 @@ interface NavDef {
   requiresManagedServices?: boolean;
 }
 
-const MAIN: NavDef[] = [
+const MIGRATION: NavDef[] = [
   { to: '/', label: 'Dashboard', icon: <Home24Regular /> },
-  { to: '/incidents', label: 'Incidents', icon: <AlertUrgent24Regular />, permission: 'inc:read', requiresManagedServices: true },
-  { to: '/service-requests', label: 'Service Requests', icon: <TicketDiagonal24Regular />, permission: 'sr:read', requiresManagedServices: true },
   { to: '/data-collection', label: 'Data Collection', icon: <ClipboardTaskListLtr24Regular />, permission: 'discovery:read' },
   { to: '/discovery', label: 'Discovery', icon: <Search24Regular />, permission: 'tenantdiscovery:read' },
   { to: '/build', label: 'Design & Build', icon: <Board24Regular />, permission: 'build:read' },
   { to: '/deployment', label: 'Deployment', icon: <CloudArrowUp24Regular />, permission: 'deployment:read' },
   { to: '/handover', label: 'Service Handover', icon: <DocumentBulletListMultiple24Regular />, permission: 'handover:read' },
   { to: '/files', label: 'Files', icon: <DocumentFolder24Regular />, permission: 'files:read' },
+];
+
+/** The managed service for the active customer. The whole section is hidden unless that customer has Managed Services switched on. */
+const OPERATIONS: NavDef[] = [
+  { to: '/incidents', label: 'Incidents', icon: <AlertUrgent24Regular />, permission: 'inc:read', requiresManagedServices: true },
+  { to: '/service-requests', label: 'Service Requests', icon: <TicketDiagonal24Regular />, permission: 'sr:read', requiresManagedServices: true },
 ];
 
 /** Cross-customer views for an MSP's own staff (and Super Admins). */
@@ -205,9 +209,12 @@ export function AppShell({ children }: { children: ReactNode }) {
         : null;
 
   const managedServices = tenants.find((t) => t.id === activeTenantId)?.managedServices ?? false;
+  const navVisible = (i: NavDef) => (!i.permission || can(i.permission)) && (!i.requiresManagedServices || managedServices);
+  // No Operations heading unless there is something under it (Managed Services on for this customer, and a permission to see it).
+  const operationsVisible = OPERATIONS.some(navVisible);
   const renderNav = (items: NavDef[]) =>
     items
-      .filter((i) => (!i.permission || can(i.permission)) && (!i.requiresManagedServices || managedServices))
+      .filter(navVisible)
       .map((i) => (
         <NavLink
           key={i.to}
@@ -302,7 +309,13 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className={s.body}>
         <nav className={s.nav}>
           <div className={s.navSectionLabel}>Migration</div>
-          {renderNav(MAIN)}
+          {renderNav(MIGRATION)}
+          {operationsVisible && (
+            <>
+              <div className={s.navSectionLabel}>Operations</div>
+              {renderNav(OPERATIONS)}
+            </>
+          )}
           {MSP_ITEMS.some((i) => !i.permission || can(i.permission)) && (
             <>
               <div className={s.navSectionLabel}>MSP</div>
