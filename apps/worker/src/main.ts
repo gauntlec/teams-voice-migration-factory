@@ -47,7 +47,7 @@ import { makeMailEnqueuer } from './mail/enqueue';
 import { planDelivery } from './mail/sandbox';
 import { deliverWebhooks, sweepAgents } from './agents';
 import { sweepIncidents } from './incidents';
-import { recordServiceRequestRun, sweepServiceRequests } from './service-requests';
+import { finishAgentDeployment, recordServiceRequestRun, sweepServiceRequests } from './service-requests';
 
 const QUEUE_NAME = 'deployments';
 const MAIL_QUEUE_NAME = 'mail';
@@ -430,7 +430,7 @@ async function handleDeploymentRun(job: Job) {
     connectionId: string;
     mode: 'dry_run' | 'execute';
     /** serviceRequestId: started from a service request's Deploy tab - see service-requests.ts. */
-    scope: { siteId: string; sheets: string[]; rowIds?: string[]; serviceRequestId?: string };
+    scope: { siteId: string; sheets: string[]; rowIds?: string[]; serviceRequestId?: string; agentId?: string; proposalId?: string };
     operatorUserId: string;
     tenantId: string;
   };
@@ -501,6 +501,7 @@ async function handleDeploymentRun(job: Job) {
         mode,
         counts,
         errorMessage: message,
+        ...(scope.agentId && scope.proposalId ? { agent: { agentId: scope.agentId, proposalId: scope.proposalId } } : {}),
       });
     }
     throw err;
@@ -511,6 +512,7 @@ async function handleDeploymentRun(job: Job) {
   // any Discovery run - and it can never fail the deployment, which is
   // already recorded as finished.
   if (mode === 'execute') {
+    let verification: Awaited<ReturnType<typeof verifyDeployment>> | null = null;
     try {
       const v = await verifyDeployment(scoped, exec!, {
         deploymentId,
@@ -519,6 +521,7 @@ async function handleDeploymentRun(job: Job) {
         operatorUserId,
         delayMs: VERIFY_DELAY_MS,
       });
+      verification = v;
       // eslint-disable-next-line no-console
       console.log(`[deployment ${deploymentId}] verification: ${v.status}`);
     } catch (e) {
@@ -531,6 +534,13 @@ async function handleDeploymentRun(job: Job) {
         .where('id', '=', deploymentId)
         .execute()
         .catch(() => undefined);
+    }
+    // An assistant's deployment is only "done" once the live tenant has been re-read and matches the design.
+    if (scope.serviceRequestId && scope.agentId && scope.proposalId) {
+      await finishAgentDeployment(db, enqueueMail, { tenantId, schema, serviceRequestId: scope.serviceRequestId, deploymentId, agentId: scope.agentId, proposalId: scope.proposalId, operatorUserId, verification }).catch((e) =>
+        // eslint-disable-next-line no-console
+        console.warn(`[deployment ${deploymentId}] could not finish the assistant's deployment: ${(e as Error).message}`),
+      );
     }
   }
 
@@ -859,6 +869,7 @@ async function handleDeploymentRun(job: Job) {
       operatorUserId,
       mode,
       counts,
+      ...(scope.agentId && scope.proposalId ? { agent: { agentId: scope.agentId, proposalId: scope.proposalId } } : {}),
     });
   }
   }

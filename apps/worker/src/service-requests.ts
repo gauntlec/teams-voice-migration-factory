@@ -5,6 +5,7 @@ import {
   SR_TYPE_DEFS,
   SR_WAITING_MAX_REMINDERS,
   SR_WAITING_REMINDER_DAYS,
+  agentLabel,
   srDuration,
   srEffectiveTargets,
   srReference,
@@ -14,7 +15,9 @@ import {
   type SrSettings,
   type ServiceRequestStatusChangedContext,
 } from '@tvmf/shared';
+import type { DeploymentVerification } from '@tvmf/shared';
 import type { MailEnqueuer } from './mail/enqueue';
+import { emailRequestTeam, emitRequestEvent } from './sr-agents';
 
 /**
  * Managed Services: a deployment run started from a service request's Deploy
@@ -42,13 +45,15 @@ export async function recordServiceRequestRun(
     counts: { applied: number; skipped: number; failed: number; whatif: number };
     /** Set when the run itself didn't finish. */
     errorMessage?: string;
+    /** Set when an assistant started the run (as a person approved): its outcome is recorded on the proposal, and the request only moves to Deployed once the live re-check passes. */
+    agent?: { agentId: string; proposalId: string };
   },
 ): Promise<void> {
   try {
     const s = tenantDb(db, args.schema);
     const sr = await s
       .selectFrom('service_requests')
-      .select(['id', 'number', 'type', 'title', 'status', 'requested_by', 'waiting_since', 'waiting_seconds'])
+      .select(['id', 'number', 'type', 'title', 'status', 'priority', 'requested_by', 'waiting_since', 'waiting_seconds', 'incident_id', 'assigned_to'])
       .where('id', '=', args.serviceRequestId)
       .executeTakeFirst();
     if (!sr) return;
@@ -68,69 +73,162 @@ export async function recordServiceRequestRun(
       .values({ request_id: sr.id, kind: 'deployment', body, internal: true, deployment_id: args.deploymentId, author_id: args.operatorUserId })
       .execute();
 
+    if (args.agent && args.mode === 'execute') {
+      await s
+        .updateTable('service_request_actions')
+        .set({ state: clean ? 'done' : 'failed', finished_at: new Date().toISOString(), result: JSON.stringify({ deploymentId: args.deploymentId, ...args.counts }), ...(clean ? {} : { error: body }) })
+        .where('id', '=', args.agent.proposalId)
+        .execute();
+      if (!clean) await agentDeployNeedsCheck(db, enqueueMail, args, sr, body);
+      // A clean run is not "Deployed" yet: the live re-check (finishAgentDeployment) decides that.
+      await s.updateTable('service_requests').set({ updated_at: new Date().toISOString() }).where('id', '=', sr.id).execute();
+      return;
+    }
     if (args.mode !== 'execute' || !clean || sr.status !== 'built') {
       await s.updateTable('service_requests').set({ updated_at: new Date().toISOString() }).where('id', '=', sr.id).execute();
       return;
     }
 
-    const now = new Date().toISOString();
-    const moved = await s
-      .updateTable('service_requests')
-      .set({
-        status: 'deployed',
-        deployed_at: now,
-        updated_at: now,
-        // Deploying ends any wait on the customer.
-        ...(sr.waiting_since
-          ? {
-              waiting_since: null,
-              waiting_seconds: sr.waiting_seconds + Math.max(0, Math.round((Date.now() - new Date(sr.waiting_since).getTime()) / 1000)),
-              waiting_reminded_at: null,
-              waiting_reminders: 0,
-            }
-          : {}),
-      })
-      .where('id', '=', sr.id)
-      .where('status', '=', 'built') // an engineer moving it at the same moment wins
-      .returning('id')
-      .executeTakeFirst();
-    if (!moved) return;
-    const note = 'Deployed to Microsoft Teams.';
-    await s
-      .insertInto('service_request_events')
-      .values({ request_id: sr.id, kind: 'status_changed', from_status: 'built', to_status: 'deployed', body: note, author_id: args.operatorUserId })
-      .execute();
-
-    if (!SR_CUSTOMER_NOTIFY_STATUSES.includes('deployed') || sr.requested_by === args.operatorUserId) return;
-    const [requester, tenant] = await Promise.all([
-      platformDb(db).selectFrom('users').select(['email', 'display_name', 'status']).where('id', '=', sr.requested_by).executeTakeFirst(),
-      platformDb(db).selectFrom('tenants').select('name').where('id', '=', args.tenantId).executeTakeFirst(),
-    ]);
-    if (!requester || requester.status !== 'active') return;
-    const webOrigin = (process.env.WEB_ORIGIN ?? '').replace(/\/+$/, '');
-    const context: ServiceRequestStatusChangedContext = {
-      customerName: tenant?.name ?? 'your organisation',
-      reference: srReference(sr.number),
-      title: sr.title,
-      typeLabel: SR_TYPE_DEFS[sr.type].label,
-      fromStatus: 'built',
-      toStatus: 'deployed',
-      moveKind: 'forward',
-      note,
-      runUrl: `${webOrigin}/service-requests/${sr.id}`,
-    };
-    await enqueueMail({
-      template: 'service_request_status_changed',
-      to: { email: requester.email, name: requester.display_name },
-      context,
-      related: { type: 'service_request', id: sr.id },
-      createdBy: args.operatorUserId,
-      tenantId: args.tenantId,
-    });
+    await markRequestDeployed(db, enqueueMail, sr, { tenantId: args.tenantId, schema: args.schema, operatorUserId: args.operatorUserId, note: 'Deployed to Microsoft Teams.', author: { id: args.operatorUserId, type: 'user' } });
   } catch (e) {
     // eslint-disable-next-line no-console
     console.warn(`[deployment ${args.deploymentId}] service request update failed: ${(e as Error).message}`);
   }
+}
+
+/** Moves a Designed & built request to Deployed and tells the requester (the same email as when an engineer moves it by hand). */
+export async function markRequestDeployed(
+  db: Kysely<DB>,
+  enqueueMail: MailEnqueuer,
+  sr: { id: string; number: number; type: keyof typeof SR_TYPE_DEFS; title: string; requested_by: string; waiting_since: string | null; waiting_seconds: number },
+  args: { tenantId: string; schema: string; operatorUserId: string; note: string; author: { id: string; type: 'user' | 'agent' } },
+): Promise<boolean> {
+  const s = tenantDb(db, args.schema);
+  const now = new Date().toISOString();
+  const moved = await s
+    .updateTable('service_requests')
+    .set({
+      status: 'deployed',
+      deployed_at: now,
+      updated_at: now,
+      assigned_agent_id: null,
+      // Deploying ends any wait on the customer.
+      ...(sr.waiting_since
+        ? {
+            waiting_since: null,
+            waiting_seconds: sr.waiting_seconds + Math.max(0, Math.round((Date.now() - new Date(sr.waiting_since).getTime()) / 1000)),
+            waiting_reminded_at: null,
+            waiting_reminders: 0,
+          }
+        : {}),
+    })
+    .where('id', '=', sr.id)
+    .where('status', '=', 'built') // an engineer moving it at the same moment wins
+    .returning('id')
+    .executeTakeFirst();
+  if (!moved) return false;
+  await s
+    .insertInto('service_request_events')
+    .values({ request_id: sr.id, kind: 'status_changed', from_status: 'built', to_status: 'deployed', body: args.note, author_id: args.author.id, actor_type: args.author.type })
+    .execute();
+  await s.updateTable('service_request_claims').set({ released_at: now, release_reason: 'released' }).where('request_id', '=', sr.id).where('released_at', 'is', null).execute();
+
+  if (!SR_CUSTOMER_NOTIFY_STATUSES.includes('deployed') || sr.requested_by === args.operatorUserId) return true;
+  const [requester, tenant] = await Promise.all([
+    platformDb(db).selectFrom('users').select(['email', 'display_name', 'status']).where('id', '=', sr.requested_by).executeTakeFirst(),
+    platformDb(db).selectFrom('tenants').select('name').where('id', '=', args.tenantId).executeTakeFirst(),
+  ]);
+  if (!requester || requester.status !== 'active') return true;
+  const webOrigin = (process.env.WEB_ORIGIN ?? '').replace(/\/+$/, '');
+  const context: ServiceRequestStatusChangedContext = {
+    customerName: tenant?.name ?? 'your organisation',
+    reference: srReference(sr.number),
+    title: sr.title,
+    typeLabel: SR_TYPE_DEFS[sr.type].label,
+    fromStatus: 'built',
+    toStatus: 'deployed',
+    moveKind: 'forward',
+    note: args.note,
+    runUrl: `${webOrigin}/service-requests/${sr.id}`,
+  };
+  await enqueueMail({
+    template: 'service_request_status_changed',
+    to: { email: requester.email, name: requester.display_name },
+    context,
+    related: { type: 'service_request', id: sr.id },
+    createdBy: args.author.type === 'user' ? args.operatorUserId : null,
+    tenantId: args.tenantId,
+  });
+  await emitRequestEvent(db, args.tenantId, { id: sr.id, number: sr.number, type: sr.type, status: 'deployed', priority: 'normal' }, 'sr.updated', { change: 'status', from: 'built', to: 'deployed', by: args.author.type === 'agent' ? 'agent' : 'person' });
+  return true;
+}
+
+/** A run an assistant started did not finish cleanly, or its live re-check found differences: the request stays Designed & built for a person to look at. */
+async function agentDeployNeedsCheck(
+  db: Kysely<DB>,
+  enqueueMail: MailEnqueuer,
+  args: { tenantId: string; schema: string; deploymentId: string; agent?: { agentId: string; proposalId: string } },
+  sr: { id: string; number: number; type: keyof typeof SR_TYPE_DEFS; title: string; priority: string; incident_id: string | null; assigned_to: string | null },
+  why: string,
+): Promise<void> {
+  const s = tenantDb(db, args.schema);
+  const agentId = args.agent?.agentId;
+  const agent = agentId ? await platformDb(db).selectFrom('agents').select('name').where('id', '=', agentId).executeTakeFirst() : null;
+  const name = agentLabel(agent?.name ?? 'The assistant');
+  const now = new Date().toISOString();
+  await s.insertInto('service_request_events').values({ request_id: sr.id, kind: 'deployment', body: `${name}'s deployment needs a person to check it: ${why}`, internal: true, deployment_id: args.deploymentId, author_id: agentId ?? args.deploymentId, actor_type: 'agent' }).execute();
+  // The assistant stops: the lease ends and the request is nobody's, for a person to pick up.
+  await s.updateTable('service_request_claims').set({ released_at: now, release_reason: 'released' }).where('request_id', '=', sr.id).where('released_at', 'is', null).execute();
+  await s.updateTable('service_requests').set({ assigned_agent_id: null, updated_at: now }).where('id', '=', sr.id).execute();
+  const tenant = await platformDb(db).selectFrom('tenants').select(['id', 'name']).where('id', '=', args.tenantId).executeTakeFirst();
+  if (tenant) await emailRequestTeam(db, enqueueMail, tenant, sr, 'agent_deploy_check', name, why);
+  // An incident this request was raised for hears about it too.
+  if (sr.incident_id) {
+    await s
+      .insertInto('incident_events')
+      .values({ incident_id: sr.incident_id, kind: 'comment', body: `${srReference(sr.number)} was deployed by ${name} but needs a person to check it: ${why}`, internal: true, author_id: agentId ?? args.deploymentId, actor_type: 'agent' })
+      .execute()
+      .catch(() => undefined);
+  }
+}
+
+/**
+ * An assistant's deployment has been re-read from the live tenant (deployment-verify.ts). Only a clean re-check (every
+ * account matches the design) moves the request to Deployed. Anything else, including a re-check that could not run,
+ * leaves it Designed & built and tells the team: an unattended change must be provably right before it is called done.
+ */
+export async function finishAgentDeployment(
+  db: Kysely<DB>,
+  enqueueMail: MailEnqueuer,
+  args: { tenantId: string; schema: string; serviceRequestId: string; deploymentId: string; agentId: string; proposalId: string; operatorUserId: string; verification: DeploymentVerification | null },
+): Promise<'deployed' | 'needs_check' | 'skipped'> {
+  const s = tenantDb(db, args.schema);
+  const sr = await s
+    .selectFrom('service_requests')
+    .select(['id', 'number', 'type', 'title', 'status', 'priority', 'requested_by', 'waiting_since', 'waiting_seconds', 'incident_id', 'assigned_to'])
+    .where('id', '=', args.serviceRequestId)
+    .executeTakeFirst();
+  if (!sr || sr.status !== 'built') return 'skipped';
+  // The run itself must have been clean (its proposal is marked done only then); a failed run already told the team.
+  const prop = await s.selectFrom('service_request_actions').select('state').where('id', '=', args.proposalId).executeTakeFirst();
+  if (prop?.state !== 'done') return 'skipped';
+  const v = args.verification;
+  const agent = await platformDb(db).selectFrom('agents').select('name').where('id', '=', args.agentId).executeTakeFirst();
+  if (v && v.status === 'verified' && v.differing.length === 0 && v.checked > 0) {
+    const approver = await platformDb(db).selectFrom('users').select('display_name').where('id', '=', args.operatorUserId).executeTakeFirst();
+    const note = `Deployed to Microsoft Teams by ${agentLabel(agent?.name ?? 'an assistant')}${approver ? `, as approved by ${approver.display_name}` : ''}. The live tenant was re-read and matches the design.`;
+    await markRequestDeployed(db, enqueueMail, sr, { tenantId: args.tenantId, schema: args.schema, operatorUserId: args.operatorUserId, note, author: { id: args.agentId, type: 'agent' } });
+    return 'deployed';
+  }
+  const why = !v
+    ? 'the live re-check did not run.'
+    : v.status === 'verified'
+      ? v.differing.length
+        ? `the live re-check found differences: ${v.differing.slice(0, 3).map((d) => `${d.upn}: ${d.differences.slice(0, 2).join('; ')}`).join(' | ')}`
+        : 'the live re-check had nothing to check.'
+      : `the live re-check ${v.status === 'pending' ? 'did not finish' : v.status === 'skipped' ? 'was skipped' : 'failed'}.`;
+  await agentDeployNeedsCheck(db, enqueueMail, { tenantId: args.tenantId, schema: args.schema, deploymentId: args.deploymentId, agent: { agentId: args.agentId, proposalId: args.proposalId } }, sr, why);
+  return 'needs_check';
 }
 
 /**

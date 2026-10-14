@@ -14,6 +14,7 @@ import {
 } from '@tvmf/shared';
 import { decryptSecret } from './crypto';
 import type { MailEnqueuer } from './mail/enqueue';
+import { expireSrProposals, lapseSrClaims } from './sr-agents';
 
 /**
  * Housekeeping for AI agents, every minute (docs/AGENTS.md):
@@ -32,6 +33,9 @@ export async function sweepAgents(db: Kysely<DB>, enqueueMail: MailEnqueuer, opt
     try {
       total.expired += await expireProposals(db, t);
       total.lapsed += await lapseClaims(db, enqueueMail, t, webOrigin);
+      // Service requests: the same two housekeeping jobs.
+      total.expired += await expireSrProposals(db, t);
+      total.lapsed += await lapseSrClaims(db, enqueueMail, t);
     } catch (e) {
       // eslint-disable-next-line no-console
       console.warn(`[agents] sweep failed for ${t.schema_name}: ${(e as Error).message}`);
