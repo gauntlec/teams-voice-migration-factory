@@ -25,6 +25,7 @@ import {
 } from '@tvmf/shared';
 import { api, apiUpload } from '../api';
 import { useAuth } from '../auth';
+import { KnowledgeTips } from '../components/IncidentKnowledge';
 import { Page } from '../components/Page';
 import { NoTenant } from '../components/records';
 import { errorText, useSrStyles } from './ServiceRequests';
@@ -310,6 +311,8 @@ export function IncidentNew() {
 
       {def && (
         <>
+          {!staff && <KnowledgeTips base={base} category={category} subcategory={subcategory} text={`${title} ${description}`} enabled={enabled} />}
+
           {(knownQ.data ?? []).length > 0 && (
             <div className={s.notice}>
               <Text weight="semibold" block>

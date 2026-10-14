@@ -18,6 +18,7 @@ import { InboundReplyService } from '../../../../apps/api/src/modules/incidents/
 import { IncidentIntakeService } from '../../../../apps/api/src/modules/incidents/incident-intake.service';
 import { IntakeAdminService } from '../../../../apps/api/src/modules/incidents/intake-admin.service';
 import { IntakeAuthGuard } from '../../../../apps/api/src/modules/incidents/intake-auth.guard';
+import { IncidentKnowledgeService } from '../../../../apps/api/src/modules/incidents/incident-knowledge.service';
 import { IncidentMajorService } from '../../../../apps/api/src/modules/incidents/incident-major.service';
 import { IncidentNotifier } from '../../../../apps/api/src/modules/incidents/incident-notifier';
 import { IncidentReportService } from '../../../../apps/api/src/modules/incidents/incident-report.service';
@@ -47,7 +48,8 @@ export function incidentServices(handle: DbHandle, mail: Pick<MailService, 'enqu
   const problems = new ProblemsService(handle.db, audit, notifier);
   const diagnostics = new IncidentDiagnosticsService(handle.db);
   const proposals = new IncidentProposalsService(handle.db, audit, svc, major, problems, claims, events, notifier);
-  const agentApi = new AgentApiService(handle.db, svc, claims, proposals, events, problems, notifier, diagnostics);
+  const knowledge = new IncidentKnowledgeService(handle.db, audit);
+  const agentApi = new AgentApiService(handle.db, svc, claims, proposals, events, problems, notifier, diagnostics, knowledge);
   return {
     svc,
     notifier,
@@ -63,6 +65,7 @@ export function incidentServices(handle: DbHandle, mail: Pick<MailService, 'enqu
     response: new IncidentResponseService(handle.db, cfg, svc),
     humanAgents: new IncidentAgentsService(handle.db, audit, claims, svc, events),
     agentApi,
+    knowledge,
     intake: new IncidentIntakeService(handle.db, svc),
     replies,
     inbound: new InboundEmailService(handle.db, svc, replies, cfg),

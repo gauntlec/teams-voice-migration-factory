@@ -57,6 +57,13 @@ export class IncidentMajorController {
     return this.major.notices(t);
   }
 
+  /** Notices that have ended, for looking back. */
+  @Get('notices/history')
+  @RequirePermission('inc:read')
+  noticeHistory(@TenantCtx() t: TenantContext, @Query('days') days?: string) {
+    return this.major.noticeHistory(t, Math.min(365, Math.max(1, Number(days) || 90)));
+  }
+
   @Get('report')
   @RequirePermission('inc:read')
   report(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Query(new ZodBody(incidentReportQuerySchema)) q: IncidentReportQuery) {

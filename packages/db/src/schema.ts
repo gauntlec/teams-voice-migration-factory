@@ -1084,6 +1084,23 @@ export interface ServiceRequestActionsTable {
   finished_at: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
+export interface IncidentKnowledgeTable {
+  id: Generated<string>;
+  title: string;
+  category: string;
+  subcategory: string | null;
+  symptoms: ColumnType<string, string | undefined, string>;
+  fix: string;
+  customer_text: ColumnType<string, string | undefined, string>;
+  source_incident_id: string | null;
+  helpful: ColumnType<number, number | undefined, number>;
+  not_helpful: ColumnType<number, number | undefined, number>;
+  archived: ColumnType<boolean, boolean | undefined, boolean>;
+  created_by: string | null;
+  created_at: Ts;
+  updated_at: Ts;
+}
+
 export interface IncidentDiagnosticsTable {
   id: Generated<string>;
   incident_id: string;
@@ -1432,6 +1449,7 @@ export interface DB {
   incident_reviews: IncidentReviewsTable;
   incident_claims: IncidentClaimsTable;
   incident_diagnostics: IncidentDiagnosticsTable;
+  incident_knowledge: IncidentKnowledgeTable;
   service_request_claims: ServiceRequestClaimsTable;
   service_request_actions: ServiceRequestActionsTable;
   incident_actions: IncidentActionsTable;

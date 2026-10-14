@@ -39,6 +39,7 @@ import { AgentEventsService } from './agent-events.service';
 import { IncidentProposalsService } from './agent-proposals.service';
 import { IncidentClaimsService } from './incident-claims.service';
 import { IncidentDiagnosticsService } from './incident-diagnostics.service';
+import { IncidentKnowledgeService } from './incident-knowledge.service';
 import { IncidentNotifier } from './incident-notifier';
 import { IncidentsService } from './incidents.service';
 import { ProblemsService } from './problems.service';
@@ -66,6 +67,7 @@ export class AgentApiService {
     private readonly problems: ProblemsService,
     private readonly notify: IncidentNotifier,
     private readonly diagnostics: IncidentDiagnosticsService,
+    private readonly knowledge: IncidentKnowledgeService,
   ) {}
 
   /* ------------------------------ checks ------------------------------ */
@@ -222,6 +224,7 @@ export class AgentApiService {
       knownErrors: known,
       diagnostics: await this.diagnostics.list(t, id, 10),
       suggestedChecks: await this.diagnostics.suggest(t, id),
+      knowledge: await this.knowledge.matchIncident(t, id, 3),
       similar: similar.map((s) => ({ ...s, reference: incReference(s.number) })),
       autonomy: agentEffectiveAutonomy(autonomy),
     };

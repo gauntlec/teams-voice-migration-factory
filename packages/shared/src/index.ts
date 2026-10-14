@@ -24,6 +24,7 @@ export * from './builtin-agents';
 export * from './service-request-agents';
 export * from './incident-intake';
 export * from './inbound-email';
+export * from './incident-knowledge';
 export * from './wizard-convert';
 export * from './progress';
 export * from './release-safety';

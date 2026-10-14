@@ -6,7 +6,8 @@ import { INC_CATEGORIES, INC_CATEGORY_BY_KEY, INC_PRIORITIES, INC_PRIORITY_LABEL
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
-import { IncidentNotices } from '../components/IncidentNotices';
+import { IncidentNotices, PastNoticesButton } from '../components/IncidentNotices';
+import { KnowledgeButton } from '../components/IncidentKnowledge';
 import { IncidentReportsDialog } from '../components/IncidentReports';
 import { IncidentSettingsDialog } from '../components/IncidentSettings';
 import { IncQueueTiles, IncSlaBadge, IncStatusBadge, MajorBadge, MajorClockBadge, PriorityBadge, incQueueFilter, type IncQueueFilter, type IncidentRow } from '../components/IncidentBits';
@@ -75,9 +76,11 @@ export function Incidents() {
       actions={
         <div className={cs.actions}>
           <Button onClick={() => setReportsOpen(true)}>Reports</Button>
+          <PastNoticesButton base={base} enabled={enabled} />
           {staff && (
             <Button onClick={() => navigate('/incidents/problems')}>Problems</Button>
           )}
+          {staff && <KnowledgeButton base={base} />}
           <Button onClick={() => setSettingsOpen(true)}>{staff ? 'Settings' : 'Our targets'}</Button>
           {can('inc:create') && (
             <Button appearance="primary" onClick={() => navigate('/incidents/new')}>

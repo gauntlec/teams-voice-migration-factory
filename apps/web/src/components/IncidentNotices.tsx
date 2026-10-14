@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link as RouterLink } from 'react-router-dom';
-import { Text, makeStyles, shorthands, tokens } from '@fluentui/react-components';
+import { useState } from 'react';
+import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Select, Spinner, Text, makeStyles, shorthands, tokens } from '@fluentui/react-components';
 import { WarningRegular } from '@fluentui/react-icons';
 import { api } from '../api';
 import { useAuth } from '../auth';
@@ -59,5 +60,77 @@ export function IncidentNotices({ base, enabled }: { base: string; enabled: bool
         </div>
       ))}
     </div>
+  );
+}
+
+interface PastNotice {
+  id: string;
+  reference: string;
+  title: string;
+  sitecode: string | null;
+  declared_at: string | null;
+  ended_at: string | null;
+  minutes: number | null;
+  outcome: string | null;
+  can_open: boolean;
+}
+
+const duration = (m: number | null) => (m === null ? '' : m < 60 ? `${m} min` : m < 1440 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${Math.floor(m / 1440)}d ${Math.floor((m % 1440) / 60)}h`);
+
+/** The notices that have ended, for looking back: what the customer was told, where, for how long, and how it ended. */
+export function PastNoticesButton({ base, enabled }: { base: string; enabled: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [days, setDays] = useState('90');
+  const q = useQuery({ queryKey: ['incident-notice-history', base, days], enabled: enabled && open, queryFn: () => api<PastNotice[]>(`${base}/notices/history?days=${days}`) });
+  return (
+    <>
+      <Button onClick={() => setOpen(true)}>Past notices</Button>
+      {open && (
+        <Dialog open onOpenChange={(_, d) => !d.open && setOpen(false)}>
+          <DialogSurface style={{ maxWidth: '720px', width: '94vw' }}>
+            <DialogBody>
+              <DialogTitle>Past service notices</DialogTitle>
+              <DialogContent style={{ display: 'flex', flexDirection: 'column', rowGap: 12, maxHeight: '70vh', overflowY: 'auto' }}>
+                <Select value={days} onChange={(_, d) => setDays(d.value)} aria-label="How far back">
+                  <option value="30">Last 30 days</option>
+                  <option value="90">Last 90 days</option>
+                  <option value="365">Last year</option>
+                </Select>
+                {q.isLoading && <Spinner size="tiny" />}
+                {q.data?.length === 0 && <Text>No service notices in this time.</Text>}
+                {q.data?.map((n) => (
+                  <div key={n.id} style={{ display: 'flex', flexDirection: 'column', rowGap: 2, paddingBottom: 8, borderBottom: `1px solid ${tokens.colorNeutralStroke2}` }}>
+                    <Text weight="semibold">
+                      {n.title}
+                      {n.sitecode ? ` · ${n.sitecode}` : ' · all sites'}
+                    </Text>
+                    <Text size={200}>
+                      {n.declared_at ? new Date(n.declared_at).toLocaleString() : ''}
+                      {n.minutes !== null ? ` · lasted ${duration(n.minutes)}` : ''}
+                      {n.can_open && (
+                        <>
+                          {' · '}
+                          <RouterLink to={`/incidents/${n.id}`}>{n.reference}</RouterLink>
+                        </>
+                      )}
+                    </Text>
+                    {n.outcome && (
+                      <Text size={200} style={{ whiteSpace: 'pre-wrap' }}>
+                        {n.outcome}
+                      </Text>
+                    )}
+                  </div>
+                ))}
+              </DialogContent>
+              <DialogActions>
+                <Button appearance="primary" onClick={() => setOpen(false)}>
+                  Close
+                </Button>
+              </DialogActions>
+            </DialogBody>
+          </DialogSurface>
+        </Dialog>
+      )}
+    </>
   );
 }

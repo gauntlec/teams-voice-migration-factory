@@ -60,6 +60,7 @@ import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
 import { AskAssistantCard, IncidentAssistantCard, type AssistantInfo } from '../components/IncidentAssistant';
 import { IncidentChecks } from '../components/IncidentChecks';
+import { KnowledgeSuggestions, SaveKnowledgeButton } from '../components/IncidentKnowledge';
 import { IncidentMajorSection, type ChildIncident, type MajorInfo, type ParentIncident } from '../components/IncidentMajor';
 import { IncidentProblemCard, type LinkedProblem } from '../components/IncidentProblemCard';
 import { IncidentReviewCard, type ReviewInfo } from '../components/IncidentReview';
@@ -391,6 +392,10 @@ function Overview({ base, data }: { base: string; data: IncidentPayload }) {
       )}
 
       {staff && data.agent && <IncidentAssistantCard base={base} incidentId={id} agent={data.agent} assignedAgentName={r.assigned_agent_name ?? null} onChanged={refresh} />}
+
+      {staff && <KnowledgeSuggestions base={base} incidentId={id} />}
+
+      {staff && ['restored', 'resolved', 'closed'].includes(r.status) && <SaveKnowledgeButton base={base} incidentId={id} />}
 
       {staff && <IncidentChecks base={base} incidentId={id} />}
 

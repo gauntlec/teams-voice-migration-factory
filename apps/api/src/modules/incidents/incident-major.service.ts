@@ -341,4 +341,42 @@ export class IncidentMajorService {
       };
     });
   }
+
+  /**
+   * Past notices: major incidents that have ended, newest first, for the customer to look back on ("what happened in September?").
+   * What a customer sees is what they were told at the time: the title, the place, when it started and ended, and how it ended.
+   */
+  async noticeHistory(t: TenantContext, days: number) {
+    this.assertEnabled(t);
+    const s = tenantDb(this.db, t.schema);
+    const since = new Date(Date.now() - days * 86_400_000).toISOString();
+    let q = s
+      .selectFrom('incidents as i')
+      .leftJoin('discovery_sites as ds', 'ds.id', 'i.site_id')
+      .select(['i.id as id', 'i.number as number', 'i.title as title', 'i.priority as priority', 'i.site_id as site_id', 'ds.sitecode as sitecode', 'i.major_declared_at as declared_at', 'i.major_ended_at as ended_at'])
+      .where('i.major', '=', true)
+      .where('i.major_ended_at', 'is not', null)
+      .where('i.major_ended_at', '>=', since)
+      .orderBy('i.major_ended_at', 'desc')
+      .limit(100);
+    if (isSiteScoped(t)) q = q.where((eb) => eb.or([eb('i.site_id', 'in', t.siteScope), eb('i.site_id', 'is', null)]));
+    const rows = await q.execute();
+    if (rows.length === 0) return [];
+    const events = await s.selectFrom('incident_events').select(['incident_id', 'body', 'created_at']).where('incident_id', 'in', rows.map((r) => r.id)).where('kind', '=', 'major_ended').orderBy('created_at', 'desc').execute();
+    return rows.map((r) => {
+      const declared = r.declared_at ? new Date(r.declared_at).getTime() : null;
+      const ended = r.ended_at ? new Date(r.ended_at).getTime() : null;
+      return {
+        id: r.id,
+        reference: incReference(r.number),
+        title: r.title,
+        sitecode: r.sitecode,
+        declared_at: r.declared_at,
+        ended_at: r.ended_at,
+        minutes: declared && ended ? Math.max(0, Math.round((ended - declared) / 60_000)) : null,
+        outcome: events.find((e) => e.incident_id === r.id)?.body ?? null,
+        can_open: !isSiteScoped(t) || (!!r.site_id && t.siteScope.includes(r.site_id)),
+      };
+    });
+  }
 }
