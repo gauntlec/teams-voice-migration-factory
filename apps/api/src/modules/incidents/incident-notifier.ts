@@ -27,7 +27,11 @@ import { APP_CONFIG, type AppConfig } from '../../common/config';
 import type { AuthedUser, TenantContext } from '../../common/request';
 import { InjectDb, type Db } from '../../db/db.module';
 import { MailService } from '../../mail/mail.service';
+import { customerFacingName } from './agent-actor';
 import { signIncidentLink } from './incident-links';
+
+/** Mail rows record who caused them; an agent is not a user, so it is recorded as nobody. */
+const createdBy = (a: AuthedUser) => (a.agent ? null : a.id);
 
 export interface StaffMember {
   id: string;
@@ -133,10 +137,10 @@ export class IncidentNotifier {
     const common = { customerName: t.name, reference: incReference(row.number), title: row.title, categoryLabel: incCategoryLabel(row.category, row.subcategory), siteLabel: opts.siteLabel, raisedBy: actor.displayName, runUrl: this.url(row.id), lines: incDetailLines(row.category, row.details.answers ?? {}) };
     if (!opts.staffRaised) {
       const ctx: IncidentCreatedContext = { ...common, audience: 'reporter', priorityLabel: INC_PRIORITY_CUSTOMER_TEXT[row.priority], respondText: opts.respondText };
-      await this.send(t, 'incident_created', [{ email: actor.email, display_name: actor.displayName }], ctx, row.id, actor.id);
+      await this.send(t, 'incident_created', [{ email: actor.email, display_name: actor.displayName }], ctx, row.id, createdBy(actor));
     }
     const teamCtx: IncidentCreatedContext = { ...common, audience: 'team', priorityLabel: INC_PRIORITY_LABELS[row.priority], respondText: null };
-    await this.send(t, 'incident_created', (await this.staff(t)).filter((m) => m.id !== actor.id), teamCtx, row.id, actor.id);
+    await this.send(t, 'incident_created', (await this.staff(t)).filter((m) => m.id !== actor.id), teamCtx, row.id, createdBy(actor));
   }
 
   /** A status move: the customer side hears about the ones that matter to them, the team hears when the customer acts. */
@@ -153,7 +157,7 @@ export class IncidentNotifier {
     if (!opts.staff) {
       // The customer acted: tell the team.
       const k = kind === 'close' ? 'confirmed' : kind === 'reopen' ? 'reopened' : kind === 'cancel' ? 'cancelled' : null;
-      if (k) await this.send(t, 'incident_activity', await this.teamSide(t, row, actor.id), teamCtx(k), row.id, actor.id);
+      if (k) await this.send(t, 'incident_activity', await this.teamSide(t, row, actor.id), teamCtx(k), row.id, createdBy(actor));
       return;
     }
     const to = await this.customerSide(t, row.id, row.reporter_id, actor.id);
@@ -164,13 +168,13 @@ export class IncidentNotifier {
         const origin = this.cfg.WEB_ORIGIN.replace(/\/+$/, '');
         const ctx: IncidentResolvedContext = {
           ...base,
-          author: actor.displayName,
+          author: customerFacingName(actor),
           note: opts.note,
           fixedUrl: `${origin}/incident-response?t=${token}&a=fixed`,
           brokenUrl: `${origin}/incident-response?t=${token}&a=broken`,
           autoCloseDays: INC_AUTOCLOSE_DAYS,
         };
-        await this.send(t, 'incident_resolved', [r], ctx, row.id, actor.id);
+        await this.send(t, 'incident_resolved', [r], ctx, row.id, createdBy(actor));
       }
       return;
     }
@@ -187,15 +191,15 @@ export class IncidentNotifier {
     const k = kinds[kind];
     if (!k) return;
     const ctx: IncidentStatusChangedContext = { ...base, kind: k, holdLabel: opts.holdReason ? INC_HOLD_CUSTOMER_LABELS[opts.holdReason] : null, note: opts.note };
-    await this.send(t, 'incident_status_changed', to, ctx, row.id, actor.id);
+    await this.send(t, 'incident_status_changed', to, ctx, row.id, createdBy(actor));
   }
 
   /** A comment: public from the team goes to the customer side; the customer's goes to the team; a note goes to the assignee. */
   async commented(t: TenantContext, actor: AuthedUser, row: NotifiableIncident, c: { body: string; internal: boolean; question: boolean; staff: boolean; resumed: boolean }) {
     const base = this.base(t, row);
     if (c.staff && !c.internal) {
-      const ctx: IncidentMessageContext = { ...base, kind: c.question ? 'question' : 'comment', author: actor.displayName, body: c.body };
-      await this.send(t, 'incident_message', await this.customerSide(t, row.id, row.reporter_id, actor.id), ctx, row.id, actor.id);
+      const ctx: IncidentMessageContext = { ...base, kind: c.question ? 'question' : 'comment', author: customerFacingName(actor), body: c.body };
+      await this.send(t, 'incident_message', await this.customerSide(t, row.id, row.reporter_id, actor.id), ctx, row.id, createdBy(actor));
       return;
     }
     const ctx: IncidentActivityContext = {
@@ -206,13 +210,13 @@ export class IncidentNotifier {
       author: actor.displayName,
       body: c.body,
     };
-    await this.send(t, 'incident_activity', await this.teamSide(t, row, actor.id, c.internal), ctx, row.id, actor.id);
+    await this.send(t, 'incident_activity', await this.teamSide(t, row, actor.id, c.internal), ctx, row.id, createdBy(actor));
   }
 
   /** The priority changed: the customer side is told it did (not why). */
   async priorityChanged(t: TenantContext, actor: AuthedUser, row: NotifiableIncident) {
     const ctx: IncidentStatusChangedContext = { ...this.base(t, row), kind: 'priority', priorityText: INC_PRIORITY_CUSTOMER_TEXT[row.priority] };
-    await this.send(t, 'incident_status_changed', await this.customerSide(t, row.id, row.reporter_id, actor.id), ctx, row.id, actor.id);
+    await this.send(t, 'incident_status_changed', await this.customerSide(t, row.id, row.reporter_id, actor.id), ctx, row.id, createdBy(actor));
   }
 
   /** Assigned to someone else: tell them. */
@@ -227,7 +231,7 @@ export class IncidentNotifier {
       body: null,
     };
     const to = (await this.staff(t)).filter((m) => m.id === assigneeId);
-    await this.send(t, 'incident_activity', to, ctx, row.id, actor.id);
+    await this.send(t, 'incident_activity', to, ctx, row.id, createdBy(actor));
   }
 
   /* ------------------------------ major incidents ------------------------------ */
@@ -267,16 +271,16 @@ export class IncidentNotifier {
   /** Declared: the customer side hears we are aware, the team hears who is leading. */
   async majorDeclared(t: TenantContext, actor: AuthedUser, row: NotifiableIncident, c: { siteLabel: string | null; lead: string; summary: string; nextUpdateAt: Date }) {
     const ctx = (audience: 'customer' | 'team') => this.majorContext(t, row, { kind: 'declared', audience, siteLabel: c.siteLabel, lead: c.lead, body: c.summary, nextUpdateAt: c.nextUpdateAt });
-    await this.send(t, 'incident_major', await this.majorAudience(t, row), ctx('customer'), row.id, actor.id);
-    await this.send(t, 'incident_major', (await this.staff(t)).filter((m) => m.id !== actor.id), ctx('team'), row.id, actor.id);
+    await this.send(t, 'incident_major', await this.majorAudience(t, row), ctx('customer'), row.id, createdBy(actor));
+    await this.send(t, 'incident_major', (await this.staff(t)).filter((m) => m.id !== actor.id), ctx('team'), row.id, createdBy(actor));
   }
 
   async majorUpdated(t: TenantContext, actor: AuthedUser, row: NotifiableIncident, c: { siteLabel: string | null; lead: string; body: string; nextUpdateAt: Date }) {
-    await this.send(t, 'incident_major', await this.majorAudience(t, row), this.majorContext(t, row, { kind: 'update', audience: 'customer', ...c }), row.id, actor.id);
+    await this.send(t, 'incident_major', await this.majorAudience(t, row), this.majorContext(t, row, { kind: 'update', audience: 'customer', ...c }), row.id, createdBy(actor));
   }
 
   async majorResolved(t: TenantContext, actor: AuthedUser, row: NotifiableIncident, c: { siteLabel: string | null; lead: string; body: string }) {
-    await this.send(t, 'incident_major', await this.majorAudience(t, row), this.majorContext(t, row, { kind: 'resolved', audience: 'customer', nextUpdateAt: null, ...c }), row.id, actor.id);
+    await this.send(t, 'incident_major', await this.majorAudience(t, row), this.majorContext(t, row, { kind: 'resolved', audience: 'customer', nextUpdateAt: null, ...c }), row.id, createdBy(actor));
   }
 
   /** You were made the lead or comms owner of a major incident. */
@@ -290,12 +294,53 @@ export class IncidentNotifier {
       author: actor.displayName,
       body: role,
     };
-    await this.send(t, 'incident_activity', (await this.staff(t)).filter((m) => userIds.includes(m.id) && m.id !== actor.id), ctx, row.id, actor.id);
+    await this.send(t, 'incident_activity', (await this.staff(t)).filter((m) => userIds.includes(m.id) && m.id !== actor.id), ctx, row.id, createdBy(actor));
   }
 
   /** A review was shared: the customer side and the named stakeholders. */
   async reviewShared(t: TenantContext, actor: AuthedUser, row: NotifiableIncident, r: { summary: string; cause: string; actions: IncReviewAction[] }) {
     const ctx: IncidentReviewContext = { ...this.base(t, row), summary: r.summary, cause: r.cause, actions: r.actions.map(({ text, owner, due }) => ({ text, owner, due })) };
-    await this.send(t, 'incident_review', await this.majorAudience(t, row), ctx, row.id, actor.id);
+    await this.send(t, 'incident_review', await this.majorAudience(t, row), ctx, row.id, createdBy(actor));
+  }
+
+  /* ------------------------------ AI assistants ------------------------------ */
+
+  /** An assistant proposed a next step: tell whoever is working the incident (or the whole team). */
+  async agentProposal(t: TenantContext, row: NotifiableIncident, agentName: string, summary: string) {
+    const ctx: IncidentActivityContext = {
+      ...this.base(t, row),
+      categoryLabel: incCategoryLabel(row.category, row.subcategory),
+      priorityLabel: INC_PRIORITY_LABELS[row.priority],
+      kind: 'agent_proposal',
+      author: `${agentName} (AI)`,
+      body: summary,
+    };
+    await this.send(t, 'incident_activity', await this.teamSide(t, row, null), ctx, row.id, null);
+  }
+
+  /** An assistant stopped (lease lapsed or it failed): the incident is back in the queue. */
+  async agentLapsed(t: TenantContext, row: NotifiableIncident, agentName: string, why: string) {
+    const ctx: IncidentActivityContext = {
+      ...this.base(t, row),
+      categoryLabel: incCategoryLabel(row.category, row.subcategory),
+      priorityLabel: INC_PRIORITY_LABELS[row.priority],
+      kind: 'agent_lapsed',
+      author: `${agentName} (AI)`,
+      body: why,
+    };
+    await this.send(t, 'incident_activity', await this.teamSide(t, { ...row, assigned_to: null }, null), ctx, row.id, null);
+  }
+
+  /** An assistant handed the incident on with a summary: the assignee (or the team) is told. */
+  async agentHandoff(t: TenantContext, row: NotifiableIncident, agentName: string, summary: string) {
+    const ctx: IncidentActivityContext = {
+      ...this.base(t, row),
+      categoryLabel: incCategoryLabel(row.category, row.subcategory),
+      priorityLabel: INC_PRIORITY_LABELS[row.priority],
+      kind: 'agent_handoff',
+      author: `${agentName} (AI)`,
+      body: summary,
+    };
+    await this.send(t, 'incident_activity', await this.teamSide(t, row, null), ctx, row.id, null);
   }
 }

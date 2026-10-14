@@ -757,6 +757,12 @@ function eventText(e: IncidentEvent, staff: boolean): string {
       return e.body ?? '';
     case 'review_shared':
       return 'Shared the post-incident review.';
+    case 'claim_started':
+    case 'claim_released':
+    case 'handoff':
+    case 'proposal':
+    case 'proposal_decided':
+      return e.body ?? '';
     case 'comment':
       return e.body ?? '';
   }

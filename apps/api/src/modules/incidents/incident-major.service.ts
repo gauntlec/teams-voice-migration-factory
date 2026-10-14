@@ -17,6 +17,7 @@ import { AuditService } from '../../common/audit.service';
 import type { AuthedUser, TenantContext } from '../../common/request';
 import { InjectDb, type Db } from '../../db/db.module';
 import { assertSiteInScope, isSiteScoped } from '../data-collection/site-scope';
+import { AgentEventsService } from './agent-events.service';
 import { IncidentNotifier } from './incident-notifier';
 
 /** `version = version + 1`, for the updates that don't read the row first. */
@@ -34,6 +35,7 @@ export class IncidentMajorService {
     @InjectDb() private readonly db: Db,
     private readonly audit: AuditService,
     private readonly notify: IncidentNotifier,
+    private readonly events: AgentEventsService,
   ) {}
 
   private assertEnabled(t: TenantContext) {
@@ -114,6 +116,7 @@ export class IncidentMajorService {
       detail: { reference: incReference(row.number), leadId: input.leadId, commsId, intervalMinutes: interval },
     });
     const names = await this.names([input.leadId, commsId]);
+    await this.events.emit(t.id, updated, 'incident.major_declared', { lead: input.leadId });
     await this.notify.majorDeclared(t, user, updated, { siteLabel: await this.siteLabel(t, row.site_id), lead: names.get(input.leadId) ?? 'An engineer', summary: input.summary, nextUpdateAt: next });
     await this.notify.majorRoleAssigned(t, user, updated, [input.leadId], 'the lead');
     if (commsId !== input.leadId) await this.notify.majorRoleAssigned(t, user, updated, [commsId], 'the comms owner');

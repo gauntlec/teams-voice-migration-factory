@@ -23,6 +23,8 @@ export interface TenantsTable {
   sr_settings: ColumnType<import('@tvmf/shared').SrSettings, string | undefined, string>;
   /** Incident targets and impact x urgency matrix - see 0016_tenant_inc_settings.sql. Written as JSON.stringify(...). */
   inc_settings: ColumnType<import('@tvmf/shared').IncSettings, string | undefined, string>;
+  /** Kill switch for every agent on this customer - see 0017_agents.sql. */
+  agents_enabled: ColumnType<boolean, boolean | undefined, boolean>;
   /** The MSP that looks after this customer - see 0013_tenant_msp.sql. */
   msp_id: string | null;
   /** A test customer: its emails go to whoever triggered them - see 0015_release_safety.sql. */
@@ -997,6 +999,8 @@ export interface IncidentsTable {
   update_escalated_at: ColumnType<string | null, string | null | undefined, string | null>;
   parent_id: ColumnType<string | null, string | null | undefined, string | null>;
   problem_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0050_incident_agents.sql - a person took over; agents may read but not write until it is handed back. */
+  agent_hold: ColumnType<boolean, boolean | undefined, boolean>;
 }
 
 /** A problem record: the cause behind one or more incidents - see 0049_incident_major_problems.sql. */
@@ -1035,6 +1039,40 @@ export interface IncidentReviewsTable {
   updated_at: Ts;
   shared_at: ColumnType<string | null, string | null | undefined, string | null>;
   shared_by: ColumnType<string | null, string | null | undefined, string | null>;
+}
+
+/** A lease on an incident: who is working it right now - see 0050_incident_agents.sql. */
+export interface IncidentClaimsTable {
+  id: Generated<string>;
+  incident_id: string;
+  agent_id: string;
+  note: ColumnType<string, string | undefined, string>;
+  started_at: Ts;
+  expires_at: string;
+  released_at: ColumnType<string | null, string | null | undefined, string | null>;
+  release_reason: ColumnType<'released' | 'expired' | 'revoked' | 'handed_off' | null, 'released' | 'expired' | 'revoked' | 'handed_off' | null | undefined, 'released' | 'expired' | 'revoked' | 'handed_off' | null>;
+}
+
+/** An agent's proposal for a person to decide. */
+export interface IncidentActionsTable {
+  id: Generated<string>;
+  incident_id: string;
+  agent_id: string;
+  kind: string;
+  action_class: string;
+  // Written as JSON.stringify(...).
+  params: ColumnType<Record<string, unknown>, string | undefined, string>;
+  rationale: ColumnType<string, string | undefined, string>;
+  risk: ColumnType<'low' | 'medium' | 'high', 'low' | 'medium' | 'high' | undefined, 'low' | 'medium' | 'high'>;
+  state: ColumnType<import('@tvmf/shared').AgentProposalState, import('@tvmf/shared').AgentProposalState | undefined, import('@tvmf/shared').AgentProposalState>;
+  decided_by: ColumnType<string | null, string | null | undefined, string | null>;
+  decided_at: ColumnType<string | null, string | null | undefined, string | null>;
+  decision_note: ColumnType<string | null, string | null | undefined, string | null>;
+  result: ColumnType<Record<string, unknown> | null, string | null | undefined, string | null>;
+  error: ColumnType<string | null, string | null | undefined, string | null>;
+  created_at: Ts;
+  expires_at: string;
+  finished_at: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 export interface IncidentEventsTable {
@@ -1132,6 +1170,90 @@ export interface TenantAuditLogTable {
   detail: Json;
 }
 
+/* ------------------------------ agents (platform) ------------------------------ */
+
+/** An AI agent that works incidents - see 0017_agents.sql and docs/AGENTS.md. */
+export interface AgentsTable {
+  id: Generated<string>;
+  name: string;
+  description: ColumnType<string, string | undefined, string>;
+  kind: ColumnType<import('@tvmf/shared').AgentKind, import('@tvmf/shared').AgentKind | undefined, import('@tvmf/shared').AgentKind>;
+  msp_id: ColumnType<string | null, string | null | undefined, string | null>;
+  status: ColumnType<import('@tvmf/shared').AgentStatus, import('@tvmf/shared').AgentStatus | undefined, import('@tvmf/shared').AgentStatus>;
+  model_label: ColumnType<string, string | undefined, string>;
+  created_by: ColumnType<string | null, string | null | undefined, string | null>;
+  created_at: Ts;
+  updated_at: Ts;
+  last_seen_at: ColumnType<string | null, string | null | undefined, string | null>;
+}
+
+export interface AgentTokensTable {
+  id: Generated<string>;
+  agent_id: string;
+  name: string;
+  last4: string;
+  secret_hash: string;
+  scopes: ColumnType<import('@tvmf/shared').AgentScope[], import('@tvmf/shared').AgentScope[] | undefined, import('@tvmf/shared').AgentScope[]>;
+  ip_allow: ColumnType<string[], string[] | undefined, string[]>;
+  expires_at: ColumnType<string | null, string | null | undefined, string | null>;
+  last_used_at: ColumnType<string | null, string | null | undefined, string | null>;
+  revoked_at: ColumnType<string | null, string | null | undefined, string | null>;
+  created_by: ColumnType<string | null, string | null | undefined, string | null>;
+  created_at: Ts;
+}
+
+export interface AgentCustomerPolicyTable {
+  agent_id: string;
+  tenant_id: string;
+  enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  // Written as JSON.stringify(...).
+  autonomy: ColumnType<import('@tvmf/shared').AgentAutonomy, string | undefined, string>;
+  updated_by: ColumnType<string | null, string | null | undefined, string | null>;
+  updated_at: Ts;
+}
+
+export interface AgentKillSwitchTable {
+  id: ColumnType<number, number | undefined, number>;
+  all_disabled: ColumnType<boolean, boolean | undefined, boolean>;
+  note: ColumnType<string | null, string | null | undefined, string | null>;
+  changed_by: ColumnType<string | null, string | null | undefined, string | null>;
+  changed_at: Ts;
+}
+
+export interface AgentEventsTable {
+  id: Generated<string>;
+  tenant_id: string;
+  incident_id: ColumnType<string | null, string | null | undefined, string | null>;
+  kind: string;
+  agent_id: ColumnType<string | null, string | null | undefined, string | null>;
+  payload: ColumnType<Record<string, unknown>, string | undefined, string>;
+  created_at: Ts;
+}
+
+export interface AgentWebhooksTable {
+  id: Generated<string>;
+  agent_id: string;
+  url: string;
+  secret_enc: string;
+  kinds: ColumnType<string[], string[] | undefined, string[]>;
+  active: ColumnType<boolean, boolean | undefined, boolean>;
+  cursor: ColumnType<string, string | number | undefined, string | number>;
+  failures: ColumnType<number, number | undefined, number>;
+  next_attempt_at: Ts;
+  last_status: ColumnType<string | null, string | null | undefined, string | null>;
+  last_delivery_at: ColumnType<string | null, string | null | undefined, string | null>;
+  created_by: ColumnType<string | null, string | null | undefined, string | null>;
+  created_at: Ts;
+}
+
+export interface AgentRequestsTable {
+  agent_id: string;
+  idem_key: string;
+  status: ColumnType<'running' | 'done', 'running' | 'done' | undefined, 'running' | 'done'>;
+  response: ColumnType<Record<string, unknown> | null, string | null | undefined, string | null>;
+  created_at: Ts;
+}
+
 /* ------------------------------ merged DB ------------------------------- */
 /**
  * One Kysely<DB>. Platform tables are queried with `.withSchema('platform')`,
@@ -1151,6 +1273,13 @@ export interface DB {
   bug_reports: BugReportsTable;
   platform_audit_log: PlatformAuditLogTable;
   maintenance_notice: MaintenanceNoticeTable;
+  agents: AgentsTable;
+  agent_tokens: AgentTokensTable;
+  agent_customer_policy: AgentCustomerPolicyTable;
+  agent_kill_switch: AgentKillSwitchTable;
+  agent_events: AgentEventsTable;
+  agent_webhooks: AgentWebhooksTable;
+  agent_requests: AgentRequestsTable;
   // tenant
   discovery: DiscoveryTable;
   discovery_sites: DiscoverySitesTable;
@@ -1199,6 +1328,8 @@ export interface DB {
   incident_watchers: IncidentWatchersTable;
   problems: ProblemsTable;
   incident_reviews: IncidentReviewsTable;
+  incident_claims: IncidentClaimsTable;
+  incident_actions: IncidentActionsTable;
   files: FilesTable;
   audit_log: TenantAuditLogTable;
 }

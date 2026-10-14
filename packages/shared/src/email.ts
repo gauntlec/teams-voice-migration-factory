@@ -334,7 +334,10 @@ export interface IncidentActivityContext {
     | 'sla_breached' // ... or has been
     | 'update_due' // a major incident's customer update is due (to the comms owner)
     | 'update_overdue' // ... and is late (to the lead and the team)
-    | 'major_assigned'; // you are the lead or comms owner of a major incident
+    | 'major_assigned' // you are the lead or comms owner of a major incident
+    | 'agent_proposal' // an AI assistant proposed a next step for a person to decide
+    | 'agent_lapsed' // an AI assistant stopped working the incident; it is back in the queue
+    | 'agent_handoff'; // an AI assistant handed the incident to the team, with a summary
   author: string | null;
   body: string | null;
   runUrl: string;

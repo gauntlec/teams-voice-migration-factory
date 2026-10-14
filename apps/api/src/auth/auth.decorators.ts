@@ -1,5 +1,5 @@
 import { SetMetadata, createParamDecorator, type ExecutionContext } from '@nestjs/common';
-import type { AppRequest, AuthedUser, TenantContext } from '../common/request';
+import type { AgentPrincipal, AppRequest, AuthedUser, TenantContext } from '../common/request';
 
 export const IS_PUBLIC = 'auth:public';
 /** Route needs no authentication at all. */
@@ -26,5 +26,13 @@ export const TenantCtx = createParamDecorator(
     const req = ctx.switchToHttp().getRequest<AppRequest>();
     if (!req.tenant) throw new Error('TenantCtx used on a route without TenantGuard');
     return req.tenant;
+  },
+);
+
+export const CurrentAgent = createParamDecorator(
+  (_data: unknown, ctx: ExecutionContext): AgentPrincipal => {
+    const req = ctx.switchToHttp().getRequest<AppRequest>();
+    if (!req.agent) throw new Error('CurrentAgent used on a route without AgentAuthGuard');
+    return req.agent;
   },
 );

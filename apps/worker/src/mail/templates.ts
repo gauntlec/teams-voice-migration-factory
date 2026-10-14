@@ -573,6 +573,9 @@ function incidentActivity(c: IncidentActivityContext, branding?: EmailBranding):
     sla_breached: { subject: `${c.reference} has missed a target`, lead: 'This incident has missed a target:' },
     update_due: { subject: `${c.reference}: customer update due`, lead: 'The next customer update on this major incident is due now. Post it from the incident page:' },
     update_overdue: { subject: `${c.reference}: customer update is late`, lead: 'The customer update on this major incident is late, and the comms owner has not posted it:' },
+    agent_proposal: { subject: `${c.reference}: an assistant needs a decision`, lead: `${who} proposed a next step. Open the incident to approve or reject it:` },
+    agent_lapsed: { subject: `${c.reference}: an assistant stopped; it is back in the queue`, lead: `${who} stopped working on this incident:` },
+    agent_handoff: { subject: `${c.reference}: an assistant handed this to the team`, lead: `${who} handed this incident to the team. Its summary:` },
     major_assigned: { subject: `${c.reference}: you are on a major incident`, lead: `${who} made you ${c.body ?? 'part of the response'} on this major incident.` },
   };
   const w = what[c.kind];

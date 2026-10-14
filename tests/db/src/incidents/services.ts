@@ -3,6 +3,14 @@ import { AuditService } from '../../../../apps/api/src/common/audit.service';
 import type { AppConfig } from '../../../../apps/api/src/common/config';
 import type { MailService } from '../../../../apps/api/src/mail/mail.service';
 import { FilesService } from '../../../../apps/api/src/modules/files/files.service';
+import { AgentAdminService } from '../../../../apps/api/src/modules/incidents/agent-admin.service';
+import { AgentApiService } from '../../../../apps/api/src/modules/incidents/agent-api.service';
+import { AgentAuthGuard } from '../../../../apps/api/src/modules/incidents/agent-auth.guard';
+import { AgentEventsService } from '../../../../apps/api/src/modules/incidents/agent-events.service';
+import { IncidentProposalsService } from '../../../../apps/api/src/modules/incidents/agent-proposals.service';
+import { IncidentAgentView } from '../../../../apps/api/src/modules/incidents/incident-agent-view.service';
+import { IncidentAgentsService } from '../../../../apps/api/src/modules/incidents/incident-agents.service';
+import { IncidentClaimsService } from '../../../../apps/api/src/modules/incidents/incident-claims.service';
 import { IncidentMajorService } from '../../../../apps/api/src/modules/incidents/incident-major.service';
 import { IncidentNotifier } from '../../../../apps/api/src/modules/incidents/incident-notifier';
 import { IncidentReportService } from '../../../../apps/api/src/modules/incidents/incident-report.service';
@@ -22,17 +30,29 @@ export function incidentServices(handle: DbHandle, mail: Pick<MailService, 'enqu
   const cfg = { WEB_ORIGIN: 'https://app.test/', JWT_REFRESH_SECRET: TEST_SECRET } as AppConfig;
   const audit = new AuditService(handle.db);
   const notifier = new IncidentNotifier(handle.db, mail as MailService, cfg);
-  const major = new IncidentMajorService(handle.db, audit, notifier);
+  const events = new AgentEventsService(handle.db);
+  const claims = new IncidentClaimsService(handle.db, events, notifier);
+  const agentView = new IncidentAgentView(handle.db, claims);
+  const major = new IncidentMajorService(handle.db, audit, notifier, events);
   const files = new FilesService(handle.db, { write: async () => {}, read: async () => Buffer.alloc(0), delete: async () => {}, exists: async () => true });
-  const svc = new IncidentsService(handle.db, audit, files, notifier, major);
+  const svc = new IncidentsService(handle.db, audit, files, notifier, major, events, claims, agentView);
+  const problems = new ProblemsService(handle.db, audit, notifier);
+  const proposals = new IncidentProposalsService(handle.db, audit, svc, major, problems, claims, events, notifier);
   return {
     svc,
     notifier,
     major,
-    problems: new ProblemsService(handle.db, audit, notifier),
+    problems,
+    events,
+    claims,
+    proposals,
     reviews: new IncidentReviewService(handle.db, audit, notifier),
     reports: new IncidentReportService(handle.db),
     msp: new MspIncidentsService(handle.db, svc),
     response: new IncidentResponseService(handle.db, cfg, svc),
+    humanAgents: new IncidentAgentsService(handle.db, audit, claims, svc, events),
+    agentApi: new AgentApiService(handle.db, svc, claims, proposals, events, problems, notifier),
+    agentAdmin: new AgentAdminService(handle.db, audit),
+    agentGuard: new AgentAuthGuard(handle.db),
   };
 }

@@ -22,6 +22,8 @@ import {
   incPause,
   incPriority,
   incReference,
+  AGENT_CUSTOMER_LABEL,
+  agentLabel,
   incCategoryLabel,
   incMajorUpdateClock,
   incRespondText,
@@ -45,6 +47,10 @@ import type { AuthedUser, TenantContext } from '../../common/request';
 import { InjectDb, type Db } from '../../db/db.module';
 import { assertSiteInScope, isSiteScoped } from '../data-collection/site-scope';
 import { FilesService } from '../files/files.service';
+import { actorCols } from './agent-actor';
+import { AgentEventsService } from './agent-events.service';
+import { IncidentAgentView } from './incident-agent-view.service';
+import { IncidentClaimsService } from './incident-claims.service';
 import { IncidentMajorService } from './incident-major.service';
 import { IncidentNotifier, type StaffMember } from './incident-notifier';
 
@@ -72,6 +78,9 @@ export class IncidentsService {
     private readonly files: FilesService,
     private readonly notify: IncidentNotifier,
     private readonly major: IncidentMajorService,
+    private readonly events: AgentEventsService,
+    private readonly claims: IncidentClaimsService,
+    private readonly agentView: IncidentAgentView,
   ) {}
 
   private assertEnabled(t: TenantContext) {
@@ -83,6 +92,30 @@ export class IncidentsService {
     if (unique.length === 0) return new Map<string, string>();
     const rows = await platformDb(this.db).selectFrom('users').select(['id', 'display_name']).where('id', 'in', unique).execute();
     return new Map(rows.map((r) => [r.id, r.display_name]));
+  }
+
+  private async agentNames(ids: (string | null | undefined)[]) {
+    const unique = [...new Set(ids.filter((v): v is string => !!v))];
+    if (unique.length === 0) return new Map<string, string>();
+    const rows = await platformDb(this.db).selectFrom('agents').select(['id', 'name']).where('id', 'in', unique).execute();
+    return new Map(rows.map((r) => [r.id, r.name]));
+  }
+
+  /** The AI assistants that may be given an incident on this customer: active, allowed here, and not switched off. */
+  async assignableAgents(t: TenantContext) {
+    const p = platformDb(this.db);
+    const [tenant, kill] = await Promise.all([
+      p.selectFrom('tenants').select('agents_enabled').where('id', '=', t.id).executeTakeFirst(),
+      p.selectFrom('agent_kill_switch').select('all_disabled').where('id', '=', 1).executeTakeFirst(),
+    ]);
+    if (!tenant?.agents_enabled || kill?.all_disabled) return [];
+    return p
+      .selectFrom('agents as a')
+      .innerJoin('agent_customer_policy as cp', (j) => j.onRef('cp.agent_id', '=', 'a.id').on('cp.tenant_id', '=', t.id).on('cp.enabled', '=', true))
+      .select(['a.id as id', 'a.name as name', 'a.kind as kind'])
+      .where('a.status', '=', 'active')
+      .orderBy('a.name')
+      .execute();
   }
 
   /** The people who work this customer's incidents: its engineers and every Super Admin. */
@@ -234,6 +267,7 @@ export class IncidentsService {
     if (q.siteId) query = query.where('i.site_id', '=', q.siteId);
     if (q.assigned === 'me') query = query.where('i.assigned_to', '=', user.id);
     if (q.assigned === 'none') query = query.where('i.assigned_to', 'is', null).where('i.assigned_agent_id', 'is', null);
+    if (q.assigned === 'agent') query = query.where('i.assigned_agent_id', 'is not', null);
     if (q.q) {
       const like = `%${q.q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
       const num = /^(?:inc-?)?(\d{1,9})$/i.exec(q.q)?.[1];
@@ -242,10 +276,12 @@ export class IncidentsService {
     if (isSiteScoped(t)) query = query.where('i.site_id', 'in', t.siteScope);
     const rows = await query.execute();
     const names = await this.names(rows.flatMap((r) => [r.reporter_id, r.assigned_to]));
+    const agentNames = await this.agentNames(rows.map((r) => r.assigned_agent_id));
     const settings = await this.settingsRaw(t);
     const now = Date.now();
     return rows.map((r) => ({
       ...r,
+      assigned_agent_name: r.assigned_agent_id ? (agentNames.get(r.assigned_agent_id) ?? 'Assistant') : null,
       sla: incNextClock(incSlaFor(r, settings, now)),
       major_clock: incMajorUpdateClock(r, now),
       reference: incReference(r.number),
@@ -298,7 +334,10 @@ export class IncidentsService {
       s.selectFrom('incident_watchers').select('user_id').where('incident_id', '=', id).execute(),
     ]);
     const watcherIds = watchers.map((w) => w.user_id);
-    const names = await this.names([row.reporter_id, row.assigned_to, ...events.map((e) => e.author_id), ...(canManage ? watcherIds : [])]);
+    const names = await this.names([row.reporter_id, row.assigned_to, ...events.filter((e) => e.actor_type !== 'agent').map((e) => e.author_id), ...(canManage ? watcherIds : [])]);
+    const agentNames = await this.agentNames([row.assigned_agent_id, ...events.filter((e) => e.actor_type === 'agent').map((e) => e.author_id)]);
+    // A person is named; an assistant is "(AI)" to the team and just "Voxshift assistant" to a customer.
+    const agentName = (id: string | null) => (id ? (canManage ? agentLabel(agentNames.get(id) ?? 'Assistant') : AGENT_CUSTOMER_LABEL) : null);
     const settings = await this.settingsRaw(t);
     const own = row.reporter_id === viewerId;
     const watching = watcherIds.includes(viewerId);
@@ -312,6 +351,7 @@ export class IncidentsService {
         site_name: site?.name ?? null,
         reporter_name: names.get(row.reporter_id) ?? null,
         assigned_to_name: row.assigned_to ? (names.get(row.assigned_to) ?? null) : null,
+        assigned_agent_name: agentName(row.assigned_agent_id),
       },
       sla: incSlaFor(row, settings),
       // What the viewer may do next, so the page does not have to re-derive the rules.
@@ -323,12 +363,14 @@ export class IncidentsService {
       watching,
       watchers: canManage ? watcherIds.map((uid) => ({ id: uid, display_name: names.get(uid) ?? 'Unknown user' })) : undefined,
       ...(await this.major.details(t, row, canManage)),
+      // The assistant's side of the story is for the team.
+      ...(canManage ? { agent: await this.agentView.details(t, row) } : {}),
       items,
       // The reason for a priority change stays with the team.
       events: events.map((e) => ({
         ...e,
         body: !canManage && e.kind === 'priority_changed' ? null : e.body,
-        author_name: names.get(e.author_id ?? '') ?? null,
+        author_name: e.actor_type === 'agent' ? agentName(e.author_id) : (names.get(e.author_id ?? '') ?? null),
       })),
     };
   }
@@ -376,7 +418,7 @@ export class IncidentsService {
         })
         .returningAll()
         .executeTakeFirstOrThrow();
-      await s.insertInto('incident_events').values({ incident_id: created.id, kind: 'created', to_status: 'new', author_id: user.id }).execute();
+      await s.insertInto('incident_events').values({ incident_id: created.id, kind: 'created', to_status: 'new', ...actorCols(user) }).execute();
       if (input.items.length) {
         await s
           .insertInto('incident_items')
@@ -396,6 +438,7 @@ export class IncidentsService {
     });
     const settings = await this.settingsRaw(t);
     const sla = incSlaFor(row, settings);
+    await this.events.emit(t.id, row, 'incident.created', { site: site?.sitecode ?? null, by: canManage ? 'team' : 'customer' });
     await this.notify.created(t, user, { ...row, details }, {
       siteLabel: site ? (site.name ? `${site.sitecode} — ${site.name}` : site.sitecode) : null,
       staffRaised: canManage,
@@ -462,7 +505,10 @@ export class IncidentsService {
     };
     // The team's first move is the acknowledgement the response target is measured to.
     if (canManage && !row.acknowledged_at) set.acknowledged_at = now;
-    if (kind === 'acknowledge' && !row.assigned_to && !row.assigned_agent_id) set.assigned_to = user.id;
+    if (kind === 'acknowledge' && !row.assigned_to && !row.assigned_agent_id) {
+      if (user.agent) set.assigned_agent_id = user.id;
+      else set.assigned_to = user.id;
+    }
     if (kind === 'restore') set.restored_at = now;
     if (kind === 'resolve') set.resolved_at = now;
     if (kind === 'close') set.closed_at = now;
@@ -491,7 +537,7 @@ export class IncidentsService {
         from_status: from,
         to_status: to,
         body: note,
-        author_id: user.id,
+        ...actorCols(user),
         meta: JSON.stringify({ kind, ...(holdReason ? { holdReason } : {}), ...(duplicateOf ? { duplicateOf } : {}) }),
       })
       .execute();
@@ -501,6 +547,7 @@ export class IncidentsService {
       targetId: id,
       detail: { reference: incReference(row.number), from, to, kind, holdReason },
     });
+    await this.events.emit(t.id, updated, 'incident.updated', { change: 'status', from, to, move: kind, by: user.agent ? 'agent' : canManage ? 'team' : 'customer' });
     await this.notify.moved(t, user, updated, kind, { staff: canManage, note, holdReason });
     // A major incident that is finished stops being live; its children can be finished with it.
     if (row.major && !row.major_ended_at && (kind === 'resolve' || kind === 'cancel' || kind === 'duplicate')) {
@@ -523,14 +570,27 @@ export class IncidentsService {
     this.assertEnabled(t);
     const row = await this.load(t, id);
     let assigneeName = 'Unassigned';
-    if (input.userId) {
+    let agentId: string | null = null;
+    if (input.agentId) {
+      const agent = (await this.assignableAgents(t)).find((a) => a.id === input.agentId);
+      if (!agent) throw new BadRequestException('That assistant is not available on this customer. A Super Admin allows it from Administration -> Assistants.');
+      agentId = agent.id;
+      assigneeName = agentLabel(agent.name);
+    } else if (input.userId) {
       const member = (await this.staff(t)).find((m) => m.id === input.userId);
       if (!member) throw new BadRequestException('Incidents can only be assigned to an engineer on this customer, or a Super Admin.');
       assigneeName = member.display_name;
     }
     const updated = await tenantDb(this.db, t.schema)
       .updateTable('incidents')
-      .set({ assigned_to: input.userId, assigned_agent_id: null, updated_at: new Date().toISOString(), version: row.version + 1 })
+      .set({
+        assigned_to: agentId ? null : (input.userId ?? null),
+        assigned_agent_id: agentId,
+        // Giving it to an assistant hands it back: a person's take-over no longer holds.
+        ...(agentId ? { agent_hold: false } : {}),
+        updated_at: new Date().toISOString(),
+        version: row.version + 1,
+      })
       .where('id', '=', id)
       .where('version', '=', row.version)
       .returningAll()
@@ -538,15 +598,19 @@ export class IncidentsService {
     if (!updated) throw new ConflictException('This incident was just updated by someone else. Refresh and try again.');
     await tenantDb(this.db, t.schema)
       .insertInto('incident_events')
-      .values({ incident_id: id, kind: 'assigned', body: assigneeName, author_id: user.id, meta: JSON.stringify({ userId: input.userId }) })
+      .values({ incident_id: id, kind: 'assigned', body: assigneeName, ...actorCols(user), meta: JSON.stringify({ userId: input.userId ?? null, agentId }) })
       .execute();
     await this.audit.tenant(t.schema, 'incident.assigned', {
       actor: { id: user.id, email: user.email },
       targetType: 'incident',
       targetId: id,
-      detail: { reference: incReference(row.number), assigneeId: input.userId },
+      detail: { reference: incReference(row.number), assigneeId: input.userId ?? null, agentId },
     });
-    if (input.userId !== row.assigned_to) await this.notify.assigned(t, user, updated, input.userId);
+    // Whoever the incident goes to, an assistant that was working it is stopped (unless it is the one being given it).
+    if (!agentId && row.assigned_agent_id && !user.agent) await this.claims.revoke(t, updated, user, { hold: false });
+    if (input.userId && input.userId !== row.assigned_to) await this.notify.assigned(t, user, updated, input.userId);
+    await this.events.emit(t.id, updated, 'incident.updated', { change: 'assigned' });
+    if (agentId) await this.events.emit(t.id, updated, 'incident.assigned', { by: user.displayName }, agentId);
     return { ...updated, reference: incReference(row.number) };
   }
 
@@ -574,7 +638,7 @@ export class IncidentsService {
     if (!updated) throw new ConflictException('This incident was just updated by someone else. Refresh and try again.');
     await tenantDb(this.db, t.schema)
       .insertInto('incident_events')
-      .values({ incident_id: id, kind: 'priority_changed', from_status: row.priority, to_status: input.priority, body: input.reason, author_id: user.id, meta: JSON.stringify({ from: row.priority, to: input.priority }) })
+      .values({ incident_id: id, kind: 'priority_changed', from_status: row.priority, to_status: input.priority, body: input.reason, ...actorCols(user), meta: JSON.stringify({ from: row.priority, to: input.priority }) })
       .execute();
     await this.audit.tenant(t.schema, 'incident.priority_changed', {
       actor: { id: user.id, email: user.email },
@@ -582,6 +646,7 @@ export class IncidentsService {
       targetId: id,
       detail: { reference: incReference(row.number), from: row.priority, to: input.priority, reason: input.reason },
     });
+    await this.events.emit(t.id, updated, 'incident.updated', { change: 'priority', from: row.priority, to: input.priority });
     await this.notify.priorityChanged(t, user, updated);
     return { ...updated, reference: incReference(row.number) };
   }
@@ -610,7 +675,7 @@ export class IncidentsService {
     const question = !!input.waitForReply;
     const event = await s
       .insertInto('incident_events')
-      .values({ incident_id: id, kind: question ? 'waiting' : 'comment', body: input.body, internal: !!input.internal, author_id: user.id })
+      .values({ incident_id: id, kind: question ? 'waiting' : 'comment', body: input.body, internal: !!input.internal, ...actorCols(user) })
       .returningAll()
       .executeTakeFirstOrThrow();
 
@@ -625,8 +690,9 @@ export class IncidentsService {
     }
     await s.updateTable('incidents').set(set).where('id', '=', id).execute();
     if (resumed) {
-      await s.insertInto('incident_events').values({ incident_id: id, kind: 'resumed', from_status: 'on_hold', to_status: 'in_progress', author_id: user.id }).execute();
+      await s.insertInto('incident_events').values({ incident_id: id, kind: 'resumed', from_status: 'on_hold', to_status: 'in_progress', ...actorCols(user) }).execute();
     }
+    await this.events.emit(t.id, { ...row, version: row.version + 1 }, 'incident.message', { by: user.agent ? 'agent' : canManage ? 'team' : 'customer', internal: !!input.internal, question });
     await this.notify.commented(t, user, row, { body: input.body, internal: !!input.internal, question, staff: canManage, resumed });
     return event;
   }
@@ -678,7 +744,7 @@ export class IncidentsService {
       .returningAll()
       .executeTakeFirst();
     if (!item) return s.selectFrom('incident_items').selectAll().where('incident_id', '=', id).where('kind', '=', input.kind).where('ref', '=', input.ref).executeTakeFirstOrThrow();
-    await s.insertInto('incident_events').values({ incident_id: id, kind: 'link', body: input.label ?? input.ref, internal: true, author_id: user.id, meta: JSON.stringify({ kind: input.kind, ref: input.ref }) }).execute();
+    await s.insertInto('incident_events').values({ incident_id: id, kind: 'link', body: input.label ?? input.ref, internal: true, ...actorCols(user), meta: JSON.stringify({ kind: input.kind, ref: input.ref }) }).execute();
     await this.audit.tenant(t.schema, 'incident.item_linked', {
       actor: { id: user.id, email: user.email },
       targetType: 'incident',

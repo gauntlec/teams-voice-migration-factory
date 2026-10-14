@@ -11,6 +11,11 @@ export interface AuthedUser {
   enrolOnly: boolean;
   /** true when the bearer token is a limited "forced password reset" token */
   pwresetOnly: boolean;
+  /**
+   * Set when this "user" is an AI agent acting through the agent API (see agent-actor.ts): events it makes
+   * are attributed to the agent (not a person), and it never has an email or an account.
+   */
+  agent?: { id: string; name: string };
 }
 
 export interface TenantContext {
@@ -30,7 +35,17 @@ export interface TenantContext {
   managedServices: boolean;
 }
 
+/** An AI agent authenticated by its token (see AgentAuthGuard). */
+export interface AgentPrincipal {
+  agentId: string;
+  tokenId: string;
+  name: string;
+  kind: import('@tvmf/shared').AgentKind;
+  scopes: import('@tvmf/shared').AgentScope[];
+}
+
 export interface AppRequest extends Request {
   user?: AuthedUser;
+  agent?: AgentPrincipal;
   tenant?: TenantContext;
 }

@@ -18,6 +18,7 @@ export * from './service-request-change';
 export * from './service-request-sla';
 export * from './incidents';
 export * from './incident-major';
+export * from './agents';
 export * from './wizard-convert';
 export * from './progress';
 export * from './release-safety';

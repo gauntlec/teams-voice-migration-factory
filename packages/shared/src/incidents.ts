@@ -549,6 +549,11 @@ export const INC_EVENT_KINDS = [
   'child_unlinked',
   'problem_linked',
   'review_shared',
+  'claim_started',
+  'claim_released',
+  'handoff',
+  'proposal',
+  'proposal_decided',
 ] as const;
 export type IncEventKind = (typeof INC_EVENT_KINDS)[number];
 
@@ -942,8 +947,8 @@ export const listIncidentsQuerySchema = z
     category: z.enum(INC_CATEGORY_KEYS).optional(),
     priority: priorityEnum.optional(),
     siteId: z.string().uuid().optional(),
-    /** 'me' = assigned to me; 'none' = unassigned. */
-    assigned: z.enum(['me', 'none']).optional(),
+    /** 'me' = assigned to me; 'none' = unassigned; 'agent' = with an AI assistant. */
+    assigned: z.enum(['me', 'none', 'agent']).optional(),
     q: z.string().trim().max(120).optional(),
     limit: z.coerce.number().int().min(1).max(500).default(200),
   })
@@ -972,7 +977,11 @@ export const incidentStatusSchema = z
   .strict();
 export type IncidentStatusInput = z.infer<typeof incidentStatusSchema>;
 
-export const incidentAssignSchema = z.object({ userId: z.string().uuid().nullable() }).strict();
+/** POST /incidents/:id/assign - a person (or null to unassign), or an AI assistant. */
+export const incidentAssignSchema = z
+  .object({ userId: z.string().uuid().nullable().optional(), agentId: z.string().uuid().optional() })
+  .strict()
+  .refine((v) => (v.userId !== undefined) !== (v.agentId !== undefined), 'Choose a person (or nobody), or an assistant');
 export type IncidentAssignInput = z.infer<typeof incidentAssignSchema>;
 
 /** POST /incidents/:id/comments */
