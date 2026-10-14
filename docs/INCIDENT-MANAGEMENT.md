@@ -524,7 +524,7 @@ What exists after chunk 1 (API and rules only - no screens, no emails yet):
 | Chunk | Status | Commit / notes |
 |---|---|---|
 | 0 Research and design | Done 2026-10-14 | this document |
-| 1 Foundations | Built 2026-10-14 (073e661) - committed, not yet deployed | See "Chunk 1 as built" |
+| 1 Foundations | Built and deployed 2026-10-14 (073e661), verified live (migrations applied to all 5 customer schemas) | See "Chunk 1 as built" |
 | 2 Customer and engineer UI | Not started | |
 | 3 Email workflows and SLA engine | Not started | |
 | 4 MSP console, major incidents, problems, reports | Not started | |
