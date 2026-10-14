@@ -464,7 +464,7 @@ ones; Teams channel notification for the MSP; customer-wide notices history;
 performance, accessibility, docs and demo data; add an incident segment to the
 executive demo deck.
 
-## 10. Decisions needed (recommended defaults in bold)
+## 10. Decisions (all six confirmed by the owner on 2026-10-14, as recommended)
 
 1. One switch or two? **Reuse Managed Services** so customers get both; add a per-module
    toggle later if needed.
@@ -653,7 +653,7 @@ The MSP console, major incidents, problems, post-incident reviews and reports. M
 | 1 Foundations | Built and deployed 2026-10-14 (073e661), verified live (migrations applied to all 5 customer schemas) | See "Chunk 1 as built" |
 | 2 Customer and engineer UI | Built and deployed 2026-10-14 (1455aa6), verified live | See "Chunk 2 as built" |
 | 3 Email workflows and SLA engine | Built and deployed 2026-10-14 (8a6ad5a), verified live (migration 0048 on all 5 customer schemas) | See "Chunk 3 as built" |
-| 4 MSP console, major incidents, problems, reports | Built 2026-10-14 - committed, not yet deployed | See "Chunk 4 as built" |
+| 4 MSP console, major incidents, problems, reports | Built and deployed 2026-10-14 (a75e4a4), verified live (migration 0049 on all 5 customer schemas) | See "Chunk 4 as built" |
 | 5 Agent platform | Not started | |
 | 6 First-party agents, diagnostics, MCP | Not started | |
 | 7 Bots completing service requests | Not started | |
