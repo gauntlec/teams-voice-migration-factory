@@ -1,5 +1,5 @@
 import type { ComponentProps, ReactNode } from 'react';
-import { Table, makeStyles, mergeClasses, shorthands } from '@fluentui/react-components';
+import { Table, makeStyles, mergeClasses, shorthands, tokens } from '@fluentui/react-components';
 
 /**
  * Standard data table for the whole app. Use this instead of Fluent's `<Table>`
@@ -41,11 +41,18 @@ export function DataTable({
 }
 
 const useStyles = makeStyles({
+  // A soft shadow on whichever edge has more to scroll to, so a wide table never looks like it ends at the window edge. The two
+  // "local" gradients are page-coloured covers that hide the shadow once you reach that end.
   scroller: {
     width: '100%',
     overflowX: 'auto',
     overflowY: 'hidden',
     ...shorthands.padding('0', '0', '2px', '0'),
+    backgroundImage: `linear-gradient(to right, ${tokens.colorNeutralBackground1} 30%, transparent), linear-gradient(to left, ${tokens.colorNeutralBackground1} 30%, transparent), radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.18), transparent), radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.18), transparent)`,
+    backgroundRepeat: 'no-repeat',
+    backgroundPosition: 'left center, right center, left center, right center',
+    backgroundSize: '40px 100%, 40px 100%, 12px 100%, 12px 100%',
+    backgroundAttachment: 'local, local, scroll, scroll',
   },
   table: {
     width: '100%',

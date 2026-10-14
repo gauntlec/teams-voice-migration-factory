@@ -16,6 +16,7 @@ import {
   TableHeaderCell,
   TableRow,
   Text,
+  tokens,
 } from '@fluentui/react-components';
 import { ArrowClockwiseRegular } from '@fluentui/react-icons';
 import { MAINTENANCE_FREEZE_MINUTES, type MaintenanceNoticeView, type ReleaseCheck } from '@tvmf/shared';
@@ -103,7 +104,7 @@ export function AdminReleaseCheck() {
   const notice = data?.maintenance ?? null;
 
   return (
-    <Page
+    <Page narrow platform
       title="Release check"
       subtitle="What a release would interrupt right now. Releasing restarts the worker, which ends every customer-tenant sign-in and fails every queued or running discovery and deployment run."
       actions={
@@ -227,7 +228,7 @@ export function AdminReleaseCheck() {
           </>
         )}
         {data && (
-          <Text size={200} style={{ color: '#666' }}>
+          <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
             Checked {fmt(data.checkedAt)} - refreshes every 15 seconds.
           </Text>
         )}
@@ -235,7 +236,7 @@ export function AdminReleaseCheck() {
 
       <Card>
         <Text weight="semibold">Maintenance notice</Text>
-        <Text size={200} style={{ color: '#666' }}>
+        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
           Shown as a banner to every signed-in staff member. For the final {MAINTENANCE_FREEZE_MINUTES} minutes before the time
           (and until you clear it, or 30 minutes after), nobody can start a new deployment run, discovery run or customer-tenant
           sign-in - so nothing new is cut off by the release. Clear it once the release is done.
@@ -267,7 +268,7 @@ export function AdminReleaseCheck() {
             </Button>
           )}
         </div>
-        {err && <Text style={{ color: '#b10e1c' }}>{err}</Text>}
+        {err && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{err}</Text>}
       </Card>
     </Page>
   );

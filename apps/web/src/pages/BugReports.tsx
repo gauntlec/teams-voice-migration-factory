@@ -775,7 +775,7 @@ export function BugReports() {
   ) : undefined;
 
   return (
-    <Page
+    <Page platform
       title="Bug reports"
       subtitle="Defects found in the platform itself. An admin moves a card through triage as it's confirmed, fixed and shipped."
       actions={actions}

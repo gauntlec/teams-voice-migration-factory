@@ -185,7 +185,7 @@ export function KnowledgeButton({ base }: { base: string }) {
   const label = (k: Snippet) => INC_CATEGORIES.find((c) => c.key === k.category)?.label ?? k.category;
   return (
     <>
-      <Button onClick={() => setOpen(true)}>Knowledge</Button>
+      <Button appearance="subtle" onClick={() => setOpen(true)}>Knowledge</Button>
       {open && (
         <Dialog open onOpenChange={(_, x) => !x.open && setOpen(false)}>
           <DialogSurface style={{ maxWidth: '820px', width: '94vw' }}>

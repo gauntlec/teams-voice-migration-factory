@@ -155,7 +155,7 @@ const usePageStyles = makeStyles({
     fontWeight: tokens.fontWeightSemibold,
     fontSize: tokens.fontSizeBase200,
   },
-  blockers: { margin: 0, paddingLeft: '20px', color: tokens.colorPaletteMarigoldForeground1 },
+  blockers: { margin: 0, paddingLeft: '20px', color: tokens.colorPaletteMarigoldForeground2 },
   waiting: {
     display: 'flex',
     alignItems: 'center',
@@ -215,7 +215,7 @@ export function ServiceRequestPage() {
   if (!activeTenantId) return <NoTenant />;
   if (!enabled) {
     return (
-      <Page title="Service request">
+      <Page narrow title="Service request">
         <Card>
           <Text>
             Managed Services isn&apos;t switched on for this customer. A Super Admin can switch it on from <b>Customers</b>.
@@ -228,7 +228,7 @@ export function ServiceRequestPage() {
   if (q.isError || !r) return <LoadError message={q.error ? (q.error as Error).message : 'Request not found.'} />;
 
   return (
-    <Page
+    <Page narrow
       title={`${r.reference} · ${r.title}`}
       subtitle={`${SR_TYPE_DEFS[r.type].label}${r.sitecode ? ` · ${r.site_name ? `${r.sitecode} (${r.site_name})` : r.sitecode}` : ''}`}
       actions={

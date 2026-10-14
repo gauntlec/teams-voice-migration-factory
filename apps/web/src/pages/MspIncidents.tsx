@@ -125,7 +125,7 @@ export function MspIncidents() {
   const subtitle = superAdmin ? 'Every incident across all customers with Managed Services switched on.' : q.data?.msp ? `Every incident across ${q.data.msp.name}'s customers.` : "Every incident across your MSP's customers.";
 
   return (
-    <Page title="Incident console" subtitle={subtitle}>
+    <Page platform title="Incident console" subtitle={subtitle}>
       <TabList selectedValue={tab} onTabSelect={(_, d) => setTab(d.value as typeof tab)}>
         <Tab value="queue">Queue</Tab>
         <Tab value="major">Major incidents{majors.length ? ` (${majors.length})` : ''}</Tab>

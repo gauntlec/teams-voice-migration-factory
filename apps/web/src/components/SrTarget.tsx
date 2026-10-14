@@ -72,7 +72,7 @@ const useStyles = makeStyles({
   active: { ...shorthands.border('1px', 'solid', tokens.colorBrandStroke1) },
   value: { fontSize: tokens.fontSizeHero700, lineHeight: tokens.lineHeightHero700, fontWeight: tokens.fontWeightSemibold, fontVariantNumeric: 'tabular-nums' },
   danger: { color: tokens.colorPaletteRedForeground1 },
-  warning: { color: tokens.colorPaletteMarigoldForeground1 },
+  warning: { color: tokens.colorPaletteMarigoldForeground2 },
 });
 
 export interface QueueItemForTiles {

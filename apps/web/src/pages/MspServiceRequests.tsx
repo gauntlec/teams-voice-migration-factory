@@ -127,7 +127,7 @@ export function MspServiceRequests() {
       : 'Every service request across your MSP’s customers.';
 
   return (
-    <Page title="Service request admin" subtitle={subtitle}>
+    <Page platform title="Service request admin" subtitle={subtitle}>
       <div className={cs.toolbar}>
         <Field label="Status">
           <Select value={status} onChange={(_, d) => setStatus(d.value)}>

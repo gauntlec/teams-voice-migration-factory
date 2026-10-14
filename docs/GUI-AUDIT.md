@@ -43,6 +43,26 @@ not a consumer app. Severity: **High** = blocks or misleads real users; **Medium
 2. **Next (about 1-2 weeks)**: 1 (responsive shell and phone-first incident pages), 7 (action menus, toasts), 10 (skeletons, empty states), 6 (list page actions), 9 (width caps, sticky grid columns).
 3. **Foundation**: 11 and 12 together (tokens, dark mode, layout primitives, splitting the big pages), then a table component with sort, density and column chooser.
 
+## Status (2026-10-14, after the first implementation pass)
+
+| # | Status | What changed |
+|---|---|---|
+| 1 | Done (shell and incident/request lists) | Under 900 px the nav is a drawer opened from a menu button (closes on navigation, Escape, or the scrim); the header, customer picker and page padding shrink; list filters no longer push the page wider. Dense grids (Design & Build, Discovery) are still desktop-first. |
+| 2 | Done | `Page` renders a real `h1` and sets the document title per page ("Incidents · Customer · Voxshift"); skip-to-content link; the nav is labelled "Main". |
+| 3 | Done | All amber warning text uses `colorPaletteMarigoldForeground2` (6.1:1); the Design & Build "will change" cells also get a tinted background so colour is not the only cue. |
+| 4 | Done | Every customer-scoped page shows the customer name (and a Test customer badge) above its title. Platform pages (administration, MSP consoles, feedback, Dashboard) do not. |
+| 5 | Done | The Dashboard stage "Operations" is now "In service"; the Incident console has its own icon. |
+| 6 | Partly | Secondary header buttons on Incidents and Service Requests are subtle so the primary action stands out. Not done: consolidating them into tabs or a menu. |
+| 7 | Done for Users | Row actions are Manage, a "..." menu (Disable/Enable, Reset two-factor, Resend invitation) and Delete; Disable and Reset two-factor now ask first; "New user" is a dialog opened from the page header; a toaster (`useNotify`) confirms actions. Other pages can adopt `useNotify` as they are touched. |
+| 8 | Done | Nav group labels are 12 px; page titles have -0.01em tracking; stage chip detail is 12 px. |
+| 9 | Partly | Forms and detail pages (`narrow`) cap at 1200 px; tables show scroll-edge shadows. Not done: sticky first column, column chooser, sorting. |
+| 10 | Done for Incidents, Service Requests | Skeleton rows while loading; empty states say what to do and offer the action (`components/states.tsx`). Other lists still use spinners. |
+| 11 | Partly | Literal reds and greys in pages replaced with theme tokens. Not done: wiring dark mode, and the diagram colours (CallFlowDiagram, NetworkDiagram) still use literal hex. |
+| 12 | Not started | Layout primitives beyond `Page`; splitting the very large pages. |
+| 13 | Partly | Toasts are live-region text; the Users search box is labelled. Icon button hit areas unchanged. |
+| 14 | Done | Dashboard legend line added. |
+| 15 | n/a | No change needed. |
+
 ## Method and limits
 
 - Live review of the production-like dev site as a Super Admin on the customer "AT&T Voice Consult": Dashboard, Data Collection, Discovery,

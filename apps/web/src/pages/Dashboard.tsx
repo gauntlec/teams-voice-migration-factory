@@ -21,7 +21,7 @@ const useStyles = makeStyles({
   summary: { display: 'flex', flexWrap: 'wrap', ...shorthands.gap('8px', '24px'), alignItems: 'center' },
   list: { display: 'grid', ...shorthands.gap('6px'), ...shorthands.margin(0), ...shorthands.padding(0), listStyleType: 'none' },
   row: { display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr) auto', alignItems: 'center', ...shorthands.gap('8px'), minHeight: '24px' },
-  warn: { color: tokens.colorPaletteMarigoldForeground1, flexShrink: 0 },
+  warn: { color: tokens.colorPaletteMarigoldForeground2, flexShrink: 0 },
   ok: { color: tokens.colorPaletteGreenForeground1, flexShrink: 0 },
   todo: { color: tokens.colorNeutralForeground3, flexShrink: 0 },
   site: {
@@ -116,7 +116,7 @@ export function Dashboard() {
   });
 
   return (
-    <Page
+    <Page platform
       title={`Welcome, ${me?.displayName ?? ''}`}
       subtitle={
         activeTenant
@@ -226,7 +226,7 @@ function ProgressView({ data, tenant, can }: { data: CustomerProgress; tenant: M
             Sites{' '}
             <span className={rs.muted}>
               ({term ? `${sites.length} of ${data.sites.length}` : data.sites.length}
-              {data.sites.length > 0 ? ` · ${inOperations} in operations` : ''})
+              {data.sites.length > 0 ? ` · ${inOperations} in service` : ''})
             </span>
           </Text>
         </div>
@@ -248,11 +248,16 @@ function ProgressView({ data, tenant, can }: { data: CustomerProgress; tenant: M
             No sites match “{search}”.
           </Text>
         ) : (
-          <div>
-            {sites.map((site) => (
-              <SiteRow key={site.id} site={site} linkFor={linkFor} />
-            ))}
-          </div>
+          <>
+            <Text size={200} className={rs.muted} block>
+              Each site moves left to right. The shaded stage is where it is now; select a stage to open it.
+            </Text>
+            <div>
+              {sites.map((site) => (
+                <SiteRow key={site.id} site={site} linkFor={linkFor} />
+              ))}
+            </div>
+          </>
         )}
       </Card>
     </>
@@ -321,7 +326,7 @@ function StageChip({ stage, current, to }: { stage: ProgressStage; current: bool
         {stage.label}
       </Text>
       {stage.detail && (
-        <Text size={100} className={s.stepDetail}>
+        <Text size={200} className={s.stepDetail}>
           {stage.detail}
         </Text>
       )}

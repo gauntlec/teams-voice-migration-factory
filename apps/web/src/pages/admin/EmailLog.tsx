@@ -15,6 +15,7 @@ import {
   TableHeaderCell,
   TableRow,
   Text,
+  tokens,
 } from '@fluentui/react-components';
 import { ArrowClockwiseRegular } from '@fluentui/react-icons';
 import { api } from '../../api';
@@ -85,7 +86,7 @@ export function AdminEmailLog() {
   const items = q.data?.items ?? [];
 
   return (
-    <Page
+    <Page platform
       title="Email log"
       subtitle="Queued and sent messages, with per-message SMTP delivery status."
     >
@@ -116,7 +117,7 @@ export function AdminEmailLog() {
             </MessageBarBody>
           </MessageBar>
         )}
-        <Text size={200} style={{ color: '#666' }}>
+        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
           The rows below are the delivery record — one per message, with the last SMTP error and
           the retry count. Lower-level SMTP conversation logs are in the worker container
           (<code style={mono}>docker logs</code> on the Docker host).
@@ -156,7 +157,7 @@ export function AdminEmailLog() {
                   <TableCell title={m.to_email}>
                     {m.to_email}
                     {m.original_to_email && (
-                      <Text size={200} block style={{ color: '#666' }}>
+                      <Text size={200} block style={{ color: tokens.colorNeutralForeground3 }}>
                         <Badge appearance="tint" color="warning" size="small">
                           Test customer
                         </Badge>{' '}
@@ -174,11 +175,11 @@ export function AdminEmailLog() {
                     {m.status === 'sent' ? (
                       <Text size={200}>sent {fmt(m.sent_at)}</Text>
                     ) : m.status === 'failed' ? (
-                      <Text size={200} style={{ color: '#b10e1c' }}>
+                      <Text size={200} style={{ color: tokens.colorPaletteRedForeground1 }}>
                         {m.error || 'failed'} · {m.attempts} {m.attempts === 1 ? 'try' : 'tries'}
                       </Text>
                     ) : (
-                      <Text size={200} style={{ color: '#666' }}>
+                      <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
                         {m.status === 'queued' ? 'waiting' : m.status}
                         {m.attempts > 0 ? ` · ${m.attempts} tries` : ''}
                       </Text>

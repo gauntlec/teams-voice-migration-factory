@@ -36,7 +36,7 @@ export function AdminAudit() {
   });
 
   return (
-    <Page title="Platform Audit" subtitle="Authentication, user and customer administration, and tenant connections.">
+    <Page platform title="Platform Audit" subtitle="Authentication, user and customer administration, and tenant connections.">
       <Card>
         <SearchBox
           size="small"

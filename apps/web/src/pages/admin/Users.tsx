@@ -18,6 +18,12 @@ import {
   MessageBarActions,
   MessageBarBody,
   MessageBarTitle,
+  Menu,
+  MenuDivider,
+  MenuItem,
+  MenuList,
+  MenuPopover,
+  MenuTrigger,
   Option,
   SearchBox,
   Spinner,
@@ -29,12 +35,15 @@ import {
   Text,
   makeStyles,
   shorthands,
+  tokens,
 } from '@fluentui/react-components';
 import {
+  AddRegular,
   CheckmarkRegular,
   CopyRegular,
   DeleteRegular,
   MailRegular,
+  MoreHorizontalRegular,
   PeopleTeamRegular,
   PersonAvailableRegular,
   PersonProhibitedRegular,
@@ -47,6 +56,7 @@ import { DataTable } from '../../components/DataTable';
 import { Page } from '../../components/Page';
 import { LoadError } from '../../components/records';
 import { useDebounced } from '../../hooks/useDebounced';
+import { useNotify } from '../../hooks/useNotify';
 
 const useStyles = makeStyles({
   actions: { display: 'flex', ...shorthands.gap('4px'), flexWrap: 'nowrap' },
@@ -149,7 +159,7 @@ function DeleteUserButton({ user, onDeleted }: { user: UserRow; onDeleted: () =>
         size="small"
         appearance="subtle"
         icon={<DeleteRegular />}
-        style={{ color: '#b10e1c' }}
+        style={{ color: tokens.colorPaletteRedForeground1 }}
         title="Delete account"
         aria-label="Delete account"
         onClick={() => {
@@ -166,7 +176,7 @@ function DeleteUserButton({ user, onDeleted }: { user: UserRow; onDeleted: () =>
               enrolment and customer assignments are deleted with the account. This cannot be
               undone.
               {err && (
-                <Text style={{ color: '#b10e1c', display: 'block', marginTop: 8 }}>{err}</Text>
+                <Text style={{ color: tokens.colorPaletteRedForeground1, display: 'block', marginTop: 8 }}>{err}</Text>
               )}
             </DialogContent>
             <DialogActions>
@@ -175,7 +185,7 @@ function DeleteUserButton({ user, onDeleted }: { user: UserRow; onDeleted: () =>
               </Button>
               <Button
                 appearance="primary"
-                style={{ backgroundColor: '#b10e1c' }}
+                style={{ backgroundColor: tokens.colorPaletteRedBackground3 }}
                 disabled={del.isPending}
                 onClick={() => del.mutate()}
               >
@@ -240,6 +250,7 @@ export function AdminUsers() {
   const [mspId, setMspId] = useState<string>('');
   const [err, setErr] = useState<string | null>(null);
   const [manage, setManage] = useState<UserRow | null>(null);
+  const [creating, setCreating] = useState(false);
   const [invited, setInvited] = useState<{
     email: string;
     tempPassword: string;
@@ -273,6 +284,7 @@ export function AdminUsers() {
     setErr(null);
   };
 
+  const notify = useNotify();
   const create = useMutation({
     mutationFn: () =>
       api<{ email: string; tempPassword: string }>('/users', {
@@ -289,16 +301,27 @@ export function AdminUsers() {
       }),
     onSuccess: (data) => {
       resetForm();
+      setCreating(false);
       setInvited({ email: data.email, tempPassword: data.tempPassword, resent: false });
+      notify(`Invitation sent to ${data.email}`);
       qc.invalidateQueries({ queryKey: ['users'] });
     },
     onError: (e) => setErr(e instanceof Error ? e.message : 'Failed'),
   });
 
+  // Disabling an account and resetting two-factor change who can sign in, so they ask first.
+  const [confirm, setConfirm] = useState<{ user: UserRow; action: 'disable' | 'reset-mfa' } | null>(null);
   const act = useMutation({
-    mutationFn: ({ id, action }: { id: string; action: 'disable' | 'enable' | 'reset-mfa' }) =>
+    mutationFn: ({ id, action }: { id: string; action: 'disable' | 'enable' | 'reset-mfa'; name: string }) =>
       api(`/users/${id}/${action}`, { method: 'POST' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+    onSuccess: (_d, v) => {
+      setConfirm(null);
+      qc.invalidateQueries({ queryKey: ['users'] });
+      notify(v.action === 'disable' ? `${v.name} disabled` : v.action === 'enable' ? `${v.name} enabled` : `Two-factor reset for ${v.name}`, {
+        body: v.action === 'reset-mfa' ? 'They will set up two-factor again at their next sign-in.' : undefined,
+      });
+    },
+    onError: (e) => notify('That did not work', { intent: 'error', body: e instanceof Error ? e.message : undefined }),
   });
 
   const resend = useMutation({
@@ -309,12 +332,22 @@ export function AdminUsers() {
     onSuccess: (data) => {
       setInvited({ email: data.email, tempPassword: data.tempPassword, resent: true });
       qc.invalidateQueries({ queryKey: ['users'] });
+      notify(`Invitation sent to ${data.email}`);
     },
     onError: (e) => setErr(e instanceof Error ? e.message : 'Failed'),
   });
 
   return (
-    <Page title="Users" subtitle="Platform staff and customer users, and which customers they can work in.">
+    <Page
+      platform
+      title="Users"
+      subtitle="Platform staff and customer users, and which customers they can work in."
+      actions={
+        <Button appearance="primary" icon={<AddRegular />} onClick={() => setCreating(true)}>
+          New user
+        </Button>
+      }
+    >
       {invited && (
         <MessageBar intent="success">
           <MessageBarBody>
@@ -343,8 +376,11 @@ export function AdminUsers() {
           </MessageBarActions>
         </MessageBar>
       )}
-      <Card>
-        <Text weight="semibold">New user</Text>
+      <Dialog open={creating} onOpenChange={(_, d) => setCreating(d.open)}>
+        <DialogSurface style={{ maxWidth: 780 }}>
+          <DialogBody>
+            <DialogTitle>New user</DialogTitle>
+            <DialogContent>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'end' }}>
           <Field label="Email">
             <Input type="email" value={email} onChange={(_, d) => setEmail(d.value)} />
@@ -437,7 +473,19 @@ export function AdminUsers() {
               </Dropdown>
             </Field>
           )}
-          <Button
+        </div>
+        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+          The user is emailed a temporary password and must set their own password, then set up
+          two-factor authentication, on first sign-in. Change their customers and site access any
+          time with <b>Manage</b> below.
+        </Text>
+        {err && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{err}</Text>}
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setCreating(false)}>
+                Cancel
+              </Button>
+              <Button
             appearance="primary"
             disabled={
               !email ||
@@ -449,19 +497,16 @@ export function AdminUsers() {
           >
             Create & invite
           </Button>
-        </div>
-        <Text size={200} style={{ color: '#666' }}>
-          The user is emailed a temporary password and must set their own password, then set up
-          two-factor authentication, on first sign-in. Change their customers and site access any
-          time with <b>Manage</b> below.
-        </Text>
-        {err && <Text style={{ color: '#b10e1c' }}>{err}</Text>}
-      </Card>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
 
       <Card>
         <SearchBox
           size="small"
           placeholder="Search by name or email…"
+          aria-label="Search users"
           value={searchInput}
           onChange={(_, d) => setSearchInput(d.value)}
           style={{ maxWidth: 320 }}
@@ -519,41 +564,49 @@ export function AdminUsers() {
                           onClick={() => setManage(u)}
                         />
                       )}
-                      <Button
-                        size="small"
-                        appearance="subtle"
-                        icon={
-                          u.status === 'active' ? <PersonProhibitedRegular /> : <PersonAvailableRegular />
-                        }
-                        title={u.status === 'active' ? 'Disable account' : 'Enable account'}
-                        aria-label={u.status === 'active' ? 'Disable account' : 'Enable account'}
-                        onClick={() =>
-                          act.mutate({ id: u.id, action: u.status === 'active' ? 'disable' : 'enable' })
-                        }
-                      />
-                      <Button
-                        size="small"
-                        appearance="subtle"
-                        icon={<ShieldKeyholeRegular />}
-                        title="Reset two-factor enrolment"
-                        aria-label="Reset two-factor enrolment"
-                        onClick={() => act.mutate({ id: u.id, action: 'reset-mfa' })}
-                      />
-                      {u.role !== 'SUPER_ADMIN' && (
-                        <Button
-                          size="small"
-                          appearance="subtle"
-                          icon={<MailRegular />}
-                          title="Resend invitation email"
-                          aria-label="Resend invitation email"
-                          disabled={resend.isPending}
-                          onClick={() => resend.mutate(u.id)}
-                        />
-                      )}
+                      <Menu>
+                        <MenuTrigger disableButtonEnhancement>
+                          <Button
+                            size="small"
+                            appearance="subtle"
+                            icon={<MoreHorizontalRegular />}
+                            title={`More actions for ${u.display_name}`}
+                            aria-label={`More actions for ${u.display_name}`}
+                          />
+                        </MenuTrigger>
+                        <MenuPopover>
+                          <MenuList>
+                            <MenuItem
+                              icon={u.status === 'active' ? <PersonProhibitedRegular /> : <PersonAvailableRegular />}
+                              onClick={() =>
+                                u.status === 'active'
+                                  ? setConfirm({ user: u, action: 'disable' })
+                                  : act.mutate({ id: u.id, action: 'enable', name: u.display_name })
+                              }
+                            >
+                              {u.status === 'active' ? 'Disable account' : 'Enable account'}
+                            </MenuItem>
+                            <MenuItem icon={<ShieldKeyholeRegular />} onClick={() => setConfirm({ user: u, action: 'reset-mfa' })}>
+                              Reset two-factor
+                            </MenuItem>
+                            {u.role !== 'SUPER_ADMIN' && (
+                              <>
+                                <MenuDivider />
+                                <MenuItem icon={<MailRegular />} disabled={resend.isPending} onClick={() => resend.mutate(u.id)}>
+                                  Resend invitation email
+                                </MenuItem>
+                              </>
+                            )}
+                          </MenuList>
+                        </MenuPopover>
+                      </Menu>
                       {can('user:delete') && u.id !== me?.id && (
                         <DeleteUserButton
                           user={u}
-                          onDeleted={() => qc.invalidateQueries({ queryKey: ['users'] })}
+                          onDeleted={() => {
+                            qc.invalidateQueries({ queryKey: ['users'] });
+                            notify(`${u.display_name} deleted`);
+                          }}
                         />
                       )}
                     </div>
@@ -565,6 +618,31 @@ export function AdminUsers() {
           </DataTable>
         )}
       </Card>
+
+      <Dialog open={!!confirm} onOpenChange={(_, d) => !d.open && setConfirm(null)}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>{confirm?.action === 'disable' ? `Disable ${confirm?.user.display_name}?` : `Reset two-factor for ${confirm?.user.display_name}?`}</DialogTitle>
+            <DialogContent>
+              {confirm?.action === 'disable'
+                ? `${confirm.user.email} will be signed out and will not be able to sign in until you enable the account again.`
+                : `${confirm?.user.email} will have to set up two-factor again at their next sign-in. Do this only when you have checked it is really them.`}
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setConfirm(null)}>
+                Cancel
+              </Button>
+              <Button
+                appearance="primary"
+                disabled={act.isPending}
+                onClick={() => confirm && act.mutate({ id: confirm.user.id, action: confirm.action, name: confirm.user.display_name })}
+              >
+                {confirm?.action === 'disable' ? 'Disable account' : 'Reset two-factor'}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
 
       {manage && (
         <UserMembershipsDialog
@@ -748,7 +826,7 @@ function MembershipRow({
         ) : (
           <Text size={200}>Whole customer</Text>
         )}
-        {err && <Text size={200} style={{ color: '#b10e1c' }}>{err}</Text>}
+        {err && <Text size={200} style={{ color: tokens.colorPaletteRedForeground1 }}>{err}</Text>}
       </TableCell>
       <TableCell>
         <Button
@@ -805,7 +883,7 @@ function AddMembershipRow({
 
   if (isCustomer && taken.size >= 1) {
     return (
-      <Text size={200} style={{ color: '#666' }}>
+      <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
         Customer users belong to a single customer. Remove the current one first to move them.
       </Text>
     );
@@ -873,7 +951,7 @@ function AddMembershipRow({
       >
         Add
       </Button>
-      {err && <Text size={200} style={{ color: '#b10e1c' }}>{err}</Text>}
+      {err && <Text size={200} style={{ color: tokens.colorPaletteRedForeground1 }}>{err}</Text>}
     </div>
   );
 }

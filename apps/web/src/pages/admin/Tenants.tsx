@@ -25,6 +25,7 @@ import {
   TableHeaderCell,
   TableRow,
   Text,
+  tokens,
 } from '@fluentui/react-components';
 import type { Branding } from '@tvmf/shared';
 import { api, apiUpload } from '../../api';
@@ -153,7 +154,7 @@ export function AdminTenants() {
   });
 
   return (
-    <Page
+    <Page platform
       title="Customers"
       subtitle="Each customer gets an isolated database schema, provisioned automatically on creation."
     >
@@ -191,7 +192,7 @@ export function AdminTenants() {
             Create
           </Button>
         </div>
-        {err && <Text style={{ color: '#b10e1c' }}>{err}</Text>}
+        {err && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{err}</Text>}
       </Card>
 
       <Card>
@@ -243,7 +244,7 @@ export function AdminTenants() {
                         </Button>
                       ) : (
                         t.branding && (
-                          <Text size={200} style={{ color: '#616161' }}>
+                          <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
                             Branded
                           </Text>
                         )
@@ -338,13 +339,13 @@ export function AdminTenants() {
             </TableBody>
           </DataTable>
         )}
-        <Text size={200} style={{ color: '#616161' }}>
+        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
           When Teams read-only is on, the platform can never send a write cmdlet to that customer's
           live Microsoft Teams tenant - every deployment run is forced to dry-run, no matter what
           mode is requested. Discovery and validation (read-only) are unaffected.
         </Text>
-        {sandboxErr && <Text style={{ color: '#b10e1c' }}>{sandboxErr}</Text>}
-        <Text size={200} style={{ color: '#616161' }}>
+        {sandboxErr && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{sandboxErr}</Text>}
+        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
           A test customer never emails its real recipients: every email for it goes to the person who
           triggered it, with the subject starting "[TEST - would have gone to ...]". Emails nobody
           triggered (reminders) go to the fallback address, or aren't sent if it's empty.
@@ -415,7 +416,7 @@ function BrandingDialog({
                 ) : (
                   <Wordmark size={18} />
                 )}
-                <Text size={200} style={{ color: '#616161' }}>
+                <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
                   {previewUrl ? 'Current logo' : 'No logo set - default Voxshift mark shown everywhere'}
                 </Text>
               </div>
@@ -451,7 +452,7 @@ function BrandingDialog({
                   style={{ width: 40, height: 32, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
                 />
               </Field>
-              {err && <Text style={{ color: '#b10e1c' }}>{err}</Text>}
+              {err && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{err}</Text>}
             </div>
           </DialogContent>
           <DialogActions>
@@ -611,7 +612,7 @@ function CustomerMembers({ tenants }: { tenants: Tenant[] }) {
           Add
         </Button>
       </div>
-      {err && <Text style={{ color: '#b10e1c' }}>{err}</Text>}
+      {err && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{err}</Text>}
 
       {scopeFor && (
         <ScopeDialog
@@ -694,7 +695,7 @@ function ScopeDialog({
                   </Dropdown>
                 </Field>
               )}
-              {err && <Text style={{ color: '#b10e1c' }}>{err}</Text>}
+              {err && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{err}</Text>}
             </div>
           </DialogContent>
           <DialogActions>

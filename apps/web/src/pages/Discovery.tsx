@@ -1161,7 +1161,7 @@ function PurgeCard({
         <Button
           appearance="secondary"
           icon={<DeleteRegular />}
-          style={{ color: '#b10e1c' }}
+          style={{ color: tokens.colorPaletteRedForeground1 }}
           disabled={!hasData}
           onClick={() => {
             setErr(null);
@@ -1189,12 +1189,12 @@ function PurgeCard({
               {summary?.lastRun ? ' and the run history' : ''}. Any Data Collection users stay, but
               lose their link to a discovered identity. This cannot be undone.
               {running && (
-                <Text style={{ color: '#b10e1c', display: 'block', marginTop: 8 }}>
+                <Text style={{ color: tokens.colorPaletteRedForeground1, display: 'block', marginTop: 8 }}>
                   A discovery is running — wait for it to finish first.
                 </Text>
               )}
               {err && (
-                <Text style={{ color: '#b10e1c', display: 'block', marginTop: 8 }}>{err}</Text>
+                <Text style={{ color: tokens.colorPaletteRedForeground1, display: 'block', marginTop: 8 }}>{err}</Text>
               )}
             </DialogContent>
             <DialogActions>
@@ -1203,7 +1203,7 @@ function PurgeCard({
               </Button>
               <Button
                 appearance="primary"
-                style={{ backgroundColor: '#b10e1c' }}
+                style={{ backgroundColor: tokens.colorPaletteRedBackground3 }}
                 disabled={purge.isPending || running}
                 onClick={() => purge.mutate()}
               >

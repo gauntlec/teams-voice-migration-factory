@@ -248,7 +248,7 @@ export function IncidentNew() {
   if (!activeTenantId) return <NoTenant />;
   if (!enabled) {
     return (
-      <Page title="Raise an incident">
+      <Page narrow title="Raise an incident">
         <Card>
           <Text>
             Managed Services isn&apos;t switched on for this customer. A Super Admin can switch it on from <b>Customers</b>.
@@ -261,7 +261,7 @@ export function IncidentNew() {
   const setCall = (key: number, patch: Partial<CallRow>) => setCalls((prev) => prev.map((c) => (c.key === key ? { ...c, ...patch } : c)));
 
   return (
-    <Page
+    <Page narrow
       title="Raise an incident"
       subtitle="Tell us what's wrong. The more detail you give, the faster we can find it - example calls help most."
       actions={

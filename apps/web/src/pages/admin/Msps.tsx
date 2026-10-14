@@ -21,6 +21,7 @@ import {
   TableHeaderCell,
   TableRow,
   Text,
+  tokens,
 } from '@fluentui/react-components';
 import { DeleteRegular } from '@fluentui/react-icons';
 import type { Branding } from '@tvmf/shared';
@@ -96,7 +97,7 @@ export function AdminMsps() {
   });
 
   return (
-    <Page
+    <Page platform
       title="MSPs"
       subtitle="Managed Service Providers - engineers and project managers see their MSP's branding in the app chrome, resolved by their account's email domain."
     >
@@ -134,7 +135,7 @@ export function AdminMsps() {
             Create
           </Button>
         </div>
-        {err && <Text style={{ color: '#b10e1c' }}>{err}</Text>}
+        {err && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{err}</Text>}
       </Card>
 
       <Card>
@@ -191,7 +192,7 @@ export function AdminMsps() {
                         </Button>
                       ) : (
                         m.branding && (
-                          <Text size={200} style={{ color: '#616161' }}>
+                          <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
                             Branded
                           </Text>
                         )
@@ -263,7 +264,7 @@ function DeleteMspButton({ msp, onDeleted }: { msp: Msp; onDeleted: () => void }
         size="small"
         appearance="subtle"
         icon={<DeleteRegular />}
-        style={{ color: '#b10e1c' }}
+        style={{ color: tokens.colorPaletteRedForeground1 }}
         title="Delete MSP"
         aria-label="Delete MSP"
         onClick={() => {
@@ -278,7 +279,7 @@ function DeleteMspButton({ msp, onDeleted }: { msp: Msp; onDeleted: () => void }
             <DialogContent>
               This permanently removes the MSP and its branding. Any user whose MSP override
               pointed here falls back to domain match / default branding. This cannot be undone.
-              {err && <Text style={{ color: '#b10e1c', display: 'block', marginTop: 8 }}>{err}</Text>}
+              {err && <Text style={{ color: tokens.colorPaletteRedForeground1, display: 'block', marginTop: 8 }}>{err}</Text>}
             </DialogContent>
             <DialogActions>
               <Button appearance="secondary" onClick={() => setOpen(false)}>
@@ -286,7 +287,7 @@ function DeleteMspButton({ msp, onDeleted }: { msp: Msp; onDeleted: () => void }
               </Button>
               <Button
                 appearance="primary"
-                style={{ backgroundColor: '#b10e1c' }}
+                style={{ backgroundColor: tokens.colorPaletteRedBackground3 }}
                 disabled={del.isPending}
                 onClick={() => del.mutate()}
               >
@@ -330,7 +331,7 @@ function EditMspDialog({ msp, onClose, onSaved }: { msp: Msp; onClose: () => voi
               <Field label="Domains" hint="comma or newline separated, e.g. contoso.com, intl.contoso.com">
                 <Input value={domainsRaw} onChange={(_, d) => setDomainsRaw(d.value)} />
               </Field>
-              {err && <Text style={{ color: '#b10e1c' }}>{err}</Text>}
+              {err && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{err}</Text>}
             </div>
           </DialogContent>
           <DialogActions>
@@ -388,7 +389,7 @@ function BrandingDialog({ msp, onClose, onSaved }: { msp: Msp; onClose: () => vo
                 ) : (
                   <Wordmark size={18} />
                 )}
-                <Text size={200} style={{ color: '#616161' }}>
+                <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
                   {previewUrl ? 'Current logo' : 'No logo set - default Voxshift mark shown everywhere'}
                 </Text>
               </div>
@@ -424,7 +425,7 @@ function BrandingDialog({ msp, onClose, onSaved }: { msp: Msp; onClose: () => vo
                   style={{ width: 40, height: 32, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
                 />
               </Field>
-              {err && <Text style={{ color: '#b10e1c' }}>{err}</Text>}
+              {err && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{err}</Text>}
             </div>
           </DialogContent>
           <DialogActions>
@@ -475,7 +476,7 @@ function TeamsDialog({ msp, onClose }: { msp: Msp; onClose: () => void }) {
             {(['incidents', 'major', 'sla'] as const).map((k) => (
               <Checkbox key={k} checked={n[k]} onChange={(_, d) => setNotify({ ...n, [k]: !!d.checked })} label={k === 'incidents' ? 'A P1 or P2 incident is raised' : k === 'major' ? 'A major incident is declared or ends' : 'A response or resolution target is missed'} />
             ))}
-            {error && <Text style={{ color: '#B10E1C' }}>{error instanceof Error ? error.message : 'That did not work.'}</Text>}
+            {error && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{error instanceof Error ? error.message : 'That did not work.'}</Text>}
             {test.isSuccess && <Text>A test message is on its way: look in the channel in a few seconds.</Text>}
           </DialogContent>
           <DialogActions>

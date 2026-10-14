@@ -84,7 +84,7 @@ export function PastNoticesButton({ base, enabled }: { base: string; enabled: bo
   const q = useQuery({ queryKey: ['incident-notice-history', base, days], enabled: enabled && open, queryFn: () => api<PastNotice[]>(`${base}/notices/history?days=${days}`) });
   return (
     <>
-      <Button onClick={() => setOpen(true)}>Past notices</Button>
+      <Button appearance="subtle" onClick={() => setOpen(true)}>Past notices</Button>
       {open && (
         <Dialog open onOpenChange={(_, d) => !d.open && setOpen(false)}>
           <DialogSurface style={{ maxWidth: '720px', width: '94vw' }}>

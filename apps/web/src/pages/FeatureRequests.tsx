@@ -849,7 +849,7 @@ export function FeatureRequests() {
   ) : undefined;
 
   return (
-    <Page
+    <Page platform
       title="Feature requests"
       subtitle="Ideas to improve the platform. An admin moves a card to “In development” to hand it to Claude Code; it returns to “Deployed” when the change ships."
       actions={actions}

@@ -1353,7 +1353,7 @@ function policyColumns(): ColumnDef[] {
       return (
         <span
           title={`Live: ${mismatch.live ?? '(none)'} → will change to "${target}" on deploy`}
-          style={{ color: tokens.colorPaletteMarigoldForeground1, fontWeight: tokens.fontWeightSemibold }}
+          style={{ color: tokens.colorPaletteMarigoldForeground2, backgroundColor: tokens.colorPaletteMarigoldBackground2, fontWeight: tokens.fontWeightSemibold, padding: '1px 6px', borderRadius: tokens.borderRadiusSmall }}
         >
           {target}
         </span>
@@ -2022,7 +2022,7 @@ function CallingSettingsDialog({
                   </div>
                 ))}
                 {pgTargets.length === 0 && (
-                  <Text size={200} style={{ color: '#616161', display: 'block', marginTop: 6 }}>
+                  <Text size={200} style={{ color: tokens.colorNeutralForeground3, display: 'block', marginTop: 6 }}>
                     No members - saving now will clear a previously-saved group on next deploy.
                   </Text>
                 )}
@@ -2216,7 +2216,7 @@ function CallQueueSettingsDialog({
                   </div>
                 ))}
                 {agents.length === 0 && (
-                  <Text size={200} style={{ color: '#616161', display: 'block', marginTop: 6 }}>
+                  <Text size={200} style={{ color: tokens.colorNeutralForeground3, display: 'block', marginTop: 6 }}>
                     No agents yet.
                   </Text>
                 )}
@@ -2314,7 +2314,7 @@ function CallQueueSettingsDialog({
               </div>
 
               {(overflowAction === 'SharedVoicemail' || timeoutAction === 'SharedVoicemail' || noAgentAction === 'SharedVoicemail') && (
-                <Text size={200} style={{ color: tokens.colorPaletteMarigoldForeground1 }}>
+                <Text size={200} style={{ color: tokens.colorPaletteMarigoldForeground2 }}>
                   Shared Voicemail needs a Language ID set on this row - edit it from the table's Edit form.
                 </Text>
               )}
@@ -2324,7 +2324,7 @@ function CallQueueSettingsDialog({
                 {raQ.isLoading ? (
                   <Spinner size="tiny" label="Loading…" />
                 ) : raChoices.length === 0 ? (
-                  <Text size={200} style={{ color: '#616161', display: 'block', marginTop: 6 }}>
+                  <Text size={200} style={{ color: tokens.colorNeutralForeground3, display: 'block', marginTop: 6 }}>
                     No Call Queue-kind resource accounts on this site yet - add one on the Resource accounts tab.
                   </Text>
                 ) : (
@@ -2635,7 +2635,7 @@ function CallFlowEditor({
             />
           ))}
           {value.menu.options.length === 0 && (
-            <Text size={200} style={{ color: '#616161' }}>
+            <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
               No menu options yet - callers hear the greeting then silence.
             </Text>
           )}
@@ -2761,7 +2761,7 @@ function ScheduleEditor({ value, onChange }: { value: AutoAttendantSchedule; onC
             </div>
           ))}
           {value.fixed.ranges.length === 0 && (
-            <Text size={200} style={{ color: '#616161', display: 'block', marginTop: 6 }}>
+            <Text size={200} style={{ color: tokens.colorNeutralForeground3, display: 'block', marginTop: 6 }}>
               No date ranges yet.
             </Text>
           )}
@@ -2918,7 +2918,7 @@ function AutoAttendantSettingsDialog({
                     </Card>
                   ))}
                   {holidays.length === 0 && (
-                    <Text size={200} style={{ color: '#616161' }}>
+                    <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
                       No holiday call flows yet.
                     </Text>
                   )}
@@ -2930,7 +2930,7 @@ function AutoAttendantSettingsDialog({
                 {raQ.isLoading ? (
                   <Spinner size="tiny" label="Loading…" />
                 ) : raChoices.length === 0 ? (
-                  <Text size={200} style={{ color: '#616161', display: 'block', marginTop: 6 }}>
+                  <Text size={200} style={{ color: tokens.colorNeutralForeground3, display: 'block', marginTop: 6 }}>
                     No Auto Attendant-kind resource accounts on this site yet - add one on the Resource accounts tab.
                   </Text>
                 ) : (

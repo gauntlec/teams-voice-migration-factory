@@ -20,7 +20,6 @@ import {
   Link,
   Option,
   Select,
-  Spinner,
   TableBody,
   TableCell,
   TableHeader,
@@ -70,6 +69,7 @@ import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
 import { useDebounced } from '../hooks/useDebounced';
 import { Page } from '../components/Page';
+import { EmptyState, TableSkeleton } from '../components/states';
 import { LoadError, NoTenant } from './DataCollection';
 
 export interface RequestRow {
@@ -168,7 +168,15 @@ export const STATUS_COLOR: Record<SrStatus, 'informative' | 'brand' | 'warning' 
 export const PRIORITY_LABEL: Record<SrPriority, string> = { low: 'Low', normal: 'Normal', high: 'High', urgent: 'Urgent' };
 
 export const useSrStyles = makeStyles({
-  toolbar: { display: 'flex', columnGap: tokens.spacingHorizontalM, alignItems: 'end', flexWrap: 'wrap', marginBottom: tokens.spacingVerticalM },
+  toolbar: {
+    display: 'flex',
+    columnGap: tokens.spacingHorizontalM,
+    alignItems: 'end',
+    flexWrap: 'wrap',
+    marginBottom: tokens.spacingVerticalM,
+    // A filter never makes the page wider than the screen: on a phone each one shrinks to fit its row.
+    '& .fui-Field, & .fui-Select, & .fui-Input': { maxWidth: '100%', minWidth: 0 },
+  },
   stack: { display: 'flex', flexDirection: 'column', rowGap: tokens.spacingVerticalM },
   facts: { display: 'grid', gridTemplateColumns: 'max-content 1fr', columnGap: tokens.spacingHorizontalL, rowGap: tokens.spacingVerticalXS },
   factLabel: { color: tokens.colorNeutralForeground3 },
@@ -253,9 +261,13 @@ export function ServiceRequests() {
       subtitle="Ask for new users, numbers, sites, phones, call queues and auto attendants. Each request is planned, designed and built, then deployed, and you're emailed as it moves on."
       actions={
         <div className={cs.actions}>
-          <Button onClick={() => setReportsOpen(true)}>Reports</Button>
-          <Button onClick={() => setSettingsOpen(true)}>{staff ? 'Settings' : 'Our targets'}</Button>
-          {can('sr:manage') && <Button onClick={() => setModesOpen(true)}>Site modes</Button>}
+          <Button appearance="subtle" onClick={() => setReportsOpen(true)}>Reports</Button>
+          <Button appearance="subtle" onClick={() => setSettingsOpen(true)}>{staff ? 'Settings' : 'Our targets'}</Button>
+          {can('sr:manage') && (
+            <Button appearance="subtle" onClick={() => setModesOpen(true)}>
+              Site modes
+            </Button>
+          )}
           {can('sr:create') && (
             <Button appearance="primary" onClick={() => setCreating(true)}>
               New request
@@ -291,9 +303,19 @@ export function ServiceRequests() {
       {staff && status === 'open' && list.data && <QueueTiles items={list.data} filter={tile} onFilter={setTile} />}
       <Card>
         {list.isLoading ? (
-          <Spinner size="tiny" />
+          <TableSkeleton rows={4} cols={6} label="Loading requests" />
         ) : (list.data?.length ?? 0) === 0 ? (
-          <Text size={200}>No requests here.</Text>
+          <EmptyState
+            title="No requests here"
+            hint="Ask for a new user, number, queue or change and follow it from here."
+            action={
+              can('sr:create') && (
+                <Button size="small" appearance="primary" onClick={() => setCreating(true)}>
+                  New request
+                </Button>
+              )
+            }
+          />
         ) : (
           <DataTable size="small" minWidth={900}>
             <TableHeader>

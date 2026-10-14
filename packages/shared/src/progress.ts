@@ -24,7 +24,7 @@ export const PROGRESS_STAGE_LABELS: Record<ProgressStageViewKey, string> = {
   deployed: 'Deployed',
   delivery: 'Design & deployment',
   handover: 'Handover',
-  operations: 'Operations',
+  operations: 'In service',
 };
 
 /** done = finished; attention = reached or attempted but something needs fixing; todo = not started. */

@@ -1,5 +1,5 @@
-import { useEffect, type ReactNode } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { useEffect, useState, type ReactNode } from 'react';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   Avatar,
@@ -16,6 +16,7 @@ import {
   MessageBarTitle,
   Option,
   Text,
+  Toaster,
   Tooltip,
   makeStyles,
   shorthands,
@@ -41,10 +42,14 @@ import {
   BotSparkle24Regular,
   TaskListSquareLtr24Regular,
   ShieldCheckmark24Regular,
+  AlertOn24Regular,
+  Navigation24Regular,
+  Dismiss24Regular,
 } from '@fluentui/react-icons';
 import type { MaintenanceNoticeView, Permission } from '@tvmf/shared';
 import { api } from '../api';
 import { useAuth } from '../auth';
+import { TOASTER_ID } from '../hooks/useNotify';
 import { Wordmark } from './Logo';
 
 const useStyles = makeStyles({
@@ -59,13 +64,50 @@ const useStyles = makeStyles({
   },
   brand: { fontWeight: tokens.fontWeightSemibold, color: tokens.colorNeutralForegroundOnBrand },
   headerRight: { display: 'flex', alignItems: 'center', ...shorthands.gap('12px') },
-  body: { display: 'grid', gridTemplateColumns: '224px 1fr', minHeight: 0 },
+  skip: {
+    position: 'absolute',
+    left: '8px',
+    top: '-48px',
+    zIndex: 1000,
+    ...shorthands.padding('8px', '12px'),
+    backgroundColor: tokens.colorNeutralBackground1,
+    color: tokens.colorBrandForegroundLink,
+    ...shorthands.borderRadius(tokens.borderRadiusMedium),
+    boxShadow: tokens.shadow8,
+    ':focus': { top: '8px' },
+  },
+  menuButton: { display: 'none', '@media (max-width: 900px)': { display: 'inline-flex' }, color: tokens.colorNeutralForegroundOnBrand },
+  brandRow: { display: 'flex', alignItems: 'center', ...shorthands.gap('8px'), minWidth: 0 },
+  hideSmall: { '@media (max-width: 900px)': { display: 'none' } },
+  picker: { minWidth: '220px', '@media (max-width: 900px)': { minWidth: '140px', maxWidth: '45vw' } },
+  scrim: {
+    display: 'none',
+    '@media (max-width: 900px)': { display: 'block', position: 'fixed', top: '48px', left: 0, right: 0, bottom: 0, zIndex: 20, backgroundColor: 'rgba(0, 0, 0, 0.4)' },
+  },
+  body: { display: 'grid', gridTemplateColumns: '224px minmax(0, 1fr)', minHeight: 0, '@media (max-width: 900px)': { gridTemplateColumns: 'minmax(0, 1fr)' } },
   nav: {
     backgroundColor: tokens.colorNeutralBackground1,
     ...shorthands.borderRight('1px', 'solid', tokens.colorNeutralStroke2),
     ...shorthands.padding('8px', '0'),
     overflowY: 'auto',
+    // Under 900px the nav is a drawer from the left, over the page, opened by the menu button.
+    '@media (max-width: 900px)': {
+      position: 'fixed',
+      top: '48px',
+      bottom: 0,
+      left: 0,
+      width: '272px',
+      zIndex: 30,
+      boxShadow: tokens.shadow28,
+      transform: 'translateX(-100%)',
+      visibility: 'hidden',
+      transitionProperty: 'transform, visibility',
+      transitionDuration: '200ms',
+      transitionTimingFunction: 'ease-out',
+    },
+    '@media (prefers-reduced-motion: reduce)': { transitionDuration: '1ms' },
   },
+  navOpen: { '@media (max-width: 900px)': { transform: 'translateX(0)', visibility: 'visible' } },
   navSectionLabel: {
     ...shorthands.padding('12px', '16px', '4px'),
     color: tokens.colorNeutralForeground3,
@@ -80,7 +122,7 @@ const useStyles = makeStyles({
   navGroupLabel: {
     ...shorthands.padding('10px', '16px', '2px'),
     color: tokens.colorNeutralForeground3,
-    fontSize: tokens.fontSizeBase100,
+    fontSize: tokens.fontSizeBase200,
   },
   navItem: {
     display: 'flex',
@@ -97,7 +139,7 @@ const useStyles = makeStyles({
     borderLeftColor: tokens.colorBrandStroke1,
     fontWeight: tokens.fontWeightSemibold,
   },
-  content: { minWidth: 0, overflowY: 'auto', ...shorthands.padding('24px', '32px') },
+  content: { minWidth: 0, overflowY: 'auto', ...shorthands.padding('24px', '32px'), '@media (max-width: 900px)': { ...shorthands.padding('16px') } },
 });
 
 interface NavDef {
@@ -127,7 +169,7 @@ const OPERATIONS: NavDef[] = [
 
 /** Cross-customer views for an MSP's own staff (and Super Admins). */
 const MSP_ITEMS: NavDef[] = [
-  { to: '/msp/incidents', label: 'Incident console', icon: <AlertUrgent24Regular />, permission: 'inc:msp' },
+  { to: '/msp/incidents', label: 'Incident console', icon: <AlertOn24Regular />, permission: 'inc:msp' },
   { to: '/msp/service-requests', label: 'Service request admin', icon: <TaskListSquareLtr24Regular />, permission: 'sr:msp' },
 ];
 
@@ -169,6 +211,17 @@ export function AppShell({ children }: { children: ReactNode }) {
   const s = useStyles();
   const navigate = useNavigate();
   const { me, can, activeTenantId, setActiveTenant, logout } = useAuth();
+  const { pathname } = useLocation();
+  const [navOpen, setNavOpen] = useState(false);
+
+  // The drawer closes when you go somewhere, and on Escape.
+  useEffect(() => setNavOpen(false), [pathname]);
+  useEffect(() => {
+    if (!navOpen) return;
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setNavOpen(false);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [navOpen]);
 
   const tenants = me?.tenants ?? [];
 
@@ -229,27 +282,40 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className={s.root}>
+      <Toaster toasterId={TOASTER_ID} position="bottom-end" />
+      <a href="#main" className={s.skip}>
+        Skip to content
+      </a>
       <header className={s.header}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div className={s.brandRow}>
+          <Button
+            className={s.menuButton}
+            appearance="transparent"
+            icon={navOpen ? <Dismiss24Regular /> : <Navigation24Regular />}
+            aria-label={navOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={navOpen}
+            aria-controls="app-nav"
+            onClick={() => setNavOpen((o) => !o)}
+          />
           <Wordmark tone="onDark" size={18} logoUrl={logoUrl} />
           {logoUrl && (
-            <>
+            <span className={s.hideSmall} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
               <Text size={100} style={{ color: tokens.colorNeutralForegroundOnBrand, opacity: 0.7 }}>
                 Powered by
               </Text>
               <Wordmark tone="onDark" size={11} />
-            </>
+            </span>
           )}
         </div>
         <div className={s.headerRight}>
           {activeTenant?.siteScoped && (
-            <Text size={200} style={{ color: tokens.colorNeutralForegroundOnBrand, opacity: 0.85 }}>
+            <Text size={200} className={s.hideSmall} style={{ color: tokens.colorNeutralForegroundOnBrand, opacity: 0.85 }}>
               Site contact
             </Text>
           )}
           {activeTenant?.sandbox && (
             <Tooltip content="A test customer: its emails go to whoever triggered them, not to the real recipients." relationship="description">
-              <Badge appearance="filled" color="warning">
+              <Badge appearance="filled" color="warning" className={s.hideSmall}>
                 Test customer
               </Badge>
             </Tooltip>
@@ -262,7 +328,8 @@ export function AppShell({ children }: { children: ReactNode }) {
               selectedOptions={activeTenant ? [activeTenant.id] : []}
               value={activeTenant?.name ?? ''}
               onOptionSelect={(_, d) => d.optionValue && setActiveTenant(d.optionValue)}
-              style={{ minWidth: '220px' }}
+              className={s.picker}
+              aria-label="Active customer"
             >
               {tenants.map((t) => (
                 <Option key={t.id} value={t.id} text={t.name}>
@@ -307,7 +374,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       </header>
 
       <div className={s.body}>
-        <nav className={s.nav}>
+        {navOpen && <div className={s.scrim} onClick={() => setNavOpen(false)} aria-hidden />}
+        <nav id="app-nav" aria-label="Main" className={navOpen ? `${s.nav} ${s.navOpen}` : s.nav}>
           <div className={s.navSectionLabel}>Migration</div>
           {renderNav(MIGRATION)}
           {operationsVisible && (
@@ -334,7 +402,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </>
           )}
         </nav>
-        <main className={s.content}>
+        <main id="main" tabIndex={-1} className={s.content} style={{ outline: 'none' }}>
           {maintenance.data && (
             <MessageBar intent={maintenance.data.phase === 'freeze' ? 'warning' : 'info'} style={{ marginBottom: 16 }}>
               <MessageBarBody>

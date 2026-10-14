@@ -117,7 +117,7 @@ export function AdminAgents() {
   });
 
   return (
-    <Page
+    <Page narrow platform
       title="Assistants"
       subtitle="AI assistants that work incidents alongside your engineers: the ones Voxshift ships, and your own. Each has its own identity, is allowed on named customers only, and starts at suggest-only: a person approves anything it proposes."
       actions={

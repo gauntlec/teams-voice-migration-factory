@@ -191,7 +191,7 @@ export function IncidentPage() {
   if (!activeTenantId) return <NoTenant />;
   if (!enabled) {
     return (
-      <Page title="Incident">
+      <Page narrow title="Incident">
         <Card>
           <Text>
             Managed Services isn&apos;t switched on for this customer. A Super Admin can switch it on from <b>Customers</b>.
@@ -208,7 +208,7 @@ export function IncidentPage() {
   const at = STEPS.indexOf(r.status === 'on_hold' ? 'in_progress' : r.status);
 
   return (
-    <Page
+    <Page narrow
       title={`${r.reference} · ${r.title}`}
       subtitle={`${incCategoryLabel(r.category, r.subcategory)}${r.sitecode ? ` · ${r.site_name ? `${r.sitecode} (${r.site_name})` : r.sitecode}` : ' · All sites'}`}
       actions={

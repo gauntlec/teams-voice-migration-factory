@@ -27,6 +27,7 @@ import {
   TableRow,
   Text,
   Textarea,
+  tokens,
 } from '@fluentui/react-components';
 import {
   ArrowLeftRegular,
@@ -179,7 +180,7 @@ function RelinkUsersButton({
         {relink.isPending ? 'Linking…' : 'Link to tenant'}
       </Button>
       {msg && (
-        <Text size={200} style={{ color: '#606060' }}>
+        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
           {msg}
         </Text>
       )}

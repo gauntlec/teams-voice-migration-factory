@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Card, Field, Input, Link, Select, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text } from '@fluentui/react-components';
+import { Button, Card, Field, Input, Link, Select, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text } from '@fluentui/react-components';
 import { INC_CATEGORIES, INC_CATEGORY_BY_KEY, INC_PRIORITIES, INC_PRIORITY_LABELS, INC_STATUSES, INC_STATUS_CUSTOMER_LABELS, INC_STATUS_LABELS } from '@tvmf/shared';
 import { api } from '../api';
 import { useAuth } from '../auth';
@@ -12,6 +12,7 @@ import { IncidentReportsDialog } from '../components/IncidentReports';
 import { IncidentSettingsDialog } from '../components/IncidentSettings';
 import { IncQueueTiles, IncSlaBadge, IncStatusBadge, MajorBadge, MajorClockBadge, PriorityBadge, incQueueFilter, type IncQueueFilter, type IncidentRow } from '../components/IncidentBits';
 import { Page } from '../components/Page';
+import { EmptyState, TableSkeleton } from '../components/states';
 import { LoadError, NoTenant } from '../components/records';
 import { useDebounced } from '../hooks/useDebounced';
 import { useSrStyles } from './ServiceRequests';
@@ -81,18 +82,18 @@ export function Incidents() {
       subtitle="Something not working, or not working well? Raise an incident and follow it here. You're emailed as it moves on."
       actions={
         <div className={cs.actions}>
-          <Button onClick={() => setReportsOpen(true)}>Reports</Button>
+          <Button appearance="subtle" onClick={() => setReportsOpen(true)}>Reports</Button>
           <PastNoticesButton base={base} enabled={enabled} />
           {staff && (
-            <Button onClick={() => navigate('/incidents/problems')}>Problems</Button>
+            <Button appearance="subtle" onClick={() => navigate('/incidents/problems')}>Problems</Button>
           )}
           {staff && <KnowledgeButton base={base} />}
           {can('intake:manage') && sandbox && (
-            <Button disabled={demo.isPending} title={demo.error ? (demo.error as Error).message : 'Adds six example incidents to this test customer'} onClick={() => window.confirm('Add six demo incidents to this test customer? Their emails go to the test address.') && demo.mutate()}>
+            <Button appearance="subtle" disabled={demo.isPending} title={demo.error ? (demo.error as Error).message : 'Adds six example incidents to this test customer'} onClick={() => window.confirm('Add six demo incidents to this test customer? Their emails go to the test address.') && demo.mutate()}>
               {demo.isError ? 'Demo incidents: ' + (demo.error as Error).message.slice(0, 60) : 'Add demo incidents'}
             </Button>
           )}
-          <Button onClick={() => setSettingsOpen(true)}>{staff ? 'Settings' : 'Our targets'}</Button>
+          <Button appearance="subtle" onClick={() => setSettingsOpen(true)}>{staff ? 'Settings' : 'Our targets'}</Button>
           {can('inc:create') && (
             <Button appearance="primary" onClick={() => navigate('/incidents/new')}>
               Raise an incident
@@ -152,11 +153,25 @@ export function Incidents() {
       {staff && status === 'open' && list.data && <IncQueueTiles items={list.data} filter={tile} onFilter={setTile} />}
       <Card>
         {list.isLoading ? (
-          <Spinner size="tiny" />
+          <TableSkeleton rows={5} cols={6} label="Loading incidents" />
         ) : rows.length === 0 ? (
-          <Text size={200}>
-            {list.data && list.data.length > 0 ? 'Nothing matches that filter.' : status === 'open' ? 'No open incidents. Nothing is being worked on right now.' : 'No incidents here.'}
-          </Text>
+          list.data && list.data.length > 0 ? (
+            <EmptyState title="Nothing matches that filter" hint="Clear a filter or search for something else." />
+          ) : status === 'open' ? (
+            <EmptyState
+              title="No open incidents"
+              hint="Nothing is being worked on right now."
+              action={
+                can('inc:create') && (
+                  <Button size="small" appearance="primary" onClick={() => navigate('/incidents/new')}>
+                    Raise an incident
+                  </Button>
+                )
+              }
+            />
+          ) : (
+            <EmptyState title="No incidents here" />
+          )
         ) : (
           <DataTable size="small" minWidth={980}>
             <TableHeader>
