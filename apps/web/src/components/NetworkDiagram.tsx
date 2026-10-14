@@ -185,7 +185,7 @@ export function NetworkDiagram({ rows }: { rows: NetworkRow[] }) {
   const wStartX = 500 - ((wireless.length - 1) * 150) / 2;
 
   return (
-    <div style={{ width: '100%', overflowX: 'auto' }}>
+    <div style={{ width: '100%', overflowX: 'auto', background: '#ffffff', color: '#242424', borderRadius: 8 }}>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ minWidth: 640, display: 'block' }} role="img" aria-label="Network diagram">
         {/* external subnet connectors */}
         {external.slice(0, shownExt).map((r, i) => {

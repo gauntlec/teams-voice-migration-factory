@@ -10,6 +10,8 @@
  * login screen, which never has tenant context.
  */
 
+import { tokens } from '@fluentui/react-components';
+
 const BRAND = '#4657D2';
 const ACCENT = '#5B5FC7';
 
@@ -53,7 +55,7 @@ export function Wordmark({
       </span>
     );
   }
-  const text = tone === 'onDark' ? '#ffffff' : '#242424';
+  const text = tone === 'onDark' ? '#ffffff' : tokens.colorNeutralForeground1;
   const accent = tone === 'onDark' ? 'rgba(255,255,255,0.88)' : ACCENT;
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 9 }}>

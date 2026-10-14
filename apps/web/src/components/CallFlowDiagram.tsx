@@ -4,7 +4,7 @@ import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
 import { toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
-import { Button, Text, Tooltip } from '@fluentui/react-components';
+import { Button, Text, Tooltip, tokens } from '@fluentui/react-components';
 import { ArrowDownloadRegular, ArrowDownRegular, ArrowRightRegular } from '@fluentui/react-icons';
 import type { CallFlowBranch, CallFlowGraph, CallFlowNode, CallFlowNodeKind } from '@tvmf/shared';
 
@@ -168,7 +168,7 @@ function ExportControls({ filename }: { filename: string }) {
           </Tooltip>
         </div>
         {error && (
-          <Text size={200} style={{ color: '#B10E1C', background: '#FDF3F4', border: '1px solid #F3D6D8', borderRadius: 4, padding: '2px 8px' }}>
+          <Text size={200} style={{ color: tokens.colorPaletteRedForeground1, background: tokens.colorPaletteRedBackground1, border: `1px solid ${tokens.colorPaletteRedBorder1}`, borderRadius: 4, padding: '2px 8px' }}>
             {error}
           </Text>
         )}
@@ -319,7 +319,7 @@ export function CallFlowDiagram({ graph, exportFilename }: { graph: CallFlowGrap
 
   if (graph.nodes.length === 0) {
     return (
-      <Text size={200} style={{ color: '#616161' }}>
+      <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
         Nothing to draw yet.
       </Text>
     );
@@ -327,7 +327,8 @@ export function CallFlowDiagram({ graph, exportFilename }: { graph: CallFlowGrap
 
   return (
     <div style={{ display: 'grid', gap: 8 }}>
-      <div style={{ height: '75vh', minHeight: 480, border: '1px solid #E1E1E1', borderRadius: 8 }}>
+      {/* A diagram is a page of paper: it stays light (and its text dark) in the dark theme, like the PNG and PDF exports. */}
+      <div style={{ height: '75vh', minHeight: 480, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: 8, background: '#ffffff', color: '#242424' }}>
         <ReactFlowProvider>
           <ReactFlow
             nodes={nodes}

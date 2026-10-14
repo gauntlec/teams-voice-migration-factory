@@ -28,6 +28,7 @@ export const lightTheme: Theme = { ...createLightTheme(brand) };
 export const darkTheme: Theme = { ...createDarkTheme(brand) };
 
 /** White-label theme for one customer - same ramp-generation Fluent expects, built from their one picked accent color. */
-export function buildTenantTheme(accentHex: string): Theme {
-  return { ...createLightTheme(buildColorRamp(accentHex) as BrandVariants) };
+export function buildTenantTheme(accentHex: string, dark = false): Theme {
+  const ramp = buildColorRamp(accentHex) as BrandVariants;
+  return dark ? { ...createDarkTheme(ramp) } : { ...createLightTheme(ramp) };
 }

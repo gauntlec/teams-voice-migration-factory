@@ -367,7 +367,7 @@ export function AdminUsers() {
             <code
               style={{
                 fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-                background: 'rgba(0,0,0,0.06)',
+                background: tokens.colorNeutralBackground3,
                 padding: '2px 6px',
                 borderRadius: 4,
               }}

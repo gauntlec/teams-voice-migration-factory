@@ -7,7 +7,11 @@ import {
   Button,
   Dropdown,
   Menu,
+  MenuDivider,
+  MenuGroup,
+  MenuGroupHeader,
   MenuItem,
+  MenuItemRadio,
   MenuList,
   MenuPopover,
   MenuTrigger,
@@ -50,6 +54,7 @@ import type { MaintenanceNoticeView, Permission } from '@tvmf/shared';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { TOASTER_ID } from '../hooks/useNotify';
+import { useThemeMode } from '../ThemeMode';
 import { Wordmark } from './Logo';
 
 const useStyles = makeStyles({
@@ -213,6 +218,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { me, can, activeTenantId, setActiveTenant, logout } = useAuth();
   const { pathname } = useLocation();
   const [navOpen, setNavOpen] = useState(false);
+  const { mode, setMode } = useThemeMode();
 
   // The drawer closes when you go somewhere, and on Escape.
   useEffect(() => setNavOpen(false), [pathname]);
@@ -356,7 +362,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               No customers assigned
             </Text>
           )}
-          <Menu>
+          <Menu checkedValues={{ theme: [mode] }} onCheckedValueChange={(_, d) => d.name === 'theme' && d.checkedItems[0] && setMode(d.checkedItems[0] as typeof mode)}>
             <MenuTrigger disableButtonEnhancement>
               <Tooltip content={`${me.displayName} · ${me.role}`} relationship="label">
                 <Avatar name={me.displayName} size={28} color="colorful" />
@@ -366,6 +372,20 @@ export function AppShell({ children }: { children: ReactNode }) {
               <MenuList>
                 <MenuItem disabled>{me.email}</MenuItem>
                 <MenuItem disabled>Role: {me.role}</MenuItem>
+                <MenuDivider />
+                <MenuGroup>
+                  <MenuGroupHeader>Appearance</MenuGroupHeader>
+                  <MenuItemRadio name="theme" value="system">
+                    Match my computer
+                  </MenuItemRadio>
+                  <MenuItemRadio name="theme" value="light">
+                    Light
+                  </MenuItemRadio>
+                  <MenuItemRadio name="theme" value="dark">
+                    Dark
+                  </MenuItemRadio>
+                </MenuGroup>
+                <MenuDivider />
                 <MenuItem onClick={() => void logout()}>Sign out</MenuItem>
               </MenuList>
             </MenuPopover>

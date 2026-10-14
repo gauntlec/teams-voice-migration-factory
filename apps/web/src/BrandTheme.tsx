@@ -2,6 +2,7 @@ import { useMemo, type ReactNode } from 'react';
 import { FluentProvider } from '@fluentui/react-components';
 import { useAuth } from './auth';
 import { buildTenantTheme } from './theme';
+import { useThemeMode } from './ThemeMode';
 
 /**
  * Re-themes the authenticated app to the active tenant's branding, when set.
@@ -29,7 +30,8 @@ export function BrandThemeProvider({ children }: { children: ReactNode }) {
         : me.mspBranding?.accentColor
       : undefined;
 
-  const theme = useMemo(() => (accentColor ? buildTenantTheme(accentColor) : undefined), [accentColor]);
+  const { resolved } = useThemeMode();
+  const theme = useMemo(() => (accentColor ? buildTenantTheme(accentColor, resolved === 'dark') : undefined), [accentColor, resolved]);
 
   if (!theme) return <>{children}</>;
   return (
