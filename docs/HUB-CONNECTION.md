@@ -31,3 +31,16 @@ there) the card says so in words; copy a fresh token from the hub and connect ag
 - The version is the build's commit (`APP_VERSION`, set from `GIT_SHA` by CI in the worker image) as `0.1.0+<7 characters>`; `0.1.0+dev` for a hand-built image.
 - Connecting and disconnecting are in the platform audit log (the hub address, never the token).
 - Only outbound HTTPS from the worker to the hub is needed. No inbound firewall rules.
+
+## Remote access through the hub (the customer's switch)
+
+Beyond being listed, an installation can let staff open it **from the hub, with no VPN and no inbound firewall rule**. The customer controls this:
+
+- **Administration > Platform settings > Voxshift hub > "Staff can open this installation through the hub"**: off until someone here turns it on. Switch it off at any time; it takes effect within seconds.
+- While it is on, the worker (`apps/worker/src/hub-tunnel.ts`) holds **one outbound WebSocket** to `<hub>/api/v1/tunnel`, authenticated with the same instance token. The hub sends each browser request of a person it has authorised down that connection, and the worker answers from this installation's own web server.
+- **Who can open it** is decided by the hub (people assigned to this customer, signed in with MFA, checked on every request). **Signing in here is unchanged**: they still need a user name and password for this installation.
+- **What passes through the hub:** the signed-in person's traffic, decrypted at the hub in transit and relayed, not stored or logged there. Tell the customer this when switching it on.
+- **What the worker will and will not do:** it talks only to the installation's own web server (`HUB_TUNNEL_TARGET`, default `http://web:80`, which matches the compose files), never to an address the hub names; it refuses unusual methods and any path that does not start with a single `/`.
+- Stored in `platform.app_settings` (`hub_remote_access`, `hub_tunnel_state`, `hub_tunnel_error`, `hub_tunnel_at`; migration `0028_hub_remote_access.sql`). The heartbeat also reports the switch, so the hub can say "switched off by the customer".
+- The connector reconnects by itself (2 s, doubling to a minute) if the connection drops, and says in words on this card why it is not connected (for example "the hub does not accept this installation's token").
+

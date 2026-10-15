@@ -4,9 +4,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { forgetAppSettings, platformDb, webOrigin } from '@tvmf/db';
 import { PlatformSettingsService } from '../../../../apps/api/src/platform-ops/platform-settings.service';
 import type { AppConfig } from '../../../../apps/api/src/common/config';
-import { seedUser, useDb } from '../helpers';
+import { seedUser, useDb, useGlobalSettingsLock } from '../helpers';
 
 const handle = useDb();
+useGlobalSettingsLock(handle);
 let admin: Awaited<ReturnType<typeof seedUser>>;
 const cfg = { WEB_ORIGIN: 'http://localhost:5173/', REFRESH_COOKIE: 'tvmf_rt' } as AppConfig;
 

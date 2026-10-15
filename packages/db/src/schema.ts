@@ -117,6 +117,11 @@ export interface AppSettingsTable {
   hub_last_attempt_at: ColumnType<string | null, string | null | undefined, string | null>;
   hub_last_ok_at: ColumnType<string | null, string | null | undefined, string | null>;
   hub_last_error: ColumnType<string | null, string | null | undefined, string | null>;
+  /** The customer's switch: may staff open this installation through the hub? (0028_hub_remote_access.sql) */
+  hub_remote_access: ColumnType<boolean, boolean | undefined, boolean>;
+  hub_tunnel_state: ColumnType<'off' | 'connecting' | 'connected' | 'error', 'off' | 'connecting' | 'connected' | 'error' | undefined, 'off' | 'connecting' | 'connected' | 'error'>;
+  hub_tunnel_error: ColumnType<string | null, string | null | undefined, string | null>;
+  hub_tunnel_at: ColumnType<string | null, string | null | undefined, string | null>;
   updated_by: string | null;
   updated_at: Ts;
 }

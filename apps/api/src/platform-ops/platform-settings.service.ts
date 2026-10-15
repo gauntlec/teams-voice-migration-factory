@@ -84,7 +84,7 @@ export class PlatformSettingsService implements OnModuleInit {
   async hubView(): Promise<HubConnectionView> {
     const r = await platformDb(this.db)
       .selectFrom('app_settings')
-      .select(['hub_url', 'hub_token_hint', 'hub_last_attempt_at', 'hub_last_ok_at', 'hub_last_error'])
+      .select(['hub_url', 'hub_token_hint', 'hub_last_attempt_at', 'hub_last_ok_at', 'hub_last_error', 'hub_remote_access', 'hub_tunnel_state', 'hub_tunnel_error'])
       .executeTakeFirst();
     return {
       connected: !!r?.hub_url,
@@ -93,12 +93,15 @@ export class PlatformSettingsService implements OnModuleInit {
       lastAttemptAt: iso(r?.hub_last_attempt_at),
       lastOkAt: iso(r?.hub_last_ok_at),
       lastError: r?.hub_last_error ?? null,
+      remoteAccess: r?.hub_remote_access ?? false,
+      tunnelState: r?.hub_tunnel_state ?? 'off',
+      tunnelError: r?.hub_tunnel_error ?? null,
     };
   }
 
   /** Connects to a hub: the token is stored encrypted, and the worker starts reporting within a minute. */
   async connectHub(hubUrl: string, token: string, userId: string): Promise<BaseUrlView> {
-    const values = { hub_url: hubUrl, hub_token_enc: encryptSecret(token), hub_token_hint: `…${token.slice(-4)}`, hub_last_attempt_at: null, hub_last_ok_at: null, hub_last_error: null, updated_by: userId };
+    const values = { hub_url: hubUrl, hub_token_enc: encryptSecret(token), hub_token_hint: `…${token.slice(-4)}`, hub_last_attempt_at: null, hub_last_ok_at: null, hub_last_error: null, hub_remote_access: false, hub_tunnel_state: 'off' as const, hub_tunnel_error: null, hub_tunnel_at: null, updated_by: userId };
     await platformDb(this.db)
       .insertInto('app_settings')
       .values({ id: true, base_url: null, ...values })
@@ -110,8 +113,19 @@ export class PlatformSettingsService implements OnModuleInit {
   async disconnectHub(userId: string): Promise<BaseUrlView> {
     await platformDb(this.db)
       .updateTable('app_settings')
-      .set({ hub_url: null, hub_token_enc: null, hub_token_hint: null, hub_last_attempt_at: null, hub_last_ok_at: null, hub_last_error: null, updated_by: userId, updated_at: new Date().toISOString() })
+      .set({ hub_url: null, hub_token_enc: null, hub_token_hint: null, hub_last_attempt_at: null, hub_last_ok_at: null, hub_last_error: null, hub_remote_access: false, hub_tunnel_state: 'off', hub_tunnel_error: null, hub_tunnel_at: null, updated_by: userId, updated_at: new Date().toISOString() })
       .where('id', '=', true)
+      .execute();
+    return this.view();
+  }
+
+  /** The customer's switch: while on, the worker keeps a connection open to the hub so staff it allows can open this installation there. Off by default. */
+  async setHubRemoteAccess(enabled: boolean, userId: string): Promise<BaseUrlView> {
+    await platformDb(this.db)
+      .updateTable('app_settings')
+      .set({ hub_remote_access: enabled, ...(enabled ? {} : { hub_tunnel_state: 'off' as const, hub_tunnel_error: null }), updated_by: userId, updated_at: new Date().toISOString() })
+      .where('id', '=', true)
+      .where('hub_url', 'is not', null)
       .execute();
     return this.view();
   }

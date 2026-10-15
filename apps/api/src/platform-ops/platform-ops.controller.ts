@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Put } from '@nestjs/common';
 import { platformDb } from '@tvmf/db';
 import {
   connectHubSchema,
+  setHubRemoteAccessSchema,
   setBaseUrlSchema,
   setEmailEnabledSchema,
   setMaintenanceNoticeSchema,
@@ -9,6 +10,7 @@ import {
   type MaintenanceNoticeView,
   type ReleaseCheck,
   type ConnectHubInput,
+  type SetHubRemoteAccessInput,
   type SetBaseUrlInput,
   type SetEmailEnabledInput,
   type SetMaintenanceNoticeInput,
@@ -130,6 +132,15 @@ export class PlatformOpsController {
   async disconnectHub(@CurrentUser() user: AuthedUser): Promise<BaseUrlView> {
     const view = await this.baseUrl.disconnectHub(user.id);
     await this.audit.platform('platform.hub_disconnected', { actor: { id: user.id, email: user.email }, targetType: 'app_settings' });
+    return view;
+  }
+
+  /** SUPER_ADMIN: the customer's switch for remote access through the hub. Off unless someone here turns it on. */
+  @Put('hub/remote-access')
+  @RequirePermission('platform:operate')
+  async setHubRemoteAccess(@Body(new ZodBody(setHubRemoteAccessSchema)) body: SetHubRemoteAccessInput, @CurrentUser() user: AuthedUser): Promise<BaseUrlView> {
+    const view = await this.baseUrl.setHubRemoteAccess(body.enabled, user.id);
+    await this.audit.platform(body.enabled ? 'platform.hub_remote_access_on' : 'platform.hub_remote_access_off', { actor: { id: user.id, email: user.email }, targetType: 'app_settings' });
     return view;
   }
 }

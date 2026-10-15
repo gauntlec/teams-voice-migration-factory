@@ -6,9 +6,10 @@ import { HUB_TOKEN_RE } from '@tvmf/shared';
 import { PlatformSettingsService } from '../../../../apps/api/src/platform-ops/platform-settings.service';
 import type { AppConfig } from '../../../../apps/api/src/common/config';
 import { hubVersion, sendHubHeartbeat } from '../../../../apps/worker/src/hub-heartbeat';
-import { seedUser, useDb } from '../helpers';
+import { seedUser, useDb, useGlobalSettingsLock } from '../helpers';
 
 const handle = useDb();
+useGlobalSettingsLock(handle);
 const cfg = { WEB_ORIGIN: 'http://localhost:5173', REFRESH_COOKIE: 'tvmf_rt' } as AppConfig;
 const TOKEN = `vxh_b04e6c2c-d276-4c12-a477-0554a8b34d20_${'ab12'.repeat(12)}`;
 let admin: Awaited<ReturnType<typeof seedUser>>;
@@ -57,7 +58,7 @@ describe('hub connection', () => {
     expect(calls[0]!.url).toBe('https://hub.voxshift.io/api/v1/heartbeat');
     expect(calls[0]!.headers.Authorization).toBe(`Bearer ${TOKEN}`);
     // the whole of what leaves this installation:
-    expect(Object.keys(calls[0]!.body).sort()).toEqual(['health', 'uptimeSeconds', 'version']);
+    expect(Object.keys(calls[0]!.body).sort()).toEqual(['health', 'remoteAccess', 'uptimeSeconds', 'version']);
     expect(calls[0]!.body.version).toBe(hubVersion());
     expect(calls[0]!.body.health).toBe('ok');
     expect((await svc.view()).hub).toMatchObject({ lastOkAt: '2026-10-15T12:00:00.000Z', lastError: null });

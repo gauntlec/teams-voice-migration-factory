@@ -35,6 +35,22 @@ export function useGlobalAgentLock(handle: DbHandle) {
   });
 }
 
+/**
+ * platform.app_settings is ONE row for the whole platform (base URL, email switch, hub connection), so test files that change it must run one
+ * at a time, or one file's settings leak into another's assertions. Hold this lock for the whole file.
+ */
+export function useGlobalSettingsLock(handle: DbHandle) {
+  let client: import('pg').PoolClient | undefined;
+  beforeAll(async () => {
+    client = await handle.pool.connect();
+    await client.query('select pg_advisory_lock(7102)');
+  }, 300_000);
+  afterAll(async () => {
+    await client?.query('select pg_advisory_unlock(7102)');
+    client?.release();
+  });
+}
+
 export interface TestCustomer {
   /** what the API's TenantGuard hands every service */
   t: TenantContext;

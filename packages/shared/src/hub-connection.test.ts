@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { HUB_OK_WITHIN_SECONDS, HUB_TOKEN_RE, connectHubSchema, hubErrorText, hubLinkState, type HubConnectionView } from './hub-connection';
 
 const token = `vxh_b04e6c2c-d276-4c12-a477-0554a8b34d20_${'ab12'.repeat(12)}`;
-const view = (over: Partial<HubConnectionView> = {}): HubConnectionView => ({ connected: true, hubUrl: 'https://hub.voxshift.io', tokenHint: '…ab12', lastAttemptAt: null, lastOkAt: null, lastError: null, ...over });
+const view = (over: Partial<HubConnectionView> = {}): HubConnectionView => ({ connected: true, hubUrl: 'https://hub.voxshift.io', tokenHint: '…ab12', lastAttemptAt: null, lastOkAt: null, lastError: null, remoteAccess: false, tunnelState: 'off', tunnelError: null, ...over });
 
 describe('connecting to a hub', () => {
   it('takes the address and an instance token, and tidies the address', () => {

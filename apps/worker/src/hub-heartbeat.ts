@@ -13,11 +13,11 @@ export const hubVersion = () => {
 };
 
 export async function sendHubHeartbeat(db: Kysely<DB>, opts: { fetchFn?: typeof fetch; now?: Date } = {}): Promise<'skipped' | 'sent' | 'failed'> {
-  const row = await platformDb(db).selectFrom('app_settings').select(['hub_url', 'hub_token_enc']).executeTakeFirst();
+  const row = await platformDb(db).selectFrom('app_settings').select(['hub_url', 'hub_token_enc', 'hub_remote_access']).executeTakeFirst();
   if (!row?.hub_url || !row.hub_token_enc) return 'skipped';
   const fetchFn = opts.fetchFn ?? fetch;
   const at = (opts.now ?? new Date()).toISOString();
-  const body: HubHeartbeat = { version: hubVersion(), health: 'ok', uptimeSeconds: Math.round(process.uptime()) };
+  const body: HubHeartbeat = { version: hubVersion(), health: 'ok', uptimeSeconds: Math.round(process.uptime()), remoteAccess: row.hub_remote_access };
 
   let error: string | null = null;
   try {

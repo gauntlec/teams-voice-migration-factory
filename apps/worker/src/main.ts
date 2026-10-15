@@ -44,6 +44,7 @@ import type { EmailBranding } from './mail/layout';
 import { mailerConfigured, sendMail } from './mail/mailer';
 import { makeMailEnqueuer } from './mail/enqueue';
 import { sendHubHeartbeat } from './hub-heartbeat';
+import { HubTunnel } from './hub-tunnel';
 import { planDelivery } from './mail/sandbox';
 import { deliverWebhooks, sweepAgents } from './agents';
 import { deliverMspNotifications } from './msp-notify';
@@ -289,6 +290,8 @@ void sweepIncidents(db, enqueueMail).catch((e) => console.warn('incident sweep f
 // The Voxshift Hub (if one is connected): report this installation's version and health once a minute.
 setInterval(() => void sendHubHeartbeat(db).catch((e) => console.warn('hub heartbeat failed', e)), HUB_HEARTBEAT_SECONDS * 1000).unref();
 setTimeout(() => void sendHubHeartbeat(db).catch((e) => console.warn('hub heartbeat failed', e)), 5_000).unref();
+// Remote access through the hub: only while the customer's switch is on, one outbound connection the hub sends browser requests down.
+new HubTunnel(db).start();
 // AI agents: expire proposals, put incidents back in the queue when a lease lapses, clear old events, and push events to webhooks.
 setInterval(() => void sweepAgents(db, enqueueMail).catch((e) => console.warn('agent sweep failed', e)), 60_000).unref();
 setInterval(() => void deliverMspNotifications(db).catch((e) => console.warn('MSP Teams delivery failed', e)), 15_000).unref();

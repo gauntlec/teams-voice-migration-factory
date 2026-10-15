@@ -46,6 +46,11 @@ function HubCard({ hub }: { hub: HubConnectionView }) {
     onSuccess: (v) => done(v, 'Disconnected from the hub'),
     onError: (e) => setErr((e as Error).message),
   });
+  const remote = useMutation({
+    mutationFn: (enabled: boolean) => api<BaseUrlView>('/platform/hub/remote-access', { method: 'PUT', body: JSON.stringify({ enabled }) }),
+    onSuccess: (v) => done(v, v.hub.remoteAccess ? 'Remote access switched on' : 'Remote access switched off'),
+    onError: (e) => setErr((e as Error).message),
+  });
   const state = hubLinkState(hub);
   const addr = normalizeBaseUrl(hubUrl);
   const tokenOk = HUB_TOKEN_RE.test(token.trim());
@@ -74,6 +79,23 @@ function HubCard({ hub }: { hub: HubConnectionView }) {
                 <MessageBarBody>{hub.lastError}</MessageBarBody>
               </MessageBar>
             )}
+            <div className={s.stack}>
+              <Switch
+                checked={hub.remoteAccess}
+                disabled={remote.isPending}
+                label={hub.remoteAccess ? 'Staff can open this installation through the hub' : 'Remote access through the hub is off'}
+                onChange={(_, d) => remote.mutate(d.checked)}
+              />
+              <MutedText>
+                While this is on, people the hub has given access to can open this installation from the hub without a VPN. They still need a user name and password here, and the hub only
+                passes their traffic through: it keeps none of it. You can switch it off at any time and it takes effect within seconds. It is off until someone here turns it on.
+              </MutedText>
+              {hub.remoteAccess && (
+                <Text size={200} className={s.code}>
+                  {hub.tunnelState === 'connected' ? 'Connected to the hub.' : hub.tunnelState === 'connecting' ? 'Connecting to the hub...' : hub.tunnelError ?? 'Not connected.'}
+                </Text>
+              )}
+            </div>
             <div className={s.row}>
               <Button disabled={disconnect.isPending} onClick={() => disconnect.mutate()}>
                 Disconnect
