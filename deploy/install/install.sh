@@ -142,6 +142,9 @@ if [ "$START" = 1 ]; then
   if ! command -v curl >/dev/null 2>&1; then die "curl is required. Install it (apt install curl / dnf install curl) and re-run."; fi
 fi
 
+case "$DIR" in /*) ;; *) die "--dir must be an absolute path." ;; esac
+case "$DIR" in *[!A-Za-z0-9._/-]*) die "--dir may only contain letters, digits and . _ / -" ;; esac
+
 # ---------------------------------------------------------------------------------------------------------- answers
 step "Settings"
 ask BASE_URL "Web address people will use (e.g. https://voice.contoso.com)"
@@ -449,7 +452,12 @@ cat > "$DIR/voxshift" <<'CTL'
 #!/usr/bin/env bash
 # Control command for this Voxshift installation. Run 'voxshift help'.
 set -Eeuo pipefail
-DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+DIR="@@DIR@@"   # filled in by install.sh
+# Everything here needs root (the install directory is root-only), so ask for it rather than failing.
+if [ "$(id -u)" -ne 0 ]; then
+  command -v sudo >/dev/null 2>&1 || { echo "voxshift needs root. Run it as root." >&2; exit 1; }
+  exec sudo "$0" "$@"
+fi
 cd "$DIR"
 dc() { docker compose "$@"; }
 need_root() { [ "$(id -u)" -eq 0 ] || { echo "Run as root: sudo voxshift $*" >&2; exit 1; }; }
@@ -504,8 +512,11 @@ EOF
     ;;
 esac
 CTL
+# The command is a real file in /usr/local/bin, not a link into $DIR: $DIR is root-only, and a link into it would look
+# like "command not found" to every other user. The directory it manages is written into it.
+sed "s|@@DIR@@|$DIR|" "$DIR/voxshift" > "$DIR/voxshift.tmp" && mv "$DIR/voxshift.tmp" "$DIR/voxshift"
 chmod 755 "$DIR/voxshift"
-if [ "$START" = 1 ]; then ln -sf "$DIR/voxshift" /usr/local/bin/voxshift; ok "installed the 'voxshift' command"; fi
+if [ "$START" = 1 ]; then install -m 755 "$DIR/voxshift" /usr/local/bin/voxshift; ok "installed the 'voxshift' command (works from any directory; asks for sudo itself)"; fi
 
 if [ "$START" = 0 ]; then
   step "Files written (nothing started)"
@@ -563,7 +574,8 @@ fi
 cat <<EOF
 
   Next:
-   1. Sign in, then open Administration > Platform settings to confirm the web address${SMTP_HOST:+ }$( [ -z "$SMTP_HOST" ] && echo 'and (when ready) set SMTP in '"$DIR"'/.env, then: voxshift restart').
+   1. Sign in, then open Administration > Platform settings to confirm the web address.
+$( [ -n "$SMTP_HOST" ] || printf '      To send email, set SMTP_HOST (and the other SMTP_ lines) in %s/.env, then run: voxshift restart\n' "$DIR" )
    2. Back up regularly:  voxshift backup   (copy the result off this host)
    3. Upgrade later:      voxshift update
 EOF

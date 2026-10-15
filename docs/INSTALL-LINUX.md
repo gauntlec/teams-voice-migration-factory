@@ -75,7 +75,7 @@ other system directories.
 | `.env` | every setting and secret, freshly generated for this host (mode 600). **Back it up**: `DATA_ENCRYPTION_KEY` protects stored secrets and cannot be recovered. |
 | `compose.yaml` | postgres, redis, api, worker, web and caddy. Only Caddy is published (80, and 443 with HTTPS). |
 | `Caddyfile` | the front door and certificate handling |
-| `voxshift` | the control command, also linked as `/usr/local/bin/voxshift` |
+| `voxshift` | the control command. A copy is installed as `/usr/local/bin/voxshift`, so it works from any directory and any user; it asks for `sudo` itself (the install directory is root-only) |
 
 Everything restarts on its own after a reboot (`restart: unless-stopped`, Docker enabled at boot).
 
