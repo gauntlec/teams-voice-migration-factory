@@ -122,6 +122,17 @@ export interface AppSettingsTable {
   hub_tunnel_state: ColumnType<'off' | 'connecting' | 'connected' | 'error', 'off' | 'connecting' | 'connected' | 'error' | undefined, 'off' | 'connecting' | 'connected' | 'error'>;
   hub_tunnel_error: ColumnType<string | null, string | null | undefined, string | null>;
   hub_tunnel_at: ColumnType<string | null, string | null | undefined, string | null>;
+  /** Email settings kept in the app (0029_mail_settings.sql). mail_mode null = use the SMTP_* environment values. */
+  mail_mode: ColumnType<'none' | 'smtp' | 'hub' | null, 'none' | 'smtp' | 'hub' | null | undefined, 'none' | 'smtp' | 'hub' | null>;
+  smtp_host: ColumnType<string | null, string | null | undefined, string | null>;
+  smtp_port: ColumnType<number | null, number | null | undefined, number | null>;
+  smtp_secure: ColumnType<boolean | null, boolean | null | undefined, boolean | null>;
+  smtp_user: ColumnType<string | null, string | null | undefined, string | null>;
+  /** The SMTP password, encrypted with DATA_ENCRYPTION_KEY. Never returned by the API. */
+  smtp_pass_enc: ColumnType<string | null, string | null | undefined, string | null>;
+  mail_from: ColumnType<string | null, string | null | undefined, string | null>;
+  mail_from_name: ColumnType<string | null, string | null | undefined, string | null>;
+  hub_mail_relay: ColumnType<boolean | null, boolean | null | undefined, boolean | null>;
   updated_by: string | null;
   updated_at: Ts;
 }

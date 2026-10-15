@@ -13,6 +13,8 @@
     "@tvmf/shared": "0.1.0"
   },
   "devDependencies": {
-    "embedded-postgres": "16.14.0-beta.17"
+    "@types/smtp-server": "^3.5.13",
+    "embedded-postgres": "16.14.0-beta.17",
+    "smtp-server": "^3.19.22"
   }
 }

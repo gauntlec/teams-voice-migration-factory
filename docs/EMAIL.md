@@ -6,6 +6,33 @@ by the worker, and every message is logged.
 
 > **Links in emails** are built from the base URL: the address saved on Administration > Platform settings, else `WEB_ORIGIN` (see [BASE-URL.md](BASE-URL.md)). Where this page writes `WEB_ORIGIN/...`, read "the base URL".
 
+## Where email is set up
+
+**In the app: Administration > Platform settings > Email** (Super Admin). Choose how this installation sends mail:
+
+| | |
+|---|---|
+| **This installation's own mail server** | server, port, STARTTLS or implicit TLS, user name and password, the From address and sender name. The password is stored encrypted and never shown again. |
+| **Through the Voxshift Hub** | the hub's mail service sends it (see below). Needs the installation to be connected to a hub; the card shows whether the hub's service is ready. |
+| **Not set up** | nothing is sent; messages show as failed in the Email log. |
+
+**Send a test email** on the same card sends a real message the way it is set up and shows the outcome (sent, or the mail server's own error).
+The master on/off switch above it stops all email whatever is chosen.
+
+**The environment still works as a fallback.** Until something is saved on that card, the `SMTP_*` / `MAIL_FROM` values in the installation's `.env` apply exactly as before
+(so existing installations keep sending without any change). Saving on the card replaces them; the old values are carried over (including the password) unless a new one is typed.
+The worker re-reads the setting for every message, so a change needs no restart or redeploy.
+
+Every connection to a mail server is encrypted: STARTTLS is required unless the connection is encrypted from the start (port 465). A server that offers no encryption is refused rather than sent to in plain text.
+
+### Through the Voxshift Hub
+
+An installation connected to a hub (see [HUB-CONNECTION.md](HUB-CONNECTION.md)) can send its email through the hub's mail service, so a customer-premises installation needs no mail server of its own.
+The worker hands each rendered message to `POST <hub>/api/v1/mail` with the instance token; the hub sends it from **its own From address** (only the sender *name* and reply address come from the installation)
+and records the instance, the recipient's domain, the size and the outcome, never a subject, an address or a body. The hub limits how much each instance may send per hour and per day, and an administrator
+can switch one instance off. The hub's reply to each heartbeat says whether its mail service is ready for this installation.
+Messages still pass through the hub in transit, so tell customers who require otherwise to use their own mail server.
+
 ## The master switch
 
 A Super Admin can switch **all** email off on **Administration > Platform settings** (permission `platform:operate`; stored as

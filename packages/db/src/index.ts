@@ -5,6 +5,7 @@ import type { DB } from './schema';
 export * from './schema';
 export * from './live-state';
 export * from './app-settings';
+export * from './mail-config';
 export * from './plan-rows';
 export { migratePlatform, provisionTenant, migrateAllTenants } from './migrate';
 

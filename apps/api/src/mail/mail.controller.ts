@@ -16,14 +16,7 @@ export class MailController {
   @RequirePermission('audit:read:platform')
   async list(@Query('limit') limit = '250', @Query('q') q?: string) {
     return {
-      smtp: {
-        configured: !!process.env.SMTP_HOST,
-        host: process.env.SMTP_HOST ?? null,
-        port: Number(process.env.SMTP_PORT ?? 587),
-        from: process.env.MAIL_FROM ?? 'no-reply@voxshift.io',
-        // true only tells the operator whether a password is present, never its value
-        hasCredentials: !!process.env.SMTP_USER,
-      },
+      smtp: await this.mail.config(),
       items: await this.mail.list(Number(limit) || 250, q),
     };
   }

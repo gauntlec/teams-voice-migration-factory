@@ -53,6 +53,7 @@ interface EmailMessage {
 
 interface EmailLogResponse {
   smtp: {
+    mode: 'none' | 'smtp' | 'hub';
     configured: boolean;
     host: string | null;
     port: number;
@@ -115,16 +116,21 @@ export function AdminEmailLog() {
         </div>
         {smtp?.configured ? (
           <Text size={200}>
-            Sending via <b>{smtp.host}</b>:{smtp.port} as <b>{smtp.from}</b>
-            {smtp.hasCredentials ? '' : ' — no SMTP_USER set, authentication will fail'}
+            {smtp.mode === 'hub' ? (
+              <>Sending through <b>the Voxshift Hub</b>'s mail service</>
+            ) : (
+              <>
+                Sending via <b>{smtp.host}</b>:{smtp.port} as <b>{smtp.from}</b>
+                {smtp.hasCredentials ? '' : ' — no user name set, authentication will fail'}
+              </>
+            )}
           </Text>
         ) : (
           <MessageBar intent="warning">
             <MessageBarBody>
-              <MessageBarTitle>SMTP is not configured</MessageBarTitle>
-              Messages are written to the worker container log and marked <b>failed</b>. Set{' '}
-              <code style={mono}>SMTP_HOST</code> and the other <code style={mono}>SMTP_*</code>{' '}
-              values in the deploy <code style={mono}>.env</code>, then redeploy.
+              <MessageBarTitle>Email is not set up</MessageBarTitle>
+              Messages are written to the worker container log and marked <b>failed</b>. Choose how email is sent in{' '}
+              <b>Administration &gt; Platform settings &gt; Email</b>.
             </MessageBarBody>
           </MessageBar>
         )}

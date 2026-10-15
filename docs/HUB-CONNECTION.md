@@ -44,3 +44,8 @@ Beyond being listed, an installation can let staff open it **from the hub, with 
 - Stored in `platform.app_settings` (`hub_remote_access`, `hub_tunnel_state`, `hub_tunnel_error`, `hub_tunnel_at`; migration `0028_hub_remote_access.sql`). The heartbeat also reports the switch, so the hub can say "switched off by the customer".
 - The connector reconnects by itself (2 s, doubling to a minute) if the connection drops, and says in words on this card why it is not connected (for example "the hub does not accept this installation's token").
 
+## Mail through the hub
+
+If the hub has its mail service switched on, this installation can send its email through it instead of needing a mail server of its own: Platform settings > Email > "Through the Voxshift Hub".
+See [EMAIL.md](EMAIL.md#through-the-voxshift-hub). The hub's heartbeat reply says whether the service is ready for this installation (`mailRelay`), which the Email card shows.
+

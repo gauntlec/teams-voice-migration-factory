@@ -31,6 +31,7 @@ export * from './progress';
 export * from './release-safety';
 export * from './base-url';
 export * from './hub-connection';
+export * from './mail-settings';
 
 import type { CmdletInvocation } from './deployment';
 

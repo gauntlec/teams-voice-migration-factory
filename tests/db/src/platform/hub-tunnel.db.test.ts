@@ -84,7 +84,7 @@ function ask(ws: WebSocket, frames: Record<string, any>[], id: string, req: { me
 
 beforeAll(async () => {
   admin = await seedUser(handle, 'SUPER_ADMIN');
-  svc = new PlatformSettingsService(handle.db, cfg);
+  svc = new PlatformSettingsService(handle.db, cfg, {} as never);
 });
 afterAll(async () => {
   await platformDb(handle.db).deleteFrom('app_settings').execute();

@@ -41,7 +41,7 @@ import { handleTenantDiscoveryRun, syncTenantGroups } from './discovery/run';
 import { beforeStateResolver, planIdentityRows, planResourceAccountRows, verifyDeployment } from './deployment-verify';
 import { renderEmail } from './mail/templates';
 import type { EmailBranding } from './mail/layout';
-import { mailerConfigured, sendMail } from './mail/mailer';
+import { resolveMail, sendMail } from './mail/mailer';
 import { makeMailEnqueuer } from './mail/enqueue';
 import { sendHubHeartbeat } from './hub-heartbeat';
 import { HubTunnel } from './hub-tunnel';
@@ -1040,22 +1040,23 @@ async function handleMail(job: Job) {
     .where('id', '=', id)
     .execute();
 
-  if (!mailerConfigured) {
+  const mailCfg = await resolveMail(db);
+  if (mailCfg.mode === 'none') {
     // eslint-disable-next-line no-console
     console.log(
-      `[mail ${id}] SMTP not configured - not sent.\n` +
+      `[mail ${id}] ${mailCfg.reason} - not sent.\n` +
         `  to: ${delivery.to}\n  subject: ${delivery.subject}\n\n${rendered.text}\n`,
     );
     await platformDb(db)
       .updateTable('email_messages')
-      .set({ status: 'failed', error: 'SMTP not configured', subject: delivery.subject })
+      .set({ status: 'failed', error: mailCfg.reason, subject: delivery.subject })
       .where('id', '=', id)
       .execute();
     return;
   }
 
   try {
-    await sendMail({
+    await sendMail(mailCfg, {
       to: delivery.to,
       toName: delivery.toName,
       subject: delivery.subject,

@@ -6,6 +6,7 @@
  */
 import { z } from 'zod';
 import type { HubConnectionView } from './hub-connection';
+import type { MailSettingsView } from './mail-settings';
 
 /** The hosted service's address, used in docs and as the example everywhere. */
 export const HOSTED_BASE_URL = 'https://www.voxshift.io';
@@ -84,6 +85,8 @@ export interface BaseUrlView {
   emailEnabled: boolean;
   /** The connection to a Voxshift Hub (reporting this installation to the registry). */
   hub: HubConnectionView;
+  /** How this installation sends email. */
+  mail: MailSettingsView;
   /** The release of Voxshift running here (yyyy.mm.N); "dev" for a hand-built image. */
   version: string;
   /** Connection details for assistants, built from `baseUrl`. */

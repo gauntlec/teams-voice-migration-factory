@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Card, Switch, Field, Input, MessageBar, MessageBarActions, MessageBarBody, Spinner, Text, makeStyles, shorthands, tokens } from '@fluentui/react-components';
+import { Badge, Button, Card, Radio, RadioGroup, Switch, Field, Input, MessageBar, MessageBarActions, MessageBarBody, Spinner, Text, makeStyles, shorthands, tokens } from '@fluentui/react-components';
 import { CopyRegular } from '@fluentui/react-icons';
-import { DEFAULT_HUB_URL, HOSTED_BASE_URL, HUB_TOKEN_RE, baseUrlWarnings, hubLinkState, normalizeBaseUrl, type BaseUrlView, type HubConnectionView } from '@tvmf/shared';
+import { DEFAULT_HUB_URL, HOSTED_BASE_URL, HUB_TOKEN_RE, MAIL_MODE_LABELS, baseUrlWarnings, hubLinkState, normalizeBaseUrl, type BaseUrlView, type HubConnectionView, type MailModeSetting, type MailSettingsView } from '@tvmf/shared';
 import { api } from '../../api';
 import { Page } from '../../components/Page';
 import { LoadError } from '../../components/records';
@@ -21,6 +21,167 @@ const useLocalStyles = makeStyles({
   line: { display: 'grid', gridTemplateColumns: 'minmax(160px, 220px) 1fr auto', ...shorthands.gap('8px'), alignItems: 'center' },
   code: { fontFamily: tokens.fontFamilyMonospace, fontSize: tokens.fontSizeBase200, overflowWrap: 'anywhere' },
 });
+
+/** How this installation sends email: nothing, a mail server of its own, or the Voxshift Hub's mail service. With a test message that proves the saved setup. */
+function EmailCard({ mail }: { mail: MailSettingsView }) {
+  const s = useLocalStyles();
+  const qc = useQueryClient();
+  const notify = useNotify();
+  const [mode, setMode] = useState<MailModeSetting>(mail.mode);
+  const [host, setHost] = useState(mail.smtp.host);
+  const [port, setPort] = useState(String(mail.smtp.port));
+  const [secure, setSecure] = useState(mail.smtp.secure);
+  const [user, setUser] = useState(mail.smtp.user);
+  const [password, setPassword] = useState('');
+  const [from, setFrom] = useState(mail.smtp.from);
+  const [fromName, setFromName] = useState(mode === 'hub' ? mail.hubFromName : mail.smtp.fromName);
+  const [dirty, setDirty] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [testTo, setTestTo] = useState('');
+  const [test, setTest] = useState<{ state: 'sending' | 'sent' | 'failed'; message?: string } | null>(null);
+  const touch = <T,>(set: (v: T) => void) => (v: T) => (set(v), setDirty(true));
+
+  const portNum = Number(port);
+  const smtpValid = host.trim().length > 0 && Number.isInteger(portNum) && portNum >= 1 && portNum <= 65535 && /^\S+@\S+\.\S+$/.test(from.trim());
+  const valid = mode !== 'smtp' || smtpValid;
+
+  const save = useMutation({
+    mutationFn: () => {
+      const body =
+        mode === 'none'
+          ? { mode }
+          : mode === 'hub'
+            ? { mode, fromName: fromName.trim() || 'Voxshift' }
+            : { mode, smtp: { host: host.trim(), port: portNum, secure, user: user.trim(), ...(password ? { password } : {}), from: from.trim(), fromName: fromName.trim() || 'Voxshift' } };
+      return api<BaseUrlView>('/platform/mail', { method: 'PUT', body: JSON.stringify(body) });
+    },
+    onSuccess: (v) => {
+      setErr(null);
+      setPassword('');
+      setDirty(false);
+      qc.setQueryData(['platform-settings'], v);
+      notify('Email settings saved');
+    },
+    onError: (e) => setErr((e as Error).message),
+  });
+
+  const sendTest = async () => {
+    setTest({ state: 'sending' });
+    try {
+      const { id } = await api<{ id: string }>('/platform/mail/test', { method: 'POST', body: JSON.stringify({ to: testTo.trim() }) });
+      for (let i = 0; i < 30; i++) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const r = await api<{ status: string; error: string | null }>(`/platform/mail/test/${id}`);
+        if (r.status === 'sent') return setTest({ state: 'sent', message: `Sent to ${testTo.trim()}. Check the inbox (and junk mail).` });
+        if (r.status === 'failed') return setTest({ state: 'failed', message: r.error ?? 'It could not be sent.' });
+        if (r.status === 'skipped') return setTest({ state: 'failed', message: r.error ?? 'It was skipped.' });
+      }
+      setTest({ state: 'failed', message: 'It is still waiting to be sent. Check Administration > Email log.' });
+    } catch (e) {
+      setTest({ state: 'failed', message: (e as Error).message });
+    }
+  };
+
+  return (
+    <Card>
+      <div className={s.body}>
+        <div className={s.stack}>
+          <Text weight="semibold">How email is sent</Text>
+          <MutedText>Invitations, password resets and notices are sent the way you choose here. The on/off switch above stops all of it.</MutedText>
+        </div>
+        {mail.source === 'environment' && (
+          <MessageBar intent="info">
+            <MessageBarBody>These settings are coming from this installation's configuration file (SMTP_* in its .env). Saving here replaces them; nothing in the file needs changing.</MessageBarBody>
+          </MessageBar>
+        )}
+        <RadioGroup value={mode} onChange={(_, d) => touch(setMode)(d.value as MailModeSetting)}>
+          <Radio value="smtp" label={MAIL_MODE_LABELS.smtp} />
+          <Radio value="hub" label={MAIL_MODE_LABELS.hub} disabled={!mail.hub.connected} />
+          <Radio value="none" label={MAIL_MODE_LABELS.none} />
+        </RadioGroup>
+
+        {mode === 'smtp' && (
+          <div className={s.body} style={{ padding: 0 }}>
+            <div className={s.row}>
+              <Field className={s.grow} label="Mail server" required hint="For Microsoft 365: smtp.office365.com">
+                <Input value={host} onChange={(_, d) => touch(setHost)(d.value)} />
+              </Field>
+              <Field label="Port" hint="587 (STARTTLS) or 465" style={{ width: 120 }}>
+                <Input value={port} onChange={(_, d) => touch(setPort)(d.value)} inputMode="numeric" />
+              </Field>
+            </div>
+            <Switch checked={secure} onChange={(_, d) => touch(setSecure)(d.checked)} label={secure ? 'Encrypted from the start (port 465)' : 'Upgrade to encryption (STARTTLS, port 587)'} />
+            <div className={s.row}>
+              <Field className={s.grow} label="User name" hint="Leave empty if the server needs no sign-in">
+                <Input value={user} onChange={(_, d) => touch(setUser)(d.value)} autoComplete="off" />
+              </Field>
+              <Field className={s.grow} label="Password" hint={mail.smtp.passwordSet ? 'A password is saved. Type here only to replace it.' : undefined}>
+                <Input type="password" value={password} onChange={(_, d) => touch(setPassword)(d.value)} autoComplete="new-password" placeholder={mail.smtp.passwordSet ? '••••••••' : ''} />
+              </Field>
+            </div>
+            <div className={s.row}>
+              <Field className={s.grow} label="Send from" required hint="Must be the mailbox above, or one it is allowed to send as">
+                <Input value={from} onChange={(_, d) => touch(setFrom)(d.value)} />
+              </Field>
+              <Field className={s.grow} label="Sender name">
+                <Input value={fromName} onChange={(_, d) => touch(setFromName)(d.value)} />
+              </Field>
+            </div>
+          </div>
+        )}
+
+        {mode === 'hub' && (
+          <div className={s.stack}>
+            <MessageBar intent={mail.hub.available === false ? 'warning' : 'info'}>
+              <MessageBarBody>
+                {!mail.hub.connected
+                  ? 'Connect this installation to a hub first (the card above).'
+                  : mail.hub.available === true
+                    ? "The hub's mail service is ready. Messages are handed to the hub, which sends them from its own address; the hub does not keep their contents."
+                    : mail.hub.available === false
+                      ? "The hub's mail service is not available for this installation (it is switched off or not set up in the hub). Ask a hub administrator."
+                      : 'Waiting to hear from the hub (within a minute of connecting).'}
+              </MessageBarBody>
+            </MessageBar>
+            <Field label="Sender name" hint="Shown with the hub's From address">
+              <Input value={fromName} onChange={(_, d) => touch(setFromName)(d.value)} />
+            </Field>
+          </div>
+        )}
+
+        {err && (
+          <MessageBar intent="error">
+            <MessageBarBody>{err}</MessageBarBody>
+          </MessageBar>
+        )}
+        <div className={s.row}>
+          <Button appearance="primary" disabled={!dirty || !valid || save.isPending} onClick={() => save.mutate()}>
+            Save
+          </Button>
+        </div>
+
+        {mail.mode !== 'none' && (
+          <div className={s.stack}>
+            <Text weight="semibold">Send a test email</Text>
+            <div className={s.row}>
+              <Field className={s.grow} label="To" hint={dirty ? 'Save your changes first: the test uses the saved settings.' : undefined}>
+                <Input type="email" value={testTo} onChange={(_, d) => setTestTo(d.value)} />
+              </Field>
+              <Button disabled={dirty || !/^\S+@\S+\.\S+$/.test(testTo.trim()) || test?.state === 'sending'} onClick={() => void sendTest()}>
+                {test?.state === 'sending' ? 'Sending' : 'Send test'}
+              </Button>
+            </div>
+            {test && test.state !== 'sending' && (
+              <MessageBar intent={test.state === 'sent' ? 'success' : 'error'}>
+                <MessageBarBody>{test.message}</MessageBarBody>
+              </MessageBar>
+            )}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
 
 /** The connection to a Voxshift Hub: connect with the token the hub showed, see whether reports are getting through, disconnect. */
 function HubCard({ hub }: { hub: HubConnectionView }) {
@@ -204,6 +365,8 @@ export function AdminPlatformSettings() {
       )}
 
       {view && <HubCard hub={view.hub} />}
+
+      {view && <EmailCard key={`${view.mail.mode}-${view.mail.source}-${view.mail.smtp.host}-${view.mail.smtp.passwordSet}`} mail={view.mail} />}
 
       <Card>
         {q.isLoading ? (

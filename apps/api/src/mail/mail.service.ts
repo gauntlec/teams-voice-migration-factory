@@ -1,5 +1,5 @@
 import { ConflictException, Injectable, NotFoundException, Logger } from '@nestjs/common';
-import { emailEnabled, platformDb } from '@tvmf/db';
+import { effectiveMail, emailEnabled, platformDb, readMailRow } from '@tvmf/db';
 import type { EmailContext, EmailTemplate } from '@tvmf/shared';
 import type { Queue } from 'bullmq';
 import { InjectDb, type Db } from '../db/db.module';
@@ -112,5 +112,11 @@ export class MailService {
       q = q.where((eb) => eb.or([eb('to_email', 'ilike', like), eb('subject', 'ilike', like), eb('template', 'ilike', like)]));
     }
     return q.execute();
+  }
+
+  /** How mail is sent now, for the email log banner. Never the password. */
+  async config() {
+    const m = effectiveMail(await readMailRow(this.db));
+    return { mode: m.mode, configured: m.mode !== 'none', host: m.mode === 'hub' ? 'the Voxshift Hub' : m.host, port: m.port, from: m.from, hasCredentials: m.mode === 'hub' || !!m.user };
   }
 }

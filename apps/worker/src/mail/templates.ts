@@ -81,6 +81,8 @@ export function renderEmail(template: string, context: Record<string, unknown>, 
       return incidentMajor(context as unknown as IncidentMajorContext, branding);
     case 'incident_review':
       return incidentReview(context as unknown as IncidentReviewContext, branding);
+    case 'mail_test':
+      return mailTest(context as unknown as { installation: string; how: string; sentAt: string }, branding);
     default:
       throw new Error(`unknown email template: ${template}`);
   }
@@ -110,6 +112,18 @@ function invitation(c: UserInvitationContext, branding?: EmailBranding): Rendere
   };
 
   return { subject, html: renderHtml(layout, branding), text: renderText(layout) };
+}
+
+/** The test message from Platform settings > Email: proves this installation can send mail the way it is set up. */
+function mailTest(c: { installation: string; how: string; sentAt: string }, branding?: EmailBranding): RenderedEmail {
+  const layout: LayoutInput = {
+    previewText: 'Email from your Voxshift installation is working.',
+    eyebrow: 'Email test',
+    heading: 'Email is working',
+    intro: [`This is a test message from ${c.installation}.`, `It was sent ${c.how}, at ${c.sentAt}.`],
+    outro: ['Nothing more is needed. You can ignore this message.'],
+  };
+  return { subject: 'Voxshift email test', html: renderHtml(layout, branding), text: renderText(layout) };
 }
 
 function discoveryCompleted(c: DiscoveryCompletedContext, branding?: EmailBranding): RenderedEmail {

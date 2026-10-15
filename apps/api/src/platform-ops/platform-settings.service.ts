@@ -1,9 +1,10 @@
-import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { emailEnabled, forgetAppSettings, platformDb, savedBaseUrl } from '@tvmf/db';
-import { baseUrlWarnings, connectDetails, type BaseUrlView, type HubConnectionView } from '@tvmf/shared';
+import { ConflictException, Inject, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { effectiveMail, emailEnabled, forgetAppSettings, platformDb, readMailRow, savedBaseUrl } from '@tvmf/db';
+import { baseUrlWarnings, connectDetails, MAIL_MODE_LABELS, type BaseUrlView, type HubConnectionView, type MailSettingsView, type SetMailSettingsInput } from '@tvmf/shared';
 import { APP_CONFIG, type AppConfig } from '../common/config';
 import { encryptSecret } from '../common/crypto';
 import { InjectDb, type Db } from '../db/db.module';
+import { MailService } from '../mail/mail.service';
 
 // The driver hands back Date objects for timestamptz columns whatever the table type says.
 const iso = (v: string | Date | null | undefined): string | null => (v ? new Date(v).toISOString() : null);
@@ -26,6 +27,7 @@ export class PlatformSettingsService implements OnModuleInit {
   constructor(
     @InjectDb() private readonly db: Db,
     @Inject(APP_CONFIG) private readonly cfg: AppConfig,
+    private readonly mail: MailService,
   ) {
     this.environmentValue = cfg.WEB_ORIGIN.replace(/\/+$/, '');
   }
@@ -53,6 +55,7 @@ export class PlatformSettingsService implements OnModuleInit {
       warnings: baseUrlWarnings(baseUrl),
       emailEnabled: await emailEnabled(this.db, { fresh: true }),
       hub: await this.hubView(),
+      mail: await this.mailView(),
       version: (process.env.APP_VERSION ?? '').trim() || 'dev',
       connect: connectDetails(baseUrl),
     };
@@ -129,5 +132,57 @@ export class PlatformSettingsService implements OnModuleInit {
       .where('hub_url', 'is not', null)
       .execute();
     return this.view();
+  }
+
+  /** How this installation sends email: what is saved in the app, else the SMTP_* environment values. The password is never returned, only whether one is set. */
+  async mailView(): Promise<MailSettingsView> {
+    const row = await readMailRow(this.db);
+    const m = effectiveMail(row);
+    return {
+      mode: m.mode,
+      source: m.source,
+      smtp: { host: m.host, port: m.port, secure: m.secure, user: m.user, passwordSet: !!(m.passEnc ?? m.passEnv), from: m.from, fromName: m.fromName },
+      hubFromName: m.fromName,
+      hub: { connected: !!row.hub_url && !!row.hub_token_enc, available: row.hub_mail_relay },
+    };
+  }
+
+  /** Saves how email is sent. Changing from the environment values keeps their password unless a new one is given. */
+  async setMail(input: SetMailSettingsInput, userId: string): Promise<BaseUrlView> {
+    const row = await readMailRow(this.db);
+    const current = effectiveMail(row);
+    let values: Record<string, unknown>;
+    if (input.mode === 'none') values = { mail_mode: 'none' };
+    else if (input.mode === 'hub') values = { mail_mode: 'hub', mail_from_name: input.fromName || 'Voxshift' };
+    else {
+      const s = input.smtp;
+      let pass: string | null;
+      if (s.password === undefined) pass = row.smtp_pass_enc ?? (current.passEnv ? encryptSecret(current.passEnv) : null);
+      else pass = s.password === '' ? null : encryptSecret(s.password);
+      values = { mail_mode: 'smtp', smtp_host: s.host, smtp_port: s.port, smtp_secure: s.secure, smtp_user: s.user || null, smtp_pass_enc: pass, mail_from: s.from, mail_from_name: s.fromName || 'Voxshift' };
+    }
+    await platformDb(this.db)
+      .insertInto('app_settings')
+      .values({ id: true, base_url: null, ...values, updated_by: userId } as never)
+      .onConflict((oc) => oc.column('id').doUpdateSet({ ...values, updated_by: userId, updated_at: new Date().toISOString() } as never))
+      .execute();
+    return this.view();
+  }
+
+  /** Queues a test message the normal way (the worker sends it as set up), so it proves the real path. Poll `mailTestStatus` for the result. */
+  async testMail(to: string): Promise<{ id: string }> {
+    if (!(await emailEnabled(this.db, { fresh: true }))) throw new ConflictException('Email is switched off for the whole platform (the switch above). Switch it on to send a test.');
+    const m = await this.mailView();
+    if (m.mode === 'none') throw new ConflictException('Email is not set up. Choose how it is sent and save first.');
+    const how = m.mode === 'hub' ? 'through the Voxshift Hub\'s mail service' : `through ${m.smtp.host}`;
+    const r = await this.mail.enqueue({ template: 'mail_test', to: { email: to }, context: { installation: this.cfg.WEB_ORIGIN, how, sentAt: new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC' }, related: { type: 'mail_test', id: to } });
+    if (!r.id) throw new ConflictException('Email is switched off for the whole platform.');
+    return { id: r.id };
+  }
+
+  async mailTestStatus(id: string): Promise<{ status: string; error: string | null }> {
+    const r = await platformDb(this.db).selectFrom('email_messages').select(['status', 'error']).where('id', '=', id).where('template', '=', 'mail_test').executeTakeFirst();
+    if (!r) throw new NotFoundException('No such test message.');
+    return { status: r.status, error: r.error };
   }
 }

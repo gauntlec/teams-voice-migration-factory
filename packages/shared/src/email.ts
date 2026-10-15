@@ -25,6 +25,7 @@ export const EMAIL_TEMPLATES = [
   'incident_activity',
   'incident_major',
   'incident_review',
+  'mail_test',
 ] as const;
 export type EmailTemplate = (typeof EMAIL_TEMPLATES)[number];
 

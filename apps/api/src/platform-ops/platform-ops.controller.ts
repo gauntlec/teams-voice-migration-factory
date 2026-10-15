@@ -1,7 +1,9 @@
-import { Body, Controller, Delete, Get, Put } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put } from '@nestjs/common';
 import { platformDb } from '@tvmf/db';
 import {
   connectHubSchema,
+  mailTestSchema,
+  setMailSettingsSchema,
   setHubRemoteAccessSchema,
   setBaseUrlSchema,
   setEmailEnabledSchema,
@@ -10,6 +12,8 @@ import {
   type MaintenanceNoticeView,
   type ReleaseCheck,
   type ConnectHubInput,
+  type MailTestInput,
+  type SetMailSettingsInput,
   type SetHubRemoteAccessInput,
   type SetBaseUrlInput,
   type SetEmailEnabledInput,
@@ -142,5 +146,31 @@ export class PlatformOpsController {
     const view = await this.baseUrl.setHubRemoteAccess(body.enabled, user.id);
     await this.audit.platform(body.enabled ? 'platform.hub_remote_access_on' : 'platform.hub_remote_access_off', { actor: { id: user.id, email: user.email }, targetType: 'app_settings' });
     return view;
+  }
+
+  /** SUPER_ADMIN: how this installation sends email (own mail server, the hub's mail service, or nothing). */
+  @Put('mail')
+  @RequirePermission('platform:operate')
+  async setMail(@Body(new ZodBody(setMailSettingsSchema)) body: SetMailSettingsInput, @CurrentUser() user: AuthedUser): Promise<BaseUrlView> {
+    const view = await this.baseUrl.setMail(body, user.id);
+    // Where it points, never the password.
+    await this.audit.platform('platform.mail_settings_changed', {
+      actor: { id: user.id, email: user.email },
+      targetType: 'app_settings',
+      detail: { mode: body.mode, ...(body.mode === 'smtp' ? { host: body.smtp.host, port: body.smtp.port, from: body.smtp.from } : {}) },
+    });
+    return view;
+  }
+
+  @Post('mail/test')
+  @RequirePermission('platform:operate')
+  testMail(@Body(new ZodBody(mailTestSchema)) body: MailTestInput) {
+    return this.baseUrl.testMail(body.to);
+  }
+
+  @Get('mail/test/:id')
+  @RequirePermission('platform:operate')
+  mailTestStatus(@Param('id') id: string) {
+    return this.baseUrl.mailTestStatus(id);
   }
 }

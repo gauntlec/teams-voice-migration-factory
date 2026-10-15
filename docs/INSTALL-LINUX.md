@@ -93,7 +93,7 @@ Everything restarts on its own after a reboot (`restart: unless-stopped`, Docker
 
 ## Settings you will change after installing
 
-- **Email**: set `SMTP_HOST` (and the others) in `.env`, then `voxshift restart`. Until then no email is delivered. The whole platform's email can be
+- **Email**: set it up in the app, in Administration > Platform settings > Email (your own mail server, or the Voxshift Hub's mail service), and use "Send test". The installer's `--smtp-*` options and the `SMTP_*` values in `.env` still work as the starting point until something is saved there. Until email is set up none is delivered. The whole platform's email can be
   switched off in Administration > Platform settings.
 - **The hub**: to list this installation in a Voxshift Hub and see it online there, connect it in Administration > Platform settings > Voxshift hub. See [HUB-CONNECTION.md](HUB-CONNECTION.md).
 - **The web address**: change it in Administration > Platform settings (no restart). `WEB_ORIGIN` in `.env` is only the starting value. See [BASE-URL.md](BASE-URL.md).

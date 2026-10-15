@@ -18,6 +18,7 @@ export async function sendHubHeartbeat(db: Kysely<DB>, opts: { fetchFn?: typeof 
   const body: HubHeartbeat = { version: hubVersion(), health: 'ok', uptimeSeconds: Math.round(process.uptime()), remoteAccess: row.hub_remote_access };
 
   let error: string | null = null;
+  let mailRelay: boolean | null = null;
   try {
     const res = await fetchFn(`${row.hub_url}/api/v1/heartbeat`, {
       method: 'POST',
@@ -26,13 +27,18 @@ export async function sendHubHeartbeat(db: Kysely<DB>, opts: { fetchFn?: typeof 
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) error = hubErrorText(res.status);
+    else {
+      // The hub's reply says whether its mail service is ready for this installation (shown in Platform settings > Email).
+      const reply = typeof res.json === 'function' ? ((await res.json().catch(() => null)) as { mailRelay?: unknown } | null) : null;
+      if (typeof reply?.mailRelay === 'boolean') mailRelay = reply.mailRelay;
+    }
   } catch (e) {
     // The message of a network error holds no secret (the token is only in the header), but keep it short.
     error = hubErrorText(null, (e as Error).message.slice(0, 120));
   }
   await platformDb(db)
     .updateTable('app_settings')
-    .set(error ? { hub_last_attempt_at: at, hub_last_error: error } : { hub_last_attempt_at: at, hub_last_ok_at: at, hub_last_error: null })
+    .set(error ? { hub_last_attempt_at: at, hub_last_error: error } : { hub_last_attempt_at: at, hub_last_ok_at: at, hub_last_error: null, ...(mailRelay !== null ? { hub_mail_relay: mailRelay } : {}) })
     .where('id', '=', true)
     .execute();
   return error ? 'failed' : 'sent';
