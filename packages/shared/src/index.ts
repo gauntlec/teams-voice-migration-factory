@@ -29,6 +29,7 @@ export * from './msp-notify';
 export * from './wizard-convert';
 export * from './progress';
 export * from './release-safety';
+export * from './base-url';
 
 import type { CmdletInvocation } from './deployment';
 

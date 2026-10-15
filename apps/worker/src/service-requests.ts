@@ -1,5 +1,5 @@
 import { sql, type Kysely } from 'kysely';
-import { platformDb, tenantDb, type DB } from '@tvmf/db';
+import { platformDb, tenantDb, type DB, webOrigin as resolveWebOrigin } from '@tvmf/db';
 import {
   SR_CUSTOMER_NOTIFY_STATUSES,
   SR_TYPE_DEFS,
@@ -139,7 +139,7 @@ export async function markRequestDeployed(
     platformDb(db).selectFrom('tenants').select('name').where('id', '=', args.tenantId).executeTakeFirst(),
   ]);
   if (!requester || requester.status !== 'active') return true;
-  const webOrigin = (process.env.WEB_ORIGIN ?? '').replace(/\/+$/, '');
+  const webOrigin = await resolveWebOrigin(db);
   const context: ServiceRequestStatusChangedContext = {
     customerName: tenant?.name ?? 'your organisation',
     reference: srReference(sr.number),
@@ -237,7 +237,7 @@ export async function finishAgentDeployment(
  *   days, at most SR_WAITING_MAX_REMINDERS times, quoting the team's question.
  */
 export async function sweepServiceRequests(db: Kysely<DB>, enqueueMail: MailEnqueuer): Promise<void> {
-  const webOrigin = (process.env.WEB_ORIGIN ?? '').replace(/\/+$/, '');
+  const webOrigin = await resolveWebOrigin(db);
   const tenants = await platformDb(db)
     .selectFrom('tenants')
     .select(['id', 'schema_name', 'name', 'sr_settings'])

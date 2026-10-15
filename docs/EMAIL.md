@@ -4,6 +4,8 @@ One reusable path for every email the platform sends — invitations today,
 workflow / approval / review notifications later. All mail is **queued** and sent
 by the worker, and every message is logged.
 
+> **Links in emails** are built from the base URL: the address saved on Administration > Web address, else `WEB_ORIGIN` (see [BASE-URL.md](BASE-URL.md)). Where this page writes `WEB_ORIGIN/...`, read "the base URL".
+
 ## Flow
 
 ```

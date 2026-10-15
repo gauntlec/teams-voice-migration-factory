@@ -62,7 +62,7 @@
 
 ## Transport & headers
 
-- API sets `helmet` defaults, strict CORS to `WEB_ORIGIN`, `X-Tenant-Id` is the
+- API sets `helmet` defaults, strict CORS to the base URL (the saved Administration > Web address, else `WEB_ORIGIN`), `X-Tenant-Id` is the
   only custom request header accepted.
 - In production terminate TLS at a reverse proxy in front of `web`; set
   `COOKIE_SECURE=true`.

@@ -1,6 +1,6 @@
 import type { Job } from 'bullmq';
 import type { Kysely } from 'kysely';
-import { platformDb, tenantDb, type DB } from '@tvmf/db';
+import { platformDb, tenantDb, type DB, webOrigin as resolveWebOrigin } from '@tvmf/db';
 import {
   RESOURCE_ACCOUNT_APPLICATION_IDS,
   TENANT_DISCOVERY_STEPS,
@@ -450,7 +450,7 @@ async function notifyRunComplete(
     const durationText =
       secs < 90 ? `${secs} s` : `${Math.floor(secs / 60)} min ${String(secs % 60).padStart(2, '0')} s`;
 
-    const webOrigin = (process.env.WEB_ORIGIN ?? '').replace(/\/+$/, '');
+    const webOrigin = await resolveWebOrigin(db);
 
     const context: DiscoveryCompletedContext = {
       recipientName: user.display_name ?? user.email,

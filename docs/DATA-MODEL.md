@@ -19,6 +19,7 @@ Derived from the current artifacts:
 | `invitations` | id, email, role, tenant_id, token_hash, invited_by, expires_at, accepted_at |
 | `email_messages` | id, to_email (citext), to_name, template, context (jsonb), subject, status (`queued`/`sent`/`failed`/`skipped`), error, attempts, related_type + related_id, created_by, created_at, sent_at, `original_to_email` (set when a test customer's email was redirected) — the comms log; API inserts + enqueues, worker sends. See [`EMAIL.md`](EMAIL.md) |
 | `feature_requests` | id, title, area, status (`new`/`under_review`/`scheduled`/`in_development`/`deployed`/`declined`), priority (`low`/`medium`/`high`/`urgent`), problem, proposal, current_behavior, examples, acceptance, constraints, affected_roles (text[]), decision_note, submitted_by, created_at, updated_at, status_changed_at/by — the feature-request board. Staff submit; a SUPER_ADMIN moves a card to `in_development` (the cue for Claude Code) and to `deployed` on ship. Values in `packages/shared/src/domain.ts` |
+| `app_settings` | id (always `true` - one row), base_url (the address people reach this installation at; NULL = use `WEB_ORIGIN`), updated_by, updated_at — see [`BASE-URL.md`](BASE-URL.md) |
 | `maintenance_notice` | id (always `true` - one row at most), message, starts_at, created_by, created_at — the release maintenance notice, see [`ARCHITECTURE.md`](ARCHITECTURE.md#operations-releasing-safely) |
 | `platform_audit_log` | id, at, actor_user_id, actor_email, action, target_type, target_id, tenant_id, detail (jsonb), ip |
 

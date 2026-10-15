@@ -142,7 +142,7 @@ claude mcp add voxshift \
 }
 ```
 
-`VOXSHIFT_URL` is the address the program calls, without `/api`. Keep the token out of version control (use your client's secret handling
+`VOXSHIFT_URL` is the address the program calls, without `/api`. Examples in this guide use the hosted service, `https://www.voxshift.io`; an installation on a customer's own premises has its own address, shown (with every connection URL ready to copy) on **Administration > Web address** (see [BASE-URL.md](BASE-URL.md)). Keep the token out of version control (use your client's secret handling
 or an environment variable). Restart the client.
 
 When it starts, the server asks Voxshift (`GET /me`) where this assistant works and offers **only those tools**: an incident assistant never sees

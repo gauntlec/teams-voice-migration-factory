@@ -1,5 +1,5 @@
 import { sql, type Kysely } from 'kysely';
-import { platformDb, tenantDb, type DB } from '@tvmf/db';
+import { platformDb, tenantDb, type DB, webOrigin as resolveWebOrigin } from '@tvmf/db';
 import {
   INC_AUTOCLOSE_DAYS,
   INC_MAJOR_ESCALATE_AFTER_MINUTES,
@@ -36,7 +36,7 @@ type Person = { id: string; email: string; display_name: string };
  * `opts.tenantId` limits it to one customer (tests).
  */
 export async function sweepIncidents(db: Kysely<DB>, enqueueMail: MailEnqueuer, opts: { tenantId?: string } = {}): Promise<{ reminders: number; targetEmails: number; closed: number; majorReminders: number }> {
-  const webOrigin = (process.env.WEB_ORIGIN ?? '').replace(/\/+$/, '');
+  const webOrigin = await resolveWebOrigin(db);
   let q = platformDb(db)
     .selectFrom('tenants')
     .select(['id', 'schema_name', 'name', 'inc_settings'])

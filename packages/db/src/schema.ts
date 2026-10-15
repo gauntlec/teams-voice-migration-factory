@@ -102,6 +102,15 @@ export interface EmailMessagesTable {
   original_to_email: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
+/** Platform-wide settings (one row, id is always true) - see 0025_app_settings.sql. */
+export interface AppSettingsTable {
+  id: ColumnType<boolean, boolean | undefined, boolean>;
+  /** The address people use to reach this installation; null = use the WEB_ORIGIN environment value. */
+  base_url: string | null;
+  updated_by: string | null;
+  updated_at: Ts;
+}
+
 /** The single maintenance notice (id is always true) - see 0015_release_safety.sql. */
 export interface MaintenanceNoticeTable {
   id: ColumnType<boolean, boolean | undefined, boolean>;
@@ -1408,6 +1417,7 @@ export interface DB {
   bug_reports: BugReportsTable;
   platform_audit_log: PlatformAuditLogTable;
   maintenance_notice: MaintenanceNoticeTable;
+  app_settings: AppSettingsTable;
   agents: AgentsTable;
   intake_sources: IntakeSourcesTable;
   msp_notifications: MspNotificationsTable;

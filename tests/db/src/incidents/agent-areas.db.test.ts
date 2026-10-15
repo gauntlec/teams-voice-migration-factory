@@ -3,7 +3,7 @@
 // assistants Voxshift ships are narrowed to their job.
 import { randomUUID } from 'node:crypto';
 import { ForbiddenException, type ExecutionContext } from '@nestjs/common';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { platformDb } from '@tvmf/db';
 import { agentWorksOnSchema, createAgentSchema, createAgentWebhookSchema, createAgentTokenSchema, createIncidentSchema, type AgentDomain } from '@tvmf/shared';
 import type { AppRequest } from '../../../../apps/api/src/common/request';
@@ -31,6 +31,22 @@ async function bot(name: string, worksOn?: AgentDomain[], autonomy = {}) {
   const t = await s.agentAdmin.createToken(admin, a.id, createAgentTokenSchema.parse({ name: 'Runner', scopes: ['read', 'note', 'propose', 'act'] }));
   return { a, token: t.token };
 }
+
+/**
+ * A built-in assistant: the one that already exists, else a new one that is removed again afterwards. Each built-in can
+ * be added once, and other test files add them, so leaving one behind would fail whichever of them runs later.
+ */
+const madeBuiltins: string[] = [];
+async function builtin(key: 'triage' | 'changes') {
+  const existing = await platformDb(handle.db).selectFrom('agents').selectAll().where('builtin_key', '=', key).executeTakeFirst();
+  if (existing) return existing;
+  const made = await s.agentAdmin.createBuiltin(admin, { key });
+  madeBuiltins.push(made.id);
+  return made;
+}
+afterAll(async () => {
+  if (madeBuiltins.length) await platformDb(handle.db).deleteFrom('agents').where('id', 'in', madeBuiltins).execute();
+});
 
 /** Runs the real guard against a handler on a controller, the way Nest would. */
 async function through(token: string, controller: { prototype: object } & (new (...a: never[]) => unknown), handler: string) {
@@ -74,10 +90,10 @@ describe('choosing where an assistant works', () => {
     expect(a.works_on).toEqual(['incidents']);
     const u = await s.agentAdmin.update(admin, a.id, { worksOn: ['incidents', 'service_requests'] });
     expect(u.works_on).toEqual(['incidents', 'service_requests']);
-    const changes = await s.agentAdmin.createBuiltin(admin, { key: 'changes' }).catch(async () => (await platformDb(handle.db).selectFrom('agents').selectAll().where('builtin_key', '=', 'changes').executeTakeFirstOrThrow()));
+    const changes = await builtin('changes');
     expect(changes.works_on).toEqual(['service_requests']);
     await expect(s.agentAdmin.update(admin, changes.id, { worksOn: ['incidents'] })).rejects.toThrow(/built-in/);
-    const triage = await s.agentAdmin.createBuiltin(admin, { key: 'triage' }).catch(async () => (await platformDb(handle.db).selectFrom('agents').selectAll().where('builtin_key', '=', 'triage').executeTakeFirstOrThrow()));
+    const triage = await builtin('triage');
     expect(triage.works_on).toEqual(['incidents']);
   });
 

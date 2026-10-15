@@ -11,8 +11,7 @@ import {
   resolveLiveCallQueueState,
   resolveLiveIdentityState,
   resolveLiveSharedCallingPolicyState,
-  tenantDb,
-} from '@tvmf/db';
+  tenantDb, webOrigin as resolveWebOrigin } from '@tvmf/db';
 import { buildColorRamp, type Branding, type DiscoverySiteOverview, type PortDocumentItemSummary } from '@tvmf/shared';
 import {
   collectAutoAttendantUserUpns,
@@ -215,7 +214,7 @@ async function resolvePortRecipients(
  * in days, so this is far more often than needed, but cheap and idempotent.
  */
 async function sweepPortDocumentReminders() {
-  const webOrigin = (process.env.WEB_ORIGIN ?? '').replace(/\/+$/, '');
+  const webOrigin = await resolveWebOrigin(db);
   const tenants = await platformDb(db).selectFrom('tenants').select(['id', 'schema_name', 'name']).execute();
   let sent = 0;
   for (const tenant of tenants) {
@@ -917,7 +916,7 @@ async function notifyDeploymentRunComplete(
 
     const secs = Math.max(1, Math.round((Date.now() - args.startedAt) / 1000));
     const durationText = secs < 90 ? `${secs} s` : `${Math.floor(secs / 60)} min ${String(secs % 60).padStart(2, '0')} s`;
-    const webOrigin = (process.env.WEB_ORIGIN ?? '').replace(/\/+$/, '');
+    const webOrigin = await resolveWebOrigin(db);
 
     const context: DeploymentCompletedContext = {
       recipientName: user.display_name ?? user.email,
@@ -962,7 +961,7 @@ async function notifyDeploymentRunComplete(
  * Voxshift branding.
  */
 async function loadEmailBranding(tenantId: string | null, mspId: string | null): Promise<EmailBranding | undefined> {
-  const webOrigin = (process.env.WEB_ORIGIN ?? '').replace(/\/+$/, '');
+  const webOrigin = await resolveWebOrigin(db);
   const toEmailBranding = (branding: Branding, logoPath: string): EmailBranding => ({
     logoUrl: branding.logo ? `${webOrigin}${logoPath}?v=${branding.logo.version}` : null,
     // Older logos uploaded before dimension-capture was added won't have

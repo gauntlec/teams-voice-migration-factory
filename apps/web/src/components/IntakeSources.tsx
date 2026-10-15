@@ -66,7 +66,9 @@ export function IntakeSources({ base, editable }: { base: string; editable: bool
   const rotate = useMutation({ mutationFn: (id: string) => api<{ name: string; token: string }>(`${base}/intake-sources/${id}/rotate`, { method: 'POST' }), onSuccess: (r) => (setFresh({ name: r.name, token: r.token }), refresh()) });
   const remove = useMutation({ mutationFn: (id: string) => api(`${base}/intake-sources/${id}`, { method: 'DELETE' }), onSuccess: refresh });
   const error = create.error ?? toggle.error ?? rotate.error ?? remove.error;
-  const url = `${window.location.origin}/api/intake/v1/alerts`;
+  // The configured base URL (Administration > Web address) when we can read it, else the address this page was opened at.
+  const baseUrl = useQuery({ queryKey: ['base-url'], queryFn: () => api<{ connect: { intakeAlerts: string } } | null>('/platform/base-url'), staleTime: 60_000 });
+  const url = baseUrl.data?.connect.intakeAlerts ?? `${window.location.origin}/api/intake/v1/alerts`;
 
   return (
     <div className={s.box}>

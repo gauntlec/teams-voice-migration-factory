@@ -4,6 +4,7 @@ import type { DB } from './schema';
 
 export * from './schema';
 export * from './live-state';
+export * from './base-url';
 export * from './plan-rows';
 export { migratePlatform, provisionTenant, migrateAllTenants } from './migrate';
 

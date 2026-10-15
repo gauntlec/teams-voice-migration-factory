@@ -1,12 +1,21 @@
 import { Body, Controller, Delete, Get, Put } from '@nestjs/common';
 import { platformDb } from '@tvmf/db';
-import { setMaintenanceNoticeSchema, type MaintenanceNoticeView, type ReleaseCheck, type SetMaintenanceNoticeInput } from '@tvmf/shared';
+import {
+  setBaseUrlSchema,
+  setMaintenanceNoticeSchema,
+  type BaseUrlView,
+  type MaintenanceNoticeView,
+  type ReleaseCheck,
+  type SetBaseUrlInput,
+  type SetMaintenanceNoticeInput,
+} from '@tvmf/shared';
 import { CurrentUser } from '../auth/auth.decorators';
 import { AuditService } from '../common/audit.service';
 import type { AuthedUser } from '../common/request';
 import { ZodBody } from '../common/zod.pipe';
 import { InjectDb, type Db } from '../db/db.module';
 import { RequirePermission } from '../rbac/require-permission.decorator';
+import { BaseUrlService } from './base-url.service';
 import { currentMaintenance } from './maintenance';
 import { collectReleaseCheck } from './release-check';
 
@@ -19,6 +28,7 @@ export class PlatformOpsController {
   constructor(
     @InjectDb() private readonly db: Db,
     private readonly audit: AuditService,
+    private readonly baseUrl: BaseUrlService,
   ) {}
 
   /** SUPER_ADMIN: every live sign-in, discovery run and deployment a worker restart would end. */
@@ -66,5 +76,26 @@ export class PlatformOpsController {
       targetType: 'maintenance_notice',
     });
     return { cleared: Number(r.numDeletedRows) > 0 };
+  }
+
+  /** The address this installation is reached at, and the connection details built from it. Any signed-in staff member. */
+  @Get('base-url')
+  async getBaseUrl(@CurrentUser() user: AuthedUser): Promise<BaseUrlView | null> {
+    if (user.role === 'CUSTOMER') return null;
+    return this.baseUrl.view();
+  }
+
+  /** SUPER_ADMIN: set the address (`baseUrl: null` goes back to the WEB_ORIGIN environment value). */
+  @Put('base-url')
+  @RequirePermission('platform:operate')
+  async setBaseUrl(@Body(new ZodBody(setBaseUrlSchema)) body: SetBaseUrlInput, @CurrentUser() user: AuthedUser): Promise<BaseUrlView> {
+    const before = (await this.baseUrl.view()).baseUrl;
+    const view = await this.baseUrl.set(body.baseUrl, user.id);
+    await this.audit.platform('platform.base_url_set', {
+      actor: { id: user.id, email: user.email },
+      targetType: 'app_settings',
+      detail: { from: before, to: view.baseUrl, source: view.source },
+    });
+    return view;
   }
 }

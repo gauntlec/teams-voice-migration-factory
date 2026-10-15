@@ -8,10 +8,11 @@ import type { EnqueueMailInput } from '../../../../apps/api/src/mail/mail.servic
 import { deliverWebhooks, signWebhook, sweepAgents } from '../../../../apps/worker/src/agents';
 import { decryptSecret } from '../../../../apps/worker/src/crypto';
 import { sweepIncidents } from '../../../../apps/worker/src/incidents';
-import { seedCustomer, seedSite, seedUser, useDb, type TestCustomer } from '../helpers';
+import { seedCustomer, seedSite, seedUser, useDb, useGlobalAgentLock, type TestCustomer } from '../helpers';
 import { incidentServices } from './services';
 
 const handle = useDb();
+useGlobalAgentLock(handle); // delivers every assistant's webhooks, so no other file's assistants may exist meanwhile
 let c: TestCustomer;
 let s: ReturnType<typeof incidentServices>;
 let admin: Awaited<ReturnType<typeof seedUser>>;

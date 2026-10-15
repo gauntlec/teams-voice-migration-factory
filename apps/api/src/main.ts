@@ -5,7 +5,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
-import { loadConfig } from './common/config';
+import { APP_CONFIG, loadConfig, type AppConfig } from './common/config';
 
 async function bootstrap() {
   const cfg = loadConfig();
@@ -26,9 +26,11 @@ async function bootstrap() {
   app.use(cookieParser());
   // The SPA is same-origin (served by the same nginx that proxies /api), so
   // CORS is only exercised if the API is reached from another origin. Keep the
-  // allow-list tight to WEB_ORIGIN.
+  // allow-list tight to the base URL. That is read per request from the config the app shares (Administration > Web
+  // address can change it while running), not from the copy loaded above.
+  const live = app.get<AppConfig>(APP_CONFIG);
   app.enableCors({
-    origin: cfg.WEB_ORIGIN,
+    origin: (origin, cb) => cb(null, !origin || origin === live.WEB_ORIGIN.replace(/\/+$/, '')),
     credentials: true,
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Tenant-Id'],
   });

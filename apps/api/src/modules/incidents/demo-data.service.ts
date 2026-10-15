@@ -185,6 +185,11 @@ export class IncidentDemoDataService {
     };
     const cap = (d: Date, floorMs = 5 * MIN) => (d.getTime() > now.getTime() - floorMs ? new Date(now.getTime() - floorMs) : d);
     const at = (d: Date, plusMs: number) => new Date(d.getTime() + plusMs);
+    // A later step is capped to stay clear of "now" too, but never lands before the step it follows (the margins differ).
+    const capAfter = (d: Date, after: Date, floorMs?: number) => {
+      const c = cap(d, floorMs);
+      return c.getTime() < after.getTime() ? after : c;
+    };
 
     const autoAnswers = (categoryKey: string, u: Person, started: Date) => {
       const def = INC_CATEGORY_BY_KEY[categoryKey]!;
@@ -327,17 +332,17 @@ export class IncidentDemoDataService {
             resolvedAt = cap(at(new Date(Math.max((restoredAt ?? last).getTime(), at(ackAt!, resolveMs).getTime())), 10 * MIN));
             move('resolved', resolvedAt, 'resolve', tpl.fix);
             if (archetype === 'closed') {
-              closedAt = cap(at(resolvedAt, between(2, 70) * HOUR), 30 * MIN);
+              closedAt = capAfter(at(resolvedAt, between(2, 70) * HOUR), resolvedAt, 30 * MIN);
               move('closed', closedAt, 'close', null);
             }
             if (archetype === 'reopened') {
-              reopenedAt = cap(at(resolvedAt, between(3, 20) * HOUR), 20 * MIN);
+              reopenedAt = capAfter(at(resolvedAt, between(3, 20) * HOUR), resolvedAt, 20 * MIN);
               move('in_progress', reopenedAt, 'reopen', 'The customer says it has come back.');
               pauseState = { paused_since: null, paused_seconds: 0, pause_log: [] };
               restoredAt = null;
-              resolvedAt = cap(at(reopenedAt, between(1, 8) * HOUR), 10 * MIN);
+              resolvedAt = capAfter(at(reopenedAt, between(1, 8) * HOUR), reopenedAt, 10 * MIN);
               move('resolved', resolvedAt, 'resolve', `${tpl.fix} Checked again with the customer.`);
-              closedAt = cap(at(resolvedAt, between(5, 40) * HOUR), 5 * MIN);
+              closedAt = capAfter(at(resolvedAt, between(5, 40) * HOUR), resolvedAt, 5 * MIN);
               move('closed', closedAt, 'close', null);
             }
           }

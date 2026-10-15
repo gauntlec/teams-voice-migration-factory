@@ -1,5 +1,5 @@
 import type { Kysely } from 'kysely';
-import { platformDb, tenantDb, type DB } from '@tvmf/db';
+import { platformDb, tenantDb, type DB, webOrigin as resolveWebOrigin } from '@tvmf/db';
 import { SR_TYPE_DEFS, agentLabel, srReference, type ServiceRequestActivityContext } from '@tvmf/shared';
 import type { MailEnqueuer } from './mail/enqueue';
 
@@ -50,7 +50,7 @@ export async function emailRequestTeam(
   author: string | null,
   body: string | null,
 ): Promise<void> {
-  const webOrigin = (process.env.WEB_ORIGIN ?? '').replace(/\/+$/, '');
+  const webOrigin = await resolveWebOrigin(db);
   const members = await srTeam(db, t.id);
   const to = sr.assigned_to ? members.filter((m) => m.id === sr.assigned_to) : members;
   const context: ServiceRequestActivityContext = { customerName: t.name, reference: srReference(sr.number), title: sr.title, typeLabel: SR_TYPE_DEFS[sr.type].label, kind, author, body, runUrl: `${webOrigin}/service-requests/${sr.id}` };

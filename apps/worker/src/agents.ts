@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
-import { platformDb, tenantDb, type DB } from '@tvmf/db';
+import { platformDb, tenantDb, type DB, webOrigin as resolveWebOrigin } from '@tvmf/db';
 import {
   AGENT_EVENT_RETENTION_DAYS,
   AGENT_WEBHOOK_MAX_FAILURES,
@@ -24,7 +24,7 @@ import { expireSrProposals, lapseSrClaims } from './sr-agents';
  * Each step claims the row first, so two workers never both act. `opts.tenantId` limits it to one customer (tests).
  */
 export async function sweepAgents(db: Kysely<DB>, enqueueMail: MailEnqueuer, opts: { tenantId?: string } = {}): Promise<{ expired: number; lapsed: number }> {
-  const webOrigin = (process.env.WEB_ORIGIN ?? '').replace(/\/+$/, '');
+  const webOrigin = await resolveWebOrigin(db);
   let q = platformDb(db).selectFrom('tenants').select(['id', 'schema_name', 'name']).where('managed_services_enabled', '=', true).where('status', '=', 'active');
   if (opts.tenantId) q = q.where('id', '=', opts.tenantId);
   const tenants = await q.execute();
