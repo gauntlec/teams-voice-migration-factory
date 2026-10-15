@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { FluentProvider , makeStyles } from '@fluentui/react-components';
+import { FluentProvider } from '@fluentui/react-components';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router-dom';
 import { darkTheme, lightTheme } from './theme';
@@ -9,20 +9,18 @@ import { AuthProvider } from './auth';
 import { BrandThemeProvider } from './BrandTheme';
 import { App } from './App';
 
-const useLocalStyles = makeStyles({
-  minH100vh: { minHeight: "100vh" },
-});
 
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
 });
 
+// The provider's min-height stays an inline style on purpose. Fluent copies a provider's className onto the layer it draws menus,
+// dropdowns, dialogs and tooltips in, so a class here would stretch that layer over the whole page (a white screen) when one opens.
 function Themed() {
-  const ls = useLocalStyles();
   const { resolved } = useThemeMode();
   return (
-    <FluentProvider theme={resolved === 'dark' ? darkTheme : lightTheme} className={ls.minH100vh}>
+    <FluentProvider theme={resolved === 'dark' ? darkTheme : lightTheme} style={{ minHeight: '100vh' }}>
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
           <AuthProvider>
