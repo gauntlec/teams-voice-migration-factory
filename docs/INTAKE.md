@@ -126,6 +126,23 @@ no-calls outage at the main site, a queue that is not ringing, choppy audio from
 one-way-audio incident that also becomes a knowledge snippet, and a voicemail greeting problem) once per customer, so there is
 something to show. The button is not offered on real customers and the API refuses it there.
 
+### Demo history for any customer (Super Admin)
+
+Incidents -> **More** -> **Add demo history** (Super Admin, `intake:manage`) fills **any** customer that has Managed Services on with about two
+months of believable data, so the queues, dashboards and both reports have something to show:
+
+- ~45 incidents: most closed at a mix of speeds (some targets missed), a few re-opened, resolved or restored but not closed, some open, two on
+  hold, one cancelled, one duplicate, two on the clock right now (one still inside its response target, one past it); plus a **live** major
+  incident with three customers' incidents linked under it, and **two past** major incidents with shared reviews (and so Past notices).
+- 3 problems (a known error, one being investigated, one resolved) linked to incidents, and 4 knowledge snippets saved from fixed ones.
+- 27 service requests at every stage (deployed, planned, built, new, one cancelled, one declined, some that waited on the customer).
+- The affected people in incidents and the people in requests are real accounts from the customer's Discovery; assignees and reporters are the
+  customer's own team.
+
+It writes straight to the database with simulated times (using the real pause and priority rules), so **no emails are sent and no assistant
+events are raised**. Every row is tagged (`details.demo`, problems start "(Demo data)"), so **Remove demo data** (same menu) takes exactly
+those away and leaves anything real. It refuses to add twice. API: `GET/POST/DELETE /api/t/:tenantId/incidents/demo-data`.
+
 ## Environment
 
 | Variable | Used by | Meaning |

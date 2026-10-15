@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Card, Field, Input, Link, Menu, MenuItem, MenuList, MenuPopover, MenuTrigger, Select, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text } from '@fluentui/react-components';
+import { Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Link, Menu, MenuItem, MenuList, MenuPopover, MenuTrigger, Select, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text } from '@fluentui/react-components';
 import { INC_CATEGORIES, INC_CATEGORY_BY_KEY, INC_PRIORITIES, INC_PRIORITY_LABELS, INC_STATUSES, INC_STATUS_CUSTOMER_LABELS, INC_STATUS_LABELS } from '@tvmf/shared';
 import { api } from '../api';
 import { useAuth } from '../auth';
@@ -68,6 +68,24 @@ export function Incidents() {
     refetchInterval: 30_000,
   });
 
+  // Demo history (two months of tagged incidents and requests for a customer, no emails): Super Admin only.
+  const [demoDataOpen, setDemoDataOpen] = useState(false);
+  const demoStatus = useQuery({
+    queryKey: ['demo-data', activeTenantId],
+    enabled: !!activeTenantId && enabled && can('intake:manage'),
+    queryFn: () => api<{ incidents: number; requests: number; problems: number }>(`${base}/demo-data`),
+  });
+  const hasDemoData = (demoStatus.data?.incidents ?? 0) + (demoStatus.data?.requests ?? 0) > 0;
+  const demoData = useMutation({
+    mutationFn: (remove: boolean) => api<Record<string, number>>(`${base}/demo-data`, { method: remove ? 'DELETE' : 'POST' }),
+    onSuccess: (r, remove) => {
+      qc.invalidateQueries();
+      setDemoDataOpen(false);
+      notify(remove ? 'Demo data removed' : 'Demo history added', { body: remove ? `${r.incidents} incidents and ${r.requests} requests taken away.` : `${r.incidents} incidents, ${r.requests} requests and ${r.problems} problems added.` });
+    },
+    onError: (e) => notify('Could not do that', { intent: 'error', body: e instanceof Error ? e.message : undefined }),
+  });
+
   const open = (id: string) => navigate(`/incidents/${id}`);
 
   const filtered = (list.data ?? []).filter(incQueueFilter(staff && status === 'open' ? tile : 'all'));
@@ -121,6 +139,9 @@ export function Incidents() {
                 {staff && <MenuItem onClick={() => navigate('/incidents/problems')}>Problems</MenuItem>}
                 {staff && <MenuItem onClick={() => setKnowledgeOpen(true)}>Knowledge</MenuItem>}
                 <MenuItem onClick={() => setSettingsOpen(true)}>{staff ? 'Settings' : 'Our targets'}</MenuItem>
+                {can('intake:manage') && (
+                  <MenuItem onClick={() => setDemoDataOpen(true)}>{hasDemoData ? 'Remove demo data…' : 'Add demo history…'}</MenuItem>
+                )}
                 {can('intake:manage') && sandbox && (
                   <MenuItem
                     disabled={demo.isPending}
@@ -257,6 +278,34 @@ export function Incidents() {
           </DataTable>
         )}
       </Card>
+      {demoDataOpen && (
+        <Dialog open onOpenChange={(_, d) => !d.open && setDemoDataOpen(false)}>
+          <DialogSurface>
+            <DialogBody>
+              <DialogTitle>{hasDemoData ? 'Remove the demo data?' : 'Add demo history?'}</DialogTitle>
+              <DialogContent>
+                {hasDemoData ? (
+                  <Text>
+                    This takes away the {demoStatus.data?.incidents} demo incidents, {demoStatus.data?.requests} demo requests and {demoStatus.data?.problems} demo problems (and the knowledge saved from them). Anything real stays.
+                  </Text>
+                ) : (
+                  <Text>
+                    Adds about two months of believable history to <b>this customer</b>: around 45 incidents (most closed, some open, on hold or past their target), a live and two past major incidents with reviews, problems, knowledge, and 27 service requests at every stage. The people in it come from this customer&apos;s Discovery. Nothing is emailed, and everything is tagged so you can remove it in one click. Other people who work on this customer will see it until it is removed.
+                  </Text>
+                )}
+              </DialogContent>
+              <DialogActions>
+                <Button appearance="secondary" onClick={() => setDemoDataOpen(false)}>
+                  Cancel
+                </Button>
+                <Button appearance="primary" disabled={demoData.isPending} onClick={() => demoData.mutate(hasDemoData)}>
+                  {demoData.isPending ? 'Working…' : hasDemoData ? 'Remove demo data' : 'Add demo history'}
+                </Button>
+              </DialogActions>
+            </DialogBody>
+          </DialogSurface>
+        </Dialog>
+      )}
       {noticesOpen && <PastNoticesDialog base={base} enabled={enabled} onClose={() => setNoticesOpen(false)} />}
       {knowledgeOpen && <KnowledgeDialog base={base} onClose={() => setKnowledgeOpen(false)} />}
       {settingsOpen && <IncidentSettingsDialog base={base} onClose={() => setSettingsOpen(false)} />}

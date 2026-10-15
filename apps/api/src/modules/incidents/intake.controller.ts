@@ -5,6 +5,7 @@ import type { AuthedUser, IntakePrincipal, TenantContext } from '../../common/re
 import { ZodBody } from '../../common/zod.pipe';
 import { RequirePermission } from '../../rbac/require-permission.decorator';
 import { TenantGuard } from '../../rbac/tenant.guard';
+import { IncidentDemoDataService } from './demo-data.service';
 import { IncidentDemoService } from './incident-demo.service';
 import { IncidentIntakeService } from './incident-intake.service';
 import { IntakeAdminService } from './intake-admin.service';
@@ -40,6 +41,7 @@ export class IntakeAdminController {
   constructor(
     private readonly svc: IntakeAdminService,
     private readonly demo: IncidentDemoService,
+    private readonly demoData: IncidentDemoDataService,
   ) {}
 
   @Get('intake-sources')
@@ -53,6 +55,25 @@ export class IntakeAdminController {
   @RequirePermission('intake:manage')
   seedDemo(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser) {
     return this.demo.seed(t, user);
+  }
+
+  /** Demo history (two months of incidents and requests, tagged, no emails): what is there, add it, take it away. */
+  @Get('demo-data')
+  @RequirePermission('intake:manage')
+  demoDataStatus(@TenantCtx() t: TenantContext) {
+    return this.demoData.status(t);
+  }
+
+  @Post('demo-data')
+  @RequirePermission('intake:manage')
+  seedDemoData(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser) {
+    return this.demoData.seed(t, user);
+  }
+
+  @Delete('demo-data')
+  @RequirePermission('intake:manage')
+  removeDemoData(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser) {
+    return this.demoData.remove(t, user);
   }
 
   @Post('intake-sources')
