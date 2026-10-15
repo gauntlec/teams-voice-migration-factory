@@ -123,7 +123,7 @@ npm run build --workspace @tvmf/mcp        # produces apps/mcp/dist/main.js
 
 ```bash
 claude mcp add voxshift \
-  --env VOXSHIFT_URL=https://www.directrouting.online \
+  --env VOXSHIFT_URL=https://www.voxshift.io \
   --env VOXSHIFT_TOKEN=vxs_agent_... \
   -- node /absolute/path/to/teams-voice-migration-factory/apps/mcp/dist/main.js
 ```
@@ -136,7 +136,7 @@ claude mcp add voxshift \
     "voxshift": {
       "command": "node",
       "args": ["/absolute/path/to/teams-voice-migration-factory/apps/mcp/dist/main.js"],
-      "env": { "VOXSHIFT_URL": "https://www.directrouting.online", "VOXSHIFT_TOKEN": "vxs_agent_..." }
+      "env": { "VOXSHIFT_URL": "https://www.voxshift.io", "VOXSHIFT_TOKEN": "vxs_agent_..." }
     }
   }
 }
@@ -157,7 +157,7 @@ Then ask: *"Use the work_incident prompt on the next unassigned incident for <cu
 Everything is JSON under `/api/agent/v1` with `Authorization: Bearer vxs_agent_...`. Rate limit 240 requests a minute per token.
 
 ```bash
-BASE=https://www.directrouting.online/api/agent/v1
+BASE=https://www.voxshift.io/api/agent/v1
 AUTH="Authorization: Bearer $VOXSHIFT_TOKEN"
 
 curl -s "$BASE/me" -H "$AUTH"                                                        # who am I, where may I work, my levels: call this first
@@ -176,7 +176,7 @@ The shape of a working incident bot, in order: `/me` -> list -> claim -> get -> 
 working -> release or hand off. `docs/agents/reference-triage-agent.mjs` does exactly this and is a good base:
 
 ```bash
-VOXSHIFT_URL=https://www.directrouting.online VOXSHIFT_TOKEN=vxs_agent_... node docs/agents/reference-triage-agent.mjs
+VOXSHIFT_URL=https://www.voxshift.io VOXSHIFT_TOKEN=vxs_agent_... node docs/agents/reference-triage-agent.mjs
 ```
 
 Where an LLM goes: replace the `diagnose(context)` function with a call to your model, giving it the incident JSON plus the skill as the

@@ -6,7 +6,7 @@ import { createMcpServer } from './server';
 
 /**
  * Voxshift incident tools over MCP (stdio). Configure your MCP client to run this with:
- *   VOXSHIFT_URL    https://www.directrouting.online   (the Voxshift address, no /api)
+ *   VOXSHIFT_URL    https://www.voxshift.io   (the Voxshift address, no /api)
  *   VOXSHIFT_TOKEN  vxs_agent_...                       (Administration -> Assistants -> Tokens)
  * Nothing is written to stdout except the protocol; messages go to stderr.
  */

@@ -14,7 +14,7 @@ export class VoxshiftError extends Error {
 }
 
 export interface ClientOptions {
-  /** The Voxshift address, e.g. https://www.directrouting.online (no /api). */
+  /** The Voxshift address, e.g. https://www.voxshift.io (no /api). */
   baseUrl: string;
   /** vxs_agent_... token from Administration -> Assistants. */
   token: string;

@@ -2,7 +2,7 @@
 // read the queue, claim an incident, read its context, add an internal note, act or propose depending on
 // the autonomy it has been given, hand over when it cannot help, and renew its lease while it works.
 //
-//   VOXSHIFT_URL=https://www.directrouting.online VOXSHIFT_TOKEN=vxs_agent_... node reference-triage-agent.mjs
+//   VOXSHIFT_URL=https://www.voxshift.io VOXSHIFT_TOKEN=vxs_agent_... node reference-triage-agent.mjs
 //
 // It does no thinking of its own: `diagnose()` is where your model or runbook goes. Everything else is
 // plumbing you can lift as is. Nothing here changes an incident without the lease, and anything the

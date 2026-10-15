@@ -20,7 +20,7 @@ everything on the timeline as "Name (AI)". It adds nothing the REST API cannot d
     "voxshift": {
       "command": "node",
       "args": ["/path/to/teams-voice-migration-factory/apps/mcp/dist/main.js"],
-      "env": { "VOXSHIFT_URL": "https://www.directrouting.online", "VOXSHIFT_TOKEN": "vxs_agent_..." }
+      "env": { "VOXSHIFT_URL": "https://www.voxshift.io", "VOXSHIFT_TOKEN": "vxs_agent_..." }
     }
   }
 }
