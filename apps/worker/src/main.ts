@@ -12,7 +12,7 @@ import {
   resolveLiveIdentityState,
   resolveLiveSharedCallingPolicyState,
   tenantDb, emailEnabled, webOrigin as resolveWebOrigin } from '@tvmf/db';
-import { buildColorRamp, type Branding, type DiscoverySiteOverview, type PortDocumentItemSummary } from '@tvmf/shared';
+import { HUB_HEARTBEAT_SECONDS, buildColorRamp, type Branding, type DiscoverySiteOverview, type PortDocumentItemSummary } from '@tvmf/shared';
 import {
   collectAutoAttendantUserUpns,
   collectCallQueueTargetUpns,
@@ -43,6 +43,7 @@ import { renderEmail } from './mail/templates';
 import type { EmailBranding } from './mail/layout';
 import { mailerConfigured, sendMail } from './mail/mailer';
 import { makeMailEnqueuer } from './mail/enqueue';
+import { sendHubHeartbeat } from './hub-heartbeat';
 import { planDelivery } from './mail/sandbox';
 import { deliverWebhooks, sweepAgents } from './agents';
 import { deliverMspNotifications } from './msp-notify';
@@ -285,6 +286,9 @@ void sweepServiceRequests(db, enqueueMail).catch((e) => console.warn('service re
 // Incidents: waiting-on-customer reminders, target warnings and misses, auto-close of resolved ones.
 setInterval(() => void sweepIncidents(db, enqueueMail).catch((e) => console.warn('incident sweep failed', e)), 5 * 60_000).unref();
 void sweepIncidents(db, enqueueMail).catch((e) => console.warn('incident sweep failed', e));
+// The Voxshift Hub (if one is connected): report this installation's version and health once a minute.
+setInterval(() => void sendHubHeartbeat(db).catch((e) => console.warn('hub heartbeat failed', e)), HUB_HEARTBEAT_SECONDS * 1000).unref();
+setTimeout(() => void sendHubHeartbeat(db).catch((e) => console.warn('hub heartbeat failed', e)), 5_000).unref();
 // AI agents: expire proposals, put incidents back in the queue when a lease lapses, clear old events, and push events to webhooks.
 setInterval(() => void sweepAgents(db, enqueueMail).catch((e) => console.warn('agent sweep failed', e)), 60_000).unref();
 setInterval(() => void deliverMspNotifications(db).catch((e) => console.warn('MSP Teams delivery failed', e)), 15_000).unref();

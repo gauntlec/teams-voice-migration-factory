@@ -30,6 +30,7 @@ export * from './wizard-convert';
 export * from './progress';
 export * from './release-safety';
 export * from './base-url';
+export * from './hub-connection';
 
 import type { CmdletInvocation } from './deployment';
 

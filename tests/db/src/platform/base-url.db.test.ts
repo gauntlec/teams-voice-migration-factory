@@ -2,7 +2,7 @@
 // config follows a save, and the worker's resolver sees the same value.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { forgetAppSettings, platformDb, webOrigin } from '@tvmf/db';
-import { BaseUrlService } from '../../../../apps/api/src/platform-ops/base-url.service';
+import { PlatformSettingsService } from '../../../../apps/api/src/platform-ops/platform-settings.service';
 import type { AppConfig } from '../../../../apps/api/src/common/config';
 import { seedUser, useDb } from '../helpers';
 
@@ -22,7 +22,7 @@ describe('base URL setting', () => {
   it('uses WEB_ORIGIN until a Super Admin saves an address, then the saved address everywhere', async () => {
     await platformDb(handle.db).deleteFrom('app_settings').execute();
     forgetAppSettings();
-    const svc = new BaseUrlService(handle.db, cfg);
+    const svc = new PlatformSettingsService(handle.db, cfg);
     await svc.onModuleInit();
     let v = await svc.view();
     expect(v).toMatchObject({ baseUrl: 'http://localhost:5173', source: 'environment' });
@@ -35,7 +35,7 @@ describe('base URL setting', () => {
     expect(await webOrigin(handle.db, 'http://ignored')).toBe('https://voice.contoso.local'); // and so does the worker
 
     // A new API process starts from the saved value.
-    const restarted = new BaseUrlService(handle.db, { ...cfg, WEB_ORIGIN: 'http://localhost:5173' });
+    const restarted = new PlatformSettingsService(handle.db, { ...cfg, WEB_ORIGIN: 'http://localhost:5173' });
     forgetAppSettings();
     await restarted.onModuleInit();
     expect((await restarted.view()).baseUrl).toBe('https://voice.contoso.local');
@@ -47,7 +47,7 @@ describe('base URL setting', () => {
   });
 
   it('keeps one settings row however often it is saved', async () => {
-    const svc = new BaseUrlService(handle.db, cfg);
+    const svc = new PlatformSettingsService(handle.db, cfg);
     await svc.set('https://a.example.com', admin.id);
     await svc.set('https://b.example.com', admin.id);
     const rows = await platformDb(handle.db).selectFrom('app_settings').selectAll().execute();
@@ -63,7 +63,7 @@ describe('email switch', () => {
     const added: unknown[] = [];
     const queue = { add: async (...a: unknown[]) => void added.push(a) } as never;
     const mail = new MailService(handle.db, queue);
-    const svc = new BaseUrlService(handle.db, cfg);
+    const svc = new PlatformSettingsService(handle.db, cfg);
     const count = async () => Number((await platformDb(handle.db).selectFrom('email_messages').select((eb) => eb.fn.countAll<number>().as('n')).where('to_email', '=', 'switch@example.test').executeTakeFirstOrThrow()).n);
     const input = { template: 'user_invitation', to: { email: 'switch@example.test' }, context: {} } as never;
 
@@ -88,7 +88,7 @@ describe('email switch', () => {
   });
 
   it('keeps the saved base URL when only the email switch changes', async () => {
-    const svc = new BaseUrlService(handle.db, cfg);
+    const svc = new PlatformSettingsService(handle.db, cfg);
     await svc.set('https://keep.example.com', admin.id);
     await svc.setEmailEnabled(false, admin.id);
     expect((await svc.view()).baseUrl).toBe('https://keep.example.com');

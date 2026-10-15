@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Badge, Button, Card, Switch, Field, Input, MessageBar, MessageBarActions, MessageBarBody, Spinner, Text, makeStyles, shorthands, tokens } from '@fluentui/react-components';
 import { CopyRegular } from '@fluentui/react-icons';
-import { HOSTED_BASE_URL, baseUrlWarnings, normalizeBaseUrl, type BaseUrlView } from '@tvmf/shared';
+import { DEFAULT_HUB_URL, HOSTED_BASE_URL, HUB_TOKEN_RE, baseUrlWarnings, hubLinkState, normalizeBaseUrl, type BaseUrlView, type HubConnectionView } from '@tvmf/shared';
 import { api } from '../../api';
 import { Page } from '../../components/Page';
 import { LoadError } from '../../components/records';
@@ -12,6 +12,8 @@ import { MutedText } from '../../components/ui';
 const useLocalStyles = makeStyles({
   body: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', ...shorthands.gap('16px'), ...shorthands.padding('16px') },
   row: { display: 'flex', ...shorthands.gap('12px'), alignItems: 'flex-end', flexWrap: 'wrap' },
+  hubRow: { display: 'flex', ...shorthands.gap('12px'), alignItems: 'flex-start', flexWrap: 'wrap' },
+  hubButton: { marginTop: '22px' },
   grow: { flex: 1, minWidth: '280px' },
   stack: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', ...shorthands.gap('4px') },
   current: { display: 'flex', ...shorthands.gap('8px'), alignItems: 'center', flexWrap: 'wrap' },
@@ -20,7 +22,88 @@ const useLocalStyles = makeStyles({
   code: { fontFamily: tokens.fontFamilyMonospace, fontSize: tokens.fontSizeBase200, overflowWrap: 'anywhere' },
 });
 
-/** Administration > Platform settings: the base URL (every link, the CORS allow-list, the assistant connection details) and the master email switch. */
+/** The connection to a Voxshift Hub: connect with the token the hub showed, see whether reports are getting through, disconnect. */
+function HubCard({ hub }: { hub: HubConnectionView }) {
+  const s = useLocalStyles();
+  const qc = useQueryClient();
+  const notify = useNotify();
+  const [hubUrl, setHubUrl] = useState(hub.hubUrl ?? DEFAULT_HUB_URL);
+  const [token, setToken] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  const done = (v: BaseUrlView, message: string) => {
+    setErr(null);
+    setToken('');
+    qc.setQueryData(['platform-settings'], v);
+    notify(message);
+  };
+  const connect = useMutation({
+    mutationFn: () => api<BaseUrlView>('/platform/hub', { method: 'PUT', body: JSON.stringify({ hubUrl, token: token.trim() }) }),
+    onSuccess: (v) => done(v, 'Connected to the hub'),
+    onError: (e) => setErr((e as Error).message),
+  });
+  const disconnect = useMutation({
+    mutationFn: () => api<BaseUrlView>('/platform/hub', { method: 'DELETE' }),
+    onSuccess: (v) => done(v, 'Disconnected from the hub'),
+    onError: (e) => setErr((e as Error).message),
+  });
+  const state = hubLinkState(hub);
+  const addr = normalizeBaseUrl(hubUrl);
+  const tokenOk = HUB_TOKEN_RE.test(token.trim());
+
+  return (
+    <Card>
+      <div className={s.body}>
+        <div className={s.stack}>
+          <Text weight="semibold">Voxshift hub</Text>
+          <MutedText>
+            Lists this installation in a Voxshift hub so staff can see whether it is up and open it from one place. Once a minute it sends the hub two things: its version and whether it is healthy. No customer data is ever sent, and signing in here stays separate from the hub.
+          </MutedText>
+        </div>
+        {hub.connected ? (
+          <>
+            <div className={s.current}>
+              <Text className={s.code}>{hub.hubUrl}</Text>
+              <Text className={s.code}>token {hub.tokenHint}</Text>
+              <Badge appearance="tint" shape="rounded" color={state === 'ok' ? 'success' : state === 'failing' ? 'danger' : 'informative'}>
+                {state === 'ok' ? 'Reporting' : state === 'failing' ? 'Not getting through' : 'Waiting for the first report'}
+              </Badge>
+            </div>
+            {hub.lastOkAt && state === 'ok' && <MutedText>Last report accepted {new Date(hub.lastOkAt).toLocaleTimeString()}.</MutedText>}
+            {hub.lastError && (
+              <MessageBar intent="error">
+                <MessageBarBody>{hub.lastError}</MessageBarBody>
+              </MessageBar>
+            )}
+            <div className={s.row}>
+              <Button disabled={disconnect.isPending} onClick={() => disconnect.mutate()}>
+                Disconnect
+              </Button>
+            </div>
+          </>
+        ) : (
+          <div className={s.hubRow}>
+            <Field className={s.grow} label="Hub address" validationState={!addr.ok && hubUrl.trim() ? 'error' : 'none'} validationMessage={!addr.ok && hubUrl.trim() ? addr.error : undefined}>
+              <Input value={hubUrl} onChange={(_, d) => setHubUrl(d.value)} />
+            </Field>
+            <Field className={s.grow} label="Instance token" hint="Shown once in the hub when this installation is registered there." validationState={token && !tokenOk ? 'error' : 'none'} validationMessage={token && !tokenOk ? 'That does not look like an instance token (it starts with vxh_).' : undefined}>
+              <Input type="password" value={token} onChange={(_, d) => setToken(d.value)} autoComplete="off" />
+            </Field>
+            <Button className={s.hubButton} appearance="primary" disabled={!addr.ok || !tokenOk || connect.isPending} onClick={() => connect.mutate()}>
+              Connect
+            </Button>
+          </div>
+        )}
+        {err && (
+          <MessageBar intent="error">
+            <MessageBarBody>{err}</MessageBarBody>
+          </MessageBar>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/** Administration > Platform settings: the base URL (every link, the CORS allow-list, the assistant connection details), the master email switch and the hub connection. */
 export function AdminPlatformSettings() {
   const s = useLocalStyles();
   const qc = useQueryClient();
@@ -88,6 +171,8 @@ export function AdminPlatformSettings() {
           </div>
         </Card>
       )}
+
+      {view && <HubCard hub={view.hub} />}
 
       <Card>
         {q.isLoading ? (

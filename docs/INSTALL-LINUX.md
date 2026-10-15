@@ -95,6 +95,7 @@ Everything restarts on its own after a reboot (`restart: unless-stopped`, Docker
 
 - **Email**: set `SMTP_HOST` (and the others) in `.env`, then `voxshift restart`. Until then no email is delivered. The whole platform's email can be
   switched off in Administration > Platform settings.
+- **The hub**: to list this installation in a Voxshift Hub and see it online there, connect it in Administration > Platform settings > Voxshift hub. See [HUB-CONNECTION.md](HUB-CONNECTION.md).
 - **The web address**: change it in Administration > Platform settings (no restart). `WEB_ORIGIN` in `.env` is only the starting value. See [BASE-URL.md](BASE-URL.md).
 - **The first admin's password**: `BOOTSTRAP_ADMIN_PASSWORD` in `.env` is used only to create the account on the first start. After that
   a restart never touches the account, so a password changed in the app stays. If it is lost, or the admin is locked out or

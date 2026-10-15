@@ -1,12 +1,14 @@
 import { Body, Controller, Delete, Get, Put } from '@nestjs/common';
 import { platformDb } from '@tvmf/db';
 import {
+  connectHubSchema,
   setBaseUrlSchema,
   setEmailEnabledSchema,
   setMaintenanceNoticeSchema,
   type BaseUrlView,
   type MaintenanceNoticeView,
   type ReleaseCheck,
+  type ConnectHubInput,
   type SetBaseUrlInput,
   type SetEmailEnabledInput,
   type SetMaintenanceNoticeInput,
@@ -17,7 +19,7 @@ import type { AuthedUser } from '../common/request';
 import { ZodBody } from '../common/zod.pipe';
 import { InjectDb, type Db } from '../db/db.module';
 import { RequirePermission } from '../rbac/require-permission.decorator';
-import { BaseUrlService } from './base-url.service';
+import { PlatformSettingsService } from './platform-settings.service';
 import { currentMaintenance } from './maintenance';
 import { collectReleaseCheck } from './release-check';
 
@@ -30,7 +32,7 @@ export class PlatformOpsController {
   constructor(
     @InjectDb() private readonly db: Db,
     private readonly audit: AuditService,
-    private readonly baseUrl: BaseUrlService,
+    private readonly baseUrl: PlatformSettingsService,
   ) {}
 
   /** SUPER_ADMIN: every live sign-in, discovery run and deployment a worker restart would end. */
@@ -110,6 +112,24 @@ export class PlatformOpsController {
       actor: { id: user.id, email: user.email },
       targetType: 'app_settings',
     });
+    return view;
+  }
+
+  /** SUPER_ADMIN: connect this installation to a Voxshift Hub with the token the hub showed when the instance was registered. */
+  @Put('hub')
+  @RequirePermission('platform:operate')
+  async connectHub(@Body(new ZodBody(connectHubSchema)) body: ConnectHubInput, @CurrentUser() user: AuthedUser): Promise<BaseUrlView> {
+    const view = await this.baseUrl.connectHub(body.hubUrl, body.token, user.id);
+    // The token is never written to the audit log, only where it points.
+    await this.audit.platform('platform.hub_connected', { actor: { id: user.id, email: user.email }, targetType: 'app_settings', detail: { hubUrl: body.hubUrl } });
+    return view;
+  }
+
+  @Delete('hub')
+  @RequirePermission('platform:operate')
+  async disconnectHub(@CurrentUser() user: AuthedUser): Promise<BaseUrlView> {
+    const view = await this.baseUrl.disconnectHub(user.id);
+    await this.audit.platform('platform.hub_disconnected', { actor: { id: user.id, email: user.email }, targetType: 'app_settings' });
     return view;
   }
 }

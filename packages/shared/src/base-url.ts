@@ -5,6 +5,7 @@
  * A Super Admin sets it on Administration > Platform settings; until then the WEB_ORIGIN environment value is used.
  */
 import { z } from 'zod';
+import type { HubConnectionView } from './hub-connection';
 
 /** The hosted service's address, used in docs and as the example everywhere. */
 export const HOSTED_BASE_URL = 'https://www.voxshift.io';
@@ -81,6 +82,8 @@ export interface BaseUrlView {
   warnings: string[];
   /** False when a Super Admin has switched all email off. */
   emailEnabled: boolean;
+  /** The connection to a Voxshift Hub (reporting this installation to the registry). */
+  hub: HubConnectionView;
   /** Connection details for assistants, built from `baseUrl`. */
   connect: { voxshiftUrl: string; agentApi: string; intakeAlerts: string; inboundEmail: string };
 }

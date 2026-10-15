@@ -112,10 +112,12 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
-          # Deliberately no build-args here: the worker Dockerfile's
-          # TEAMS_MODULE_VERSION/GRAPH_MODULE_VERSION ARGs default to the
-          # pinned versions, and with no CACHE_BUST that install layer is
-          # now fully cache-stable (same pinned version every time).
+          # The only build-arg is the commit, so the worker can tell a Voxshift Hub which build this is. It is used in the
+          # LAST layer of the worker image, so it never invalidates the module-install layer: the worker Dockerfile's
+          # TEAMS_MODULE_VERSION/GRAPH_MODULE_VERSION ARGs still default to the pinned versions (no CACHE_BUST), which keeps that
+          # layer fully cache-stable. The api and web Dockerfiles ignore it.
+          build-args: |
+            GIT_SHA=${{ github.sha }}
 
   # Weekly only - see the `on.schedule` comment above. Builds just the
   # worker image, unpinned, to ghcr.io/.../tvmf-worker:candidate (never

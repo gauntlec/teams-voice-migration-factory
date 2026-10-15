@@ -109,6 +109,14 @@ export interface AppSettingsTable {
   base_url: string | null;
   /** Master email switch: false = no email is generated or sent - see 0026_email_switch.sql. */
   email_enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  /** The Voxshift Hub this installation reports to (0027_hub_connection.sql); null = not connected. */
+  hub_url: ColumnType<string | null, string | null | undefined, string | null>;
+  /** The hub's instance token, encrypted with DATA_ENCRYPTION_KEY. */
+  hub_token_enc: ColumnType<string | null, string | null | undefined, string | null>;
+  hub_token_hint: ColumnType<string | null, string | null | undefined, string | null>;
+  hub_last_attempt_at: ColumnType<string | null, string | null | undefined, string | null>;
+  hub_last_ok_at: ColumnType<string | null, string | null | undefined, string | null>;
+  hub_last_error: ColumnType<string | null, string | null | undefined, string | null>;
   updated_by: string | null;
   updated_at: Ts;
 }

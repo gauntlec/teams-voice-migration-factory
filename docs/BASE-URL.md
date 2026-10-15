@@ -1,6 +1,6 @@
 # Base URL: where the application is reached
 
-(Set on **Administration > Platform settings**, which also holds the master email switch: see [EMAIL.md](EMAIL.md#the-master-switch).)
+(Set on **Administration > Platform settings**, which also holds the master email switch (see [EMAIL.md](EMAIL.md#the-master-switch)) and the connection to a Voxshift Hub (see [HUB-CONNECTION.md](HUB-CONNECTION.md)).)
 
 The **base URL** is the one address people and assistants use to reach this installation. The hosted service is
 `https://www.voxshift.io`; an installation on a customer's own premises (or anywhere else) has its own, for example
@@ -23,7 +23,7 @@ a normal choice for a test install.
 
 | Thing | How |
 |---|---|
-| Links in every email (invitations, notices, incident, service request, discovery, deployment and number-port mails, incident reply links) | API: `cfg.WEB_ORIGIN`, kept current by `BaseUrlService`. Worker: `webOrigin(db)` from `@tvmf/db` (cached 30 s). |
+| Links in every email (invitations, notices, incident, service request, discovery, deployment and number-port mails, incident reply links) | API: `cfg.WEB_ORIGIN`, kept current by `PlatformSettingsService`. Worker: `webOrigin(db)` from `@tvmf/db` (cached 30 s). |
 | Branded logo URLs in emails | worker, same resolver |
 | The cross-origin (CORS) allow-list | `main.ts`, read per request |
 | "Connect an assistant" details (`VOXSHIFT_URL`, REST base, alert intake, inbound email forwarder) | Administration > Platform settings and the intake sources panel |

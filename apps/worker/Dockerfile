@@ -64,4 +64,7 @@ COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/packages ./packages
 COPY --from=build /app/apps/worker/dist ./apps/worker/dist
 COPY --from=build /app/apps/worker/package.json ./apps/worker/package.json
+# Which build this is, shown in the Voxshift Hub's list (set by CI; "dev" when built by hand). Last on purpose: it changes every build.
+ARG GIT_SHA=dev
+ENV APP_VERSION=${GIT_SHA}
 CMD ["node", "apps/worker/dist/main.js"]
