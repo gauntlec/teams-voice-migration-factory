@@ -4,7 +4,21 @@ One reusable path for every email the platform sends — invitations today,
 workflow / approval / review notifications later. All mail is **queued** and sent
 by the worker, and every message is logged.
 
-> **Links in emails** are built from the base URL: the address saved on Administration > Web address, else `WEB_ORIGIN` (see [BASE-URL.md](BASE-URL.md)). Where this page writes `WEB_ORIGIN/...`, read "the base URL".
+> **Links in emails** are built from the base URL: the address saved on Administration > Platform settings, else `WEB_ORIGIN` (see [BASE-URL.md](BASE-URL.md)). Where this page writes `WEB_ORIGIN/...`, read "the base URL".
+
+## The master switch
+
+A Super Admin can switch **all** email off on **Administration > Platform settings** (permission `platform:operate`; stored as
+`platform.app_settings.email_enabled`, default on). While it is off:
+
+- nothing is generated: `MailService.enqueue` (API) and the worker's enqueuer write no `email_messages` row and queue no job, so there is
+  no record of what would have been sent;
+- a message already queued is marked `skipped` (error "Email is switched off for the platform") by the worker instead of being sent;
+- "Resend" is refused with a clear message.
+
+Super Admins see a banner on every page while it is off. A failed read of the setting counts as "on". The worker caches the setting for
+30 seconds (the sender re-reads it fresh before each message), so a switch is felt within seconds. Sign-in, MFA and everything else that
+does not email carry on as normal.
 
 ## Flow
 

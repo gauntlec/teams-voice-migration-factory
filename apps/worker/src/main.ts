@@ -11,7 +11,7 @@ import {
   resolveLiveCallQueueState,
   resolveLiveIdentityState,
   resolveLiveSharedCallingPolicyState,
-  tenantDb, webOrigin as resolveWebOrigin } from '@tvmf/db';
+  tenantDb, emailEnabled, webOrigin as resolveWebOrigin } from '@tvmf/db';
 import { buildColorRamp, type Branding, type DiscoverySiteOverview, type PortDocumentItemSummary } from '@tvmf/shared';
 import {
   collectAutoAttendantUserUpns,
@@ -1002,6 +1002,14 @@ async function handleMail(job: Job) {
     return;
   }
   if (row.status === 'sent') return;
+
+  // The master switch (Administration > Platform settings): a message queued before it was turned off is not sent.
+  if (!(await emailEnabled(db, { fresh: true }))) {
+    // eslint-disable-next-line no-console
+    console.log(`[mail ${id}] email is switched off - not sent`);
+    await platformDb(db).updateTable('email_messages').set({ status: 'skipped', error: 'Email is switched off for the platform' }).where('id', '=', id).execute();
+    return;
+  }
 
   const branding = await loadEmailBranding(row.tenant_id, row.msp_id);
   const rendered = renderEmail(row.template, (row.context ?? {}) as Record<string, unknown>, branding);

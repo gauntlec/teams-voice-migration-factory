@@ -25,7 +25,7 @@ import { AdminEmailLog } from './pages/admin/EmailLog';
 import { AdminAudit } from './pages/admin/Audit';
 import { AdminAgents } from './pages/admin/Agents';
 import { AdminReleaseCheck } from './pages/admin/ReleaseCheck';
-import { AdminBaseUrl } from './pages/admin/BaseUrl';
+import { AdminPlatformSettings } from './pages/admin/PlatformSettings';
 import { FeatureRequests } from './pages/FeatureRequests';
 import { MspIncidents } from './pages/MspIncidents';
 import { MspServiceRequests } from './pages/MspServiceRequests';
@@ -166,10 +166,10 @@ export function App() {
           }
         />
         <Route
-          path="/admin/base-url"
+          path="/admin/settings"
           element={
             <RequirePermission permission="platform:operate">
-              <AdminBaseUrl />
+              <AdminPlatformSettings />
             </RequirePermission>
           }
         />

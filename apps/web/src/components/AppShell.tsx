@@ -208,7 +208,7 @@ const ADMIN_GROUPS: { label: string; items: NavDef[] }[] = [
       { to: '/admin/msps', label: 'MSPs', icon: <BuildingMultiple24Regular />, permission: 'msp:read' },
       { to: '/admin/sites', label: 'Sites', icon: <Location24Regular />, permission: 'discovery:sites:manage' },
       { to: '/admin/agents', label: 'Assistants', icon: <BotSparkle24Regular />, permission: 'agent:manage' },
-      { to: '/admin/base-url', label: 'Web address', icon: <Globe24Regular />, permission: 'platform:operate' },
+      { to: '/admin/settings', label: 'Platform settings', icon: <Globe24Regular />, permission: 'platform:operate' },
     ],
   },
   {
@@ -263,6 +263,14 @@ export function AppShell({ children }: { children: ReactNode }) {
     queryFn: () => api<MaintenanceNoticeView | null>('/platform/maintenance'),
     enabled: !!me && me.role !== 'CUSTOMER',
     refetchInterval: 60_000,
+  });
+
+  // Super Admins are told while the email switch is off, so it is not left off by mistake.
+  const platformSettings = useQuery({
+    queryKey: ['platform-settings'],
+    queryFn: () => api<{ emailEnabled: boolean } | null>('/platform/settings'),
+    enabled: !!me && can('platform:operate'),
+    refetchInterval: 5 * 60_000,
   });
 
   if (!me) return null;
@@ -440,6 +448,14 @@ export function AppShell({ children }: { children: ReactNode }) {
           )}
         </nav>
         <main id="main" tabIndex={-1} className={mergeClasses(s.content, ls.styled)}>
+          {platformSettings.data?.emailEnabled === false && (
+            <MessageBar intent="warning" className={ls.mb16}>
+              <MessageBarBody>
+                <MessageBarTitle>Email is switched off</MessageBarTitle>
+                No email is being generated or sent by the platform. <NavLink to="/admin/settings">Platform settings</NavLink>
+              </MessageBarBody>
+            </MessageBar>
+          )}
           {maintenance.data && (
             <MessageBar intent={maintenance.data.phase === 'freeze' ? 'warning' : 'info'} className={ls.mb16}>
               <MessageBarBody>

@@ -1,5 +1,5 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { platformDb } from '@tvmf/db';
+import { ConflictException, Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { emailEnabled, platformDb } from '@tvmf/db';
 import type { EmailContext, EmailTemplate } from '@tvmf/shared';
 import type { Queue } from 'bullmq';
 import { InjectDb, type Db } from '../db/db.module';
@@ -39,7 +39,17 @@ export class MailService {
     @InjectMailQueue() private readonly queue: Queue,
   ) {}
 
-  async enqueue(input: EnqueueMailInput): Promise<{ id: string }> {
+  private readonly log = new Logger(MailService.name);
+
+  /**
+   * Queues an email. When a Super Admin has switched email off (Administration > Platform settings) nothing is
+   * generated: no log row, no job, and the caller gets `id: null`.
+   */
+  async enqueue(input: EnqueueMailInput): Promise<{ id: string | null }> {
+    if (!(await emailEnabled(this.db))) {
+      this.log.log(`Email is switched off - not generating "${input.template}" for ${input.to.email}`);
+      return { id: null };
+    }
     const row = await platformDb(this.db)
       .insertInto('email_messages')
       .values({
@@ -64,6 +74,7 @@ export class MailService {
 
   /** Re-send an existing message (used by "resend invitation"). */
   async resend(id: string): Promise<{ id: string }> {
+    if (!(await emailEnabled(this.db, { fresh: true }))) throw new ConflictException('Email is switched off for the whole platform (Administration > Platform settings). Switch it on to send.');
     const row = await platformDb(this.db)
       .updateTable('email_messages')
       .set({ status: 'queued', attempts: 0, error: null, sent_at: null })

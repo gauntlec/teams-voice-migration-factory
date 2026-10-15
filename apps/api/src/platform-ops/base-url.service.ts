@@ -1,11 +1,11 @@
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { forgetBaseUrl, platformDb, savedBaseUrl } from '@tvmf/db';
+import { emailEnabled, forgetAppSettings, platformDb, savedBaseUrl } from '@tvmf/db';
 import { baseUrlWarnings, connectDetails, type BaseUrlView } from '@tvmf/shared';
 import { APP_CONFIG, type AppConfig } from '../common/config';
 import { InjectDb, type Db } from '../db/db.module';
 
 /**
- * The base URL (Administration > Web address): the address people use to reach this installation.
+ * The base URL (Administration > Platform settings): the address people use to reach this installation.
  *
  * The API reads `cfg.WEB_ORIGIN` wherever it builds a link (emails, notifications) and for the CORS allow-list, so
  * this service keeps that one value current: the saved setting when there is one, else the WEB_ORIGIN environment
@@ -44,6 +44,7 @@ export class BaseUrlService implements OnModuleInit {
       source: saved ? 'setting' : 'environment',
       environmentValue: this.environmentValue,
       warnings: baseUrlWarnings(baseUrl),
+      emailEnabled: await emailEnabled(this.db, { fresh: true }),
       connect: connectDetails(baseUrl),
     };
   }
@@ -55,8 +56,19 @@ export class BaseUrlService implements OnModuleInit {
       .values({ id: true, base_url: baseUrl, updated_by: userId })
       .onConflict((oc) => oc.column('id').doUpdateSet({ base_url: baseUrl, updated_by: userId, updated_at: new Date().toISOString() }))
       .execute();
-    forgetBaseUrl();
+    forgetAppSettings();
     this.apply(baseUrl);
+    return this.view();
+  }
+
+  /** The master email switch: false stops all email being generated or sent. */
+  async setEmailEnabled(enabled: boolean, userId: string): Promise<BaseUrlView> {
+    await platformDb(this.db)
+      .insertInto('app_settings')
+      .values({ id: true, email_enabled: enabled, base_url: null, updated_by: userId })
+      .onConflict((oc) => oc.column('id').doUpdateSet({ email_enabled: enabled, updated_by: userId, updated_at: new Date().toISOString() }))
+      .execute();
+    forgetAppSettings();
     return this.view();
   }
 }

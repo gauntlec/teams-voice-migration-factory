@@ -1,7 +1,7 @@
 import { Queue } from 'bullmq';
 import type IORedis from 'ioredis';
 import type { Kysely } from 'kysely';
-import { platformDb, type DB } from '@tvmf/db';
+import { emailEnabled, platformDb, type DB } from '@tvmf/db';
 import type { EmailTemplate } from '@tvmf/shared';
 
 /**
@@ -37,6 +37,8 @@ export type MailEnqueuer = (input: EnqueueMailInput) => Promise<void>;
 export function makeMailEnqueuer(db: Kysely<DB>, connection: IORedis): MailEnqueuer {
   const queue = new Queue(MAIL_QUEUE_NAME, { connection });
   return async (input) => {
+    // Email switched off (Administration > Platform settings): generate nothing.
+    if (!(await emailEnabled(db))) return;
     const row = await platformDb(db)
       .insertInto('email_messages')
       .values({

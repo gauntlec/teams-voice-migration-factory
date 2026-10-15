@@ -107,6 +107,8 @@ export interface AppSettingsTable {
   id: ColumnType<boolean, boolean | undefined, boolean>;
   /** The address people use to reach this installation; null = use the WEB_ORIGIN environment value. */
   base_url: string | null;
+  /** Master email switch: false = no email is generated or sent - see 0026_email_switch.sql. */
+  email_enabled: ColumnType<boolean, boolean | undefined, boolean>;
   updated_by: string | null;
   updated_at: Ts;
 }

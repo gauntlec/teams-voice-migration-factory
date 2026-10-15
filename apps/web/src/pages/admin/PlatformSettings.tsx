@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Card, Field, Input, MessageBar, MessageBarActions, MessageBarBody, Spinner, Text, makeStyles, shorthands, tokens } from '@fluentui/react-components';
+import { Badge, Button, Card, Switch, Field, Input, MessageBar, MessageBarActions, MessageBarBody, Spinner, Text, makeStyles, shorthands, tokens } from '@fluentui/react-components';
 import { CopyRegular } from '@fluentui/react-icons';
 import { HOSTED_BASE_URL, baseUrlWarnings, normalizeBaseUrl, type BaseUrlView } from '@tvmf/shared';
 import { api } from '../../api';
@@ -13,18 +13,19 @@ const useLocalStyles = makeStyles({
   body: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', ...shorthands.gap('16px'), ...shorthands.padding('16px') },
   row: { display: 'flex', ...shorthands.gap('12px'), alignItems: 'flex-end', flexWrap: 'wrap' },
   grow: { flex: 1, minWidth: '280px' },
+  stack: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', ...shorthands.gap('4px') },
   current: { display: 'flex', ...shorthands.gap('8px'), alignItems: 'center', flexWrap: 'wrap' },
   list: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', ...shorthands.gap('8px') },
   line: { display: 'grid', gridTemplateColumns: 'minmax(160px, 220px) 1fr auto', ...shorthands.gap('8px'), alignItems: 'center' },
   code: { fontFamily: tokens.fontFamilyMonospace, fontSize: tokens.fontSizeBase200, overflowWrap: 'anywhere' },
 });
 
-/** Administration > Web address: the base URL every link, the CORS allow-list and the assistant connection details use. */
-export function AdminBaseUrl() {
+/** Administration > Platform settings: the base URL (every link, the CORS allow-list, the assistant connection details) and the master email switch. */
+export function AdminPlatformSettings() {
   const s = useLocalStyles();
   const qc = useQueryClient();
   const notify = useNotify();
-  const q = useQuery({ queryKey: ['base-url'], queryFn: () => api<BaseUrlView | null>('/platform/base-url') });
+  const q = useQuery({ queryKey: ['platform-settings'], queryFn: () => api<BaseUrlView | null>('/platform/settings') });
   const [value, setValue] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const view = q.data ?? null;
@@ -36,10 +37,19 @@ export function AdminBaseUrl() {
     mutationFn: (baseUrl: string | null) => api<BaseUrlView>('/platform/base-url', { method: 'PUT', body: JSON.stringify({ baseUrl }) }),
     onSuccess: (v) => {
       setErr(null);
-      qc.setQueryData(['base-url'], v);
+      qc.setQueryData(['platform-settings'], v);
       notify(v.source === 'setting' ? 'Web address saved' : 'Back to the installation default', { body: v.baseUrl });
     },
     onError: (e) => setErr((e as Error).message),
+  });
+
+  const email = useMutation({
+    mutationFn: (enabled: boolean) => api<BaseUrlView>('/platform/email-delivery', { method: 'PUT', body: JSON.stringify({ enabled }) }),
+    onSuccess: (v) => {
+      qc.setQueryData(['platform-settings'], v);
+      notify(v.emailEnabled ? 'Email switched on' : 'Email switched off', { body: v.emailEnabled ? 'The platform sends email again.' : 'No email is generated or sent.' });
+    },
+    onError: (e) => notify('Could not change the email setting', { body: (e as Error).message, intent: 'error' }),
   });
 
   const typed = normalizeBaseUrl(value);
@@ -52,7 +62,33 @@ export function AdminBaseUrl() {
   };
 
   return (
-    <Page narrow platform title="Web address" subtitle="The address people use to reach this installation. Every link in an email, the connection details for assistants and the cross-origin allow-list are built from it.">
+    <Page narrow platform title="Platform settings" subtitle="Settings that apply to the whole installation, for every customer.">
+      {view && (
+        <Card>
+          <div className={s.body}>
+            <div className={s.row}>
+              <div className={`${s.grow} ${s.stack}`}>
+                <Text weight="semibold">Email</Text>
+                <MutedText>
+                  The master switch for all email: invitations, password resets, incident and service request notices, reminders and reports. When it is off nothing is generated or queued, and anything already waiting is marked skipped instead of sent.
+                </MutedText>
+              </div>
+              <Switch
+                checked={view.emailEnabled}
+                disabled={email.isPending}
+                label={view.emailEnabled ? 'Email is on' : 'Email is off'}
+                onChange={(_, d) => email.mutate(d.checked)}
+              />
+            </div>
+            {!view.emailEnabled && (
+              <MessageBar intent="warning">
+                <MessageBarBody>No email is being sent. People will not receive invitations, password resets or notices until you switch it back on. Messages that would have been sent are not kept.</MessageBarBody>
+              </MessageBar>
+            )}
+          </div>
+        </Card>
+      )}
+
       <Card>
         {q.isLoading ? (
           <Spinner label="Loading" />
@@ -61,7 +97,7 @@ export function AdminBaseUrl() {
         ) : (
           <div className={s.body}>
             <div className={s.current}>
-              <Text weight="semibold">In use now</Text>
+              <Text weight="semibold">Web address in use now</Text>
               <Text className={s.code}>{view.baseUrl}</Text>
               <Badge appearance="tint" color={view.source === 'setting' ? 'brand' : 'informative'}>
                 {view.source === 'setting' ? 'Saved setting' : 'Installation default (WEB_ORIGIN)'}

@@ -2,11 +2,13 @@ import { Body, Controller, Delete, Get, Put } from '@nestjs/common';
 import { platformDb } from '@tvmf/db';
 import {
   setBaseUrlSchema,
+  setEmailEnabledSchema,
   setMaintenanceNoticeSchema,
   type BaseUrlView,
   type MaintenanceNoticeView,
   type ReleaseCheck,
   type SetBaseUrlInput,
+  type SetEmailEnabledInput,
   type SetMaintenanceNoticeInput,
 } from '@tvmf/shared';
 import { CurrentUser } from '../auth/auth.decorators';
@@ -78,9 +80,9 @@ export class PlatformOpsController {
     return { cleared: Number(r.numDeletedRows) > 0 };
   }
 
-  /** The address this installation is reached at, and the connection details built from it. Any signed-in staff member. */
-  @Get('base-url')
-  async getBaseUrl(@CurrentUser() user: AuthedUser): Promise<BaseUrlView | null> {
+  /** The platform settings: the address this installation is reached at (and the connection details built from it) and the email switch. Any signed-in staff member. */
+  @Get('settings')
+  async getSettings(@CurrentUser() user: AuthedUser): Promise<BaseUrlView | null> {
     if (user.role === 'CUSTOMER') return null;
     return this.baseUrl.view();
   }
@@ -95,6 +97,18 @@ export class PlatformOpsController {
       actor: { id: user.id, email: user.email },
       targetType: 'app_settings',
       detail: { from: before, to: view.baseUrl, source: view.source },
+    });
+    return view;
+  }
+
+  /** SUPER_ADMIN: the master email switch. `enabled: false` stops all email being generated or sent. */
+  @Put('email-delivery')
+  @RequirePermission('platform:operate')
+  async setEmailDelivery(@Body(new ZodBody(setEmailEnabledSchema)) body: SetEmailEnabledInput, @CurrentUser() user: AuthedUser): Promise<BaseUrlView> {
+    const view = await this.baseUrl.setEmailEnabled(body.enabled, user.id);
+    await this.audit.platform(body.enabled ? 'platform.email_switched_on' : 'platform.email_switched_off', {
+      actor: { id: user.id, email: user.email },
+      targetType: 'app_settings',
     });
     return view;
   }

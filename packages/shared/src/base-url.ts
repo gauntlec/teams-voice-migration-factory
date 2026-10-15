@@ -2,7 +2,7 @@
  * The base URL: the one address people (and assistants) use to reach this installation, e.g.
  * https://www.voxshift.io for the hosted service, or https://voice.contoso.local for a customer-premises install.
  * Every link in an email, the CORS allow-list and the "connect a bot" details are built from it.
- * A Super Admin sets it on Administration > Web address; until then the WEB_ORIGIN environment value is used.
+ * A Super Admin sets it on Administration > Platform settings; until then the WEB_ORIGIN environment value is used.
  */
 import { z } from 'zod';
 
@@ -70,7 +70,7 @@ export const setBaseUrlSchema = z
   .strict();
 export type SetBaseUrlInput = z.infer<typeof setBaseUrlSchema>;
 
-/** What the settings page shows. */
+/** What Administration > Platform settings shows. */
 export interface BaseUrlView {
   /** The address in use now. */
   baseUrl: string;
@@ -79,6 +79,8 @@ export interface BaseUrlView {
   /** The WEB_ORIGIN environment value, which applies when no setting is saved. */
   environmentValue: string;
   warnings: string[];
+  /** False when a Super Admin has switched all email off. */
+  emailEnabled: boolean;
   /** Connection details for assistants, built from `baseUrl`. */
   connect: { voxshiftUrl: string; agentApi: string; intakeAlerts: string; inboundEmail: string };
 }
@@ -91,3 +93,7 @@ export function connectDetails(baseUrl: string): BaseUrlView['connect'] {
     inboundEmail: `${baseUrl}/api/public/inbound-email`,
   };
 }
+
+/** The master email switch. */
+export const setEmailEnabledSchema = z.object({ enabled: z.boolean() }).strict();
+export type SetEmailEnabledInput = z.infer<typeof setEmailEnabledSchema>;
