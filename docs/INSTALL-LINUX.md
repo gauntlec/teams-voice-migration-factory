@@ -87,6 +87,7 @@ Everything restarts on its own after a reboot (`restart: unless-stopped`, Docker
 | `voxshift update` | takes a backup, pulls the newest images, restarts, waits until it answers. Database migrations run on start. |
 | `voxshift backup [DIR]` | database dump + stored files + `.env`, into `DIR/<timestamp>` (default `/opt/voxshift/backups`, last 14 kept). Copy it off the host. |
 | `voxshift restart` | re-applies `.env` (use after editing it) |
+| `voxshift reset-admin` | sets a new password for the first Super Admin and unlocks the account (recovery) |
 | `voxshift logs [api\|worker\|web\|caddy]` | follow logs |
 | `voxshift start` / `stop` | |
 
@@ -95,8 +96,11 @@ Everything restarts on its own after a reboot (`restart: unless-stopped`, Docker
 - **Email**: set `SMTP_HOST` (and the others) in `.env`, then `voxshift restart`. Until then no email is delivered. The whole platform's email can be
   switched off in Administration > Platform settings.
 - **The web address**: change it in Administration > Platform settings (no restart). `WEB_ORIGIN` in `.env` is only the starting value. See [BASE-URL.md](BASE-URL.md).
-- **The first admin's password**: `BOOTSTRAP_ADMIN_PASSWORD` in `.env` is applied on every start, so a password changed inside the
-  app is put back to the `.env` one by a restart. To change it for good, edit `.env` and `voxshift restart`.
+- **The first admin's password**: `BOOTSTRAP_ADMIN_PASSWORD` in `.env` is used only to create the account on the first start. After that
+  a restart never touches the account, so a password changed in the app stays. If it is lost, or the admin is locked out or
+  disabled, run `voxshift reset-admin`: it asks for a new password (12+ characters, not stored in `.env`) and puts the
+  account back (Super Admin, active, unlocked). Nothing else is needed. You may delete `BOOTSTRAP_ADMIN_PASSWORD` from `.env`
+  once you have signed in, but the API then cannot create the admin on a brand-new empty database.
 
 ## Restoring
 

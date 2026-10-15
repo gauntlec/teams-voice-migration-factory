@@ -273,8 +273,8 @@ COOKIE_SECURE=$COOKIE_SECURE
 TOTP_ISSUER=Voxshift
 FILES_DIR=/data/files
 
-# The first Super Admin. Applied on every start, so a password changed in the app is reset to this one by a restart:
-# to change it for good, edit it here and run 'voxshift restart'.
+# The first Super Admin. The password is used only to CREATE the account on the first start; later starts leave the
+# account alone, so a password changed in the app stays. To recover a lost password run: voxshift reset-admin
 BOOTSTRAP_ADMIN_EMAIL='$ADMIN_EMAIL'
 BOOTSTRAP_ADMIN_PASSWORD='$ADMIN_PASSWORD'
 
@@ -479,6 +479,14 @@ case "${1:-help}" in
   stop)    need_root "$@"; dc stop ;;
   restart) need_root "$@"; dc up -d --force-recreate; wait_ready ;;
   logs)    shift; dc logs --tail 200 -f "$@" ;;
+  reset-admin)
+    # Recovery: new password for the first Super Admin (from BOOTSTRAP_ADMIN_EMAIL), role/status/lockout put right.
+    read -r -s -p "New password for the first admin (12 or more characters): " pw; echo
+    read -r -s -p "Again: " pw2; echo
+    [ "$pw" = "$pw2" ] || { echo "The two passwords differ. Nothing changed." >&2; exit 1; }
+    [ "${#pw}" -ge 12 ] || { echo "Use at least 12 characters. Nothing changed." >&2; exit 1; }
+    BOOTSTRAP_ADMIN_RESET=true BOOTSTRAP_ADMIN_PASSWORD="$pw" dc exec -T -e BOOTSTRAP_ADMIN_RESET -e BOOTSTRAP_ADMIN_PASSWORD api node packages/db/dist/seed.js
+    ;;
   update)
     need_root "$@"
     echo "Taking a backup first..."; "$0" backup
@@ -507,6 +515,7 @@ voxshift <command>
   update            back up, pull the newest images, restart, wait until it answers
   backup [DIR]      database + stored files + .env into DIR/<timestamp> (default $DIR/backups)
   logs [service]    follow logs (api, worker, web, caddy, postgres, redis)
+  reset-admin       set a new password for the first Super Admin and unlock the account
 Files: $DIR/.env (settings, secrets), $DIR/compose.yaml, $DIR/Caddyfile
 EOF
     ;;
@@ -567,7 +576,7 @@ cat <<EOF
   Sign in as:      $ADMIN_EMAIL
 EOF
 if [ "$GENERATED_ADMIN_PASSWORD" = 1 ]; then
-  printf '  Password:        %s%s%s   (shown once here; also in %s/.env. Set up MFA when asked.)\n' "$B" "$ADMIN_PASSWORD" "$N" "$DIR"
+  printf '  Password:        %s%s%s   (shown once here; also in %s/.env until you remove it. Set up MFA when asked. Lost it later? voxshift reset-admin)\n' "$B" "$ADMIN_PASSWORD" "$N" "$DIR"
 else
   say "  Password:        the one you gave"
 fi
