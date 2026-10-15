@@ -43,6 +43,29 @@ stored data). To upgrade use `voxshift update`.
 --smtp-user --smtp-pass --mail-from`), `--no-docker-install`, `--open-firewall` (opens 80/443 in ufw or firewalld if active),
 `--generate-only` (write the files and stop, to review) and `-y`. `bash install.sh --help` lists them.
 
+## Starting again: removing an installation
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gauntlec/teams-voice-migration-factory/main/deploy/install/uninstall.sh -o uninstall.sh
+sudo bash uninstall.sh --dry-run          # shows what would go, changes nothing
+sudo bash uninstall.sh                    # lists it again and asks you to type DELETE
+```
+
+It removes the containers, the **database and stored files**, `/opt/voxshift` (including `.env` and its secrets) and the
+`voxshift` command, so `install.sh` can then be run again on a clean host. It leaves Docker, your other containers and any
+firewall rule you opened.
+
+| Option | |
+|---|---|
+| `--backup-to DIR` | runs `voxshift backup DIR` first (needs a working install) |
+| `--keep-certs` | keeps the certificate store, so a reinstall reuses the issued Let's Encrypt certificate (Let's Encrypt limits how many a name can get per week) |
+| `--remove-images` | also deletes the downloaded images (the reinstall downloads them again) |
+| `--dry-run`, `-y`, `--dir PATH` | |
+
+The data volumes must go too: a new install generates a new database password, and an old database would not accept it.
+The script refuses any directory that is not clearly a Voxshift install (it needs `compose.yaml` named `voxshift` and a `.env`), and refuses `/`, `/opt` and
+other system directories.
+
 ## What gets installed
 
 `/opt/voxshift` (mode 700):

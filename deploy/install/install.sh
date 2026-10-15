@@ -189,7 +189,7 @@ ok "Address: $BASE_URL   (secured: $TLS)"
 ok "Install directory: $DIR"
 
 if [ -f "$DIR/.env" ]; then
-  die "$DIR already holds an installation. Re-running would not keep its secrets, so this installer stops. To upgrade, run: voxshift update"
+  die "$DIR already holds an installation. Re-running would not keep its secrets, so this installer stops. To upgrade, run: voxshift update. To start again from nothing (this DELETES its data): sudo bash uninstall.sh"
 fi
 
 # ---------------------------------------------------------------------------------------------------------- random values
