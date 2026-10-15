@@ -176,7 +176,7 @@ export function AdminPlatformSettings() {
   };
 
   return (
-    <Page narrow platform title="Platform settings" subtitle="Settings that apply to the whole installation, for every customer.">
+    <Page narrow platform title="Platform settings" subtitle={view ? `Voxshift ${view.version}. Settings that apply to the whole installation, for every customer.` : 'Settings that apply to the whole installation, for every customer.'}>
       {view && (
         <Card>
           <div className={s.body}>

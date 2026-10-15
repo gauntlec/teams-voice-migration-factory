@@ -53,6 +53,7 @@ export class PlatformSettingsService implements OnModuleInit {
       warnings: baseUrlWarnings(baseUrl),
       emailEnabled: await emailEnabled(this.db, { fresh: true }),
       hub: await this.hubView(),
+      version: (process.env.APP_VERSION ?? '').trim() || 'dev',
       connect: connectDetails(baseUrl),
     };
   }

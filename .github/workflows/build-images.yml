@@ -63,8 +63,28 @@ jobs:
       # a number never freed, change history lost, a run stuck 'queued'.
       - run: npm run test:db
 
-  build:
+  # The release number: yyyy.mm.N, N counting from 1 within the month (UTC), e.g. 2026.10.1, 2026.10.2, then 2026.11.1. Worked out ONCE here
+  # (the three image builds run in parallel and must agree) from the existing v<yyyy.mm.N> tags. It is only TAGGED by `release` below, after
+  # every image built, so a failed build never uses up a number. Docs-only pushes do not build (paths-ignore above) and so are not releases.
+  version:
     needs: verify
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ym=$(date -u +%Y.%m)
+          last=$(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/v${ym}." --jq '.[].ref' | sed "s#refs/tags/v${ym}\.##" | grep -E '^[0-9]+$' | sort -n | tail -1 || true)
+          echo "version=${ym}.$(( ${last:-0} + 1 ))" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: [verify, version]
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
@@ -99,6 +119,7 @@ jobs:
           images: ghcr.io/${{ github.repository_owner }}/tvmf-${{ matrix.name }}
           tags: |
             type=raw,value=latest
+            type=raw,value=${{ needs.version.outputs.version }}
             type=sha,format=long
 
       - name: Build and push
@@ -112,12 +133,26 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
-          # The only build-arg is the commit, so the worker can tell a Voxshift Hub which build this is. It is used in the
-          # LAST layer of the worker image, so it never invalidates the module-install layer: the worker Dockerfile's
-          # TEAMS_MODULE_VERSION/GRAPH_MODULE_VERSION ARGs still default to the pinned versions (no CACHE_BUST), which keeps that
-          # layer fully cache-stable. The api and web Dockerfiles ignore it.
+          # The only build-args are the release number and the commit: they say which build this is (shown in Platform settings, sent to a
+          # Voxshift Hub, served as /version.json). They are used in the LAST layer of each image, so they never invalidate a cached layer:
+          # the worker Dockerfile's TEAMS_MODULE_VERSION/GRAPH_MODULE_VERSION ARGs still default to the pinned versions (no CACHE_BUST),
+          # which keeps the module-install layer fully cache-stable.
           build-args: |
+            APP_VERSION=${{ needs.version.outputs.version }}
             GIT_SHA=${{ github.sha }}
+
+  # Tags the commit v<release number> and publishes a GitHub release with notes, once all three images are built and pushed.
+  release:
+    needs: [version, build]
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: gh release create "v${VERSION}" --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" --title "${VERSION}" --generate-notes
 
   # Weekly only - see the `on.schedule` comment above. Builds just the
   # worker image, unpinned, to ghcr.io/.../tvmf-worker:candidate (never

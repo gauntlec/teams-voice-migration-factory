@@ -7,10 +7,8 @@ import { decryptSecret } from './crypto';
  * Reports this installation to its Voxshift Hub (Administration > Platform settings), once a minute: a version and a health word, nothing
  * else. Customer data never goes in here, and the hub's schema refuses any other field. Does nothing when no hub is connected.
  */
-export const hubVersion = () => {
-  const sha = (process.env.APP_VERSION ?? '').trim();
-  return sha ? `0.1.0+${sha.slice(0, 7)}` : '0.1.0+dev';
-};
+/** This installation's release number, yyyy.mm.N (set at image build); "dev" for a hand-built image. */
+export const hubVersion = () => (process.env.APP_VERSION ?? '').trim() || 'dev';
 
 export async function sendHubHeartbeat(db: Kysely<DB>, opts: { fetchFn?: typeof fetch; now?: Date } = {}): Promise<'skipped' | 'sent' | 'failed'> {
   const row = await platformDb(db).selectFrom('app_settings').select(['hub_url', 'hub_token_enc', 'hub_remote_access']).executeTakeFirst();

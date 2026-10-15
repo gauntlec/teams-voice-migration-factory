@@ -19,6 +19,8 @@ export class HealthController {
     return {
       status: db === 'ok' ? 'ok' : 'degraded',
       db,
+      // The release number (yyyy.mm.N); "dev" for a hand-built image.
+      version: (process.env.APP_VERSION ?? '').trim() || 'dev',
       // Compare `ts` / `epoch` to your own clock — TOTP needs them within ~60s.
       ts: new Date().toISOString(),
       epoch: Math.floor(Date.now() / 1000),

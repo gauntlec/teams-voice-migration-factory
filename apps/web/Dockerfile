@@ -18,4 +18,9 @@ RUN npm run build --workspace @tvmf/shared && npm run build --workspace @tvmf/we
 FROM nginx:1.27-alpine AS runtime
 COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html
+# Which release this is (yyyy.mm.N, set by CI; "dev" when built by hand), served as /version.json so a deploy can be checked with curl.
+ARG APP_VERSION=dev
+ARG GIT_SHA=unknown
+RUN printf '{"version":"%s","commit":"%s"}\n' "$APP_VERSION" "$GIT_SHA" > /usr/share/nginx/html/version.json
+LABEL org.opencontainers.image.version="${APP_VERSION}" org.opencontainers.image.revision="${GIT_SHA}"
 EXPOSE 80

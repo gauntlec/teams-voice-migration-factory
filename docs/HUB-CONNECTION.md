@@ -9,7 +9,7 @@ of that is small: it reports in once a minute.
 A version and a health word. Nothing else. Concretely, the worker (`apps/worker/src/hub-heartbeat.ts`) posts
 
 ```json
-{ "version": "0.1.0+4e89435", "health": "ok", "uptimeSeconds": 86400 }
+{ "version": "2026.10.3", "health": "ok", "uptimeSeconds": 86400, "remoteAccess": false }
 ```
 
 to `<hub>/api/v1/heartbeat` with `Authorization: Bearer <instance token>`. The hub refuses any other field. No customer, tenant, user or
@@ -28,7 +28,7 @@ there) the card says so in words; copy a fresh token from the hub and connect ag
 
 - Stored in `platform.app_settings` (`hub_url`, `hub_token_enc`, `hub_token_hint`, last attempt / last success / last error); migration `0027_hub_connection.sql`.
 - The worker reads the setting fresh every minute, so connecting and disconnecting need no restart.
-- The version is the build's commit (`APP_VERSION`, set from `GIT_SHA` by CI in the worker image) as `0.1.0+<7 characters>`; `0.1.0+dev` for a hand-built image.
+- The version is the release number (`APP_VERSION`, set by CI in the image) as `yyyy.mm.N` (see [VERSIONING.md](VERSIONING.md)); `dev` for a hand-built image.
 - Connecting and disconnecting are in the platform audit log (the hub address, never the token).
 - Only outbound HTTPS from the worker to the hub is needed. No inbound firewall rules.
 

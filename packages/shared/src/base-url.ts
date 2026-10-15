@@ -84,6 +84,8 @@ export interface BaseUrlView {
   emailEnabled: boolean;
   /** The connection to a Voxshift Hub (reporting this installation to the registry). */
   hub: HubConnectionView;
+  /** The release of Voxshift running here (yyyy.mm.N); "dev" for a hand-built image. */
+  version: string;
   /** Connection details for assistants, built from `baseUrl`. */
   connect: { voxshiftUrl: string; agentApi: string; intakeAlerts: string; inboundEmail: string };
 }

@@ -8,6 +8,7 @@ import { platformDb } from '@tvmf/db';
 import type { AppConfig } from '../../../../apps/api/src/common/config';
 import { PlatformSettingsService } from '../../../../apps/api/src/platform-ops/platform-settings.service';
 import { sendHubHeartbeat } from '../../../../apps/worker/src/hub-heartbeat';
+import { hubVersion } from '../../../../apps/worker/src/hub-heartbeat';
 import { HubTunnel } from '../../../../apps/worker/src/hub-tunnel';
 import { seedUser, useDb, useGlobalSettingsLock } from '../helpers';
 
@@ -129,7 +130,7 @@ describe('the connector', () => {
     await until(() => hub.state.sockets.length === 1);
     expect(hub.state.auth[0]).toBe(`Bearer ${TOKEN}`);
     await until(() => hub.state.frames.some((f) => f.t === 'hello'));
-    expect(hub.state.frames.find((f) => f.t === 'hello')!.version).toMatch(/^0\.1\.0\+/);
+    expect(hub.state.frames.find((f) => f.t === 'hello')!.version).toBe(hubVersion());
     await until(async () => (await tunnelState()).tunnelState === 'connected');
   });
 
