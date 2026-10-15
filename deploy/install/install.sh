@@ -222,7 +222,8 @@ if [ "$START" = 1 ]; then
     *) die "Cannot reach https://ghcr.io (got '$code'). This host needs outbound HTTPS to ghcr.io; behind a proxy, configure Docker's proxy first." ;; esac
   busy=""
   for p in "$HTTP_PORT" $([ "$TLS" != "none" ] && echo "$HTTPS_PORT"); do
-    if ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq "[:.]${p}\$"; then busy="$busy $p"; fi
+    listening="$(ss -ltn 2>/dev/null | awk '{print $4}' || true)"
+    case "$listening" in *":$p"|*":$p"$'\n'*) busy="$busy $p" ;; esac
   done
   [ -z "$busy" ] || die "Port(s)$busy already in use on this host (a web server?). Stop it or free the port, then re-run."
   ok "ports free"
@@ -456,7 +457,9 @@ need_root() { [ "$(id -u)" -eq 0 ] || { echo "Run as root: sudo voxshift $*" >&2
 wait_ready() {
   printf 'Waiting for Voxshift to answer'
   for _ in $(seq 1 60); do
-    if dc exec -T web wget -q -O /dev/null -S http://127.0.0.1/api/auth/me 2>&1 | grep -q ' 401 '; then echo ' - up.'; return 0; fi
+    # Capture first: wget exits non-zero on the 401 we are waiting for, which under pipefail would hide grep's match.
+    out="$(dc exec -T web wget -q -O /dev/null -S http://127.0.0.1/api/auth/me 2>&1 || true)"
+    case "$out" in *" 401 "*) echo ' - up.'; return 0 ;; esac
     printf '.'; sleep 5
   done
   echo; echo "Not answering after 5 minutes. See: voxshift logs api" >&2; return 1
@@ -513,7 +516,8 @@ fi
 # ---------------------------------------------------------------------------------------------------------- firewall
 if [ "$OPEN_FIREWALL" = 1 ]; then
   step "Firewall"
-  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+  ufw_state="$(ufw status 2>/dev/null || true)"
+  if command -v ufw >/dev/null 2>&1 && [ "${ufw_state#*Status: active}" != "$ufw_state" ]; then
     ufw allow "$HTTP_PORT/tcp" >/dev/null; [ "$TLS" != "none" ] && ufw allow "$HTTPS_PORT/tcp" >/dev/null; ok "ufw: opened the web ports"
   elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
     firewall-cmd --permanent --add-port="$HTTP_PORT/tcp" >/dev/null; [ "$TLS" != "none" ] && firewall-cmd --permanent --add-port="$HTTPS_PORT/tcp" >/dev/null
@@ -533,7 +537,8 @@ docker compose up -d
 step "Waiting for Voxshift to answer"
 ready=0
 for _ in $(seq 1 72); do
-  if docker compose exec -T web wget -q -O /dev/null -S http://127.0.0.1/api/auth/me 2>&1 | grep -q ' 401 '; then ready=1; break; fi
+  out="$(docker compose exec -T web wget -q -O /dev/null -S http://127.0.0.1/api/auth/me 2>&1 || true)"
+  case "$out" in *" 401 "*) ready=1; break ;; esac
   printf '.'; sleep 5
 done
 echo
