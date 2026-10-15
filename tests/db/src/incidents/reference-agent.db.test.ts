@@ -37,7 +37,7 @@ const call = (over: Partial<CreateIncidentInput> = {}) =>
 async function bot(autonomy: AgentAutonomy) {
   const a = await s.agentAdmin.create(admin, createAgentSchema.parse({ name: `Ref-${++n}-${Date.now() % 100000}`, kind: 'triage' }));
   await s.agentAdmin.setPolicy(admin, a.id, c.t.id, { enabled: true, autonomy });
-  const p: AgentPrincipal = { agentId: a.id, tokenId: 't', name: a.name, kind: 'triage', scopes: ['read', 'note', 'propose', 'act'] };
+  const p: AgentPrincipal = { agentId: a.id, tokenId: 't', worksOn: ['incidents', 'service_requests'] as ('incidents' | 'service_requests')[], name: a.name, kind: 'triage', scopes: ['read', 'note', 'propose', 'act'] };
   const fetchImpl = async (url: string, init: { method: string; headers: Record<string, string>; body?: string }) => {
     const path = url.split('/api/agent/v1')[1]!.split('?')[0]!;
     const qs = new URL(url).searchParams;

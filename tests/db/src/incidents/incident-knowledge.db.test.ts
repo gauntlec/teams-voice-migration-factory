@@ -94,7 +94,7 @@ describe('suggesting it', () => {
     const src = await resolved();
     const k = await s.knowledge.create(c.t, eng, { ...(await s.knowledge.draftFrom(c.t, src.id)), title: 'Wifi one-way audio for agents' } as never);
     const fresh = await raise({ title: 'Wifi calls silent' });
-    const got = await s.agentApi.get({ agentId: a.id, tokenId: 't', name: a.name, kind: 'triage', scopes: ['read'] }, c.t.id, fresh.id);
+    const got = await s.agentApi.get({ agentId: a.id, tokenId: 't', worksOn: ['incidents', 'service_requests'] as ('incidents' | 'service_requests')[], name: a.name, kind: 'triage', scopes: ['read'] }, c.t.id, fresh.id);
     expect(got.knowledge.map((x: { id: string }) => x.id)).toContain(k.id);
   });
 });

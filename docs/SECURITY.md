@@ -137,6 +137,9 @@
   never unattended. A direct write needs the highest level for that kind of action **and** a held
   claim; everything else is a proposal a person decides. Declaring a major incident is only ever
   done by a person.
+- **An assistant works in one area: incidents, service requests, or both (a deliberate choice).** The guard refuses a route in another area
+  with `403 wrong_area`, and the events feed, `GET /me` and webhooks carry only the assistant's own area. The point is containment: incident
+  text (customers, email, monitoring) is untrusted, so an assistant that reads it should not also be able to prepare and propose changes.
 - Kill switches (all, one customer, one agent) take effect on the next request. A person can take
   over any incident at once and the agent becomes read-only.
 - Writes are idempotent (`Idempotency-Key`) and version-checked (`expectedVersion`), so retries and

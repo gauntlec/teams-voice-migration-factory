@@ -13,7 +13,7 @@ been enabled for.
 ## 1. Getting an agent
 
 A Super Admin creates it on **Administration > Assistants**: name, kind (triage, diagnostics, resolver,
-communications, monitoring, general), then:
+communications, monitoring, general), **where it works** (section 1a) and then:
 
 1. **Tokens** - create one (scopes `read`, `note`, `propose`, `act`; expiry 90 days by default, 365 at most). The
    token `vxs_agent_<id>_<secret>` is shown **once**; Voxshift stores only a hash of the secret.
@@ -23,6 +23,45 @@ communications, monitoring, general), then:
 
 Send the token as `Authorization: Bearer vxs_agent_...`. An optional IP allow-list can be set on the token.
 Rate limit: 240 requests a minute per token.
+
+## 1a. Where an assistant works
+
+Every assistant is set up for **incidents**, **service requests**, or **both**. **One area is the safer default**:
+
+- Incident text (customer descriptions, emails, monitoring alerts) is untrusted. An assistant that reads it should not also be able to
+  prepare and propose live changes, or a hostile message has a path to something that matters.
+- A leaked token is limited to one job, and each team (incident engineers, change approvers) can run its own assistant and watch it.
+- The Customers tab only asks about the kinds of action that matter for the area.
+
+| | Incidents | Service requests |
+|---|---|---|
+| Routes | `/api/agent/v1/incidents...` | `/api/agent/v1/service-requests...` |
+| Kinds of action it uses | `triage`, `internal_note`, `customer_update`, `diagnostic_read`, `resolve` | `triage`, `internal_note`, `customer_update`, `change_design`, `change_whatif`, `change_deploy` |
+| Events it hears about | `incident.*`, `claim.*`, `proposal.*`, `sla.*` | `sr.*` |
+| MCP tools | the incident tools | the service request tools |
+
+`triage`, `internal_note` and `customer_update` are used in both areas. A route in an area the assistant was **not** set up for is refused with
+**403 `wrong_area`** (the message says which area it is set up for); do not retry or look for a way round, tell a person. The events feed
+(`GET /events`), `GET /me` and the webhooks carry only the assistant's own areas.
+
+Existing assistants became **both** when this was added, so nothing stopped. The built-in assistants are fixed: Triage, Diagnose and Comms work
+on incidents; Changes works on service requests. A Super Admin changes an outside assistant's areas on **Administration > Assistants >
+(the assistant) > Overview > Works on**.
+
+`GET /api/agent/v1/me` is the first call a bot makes. It returns:
+
+```json
+{
+  "id": "...", "name": "Triage bot", "kind": "triage", "status": "active", "description": "...",
+  "worksOn": ["incidents"],
+  "scopes": ["read", "note", "propose"],
+  "customers": [
+    { "tenantId": "...", "name": "AT&T Voice Consult", "autonomy": { "triage": 1, "internal_note": 1, "customer_update": 1, "diagnostic_read": 1, "resolve": 1 } }
+  ]
+}
+```
+
+`autonomy` lists only the kinds of action that apply to `worksOn`; anything not listed is not for this assistant.
 
 ## 2. Reading
 
@@ -56,7 +95,7 @@ Each customer sets a level for each **action class**. A new policy is suggest-on
 | `change_deploy` | **2** | 0 |
 | `resolve` (restore, resolve, close) | 3 | 1 |
 
-A level is never higher than its cap, whatever is saved. Customer-visible text always needs a person's approval
+A level is never higher than its cap, whatever is saved. Only the classes for the assistant's areas (section 1a) are kept and shown. Customer-visible text always needs a person's approval
 for P1 and P2, and never goes out unattended while its cap is 2. Deployments are never unattended. Emergency
 calling incidents are always P1.
 
@@ -125,7 +164,7 @@ Proposal states: `proposed`, `approved`, `rejected`, `running`, `done`, `failed`
   next request.
 - Agents never appear as the sender of an email. Staff see "Name (AI)"; customers see "Voxshift assistant".
 - Errors carry `code` where an agent can act on it: `taken_over`, `stale`, `propose_instead`, `in_flight`
-  (the same Idempotency-Key is still running).
+  (the same Idempotency-Key is still running) and `wrong_area` (a route for an area the assistant is not set up for: stop and tell a person).
 
 ## 8. Events
 
@@ -135,7 +174,7 @@ Kinds: `incident.created`, `incident.updated`, `incident.message`, `incident.ass
 `sr.created`, `sr.updated`, `sr.assigned`, `sr.message`, `sr.proposal.decided`, `sr.claim.revoked`, `sr.claim.expired` (service requests;
 the event has `request_id`), and `incident.assist_requested` (a person asked this assistant to look at an incident: payload `question`, `askedBy`).
 
-Only customers the agent is enabled for are included. Events are kept 14 days; an agent that has been away longer
+Only customers the agent is enabled for, and only the areas it works in (`sr.*` events for a service request assistant, the rest for an incident assistant), are included. Events are kept 14 days; an agent that has been away longer
 reads the queue again.
 
 **Webhooks**: each event is POSTed to the webhook URL as JSON. Headers `X-Voxshift-Timestamp` (unix seconds) and

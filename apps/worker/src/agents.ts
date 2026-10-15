@@ -190,7 +190,7 @@ export async function deliverWebhooks(db: Kysely<DB>, deps: { fetch?: typeof fet
   const due = await p
     .selectFrom('agent_webhooks as w')
     .innerJoin('agents as a', 'a.id', 'w.agent_id')
-    .select(['w.id as id', 'w.agent_id as agent_id', 'w.url as url', 'w.secret_enc as secret_enc', 'w.kinds as kinds', 'w.cursor as cursor', 'w.failures as failures'])
+    .select(['w.id as id', 'w.agent_id as agent_id', 'w.url as url', 'w.secret_enc as secret_enc', 'w.kinds as kinds', 'w.cursor as cursor', 'w.failures as failures', 'a.works_on as works_on'])
     .where('w.active', '=', true)
     .where('w.next_attempt_at', '<=', new Date(now()).toISOString())
     .where('a.status', '=', 'active')
@@ -201,10 +201,13 @@ export async function deliverWebhooks(db: Kysely<DB>, deps: { fetch?: typeof fet
       .selectFrom('agent_events as e')
       .innerJoin('agent_customer_policy as cp', (j) => j.onRef('cp.tenant_id', '=', 'e.tenant_id').on('cp.agent_id', '=', w.agent_id).on('cp.enabled', '=', true))
       .innerJoin('tenants as t', 't.id', 'e.tenant_id')
-      .select(['e.id as id', 'e.tenant_id as tenant_id', 'e.incident_id as incident_id', 'e.kind as kind', 'e.payload as payload', 'e.created_at as created_at'])
+      .select(['e.id as id', 'e.tenant_id as tenant_id', 'e.incident_id as incident_id', 'e.request_id as request_id', 'e.kind as kind', 'e.payload as payload', 'e.created_at as created_at'])
       .where('t.agents_enabled', '=', true)
       .where('e.id', '>', String(w.cursor) as never)
       .where((eb) => eb.or([eb('e.agent_id', 'is', null), eb('e.agent_id', '=', w.agent_id)]))
+      // Only the areas the assistant works in: service request events carry a request id, incident events do not.
+      .$if(!w.works_on.includes('service_requests'), (qb) => qb.where('e.request_id', 'is', null))
+      .$if(!w.works_on.includes('incidents'), (qb) => qb.where('e.request_id', 'is not', null))
       .$if(w.kinds.length > 0, (qb) => qb.where('e.kind', 'in', w.kinds))
       .orderBy('e.id')
       .limit(BATCH)
@@ -216,7 +219,7 @@ export async function deliverWebhooks(db: Kysely<DB>, deps: { fetch?: typeof fet
       if (head && Number(head.id) > Number(w.cursor) && w.kinds.length > 0) await p.updateTable('agent_webhooks').set({ cursor: head.id }).where('id', '=', w.id).execute();
       continue;
     }
-    const body = JSON.stringify({ events: rows.map((r) => ({ ...(r.payload as Record<string, unknown>), id: Number(r.id), tenant_id: r.tenant_id, incident_id: r.incident_id, kind: r.kind, created_at: r.created_at })) });
+    const body = JSON.stringify({ events: rows.map((r) => ({ ...(r.payload as Record<string, unknown>), id: Number(r.id), tenant_id: r.tenant_id, incident_id: r.incident_id, request_id: r.request_id, kind: r.kind, created_at: r.created_at })) });
     let status = 'error';
     let ok = false;
     try {

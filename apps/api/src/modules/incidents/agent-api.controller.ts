@@ -29,6 +29,7 @@ import { CurrentAgent, Public } from '../../auth/auth.decorators';
 import type { AgentPrincipal } from '../../common/request';
 import { ZodBody } from '../../common/zod.pipe';
 import { AgentAuthGuard } from './agent-auth.guard';
+import { AgentArea } from './agent-area.decorator';
 import { AgentApiService } from './agent-api.service';
 
 /**
@@ -38,6 +39,7 @@ import { AgentApiService } from './agent-api.service';
 @Controller('agent/v1')
 @Public()
 @UseGuards(AgentAuthGuard)
+@AgentArea('incidents')
 export class AgentApiController {
   constructor(private readonly svc: AgentApiService) {}
 
@@ -47,8 +49,16 @@ export class AgentApiController {
     return this.svc.list(agent, q);
   }
 
-  /** The events feed: poll with ?after=<last id you saw>. */
+  /** Who am I: this assistant's name, where it may work, its scopes, and the customers and levels it has. Every assistant may call it. */
+  @Get('me')
+  @AgentArea('any')
+  me(@CurrentAgent() agent: AgentPrincipal) {
+    return this.svc.me(agent);
+  }
+
+  /** The events feed: poll with ?after=<last id you saw>. Only the events for the areas this assistant works in. */
   @Get('events')
+  @AgentArea('any')
   feed(@CurrentAgent() agent: AgentPrincipal, @Query(new ZodBody(agentEventsQuerySchema)) q: AgentEventsQuery) {
     return this.svc.feed(agent, q);
   }

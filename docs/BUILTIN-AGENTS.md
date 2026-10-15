@@ -14,6 +14,8 @@ Suggest or Observe. Starting points worth using once you trust them are on the a
 
 ## What each one does
 
+Each works in **one area**, fixed (outside assistants choose theirs, see [AGENTS.md](AGENTS.md) "Where an assistant works"): **Triage, Diagnose and Comms work on incidents; Changes works on service requests.** The Customers tab therefore shows only the actions that matter for each.
+
 **Triage** (kind: triage). Looks at new, unassigned incidents (not major, not held by a person, at
 least 45 seconds old, raised in the last 7 days, 5 per customer per pass, most urgent first), takes a
 5-minute lease, and writes one internal note: the known error that matches (with its workaround),

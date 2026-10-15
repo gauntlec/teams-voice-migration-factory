@@ -5,7 +5,7 @@
  * they are, what they conclude from an incident, and the words they use. The runner is
  * `apps/api/src/modules/incidents/builtin-agents.service.ts`.
  */
-import type { AgentAutonomy, AgentKind } from './agents';
+import type { AgentAutonomy, AgentDomain, AgentKind } from './agents';
 import type { DiagFinding, DiagResult } from './diagnostics';
 import { DIAG_RUNBOOKS } from './diagnostics';
 import type { IncHoldReason, IncPriority, IncStatus } from './incidents';
@@ -19,6 +19,8 @@ export interface BuiltinAgentDef {
   kind: AgentKind;
   description: string;
   modelLabel: string;
+  /** Where it works: the built-in change assistant is service-request-only, the others incident-only. */
+  worksOn: AgentDomain[];
   /** What it does, one line each, for the admin page. */
   does: string[];
   /** The autonomy worth starting with once you trust it. Nothing is applied for you. */
@@ -32,6 +34,7 @@ export const BUILTIN_AGENTS: Record<BuiltinAgentKey, BuiltinAgentDef> = {
     kind: 'triage',
     description: 'Looks at every new, unassigned incident: matches known errors, spots likely duplicates and wider problems, and leaves an internal note.',
     modelLabel: 'Built in (rules)',
+    worksOn: ['incidents'],
     does: [
       'Leaves an internal note with what it found: known error and workaround, similar open incidents, a possible wider problem',
       'Proposes linking a matching known error, and marking a likely duplicate (never closes anything itself)',
@@ -45,6 +48,7 @@ export const BUILTIN_AGENTS: Record<BuiltinAgentKey, BuiltinAgentDef> = {
     kind: 'diagnostic',
     description: 'Runs the read-only checks an incident points at (user, number, queue, routes, emergency setup, recent changes) and writes up what it found.',
     modelLabel: 'Built in (rules)',
+    worksOn: ['incidents'],
     does: [
       'Runs the suggested checks on incidents nobody has picked up yet (at "act alone"), or proposes them for approval (at "act with approval")',
       'Hands over with what it tried, what it found and what it recommends, so an engineer starts with the facts',
@@ -58,6 +62,7 @@ export const BUILTIN_AGENTS: Record<BuiltinAgentKey, BuiltinAgentDef> = {
     kind: 'comms',
     description: 'Drafts the next customer update on urgent incidents when one is due. A person always approves it before the customer sees it.',
     modelLabel: 'Built in (templates)',
+    worksOn: ['incidents'],
     does: [
       'Proposes a plain, templated update to the customer on P1 and P2 incidents when no update has gone out for a while',
       'Says only what the incident record says: no guesses, no causes, no promises about fixes',
@@ -71,6 +76,7 @@ export const BUILTIN_AGENTS: Record<BuiltinAgentKey, BuiltinAgentDef> = {
     kind: 'resolver',
     description: 'Carries change and removal service requests through: applies what the customer asked for to the design, runs the What-If, and proposes the deployment for one person to approve.',
     modelLabel: 'Built in (rules)',
+    worksOn: ['service_requests'],
     does: [
       'Takes change and removal requests that map completely onto Design & Build (a voicemail change, queue agents added or removed, a leaver, a greeting or holiday closure) and nothing a person has to decide',
       'Plans the request, applies it to the design, signs the design off, and runs the What-If',

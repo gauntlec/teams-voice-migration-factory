@@ -42,7 +42,7 @@ beforeEach(() => {
 async function bot() {
   const a = await s.agentAdmin.create(admin, createAgentSchema.parse({ name: `Wbot-${++n}-${Date.now() % 100000}`, kind: 'resolver' }));
   await s.agentAdmin.setPolicy(admin, a.id, c.t.id, { enabled: true, autonomy: FULL });
-  return { id: a.id, name: a.name, p: { agentId: a.id, tokenId: 't', name: a.name, kind: 'resolver' as const, scopes: ['read', 'note', 'propose', 'act'] as ('read' | 'note' | 'propose' | 'act')[] } };
+  return { id: a.id, name: a.name, p: { agentId: a.id, tokenId: 't', worksOn: ['incidents', 'service_requests'] as ('incidents' | 'service_requests')[], name: a.name, kind: 'resolver' as const, scopes: ['read', 'note', 'propose', 'act'] as ('read' | 'note' | 'propose' | 'act')[] } };
 }
 
 /** A request an assistant has carried to a started deployment, as a person approved it. */

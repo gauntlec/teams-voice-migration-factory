@@ -15,7 +15,7 @@ interface Call {
 }
 
 /** An MCP client connected to the server, whose "Voxshift" is a recorder with canned answers. */
-async function connect(respond: (c: Call) => { status?: number; json: unknown } = () => ({ json: { ok: true } })) {
+async function connect(respond: (c: Call) => { status?: number; json: unknown } = () => ({ json: { ok: true } }), worksOn?: ('incidents' | 'service_requests')[]) {
   const calls: Call[] = [];
   const fetchImpl = (async (url: string, init: { method: string; headers: Record<string, string>; body?: string }) => {
     const call: Call = { method: init.method, url, headers: init.headers, body: init.body ? JSON.parse(init.body) : undefined };
@@ -23,7 +23,7 @@ async function connect(respond: (c: Call) => { status?: number; json: unknown } 
     const r = respond(call);
     return new Response(JSON.stringify(r.json), { status: r.status ?? 200 });
   }) as unknown as typeof fetch;
-  const server = createMcpServer(new AgentApiClient({ baseUrl: 'https://voxshift.test/', token: 'vxs_agent_test', fetchImpl }));
+  const server = createMcpServer(new AgentApiClient({ baseUrl: 'https://voxshift.test/', token: 'vxs_agent_test', fetchImpl }), {}, worksOn);
   const [a, b] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'test', version: '1' });
   await Promise.all([server.connect(a), client.connect(b)]);
@@ -38,7 +38,7 @@ describe('the tools', () => {
     const tools = (await client.listTools()).tools;
     expect(tools.map((t) => t.name).sort()).toEqual(
       [
-        'add_internal_note', 'change_status', 'claim_incident', 'get_events', 'get_incident', 'hand_off', 'link_item', 'list_diagnostics', 'list_incidents', 'list_proposals', 'list_runbooks', 'propose_action', 'release_incident', 'renew_claim', 'report_proposal_result', 'run_diagnostic', 'set_priority',
+        'whoami', 'add_internal_note', 'change_status', 'claim_incident', 'get_events', 'get_incident', 'hand_off', 'link_item', 'list_diagnostics', 'list_incidents', 'list_proposals', 'list_runbooks', 'propose_action', 'release_incident', 'renew_claim', 'report_proposal_result', 'run_diagnostic', 'set_priority',
         'add_request_note', 'apply_request', 'claim_request', 'deploy_request', 'get_service_request', 'hand_off_request', 'list_request_proposals', 'list_service_requests', 'move_request', 'propose_request_action', 'release_request', 'renew_request_claim', 'report_request_proposal_result', 'what_if_request',
       ].sort(),
     );
@@ -48,6 +48,39 @@ describe('the tools', () => {
     expect(byName.run_diagnostic!.description).toContain('read-only');
     // The model is told how to describe proposals.
     expect(byName.propose_action!.description).toContain('customer_update');
+  });
+
+  it('offers an assistant only the tools for the areas it works in', async () => {
+    const names = async (worksOn: ('incidents' | 'service_requests')[]) => (await (await connect(undefined, worksOn)).client.listTools()).tools.map((t) => t.name);
+    const inc = await names(['incidents']);
+    const req = await names(['service_requests']);
+    // Everyone gets whoami and the events feed.
+    for (const shared of ['whoami', 'get_events']) {
+      expect(inc).toContain(shared);
+      expect(req).toContain(shared);
+    }
+    expect(inc).toContain('claim_incident');
+    expect(inc).not.toContain('deploy_request');
+    expect(inc.some((n) => n.includes('request'))).toBe(false);
+    expect(req).toContain('deploy_request');
+    expect(req).not.toContain('claim_incident');
+    expect(req).not.toContain('run_diagnostic');
+    // Prompts follow the area too.
+    const prompts = async (worksOn: ('incidents' | 'service_requests')[]) => (await (await connect(undefined, worksOn)).client.listPrompts()).prompts.map((p) => p.name);
+    expect(await prompts(['incidents'])).toEqual(['work_incident']);
+    expect(await prompts(['service_requests'])).toEqual(['work_service_request']);
+    expect((await names(['incidents', 'service_requests'])).length).toBe(inc.length + req.length - 2);
+  });
+
+  it('whoami asks the API who this assistant is, and a wrong_area refusal says what to do', async () => {
+    const me = { name: 'Triage bot', worksOn: ['incidents'], scopes: ['read', 'note'], customers: [] };
+    const { call, calls } = await connect(() => ({ json: me }));
+    expect(JSON.parse(text(await call('whoami')))).toEqual(me);
+    expect(calls[0]).toMatchObject({ method: 'GET', url: 'https://voxshift.test/api/agent/v1/me' });
+    const refused = await (await connect(() => ({ status: 403, json: { message: 'This assistant is set up for incidents only.', code: 'wrong_area' } }))).call('list_service_requests');
+    expect(refused.isError).toBe(true);
+    expect(text(refused)).toContain('wrong_area');
+    expect(text(refused)).toContain('whoami');
   });
 
   it('list_runbooks needs no network and names all six checks', async () => {

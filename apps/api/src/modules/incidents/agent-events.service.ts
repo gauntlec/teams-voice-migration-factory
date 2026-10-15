@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { platformDb } from '@tvmf/db';
-import { incReference, srReference, type AgentEventKind, type IncPriority, type IncStatus } from '@tvmf/shared';
+import { incReference, srReference, type AgentDomain, type AgentEventKind, type IncPriority, type IncStatus } from '@tvmf/shared';
 import { InjectDb, type Db } from '../../db/db.module';
 
 /** The incident columns an event is built from. */
@@ -68,7 +68,9 @@ export class AgentEventsService {
    * Events after a cursor, for the customers this agent may work: the ones for everyone and the ones
    * for it alone, oldest first. `next` is the cursor to send back next time.
    */
-  async list(agentId: string, after: number, limit: number) {
+  async list(agentId: string, after: number, limit: number, worksOn: readonly AgentDomain[] = ['incidents', 'service_requests']) {
+    const incidents = worksOn.includes('incidents');
+    const requests = worksOn.includes('service_requests');
     const rows = await platformDb(this.db)
       .selectFrom('agent_events as e')
       .innerJoin('agent_customer_policy as p', (j) => j.onRef('p.tenant_id', '=', 'e.tenant_id').on('p.agent_id', '=', agentId).on('p.enabled', '=', true))
@@ -77,6 +79,9 @@ export class AgentEventsService {
       .where('t.agents_enabled', '=', true)
       .where('e.id', '>', String(after) as never)
       .where((eb) => eb.or([eb('e.agent_id', 'is', null), eb('e.agent_id', '=', agentId)]))
+      // An assistant only hears about the areas it works in: service request events carry a request id, incident events do not.
+      .$if(!requests, (qb) => qb.where('e.request_id', 'is', null))
+      .$if(!incidents, (qb) => qb.where('e.request_id', 'is not', null))
       .orderBy('e.id')
       .limit(limit)
       .execute();

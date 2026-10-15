@@ -34,6 +34,11 @@ export class AgentApiClient {
     this.fetchImpl = opts.fetchImpl ?? fetch;
   }
 
+  /** `GET /me`: this assistant's name, where it works, scopes, and its customers with the levels that apply. */
+  me() {
+    return this.request<{ name: string; worksOn: ('incidents' | 'service_requests')[]; scopes: string[]; customers: unknown[] }>('GET', '/me');
+  }
+
   async request<T = unknown>(method: string, path: string, body?: unknown, idempotencyKey?: string): Promise<T> {
     const res = await this.fetchImpl(`${this.root}${path}`, {
       method,

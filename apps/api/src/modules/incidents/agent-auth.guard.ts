@@ -1,10 +1,12 @@
 import { CanActivate, ExecutionContext, ForbiddenException, HttpException, HttpStatus, Injectable, UnauthorizedException } from '@nestjs/common';
 import { timingSafeEqual } from 'node:crypto';
+import { Reflector } from '@nestjs/core';
 import { platformDb } from '@tvmf/db';
-import { parseAgentToken } from '@tvmf/shared';
+import { AGENT_DOMAIN_LABELS, agentWorksOnText, parseAgentToken, type AgentDomain } from '@tvmf/shared';
 import { sha256 } from '../../common/crypto';
 import type { AppRequest } from '../../common/request';
 import { InjectDb, type Db } from '../../db/db.module';
+import { AGENT_AREA } from './agent-area.decorator';
 
 /** Requests per token per minute. Plenty for an agent working incidents; stops a loop. */
 const RATE_PER_MINUTE = 240;
@@ -45,7 +47,10 @@ export function ipAllowed(ip: string | undefined, allow: string[]): boolean {
  */
 @Injectable()
 export class AgentAuthGuard implements CanActivate {
-  constructor(@InjectDb() private readonly db: Db) {}
+  constructor(
+    @InjectDb() private readonly db: Db,
+    private readonly reflector: Reflector = new Reflector(),
+  ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
     const req = ctx.switchToHttp().getRequest<AppRequest>();
@@ -56,7 +61,7 @@ export class AgentAuthGuard implements CanActivate {
     const row = await p
       .selectFrom('agent_tokens as t')
       .innerJoin('agents as a', 'a.id', 't.agent_id')
-      .select(['t.id as token_id', 't.secret_hash as secret_hash', 't.scopes as scopes', 't.ip_allow as ip_allow', 't.expires_at as expires_at', 't.revoked_at as revoked_at', 'a.id as agent_id', 'a.name as name', 'a.kind as kind', 'a.status as status'])
+      .select(['t.id as token_id', 't.secret_hash as secret_hash', 't.scopes as scopes', 't.ip_allow as ip_allow', 't.expires_at as expires_at', 't.revoked_at as revoked_at', 'a.id as agent_id', 'a.name as name', 'a.kind as kind', 'a.status as status', 'a.works_on as works_on'])
       .where('t.id', '=', parsed.tokenId)
       .executeTakeFirst();
     const given = Buffer.from(sha256(parsed.secret), 'hex');
@@ -70,6 +75,17 @@ export class AgentAuthGuard implements CanActivate {
     if (kill?.all_disabled) throw new ForbiddenException(`Assistants are switched off${kill.note ? `: ${kill.note}` : '.'}`);
     if (!ipAllowed(req.ip, row.ip_allow)) throw new ForbiddenException('This token cannot be used from this address.');
 
+    // Each assistant is set up for incidents, service requests, or both; a route in another area is refused.
+    const targets = [ctx.getHandler?.(), ctx.getClass?.()].filter(Boolean) as (() => unknown)[];
+    const area = targets.length ? this.reflector.getAllAndOverride<AgentDomain | 'any' | undefined>(AGENT_AREA, targets) : undefined;
+    if (area && area !== 'any' && !row.works_on.includes(area)) {
+      throw new ForbiddenException({
+        message: `This assistant is set up for ${agentWorksOnText(row.works_on).toLowerCase()} only, so it cannot use ${AGENT_DOMAIN_LABELS[area].toLowerCase()}. A Super Admin can change where it works on Administration > Assistants.`,
+        code: 'wrong_area',
+        worksOn: row.works_on,
+      });
+    }
+
     const now = Date.now();
     const w = windows.get(row.token_id);
     if (!w || now - w.start > 60_000) windows.set(row.token_id, { start: now, count: 1 });
@@ -81,7 +97,7 @@ export class AgentAuthGuard implements CanActivate {
       void p.updateTable('agent_tokens').set({ last_used_at: at }).where('id', '=', row.token_id).execute().catch(() => undefined);
       void p.updateTable('agents').set({ last_seen_at: at }).where('id', '=', row.agent_id).execute().catch(() => undefined);
     }
-    req.agent = { agentId: row.agent_id, tokenId: row.token_id, name: row.name, kind: row.kind, scopes: row.scopes };
+    req.agent = { agentId: row.agent_id, tokenId: row.token_id, name: row.name, kind: row.kind, scopes: row.scopes, worksOn: row.works_on };
     return true;
   }
 }

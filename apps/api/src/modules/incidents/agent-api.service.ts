@@ -3,6 +3,7 @@ import { platformDb, tenantDb, tenantSchemaName } from '@tvmf/db';
 import {
   INC_LIVE_STATUSES,
   INC_OPEN_STATUSES,
+  agentClassesFor,
   agentEffectiveAutonomy,
   agentLabel,
   agentLevel,
@@ -232,7 +233,42 @@ export class AgentApiService {
 
   async feed(agent: AgentPrincipal, q: AgentEventsQuery) {
     this.scope(agent, 'read');
-    return this.events.list(agent.agentId, q.after, q.limit);
+    return this.events.list(agent.agentId, q.after, q.limit, agent.worksOn);
+  }
+
+  /**
+   * Who this assistant is: its name, kind, status, scopes and where it works, and for each customer it is allowed on, the levels that apply to
+   * its areas (the other classes are left out). The first call a bot or the MCP server makes, so it knows what it may do before it tries.
+   */
+  async me(agent: AgentPrincipal) {
+    const p = platformDb(this.db);
+    const [row, policies] = await Promise.all([
+      p.selectFrom('agents').select(['id', 'name', 'kind', 'status', 'description', 'model_label']).where('id', '=', agent.agentId).executeTakeFirstOrThrow(),
+      p
+        .selectFrom('agent_customer_policy as cp')
+        .innerJoin('tenants as t', 't.id', 'cp.tenant_id')
+        .select(['t.id as id', 't.name as name', 't.managed_services_enabled as ms', 't.agents_enabled as on', 'cp.enabled as enabled', 'cp.autonomy as autonomy'])
+        .where('cp.agent_id', '=', agent.agentId)
+        .where('t.status', '=', 'active')
+        .orderBy('t.name')
+        .execute(),
+    ]);
+    const classes = agentClassesFor(agent.worksOn);
+    return {
+      id: row.id,
+      name: row.name,
+      kind: row.kind,
+      status: row.status,
+      description: row.description,
+      worksOn: agent.worksOn,
+      scopes: agent.scopes,
+      customers: policies
+        .filter((c) => c.enabled && c.ms && c.on)
+        .map((c) => {
+          const levels = agentEffectiveAutonomy(c.autonomy as AgentAutonomy);
+          return { tenantId: c.id, name: c.name, autonomy: Object.fromEntries(classes.map((k) => [k, levels[k]])) };
+        }),
+    };
   }
 
   /* ------------------------------ working an incident ------------------------------ */

@@ -35,7 +35,7 @@ beforeAll(async () => {
 async function bot(autonomy: AgentAutonomy = FULL) {
   const a = await s.agentAdmin.create(admin, createAgentSchema.parse({ name: `SRbot-${++n}-${Date.now() % 100000}`, kind: 'resolver' }));
   await s.agentAdmin.setPolicy(admin, a.id, c.t.id, { enabled: true, autonomy });
-  return { id: a.id, name: a.name, p: { agentId: a.id, tokenId: 't', name: a.name, kind: 'resolver' as const, scopes: ['read', 'note', 'propose', 'act'] as ('read' | 'note' | 'propose' | 'act')[] } };
+  return { id: a.id, name: a.name, p: { agentId: a.id, tokenId: 't', worksOn: ['incidents', 'service_requests'] as ('incidents' | 'service_requests')[], name: a.name, kind: 'resolver' as const, scopes: ['read', 'note', 'propose', 'act'] as ('read' | 'note' | 'propose' | 'act')[] } };
 }
 
 /** A person with a Design & Build row, and a request to turn their voicemail off. */

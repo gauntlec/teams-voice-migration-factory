@@ -44,6 +44,8 @@ export interface AgentPrincipal {
   name: string;
   kind: import('@tvmf/shared').AgentKind;
   scopes: import('@tvmf/shared').AgentScope[];
+  /** The areas this assistant may work in. */
+  worksOn: import('@tvmf/shared').AgentDomain[];
 }
 
 /** A monitoring alert source authenticated by its token (see IntakeAuthGuard). */

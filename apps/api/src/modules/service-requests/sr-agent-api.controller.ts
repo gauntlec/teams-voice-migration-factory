@@ -22,6 +22,7 @@ import {
 import { CurrentAgent, Public } from '../../auth/auth.decorators';
 import type { AgentPrincipal } from '../../common/request';
 import { ZodBody } from '../../common/zod.pipe';
+import { AgentArea } from '../incidents/agent-area.decorator';
 import { AgentAuthGuard } from '../incidents/agent-auth.guard';
 import { SrAgentApiService } from './sr-agent-api.service';
 
@@ -34,6 +35,7 @@ const T = ParseUUIDPipe;
 @Controller('agent/v1/service-requests')
 @Public()
 @UseGuards(AgentAuthGuard)
+@AgentArea('service_requests')
 export class SrAgentApiController {
   constructor(private readonly svc: SrAgentApiService) {}
 

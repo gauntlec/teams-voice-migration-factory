@@ -281,7 +281,7 @@ describe('Comms', () => {
 
 describe('releasing an incident through the API', () => {
   it('an assistant that lets go is no longer the assignee', async () => {
-    const p = { agentId: agent.triage, tokenId: 't', name: 'Voxshift Triage', kind: 'triage' as const, scopes: ['read', 'note', 'propose', 'act'] as ('read' | 'note' | 'propose' | 'act')[] };
+    const p = { agentId: agent.triage, tokenId: 't', worksOn: ['incidents', 'service_requests'] as ('incidents' | 'service_requests')[], name: 'Voxshift Triage', kind: 'triage' as const, scopes: ['read', 'note', 'propose', 'act'] as ('read' | 'note' | 'propose' | 'act')[] };
     await setLevels('triage', { triage: 3, internal_note: 3 });
     const i = await raise();
     await s.agentApi.claim(p, c.t.id, i.id, { ttlSeconds: 600 });
@@ -343,7 +343,7 @@ describe('asking an assistant', () => {
   it('sends the request to an outside agent through its events feed', async () => {
     const other = await s.agentAdmin.create(admin, { name: `Outside-${Date.now() % 100000}`, kind: 'general' } as never);
     await s.agentAdmin.setPolicy(admin, other.id, c.t.id, { enabled: true, autonomy: { internal_note: 1 } });
-    const p = { agentId: other.id, tokenId: 't', name: other.name, kind: 'general' as const, scopes: ['read'] as 'read'[] };
+    const p = { agentId: other.id, tokenId: 't', worksOn: ['incidents', 'service_requests'] as ('incidents' | 'service_requests')[], name: other.name, kind: 'general' as const, scopes: ['read'] as 'read'[] };
     const i = await raise();
     const r = await s.builtin.ask(c.t, eng, i.id, { agentId: other.id, question: 'Is this the carrier again?' });
     expect(r).toEqual({ delivered: 'event', message: `Sent to ${other.name} (AI). It will reply on the timeline.` });

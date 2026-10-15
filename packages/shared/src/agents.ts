@@ -79,6 +79,34 @@ export const AGENT_ACTION_CLASS_LABELS: Record<AgentActionClass, string> = {
   resolve: 'Restoring, resolving and closing',
 };
 
+/* ------------------------------ where an assistant works ------------------------------ */
+
+/**
+ * The two areas an assistant can be set up for. Each is a separate job with separate risks: incident text comes from customers,
+ * monitoring and email and is untrusted; service requests lead to changes on a live tenant. Keeping an assistant to one area means a
+ * bot that reads incident text can never reach the change tools (docs/AGENTS.md, "Where an assistant works").
+ */
+export const AGENT_DOMAINS = ['incidents', 'service_requests'] as const;
+export type AgentDomain = (typeof AGENT_DOMAINS)[number];
+export const AGENT_DOMAIN_LABELS: Record<AgentDomain, string> = { incidents: 'Incidents', service_requests: 'Service requests' };
+
+/** Which kinds of action each area uses. Triage, internal notes and customer updates are used in both. */
+export const AGENT_CLASSES_BY_DOMAIN: Record<AgentDomain, readonly AgentActionClass[]> = {
+  incidents: ['triage', 'internal_note', 'customer_update', 'diagnostic_read', 'resolve'],
+  service_requests: ['triage', 'internal_note', 'customer_update', 'change_design', 'change_whatif', 'change_deploy'],
+};
+
+/** The action classes that matter for an assistant that works on these areas (so the admin page only asks about those). */
+export function agentClassesFor(worksOn: readonly AgentDomain[]): AgentActionClass[] {
+  return AGENT_ACTION_CLASSES.filter((c) => worksOn.some((d) => AGENT_CLASSES_BY_DOMAIN[d].includes(c)));
+}
+
+/** "Incidents", "Service requests" or "Incidents and service requests". */
+export function agentWorksOnText(worksOn: readonly AgentDomain[]): string {
+  const names = AGENT_DOMAINS.filter((d) => worksOn.includes(d)).map((d) => AGENT_DOMAIN_LABELS[d]);
+  return names.length === 2 ? `${names[0]} and ${names[1]!.toLowerCase()}` : (names[0] ?? 'Nothing');
+}
+
 /** 0 observe, 1 suggest, 2 act with approval, 3 act alone. */
 export const AGENT_LEVELS = [0, 1, 2, 3] as const;
 export type AgentLevel = (typeof AGENT_LEVELS)[number];
@@ -407,6 +435,12 @@ export type HandBackInput = z.infer<typeof handBackSchema>;
 
 /* ------------------------------ admin DTOs ------------------------------ */
 
+/** One or both areas, no repeats. */
+export const agentWorksOnSchema = z
+  .array(z.enum(AGENT_DOMAINS))
+  .min(1, 'Choose where it works: incidents, service requests, or both')
+  .transform((xs) => AGENT_DOMAINS.filter((d) => xs.includes(d)));
+
 export const createAgentSchema = z
   .object({
     name: z.string().trim().min(2, 'Give the agent a name').max(60),
@@ -414,6 +448,8 @@ export const createAgentSchema = z
     description: z.string().trim().max(500).default(''),
     modelLabel: z.string().trim().max(120).default(''),
     mspId: z.string().uuid().nullable().optional(),
+    /** Where it works. The admin page makes you choose; callers that leave it out get both (how assistants worked before this existed). */
+    worksOn: agentWorksOnSchema.default([...AGENT_DOMAINS]),
   })
   .strict();
 export type CreateAgentInput = z.infer<typeof createAgentSchema>;
@@ -426,6 +462,7 @@ export const updateAgentSchema = z
     modelLabel: z.string().trim().max(120).optional(),
     status: z.enum(AGENT_STATUSES).optional(),
     mspId: z.string().uuid().nullable().optional(),
+    worksOn: agentWorksOnSchema.optional(),
   })
   .strict();
 export type UpdateAgentInput = z.infer<typeof updateAgentSchema>;

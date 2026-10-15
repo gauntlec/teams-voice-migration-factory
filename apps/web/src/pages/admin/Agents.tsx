@@ -32,8 +32,9 @@ import {
   mergeClasses,
 } from '@fluentui/react-components';
 import {
-  AGENT_ACTION_CLASSES,
   AGENT_ACTION_CLASS_LABELS,
+  AGENT_DOMAINS,
+  AGENT_DOMAIN_LABELS,
   BUILTIN_AGENTS,
   BUILTIN_AGENT_KEYS,
   type BuiltinAgentKey,
@@ -47,6 +48,7 @@ import {
   AGENT_EVENT_KINDS,
   AGENT_DEFAULT_SCOPES,
   type AgentActionClass,
+  type AgentDomain,
   type AgentKind,
   type AgentLevel,
   type AgentScope,
@@ -98,6 +100,7 @@ interface AgentRow {
   customers: number;
   last_seen_at: string | null;
   builtin_key: BuiltinAgentKey | null;
+  works_on: AgentDomain[];
 }
 interface AgentDetail {
   agent: AgentRow;
@@ -105,6 +108,8 @@ interface AgentDetail {
   customers: { tenant_id: string; name: string; agents_enabled: boolean; allowed: boolean; enabled: boolean; autonomy: Record<AgentActionClass, AgentLevel> }[];
   webhooks: { id: string; url: string; kinds: string[]; active: boolean; failures: number; last_status: string | null; last_delivery_at: string | null }[];
   caps: Record<AgentActionClass, AgentLevel>;
+  /** The kinds of action that matter for where this assistant works; the page only asks about these. */
+  classes: AgentActionClass[];
 }
 
 const STATUS_COLOR: Record<AgentStatus, 'success' | 'warning' | 'subtle'> = { active: 'success', paused: 'warning', disabled: 'subtle' };
@@ -202,6 +207,7 @@ export function AdminAgents() {
               <TableRow>
                 <TableHeaderCell>Name</TableHeaderCell>
                 <TableHeaderCell>Kind</TableHeaderCell>
+                <TableHeaderCell>Works on</TableHeaderCell>
                 <TableHeaderCell>Status</TableHeaderCell>
                 <TableHeaderCell>Customers</TableHeaderCell>
                 <TableHeaderCell>Live tokens</TableHeaderCell>
@@ -225,6 +231,7 @@ export function AdminAgents() {
                     )}
                   </TableCell>
                   <TableCell>{AGENT_KIND_LABELS[a.kind]}</TableCell>
+                  <TableCell>{(a.works_on ?? AGENT_DOMAINS).map((d) => AGENT_DOMAIN_LABELS[d]).join(' + ')}</TableCell>
                   <TableCell>
                     <Badge appearance="tint" color={STATUS_COLOR[a.status]}>
                       {a.status[0]!.toUpperCase() + a.status.slice(1)}
@@ -261,7 +268,9 @@ function CreateDialog({ onClose, onCreated }: { onClose: () => void; onCreated: 
   const [kind, setKind] = useState<AgentKind>('triage');
   const [description, setDescription] = useState('');
   const [modelLabel, setModelLabel] = useState('');
-  const create = useMutation({ mutationFn: () => api<{ id: string }>('/agents', { method: 'POST', body: JSON.stringify({ name, kind, description, modelLabel }) }), onSuccess: (r) => onCreated(r.id) });
+  // No area is ticked for you: where an assistant works is a deliberate choice.
+  const [worksOn, setWorksOn] = useState<AgentDomain[]>([]);
+  const create = useMutation({ mutationFn: () => api<{ id: string }>('/agents', { method: 'POST', body: JSON.stringify({ name, kind, description, modelLabel, worksOn }) }), onSuccess: (r) => onCreated(r.id) });
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
       <DialogSurface className={ls.maxW520}>
@@ -280,6 +289,7 @@ function CreateDialog({ onClose, onCreated }: { onClose: () => void; onCreated: 
                 ))}
               </Select>
             </Field>
+            <WorksOnField value={worksOn} onChange={setWorksOn} />
             <Field label="Description">
               <Textarea value={description} maxLength={500} rows={2} onChange={(_, d) => setDescription(d.value)} />
             </Field>
@@ -292,13 +302,66 @@ function CreateDialog({ onClose, onCreated }: { onClose: () => void; onCreated: 
             <Button appearance="secondary" onClick={onClose}>
               Cancel
             </Button>
-            <Button appearance="primary" disabled={name.trim().length < 2 || create.isPending} onClick={() => create.mutate()}>
+            <Button appearance="primary" disabled={name.trim().length < 2 || worksOn.length === 0 || create.isPending} onClick={() => create.mutate()}>
               Create
             </Button>
           </DialogActions>
         </DialogBody>
       </DialogSurface>
     </Dialog>
+  );
+}
+
+/** Where an assistant works. One area is safer: an assistant that reads incident text (untrusted) can then never reach the change tools. */
+function WorksOnField({ value, onChange, disabled }: { value: AgentDomain[]; onChange: (v: AgentDomain[]) => void; disabled?: boolean }) {
+  const s = useStyles();
+  const toggle = (d: AgentDomain, on: boolean) => onChange(AGENT_DOMAINS.filter((x) => (x === d ? on : value.includes(x))));
+  return (
+    <Field
+      label="Works on"
+      hint="Choose at least one. One area is safer: an assistant for incidents reads text from customers and monitoring, so it should not also be able to prepare changes. Pick both only if it really needs both."
+    >
+      <div className={s.row}>
+        {AGENT_DOMAINS.map((d) => (
+          <Checkbox key={d} disabled={disabled} checked={value.includes(d)} label={AGENT_DOMAIN_LABELS[d]} onChange={(_, x) => toggle(d, !!x.checked)} />
+        ))}
+      </div>
+    </Field>
+  );
+}
+
+/** Change where an outside assistant works. The built-in ones are made for one job and cannot be changed. */
+function WorksOnEditor({ agent, onChanged }: { agent: AgentRow; onChanged: () => void }) {
+  const s = useStyles();
+  const current = agent.works_on ?? [...AGENT_DOMAINS];
+  const [value, setValue] = useState<AgentDomain[]>(current);
+  const same = value.length === current.length && value.every((d) => current.includes(d));
+  const save = useMutation({ mutationFn: () => api(`/agents/${agent.id}`, { method: 'PATCH', body: JSON.stringify({ worksOn: value }) }), onSuccess: onChanged });
+  if (agent.builtin_key) {
+    return (
+      <Text>
+        Works on: <b>{current.map((d) => AGENT_DOMAIN_LABELS[d]).join(' and ')}</b>
+        <Text size={200} className={s.muted} block>
+          Built-in assistants are made for one job, so this is fixed.
+        </Text>
+      </Text>
+    );
+  }
+  return (
+    <div className={s.stack}>
+      <WorksOnField value={value} onChange={setValue} />
+      {!same && (
+        <div className={s.row}>
+          <Button appearance="primary" size="small" disabled={value.length === 0 || save.isPending} onClick={() => save.mutate()}>
+            Save where it works
+          </Button>
+          <Button size="small" onClick={() => setValue(current)}>
+            Undo
+          </Button>
+        </div>
+      )}
+      {save.error && <Text className={s.error}>{errorText(save.error, 'Could not change it')}</Text>}
+    </div>
   );
 }
 
@@ -342,6 +405,7 @@ function AgentDialog({ id, onClose }: { id: string; onClose: () => void }) {
                       </Text>
                     </div>
                     {a.description && <Text>{a.description}</Text>}
+                    <WorksOnEditor key={(a.works_on ?? []).join()} agent={a} onChanged={refresh} />
                     {a.builtin_key && (
                       <div className={s.stack}>
                         <ul className={s.does}>
@@ -504,14 +568,14 @@ function CustomersTab({ id, data, onChanged }: { id: string; data: AgentDetail; 
               {editing === c.tenant_id ? 'Close' : c.allowed ? 'Edit' : 'Allow'}
             </Button>
           </div>
-          {editing === c.tenant_id && <PolicyEditor agentId={id} customer={c} caps={data.caps} onDone={() => (setEditing(null), onChanged())} />}
+          {editing === c.tenant_id && <PolicyEditor agentId={id} customer={c} caps={data.caps} classes={data.classes ?? Object.keys(data.caps) as AgentActionClass[]} onDone={() => (setEditing(null), onChanged())} />}
         </Card>
       ))}
     </div>
   );
 }
 
-function PolicyEditor({ agentId, customer, caps, onDone }: { agentId: string; customer: AgentDetail['customers'][number]; caps: Record<AgentActionClass, AgentLevel>; onDone: () => void }) {
+function PolicyEditor({ agentId, customer, caps, classes, onDone }: { agentId: string; customer: AgentDetail['customers'][number]; caps: Record<AgentActionClass, AgentLevel>; classes: AgentActionClass[]; onDone: () => void }) {
   const ls = useLocalStyles();
   const s = useStyles();
   const qc = useQueryClient();
@@ -524,7 +588,7 @@ function PolicyEditor({ agentId, customer, caps, onDone }: { agentId: string; cu
     <div className={mergeClasses(s.stack, ls.mt12)}>
       <Checkbox checked={enabled} label="Allowed on this customer" onChange={(_, d) => setEnabled(!!d.checked)} />
       <div className={s.levels}>
-        {AGENT_ACTION_CLASSES.map((cls) => (
+        {classes.map((cls) => (
           <Fragment key={cls}>
             <Text>{AGENT_ACTION_CLASS_LABELS[cls]}</Text>
             <Select size="small" value={String(levels[cls])} onChange={(_, d) => setLevels({ ...levels, [cls]: Number(d.value) as AgentLevel })} title={AGENT_LEVEL_HELP[levels[cls]]}>

@@ -53,7 +53,7 @@ const ctx = (m: EnqueueMailInput) => m.context as Record<string, unknown>;
 async function bot(name: string, autonomy: AgentAutonomy = {}, scopes: AgentPrincipal['scopes'] = ['read', 'note', 'propose', 'act'], tenant: TestCustomer | null = c): Promise<Bot> {
   const a = await s.agentAdmin.create(admin, createAgentSchema.parse({ name: `${name}-${++n}-${Date.now() % 100000}`, kind: 'triage' }));
   if (tenant) await s.agentAdmin.setPolicy(admin, a.id, tenant.t.id, { enabled: true, autonomy });
-  return { id: a.id, name: a.name, p: { agentId: a.id, tokenId: 'test-token', name: a.name, kind: 'triage', scopes } };
+  return { id: a.id, name: a.name, p: { agentId: a.id, tokenId: 'test-token', worksOn: ['incidents', 'service_requests'] as ('incidents' | 'service_requests')[], name: a.name, kind: 'triage', scopes } };
 }
 const events = (id: string) => c.s.selectFrom('incident_events').selectAll().where('incident_id', '=', id).orderBy('created_at').execute();
 const proposal = (over: Partial<AgentProposalInput> & { kind: AgentProposalInput['kind'] }) => agentProposalSchema.parse({ params: {}, rationale: 'Because the logs say so', ...over });
@@ -718,7 +718,7 @@ describe('the report', () => {
     await platformDb(handle.db).insertInto('tenant_memberships').values([{ tenant_id: t.t.id, user_id: eng.id }] as never).execute();
     const a = await s.agentAdmin.create(admin, createAgentSchema.parse({ name: `Fixer-${Date.now()}`, kind: 'resolver' }));
     await s.agentAdmin.setPolicy(admin, a.id, t.t.id, { enabled: true, autonomy: { triage: 3, resolve: 3, internal_note: 3 } });
-    const p = { agentId: a.id, tokenId: 't', name: a.name, kind: 'resolver' as const, scopes: ['read', 'note', 'propose', 'act'] as ('read' | 'note' | 'propose' | 'act')[] };
+    const p = { agentId: a.id, tokenId: 't', worksOn: ['incidents', 'service_requests'] as ('incidents' | 'service_requests')[], name: a.name, kind: 'resolver' as const, scopes: ['read', 'note', 'propose', 'act'] as ('read' | 'note' | 'propose' | 'act')[] };
     const mk = () => s.svc.create(t.t, cara, call({ siteId: site }), false);
     const alone = await mk();
     await s.agentApi.claim(p, t.t.id, alone.id, { ttlSeconds: 600 });

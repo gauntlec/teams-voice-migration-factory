@@ -772,6 +772,14 @@ Intake, inbound email, knowledge, Teams and polish. Platform migrations `0021_in
 - **Tests**: 14 intake, 12 inbound email, 6 knowledge, 10 Teams database tests plus rules tests for each new shared module.
 - **Not in this chunk**: attachments by email (the count is logged, files are dropped), Graph-based mailbox polling, a status page for customers.
 
+## Assistant areas (after chunk 8)
+
+Each assistant is now set up for **incidents**, **service requests**, or **both**. It separates the roles: an incident assistant reads untrusted
+customer text and never reaches the change tools; a change assistant never reads incident text. Enforced in the agent auth guard (`403
+wrong_area`), the events feed and webhooks; the MCP server offers only the area's tools (and `whoami`, backed by `GET /agent/v1/me`); the admin
+page asks for "Works on" and shows only the relevant autonomy rows. Migration platform `0024_agent_works_on.sql`. See [AGENTS.md](AGENTS.md)
+"Where an assistant works" and [AI-BOT-SETUP.md](AI-BOT-SETUP.md).
+
 ## Build log
 
 | Chunk | Status | Commit / notes |

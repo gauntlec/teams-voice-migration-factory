@@ -31,6 +31,7 @@ export function client({ baseUrl, token, fetchImpl = fetch }) {
   }
   const at = (inc) => `/incidents/${inc.tenant_id}/${inc.id}`;
   return {
+    me: () => call('GET', '/me'),
     queue: (qs = 'status=open&assigned=unassigned') => call('GET', `/incidents?${qs}`),
     events: (after) => call('GET', `/events?after=${after}&limit=100`),
     get: (inc) => call('GET', at(inc)),
@@ -124,6 +125,13 @@ if (process.argv[1] && import.meta.url === new URL(process.argv[1], 'file://').h
     process.exit(1);
   }
   const api = client({ baseUrl, token });
+  // Ask who we are first: this assistant must be set up for incidents (Administration > Assistants > Works on).
+  const me = await api.me();
+  if (!me.worksOn.includes('incidents')) {
+    console.error(`${me.name} is set up for ${me.worksOn.join(' and ')}, not incidents. Use an assistant set up for incidents.`);
+    process.exit(1);
+  }
+  console.log(`${me.name} works on ${me.worksOn.join(', ')} for ${me.customers.length} customer(s).`);
   let after = 0;
   const handled = new Set();
   // Poll the queue, and the events feed for anything that needs a second look. A webhook could replace the polling.

@@ -62,7 +62,7 @@ async function discovery(at: string | null = new Date(Date.now() - 86_400_000).t
 async function bot(diag: 0 | 1 | 2 | 3, extra: AgentAutonomy = {}) {
   const a = await s.agentAdmin.create(admin, createAgentSchema.parse({ name: `Diag-${++n}-${Date.now() % 100000}`, kind: 'diagnostic' }));
   await s.agentAdmin.setPolicy(admin, a.id, c.t.id, { enabled: true, autonomy: { diagnostic_read: diag, internal_note: 3, triage: 3, ...extra } });
-  return { id: a.id, name: a.name, p: { agentId: a.id, tokenId: 't', name: a.name, kind: 'diagnostic' as const, scopes: ['read', 'note', 'propose', 'act'] as ('read' | 'note' | 'propose' | 'act')[] } };
+  return { id: a.id, name: a.name, p: { agentId: a.id, tokenId: 't', worksOn: ['incidents', 'service_requests'] as ('incidents' | 'service_requests')[], name: a.name, kind: 'diagnostic' as const, scopes: ['read', 'note', 'propose', 'act'] as ('read' | 'note' | 'propose' | 'act')[] } };
 }
 
 beforeAll(async () => {

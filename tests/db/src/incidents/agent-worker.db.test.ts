@@ -42,7 +42,7 @@ const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
 async function bot(autonomy = {}) {
   const a = await s.agentAdmin.create(admin, createAgentSchema.parse({ name: `Worker-${++n}-${Date.now() % 100000}`, kind: 'triage' }));
   await s.agentAdmin.setPolicy(admin, a.id, c.t.id, { enabled: true, autonomy });
-  return { id: a.id, name: a.name, p: { agentId: a.id, tokenId: 't', name: a.name, kind: 'triage' as const, scopes: ['read', 'note', 'propose', 'act'] as ('read' | 'note' | 'propose' | 'act')[] } };
+  return { id: a.id, name: a.name, p: { agentId: a.id, tokenId: 't', worksOn: ['incidents', 'service_requests'] as ('incidents' | 'service_requests')[], name: a.name, kind: 'triage' as const, scopes: ['read', 'note', 'propose', 'act'] as ('read' | 'note' | 'propose' | 'act')[] } };
 }
 
 beforeAll(async () => {

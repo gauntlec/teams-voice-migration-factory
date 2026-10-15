@@ -29,10 +29,26 @@ everything on the timeline as "Name (AI)". It adds nothing the REST API cannot d
 `VOXSHIFT_URL` is the Voxshift address (no `/api`); the token is shown once when created. Keep it out of
 version control. A token that is revoked, expired or paused stops working at once (the tools say so).
 
+## Which tools an assistant sees
+
+Each assistant is set up for **incidents**, **service requests**, or **both** ([AGENTS.md](AGENTS.md), "Where an assistant works"). When the server
+starts it calls `GET /me`, and offers only the tools for those areas:
+
+| Assistant works on | Tools offered |
+|---|---|
+| Incidents | `whoami`, `get_events`, and every incident tool (`list_incidents` ... `hand_off`); prompt `work_incident` |
+| Service requests | `whoami`, `get_events`, and every service request tool (`list_service_requests` ... `hand_off_request`, `deploy_request`); prompt `work_service_request` |
+| Both | everything |
+
+If Voxshift cannot be asked at start-up (the network, or an older Voxshift), every tool is offered and the API still refuses anything the
+assistant is not set up for (`403 wrong_area`; the tool result says so and what to do). `whoami` says the assistant's name, area, scopes and,
+for each customer, the autonomy levels that apply.
+
 ## Tools
 
 | Tool | What it does | Needs |
 |---|---|---|
+| `whoami` | this assistant's name, where it works, its scopes, and its customers with the levels that apply | `read` |
 | `list_incidents` | the queue across the customers it may work; `assigned` = `unassigned` or `me` | `read` |
 | `get_incident` | record, full timeline, items, known errors, similar incidents, checks run and worth running, **knowledge snippets that match**, claim, proposals, and **your autonomy** | `read` |
 | `claim_incident` / `renew_claim` / `release_incident` | take, keep and give up the lease on an incident | `note`; triage >= Suggest |

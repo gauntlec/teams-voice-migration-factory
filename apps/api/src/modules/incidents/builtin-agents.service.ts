@@ -86,7 +86,7 @@ export class BuiltinAgentsService implements OnModuleInit, OnModuleDestroy {
       const p = platformDb(this.db);
       const kill = await p.selectFrom('agent_kill_switch').select('all_disabled').where('id', '=', 1).executeTakeFirst();
       if (kill?.all_disabled) return stats;
-      const agents = await p.selectFrom('agents').select(['id', 'name', 'kind', 'builtin_key']).where('builtin_key', 'is not', null).where('status', '=', 'active').execute();
+      const agents = await p.selectFrom('agents').select(['id', 'name', 'kind', 'builtin_key', 'works_on']).where('builtin_key', 'is not', null).where('status', '=', 'active').execute();
       for (const a of agents) {
         let q = p
           .selectFrom('agent_customer_policy as cp')
@@ -99,7 +99,7 @@ export class BuiltinAgentsService implements OnModuleInit, OnModuleDestroy {
           .where('t.agents_enabled', '=', true);
         if (opts.tenantId) q = q.where('t.id', '=', opts.tenantId);
         const tenants = await q.execute();
-        const principal: AgentPrincipal = { agentId: a.id, tokenId: 'builtin', name: a.name, kind: a.kind, scopes: ['read', 'note', 'propose', 'act'] };
+        const principal: AgentPrincipal = { agentId: a.id, tokenId: 'builtin', name: a.name, kind: a.kind, scopes: ['read', 'note', 'propose', 'act'], worksOn: a.works_on };
         for (const t of tenants) {
           const levels = agentEffectiveAutonomy((t.autonomy ?? {}) as AgentAutonomy);
           const key = a.builtin_key as BuiltinAgentKey;
@@ -330,7 +330,7 @@ export class BuiltinAgentsService implements OnModuleInit, OnModuleDestroy {
    */
   async ask(t: TenantContext, user: AuthedUser, incidentId: string, input: AskAssistantInput): Promise<{ delivered: 'builtin' | 'event'; message: string }> {
     const p = platformDb(this.db);
-    const agent = await p.selectFrom('agents').select(['id', 'name', 'kind', 'status', 'builtin_key']).where('id', '=', input.agentId).executeTakeFirst();
+    const agent = await p.selectFrom('agents').select(['id', 'name', 'kind', 'status', 'builtin_key', 'works_on']).where('id', '=', input.agentId).executeTakeFirst();
     if (!agent) throw new BadRequestException('That assistant does not exist.');
     if (agent.builtin_key === 'changes') throw new BadRequestException('Voxshift Changes works service requests. Assign a request to it from the request page.');
     const kill = await p.selectFrom('agent_kill_switch').select('all_disabled').where('id', '=', 1).executeTakeFirst();
@@ -356,7 +356,7 @@ export class BuiltinAgentsService implements OnModuleInit, OnModuleDestroy {
     await this.events.emit(t.id, row, 'incident.assist_requested', { question: input.question, askedBy: user.displayName }, agent.id);
 
     if (!agent.builtin_key) return { delivered: 'event', message: `Sent to ${agentLabel(agent.name)}. It will reply on the timeline.` };
-    const principal: AgentPrincipal = { agentId: agent.id, tokenId: 'builtin', name: agent.name, kind: agent.kind, scopes: ['read', 'note', 'propose', 'act'] };
+    const principal: AgentPrincipal = { agentId: agent.id, tokenId: 'builtin', name: agent.name, kind: agent.kind, scopes: ['read', 'note', 'propose', 'act'], worksOn: agent.works_on };
     const levels = agentEffectiveAutonomy((policy.autonomy ?? {}) as AgentAutonomy);
     const now = new Date();
     const blocked = (what: string) => ({ delivered: 'builtin' as const, message: `${agentLabel(agent.name)} is set to observe only for ${what} on this customer, so it cannot help yet. Change that on Administration → Assistants.` });

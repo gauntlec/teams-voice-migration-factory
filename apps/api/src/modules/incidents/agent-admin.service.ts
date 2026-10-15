@@ -5,6 +5,7 @@ import {
   AGENT_ACTION_CLASSES,
   AGENT_LEVEL_CAPS,
   BUILTIN_AGENTS,
+  agentClassesFor,
   agentEffectiveAutonomy,
   agentTokenHint,
   formatAgentToken,
@@ -59,10 +60,10 @@ export class AgentAdminService {
     try {
       const a = await platformDb(this.db)
         .insertInto('agents')
-        .values({ name: input.name, kind: input.kind, description: input.description, model_label: input.modelLabel, msp_id: input.mspId ?? null, created_by: user.id })
+        .values({ name: input.name, kind: input.kind, description: input.description, model_label: input.modelLabel, msp_id: input.mspId ?? null, works_on: input.worksOn, created_by: user.id })
         .returningAll()
         .executeTakeFirstOrThrow();
-      await this.audit.platform('agent.created', { actor: { id: user.id, email: user.email }, targetType: 'agent', targetId: a.id, detail: { name: a.name, kind: a.kind } });
+      await this.audit.platform('agent.created', { actor: { id: user.id, email: user.email }, targetType: 'agent', targetId: a.id, detail: { name: a.name, kind: a.kind, worksOn: a.works_on } });
       return a;
     } catch (e) {
       if ((e as { code?: string }).code === '23505') throw new ConflictException('An agent with that name already exists.');
@@ -76,7 +77,7 @@ export class AgentAdminService {
     try {
       const a = await platformDb(this.db)
         .insertInto('agents')
-        .values({ name: def.name, kind: def.kind, description: def.description, model_label: def.modelLabel, builtin_key: input.key, created_by: user.id })
+        .values({ name: def.name, kind: def.kind, description: def.description, model_label: def.modelLabel, builtin_key: input.key, works_on: def.worksOn, created_by: user.id })
         .returningAll()
         .executeTakeFirstOrThrow();
       await this.audit.platform('agent.created', { actor: { id: user.id, email: user.email }, targetType: 'agent', targetId: a.id, detail: { name: a.name, kind: a.kind, builtin: input.key } });
@@ -108,11 +109,13 @@ export class AgentAdminService {
         }),
       webhooks: webhooks.map((w) => ({ ...w, cursor: Number(w.cursor) })),
       caps: AGENT_LEVEL_CAPS,
+      /** The action classes that matter for where this assistant works. The page only asks about these. */
+      classes: agentClassesFor(a.works_on),
     };
   }
 
   async update(user: AuthedUser, id: string, input: UpdateAgentInput) {
-    await this.agent(id);
+    const current = await this.agent(id);
     const set: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (input.name !== undefined) set.name = input.name;
     if (input.kind !== undefined) set.kind = input.kind;
@@ -120,6 +123,11 @@ export class AgentAdminService {
     if (input.modelLabel !== undefined) set.model_label = input.modelLabel;
     if (input.status !== undefined) set.status = input.status;
     if (input.mspId !== undefined) set.msp_id = input.mspId;
+    if (input.worksOn !== undefined) {
+      // The assistants Voxshift ships do one job, so where they work is not for changing.
+      if (current.builtin_key) throw new BadRequestException('A built-in assistant works where it was made to work.');
+      set.works_on = input.worksOn;
+    }
     try {
       const a = await platformDb(this.db).updateTable('agents').set(set).where('id', '=', id).returningAll().executeTakeFirstOrThrow();
       await this.audit.platform('agent.updated', { actor: { id: user.id, email: user.email }, targetType: 'agent', targetId: id, detail: { changed: Object.keys(input), status: input.status } });
@@ -162,6 +170,9 @@ export class AgentAdminService {
       const level = input.autonomy[c];
       if (level !== undefined && level > AGENT_LEVEL_CAPS[c]) throw new BadRequestException(`"${c}" can't go above level ${AGENT_LEVEL_CAPS[c]}.`);
     }
+    // Only the actions for the areas this assistant works in are kept; a level for anything else would never be used.
+    const relevant = new Set<string>(agentClassesFor(a.works_on));
+    input = { ...input, autonomy: Object.fromEntries(Object.entries(input.autonomy).filter(([k]) => relevant.has(k))) };
     await platformDb(this.db)
       .insertInto('agent_customer_policy')
       .values({ agent_id: id, tenant_id: tenantId, enabled: input.enabled, autonomy: JSON.stringify(input.autonomy), updated_by: user.id })

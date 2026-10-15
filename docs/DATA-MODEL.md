@@ -179,7 +179,7 @@ Service requests gained (0052): `assigned_agent_id`, `agent_hold`, `incident_id`
 | `service_request_claims` | One live lease per request (unique while `released_at` is null): `agent_id`, `note`, `started_at`, `expires_at`, `released_at`, `release_reason` |
 | `service_request_actions` | An assistant's proposals on a request: `kind` (`comment`/`status`/`external`), `action_class`, `params`, `rationale`, `risk`, `state`, `decided_by`, `connection_id` (the approver's tenant session, for a deploy), `fingerprint` (SHA-256 of the exact commands approved), `result`, `error` |
 
-Platform: `agent_events.request_id` (0019); `agents.builtin_key` may be `changes` (0020).
+Platform: `agent_events.request_id` (0019); `agents.builtin_key` may be `changes` (0020); `agents.works_on` (0024: `text[]`, any non-empty subset of `incidents`, `service_requests`; existing assistants became both, the built-in ones were narrowed to their one job).
 
 Chunk 8 (see [INTAKE.md](INTAKE.md)): tenant `incident_knowledge` (0053: `title`, `category`/`subcategory`, `symptoms`, `fix`, `customer_text`, `source_incident_id`, `helpful`/`not_helpful`, `archived`). Platform: `intake_sources` (0021: per customer alert sources with `kind`, `config`, `secret_hash`, `last4`, `ip_allow`, `enabled`, `alerts_received`), `inbound_reply_tokens`, `inbound_email_log` and `email_messages.reply_to` (0022), `msps.teams_webhook_enc` / `teams_notify` and the `msp_notifications` outbox (0023). Incident `source` may be a monitoring source name; the timeline actor may be `system`.
 

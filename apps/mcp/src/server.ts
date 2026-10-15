@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import {
   AGENT_CONFIDENCE,
+  AGENT_DOMAINS,
   AGENT_PROPOSAL_KINDS,
   AGENT_PROPOSAL_KIND_KEYS,
   AGENT_RISKS,
@@ -11,6 +12,7 @@ import {
   INC_ITEM_KINDS,
   INC_PRIORITIES,
   INC_STATUSES,
+  type AgentDomain,
 } from '@tvmf/shared';
 import { AgentApiClient, VoxshiftError } from './client';
 
@@ -27,7 +29,9 @@ const ok = (v: unknown): Result => ({ content: [{ type: 'text', text: typeof v =
 function failure(e: unknown): Result {
   if (e instanceof VoxshiftError) {
     const hint =
-      e.code === 'propose_instead'
+      e.code === 'wrong_area'
+        ? ' This assistant was set up for a different area (see whoami). Do not retry: use only the tools you were given, and ask a person if you need the other area.'
+        : e.code === 'propose_instead'
         ? ' Use propose_action instead: a person decides, and you carry it out if it is a step for you.'
         : e.code === 'taken_over'
           ? ' A person has taken this incident over. Stop changing it; you may still read it.'
@@ -65,14 +69,33 @@ const WRITE = { readOnlyHint: false, destructiveHint: false, openWorldHint: fals
  * the agent, the lease, and proposals for anything it may not do alone. The model is told in each description what the
  * call needs, and a refusal says what to do next.
  */
-export function createMcpServer(api: AgentApiClient, info: { name?: string; version?: string } = {}): McpServer {
+export function createMcpServer(api: AgentApiClient, info: { name?: string; version?: string } = {}, worksOn: readonly AgentDomain[] = AGENT_DOMAINS): McpServer {
   const server = new McpServer({ name: info.name ?? 'voxshift-incidents', version: info.version ?? '0.1.0' });
   // The SDK's generic inference over zod shapes is very expensive for this many tools; the shapes are checked by zod at
   // run time and by the tests, so the registration helpers take them loosely.
   const tool = (name: string, config: ToolConfig, handler: (a: Args) => Promise<Result>) => (server.registerTool as unknown as RegisterTool).call(server, name, config, handler);
   const prompt = (name: string, config: PromptConfig, handler: (a: Args) => unknown) => (server.registerPrompt as unknown as RegisterPrompt).call(server, name, config, handler);
+  // An assistant is set up for incidents, service requests, or both (docs/AGENTS.md). It is only given the tools for those, so a bot
+  // for one area never even sees the other's.
+  const inIncidents = worksOn.includes('incidents');
+  const inRequests = worksOn.includes('service_requests');
+  const incTool: typeof tool = (n, c, h) => (inIncidents ? tool(n, c, h) : undefined);
+  const reqTool: typeof tool = (n, c, h) => (inRequests ? tool(n, c, h) : undefined);
+  const incPrompt: typeof prompt = (n, c, h) => (inIncidents ? prompt(n, c, h) : undefined);
+  const reqPrompt: typeof prompt = (n, c, h) => (inRequests ? prompt(n, c, h) : undefined);
 
   tool(
+    'whoami',
+    {
+      title: 'Who am I',
+      description: 'This assistant\'s name, where it works (incidents, service requests, or both), its token scopes, and for each customer it is allowed on, the autonomy levels that apply to it. Call it first: it tells you what you may do before you try.',
+      inputSchema: {},
+      annotations: READ,
+    },
+    () => run(() => api.me()),
+  );
+
+  incTool(
     'list_incidents',
     {
       title: 'List incidents',
@@ -83,7 +106,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     (a: Args) => run(() => api.listIncidents(a)),
   );
 
-  tool(
+  incTool(
     'get_incident',
     {
       title: 'Read an incident',
@@ -94,7 +117,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     (a: Args) => run(() => api.getIncident(a.tenantId, a.incidentId)),
   );
 
-  tool(
+  incTool(
     'claim_incident',
     {
       title: 'Take an incident on',
@@ -105,19 +128,19 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     (a: Args) => run(() => api.claim(a.tenantId, a.incidentId, { ttlSeconds: a.ttlSeconds, note: a.note }, a.idempotencyKey)),
   );
 
-  tool(
+  incTool(
     'renew_claim',
     { title: 'Renew your lease', description: 'Extend your lease on an incident you hold.', inputSchema: { ...both, ttlSeconds: z.number().int().min(60).max(3600).optional() }, annotations: WRITE },
     (a: Args) => run(() => api.heartbeat(a.tenantId, a.incidentId, { ttlSeconds: a.ttlSeconds })),
   );
 
-  tool(
+  incTool(
     'release_incident',
     { title: 'Let go of an incident', description: 'Give up your lease. The incident goes back to the queue (you are no longer its assignee). Use hand_off instead when you have something to tell the next person.', inputSchema: both, annotations: WRITE },
     (a: Args) => run(() => api.release(a.tenantId, a.incidentId)),
   );
 
-  tool(
+  incTool(
     'add_internal_note',
     {
       title: 'Add an internal note',
@@ -128,7 +151,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     (a: Args) => run(() => api.note(a.tenantId, a.incidentId, { body: a.body, expectedVersion: a.expectedVersion }, a.idempotencyKey)),
   );
 
-  tool(
+  incTool(
     'change_status',
     {
       title: 'Change status',
@@ -139,19 +162,19 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     (a: Args) => run(() => api.status(a.tenantId, a.incidentId, { to: a.to, note: a.note, holdReason: a.holdReason, duplicateOf: a.duplicateOf, expectedVersion: a.expectedVersion }, a.idempotencyKey)),
   );
 
-  tool(
+  incTool(
     'set_priority',
     { title: 'Change priority', description: 'Needs a held lease and "act alone" triage autonomy; otherwise propose_action kind "set_priority". The reason stays internal.', inputSchema: { ...both, priority: z.enum(INC_PRIORITIES), reason: z.string().min(3).max(1000), expectedVersion, idempotencyKey }, annotations: WRITE },
     (a: Args) => run(() => api.priority(a.tenantId, a.incidentId, { priority: a.priority, reason: a.reason, expectedVersion: a.expectedVersion }, a.idempotencyKey)),
   );
 
-  tool(
+  incTool(
     'link_item',
     { title: 'Link an affected item', description: 'Record a user, number, queue, site ... the incident is about. Needs a held lease and triage autonomy.', inputSchema: { ...both, kind: z.enum(INC_ITEM_KINDS), ref: z.string().min(1).max(200), label: z.string().max(200).optional(), idempotencyKey }, annotations: WRITE },
     (a: Args) => run(() => api.linkItem(a.tenantId, a.incidentId, { kind: a.kind, ref: a.ref, label: a.label }, a.idempotencyKey)),
   );
 
-  tool(
+  incTool(
     'list_runbooks',
     {
       title: 'List diagnostic checks',
@@ -162,7 +185,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     async () => ok(Object.values(DIAG_RUNBOOKS)),
   );
 
-  tool(
+  incTool(
     'run_diagnostic',
     {
       title: 'Run a diagnostic check',
@@ -173,14 +196,14 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     (a: Args) => run(() => api.diagnostic(a.tenantId, a.incidentId, { runbook: a.runbook, input: a.input, proposalId: a.proposalId }, a.idempotencyKey)),
   );
 
-  tool(
+  incTool(
     'list_diagnostics',
     { title: 'Checks already run', description: 'Checks run on this incident so far, and the checks worth running.', inputSchema: both, annotations: READ },
     (a: Args) => run(() => api.diagnostics(a.tenantId, a.incidentId)),
   );
 
   const kinds = AGENT_PROPOSAL_KIND_KEYS.map((k) => `${k} (${AGENT_PROPOSAL_KINDS[k].label})`).join('; ');
-  tool(
+  incTool(
     'propose_action',
     {
       title: 'Propose a next step',
@@ -199,13 +222,13 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     (a: Args) => run(() => api.propose(a.tenantId, a.incidentId, { kind: a.kind, params: a.params, rationale: a.rationale, risk: a.risk, expiresInMinutes: a.expiresInMinutes }, a.idempotencyKey)),
   );
 
-  tool(
+  incTool(
     'list_proposals',
     { title: 'My proposals', description: 'Your proposals on this incident and what became of them (proposed, approved, rejected, running, done, failed, expired).', inputSchema: both, annotations: READ },
     (a: Args) => run(() => api.proposals(a.tenantId, a.incidentId)),
   );
 
-  tool(
+  incTool(
     'report_proposal_result',
     {
       title: 'Report on an approved step',
@@ -216,7 +239,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     (a: Args) => run(() => api.proposalResult(a.tenantId, a.incidentId, a.proposalId, { state: a.state, result: a.result, error: a.error })),
   );
 
-  tool(
+  incTool(
     'hand_off',
     {
       title: 'Hand over to the team',
@@ -250,7 +273,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
   const requestId = z.string().uuid().describe('The service request id.');
   const reqBoth = { tenantId, requestId };
 
-  tool(
+  reqTool(
     'list_service_requests',
     {
       title: 'List service requests',
@@ -261,7 +284,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     (a: Args) => run(() => api.listRequests(a)),
   );
 
-  tool(
+  reqTool(
     'get_service_request',
     {
       title: 'Read a service request',
@@ -272,21 +295,21 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     (a: Args) => run(() => api.getRequest(a.tenantId, a.requestId)),
   );
 
-  tool(
+  reqTool(
     'claim_request',
     { title: 'Take a request on', description: 'Take a lease on the request (and become its assignee). You need one to change anything. Renew it with renew_request_claim while you work. Fails if someone else holds it or a person took it over.', inputSchema: { ...reqBoth, ttlSeconds: z.number().int().min(60).max(3600).optional(), note: z.string().max(500).optional(), idempotencyKey }, annotations: WRITE },
     (a: Args) => run(() => api.claimRequest(a.tenantId, a.requestId, { ttlSeconds: a.ttlSeconds, note: a.note }, a.idempotencyKey)),
   );
-  tool('renew_request_claim', { title: 'Renew your lease on a request', description: 'Extend your lease.', inputSchema: { ...reqBoth, ttlSeconds: z.number().int().min(60).max(3600).optional() }, annotations: WRITE }, (a: Args) => run(() => api.heartbeatRequest(a.tenantId, a.requestId, { ttlSeconds: a.ttlSeconds })));
-  tool('release_request', { title: 'Let go of a request', description: 'Give up your lease; the request goes back to the queue. Use hand_off_request when you have something to tell the next person.', inputSchema: reqBoth, annotations: WRITE }, (a: Args) => run(() => api.releaseRequest(a.tenantId, a.requestId)));
+  reqTool('renew_request_claim', { title: 'Renew your lease on a request', description: 'Extend your lease.', inputSchema: { ...reqBoth, ttlSeconds: z.number().int().min(60).max(3600).optional() }, annotations: WRITE }, (a: Args) => run(() => api.heartbeatRequest(a.tenantId, a.requestId, { ttlSeconds: a.ttlSeconds })));
+  reqTool('release_request', { title: 'Let go of a request', description: 'Give up your lease; the request goes back to the queue. Use hand_off_request when you have something to tell the next person.', inputSchema: reqBoth, annotations: WRITE }, (a: Args) => run(() => api.releaseRequest(a.tenantId, a.requestId)));
 
-  tool(
+  reqTool(
     'add_request_note',
     { title: 'Add an internal note to a request', description: 'A note only the MSP team sees. Needs the "note" scope and internal-notes autonomy of at least Suggest.', inputSchema: { ...reqBoth, body: z.string().min(1).max(4000), idempotencyKey }, annotations: WRITE },
     (a: Args) => run(() => api.requestNote(a.tenantId, a.requestId, { body: a.body }, a.idempotencyKey)),
   );
 
-  tool(
+  reqTool(
     'move_request',
     {
       title: 'Move a request to Planned or Designed & built',
@@ -297,7 +320,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     (a: Args) => run(() => api.requestStatus(a.tenantId, a.requestId, { to: a.to, note: a.note }, a.idempotencyKey)),
   );
 
-  tool(
+  reqTool(
     'apply_request',
     {
       title: 'Apply the request to the design',
@@ -308,7 +331,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     (a: Args) => run(() => api.applyRequest(a.tenantId, a.requestId, { proposalId: a.proposalId }, a.idempotencyKey)),
   );
 
-  tool(
+  reqTool(
     'what_if_request',
     {
       title: 'Run a What-If on a request',
@@ -319,7 +342,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     (a: Args) => run(() => api.requestWhatIf(a.tenantId, a.requestId, { proposalId: a.proposalId }, a.idempotencyKey)),
   );
 
-  tool(
+  reqTool(
     'deploy_request',
     {
       title: 'Deploy an approved change',
@@ -330,7 +353,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     (a: Args) => run(() => api.deployRequest(a.tenantId, a.requestId, { proposalId: a.proposalId }, a.idempotencyKey)),
   );
 
-  tool(
+  reqTool(
     'propose_request_action',
     {
       title: 'Propose a next step on a request',
@@ -340,13 +363,13 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     },
     (a: Args) => run(() => api.proposeOnRequest(a.tenantId, a.requestId, { kind: a.kind, params: a.params, rationale: a.rationale, risk: a.risk, expiresInMinutes: a.expiresInMinutes }, a.idempotencyKey)),
   );
-  tool('list_request_proposals', { title: 'My proposals on a request', description: 'Your proposals on this request and what became of them.', inputSchema: reqBoth, annotations: READ }, (a: Args) => run(() => api.requestProposals(a.tenantId, a.requestId)));
-  tool(
+  reqTool('list_request_proposals', { title: 'My proposals on a request', description: 'Your proposals on this request and what became of them.', inputSchema: reqBoth, annotations: READ }, (a: Args) => run(() => api.requestProposals(a.tenantId, a.requestId)));
+  reqTool(
     'report_request_proposal_result',
     { title: 'Report on an approved step', description: 'After carrying out an approved design or What-If step yourself: running, done or failed. (A deployment reports its own outcome.)', inputSchema: { ...reqBoth, proposalId: z.string().uuid(), state: z.enum(['running', 'done', 'failed']), result: z.record(z.unknown()).optional(), error: z.string().max(2000).optional() }, annotations: WRITE },
     (a: Args) => run(() => api.requestProposalResult(a.tenantId, a.requestId, a.proposalId, { state: a.state, result: a.result, error: a.error })),
   );
-  tool(
+  reqTool(
     'hand_off_request',
     {
       title: 'Hand a request over to the team',
@@ -363,7 +386,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     (a: Args) => run(() => api.handoffRequest(a.tenantId, a.requestId, { to: a.to, toUserId: a.toUserId, summary: a.summary }, a.idempotencyKey)),
   );
 
-  prompt(
+  incPrompt(
     'work_incident',
     {
       title: 'Work an incident',
@@ -392,7 +415,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     }),
   );
 
-  prompt(
+  reqPrompt(
     'work_service_request',
     {
       title: 'Carry a change request through',

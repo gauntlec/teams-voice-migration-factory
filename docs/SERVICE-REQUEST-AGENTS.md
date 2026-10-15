@@ -5,6 +5,13 @@ where every step is mechanical and can be checked. This page is the design, the 
 platform itself is [AGENTS.md](AGENTS.md); the assistant Voxshift ships for this is **Voxshift Changes**
 ([BUILTIN-AGENTS.md](BUILTIN-AGENTS.md)); the MCP tools are in [MCP.md](MCP.md).
 
+## Who may do this: assistants set up for service requests
+
+Only an assistant whose **Works on** includes **Service requests** can use these routes; an incident-only assistant is refused with `403 wrong_area`
+([AGENTS.md](AGENTS.md), "Where an assistant works"). The recommended pattern is a **change assistant that works on service requests only**:
+it never reads incident text, so nothing a customer or a monitoring tool wrote in an incident can steer it towards a change. The built-in
+**Voxshift Changes** is exactly that. The skill to give a bot is `docs/agents/voxshift-service-request-assistant/SKILL.md`.
+
 ## Which requests qualify (automation profile)
 
 Only a request whose type is a **change or removal of something that already exists in Design & Build**, and where

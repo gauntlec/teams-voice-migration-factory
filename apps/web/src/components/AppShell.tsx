@@ -57,6 +57,7 @@ import { api } from '../api';
 import { useAuth } from '../auth';
 import { TOASTER_ID } from '../hooks/useNotify';
 import { useThemeMode } from '../ThemeMode';
+import { ErrorBoundary } from './ErrorBoundary';
 import { Wordmark } from './Logo';
 
 const useLocalStyles = makeStyles({
@@ -449,7 +450,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               </MessageBarBody>
             </MessageBar>
           )}
-          {children}
+          <ErrorBoundary key={pathname}>{children}</ErrorBoundary>
         </main>
       </div>
     </div>
