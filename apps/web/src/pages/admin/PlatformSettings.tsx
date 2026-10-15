@@ -108,7 +108,16 @@ export function AdminPlatformSettings() {
   const s = useLocalStyles();
   const qc = useQueryClient();
   const notify = useNotify();
-  const q = useQuery({ queryKey: ['platform-settings'], queryFn: () => api<BaseUrlView | null>('/platform/settings') });
+  // While a hub connection has not reported in yet (or is failing) look again every few seconds, so the card shows the first report as soon as the worker
+  // sends it (it reports once a minute); otherwise just keep the page fresh.
+  const q = useQuery({
+    queryKey: ['platform-settings'],
+    queryFn: () => api<BaseUrlView | null>('/platform/settings'),
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      return d?.hub.connected && hubLinkState(d.hub) !== 'ok' ? 10_000 : 60_000;
+    },
+  });
   const [value, setValue] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const view = q.data ?? null;
