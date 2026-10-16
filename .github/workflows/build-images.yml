@@ -160,6 +160,10 @@ jobs:
             "tvmf-${{ matrix.name }}:ci" > scan.txt 2>&1 || rc=$?
           { echo "### tvmf-${{ matrix.name }} image scan (fixable HIGH and CRITICAL)"; echo '```'; cat scan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           cat scan.txt
+          # Where each finding lives (the table above does not say), so a finding in a vendor module can be told from one in our code.
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/" "$TRIVY_IMAGE" image \
+            --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --no-progress --format json "tvmf-${{ matrix.name }}:ci" > scan.json 2>/dev/null || true
+          { echo "#### Where the findings are"; echo '```'; jq -r '.Results[]? | select((.Vulnerabilities // []) | length > 0) | .Target as $t | .Vulnerabilities[] | "\($t) | \(.PkgName) \(.InstalledVersion) | \(.PkgPath // "-")"' scan.json | sort -u; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
 
       # Same layers as above (cache hit); adds a software bill of materials and build provenance to the published image.
