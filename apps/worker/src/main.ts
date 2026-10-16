@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { writeFileSync } from 'node:fs';
 import { Worker, type Job } from 'bullmq';
 import IORedis from 'ioredis';
 import { sql } from 'kysely';
@@ -1153,3 +1154,10 @@ async function shutdown() {
 }
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+
+// Liveness for the container healthcheck (deploy/dockge/compose.yaml): touch a file every 15 seconds. If the event loop hangs the file goes stale
+// and Docker marks the worker unhealthy. Best effort: a failed write never stops the worker.
+const ALIVE_FILE = '/tmp/worker-alive';
+const touchAlive = () => { try { writeFileSync(ALIVE_FILE, String(Date.now())); } catch { /* read-only or full disk: ignore */ } };
+touchAlive();
+setInterval(touchAlive, 15_000).unref();

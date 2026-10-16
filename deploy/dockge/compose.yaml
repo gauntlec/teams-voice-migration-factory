@@ -7,11 +7,30 @@
 # One-time: make ghcr.io/gauntlec/tvmf-{api,worker,web} packages Public
 # (GitHub -> profile -> Packages -> each package -> Package settings ->
 #  Change visibility). Until then Dockge can't pull them anonymously.
+#
+# Hardening on every service: no-new-privileges, all Linux capabilities dropped (only the few each image needs are added back), and
+# capped log files (3 x 10 MB) so a chatty container cannot fill the disk. api, web and redis also have a read-only root filesystem
+# (their only writable places are the volumes and tmpfs mounts below). api, worker and web have healthchecks.
 # ---------------------------------------------------------------------------
 services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-tvmf}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
@@ -27,6 +46,20 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redisdata:/data
@@ -40,6 +73,23 @@ services:
     image: ghcr.io/gauntlec/tvmf-api:latest
     pull_policy: always
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    # The entrypoint starts as root only to hand an older, root-owned files volume to the app user once, then drops to "node".
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     env_file: .env
     environment:
       NODE_ENV: production
@@ -52,6 +102,12 @@ services:
     # needs the host port - and leaving it open lets anyone who can reach it
     # bypass OpenResty + web's nginx entirely, forge X-Forwarded-For, and have
     # main.ts's `trust proxy` setting believe it (see docs/SECURITY.md).
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
     depends_on:
       postgres:
         condition: service_healthy
@@ -62,9 +118,25 @@ services:
     image: ghcr.io/gauntlec/tvmf-worker:latest
     pull_policy: always
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     env_file: .env
     environment:
       NODE_ENV: production
+    # The worker touches /tmp/worker-alive every 15 s; a stale file means its event loop is stuck.
+    healthcheck:
+      test: ["CMD", "node", "-e", "try{process.exit(Date.now()-require('fs').statSync('/tmp/worker-alive').mtimeMs<120000?0:1)}catch{process.exit(1)}"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
     depends_on:
       postgres:
         condition: service_healthy
@@ -77,8 +149,33 @@ services:
     image: ghcr.io/gauntlec/tvmf-web:latest
     pull_policy: always
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
+      - /var/cache/nginx
+    security_opt:
+      - no-new-privileges:true
+    # nginx starts as root to bind port 80 and then runs its workers as "nginx".
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - NET_BIND_SERVICE
+      - SETGID
+      - SETUID
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
       - "5173:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/version.json"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     depends_on:
       - api
 
@@ -90,6 +187,10 @@ services:
     image: adminer:4
     restart: unless-stopped
     profiles: ["debug"]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     ports:
       - "8080:8080"
     depends_on:

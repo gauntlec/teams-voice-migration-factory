@@ -316,11 +316,28 @@ fi
 
 cat > "$DIR/compose.yaml" <<EOF
 # Voxshift - written by install.sh $VERSION_OF_INSTALLER. Edit .env, not this file; 'voxshift update' pulls new images.
+# Every service: no-new-privileges, all Linux capabilities dropped (only the few each image needs are added back) and capped log files.
+# api, web and redis also have a read-only root filesystem. api, worker and web have healthchecks.
 name: voxshift
 services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       POSTGRES_USER: \${POSTGRES_USER:-tvmf}
       POSTGRES_PASSWORD: \${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
@@ -336,6 +353,20 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redisdata:/data
@@ -348,6 +379,23 @@ services:
   api:
     image: ghcr.io/$IMAGE_OWNER/tvmf-api:\${IMAGE_TAG:-latest}
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    # The entrypoint starts as root only to hand an older, root-owned files volume to the app user once, then drops to "node".
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     env_file: .env
     environment:
       NODE_ENV: production
@@ -356,6 +404,12 @@ services:
     volumes:
       - filesdata:/data/files
     # Not published on the host: only the web container (and through it, Caddy) reaches it.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
     depends_on:
       postgres:
         condition: service_healthy
@@ -365,9 +419,25 @@ services:
   worker:
     image: ghcr.io/$IMAGE_OWNER/tvmf-worker:\${IMAGE_TAG:-latest}
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     env_file: .env
     environment:
       NODE_ENV: production
+    # The worker touches /tmp/worker-alive every 15 s; a stale file means its event loop is stuck.
+    healthcheck:
+      test: ["CMD", "node", "-e", "try{process.exit(Date.now()-require('fs').statSync('/tmp/worker-alive').mtimeMs<120000?0:1)}catch{process.exit(1)}"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
     depends_on:
       postgres:
         condition: service_healthy
@@ -379,13 +449,49 @@ services:
   web:
     image: ghcr.io/$IMAGE_OWNER/tvmf-web:\${IMAGE_TAG:-latest}
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
+      - /var/cache/nginx
+    security_opt:
+      - no-new-privileges:true
+    # nginx starts as root only to run its workers as "nginx"; it listens on port 80 inside the container and is not published (Caddy is the front door).
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - NET_BIND_SERVICE
+      - SETGID
+      - SETUID
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     # Not published: Caddy is the single front door (the API counts exactly two proxy hops: Caddy, then this nginx).
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/version.json"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     depends_on:
       - api
 
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
 $PORTS
     volumes:
