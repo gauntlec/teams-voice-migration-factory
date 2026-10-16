@@ -25,8 +25,10 @@ on:
     - cron: '0 6 * * 1'
 
 env:
-  # Vulnerability scan of every built image (Trivy). 0 = report only: findings are listed in the job summary but never block a release.
-  # Set to 1 to fail the build on any fixable HIGH/CRITICAL finding once the known dependency advisories are cleared (docs/SECURITY.md).
+  # Vulnerability scan of every built image (Trivy). Findings are always listed in the job summary. Whether they BLOCK the release is
+  # per image (`scan_exit` in the build matrix below): api and web fail the build on any fixable HIGH/CRITICAL finding, so an unfixed one
+  # never ships; the worker only reports, because its Microsoft Teams module and PowerShell base are Microsoft's to fix (docs/SECURITY.md).
+  # The weekly scan of the published images only reports.
   TRIVY_EXIT_CODE: '0'
   TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.76.0
 
@@ -89,15 +91,80 @@ jobs:
           last=$(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/v${ym}." --jq '.[].ref' | sed "s#refs/tags/v${ym}\.##" | grep -E '^[0-9]+$' | sort -n | tail -1 || true)
           echo "version=${ym}.$(( ${last:-0} + 1 ))" >> "$GITHUB_OUTPUT"
 
-  build:
+  # Builds each image (nothing is pushed), proves it starts, and scans it. Nothing is published unless ALL THREE pass, so a blocked
+  # scan on one image can never leave the others published on their own (the `publish` job below needs this whole job to succeed).
+  check:
     needs: [verify, version]
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            dockerfile: apps/api/Dockerfile
+            scan_exit: '1'
+          - name: worker
+            dockerfile: apps/worker/Dockerfile
+            scan_exit: '0'
+          - name: web
+            dockerfile: apps/web/Dockerfile
+            scan_exit: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # 1. Build it locally (nothing is pushed), 2. prove it starts and runs unprivileged, 3. scan it. The `publish` job then pushes it.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          load: true
+          push: false
+          platforms: linux/amd64
+          tags: tvmf-${{ matrix.name }}:ci
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          # The only build-args are the release number and the commit: they say which build this is (shown in Platform settings, sent to a
+          # Voxshift Hub, served as /version.json). They are used in the LAST layer of each image, so they never invalidate a cached layer:
+          # the worker Dockerfile's TEAMS_MODULE_VERSION/GRAPH_MODULE_VERSION ARGs still default to the pinned versions (no CACHE_BUST),
+          # which keeps the module-install layer fully cache-stable.
+          build-args: |
+            APP_VERSION=${{ needs.version.outputs.version }}
+            GIT_SHA=${{ github.sha }}
+
+      - name: Smoke test
+        run: .github/scripts/smoke-image.sh ${{ matrix.name }} tvmf-${{ matrix.name }}:ci
+
+      - name: Scan for vulnerabilities and secrets
+        run: |
+          mkdir -p "$HOME/.cache/trivy"
+          rc=0
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/" "$TRIVY_IMAGE" image \
+            --scanners vuln,secret --severity HIGH,CRITICAL --ignore-unfixed --no-progress --exit-code "${{ matrix.scan_exit }}" \
+            "tvmf-${{ matrix.name }}:ci" > scan.txt 2>&1 || rc=$?
+          { echo "### tvmf-${{ matrix.name }} image scan (fixable HIGH and CRITICAL)"; echo '```'; cat scan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          cat scan.txt
+          # Where each finding lives (the table above does not say), so a finding in a vendor module can be told from one in our code.
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/" "$TRIVY_IMAGE" image \
+            --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --no-progress --format json "tvmf-${{ matrix.name }}:ci" > scan.json 2>/dev/null || true
+          { echo "#### Where the findings are"; echo '```'; jq -r '.Results[]? | select((.Vulnerabilities // []) | length > 0) | .Target as $t | .Vulnerabilities[] | "\($t) | \(.PkgName) \(.InstalledVersion) | \(.PkgPath // "-")"' scan.json | sort -u; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+
+  # Pushes the images (all three, only after `check` passed for all three), with a software bill of materials and build provenance.
+  # The layers come from the cache `check` just wrote, so this is quick.
+  publish:
+    needs: [check, version]
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     strategy:
-      fail-fast: false
       matrix:
         include:
           - name: api
@@ -128,45 +195,6 @@ jobs:
             type=raw,value=${{ needs.version.outputs.version }}
             type=sha,format=long
 
-      # 1. Build it locally (nothing is pushed yet), 2. prove it starts and runs unprivileged, 3. scan it, 4. only then push it.
-      - name: Build image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          load: true
-          push: false
-          platforms: linux/amd64
-          tags: tvmf-${{ matrix.name }}:ci
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
-          # The only build-args are the release number and the commit: they say which build this is (shown in Platform settings, sent to a
-          # Voxshift Hub, served as /version.json). They are used in the LAST layer of each image, so they never invalidate a cached layer:
-          # the worker Dockerfile's TEAMS_MODULE_VERSION/GRAPH_MODULE_VERSION ARGs still default to the pinned versions (no CACHE_BUST),
-          # which keeps the module-install layer fully cache-stable.
-          build-args: |
-            APP_VERSION=${{ needs.version.outputs.version }}
-            GIT_SHA=${{ github.sha }}
-
-      - name: Smoke test
-        run: .github/scripts/smoke-image.sh ${{ matrix.name }} tvmf-${{ matrix.name }}:ci
-
-      - name: Scan for vulnerabilities and secrets
-        run: |
-          mkdir -p "$HOME/.cache/trivy"
-          rc=0
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/" "$TRIVY_IMAGE" image \
-            --scanners vuln,secret --severity HIGH,CRITICAL --ignore-unfixed --no-progress --exit-code "$TRIVY_EXIT_CODE" \
-            "tvmf-${{ matrix.name }}:ci" > scan.txt 2>&1 || rc=$?
-          { echo "### tvmf-${{ matrix.name }} image scan (fixable HIGH and CRITICAL)"; echo '```'; cat scan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          cat scan.txt
-          # Where each finding lives (the table above does not say), so a finding in a vendor module can be told from one in our code.
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/" "$TRIVY_IMAGE" image \
-            --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --no-progress --format json "tvmf-${{ matrix.name }}:ci" > scan.json 2>/dev/null || true
-          { echo "#### Where the findings are"; echo '```'; jq -r '.Results[]? | select((.Vulnerabilities // []) | length > 0) | .Target as $t | .Vulnerabilities[] | "\($t) | \(.PkgName) \(.InstalledVersion) | \(.PkgPath // "-")"' scan.json | sort -u; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          exit "$rc"
-
-      # Same layers as above (cache hit); adds a software bill of materials and build provenance to the published image.
       - name: Push
         uses: docker/build-push-action@v6
         with:
@@ -185,7 +213,7 @@ jobs:
 
   # Tags the commit v<release number> and publishes a GitHub release with notes, once all three images are built and pushed.
   release:
-    needs: [version, build]
+    needs: [version, publish]
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
@@ -199,7 +227,7 @@ jobs:
   # Weekly only - see the `on.schedule` comment above. Builds just the
   # worker image, unpinned, to ghcr.io/.../tvmf-worker:candidate (never
   # :latest, never pushed to production by Dockge). Deliberately does not
-  # depend on / block the `build` job above.
+  # depend on / block the `check` and `publish` jobs above.
   build-candidate:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest

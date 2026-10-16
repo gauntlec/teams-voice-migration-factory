@@ -19,6 +19,7 @@ RUN npm run build --workspace @tvmf/shared && npm run build --workspace @tvmf/we
 FROM nginx:stable-alpine AS runtime
 RUN apk upgrade --no-cache
 COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
+COPY apps/web/security-headers.conf /etc/nginx/security-headers.conf
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html
 # Which release this is (yyyy.mm.N, set by CI; "dev" when built by hand), served as /version.json so a deploy can be checked with curl.
 ARG APP_VERSION=dev

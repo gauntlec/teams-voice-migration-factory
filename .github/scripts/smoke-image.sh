@@ -28,6 +28,19 @@ case "$name" in
   web)
     docker run --rm --add-host api:127.0.0.1 --entrypoint sh "$image" -c 'nginx -t && test -s /usr/share/nginx/html/index.html && cat /usr/share/nginx/html/version.json' \
       || fail "nginx rejects its config or the app is missing"
+    # Start it for real and check what a browser would be sent.
+    cid=$(docker run -d --add-host api:127.0.0.1 -p 8081:80 "$image")
+    trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+    for i in $(seq 1 20); do curl -fsS -o /dev/null http://127.0.0.1:8081/version.json && break; sleep 1; done
+    asset=$(curl -fsS http://127.0.0.1:8081/ | grep -oE '/assets/[^"]+\.js' | head -1)
+    for path in / "$asset" /version.json; do
+      headers=$(curl -fsSI "http://127.0.0.1:8081$path") || fail "GET $path failed"
+      for h in "x-content-type-options: nosniff" "x-frame-options: DENY" "referrer-policy:" "permissions-policy:" "content-security-policy"; do
+        echo "$headers" | grep -qi "$h" || fail "GET $path is missing the $h header"
+      done
+    done
+    curl -fsSI http://127.0.0.1:8081/ | grep -i '^server:' | grep -q '[0-9]\.[0-9]' && fail "nginx announces its version"
+    echo "security headers present on the app shell, assets and /version.json"
     ;;
   *) fail "unknown image name" ;;
 esac
