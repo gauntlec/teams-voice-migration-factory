@@ -25,8 +25,9 @@ FROM mcr.microsoft.com/powershell:7.4-debian-12 AS runtime
 ENV NODE_ENV=production \
     POWERSHELL_TELEMETRY_OPTOUT=1 \
     DOTNET_CLI_TELEMETRY_OPTOUT=1
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libatomic1 \
   && rm -rf /var/lib/apt/lists/*
+# (libatomic1: the Node binary links it and the PowerShell base does not include it.)
 # Node comes from the official node image (the same one the other images are built on), not from a downloaded install script. The
 # build fails here, not at run time, if the binary cannot start on this base.
 COPY --from=node:26-bookworm-slim /usr/local/bin/node /usr/local/bin/node
