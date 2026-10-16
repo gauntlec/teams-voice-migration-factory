@@ -152,7 +152,9 @@ jobs:
           # Where each finding lives (the table above does not say), so a finding in a vendor module can be told from one in our code.
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/" "$TRIVY_IMAGE" image \
             --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --no-progress --format json "tvmf-${{ matrix.name }}:ci" > scan.json 2>/dev/null || true
-          { echo "#### Where the findings are"; echo '```'; jq -r '.Results[]? | select((.Vulnerabilities // []) | length > 0) | .Target as $t | .Vulnerabilities[] | "\($t) | \(.PkgName) \(.InstalledVersion) | \(.PkgPath // "-")"' scan.json | sort -u; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          jq -r '.Results[]? | select((.Vulnerabilities // []) | length > 0) | .Target as $t | .Vulnerabilities[] | "\($t) | \(.PkgName) \(.InstalledVersion) | \(.PkgPath // "-")"' scan.json | sort -u > where.txt
+          { echo "#### Where the findings are"; echo '```'; cat where.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          echo "WHERE THE FINDINGS ARE:"; cat where.txt
           exit "$rc"
 
   # Pushes the images (all three, only after `check` passed for all three), with a software bill of materials and build provenance.

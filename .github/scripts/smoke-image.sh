@@ -35,7 +35,7 @@ case "$name" in
     asset=$(curl -fsS http://127.0.0.1:8081/ | grep -oE '/assets/[^"]+\.js' | head -1)
     for path in / "$asset" /version.json; do
       headers=$(curl -fsSI "http://127.0.0.1:8081$path") || fail "GET $path failed"
-      for h in "x-content-type-options: nosniff" "x-frame-options: DENY" "referrer-policy:" "permissions-policy:" "content-security-policy"; do
+      for h in "x-content-type-options: nosniff" "x-frame-options: DENY" "referrer-policy:" "permissions-policy:" "content-security-policy: default-src"; do
         echo "$headers" | grep -qi "$h" || fail "GET $path is missing the $h header"
       done
     done
