@@ -16,7 +16,7 @@ Every push to `main` that changes more than documentation is a release (pushes t
 | | |
 |---|---|
 | Administration > Platform settings | "Voxshift 2026.10.3" under the title |
-| `GET /api/health` | `"version": "2026.10.3"` |
+| `GET /health` on the web address (Voxshift) or `GET /api/health` (the hub) | `"version": "2026.10.3"` |
 | `GET /version.json` on the web address | `{"version":"2026.10.3","commit":"<sha>"}`: the quickest check that a deploy landed, never cached |
 | A Voxshift Hub's instance list | the version each instance reports, once a minute |
 | `docker inspect` | image labels `org.opencontainers.image.version` and `.revision` |
