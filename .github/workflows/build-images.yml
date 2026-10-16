@@ -25,9 +25,10 @@ on:
     - cron: '0 6 * * 1'
 
 env:
-  # Vulnerability scan of every built image (Trivy). Findings are always listed in the job summary. Whether they BLOCK the release is
-  # per image (`scan_exit` in the build matrix below): api and web fail the build on any fixable HIGH/CRITICAL finding, so an unfixed one
-  # never ships; the worker only reports, because its Microsoft Teams module and PowerShell base are Microsoft's to fix (docs/SECURITY.md).
+  # Vulnerability scan of every built image (Trivy). Findings are always listed in the job summary and the log. In the `check` job any fixable
+  # HIGH/CRITICAL finding (or embedded secret) FAILS the build (`scan_exit` per image), so it never ships. One file is skipped:
+  # the Microsoft Teams module's _manifest/spdx_2.2/manifest.spdx.json is Microsoft's build bill of materials (it names npm and .NET packages
+  # used to BUILD the module, not code in the image), and Trivy reads it as if those packages were installed (docs/SECURITY.md).
   # The weekly scan of the published images only reports.
   TRIVY_EXIT_CODE: '0'
   TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.76.0
@@ -108,7 +109,7 @@ jobs:
             scan_exit: '1'
           - name: worker
             dockerfile: apps/worker/Dockerfile
-            scan_exit: '0'
+            scan_exit: '1'
           - name: web
             dockerfile: apps/web/Dockerfile
             scan_exit: '1'
@@ -143,15 +144,16 @@ jobs:
       - name: Scan for vulnerabilities and secrets
         run: |
           mkdir -p "$HOME/.cache/trivy"
+          skip=(--skip-files "**/_manifest/spdx_2.2/manifest.spdx.json" --skip-files "usr/local/share/powershell/Modules/*/*/_manifest/spdx_2.2/manifest.spdx.json")
           rc=0
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/" "$TRIVY_IMAGE" image \
-            --scanners vuln,secret --severity HIGH,CRITICAL --ignore-unfixed --no-progress --exit-code "${{ matrix.scan_exit }}" \
+            --scanners vuln,secret --severity HIGH,CRITICAL --ignore-unfixed "${skip[@]}" --no-progress --exit-code "${{ matrix.scan_exit }}" \
             "tvmf-${{ matrix.name }}:ci" > scan.txt 2>&1 || rc=$?
           { echo "### tvmf-${{ matrix.name }} image scan (fixable HIGH and CRITICAL)"; echo '```'; cat scan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           cat scan.txt
           # Where each finding lives (the table above does not say), so a finding in a vendor module can be told from one in our code.
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/" "$TRIVY_IMAGE" image \
-            --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --no-progress --format json "tvmf-${{ matrix.name }}:ci" > scan.json 2>/dev/null || true
+            --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed "${skip[@]}" --no-progress --format json "tvmf-${{ matrix.name }}:ci" > scan.json 2>/dev/null || true
           jq -r '.Results[]? | select((.Vulnerabilities // []) | length > 0) | .Target as $t | .Vulnerabilities[] | "\($t) | \(.PkgName) \(.InstalledVersion) | \(.PkgPath // "-")"' scan.json | sort -u > where.txt
           { echo "#### Where the findings are"; echo '```'; cat where.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           echo "WHERE THE FINDINGS ARE:"; cat where.txt
@@ -287,9 +289,10 @@ jobs:
       - name: Scan the published image
         run: |
           mkdir -p "$HOME/.cache/trivy"
+          skip=(--skip-files "**/_manifest/spdx_2.2/manifest.spdx.json" --skip-files "usr/local/share/powershell/Modules/*/*/_manifest/spdx_2.2/manifest.spdx.json")
           rc=0
           docker run --rm -v "$HOME/.cache/trivy:/root/.cache/" "$TRIVY_IMAGE" image \
-            --scanners vuln,secret --severity HIGH,CRITICAL --ignore-unfixed --no-progress --exit-code "$TRIVY_EXIT_CODE" \
+            --scanners vuln,secret --severity HIGH,CRITICAL --ignore-unfixed "${skip[@]}" --no-progress --exit-code "$TRIVY_EXIT_CODE" \
             "ghcr.io/${{ github.repository_owner }}/tvmf-${{ matrix.name }}:latest" > scan.txt 2>&1 || rc=$?
           { echo "### tvmf-${{ matrix.name }}:latest (published) - fixable HIGH and CRITICAL"; echo '```'; cat scan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           cat scan.txt
