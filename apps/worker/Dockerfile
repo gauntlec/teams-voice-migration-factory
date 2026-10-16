@@ -1,5 +1,5 @@
 # ---- build ---------------------------------------------------------------
-FROM node:22-bookworm-slim AS build
+FROM node:26-bookworm-slim AS build
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
   && rm -rf /var/lib/apt/lists/*
 # Node comes from the official node image (the same one the other images are built on), not from a downloaded install script. The
 # build fails here, not at run time, if the binary cannot start on this base.
-COPY --from=node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/node
+COPY --from=node:26-bookworm-slim /usr/local/bin/node /usr/local/bin/node
 RUN node --version
 # Pinned so production always installs the exact, already-verified-working
 # module version (day-one pin = whatever was running live when this was

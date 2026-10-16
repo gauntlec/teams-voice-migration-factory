@@ -68,7 +68,7 @@ TOTP enrolment, then create a customer tenant and invite users.
 
 ## Local development (without Docker)
 
-Requires Node 20–22 and a local Postgres + Redis.
+Requires Node 24 or newer (the images use Node 26) and a local Postgres + Redis.
 
 ```bash
 npm install

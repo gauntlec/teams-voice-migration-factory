@@ -211,7 +211,7 @@ with the deleted row counts.
 
 ## Operations
 
-- The worker image is `mcr.microsoft.com/powershell:7.4-debian-12` + Node 20 with the
+- The worker image is `mcr.microsoft.com/powershell:7.4-debian-12` + Node 26 with the
   MicrosoftTeams module pre-installed (`apps/worker/Dockerfile`). It is larger and
   slower to build than before.
 - `TEAMS_EXECUTOR=simulated` runs everything against a small fake dataset (no pwsh)
