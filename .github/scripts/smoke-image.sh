@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Starts a freshly built image just far enough to prove it is usable BEFORE it is pushed: it runs as the unprivileged user, its
+# production-only node_modules resolve, and (worker) PowerShell can load the Teams modules. Usage: smoke-image.sh <api|worker|web> <image>
+set -euo pipefail
+name="$1"; image="$2"
+fail() { echo "SMOKE TEST FAILED ($name): $*" >&2; exit 1; }
+
+case "$name" in
+  api)
+    [ "$(docker run --rm "$image" id -un)" = "node" ] || fail "the process does not run as the node user"
+    docker run --rm "$image" node -e "require('@nestjs/core'); require('@tvmf/db'); require('@tvmf/shared'); require('argon2'); require('pg'); console.log('modules resolve')" \
+      || fail "a production dependency is missing"
+    # An older, root-owned files volume is handed to the app user on start-up and is writable afterwards.
+    docker volume create smoke-files >/dev/null
+    docker run --rm -v smoke-files:/data/files --entrypoint sh "$image" -c 'chown -R 0:0 /data/files && touch /data/files/legacy'
+    docker run --rm -v smoke-files:/data/files "$image" sh -c 'touch /data/files/new && echo "files volume writable as $(id -un)"' \
+      || fail "the files volume is not writable"
+    docker volume rm smoke-files >/dev/null
+    ;;
+  worker)
+    [ "$(docker run --rm --entrypoint id "$image" -un)" = "voxshift" ] || fail "the process does not run as the voxshift user"
+    docker run --rm --entrypoint node "$image" -e "require('@tvmf/db'); require('@tvmf/shared'); require('bullmq'); require('nodemailer'); require('ws'); console.log('modules resolve')" \
+      || fail "a production dependency is missing"
+    docker run --rm --entrypoint pwsh "$image" -NoLogo -NoProfile -NonInteractive -Command \
+      "Import-Module MicrosoftTeams; Import-Module Microsoft.Graph.Authentication; 'powershell modules load as ' + [Environment]::UserName" \
+      || fail "PowerShell cannot load the Teams modules as the unprivileged user"
+    ;;
+  web)
+    docker run --rm --add-host api:127.0.0.1 --entrypoint sh "$image" -c 'nginx -t && test -s /usr/share/nginx/html/index.html && cat /usr/share/nginx/html/version.json' \
+      || fail "nginx rejects its config or the app is missing"
+    ;;
+  *) fail "unknown image name" ;;
+esac
+echo "smoke test passed ($name)"

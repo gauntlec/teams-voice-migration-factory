@@ -230,3 +230,15 @@
   writing to a customer tenant. Discovery and live-vs-target validation are
   unaffected; they only ever call the separate read-only `exec.query()`
   method, which this flag does not touch.
+
+## Container images
+
+Reviewed 2026-10-16. What the images do, and what is still open:
+
+- **Node 22 LTS** in every image (Node 20 reached end of life in April 2026). The worker takes Node from the official `node` image instead of a downloaded install script.
+- **Unprivileged.** The API runs as `node`, the worker as `voxshift`. The API entrypoint (`apps/api/docker-entrypoint.sh`) starts as root only to hand an older, root-owned `filesdata` volume to the app user once, then drops root. The web image is nginx (master process root, workers `nginx`).
+- **Production dependencies only** in the api and worker images (`npm prune --omit=dev`).
+- **Checked before it is pushed** (`build-images.yml`): the image is built locally, started by `.github/scripts/smoke-image.sh` (runs unprivileged, dependencies resolve, PowerShell loads the Teams modules, nginx accepts its config), scanned by Trivy (fixable HIGH/CRITICAL vulnerabilities and embedded secrets), and only then pushed with an SBOM and build provenance. The findings are in the job summary. A weekly job scans the published `:latest` images too.
+- **The scan reports, it does not block** (`TRIVY_EXIT_CODE: '0'` at the top of the workflow). Set it to `1` once the known dependency advisories below are cleared.
+- **Open:** dependency advisories (`npm audit --omit=dev`: nodemailer, kysely, the Nest/Express/multer/qs chain, xlsx with no fix, react-router), nginx security headers and a newer nginx, compose hardening (`cap_drop`, `no-new-privileges`, read-only filesystems, resource limits, healthchecks), host firewall for the published web port.
+- Images are not signed; the SBOM and provenance are attached to each image in GHCR.

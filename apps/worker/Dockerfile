@@ -1,5 +1,5 @@
 # ---- build ---------------------------------------------------------------
-FROM node:20-bookworm-slim AS build
+FROM node:22-bookworm-slim AS build
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
@@ -13,6 +13,8 @@ RUN npm install
 COPY packages ./packages
 COPY apps/worker ./apps/worker
 RUN npm run build:packages && npm run build --workspace @tvmf/worker
+# The runtime image carries production dependencies only (no test runner, compiler or bundler).
+RUN npm prune --omit=dev
 
 # ---- runtime ----------------------------------------------------------
 # PowerShell 7 + the MicrosoftTeams module (Discovery and deployments drive
@@ -23,11 +25,12 @@ FROM mcr.microsoft.com/powershell:7.4-debian-12 AS runtime
 ENV NODE_ENV=production \
     POWERSHELL_TELEMETRY_OPTOUT=1 \
     DOTNET_CLI_TELEMETRY_OPTOUT=1
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
-  && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-  && apt-get install -y --no-install-recommends nodejs \
-  && apt-get purge -y gnupg && apt-get autoremove -y \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
   && rm -rf /var/lib/apt/lists/*
+# Node comes from the official node image (the same one the other images are built on), not from a downloaded install script. The
+# build fails here, not at run time, if the binary cannot start on this base.
+COPY --from=node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/node
+RUN node --version
 # Pinned so production always installs the exact, already-verified-working
 # module version (day-one pin = whatever was running live when this was
 # introduced) instead of silently grabbing whatever's newest on PSGallery on
@@ -64,6 +67,9 @@ COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/packages ./packages
 COPY --from=build /app/apps/worker/dist ./apps/worker/dist
 COPY --from=build /app/apps/worker/package.json ./apps/worker/package.json
+# Unprivileged user (PowerShell and the Teams module keep their per-user state in its home directory).
+RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin voxshift
+USER voxshift
 # Which release this is (yyyy.mm.N, set by CI; "dev" when built by hand), shown in Platform settings and sent to a Voxshift Hub. Last on purpose: it changes every build.
 ARG APP_VERSION=dev
 ARG GIT_SHA=unknown
