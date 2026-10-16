@@ -8,7 +8,7 @@ fail() { echo "SMOKE TEST FAILED ($name): $*" >&2; exit 1; }
 case "$name" in
   api)
     [ "$(docker run --rm "$image" id -un)" = "node" ] || fail "the process does not run as the node user"
-    docker run --rm "$image" node -e "require('@nestjs/core'); require('@tvmf/db'); require('@tvmf/shared'); require('argon2'); require('pg'); console.log('modules resolve')" \
+    docker run --rm "$image" node -e "require('@nestjs/core'); require('@tvmf/db'); require('@tvmf/shared'); require('argon2'); require('pg'); require('express'); require('multer'); require('bullmq'); console.log('modules resolve')" \
       || fail "a production dependency is missing"
     # An older, root-owned files volume is handed to the app user on start-up and is writable afterwards.
     docker volume create smoke-files >/dev/null
@@ -19,7 +19,7 @@ case "$name" in
     ;;
   worker)
     [ "$(docker run --rm --entrypoint id "$image" -un)" = "voxshift" ] || fail "the process does not run as the voxshift user"
-    docker run --rm --entrypoint node "$image" -e "require('@tvmf/db'); require('@tvmf/shared'); require('bullmq'); require('nodemailer'); require('ws'); console.log('modules resolve')" \
+    docker run --rm --entrypoint node "$image" -e "require('@tvmf/db'); require('@tvmf/shared'); require('bullmq'); require('ioredis'); require('nodemailer'); require('ws'); console.log('modules resolve')" \
       || fail "a production dependency is missing"
     docker run --rm --entrypoint pwsh "$image" -NoLogo -NoProfile -NonInteractive -Command \
       "Import-Module MicrosoftTeams; Import-Module Microsoft.Graph.Authentication; 'powershell modules load as ' + [Environment]::UserName" \

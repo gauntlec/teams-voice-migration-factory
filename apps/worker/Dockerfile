@@ -9,12 +9,13 @@ COPY packages/db/package.json packages/db/
 COPY apps/api/package.json apps/api/
 COPY apps/worker/package.json apps/worker/
 COPY apps/web/package.json apps/web/
-RUN npm install
+# Only this service's own dependencies (not the web app's or the MCP tool's), which keeps the image small and its advisories relevant.
+RUN npm install --workspace @tvmf/worker
 COPY packages ./packages
 COPY apps/worker ./apps/worker
 RUN npm run build:packages && npm run build --workspace @tvmf/worker
 # The runtime image carries production dependencies only (no test runner, compiler or bundler).
-RUN npm prune --omit=dev
+RUN npm prune --omit=dev --workspace @tvmf/worker
 
 # ---- runtime ----------------------------------------------------------
 # PowerShell 7 + the MicrosoftTeams module (Discovery and deployments drive

@@ -12,13 +12,14 @@ COPY packages/db/package.json packages/db/
 COPY apps/api/package.json apps/api/
 COPY apps/worker/package.json apps/worker/
 COPY apps/web/package.json apps/web/
-RUN npm install
+# Only this service's own dependencies (not the web app's or the MCP tool's), which keeps the image small and its advisories relevant.
+RUN npm install --workspace @tvmf/api
 
 COPY packages ./packages
 COPY apps/api ./apps/api
 RUN npm run build:packages && npm run build --workspace @tvmf/api
 # The runtime image carries production dependencies only (no test runner, compiler or bundler).
-RUN npm prune --omit=dev
+RUN npm prune --omit=dev --workspace @tvmf/api
 
 # ---- runtime ------------------------------------------------------------
 FROM node:26-bookworm-slim AS runtime
