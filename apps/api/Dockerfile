@@ -24,6 +24,10 @@ RUN npm prune --omit=dev
 FROM node:26-bookworm-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
+# Pick up fixes Debian has published since the base image was built, and drop npm/corepack: nothing runs them here, and they bring
+# their own bundled packages (and advisories) along.
+RUN apt-get update && apt-get upgrade -y --no-install-recommends && rm -rf /var/lib/apt/lists/* \
+  && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/packages ./packages
