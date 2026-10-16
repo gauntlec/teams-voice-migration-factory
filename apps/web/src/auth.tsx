@@ -7,8 +7,8 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import type { Me, Permission } from '@tvmf/shared';
-import { can } from '@tvmf/shared';
+import type { Me, Permission, PlatformFeature } from '@tvmf/shared';
+import { can, featureOn, permissionBlocked } from '@tvmf/shared';
 import { api, auth as apiAuth, tryRefresh } from './api';
 
 type Status = 'loading' | 'anonymous' | 'pwreset' | 'enrol' | 'authenticated';
@@ -29,6 +29,8 @@ interface AuthContextValue {
   confirmEnrol: (code: string) => Promise<void>;
   logout: () => Promise<void>;
   can: (p: Permission) => boolean;
+  /** Is an optional area on for this installation? (Administration > Platform settings > Menus and features.) */
+  featureOn: (f: PlatformFeature) => boolean;
   refreshMe: () => Promise<void>;
 }
 
@@ -146,7 +148,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       changePassword,
       confirmEnrol,
       logout,
-      can: (p) => (me ? can(me.role, p) : false),
+      // A permission that belongs to a switched-off area is treated as not granted, so its menus, pages and fields all disappear together.
+      can: (p) => (me ? can(me.role, p) && !permissionBlocked(me.disabledFeatures, p) : false),
+      featureOn: (f) => featureOn(me?.disabledFeatures, f),
       refreshMe: loadMe,
     }),
     [status, me, activeTenantId, setActiveTenant, login, changePassword, confirmEnrol, logout, loadMe],

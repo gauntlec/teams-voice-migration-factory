@@ -17,8 +17,10 @@ import type { AuthedUser } from '../common/request';
 import { ZodBody } from '../common/zod.pipe';
 import { RequirePermission } from '../rbac/require-permission.decorator';
 import { MspsService } from './msps.service';
+import { RequireFeature } from '../common/feature.guard';
 
 @Controller('msps')
+@RequireFeature('msp')
 export class MspsController {
   constructor(private readonly msps: MspsService) {}
 

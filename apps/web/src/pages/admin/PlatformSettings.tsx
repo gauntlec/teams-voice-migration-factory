@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Badge, Button, Card, Radio, RadioGroup, Switch, Field, Input, MessageBar, MessageBarActions, MessageBarBody, Spinner, Text, makeStyles, shorthands, tokens } from '@fluentui/react-components';
 import { CopyRegular } from '@fluentui/react-icons';
-import { DEFAULT_HUB_URL, HOSTED_BASE_URL, HUB_TOKEN_RE, MAIL_MODE_LABELS, baseUrlWarnings, hubLinkState, normalizeBaseUrl, type BaseUrlView, type HubConnectionView, type MailModeSetting, type MailSettingsView } from '@tvmf/shared';
+import { DEFAULT_HUB_URL, HOSTED_BASE_URL, HUB_TOKEN_RE, MAIL_MODE_LABELS, PLATFORM_FEATURES, PLATFORM_FEATURE_INFO, baseUrlWarnings, hubLinkState, normalizeBaseUrl, type BaseUrlView, type HubConnectionView, type MailModeSetting, type MailSettingsView, type PlatformFeature } from '@tvmf/shared';
 import { api } from '../../api';
 import { Page } from '../../components/Page';
 import { LoadError } from '../../components/records';
 import { useNotify } from '../../hooks/useNotify';
+import { useAuth } from '../../auth';
 import { MutedText } from '../../components/ui';
 
 const useLocalStyles = makeStyles({
@@ -21,6 +22,47 @@ const useLocalStyles = makeStyles({
   line: { display: 'grid', gridTemplateColumns: 'minmax(160px, 220px) 1fr auto', ...shorthands.gap('8px'), alignItems: 'center' },
   code: { fontFamily: tokens.fontFamilyMonospace, fontSize: tokens.fontSizeBase200, overflowWrap: 'anywhere' },
 });
+
+/** Optional areas of the application: switch the ones this installation does not need off, and their menus, pages and API disappear. */
+function FeaturesCard({ disabled }: { disabled: PlatformFeature[] }) {
+  const s = useLocalStyles();
+  const qc = useQueryClient();
+  const notify = useNotify();
+  const { refreshMe } = useAuth();
+  const [err, setErr] = useState<string | null>(null);
+  const save = useMutation({
+    mutationFn: (next: PlatformFeature[]) => api<BaseUrlView>('/platform/features', { method: 'PUT', body: JSON.stringify({ disabled: next }) }),
+    onSuccess: async (v) => {
+      setErr(null);
+      qc.setQueryData(['platform-settings'], v);
+      notify('Menus and features saved');
+      await refreshMe(); // the menus change straight away
+    },
+    onError: (e) => setErr((e as Error).message),
+  });
+  const toggle = (f: PlatformFeature, on: boolean) => save.mutate(on ? disabled.filter((x) => x !== f) : [...disabled, f]);
+  return (
+    <Card>
+      <div className={s.body}>
+        <div className={s.stack}>
+          <Text weight="semibold">Menus and features</Text>
+          <MutedText>Switch off the areas this installation does not need, for example the bug and feature boards, or the MSP console on a customer's own installation. A switched-off area's menu entries disappear and its pages and API stop working. Nothing is deleted: switch it back on and it returns as it was.</MutedText>
+        </div>
+        {PLATFORM_FEATURES.map((f) => (
+          <div key={f} className={s.stack}>
+            <Switch checked={!disabled.includes(f)} disabled={save.isPending} onChange={(_, d) => toggle(f, d.checked)} label={PLATFORM_FEATURE_INFO[f].label} />
+            <MutedText>{PLATFORM_FEATURE_INFO[f].description} Menus: {PLATFORM_FEATURE_INFO[f].menus.join(', ')}.</MutedText>
+          </div>
+        ))}
+        {err && (
+          <MessageBar intent="error">
+            <MessageBarBody>{err}</MessageBarBody>
+          </MessageBar>
+        )}
+      </div>
+    </Card>
+  );
+}
 
 /** How this installation sends email: nothing, a mail server of its own, or the Voxshift Hub's mail service. With a test message that proves the saved setup. */
 function EmailCard({ mail }: { mail: MailSettingsView }) {
@@ -363,6 +405,8 @@ export function AdminPlatformSettings() {
           </div>
         </Card>
       )}
+
+      {view && <FeaturesCard disabled={view.disabledFeatures ?? []} />}
 
       {view && <HubCard hub={view.hub} />}
 

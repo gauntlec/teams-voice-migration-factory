@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { Permission } from '@tvmf/shared';
 import { MessageBar, MessageBarBody, MessageBarTitle } from '@fluentui/react-components';
+import { permissionBlocked } from '@tvmf/shared';
 import { useAuth } from '../auth';
 
 export function RequirePermission({
@@ -10,13 +11,14 @@ export function RequirePermission({
   permission: Permission;
   children: ReactNode;
 }) {
-  const { can } = useAuth();
+  const { can, me } = useAuth();
   if (!can(permission)) {
+    const switchedOff = permissionBlocked(me?.disabledFeatures, permission);
     return (
       <MessageBar intent="warning">
         <MessageBarBody>
           <MessageBarTitle>Not available</MessageBarTitle>
-          Your role does not have access to this area.
+          {switchedOff ? 'This area is switched off on this installation.' : 'Your role does not have access to this area.'}
         </MessageBarBody>
       </MessageBar>
     );

@@ -1,6 +1,6 @@
 import { ConflictException, Inject, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
-import { effectiveMail, emailEnabled, forgetAppSettings, platformDb, readMailRow, savedBaseUrl } from '@tvmf/db';
-import { baseUrlWarnings, connectDetails, MAIL_MODE_LABELS, type BaseUrlView, type HubConnectionView, type MailSettingsView, type SetMailSettingsInput } from '@tvmf/shared';
+import { disabledFeatures, effectiveMail, emailEnabled, forgetAppSettings, platformDb, readMailRow, savedBaseUrl } from '@tvmf/db';
+import { baseUrlWarnings, connectDetails, MAIL_MODE_LABELS, type BaseUrlView, type HubConnectionView, type MailSettingsView, type PlatformFeature, type SetMailSettingsInput } from '@tvmf/shared';
 import { APP_CONFIG, type AppConfig } from '../common/config';
 import { encryptSecret } from '../common/crypto';
 import { InjectDb, type Db } from '../db/db.module';
@@ -56,6 +56,7 @@ export class PlatformSettingsService implements OnModuleInit {
       emailEnabled: await emailEnabled(this.db, { fresh: true }),
       hub: await this.hubView(),
       mail: await this.mailView(),
+      disabledFeatures: (await disabledFeatures(this.db, { fresh: true })) as PlatformFeature[],
       version: (process.env.APP_VERSION ?? '').trim() || 'dev',
       connect: connectDetails(baseUrl),
     };
@@ -184,5 +185,17 @@ export class PlatformSettingsService implements OnModuleInit {
     const r = await platformDb(this.db).selectFrom('email_messages').select(['status', 'error']).where('id', '=', id).where('template', '=', 'mail_test').executeTakeFirst();
     if (!r) throw new NotFoundException('No such test message.');
     return { status: r.status, error: r.error };
+  }
+
+  /** Switches optional areas off (or back on). Takes effect at once: menus on the next page load, the API immediately. */
+  async setDisabledFeatures(disabled: PlatformFeature[], userId: string): Promise<BaseUrlView> {
+    const list = [...new Set(disabled)];
+    await platformDb(this.db)
+      .insertInto('app_settings')
+      .values({ id: true, base_url: null, disabled_features: list, updated_by: userId })
+      .onConflict((oc) => oc.column('id').doUpdateSet({ disabled_features: list, updated_by: userId, updated_at: new Date().toISOString() }))
+      .execute();
+    forgetAppSettings();
+    return this.view();
   }
 }

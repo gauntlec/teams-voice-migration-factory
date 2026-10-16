@@ -10,6 +10,7 @@ import type { AuthedUser } from '../common/request';
 import { ZodBody } from '../common/zod.pipe';
 import { RequirePermission } from '../rbac/require-permission.decorator';
 import { FeatureRequestsService } from './feature-requests.service';
+import { RequireFeature } from '../common/feature.guard';
 
 /**
  * Feature-request board. SUPER_ADMIN / PROJECT_MANAGER / ENGINEER can view and
@@ -17,6 +18,7 @@ import { FeatureRequestsService } from './feature-requests.service';
  * or edit its labels (`feature:manage`). Platform-level, not tenant-scoped.
  */
 @Controller('feature-requests')
+@RequireFeature('feature_requests')
 export class FeatureRequestsController {
   constructor(private readonly features: FeatureRequestsService) {}
 

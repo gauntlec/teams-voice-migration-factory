@@ -12,9 +12,11 @@ import type { AuthedUser } from '../../common/request';
 import { ZodBody } from '../../common/zod.pipe';
 import { RequirePermission } from '../../rbac/require-permission.decorator';
 import { MspServiceRequestsService } from './msp-service-requests.service';
+import { RequireFeature } from '../../common/feature.guard';
 
 /** MSP service-request admin: one queue across all of an MSP's customers. Not tenant-scoped. */
 @Controller('msp/service-requests')
+@RequireFeature('msp')
 export class MspServiceRequestsController {
   constructor(private readonly svc: MspServiceRequestsService) {}
 

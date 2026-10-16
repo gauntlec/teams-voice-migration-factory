@@ -27,6 +27,7 @@ import { AuditReadModule } from './modules/audit/audit-read.module';
 import { ProgressModule } from './modules/progress/progress.module';
 import { PlatformOpsModule } from './platform-ops/platform-ops.module';
 import { HealthController } from './health/health.controller';
+import { FeatureGuard } from './common/feature.guard';
 
 @Module({
   imports: [
@@ -59,6 +60,7 @@ import { HealthController } from './health/health.controller';
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
+    { provide: APP_GUARD, useClass: FeatureGuard },
   ],
 })
 export class AppModule {}

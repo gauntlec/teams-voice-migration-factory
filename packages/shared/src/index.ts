@@ -32,6 +32,7 @@ export * from './release-safety';
 export * from './base-url';
 export * from './hub-connection';
 export * from './mail-settings';
+export * from './platform-features';
 
 import type { CmdletInvocation } from './deployment';
 
@@ -116,6 +117,8 @@ export interface Me {
   /** ENGINEER/PROJECT_MANAGER only - null for CUSTOMER and SUPER_ADMIN, or when no MSP resolves. */
   mspBranding: Branding | null;
   tenants: MeTenant[];
+  /** Optional areas switched off for this installation (Platform settings > Menus and features): hide their menus and pages. */
+  disabledFeatures: import('./platform-features').PlatformFeature[];
 }
 
 /** A feature request as returned by `GET /feature-requests` (board card). */

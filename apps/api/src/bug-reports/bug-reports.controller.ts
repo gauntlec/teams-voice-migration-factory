@@ -10,6 +10,7 @@ import type { AuthedUser } from '../common/request';
 import { ZodBody } from '../common/zod.pipe';
 import { RequirePermission } from '../rbac/require-permission.decorator';
 import { BugReportsService } from './bug-reports.service';
+import { RequireFeature } from '../common/feature.guard';
 
 /**
  * Bug-report board. SUPER_ADMIN / PROJECT_MANAGER / ENGINEER can view and
@@ -17,6 +18,7 @@ import { BugReportsService } from './bug-reports.service';
  * edit its labels (`bug:manage`). Platform-level, not tenant-scoped.
  */
 @Controller('bug-reports')
+@RequireFeature('bug_reports')
 export class BugReportsController {
   constructor(private readonly bugs: BugReportsService) {}
 

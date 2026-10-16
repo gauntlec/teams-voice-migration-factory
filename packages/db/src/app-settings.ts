@@ -9,14 +9,15 @@ import type { DB } from './schema';
 interface Settings {
   base_url: string | null;
   email_enabled: boolean;
+  disabled_features: string[];
 }
 let cache: { at: number; value: Settings } | null = null;
 const TTL_MS = 30_000;
 
 async function load(db: Kysely<DB>, fresh?: boolean): Promise<Settings> {
   if (!fresh && cache && Date.now() - cache.at < TTL_MS) return cache.value;
-  const row = await db.withSchema('platform').selectFrom('app_settings').select(['base_url', 'email_enabled']).executeTakeFirst();
-  cache = { at: Date.now(), value: { base_url: row?.base_url ?? null, email_enabled: row?.email_enabled ?? true } };
+  const row = await db.withSchema('platform').selectFrom('app_settings').select(['base_url', 'email_enabled', 'disabled_features']).executeTakeFirst();
+  cache = { at: Date.now(), value: { base_url: row?.base_url ?? null, email_enabled: row?.email_enabled ?? true, disabled_features: row?.disabled_features ?? [] } };
   return cache.value;
 }
 
@@ -48,3 +49,13 @@ export async function emailEnabled(db: Kysely<DB>, opts: { fresh?: boolean } = {
     return true;
   }
 }
+
+/** The optional areas switched off for this installation (Platform settings > Menus and features). A failed read means "none off". */
+export async function disabledFeatures(db: Kysely<DB>, opts: { fresh?: boolean } = {}): Promise<string[]> {
+  try {
+    return (await load(db, opts.fresh)).disabled_features;
+  } catch {
+    return [];
+  }
+}
+

@@ -133,6 +133,8 @@ export interface AppSettingsTable {
   mail_from: ColumnType<string | null, string | null | undefined, string | null>;
   mail_from_name: ColumnType<string | null, string | null | undefined, string | null>;
   hub_mail_relay: ColumnType<boolean | null, boolean | null | undefined, boolean | null>;
+  /** Optional areas switched off for this installation (0030_disabled_features.sql). Empty = all on. */
+  disabled_features: ColumnType<string[], string[] | undefined, string[]>;
   updated_by: string | null;
   updated_at: Ts;
 }

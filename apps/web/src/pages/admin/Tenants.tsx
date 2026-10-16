@@ -97,7 +97,7 @@ interface PlatformUser {
 export function AdminTenants() {
   const ls = useLocalStyles();
   const qc = useQueryClient();
-  const { refreshMe, setActiveTenant, can } = useAuth();
+  const { refreshMe, setActiveTenant, can, featureOn } = useAuth();
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [domain, setDomain] = useState('');
@@ -124,7 +124,7 @@ export function AdminTenants() {
   });
   const mspList = useQuery({
     queryKey: ['msps', 'all'],
-    enabled: can('tenant:update'),
+    enabled: can('tenant:update') && featureOn('msp'),
     queryFn: () => api<{ id: string; name: string }[]>('/msps'),
   });
   const setMsp = useMutation({
@@ -242,7 +242,7 @@ export function AdminTenants() {
                 <TableHeaderCell>Branding</TableHeaderCell>
                 <TableHeaderCell>Teams read-only</TableHeaderCell>
                 <TableHeaderCell>Managed Services</TableHeaderCell>
-                <TableHeaderCell>MSP</TableHeaderCell>
+                {featureOn('msp') && <TableHeaderCell>MSP</TableHeaderCell>}
                 <TableHeaderCell>Test customer</TableHeaderCell>
               </TableRow>
             </TableHeader>
@@ -307,6 +307,7 @@ export function AdminTenants() {
                       '—'
                     )}
                   </TableCell>
+                  {featureOn('msp') && (
                   <TableCell>
                     {can('tenant:update') ? (
                       <Select
@@ -326,6 +327,7 @@ export function AdminTenants() {
                       (mspList.data ?? []).find((m) => m.id === t.msp_id)?.name ?? '—'
                     )}
                   </TableCell>
+                  )}
                   <TableCell>
                     {can('tenant:update') ? (
                       <div className={ls.gridGap4}>

@@ -4,8 +4,8 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import * as argon2 from 'argon2';
-import { platformDb } from '@tvmf/db';
-import type { Branding, Me } from '@tvmf/shared';
+import { disabledFeatures, platformDb } from '@tvmf/db';
+import type { Branding, Me, PlatformFeature } from '@tvmf/shared';
 import { AuditService } from '../common/audit.service';
 import { decryptSecret, encryptSecret } from '../common/crypto';
 import { resolveMspId } from '../common/msp-resolution.util';
@@ -376,6 +376,7 @@ export class AuthService {
       tenants,
       mspId: resolvedMsp?.id ?? null,
       mspBranding: resolvedMsp?.branding ?? null,
+      disabledFeatures: (await disabledFeatures(this.db)) as PlatformFeature[],
     };
   }
 

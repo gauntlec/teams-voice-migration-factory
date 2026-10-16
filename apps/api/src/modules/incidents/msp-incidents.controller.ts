@@ -14,9 +14,11 @@ import type { AuthedUser } from '../../common/request';
 import { ZodBody } from '../../common/zod.pipe';
 import { RequirePermission } from '../../rbac/require-permission.decorator';
 import { MspIncidentsService } from './msp-incidents.service';
+import { RequireFeature } from '../../common/feature.guard';
 
 /** MSP incident console: one queue and one major-incident board across all of an MSP's customers. Not tenant-scoped. */
 @Controller('msp/incidents')
+@RequireFeature('msp')
 export class MspIncidentsController {
   constructor(private readonly svc: MspIncidentsService) {}
 

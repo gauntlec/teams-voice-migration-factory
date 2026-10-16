@@ -3,6 +3,7 @@ import { platformDb } from '@tvmf/db';
 import {
   connectHubSchema,
   mailTestSchema,
+  setFeaturesSchema,
   setMailSettingsSchema,
   setHubRemoteAccessSchema,
   setBaseUrlSchema,
@@ -13,6 +14,7 @@ import {
   type ReleaseCheck,
   type ConnectHubInput,
   type MailTestInput,
+  type SetFeaturesInput,
   type SetMailSettingsInput,
   type SetHubRemoteAccessInput,
   type SetBaseUrlInput,
@@ -172,5 +174,14 @@ export class PlatformOpsController {
   @RequirePermission('platform:operate')
   mailTestStatus(@Param('id') id: string) {
     return this.baseUrl.mailTestStatus(id);
+  }
+
+  /** SUPER_ADMIN: switch optional areas off for this installation (bug and feature boards, the MSP console). */
+  @Put('features')
+  @RequirePermission('platform:operate')
+  async setFeatures(@Body(new ZodBody(setFeaturesSchema)) body: SetFeaturesInput, @CurrentUser() user: AuthedUser): Promise<BaseUrlView> {
+    const view = await this.baseUrl.setDisabledFeatures(body.disabled, user.id);
+    await this.audit.platform('platform.features_changed', { actor: { id: user.id, email: user.email }, targetType: 'app_settings', detail: { disabled: body.disabled } });
+    return view;
   }
 }
