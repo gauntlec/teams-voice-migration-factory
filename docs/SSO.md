@@ -65,12 +65,14 @@ Non-goals (first version)
 
 ### 4.1 Providers
 A new table `platform.sso_providers`: `id`, `kind` (`hub` | `oidc`), `name`, `issuer`, `client_id`, `client_secret_enc` (AES-256-GCM with
-`DATA_ENCRYPTION_KEY`, like the SMTP password), `scopes`, `enabled`, `jit_create` (bool), `require_mfa_claim` (bool, default true), `role_ceiling`
-(see 4.3), `default_role`, `role_claim` (optional claim name) and `role_map` (json: claim value to role), `email_domains` (optional allow-list),
+`DATA_ENCRYPTION_KEY`, like the SMTP password), `scopes`, `enabled`, `jit_create` (bool), `require_mfa_claim` (bool, default true), the role
+ceilings (`role_ceiling` for `oidc` providers; `role_ceiling_staff` and `role_ceiling_customer` for the `hub` provider, see 4.3), `default_role`,
+`role_claim` (optional claim name) and `role_map` (json: claim value to role), `email_domains` (optional allow-list),
 `allow_local_passwords` (bool, default true), `created_at`/`updated_at`.
 - The `hub` provider is created automatically when the instance is connected to a hub: issuer = the hub address from the hub connection,
-  `client_id` = the instance id, client secret = the instance token. **It starts disabled** (customer switches it on in Platform settings >
-  Single sign-on). Changing the hub address or token updates it.
+  `client_id` = the instance id, client secret = the instance token. **It starts disabled**: it is switched on in Platform settings > Single
+  sign-on by an administrator of the installation (normally the Voxshift staff member doing the setup, with the customer's agreement, using the
+  local administrator account). Changing the hub address or token updates it.
 - `oidc` providers are added by an administrator (issuer URL, client id, client secret). Discovery (`/.well-known/openid-configuration`) fills the
   endpoints; keys come from the provider's JWKS, cached and refreshed on an unknown `kid`.
 
@@ -87,11 +89,19 @@ A new table `platform.sso_providers`: `id`, `kind` (`hub` | `oidc`), `name`, `is
 
 ### 4.3 Roles and the ceiling
 Instance roles are `SUPER_ADMIN`, `PROJECT_MANAGER`, `ENGINEER`, `CUSTOMER`. The provider says what the person should get (the hub's `vx_role`
-claim, or an `oidc` provider's `role_claim`/`role_map`/`default_role`). **Effective role = the lower of the requested role and the provider's
-`role_ceiling`.** The default ceiling for the `hub` provider is `ENGINEER`, for generic `oidc` providers `PROJECT_MANAGER`; `SUPER_ADMIN` is never
-reachable through a provider unless an existing SUPER_ADMIN explicitly sets the ceiling to it. The ceiling exists so a mistake or compromise at a
-provider cannot hand out the installation's top role. The role is re-evaluated at every sign-in and a lowered ceiling applies at the next sign-in
-(and revokes sessions above it, see 4.7).
+claim, or an `oidc` provider's `role_claim`/`role_map`/`default_role`). **Effective role = the lower of the requested role and the ceiling.** The
+ceiling exists so a mistake or compromise at a provider cannot hand out more than the customer accepted, and the customer can lower it at any time.
+- **`hub` provider, two ceilings by the kind of hub account (`vx_kind`):**
+  - `role_ceiling_staff` (Voxshift staff and MSP engineers): default **`SUPER_ADMIN`**. Voxshift staff normally install and configure an
+    on-premises installation, so they need the top role through the hub. The customer sees this plainly on the Single sign-on screen ("Voxshift Hub staff
+    can sign in as: Administrator") and can lower it, for example to `ENGINEER` for day-to-day work (and later, in phase 3, require customer
+    approval or a time-limited window for administrator sign-in).
+  - `role_ceiling_customer` (the customer's own people with hub accounts): default **`ENGINEER`**; a customer administrator can raise it.
+- **Generic `oidc` providers** (customer's own identity provider): one `role_ceiling`, default `PROJECT_MANAGER`.
+- The ceiling is always shown and editable by an administrator of the installation (SUPER_ADMIN, permission `sso:manage`). The role is re-evaluated
+  at every sign-in and a lowered ceiling applies at the next sign-in (and revokes sessions above it, see 4.7).
+- Every sign-in with the `SUPER_ADMIN` role through a provider is audited with the provider, the person and the hub's session id, and (if
+  configured) emailed to the installation's administrators.
 
 `CUSTOMER` users sign in with no customer (tenant) memberships; an administrator adds memberships afterwards (as for any customer user today). A
 later version may carry tenant mapping in a claim.
@@ -117,7 +127,7 @@ Administration > Platform settings > **Single sign-on** (SUPER_ADMIN only, new p
 audited.
 
 ### 4.6 Break glass
-SUPER_ADMIN users created locally (including the bootstrap administrator) keep local password + TOTP sign-in even when
+SUPER_ADMIN users created locally (including the bootstrap administrator the setup is started with) keep local password + TOTP sign-in even when
 `allow_local_passwords = false` (flag `break_glass`, default true for local SUPER_ADMINs). The setting is explained in the UI and in `docs/SECURITY.md`.
 
 ### 4.7 Revocation
@@ -165,11 +175,11 @@ whose sessions were revoked since the instance's last acknowledged heartbeat. En
 
 | Threat | Control |
 |---|---|
-| Hub compromised or hub admin abuse | Instance has its own switch (off by default), role ceiling, break-glass local admin, audit on both sides; tokens are 5 minutes, audience-bound, single use. A compromised hub could sign in to instances that trust it, up to their ceiling, which is why trusting it is the customer's explicit choice. |
+| Hub compromised or hub admin abuse | Instance has its own switch (off until enabled), role ceilings the customer can lower, break-glass local admin, audit and administrator-sign-in notification on both sides; tokens are 5 minutes, audience-bound, single use. A compromised hub could sign in to instances that trust it, up to their ceiling (administrator for staff accounts by default), which is why trusting it is the customer's explicit choice and why the customer can lower the staff ceiling. Phase 3 adds customer-approved, time-limited administrator access. |
 | Token or code replay / theft | PKCE, `nonce`, single-use code and `jti`, TLS, exact redirect URI, back-channel code exchange. |
 | Open redirect / redirect URI abuse | Exact-match registered URIs derived from the instance record. |
 | Account takeover via matching email | No automatic linking; explicit administrator link. |
-| Role escalation | Ceiling applied on the instance; `SUPER_ADMIN` unreachable by default; role re-evaluated each sign-in. |
+| Role escalation | Ceilings applied on the instance and editable by the customer; hub staff may reach `SUPER_ADMIN` by default (they do the setup), customer hub users and generic providers are capped lower; every provider sign-in as administrator is audited and notified; role re-evaluated each sign-in. |
 | Stale access after removal | Heartbeat revocations (about a minute), 15 minute access tokens, 12 hour absolute session cap. |
 | Algorithm confusion / key substitution | Algorithm allow-list, key by `kid` from the pinned issuer's JWKS only, never accept `none`/HS256. |
 | Hub outage | Local sign-in unaffected; federated sessions already open continue until their cap. |
@@ -182,9 +192,11 @@ whose sessions were revoked since the instance's last acknowledged heartbeat. En
    unlinked email, ceiling, break glass, disabled user). Works end to end with Microsoft Entra ID.
 2. **Hub as provider (private repository)**: section 5.1-5.2 and the Open button flow, with tests (PKCE, redirect URI exact match, single use,
    grant checks, key rotation).
-3. **Lifecycle**: 4.7 and 5.3 (revocation), session cap, hub-side customer users and invitations, access windows (optional, time-limited grants).
+3. **Lifecycle**: 4.7 and 5.3 (revocation), session cap, hub-side customer users and invitations, customer-approved or time-limited
+   administrator access (optional).
 4. Later: SAML, SCIM, delegated customer administration, tenant claim mapping.
 
-Done means: a hub account assigned to an installation clicks Open and lands signed in (no second prompt), a removed account is out within about a
-minute, a customer can turn the hub provider off and local sign-in still works, a customer can add Entra ID and sign in with it, and
+Done means: a hub account assigned to an installation clicks Open and lands signed in (no second prompt), a Voxshift staff account with the
+administrator grant gets `SUPER_ADMIN` on a freshly connected installation and a customer account does not, a removed account is out within about
+a minute, a customer can lower the staff ceiling or turn the hub provider off and local sign-in still works, a customer can add Entra ID and sign in with it, and
 `docs/SECURITY.md`, the on-premises guide and the hub documentation describe it.
