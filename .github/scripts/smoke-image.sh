@@ -10,6 +10,8 @@ case "$name" in
     [ "$(docker run --rm "$image" id -un)" = "node" ] || fail "the process does not run as the node user"
     docker run --rm "$image" node -e "require('@nestjs/core'); require('@tvmf/db'); require('@tvmf/shared'); require('argon2'); require('pg'); require('express'); require('multer'); require('bullmq'); console.log('modules resolve')" \
       || fail "a production dependency is missing"
+    docker run --rm "$image" node -e "const p=require('path'),pk=require('./apps/api/package.json');const miss=Object.keys(pk.dependencies).filter(m=>{try{require.resolve(m,{paths:[p.resolve('apps/api')]});return false}catch{return true}});if(miss.length){console.error('missing: '+miss.join(', '));process.exit(1)}console.log('all '+Object.keys(pk.dependencies).length+' declared dependencies resolve')" \
+      || fail "a declared dependency of the api is not in the image"
     # An older, root-owned files volume is handed to the app user on start-up and is writable afterwards.
     docker volume create smoke-files >/dev/null
     docker run --rm -v smoke-files:/data/files --entrypoint sh "$image" -c 'chown -R 0:0 /data/files && touch /data/files/legacy'
@@ -21,6 +23,8 @@ case "$name" in
     [ "$(docker run --rm --entrypoint id "$image" -un)" = "voxshift" ] || fail "the process does not run as the voxshift user"
     docker run --rm --entrypoint node "$image" -e "require('@tvmf/db'); require('@tvmf/shared'); require('bullmq'); require('ioredis'); require('nodemailer'); require('ws'); console.log('modules resolve')" \
       || fail "a production dependency is missing"
+    docker run --rm --entrypoint node "$image" -e "const p=require('path'),pk=require('./apps/worker/package.json');const miss=Object.keys(pk.dependencies).filter(m=>{try{require.resolve(m,{paths:[p.resolve('apps/worker')]});return false}catch{return true}});if(miss.length){console.error('missing: '+miss.join(', '));process.exit(1)}console.log('all '+Object.keys(pk.dependencies).length+' declared dependencies resolve')" \
+      || fail "a declared dependency of the worker is not in the image"
     docker run --rm --entrypoint pwsh "$image" -NoLogo -NoProfile -NonInteractive -Command \
       "Import-Module MicrosoftTeams; Import-Module Microsoft.Graph.Authentication; 'powershell modules load as ' + [Environment]::UserName" \
       || fail "PowerShell cannot load the Teams modules as the unprivileged user"

@@ -20,6 +20,9 @@ COPY apps/api ./apps/api
 RUN npm run build:packages && npm run build --workspace @tvmf/api
 # The runtime image carries production dependencies only (no test runner, compiler or bundler).
 RUN npm prune --omit=dev --workspace @tvmf/api
+# npm puts a dependency in this service's own node_modules folder when another package in the tree needs a different version of it (the API needs jose 5,
+# the MCP tool pulls in jose 6). That folder must reach the runtime image, so make sure it exists to copy.
+RUN mkdir -p apps/api/node_modules
 
 # ---- runtime ------------------------------------------------------------
 FROM node:26-bookworm-slim AS runtime
@@ -32,6 +35,7 @@ RUN apt-get update && apt-get upgrade -y --no-install-recommends && rm -rf /var/
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/packages ./packages
+COPY --from=build /app/apps/api/node_modules ./apps/api/node_modules
 COPY --from=build /app/apps/api/dist ./apps/api/dist
 COPY --from=build /app/apps/api/package.json ./apps/api/package.json
 # Which release this is (yyyy.mm.N, set by CI; "dev" when built by hand). Last on purpose: it changes every build.

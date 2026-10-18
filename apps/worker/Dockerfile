@@ -16,6 +16,9 @@ COPY apps/worker ./apps/worker
 RUN npm run build:packages && npm run build --workspace @tvmf/worker
 # The runtime image carries production dependencies only (no test runner, compiler or bundler).
 RUN npm prune --omit=dev --workspace @tvmf/worker
+# npm puts a dependency in this service's own node_modules folder when another package in the tree needs a different version of it (the API needs jose 5,
+# the MCP tool pulls in jose 6). That folder must reach the runtime image, so make sure it exists to copy.
+RUN mkdir -p apps/worker/node_modules
 
 # ---- runtime ----------------------------------------------------------
 # PowerShell 7 + the MicrosoftTeams module (Discovery and deployments drive
@@ -68,6 +71,7 @@ WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/packages ./packages
+COPY --from=build /app/apps/worker/node_modules ./apps/worker/node_modules
 COPY --from=build /app/apps/worker/dist ./apps/worker/dist
 COPY --from=build /app/apps/worker/package.json ./apps/worker/package.json
 # Unprivileged user (PowerShell and the Teams module keep their per-user state in its home directory).
