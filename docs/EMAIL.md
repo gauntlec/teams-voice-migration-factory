@@ -244,6 +244,10 @@ or cancelled. Both use the customer's branding. See [SERVICE-REQUESTS.md](SERVIC
 `agent_deploy_check` (see [SERVICE-REQUESTS.md](SERVICE-REQUESTS.md#emails) and [SERVICE-REQUEST-AGENTS.md](SERVICE-REQUEST-AGENTS.md)).
 An assistant is never the sender of an email.
 
+## `sso_admin_signin`
+
+Sent to every active Super Admin when someone signs in as Administrator through a single sign-on provider (the Voxshift Hub or the customer's own): who, which provider, the provider's own session reference when it sent one, the time and the address. It can be switched off on **Platform settings > Single sign-on** ("Email the administrators when someone signs in as Administrator..."); the master email switch also stops it. The sign-in itself is always recorded in the audit log (`sso.login.success`). See [SSO.md](SSO.md).
+
 ## Incident emails
 
 Five templates, all with the customer's branding and a link to `/incidents/:id`

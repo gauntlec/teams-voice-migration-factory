@@ -28,8 +28,21 @@
 ## Authentication
 
 - Passwords: Argon2id (`argon2` lib, memoryCost 19456, timeCost 2, parallelism 1).
-- MFA: TOTP mandatory. A user with `totp_enrolled = false` can only call the
-  enrol/verify endpoints; every other endpoint returns 403 until enrolled.
+  An account that exists only through a single sign-on provider has no password at all: its `password_hash` is the
+  marker `!federated`, which is not a valid hash, so no password can ever match it (and local sign-in refuses it before
+  trying one).
+- MFA: TOTP mandatory for local sign-ins. A user with `totp_enrolled = false` can only call the
+  enrol/verify endpoints; every other endpoint returns 403 until enrolled. A session that came through a single
+  sign-on provider (see "Single sign-on" below) is not asked for a local authenticator: the provider does that step,
+  and the `amr` claim in its ID token proves it when the provider is set to require it. Only an access token this
+  installation signed itself, carrying the provider's id, skips the local enrolment check; a password sign-in never
+  produces one.
+- Local passwords can be switched off by a provider (Platform settings > Single sign-on, "Keep the password sign-in form
+  for everyone"). Break-glass accounts are exempt: a Super Admin created locally (including the bootstrap
+  administrator) keeps password + authenticator sign-in whatever a provider says (`users.break_glass`), so a provider
+  outage or misconfiguration can never lock everyone out. Switching local passwords off on a provider that is on is
+  refused unless at least one active break-glass administrator with a password exists. Break-glass accounts cannot be
+  linked to a provider, and an identity row pointing at one is never honoured.
 - Tokens: short-lived access JWT (default 15 min) returned in the JSON body and
   held in memory by the SPA; rotating refresh token in an `HttpOnly`, `Secure`,
   `SameSite=Lax` cookie, one row per session in `auth_sessions` so it can be
@@ -53,10 +66,29 @@
   for multi-instance since the counter lives in Redis, not per-process
   memory.
 
+## Single sign-on (OpenID Connect)
+
+The installation is an OpenID Connect **relying party** for the Voxshift Hub and for the customer's own providers (Entra ID, Okta, Google Workspace, Keycloak). The design and the contract
+with the hub are in [SSO.md](SSO.md); this is what protects it. Code: `apps/api/src/sso`.
+
+- **Off until switched on.** Every provider, including the hub's (created by the hub connection), starts disabled. Only a Super Admin (`sso:manage`) can add, change or switch one on; every change is audited (`sso.provider.changed`, with old and new values and never a secret).
+- **Authorization code flow with PKCE (S256)**, `state` bound to the browser by a short-lived (10 minute) signed `HttpOnly` cookie scoped to `/api/auth/oidc`, a `nonce` checked in the ID token, and the exact redirect URI repeated in the code exchange. The redirect URI is built from the saved base URL; on the hub's gate address (`https://<slug>.<hub domain>`) it is that address, and only for the hub provider. The `returnTo` after sign-in must be a path inside the application (anything else becomes `/`).
+- **ID token checks** (`apps/api/src/sso/oidc/id-token.ts`, library `jose` 5.10.0, pinned): algorithm allow-list RS256 / ES256 / EdDSA only, so `none` and every HS* algorithm are refused before any key is looked at; the key comes from the JWKS address in the provider's own discovery document, by `kid` (a cache that refetches once on an unknown `kid`, at most every 10 seconds); `iss` equals the configured issuer, `aud` contains our client id (and `azp` equals it when there are several); `exp`, `nbf` and `iat` within 60 seconds of clock skew; `sub`, `exp`, `iat` required; and when the provider is set to require it, `amr` contains `mfa`, `otp` or `hwk`.
+- **Single use.** An authorization code is consumed the first time it is seen, and so is an ID token's `jti` when it has one (`platform.sso_replay_guard`, in Postgres so it holds across API processes); a replayed callback is refused before anything is sent to the provider.
+- **Discovery and token traffic is https only** (plain http only to a loopback address, for tests), follows no redirects, has a 10 second timeout and never puts a code, token, secret or the provider's answer into an error or a log. The client secret is encrypted at rest (AES-256-GCM, `DATA_ENCRYPTION_KEY`, like the SMTP password) and never returned by the API; the hub's secret is the instance token.
+- **No automatic linking by email.** A first sign-in with a new provider `sub` creates a user (when "create accounts automatically" is on) only if no local account has that email. If one does, the sign-in is refused, audited, and kept as a waiting sign-in the administrator can link on purpose (Users > Link to provider identity). This blocks taking over a local administrator by someone whose provider account has the same email.
+- **Roles are capped on this installation.** The role a person gets is the lower of what the provider asks for (the hub's `vx_role`, or the generic provider's role claim and map, else its default role, Customer unless changed) and the **ceiling**: for the hub one ceiling for Voxshift/MSP staff (default Administrator, because staff install and look after an installation) and one for the customer's own people (default Engineer); for a generic provider one ceiling, default Project manager. The role is re-evaluated at every sign-in. A lowered ceiling, a provider switched off, an identity removed or a user disabled signs the person out at their next token refresh (within 15 minutes) and is audited as `sso.revoked`.
+- **Administrator sign-ins are loud.** Every sign-in as Super Admin through a provider is in the audit log (provider, person, the provider's session id) and emailed to every active Super Admin (a setting; the master email switch also applies).
+- **Sessions.** A federated session gets the same access token and rotating refresh cookie as a password sign-in, marked with the provider and the methods it reported, and has an **absolute maximum age** (12 hours by default, a Platform setting) that refreshing never extends. Local logout ends the session here; it does not sign the person out of the provider.
+- **Audit events:** `sso.login.success`, `sso.login.refused` (a reason code such as `token_audience`, `code_replayed`, `email_exists_unlinked`; never a token), `sso.user.created`, `sso.user.linked`, `sso.user.unlinked`, `sso.provider.changed`, `sso.revoked`. The login page only ever shows a short, generic message; the reason is in the audit log.
+- **Not built yet (phase 3):** the hub's revocation channel (removing someone at the hub ends their sessions within about a minute), customer-approved or time-limited administrator access, OIDC back-channel logout.
+
 ## Secrets & crypto
 
 - `DATA_ENCRYPTION_KEY` (AES-256-GCM) encrypts *queued job payloads only* while
-  they sit in Redis (they can contain UPNs and phone numbers, not credentials).
+  they sit in Redis (they can contain UPNs and phone numbers, not credentials). It also
+  encrypts the stored secrets: TOTP secrets, the SMTP password, the hub instance token,
+  and single sign-on client secrets.
 - All secrets come from env / Docker secrets. `.env` is git-ignored;
   `.env.example` documents every key.
 

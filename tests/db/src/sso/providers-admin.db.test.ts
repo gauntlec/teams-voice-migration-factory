@@ -127,3 +127,30 @@ describe('removing a provider and linking people', () => {
     expect((await sso.providers.settings()).providers.find((p) => p.id === id)!.identityCount).toBe(1);
   });
 });
+
+describe('never locking everyone out', () => {
+  it('lowering a ceiling or switching a provider off is not blocked by the password-form check, and an existing provider keeps working with local passwords off', async () => {
+    const id = await addOidcProvider(handle, fake, { name: 'Already strict', allow_local_passwords: false });
+    await expect(sso.providers.update(id, { roleCeiling: 'CUSTOMER' }, actor())).resolves.toBeTruthy();
+    await expect(sso.providers.update(id, { enabled: false }, actor())).resolves.toBeTruthy();
+  });
+
+  it('will not remove or disable the last local administrator while a provider has switched local passwords off, but will when another exists', async () => {
+    const { UsersService } = await import('../../../../apps/api/src/users/users.service');
+    const users = new UsersService(handle.db, sso.audit, {} as never, sso.cfg);
+    const id = await addOidcProvider(handle, fake, { name: 'Strict', allow_local_passwords: false });
+    // make `admin` (seeded above) the only break-glass administrator for the moment
+    await db.updateTable('users').set({ break_glass: false }).where('break_glass', '=', true).where('id', '!=', admin.id).execute();
+    try {
+      await expect(users.setStatus(admin.id, 'disabled', actor())).rejects.toThrow(/last local \(break-glass\) administrator/);
+      await expect(users.delete(admin.id, { id: 'someone-else', email: 'x', role: 'SUPER_ADMIN' } as never)).rejects.toThrow(/last local \(break-glass\) administrator/);
+      const second = await seedLocalUser(handle, 'SUPER_ADMIN', { breakGlass: true });
+      await expect(users.setStatus(second.id, 'disabled', actor())).resolves.toBeTruthy(); // another one remains
+      await db.updateTable('users').set({ status: 'active' }).where('id', '=', second.id).execute();
+      await db.updateTable('sso_providers').set({ enabled: false }).where('id', '=', id).execute();
+      await expect(users.setStatus(second.id, 'disabled', actor())).resolves.toBeTruthy(); // and with local passwords on there is no restriction
+    } finally {
+      await db.updateTable('sso_providers').set({ enabled: false }).where('id', '=', id).execute();
+    }
+  });
+});

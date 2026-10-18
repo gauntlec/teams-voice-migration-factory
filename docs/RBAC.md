@@ -95,6 +95,7 @@ feature:read  feature:create  feature:manage
 bug:read  bug:create  bug:manage
 tenantdiscovery:read  tenantdiscovery:run
 platform:operate
+sso:manage
 ```
 
 ## Matrix (✓ = allowed)
@@ -131,6 +132,7 @@ platform:operate
 | agent:manage (Administration -> Assistants: create agents, tokens, customer policies, webhooks, kill switches) | ✓ | | | |
 | tenantdiscovery:read / run (Discovery: connect to the customer's live Teams tenant) | ✓ | | ✓ | |
 | platform:operate (Release check page, set/clear the maintenance notice) | ✓ | | | |
+| sso:manage (Platform settings > Single sign-on: providers, role ceilings, linking people to provider identities; see [SSO.md](SSO.md)) | ✓ | | | |
 
 ## Enforcement
 

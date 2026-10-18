@@ -179,9 +179,12 @@ export class SsoProvidersService {
     }
     if (input.issuer !== undefined && input.issuer.replace(/\/+$/, '') !== before.issuer) await this.discoverOrExplain(input.issuer);
 
+    // Only when this change is what takes the password form away (switching the provider on, or switching passwords off on a provider
+    // that is on): lowering a ceiling or switching a provider off must never be blocked by it.
     const enabledAfter = input.enabled ?? before.enabled;
     const localAfter = input.allowLocalPasswords ?? before.allow_local_passwords;
-    if (enabledAfter && !localAfter) await this.requireBreakGlass();
+    const takesPasswordsAway = enabledAfter && !localAfter && (!before.enabled || before.allow_local_passwords);
+    if (takesPasswordsAway) await this.requireBreakGlass();
 
     const set: Record<string, unknown> = { updated_at: new Date().toISOString() };
     const map: Record<string, [keyof UpdateSsoProviderInput, string]> = {

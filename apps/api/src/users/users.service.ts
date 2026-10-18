@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import * as argon2 from 'argon2';
-import { platformDb, tenantDb } from '@tvmf/db';
+import { localPasswordsAllowed, platformDb, tenantDb } from '@tvmf/db';
 import type { CreateUserInput, Role, UserInvitationContext } from '@tvmf/shared';
 import { AuditService } from '../common/audit.service';
 import type { AuditActor } from '../common/audit.service';
@@ -338,7 +338,29 @@ export class UsersService {
     return { id: user.id, email: user.email, tempPassword };
   }
 
+  /**
+   * While a single sign-on provider has switched local passwords off, the break-glass administrators are the only way back in if the
+   * provider fails (docs/SSO.md 4.6). Refuse to remove or disable the last one then.
+   */
+  private async protectLastBreakGlass(id: string, what: string): Promise<void> {
+    const target = await platformDb(this.db).selectFrom('users').select('break_glass').where('id', '=', id).executeTakeFirst();
+    if (!target?.break_glass || (await localPasswordsAllowed(this.db))) return;
+    const others = await platformDb(this.db)
+      .selectFrom('users')
+      .select('id')
+      .where('break_glass', '=', true)
+      .where('role', '=', 'SUPER_ADMIN')
+      .where('status', '=', 'active')
+      .where('id', '!=', id)
+      .limit(1)
+      .executeTakeFirst();
+    if (!others) {
+      throw new BadRequestException(`You cannot ${what} the last local (break-glass) administrator while single sign-on has local passwords switched off. Create another local administrator first, or switch local passwords back on.`);
+    }
+  }
+
   async setStatus(id: string, status: 'active' | 'disabled', actor: AuditActor) {
+    if (status === 'disabled') await this.protectLastBreakGlass(id, 'disable');
     const updated = await platformDb(this.db)
       .updateTable('users')
       .set({ status, updated_at: new Date().toISOString() })
@@ -379,6 +401,7 @@ export class UsersService {
       .where('id', '=', id)
       .executeTakeFirst();
     if (!user) throw new NotFoundException('user not found');
+    await this.protectLastBreakGlass(id, 'delete');
 
     if (user.role === 'SUPER_ADMIN') {
       const others = await platformDb(this.db)
