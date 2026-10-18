@@ -47,6 +47,7 @@ import {
   PeopleTeamRegular,
   PersonAvailableRegular,
   PersonProhibitedRegular,
+  PlugConnectedRegular,
   ShieldKeyholeRegular,
 } from '@fluentui/react-icons';
 import { ROLES, type Role } from '@tvmf/shared';
@@ -59,6 +60,7 @@ import { useDebounced } from '../../hooks/useDebounced';
 import { useNotify } from '../../hooks/useNotify';
 import { useSort } from '../../lib/sort';
 import { DangerText, MutedText } from '../../components/ui';
+import { LinkIdentityDialog } from './LinkIdentityDialog';
 
 const useLocalStyles = makeStyles({
   danger: { color: tokens.colorPaletteRedForeground1 },
@@ -92,6 +94,8 @@ interface UserRow {
   status: string;
   totp_enrolled: boolean;
   msp_id: string | null;
+  break_glass?: boolean;
+  ssoProviders?: string[];
   tenants?: { id: string; name: string }[];
 }
 interface TenantRow {
@@ -275,6 +279,7 @@ export function AdminUsers() {
   const [mspId, setMspId] = useState<string>('');
   const [err, setErr] = useState<string | null>(null);
   const [manage, setManage] = useState<UserRow | null>(null);
+  const [linking, setLinking] = useState<UserRow | null>(null);
   const [creating, setCreating] = useState(false);
   const [invited, setInvited] = useState<{
     email: string;
@@ -579,7 +584,9 @@ export function AdminUsers() {
                     </TableCell>
                   )}
                   <TableCell>{u.status}</TableCell>
-                  <TableCell>{u.totp_enrolled ? 'enrolled' : '—'}</TableCell>
+                  <TableCell title={u.ssoProviders?.length ? `Can sign in through: ${u.ssoProviders.join(', ')}` : undefined}>
+                    {u.totp_enrolled ? 'enrolled' : u.ssoProviders?.length ? 'by provider' : '—'}
+                  </TableCell>
                   <TableCell>
                     <div className={s.actions}>
                       {u.role !== 'SUPER_ADMIN' && (
@@ -617,6 +624,11 @@ export function AdminUsers() {
                             <MenuItem icon={<ShieldKeyholeRegular />} onClick={() => setConfirm({ user: u, action: 'reset-mfa' })}>
                               Reset two-factor
                             </MenuItem>
+                            {can('sso:manage') && (
+                              <MenuItem icon={<PlugConnectedRegular />} onClick={() => setLinking(u)}>
+                                Link to provider identity…
+                              </MenuItem>
+                            )}
                             {u.role !== 'SUPER_ADMIN' && (
                               <>
                                 <MenuDivider />
@@ -671,6 +683,8 @@ export function AdminUsers() {
           </DialogBody>
         </DialogSurface>
       </Dialog>
+
+      {linking && <LinkIdentityDialog user={linking} onClose={() => setLinking(null)} />}
 
       {manage && (
         <UserMembershipsDialog

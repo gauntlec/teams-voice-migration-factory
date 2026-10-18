@@ -46,6 +46,32 @@ export const ROLE_LABELS: Record<Role, string> = {
   CUSTOMER: 'Customer',
 };
 
+/**
+ * The role map as people type it, one per line: `Voxshift Admins = Administrator`. The left side is the value the provider sends in the
+ * role claim (a group name, an app role), the right side a role as the screens name it.
+ */
+export function parseRoleMapText(text: string): { ok: true; map: Record<string, Role> } | { ok: false; error: string } {
+  const map: Record<string, Role> = {};
+  const byLabel = new Map<string, Role>([
+    ...(Object.entries(ROLE_LABELS).map(([role, label]) => [label.toLowerCase(), role as Role]) as [string, Role][]),
+    ...(ROLES.map((r) => [r.toLowerCase(), r]) as [string, Role][]),
+  ]);
+  for (const [i, raw] of text.split(/\r?\n/).entries()) {
+    const line = raw.trim();
+    if (!line) continue;
+    const at = line.lastIndexOf('=');
+    const value = at > 0 ? line.slice(0, at).trim() : '';
+    const role = at > 0 ? byLabel.get(line.slice(at + 1).trim().toLowerCase().replace(/\s+/g, ' ')) : undefined;
+    if (!value || !role) return { ok: false, error: `Line ${i + 1}: write it like  Voxshift Admins = Administrator  (roles: ${Object.values(ROLE_LABELS).join(', ')}).` };
+    map[value] = role;
+  }
+  return { ok: true, map };
+}
+
+export function formatRoleMapText(map: Record<string, Role>): string {
+  return Object.entries(map).map(([value, role]) => `${value} = ${ROLE_LABELS[role]}`).join('\n');
+}
+
 /** Roles in the order a picker shows them: most powerful first. */
 export const ROLES_BY_POWER: readonly Role[] = ROLES;
 

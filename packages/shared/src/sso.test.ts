@@ -7,7 +7,9 @@ import {
   createSsoProviderSchema,
   hubGateHost,
   instanceIdFromHubToken,
+  formatRoleMapText,
   linkIdentitySchema,
+  parseRoleMapText,
   safeReturnTo,
   updateSsoProviderSchema,
 } from './sso';
@@ -94,5 +96,29 @@ describe('provider input', () => {
     expect(linkIdentitySchema.safeParse({ requestId: '0f8fad5b-d9cb-469f-a165-70867728950e' }).success).toBe(true);
     expect(linkIdentitySchema.safeParse({ providerId: '0f8fad5b-d9cb-469f-a165-70867728950e', subject: 'abc' }).success).toBe(true);
     expect(linkIdentitySchema.safeParse({ subject: 'abc' }).success).toBe(false);
+  });
+});
+
+describe('the role map as typed', () => {
+  it('reads one mapping per line, by the names the screens use', () => {
+    expect(parseRoleMapText('Voxshift Admins = Administrator\n\n  Eng team=engineer \nPMs = Project Manager')).toEqual({
+      ok: true,
+      map: { 'Voxshift Admins': 'SUPER_ADMIN', 'Eng team': 'ENGINEER', PMs: 'PROJECT_MANAGER' },
+    });
+    expect(parseRoleMapText('')).toEqual({ ok: true, map: {} });
+    expect(parseRoleMapText('x = SUPER_ADMIN')).toEqual({ ok: true, map: { x: 'SUPER_ADMIN' } });
+  });
+
+  it('says which line is wrong', () => {
+    for (const bad of ['Admins', 'Admins = Wizard', '= Engineer', 'ok = Engineer\nbroken line']) {
+      const r = parseRoleMapText(bad);
+      expect(r.ok, bad).toBe(false);
+    }
+    expect((parseRoleMapText('ok = Engineer\nbroken') as { error: string }).error).toMatch(/^Line 2/);
+  });
+
+  it('round-trips', () => {
+    const map = { 'A group': 'ENGINEER', B: 'SUPER_ADMIN' } as const;
+    expect(parseRoleMapText(formatRoleMapText({ ...map }))).toEqual({ ok: true, map });
   });
 });

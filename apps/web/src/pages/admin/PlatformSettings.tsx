@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Badge, Button, Card, Radio, RadioGroup, Switch, Field, Input, MessageBar, MessageBarActions, MessageBarBody, Spinner, Text, makeStyles, shorthands, tokens } from '@fluentui/react-components';
 import { CopyRegular } from '@fluentui/react-icons';
-import { DEFAULT_HUB_URL, HOSTED_BASE_URL, HUB_TOKEN_RE, MAIL_MODE_LABELS, PLATFORM_FEATURES, PLATFORM_FEATURE_INFO, baseUrlWarnings, hubLinkState, normalizeBaseUrl, type BaseUrlView, type HubConnectionView, type MailModeSetting, type MailSettingsView, type PlatformFeature } from '@tvmf/shared';
+import { DEFAULT_HUB_URL, ROLE_LABELS, type SsoSettingsView, HOSTED_BASE_URL, HUB_TOKEN_RE, MAIL_MODE_LABELS, PLATFORM_FEATURES, PLATFORM_FEATURE_INFO, baseUrlWarnings, hubLinkState, normalizeBaseUrl, type BaseUrlView, type HubConnectionView, type MailModeSetting, type MailSettingsView, type PlatformFeature } from '@tvmf/shared';
 import { api } from '../../api';
 import { Page } from '../../components/Page';
 import { LoadError } from '../../components/records';
@@ -22,6 +23,40 @@ const useLocalStyles = makeStyles({
   line: { display: 'grid', gridTemplateColumns: 'minmax(160px, 220px) 1fr auto', ...shorthands.gap('8px'), alignItems: 'center' },
   code: { fontFamily: tokens.fontFamilyMonospace, fontSize: tokens.fontSizeBase200, overflowWrap: 'anywhere' },
 });
+
+/** Single sign-on at a glance: what is on, and the way in to the full screen (Platform settings > Single sign-on). */
+function SsoCard() {
+  const s = useLocalStyles();
+  const navigate = useNavigate();
+  const q = useQuery({ queryKey: ['sso-settings'], queryFn: () => api<SsoSettingsView>('/sso/settings') });
+  const on = q.data?.providers.filter((p) => p.enabled) ?? [];
+  const hub = q.data?.providers.find((p) => p.kind === 'hub');
+  return (
+    <Card>
+      <div className={s.body}>
+        <div className={s.stack}>
+          <Text weight="semibold">Single sign-on</Text>
+          <MutedText>Let people sign in with the Voxshift Hub, or with your own Microsoft Entra ID, Okta or Google Workspace, instead of a separate password here. Everything is off until you turn it on, and local sign-in keeps working.</MutedText>
+        </div>
+        {q.isLoading ? (
+          <Spinner size="tiny" />
+        ) : (
+          <div className={s.current}>
+            <Badge appearance="tint" color={on.length > 0 ? 'success' : 'informative'}>
+              {on.length > 0 ? `On: ${on.map((p) => p.name).join(', ')}` : 'Off'}
+            </Badge>
+            {hub?.enabled && <MutedText>Voxshift Hub staff can sign in as: {ROLE_LABELS[hub.roleCeilingStaff]}.</MutedText>}
+          </div>
+        )}
+        <div className={s.row}>
+          <Button appearance="primary" onClick={() => navigate('/admin/settings/sso')}>
+            Open single sign-on settings
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
 
 /** Optional areas of the application: switch the ones this installation does not need off, and their menus, pages and API disappear. */
 function FeaturesCard({ disabled }: { disabled: PlatformFeature[] }) {
@@ -331,6 +366,7 @@ function HubCard({ hub }: { hub: HubConnectionView }) {
 /** Administration > Platform settings: the base URL (every link, the CORS allow-list, the assistant connection details), the master email switch and the hub connection. */
 export function AdminPlatformSettings() {
   const s = useLocalStyles();
+  const { can } = useAuth();
   const qc = useQueryClient();
   const notify = useNotify();
   // While a hub connection has not reported in yet (or is failing) look again every few seconds, so the card shows the first report as soon as the worker
@@ -409,6 +445,8 @@ export function AdminPlatformSettings() {
       {view && <FeaturesCard disabled={view.disabledFeatures ?? []} />}
 
       {view && <HubCard hub={view.hub} />}
+
+      {can('sso:manage') && <SsoCard />}
 
       {view && <EmailCard key={`${view.mail.mode}-${view.mail.source}-${view.mail.smtp.host}-${view.mail.smtp.passwordSet}`} mail={view.mail} />}
 

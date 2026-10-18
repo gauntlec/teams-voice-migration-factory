@@ -26,6 +26,7 @@ import { AdminAudit } from './pages/admin/Audit';
 import { AdminAgents } from './pages/admin/Agents';
 import { AdminReleaseCheck } from './pages/admin/ReleaseCheck';
 import { AdminPlatformSettings } from './pages/admin/PlatformSettings';
+import { AdminSso } from './pages/admin/Sso';
 import { FeatureRequests } from './pages/FeatureRequests';
 import { MspIncidents } from './pages/MspIncidents';
 import { MspServiceRequests } from './pages/MspServiceRequests';
@@ -170,6 +171,14 @@ export function App() {
           element={
             <RequirePermission permission="platform:operate">
               <AdminPlatformSettings />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="/admin/settings/sso"
+          element={
+            <RequirePermission permission="sso:manage">
+              <AdminSso />
             </RequirePermission>
           }
         />

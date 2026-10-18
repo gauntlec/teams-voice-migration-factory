@@ -32,7 +32,7 @@ export class UsersService {
   async list(actor: { id: string; role: Role }, search?: string) {
     let query = platformDb(this.db)
       .selectFrom('users')
-      .select(['id', 'email', 'display_name', 'role', 'status', 'totp_enrolled', 'msp_id', 'created_at'])
+      .select(['id', 'email', 'display_name', 'role', 'status', 'totp_enrolled', 'msp_id', 'break_glass', 'created_at'])
       .orderBy('created_at', 'desc');
     if (actor.role !== 'SUPER_ADMIN') {
       // Non-admins only see users who belong to a customer they are assigned to.
@@ -53,7 +53,7 @@ export class UsersService {
       query = query.where((eb) => eb.or([eb('email', 'ilike', like), eb('display_name', 'ilike', like)]));
     }
     const users = await query.execute();
-    if (users.length === 0) return users;
+    if (users.length === 0) return users.map((u) => ({ ...u, tenants: [], ssoProviders: [] as string[] }));
 
     // Attach each user's customer names for the list view.
     const memberships = await platformDb(this.db)
@@ -73,7 +73,17 @@ export class UsersService {
       arr.push({ id: r.tenantId, name: r.tenantName });
       byUser.set(r.userId, arr);
     }
-    return users.map((u) => ({ ...u, tenants: byUser.get(u.id) ?? [] }));
+    // Which single sign-on providers each person can sign in through (Users > Link to provider identity).
+    const identities = await platformDb(this.db)
+      .selectFrom('external_identities as i')
+      .innerJoin('sso_providers as p', 'p.id', 'i.provider_id')
+      .select(['i.user_id as userId', 'p.name as providerName'])
+      .where('i.user_id', 'in', users.map((u) => u.id))
+      .orderBy('p.name')
+      .execute();
+    const ssoByUser = new Map<string, string[]>();
+    for (const r of identities) ssoByUser.set(r.userId, [...(ssoByUser.get(r.userId) ?? []), r.providerName]);
+    return users.map((u) => ({ ...u, tenants: byUser.get(u.id) ?? [], ssoProviders: ssoByUser.get(u.id) ?? [] }));
   }
 
   /** Every customer this user belongs to, with its site scope. Used by the
