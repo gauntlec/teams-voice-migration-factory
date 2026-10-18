@@ -78,11 +78,11 @@ function LastTest({ p }: { p: SsoProviderView }) {
   if (!p.lastTestAt) return <MutedText>Not tested yet. Test sign-in signs you in at the provider and shows what would happen, without creating anyone.</MutedText>;
   const when = new Date(p.lastTestAt).toLocaleString();
   return p.lastTestOk ? (
-    <MessageBar intent="success">
+    <MessageBar layout="multiline" intent="success">
       <MessageBarBody>Last test worked ({when}). {p.lastTestDetail}</MessageBarBody>
     </MessageBar>
   ) : (
-    <MessageBar intent="warning">
+    <MessageBar layout="multiline" intent="warning">
       <MessageBarBody>Last test did not work ({when}). {p.lastTestDetail ?? 'Check the settings below and the audit log for the reason.'}</MessageBarBody>
     </MessageBar>
   );
@@ -133,7 +133,7 @@ function HubCard({ p }: { p: SsoProviderView }) {
           Lets people who have an account at the Voxshift Hub open this installation with one click from the hub, or from the sign-in page here, without a second sign-in. Passwords stay at the hub. You decide here who is trusted and what they can do; sign-in with a local account always keeps working.
         </MutedText>
         {!p.hubConnected && (
-          <MessageBar intent="warning">
+          <MessageBar layout="multiline" intent="warning">
             <MessageBarBody>
               This installation is not connected to a Voxshift Hub yet. Connect it under <Link to="/admin/settings">Platform settings, Voxshift hub</Link>, then come back to switch this on.
             </MessageBarBody>
@@ -153,7 +153,7 @@ function HubCard({ p }: { p: SsoProviderView }) {
           onChange={(r) => set({ roleCeilingStaff: r })}
         />
         {p.roleCeilingStaff === 'SUPER_ADMIN' && p.enabled && (
-          <MessageBar intent="warning">
+          <MessageBar layout="multiline" intent="warning">
             <MessageBarBody>With this on, Voxshift staff who have been given access to this installation at the hub can sign in as Administrator. Every such sign-in is recorded and emailed to the administrators here.</MessageBarBody>
           </MessageBar>
         )}
@@ -455,7 +455,7 @@ export function AdminSso() {
       {v && (
         <div className={s.page}>
           {testedProvider && (
-            <MessageBar intent={testedProvider.lastTestOk ? 'success' : 'warning'}>
+            <MessageBar layout="multiline" intent={testedProvider.lastTestOk ? 'success' : 'warning'}>
               <MessageBarBody>
                 {testedProvider.lastTestOk ? `The test sign-in with ${testedProvider.name} worked. ` : `The test sign-in with ${testedProvider.name} did not work. `}
                 {testedProvider.lastTestDetail ?? ''}
@@ -465,7 +465,7 @@ export function AdminSso() {
               </Button>
             </MessageBar>
           )}
-          <MessageBar intent="info">
+          <MessageBar layout="multiline" intent="info">
             <MessageBarBody>
               Local accounts keep working, and local administrators (break-glass accounts) can always sign in with a password and authenticator. Nothing is switched on until you turn a provider on here. A person's role is the lower of what the provider says and the highest role you allow for it, checked at every sign-in.
             </MessageBarBody>

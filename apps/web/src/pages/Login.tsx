@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Body1,
@@ -23,15 +23,23 @@ import { MutedText } from '../components/ui';
 /** Why single sign-on did not work, if the page was reached from a refused sign-in (`/?sso_error=<code>`). The code is looked up in a fixed list; nothing from the address is shown as it is. */
 function readSsoError(): string | null {
   try {
+    const code = new URLSearchParams(window.location.search).get('sso_error');
+    return code === null ? null : SSO_PUBLIC_ERRORS[isSsoPublicError(code) ? code : 'failed'];
+  } catch {
+    return null;
+  }
+}
+
+/** Takes the code out of the address once it has been read, so a reload or a bookmark does not show the message again. */
+function forgetSsoError() {
+  try {
     const params = new URLSearchParams(window.location.search);
-    const code = params.get('sso_error');
-    if (code === null) return null;
+    if (!params.has('sso_error')) return;
     params.delete('sso_error');
     const rest = params.toString();
     window.history.replaceState(null, '', `${window.location.pathname}${rest ? `?${rest}` : ''}${window.location.hash}`);
-    return SSO_PUBLIC_ERRORS[isSsoPublicError(code) ? code : 'failed'];
   } catch {
-    return null;
+    /* the message simply stays in the address */
   }
 }
 
@@ -73,6 +81,7 @@ export function Login() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ssoError] = useState(readSsoError);
+  useEffect(forgetSsoError, []);
   // With single sign-on the password form can be switched off; break-glass administrators reach it from the "Administrator sign-in" link.
   const [showLocal, setShowLocal] = useState(false);
   const providers = useQuery({ queryKey: ['sso-providers'], queryFn: () => api<PublicSsoProviders>('/auth/providers'), retry: false });
