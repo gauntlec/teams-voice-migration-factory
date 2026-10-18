@@ -47,3 +47,19 @@ export function readState(cookie: string | undefined, secret: string): OidcState
     return null;
   }
 }
+
+/** Proof, for two minutes, that an administrator asked for "Test sign-in" on one provider. A browser navigation cannot carry the bearer token, so this travels in the address instead. */
+export function signTestTicket(providerId: string, adminId: string, secret: string): string {
+  return jwt.sign({ providerId, adminId, typ: 'oidc-test' }, key(secret), { algorithm: 'HS256', expiresIn: 120, issuer: 'tvmf-oidc' });
+}
+
+export function readTestTicket(ticket: string | undefined, secret: string): { providerId: string; adminId: string } | null {
+  if (!ticket) return null;
+  try {
+    const p = jwt.verify(ticket, key(secret), { algorithms: ['HS256'], issuer: 'tvmf-oidc' }) as Record<string, unknown>;
+    if (p.typ !== 'oidc-test' || typeof p.providerId !== 'string' || typeof p.adminId !== 'string') return null;
+    return { providerId: p.providerId, adminId: p.adminId };
+  } catch {
+    return null;
+  }
+}

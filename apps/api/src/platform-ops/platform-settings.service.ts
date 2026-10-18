@@ -5,6 +5,7 @@ import { APP_CONFIG, type AppConfig } from '../common/config';
 import { encryptSecret } from '../common/crypto';
 import { InjectDb, type Db } from '../db/db.module';
 import { MailService } from '../mail/mail.service';
+import { hubDisconnected, syncHubProvider } from '../sso/hub-provider';
 
 // The driver hands back Date objects for timestamptz columns whatever the table type says.
 const iso = (v: string | Date | null | undefined): string | null => (v ? new Date(v).toISOString() : null);
@@ -112,6 +113,8 @@ export class PlatformSettingsService implements OnModuleInit {
       .values({ id: true, base_url: null, ...values })
       .onConflict((oc) => oc.column('id').doUpdateSet({ ...values, updated_at: new Date().toISOString() }))
       .execute();
+    // The hub is also an identity provider for single sign-on (docs/SSO.md 4.1): keep that record in step, switched off until an administrator turns it on.
+    await syncHubProvider(this.db, hubUrl, token, userId);
     return this.view();
   }
 
@@ -121,6 +124,7 @@ export class PlatformSettingsService implements OnModuleInit {
       .set({ hub_url: null, hub_token_enc: null, hub_token_hint: null, hub_last_attempt_at: null, hub_last_ok_at: null, hub_last_error: null, hub_remote_access: false, hub_tunnel_state: 'off', hub_tunnel_error: null, hub_tunnel_at: null, updated_by: userId, updated_at: new Date().toISOString() })
       .where('id', '=', true)
       .execute();
+    await hubDisconnected(this.db, userId);
     return this.view();
   }
 

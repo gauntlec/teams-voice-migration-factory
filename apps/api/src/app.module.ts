@@ -26,6 +26,7 @@ import { TenantDiscoveryModule } from './modules/tenant-discovery/tenant-discove
 import { AuditReadModule } from './modules/audit/audit-read.module';
 import { ProgressModule } from './modules/progress/progress.module';
 import { PlatformOpsModule } from './platform-ops/platform-ops.module';
+import { SsoModule } from './sso/sso.module';
 import { HealthController } from './health/health.controller';
 import { FeatureGuard } from './common/feature.guard';
 
@@ -55,6 +56,7 @@ import { FeatureGuard } from './common/feature.guard';
     AuditReadModule,
     ProgressModule,
     PlatformOpsModule,
+    SsoModule,
   ],
   controllers: [HealthController],
   providers: [
