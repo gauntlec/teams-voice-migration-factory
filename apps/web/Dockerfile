@@ -15,8 +15,8 @@ COPY apps/web ./apps/web
 RUN npm run build --workspace @tvmf/shared && npm run build --workspace @tvmf/web
 
 # ---- serve ----
-# The current stable nginx branch, plus any Alpine fixes published since the image was built.
-FROM nginx:stable-alpine AS runtime
+# The current stable nginx branch, slim variant (without the image-filter/XSLT modules we do not use, which pull in libx11 and libexpat), plus any Alpine fixes published since the image was built.
+FROM nginx:stable-alpine-slim AS runtime
 RUN apk upgrade --no-cache
 COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
 COPY apps/web/security-headers.conf /etc/nginx/security-headers.conf
