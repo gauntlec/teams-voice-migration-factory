@@ -31,6 +31,7 @@ export * from './progress';
 export * from './release-safety';
 export * from './base-url';
 export * from './hub-connection';
+export * from './sso';
 export * from './mail-settings';
 export * from './platform-features';
 
@@ -119,6 +120,10 @@ export interface Me {
   tenants: MeTenant[];
   /** Optional areas switched off for this installation (Platform settings > Menus and features): hide their menus and pages. */
   disabledFeatures: import('./platform-features').PlatformFeature[];
+  /** How this session was started: with a password and authenticator here, or through a single sign-on provider (docs/SSO.md). */
+  signInMethod: 'local' | 'sso';
+  /** The provider's name when `signInMethod` is 'sso'. */
+  ssoProviderName: string | null;
 }
 
 /** A feature request as returned by `GET /feature-requests` (board card). */

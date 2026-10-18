@@ -4,13 +4,13 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import * as argon2 from 'argon2';
-import { disabledFeatures, platformDb } from '@tvmf/db';
-import type { Branding, Me, PlatformFeature } from '@tvmf/shared';
+import { disabledFeatures, hasUsablePassword, localPasswordsAllowed, platformDb } from '@tvmf/db';
+import { ceilingForIdentity, roleRank, type Branding, type Me, type PlatformFeature, type Role } from '@tvmf/shared';
 import { AuditService } from '../common/audit.service';
 import { decryptSecret, encryptSecret } from '../common/crypto';
 import { resolveMspId } from '../common/msp-resolution.util';
 import { InjectDb, type Db } from '../db/db.module';
-import { TokenService } from './token.service';
+import { TokenService, type FederatedSession } from './token.service';
 import { TotpService } from './totp.service';
 
 const ARGON = { type: argon2.argon2id, memoryCost: 19456, timeCost: 2, parallelism: 1 } as const;
@@ -55,11 +55,26 @@ export class AuthService {
     if (user.locked_until && new Date(user.locked_until).getTime() > Date.now()) {
       return fail('locked');
     }
+    // An account that exists only through a single sign-on provider has no password to try.
+    if (!hasUsablePassword(user.password_hash)) {
+      await argon2.hash(password, ARGON).catch(() => undefined); // timing padding
+      return fail('federated-account');
+    }
 
     const ok = await argon2.verify(user.password_hash, password).catch(() => false);
     if (!ok) {
       await this.recordFailedAttempt(user.id, user.failed_logins);
       return fail('bad-password');
+    }
+
+    // A provider can switch local passwords off (docs/SSO.md 4.2). Break-glass administrators are the way back in, so they are exempt.
+    // Checked only after the password is right, so this does not tell anyone which accounts are break-glass.
+    if (!user.break_glass && !(await localPasswordsAllowed(this.db))) {
+      await this.audit.platform('auth.login.failed', {
+        actor: { id: user.id, email, ip: meta.ip },
+        detail: { reason: 'local-passwords-off' },
+      });
+      throw new ForbiddenException('Signing in with a password is switched off on this installation. Use single sign-on instead.');
     }
 
     // NB: failed_logins is deliberately NOT reset here. A correct password is
@@ -303,12 +318,28 @@ export class AuthService {
       .select(['id', 'role', 'email', 'status'])
       .where('id', '=', rotated.userId)
       .executeTakeFirst();
+    if (rotated.federated) {
+      // A person who came in through a provider is checked again at every refresh (every 15 minutes): the provider may have been
+      // switched off, the identity removed, the person disabled or the ceiling lowered since (docs/SSO.md 4.7).
+      const why = await this.federatedSessionProblem(user, rotated.federated.idp);
+      if (why) {
+        await this.tokens.revokeFamily(rotated.familyId);
+        await this.audit.platform('sso.revoked', {
+          actor: { id: rotated.userId, email: user?.email, ip: meta.ip },
+          targetType: 'user',
+          targetId: rotated.userId,
+          detail: { reason: why, providerId: rotated.federated.idp },
+        });
+        throw new UnauthorizedException('You have been signed out. Sign in again.');
+      }
+    }
     if (!user || user.status !== 'active') throw new ForbiddenException('Account unavailable');
     const access = this.tokens.signAccess({
       sub: user.id,
       role: user.role,
       email: user.email,
       typ: 'access',
+      ...(rotated.federated ? { idp: rotated.federated.idp, amr: rotated.federated.amr } : {}),
     });
     return {
       accessToken: access.token,
@@ -318,11 +349,34 @@ export class AuthService {
     };
   }
 
+  /** Why a federated session may not continue, or null. Reason codes go to the audit log. */
+  private async federatedSessionProblem(
+    user: { id: string; role: Role; status: string } | undefined,
+    providerId: string,
+  ): Promise<string | null> {
+    if (!user || user.status !== 'active') return 'user-disabled';
+    const provider = await platformDb(this.db)
+      .selectFrom('sso_providers')
+      .select(['kind', 'enabled', 'role_ceiling', 'role_ceiling_staff', 'role_ceiling_customer'])
+      .where('id', '=', providerId)
+      .executeTakeFirst();
+    if (!provider || !provider.enabled) return 'provider-off';
+    const identity = await platformDb(this.db)
+      .selectFrom('external_identities')
+      .select('account_kind')
+      .where('user_id', '=', user.id)
+      .where('provider_id', '=', providerId)
+      .executeTakeFirst();
+    if (!identity) return 'identity-removed';
+    if (roleRank(user.role) > roleRank(ceilingForIdentity(provider, identity.account_kind))) return 'ceiling-lowered';
+    return null;
+  }
+
   async logout(cookieValue: string | undefined) {
     if (cookieValue) await this.tokens.revoke(cookieValue);
   }
 
-  async me(userId: string): Promise<Me> {
+  async me(userId: string, idp?: string | null): Promise<Me> {
     const user = await platformDb(this.db)
       .selectFrom('users')
       .select(['id', 'email', 'display_name', 'role', 'totp_enrolled', 'msp_id'])
@@ -377,6 +431,8 @@ export class AuthService {
       mspId: resolvedMsp?.id ?? null,
       mspBranding: resolvedMsp?.branding ?? null,
       disabledFeatures: (await disabledFeatures(this.db)) as PlatformFeature[],
+      signInMethod: idp ? 'sso' : 'local',
+      ssoProviderName: idp ? ((await platformDb(this.db).selectFrom('sso_providers').select('name').where('id', '=', idp).executeTakeFirst())?.name ?? null) : null,
     };
   }
 
@@ -396,6 +452,22 @@ export class AuthService {
     if (!id) return null;
     const msp = await platformDb(this.db).selectFrom('msps').select('branding').where('id', '=', id).executeTakeFirst();
     return { id, branding: msp?.branding ?? null };
+  }
+
+  /**
+   * A session for someone who has just signed in through a single sign-on provider (apps/api/src/sso): the same access token and
+   * rotating refresh cookie as a password sign-in, marked with the provider and the methods it reported. No local authenticator is asked
+   * for (the provider did that step); the session ends at `federated.absoluteExpiresAt` whatever refreshing does.
+   */
+  async issueFederatedLogin(userId: string, role: string, email: string, federated: FederatedSession, meta: Meta) {
+    const access = this.tokens.signAccess({ sub: userId, role, email, typ: 'access', idp: federated.idp, amr: federated.amr });
+    const session = await this.tokens.issueSession(userId, { ...meta, federated });
+    return {
+      accessToken: access.token,
+      accessExpiresIn: access.expiresIn,
+      refreshCookieValue: session.cookieValue,
+      refreshExpiresAt: session.expiresAt,
+    };
   }
 
   private async issueLogin(userId: string, role: string, email: string, meta: Meta) {

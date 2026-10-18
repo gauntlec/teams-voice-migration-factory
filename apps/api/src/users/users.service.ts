@@ -167,6 +167,8 @@ export class UsersService {
         display_name: input.displayName,
         role: input.role,
         must_change_password: true,
+        // A Super Admin created here keeps password + authenticator sign-in even if local passwords are switched off (docs/SSO.md 4.6).
+        break_glass: input.role === 'SUPER_ADMIN',
         msp_id: input.role === 'ENGINEER' || input.role === 'PROJECT_MANAGER' ? (input.mspId ?? null) : null,
       })
       .returning(['id', 'email', 'display_name', 'role', 'status'])

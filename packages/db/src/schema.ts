@@ -50,6 +50,8 @@ export interface UsersTable {
   locked_until: string | null;
   /** Explicit MSP-branding override for ENGINEER/PROJECT_MANAGER, used only when no domain matches - see 0009_msps.sql. */
   msp_id: string | null;
+  /** A locally created Super Admin who keeps password + authenticator sign-in even when local passwords are switched off - see 0031_sso.sql. */
+  break_glass: ColumnType<boolean, boolean | undefined, boolean>;
   created_at: Ts;
   updated_at: Ts;
 }
@@ -135,6 +137,10 @@ export interface AppSettingsTable {
   hub_mail_relay: ColumnType<boolean | null, boolean | null | undefined, boolean | null>;
   /** Optional areas switched off for this installation (0030_disabled_features.sql). Empty = all on. */
   disabled_features: ColumnType<string[], string[] | undefined, string[]>;
+  /** How long a federated (single sign-on) session lasts before the person signs in at the provider again, in hours (0031_sso.sql). */
+  sso_session_max_hours: ColumnType<number, number | undefined, number>;
+  /** Email the administrators when someone signs in as Super Admin through a provider (0031_sso.sql). */
+  sso_notify_admin_signin: ColumnType<boolean, boolean | undefined, boolean>;
   updated_by: string | null;
   updated_at: Ts;
 }
@@ -232,6 +238,74 @@ export interface AuthSessionsTable {
   revoked_at: string | null;
   replaced_by: string | null;
   created_at: Ts;
+  /** Authentication methods the provider reported for a federated session (0031_sso.sql); empty for a local sign-in. */
+  amr: ColumnType<string[], string[] | undefined, string[]>;
+  /** The provider a federated session came from; null = local password sign-in. */
+  idp: ColumnType<string | null, string | null | undefined, string | null>;
+  /** A federated session ends here whatever refreshing does. */
+  absolute_expires_at: ColumnType<string | null, string | null | undefined, string | null>;
+}
+
+type RoleName = 'SUPER_ADMIN' | 'PROJECT_MANAGER' | 'ENGINEER' | 'CUSTOMER';
+
+/** An identity provider this installation can sign people in with (the Voxshift Hub, or the customer's own OpenID Connect provider) - see 0031_sso.sql and docs/SSO.md. */
+export interface SsoProvidersTable {
+  id: Generated<string>;
+  kind: 'hub' | 'oidc';
+  name: string;
+  issuer: string;
+  client_id: string;
+  /** Encrypted with DATA_ENCRYPTION_KEY. Never returned by the API. */
+  client_secret_enc: ColumnType<string | null, string | null | undefined, string | null>;
+  scopes: ColumnType<string, string | undefined, string>;
+  enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  jit_create: ColumnType<boolean, boolean | undefined, boolean>;
+  require_mfa_claim: ColumnType<boolean, boolean | undefined, boolean>;
+  role_ceiling: ColumnType<RoleName, RoleName | undefined, RoleName>;
+  role_ceiling_staff: ColumnType<RoleName, RoleName | undefined, RoleName>;
+  role_ceiling_customer: ColumnType<RoleName, RoleName | undefined, RoleName>;
+  default_role: ColumnType<RoleName, RoleName | undefined, RoleName>;
+  role_claim: ColumnType<string | null, string | null | undefined, string | null>;
+  /** claim value -> role. Written as JSON.stringify(...). */
+  role_map: ColumnType<Record<string, RoleName>, string | undefined, string>;
+  email_domains: ColumnType<string[], string[] | undefined, string[]>;
+  allow_local_passwords: ColumnType<boolean, boolean | undefined, boolean>;
+  last_test_at: ColumnType<string | null, string | null | undefined, string | null>;
+  last_test_ok: ColumnType<boolean | null, boolean | null | undefined, boolean | null>;
+  last_test_detail: ColumnType<string | null, string | null | undefined, string | null>;
+  created_by: string | null;
+  created_at: Ts;
+  updated_at: Ts;
+}
+
+/** Who a local user is at a provider (the provider's `sub`). Never matched by email - see 0031_sso.sql. */
+export interface ExternalIdentitiesTable {
+  id: Generated<string>;
+  user_id: string;
+  provider_id: string;
+  subject: string;
+  email: string | null;
+  account_kind: ColumnType<string | null, string | null | undefined, string | null>;
+  created_at: Ts;
+  last_login_at: ColumnType<string | null, string | null | undefined, string | null>;
+}
+
+/** A sign-in refused because a local account with that email exists: offered to an administrator to link on purpose. */
+export interface SsoLinkRequestsTable {
+  id: Generated<string>;
+  provider_id: string;
+  subject: string;
+  email: string;
+  display_name: string | null;
+  account_kind: string | null;
+  created_at: Ts;
+  last_seen_at: Ts;
+}
+
+/** Codes and ID tokens seen once, so a replay is refused. */
+export interface SsoReplayGuardTable {
+  key: string;
+  expires_at: string;
 }
 
 export interface InvitationsTable {
@@ -1439,6 +1513,10 @@ export interface DB {
   tenant_memberships: TenantMembershipsTable;
   totp_secrets: TotpSecretsTable;
   auth_sessions: AuthSessionsTable;
+  sso_providers: SsoProvidersTable;
+  external_identities: ExternalIdentitiesTable;
+  sso_link_requests: SsoLinkRequestsTable;
+  sso_replay_guard: SsoReplayGuardTable;
   invitations: InvitationsTable;
   email_messages: EmailMessagesTable;
   feature_requests: FeatureRequestsTable;

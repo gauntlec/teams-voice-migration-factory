@@ -32,8 +32,8 @@ export async function seedBootstrapAdmin(pool: Pick<Pool, 'query'>, input: Boots
 
   if (!existing.rows[0]) {
     const created = await pool.query<{ id: string }>(
-      `INSERT INTO platform.users (email, password_hash, display_name, role)
-       VALUES ($1, $2, 'Platform Admin', 'SUPER_ADMIN')
+      `INSERT INTO platform.users (email, password_hash, display_name, role, break_glass)
+       VALUES ($1, $2, 'Platform Admin', 'SUPER_ADMIN', true)
        ON CONFLICT (email) DO NOTHING
        RETURNING id`,
       [email, hash],
@@ -48,7 +48,7 @@ export async function seedBootstrapAdmin(pool: Pick<Pool, 'query'>, input: Boots
 
   await pool.query(
     `UPDATE platform.users
-        SET password_hash = $2, role = 'SUPER_ADMIN', status = 'active', failed_logins = 0, locked_until = NULL, updated_at = now()
+        SET password_hash = $2, role = 'SUPER_ADMIN', break_glass = true, status = 'active', failed_logins = 0, locked_until = NULL, updated_at = now()
       WHERE id = $1`,
     [existing.rows[0].id, hash],
   );

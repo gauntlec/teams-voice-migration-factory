@@ -8,6 +8,6 @@ import { TotpService } from './totp.service';
 @Module({
   controllers: [AuthController],
   providers: [AuthService, TokenService, TotpService, LoginRateLimitGuard],
-  exports: [TokenService],
+  exports: [TokenService, AuthService],
 })
 export class AuthModule {}

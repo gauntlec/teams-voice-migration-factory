@@ -161,6 +161,6 @@ export class AuthController {
 
   @Get('me')
   async me(@CurrentUser() user: AuthedUser) {
-    return this.auth.me(user.id);
+    return this.auth.me(user.id, user.idp);
   }
 }

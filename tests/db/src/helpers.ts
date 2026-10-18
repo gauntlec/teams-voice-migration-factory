@@ -51,6 +51,22 @@ export function useGlobalSettingsLock(handle: DbHandle) {
   });
 }
 
+/**
+ * Single sign-on providers are platform-wide (one provider switched to "no local passwords" changes every password sign-in), so test files
+ * that create providers hold this lock for the whole file. Call right after `useDb()`.
+ */
+export function useGlobalSsoLock(handle: DbHandle) {
+  let client: import('pg').PoolClient | undefined;
+  beforeAll(async () => {
+    client = await handle.pool.connect();
+    await client.query('select pg_advisory_lock(7103)');
+  }, 300_000);
+  afterAll(async () => {
+    await client?.query('select pg_advisory_unlock(7103)');
+    client?.release();
+  });
+}
+
 export interface TestCustomer {
   /** what the API's TenantGuard hands every service */
   t: TenantContext;

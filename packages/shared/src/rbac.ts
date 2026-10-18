@@ -59,6 +59,7 @@ export const PERMISSIONS = [
   'intake:manage', // monitoring alert sources and the inbound mailbox settings: create, tokens, per-customer switches - SUPER_ADMIN only
   'agent:manage', // AI agents: create, tokens, per-customer autonomy, webhooks, kill switches - SUPER_ADMIN only
   'platform:operate', // release check + maintenance notice - SUPER_ADMIN only
+  'sso:manage', // single sign-on: providers, role ceilings, linking people to provider identities - SUPER_ADMIN only
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 

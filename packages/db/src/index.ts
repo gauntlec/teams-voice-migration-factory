@@ -6,6 +6,7 @@ export * from './schema';
 export * from './live-state';
 export * from './app-settings';
 export * from './mail-config';
+export * from './sso-settings';
 export * from './plan-rows';
 export { migratePlatform, provisionTenant, migrateAllTenants } from './migrate';
 

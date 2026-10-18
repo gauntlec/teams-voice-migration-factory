@@ -16,6 +16,18 @@ export interface AccessPayload {
    * pwreset -> limited: may only set a new password (forced first sign-in)
    */
   typ: 'access' | 'enrol' | 'pwreset';
+  /** Set when the session came from a single sign-on provider (the provider's id): the provider did the multi-factor step, so local TOTP is not asked. */
+  idp?: string;
+  /** The authentication methods the provider reported. */
+  amr?: string[];
+}
+
+/** What a federated session carries from its first sign-in through every refresh. */
+export interface FederatedSession {
+  idp: string;
+  amr: string[];
+  /** The session ends here whatever refreshing does. */
+  absoluteExpiresAt: Date;
 }
 
 export interface IssuedTokens {
@@ -52,11 +64,13 @@ export class TokenService {
   /** Creates a new session row and returns the cookie value `${sessionId}.${secret}`. */
   async issueSession(
     userId: string,
-    meta: { userAgent?: string; ip?: string; familyId?: string },
+    meta: { userAgent?: string; ip?: string; familyId?: string; federated?: FederatedSession },
   ): Promise<{ cookieValue: string; expiresAt: Date }> {
     const secret = randomBytes(32).toString('base64url');
     const familyId = meta.familyId ?? randomUUID();
-    const expiresAt = new Date(Date.now() + this.cfg.REFRESH_TOKEN_TTL * 1000);
+    let expiresAt = new Date(Date.now() + this.cfg.REFRESH_TOKEN_TTL * 1000);
+    // A federated session never outlives its absolute end: the person signs in at the provider again.
+    if (meta.federated && meta.federated.absoluteExpiresAt < expiresAt) expiresAt = meta.federated.absoluteExpiresAt;
     const row = await platformDb(this.db)
       .insertInto('auth_sessions')
       .values({
@@ -66,6 +80,9 @@ export class TokenService {
         user_agent: meta.userAgent ?? null,
         ip: meta.ip ?? null,
         expires_at: expiresAt.toISOString(),
+        amr: meta.federated?.amr ?? [],
+        idp: meta.federated?.idp ?? null,
+        absolute_expires_at: meta.federated?.absoluteExpiresAt.toISOString() ?? null,
       })
       .returning('id')
       .executeTakeFirstOrThrow();
@@ -79,7 +96,7 @@ export class TokenService {
   async rotate(
     cookieValue: string,
     meta: { userAgent?: string; ip?: string },
-  ): Promise<{ userId: string; cookieValue: string; expiresAt: Date }> {
+  ): Promise<{ userId: string; cookieValue: string; expiresAt: Date; familyId: string; federated: FederatedSession | null }> {
     const [sessionId, secret] = cookieValue.split('.');
     if (!sessionId || !secret) throw new UnauthorizedException('No session');
 
@@ -104,8 +121,15 @@ export class TokenService {
     if (new Date(session.expires_at).getTime() < Date.now()) {
       throw new UnauthorizedException('Session expired');
     }
+    const federated: FederatedSession | null =
+      session.idp && session.absolute_expires_at
+        ? { idp: session.idp, amr: session.amr, absoluteExpiresAt: new Date(session.absolute_expires_at) }
+        : null;
+    if (federated && federated.absoluteExpiresAt.getTime() <= Date.now()) {
+      throw new UnauthorizedException('Session expired');
+    }
 
-    const next = await this.issueSession(session.user_id, { ...meta, familyId: session.family_id });
+    const next = await this.issueSession(session.user_id, { ...meta, familyId: session.family_id, federated: federated ?? undefined });
     const [nextId] = next.cookieValue.split('.');
     await platformDb(this.db)
       .updateTable('auth_sessions')
@@ -113,7 +137,17 @@ export class TokenService {
       .where('id', '=', sessionId)
       .execute();
 
-    return { userId: session.user_id, cookieValue: next.cookieValue, expiresAt: next.expiresAt };
+    return { userId: session.user_id, cookieValue: next.cookieValue, expiresAt: next.expiresAt, familyId: session.family_id, federated };
+  }
+
+  /** Ends every session of a family (a sign-in and everything it was refreshed into). */
+  async revokeFamily(familyId: string): Promise<void> {
+    await platformDb(this.db)
+      .updateTable('auth_sessions')
+      .set({ revoked_at: new Date().toISOString() })
+      .where('family_id', '=', familyId)
+      .where('revoked_at', 'is', null)
+      .execute();
   }
 
   async revoke(cookieValue: string): Promise<void> {

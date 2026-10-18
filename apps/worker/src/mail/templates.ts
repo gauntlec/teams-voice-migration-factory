@@ -22,6 +22,7 @@ import {
   type ServiceRequestActivityContext,
   type ServiceRequestMessageContext,
   type ServiceRequestStatusChangedContext,
+  type SsoAdminSigninContext,
   type UserInvitationContext,
 } from '@tvmf/shared';
 import { renderHtml, renderText, type EmailBranding, type LayoutInput } from './layout';
@@ -81,6 +82,8 @@ export function renderEmail(template: string, context: Record<string, unknown>, 
       return incidentMajor(context as unknown as IncidentMajorContext, branding);
     case 'incident_review':
       return incidentReview(context as unknown as IncidentReviewContext, branding);
+    case 'sso_admin_signin':
+      return ssoAdminSignin(context as unknown as SsoAdminSigninContext);
     case 'mail_test':
       return mailTest(context as unknown as { installation: string; how: string; sentAt: string }, branding);
     default:
@@ -112,6 +115,24 @@ function invitation(c: UserInvitationContext, branding?: EmailBranding): Rendere
   };
 
   return { subject, html: renderHtml(layout, branding), text: renderText(layout) };
+}
+
+/** Someone signed in as Super Admin through a single sign-on provider: every administrator is told (docs/SSO.md 4.3). */
+function ssoAdminSignin(c: SsoAdminSigninContext, branding?: EmailBranding): RenderedEmail {
+  const layout: LayoutInput = {
+    previewText: `${c.displayName} signed in as Administrator through ${c.providerName}.`,
+    eyebrow: 'Security notice',
+    heading: 'Administrator sign-in through single sign-on',
+    intro: [
+      `${c.displayName} (${c.email}) signed in to ${c.installation} as Administrator through ${c.providerName}, at ${c.at}.`,
+      ...(c.providerSessionId ? [`The provider's session reference is ${c.providerSessionId}.`] : []),
+      ...(c.ip ? [`The sign-in came from ${c.ip}.`] : []),
+    ],
+    outro: [
+      'If you expected this, nothing more is needed. If not, open Administration > Platform settings > Single sign-on and switch the provider off, or lower the role it can give. Local administrator accounts keep working either way.',
+    ],
+  };
+  return { subject: `Administrator sign-in through ${c.providerName}`, html: renderHtml(layout, branding), text: renderText(layout) };
 }
 
 /** The test message from Platform settings > Email: proves this installation can send mail the way it is set up. */

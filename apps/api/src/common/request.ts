@@ -11,6 +11,8 @@ export interface AuthedUser {
   enrolOnly: boolean;
   /** true when the bearer token is a limited "forced password reset" token */
   pwresetOnly: boolean;
+  /** Set when this session came through a single sign-on provider (the provider's id). */
+  idp?: string;
   /**
    * Set when this "user" is an AI agent acting through the agent API (see agent-actor.ts): events it makes
    * are attributed to the agent (not a person), and it never has an email or an account.

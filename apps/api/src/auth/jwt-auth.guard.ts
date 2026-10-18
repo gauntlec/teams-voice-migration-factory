@@ -58,7 +58,9 @@ export class JwtAuthGuard implements CanActivate {
     if (enrolOnly && !allowEnrol) {
       throw new ForbiddenException('Complete MFA enrolment first');
     }
-    if (!enrolOnly && !pwresetOnly && !user.totp_enrolled && !allowEnrol) {
+    // A session that came through a single sign-on provider has no local authenticator: the provider did the multi-factor step.
+    const federated = !!payload.idp;
+    if (!enrolOnly && !pwresetOnly && !federated && !user.totp_enrolled && !allowEnrol) {
       throw new ForbiddenException('MFA enrolment required');
     }
 
@@ -70,6 +72,7 @@ export class JwtAuthGuard implements CanActivate {
       totpEnrolled: user.totp_enrolled,
       enrolOnly,
       pwresetOnly,
+      ...(federated ? { idp: payload.idp } : {}),
     };
     return true;
   }

@@ -26,6 +26,7 @@ export const EMAIL_TEMPLATES = [
   'incident_major',
   'incident_review',
   'mail_test',
+  'sso_admin_signin',
 ] as const;
 export type EmailTemplate = (typeof EMAIL_TEMPLATES)[number];
 
@@ -381,4 +382,17 @@ export interface IncidentReviewContext {
 }
 
 /** Loose map used at the enqueue/render boundary. */
+/** Context for the `sso_admin_signin` template: someone signed in as Super Admin through a single sign-on provider. */
+export interface SsoAdminSigninContext {
+  /** Who signed in. */
+  displayName: string;
+  email: string;
+  providerName: string;
+  /** The provider's own session id (the hub's), when it sent one. */
+  providerSessionId: string | null;
+  installation: string;
+  at: string;
+  ip: string | null;
+}
+
 export type EmailContext = Record<string, unknown>;
