@@ -6,7 +6,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import * as argon2 from 'argon2';
-import { localPasswordsAllowed, platformDb, tenantDb } from '@tvmf/db';
+import { sql } from 'kysely';
+import { hasUsablePassword, localPasswordsAllowed, platformDb, tenantDb } from '@tvmf/db';
 import type { CreateUserInput, Role, UserInvitationContext } from '@tvmf/shared';
 import { AuditService } from '../common/audit.service';
 import type { AuditActor } from '../common/audit.service';
@@ -33,6 +34,8 @@ export class UsersService {
     let query = platformDb(this.db)
       .selectFrom('users')
       .select(['id', 'email', 'display_name', 'role', 'status', 'totp_enrolled', 'msp_id', 'break_glass', 'created_at'])
+      // Whether the account has a local password at all (false for an account that exists only through a single sign-on provider).
+      .select(sql<boolean>`password_hash not like '!%'`.as('has_password'))
       .orderBy('created_at', 'desc');
     if (actor.role !== 'SUPER_ADMIN') {
       // Non-admins only see users who belong to a customer they are assigned to.
@@ -273,7 +276,7 @@ export class UsersService {
   async resendInvitation(id: string, actor: UserActor) {
     const user = await platformDb(this.db)
       .selectFrom('users')
-      .select(['id', 'email', 'display_name', 'role', 'status', 'msp_id'])
+      .select(['id', 'email', 'display_name', 'role', 'status', 'msp_id', 'password_hash'])
       .where('id', '=', id)
       .executeTakeFirst();
     if (!user) throw new NotFoundException('user not found');
@@ -292,6 +295,12 @@ export class UsersService {
       if (!shared) {
         throw new ForbiddenException('You can only re-invite users in your own customers');
       }
+    }
+
+    // An account that exists only through a single sign-on provider has no password to reset. Issuing one would turn it into a local
+    // account (and let the person around the provider's MFA and role limits), so the invitation is refused. docs/SSO.md 4.4.
+    if (!hasUsablePassword(user.password_hash)) {
+      throw new BadRequestException('This person signs in through single sign-on and has no local password, so there is nothing to re-send. They sign in with the "Sign in with ..." button on the login page.');
     }
 
     const memberships = await platformDb(this.db)
@@ -357,6 +366,33 @@ export class UsersService {
     if (!others) {
       throw new BadRequestException(`You cannot ${what} the last local (break-glass) administrator while single sign-on has local passwords switched off. Create another local administrator first, or switch local passwords back on.`);
     }
+  }
+
+  /**
+   * Make a local Super Admin a break-glass administrator, or take that away (docs/SSO.md 4.6). Break-glass is set automatically when a Super
+   * Admin is created here; this is the deliberate way to give it to (or remove it from) an account that became Super Admin some other way,
+   * e.g. a local account that was promoted. An account that exists only through a provider (no password) or that is linked to a provider
+   * cannot be break-glass: break-glass means "signs in here with a password and authenticator, whatever the provider says".
+   */
+  async setBreakGlass(id: string, enabled: boolean, actor: AuditActor) {
+    const user = await platformDb(this.db).selectFrom('users').select(['id', 'email', 'role', 'status', 'break_glass', 'password_hash']).where('id', '=', id).executeTakeFirst();
+    if (!user) throw new NotFoundException('user not found');
+    if (user.break_glass === enabled) return { id, break_glass: enabled };
+    if (enabled) {
+      if (user.role !== 'SUPER_ADMIN') throw new BadRequestException('Only a Super Admin can be a break-glass administrator.');
+      if (!hasUsablePassword(user.password_hash)) {
+        throw new BadRequestException('This account has no local password (it exists only through a single sign-on provider), so it cannot be a break-glass administrator. Create a separate local administrator instead.');
+      }
+      const linked = await platformDb(this.db).selectFrom('external_identities').select('id').where('user_id', '=', id).limit(1).executeTakeFirst();
+      if (linked) {
+        throw new BadRequestException('This account is linked to a single sign-on provider. A break-glass administrator signs in only with a password and authenticator, so remove the link first (Link to provider identity), or create a separate local administrator.');
+      }
+    } else {
+      await this.protectLastBreakGlass(id, 'remove break-glass from');
+    }
+    await platformDb(this.db).updateTable('users').set({ break_glass: enabled, updated_at: new Date().toISOString() }).where('id', '=', id).execute();
+    await this.audit.platform('user.break_glass_changed', { actor, targetType: 'user', targetId: id, detail: { breakGlass: enabled, email: user.email } });
+    return { id, break_glass: enabled };
   }
 
   async setStatus(id: string, status: 'active' | 'disabled', actor: AuditActor) {

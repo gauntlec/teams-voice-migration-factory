@@ -48,9 +48,13 @@ export function readState(cookie: string | undefined, secret: string): OidcState
   }
 }
 
-/** Proof, for two minutes, that an administrator asked for "Test sign-in" on one provider. A browser navigation cannot carry the bearer token, so this travels in the address instead. */
+/** Where the test ticket travels: an HttpOnly cookie set by the "Test sign-in" call and read (then cleared) when the sign-in starts. Never in the address. */
+export const TEST_COOKIE = 'tvmf_oidc_test';
+export const TEST_TICKET_TTL_SECONDS = 120;
+
+/** Proof, for two minutes, that an administrator asked for "Test sign-in" on one provider. A browser navigation cannot carry the bearer token, so it goes in a short-lived cookie on the sign-in path. */
 export function signTestTicket(providerId: string, adminId: string, secret: string): string {
-  return jwt.sign({ providerId, adminId, typ: 'oidc-test' }, key(secret), { algorithm: 'HS256', expiresIn: 120, issuer: 'tvmf-oidc' });
+  return jwt.sign({ providerId, adminId, typ: 'oidc-test' }, key(secret), { algorithm: 'HS256', expiresIn: TEST_TICKET_TTL_SECONDS, issuer: 'tvmf-oidc' });
 }
 
 export function readTestTicket(ticket: string | undefined, secret: string): { providerId: string; adminId: string } | null {
@@ -62,4 +66,11 @@ export function readTestTicket(ticket: string | undefined, secret: string): { pr
   } catch {
     return null;
   }
+}
+
+/** Options for the cookies this flow sets, always HttpOnly and scoped to the path they are used on. */
+export function oidcCookieOptions(cfg: { COOKIE_SECURE: boolean; COOKIE_DOMAIN?: string }, path: string) {
+  const o: { httpOnly: true; secure: boolean; sameSite: 'lax'; path: string; domain?: string } = { httpOnly: true, secure: cfg.COOKIE_SECURE, sameSite: 'lax', path };
+  if (cfg.COOKIE_DOMAIN) o.domain = cfg.COOKIE_DOMAIN;
+  return o;
 }

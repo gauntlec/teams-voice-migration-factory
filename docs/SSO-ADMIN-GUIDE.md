@@ -161,7 +161,12 @@ Protections built in:
 When local passwords are switched off, the login page shows the provider buttons and a small **Administrator sign-in** link that reveals the password form for these accounts only. Everyone else who types a correct password is told "Signing in with a password is switched off on this installation. Use single sign-on instead."
 
 Good practice: keep at least two break-glass administrators, with passwords in your password manager, and sign in with one now and then.
-Note: the flag is set when a Super Admin is **created**. Changing someone else's role to Administrator afterwards does not make them break-glass, and an administrator who was created through a provider is not one either.
+The flag is set when a Super Admin is **created** under Users. Two cases are deliberate:
+
+- An administrator who was **created through a provider** is never break-glass (it has no password, and a provider must not be able to create an account that bypasses it).
+- A local account that **becomes** a Super Admin later (promoted, or given the role by a provider while linked) does not become break-glass by itself. To make it one, a Super Admin opens **Users > the three dots > Make break-glass (keeps password sign-in)**. This works only for a Super Admin who has a local password and is not linked to a provider (unlink first if needed); the same menu removes it, which is refused for the last break-glass administrator while local passwords are switched off. Both are audited (`user.break_glass_changed`).
+
+So the way back in always exists: turning local passwords off needs a break-glass administrator with a password, and the last one cannot be removed, disabled or deleted while they are off.
 
 ## 9. Sessions, sign-out and the 12-hour limit
 
@@ -246,6 +251,7 @@ The message appears on the login page, or as a dismissible bar at the top of the
 | "You do not have an account on this installation yet, and automatic account creation is off. Ask an administrator to set one up." | `no_identity_jit_off` | Switch on "Create an account automatically ...", or create the account and link it (section 7) |
 | "An account with your email address already exists here but is not linked to this sign-in. Ask an administrator to link it (Users > Link to provider identity)." | `email_exists_unlinked` | Link it (section 7) after checking it is the same person, or use the other account |
 | "This account is switched off. Ask an administrator." | `user_disabled` | Enable the account under Users, if appropriate |
+| "Too many single sign-on attempts from your network. Wait a minute and try again." | (throttle: 60 a minute per address, separate from the password form) | Wait a minute; if a whole site is affected, check nothing is looping the sign-in button |
 | "This account signs in with a password and authenticator on this installation, not through a provider." | `break_glass_local_only` | This is a break-glass administrator. Sign in with the password on the **Administrator sign-in** form. To use a provider, sign in as a different account |
 
 ### 14.2 Reason codes in the audit log
@@ -278,7 +284,7 @@ The message appears on the login page, or as a dismissible bar at the top of the
 | `mfa_not_proven` | See 14.1 | |
 | `email_unverified`, `email_missing`, `domain_not_allowed`, `no_identity_jit_off`, `email_exists_unlinked`, `user_disabled`, `break_glass_local_only` | See 14.1 | |
 
-A sign-in that is refused before it starts for a malformed link, or with an invalid or expired Test ticket, shows the general message and is not given a reason (nothing was attempted).
+A sign-in that is refused before it starts for a malformed link shows the general message and is not given a reason (nothing was attempted). The Test sign-in ticket is carried in a short-lived cookie, not in the address; an invalid or expired one just makes the click an ordinary sign-in.
 
 ### 14.3 Other messages
 
@@ -298,6 +304,8 @@ A sign-in that is refused before it starts for a malformed link, or with an inva
 | Users > Link to provider identity | "This is a break-glass administrator ... so it is not linked to a provider." | Link a different account |
 | Users > Link to provider identity | "That person at the provider is already linked to a different user. Remove that link first." / "That person is already linked to this user." | Unlink the other account first |
 | Users > Link to provider identity | "That waiting sign-in is no longer there (it may already be linked)." | Refresh |
+| Users > Resend invitation | "This person signs in through single sign-on and has no local password, so there is nothing to re-send ..." | Nothing to do: the action is hidden for these accounts. They sign in with the provider button |
+| Users > Make break-glass | "... has no local password ..." / "... is linked to a single sign-on provider ..." | Use a separate local administrator, or unlink the account first |
 | Users > Disable or delete | "You cannot disable/delete the last local (break-glass) administrator while single sign-on has local passwords switched off ..." | Create another local administrator first, or switch local passwords back on |
 | The hub (before the person reaches this installation) | "This sign-in link is not valid" (unknown installation) or "The return address does not match the one registered for this installation." | The address the hub has for this installation is not the real one, or differs from this installation's Web address. Ask the hub administrator to correct it |
 | The hub | "You do not have access to this installation" | The person has no access to this installation at the hub. Ask the hub administrator |
@@ -316,6 +324,6 @@ For the customer security team, the on-premises installation and security guide 
 | Providers, ceilings, test, session length, administrator email | Administration > Platform settings > Single sign-on (`/admin/settings/sso`) |
 | Hub connection and the remote-access switch | Administration > Platform settings > Voxshift hub |
 | Link a local account to a provider identity | Administration > Users > row menu > Link to provider identity |
-| Create a break-glass administrator | Administration > Users > add a user with the Super Admin role |
+| Create a break-glass administrator | Administration > Users > add a user with the Super Admin role (or, for an existing local Super Admin, row menu > Make break-glass) |
 | Audit | Administration > Observability > Platform Audit |
 | Web address | Administration > Platform settings > Web address |

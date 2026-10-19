@@ -1,19 +1,18 @@
-import { Controller, Get, Inject, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Controller, Get, Inject, Logger, Query, Req, Res, UseGuards } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import type { AppRequest } from '../common/request';
 import { type PublicSsoProviders, safeReturnTo } from '@tvmf/shared';
 import { APP_CONFIG, type AppConfig } from '../common/config';
 import { Public } from '../auth/auth.decorators';
-import { LoginRateLimitGuard } from '../auth/login-rate-limit.guard';
-import { readTestTicket, STATE_COOKIE, STATE_TTL_SECONDS } from './oidc/state-cookie';
+import { oidcCookieOptions, readTestTicket, STATE_COOKIE, STATE_TTL_SECONDS, TEST_COOKIE } from './oidc/state-cookie';
+import { SsoRateLimitGuard } from './sso-rate-limit.guard';
 import { SsoProvidersService } from './sso-providers.service';
 import { SsoSignInService } from './sso-signin.service';
 
 const loginQuery = z.object({
   provider: z.string().trim().min(1).max(64),
   returnTo: z.string().max(600).optional(),
-  ticket: z.string().max(2000).optional(),
 });
 
 const callbackQuery = z.object({
@@ -29,6 +28,8 @@ const callbackQuery = z.object({
  */
 @Controller('auth')
 export class SsoAuthController {
+  private readonly log = new Logger(SsoAuthController.name);
+
   constructor(
     private readonly signIn: SsoSignInService,
     private readonly providers: SsoProvidersService,
@@ -36,9 +37,7 @@ export class SsoAuthController {
   ) {}
 
   private cookieOptions(path: string) {
-    const o: { httpOnly: true; secure: boolean; sameSite: 'lax'; path: string; domain?: string } = { httpOnly: true, secure: this.cfg.COOKIE_SECURE, sameSite: 'lax', path };
-    if (this.cfg.COOKIE_DOMAIN) o.domain = this.cfg.COOKIE_DOMAIN;
-    return o;
+    return oidcCookieOptions(this.cfg, path);
   }
 
   private noStore(res: Response) {
@@ -47,6 +46,13 @@ export class SsoAuthController {
 
   private clearState(res: Response) {
     res.clearCookie(STATE_COOKIE, this.cookieOptions('/api/auth/oidc'));
+  }
+
+  /** An unexpected error is never shown as raw JSON to someone who navigated here: it is logged and the person gets the plain message on the login page. */
+  private crashed(res: Response, where: string, err: unknown) {
+    this.log.error(`Single sign-on ${where} failed: ${(err as Error)?.stack ?? String(err)}`);
+    if (res.headersSent) return;
+    this.fail(res, 'failed');
   }
 
   private fail(res: Response, error: string) {
@@ -64,56 +70,65 @@ export class SsoAuthController {
   }
 
   @Public()
-  @UseGuards(LoginRateLimitGuard)
+  @UseGuards(SsoRateLimitGuard)
   @Get('oidc/login')
   async login(@Query() raw: Record<string, unknown>, @Req() req: Request, @Res() res: Response) {
-    const q = loginQuery.safeParse(raw);
-    if (!q.success) return this.fail(res, 'failed');
-    const providerId = q.data.provider === 'hub' ? await this.providers.hubProviderId() : /^[0-9a-f-]{36}$/i.test(q.data.provider) ? q.data.provider : null;
-    if (!providerId) return this.fail(res, 'provider_off');
+    try {
+      const q = loginQuery.safeParse(raw);
+      if (!q.success) return this.fail(res, 'failed');
+      const providerId = q.data.provider === 'hub' ? await this.providers.hubProviderId() : /^[0-9a-f-]{36}$/i.test(q.data.provider) ? q.data.provider : null;
+      if (!providerId) return this.fail(res, 'provider_off');
 
-    // "Test sign-in" carries a short ticket an administrator was given; without a valid one this is an ordinary sign-in.
-    let testBy: string | undefined;
-    if (q.data.ticket) {
-      const t = readTestTicket(q.data.ticket, this.cfg.JWT_ACCESS_SECRET);
-      if (!t || t.providerId !== providerId) return this.fail(res, 'failed');
-      testBy = t.adminId;
+      // "Test sign-in" leaves a short ticket in a cookie (never in the address); it is used once. Without a valid one for this provider this is an ordinary sign-in.
+      let testBy: string | undefined;
+      const ticket = (req as AppRequest).cookies?.[TEST_COOKIE];
+      if (ticket) {
+        res.clearCookie(TEST_COOKIE, this.cookieOptions('/api/auth/oidc'));
+        const t = readTestTicket(ticket, this.cfg.JWT_ACCESS_SECRET);
+        if (t && t.providerId === providerId) testBy = t.adminId;
+      }
+
+      const begun = await this.signIn.begin({
+        providerId,
+        returnTo: safeReturnTo(q.data.returnTo),
+        requestHost: req.hostname,
+        testBy,
+        meta: { ip: req.ip, userAgent: req.headers['user-agent'] },
+      });
+      if (!begun.ok) return this.fail(res, begun.error);
+      this.noStore(res);
+      res.cookie(STATE_COOKIE, begun.stateCookie, { ...this.cookieOptions('/api/auth/oidc'), maxAge: STATE_TTL_SECONDS * 1000 });
+      res.redirect(302, begun.redirectUrl);
+    } catch (err) {
+      this.crashed(res, 'start', err);
     }
-
-    const begun = await this.signIn.begin({
-      providerId,
-      returnTo: safeReturnTo(q.data.returnTo),
-      requestHost: req.hostname,
-      testBy,
-      meta: { ip: req.ip, userAgent: req.headers['user-agent'] },
-    });
-    if (!begun.ok) return this.fail(res, begun.error);
-    this.noStore(res);
-    res.cookie(STATE_COOKIE, begun.stateCookie, { ...this.cookieOptions('/api/auth/oidc'), maxAge: STATE_TTL_SECONDS * 1000 });
-    res.redirect(302, begun.redirectUrl);
   }
 
   @Public()
-  @UseGuards(LoginRateLimitGuard)
+  @UseGuards(SsoRateLimitGuard)
   @Get('oidc/callback')
   async callback(@Query() raw: Record<string, unknown>, @Req() req: Request, @Res() res: Response) {
-    const q = callbackQuery.safeParse(raw);
-    const result = await this.signIn.complete({
-      code: q.success ? q.data.code : undefined,
-      state: q.success ? q.data.state : undefined,
-      error: q.success ? q.data.error : 'malformed',
-      stateCookie: (req as AppRequest).cookies?.[STATE_COOKIE],
-      meta: { ip: req.ip, userAgent: req.headers['user-agent'] },
-    });
-    this.clearState(res);
-    this.noStore(res);
-    if (result.kind === 'tested') return res.redirect(302, `/admin/settings/sso?tested=${result.providerId}`);
-    if (result.kind === 'refused') {
-      if (result.testProviderId) return res.redirect(302, `/admin/settings/sso?tested=${result.testProviderId}`);
-      return res.redirect(302, `/?sso_error=${encodeURIComponent(result.error)}`);
+    try {
+      const q = callbackQuery.safeParse(raw);
+      const result = await this.signIn.complete({
+        code: q.success ? q.data.code : undefined,
+        state: q.success ? q.data.state : undefined,
+        error: q.success ? q.data.error : 'malformed',
+        stateCookie: (req as AppRequest).cookies?.[STATE_COOKIE],
+        meta: { ip: req.ip, userAgent: req.headers['user-agent'] },
+      });
+      this.clearState(res);
+      this.noStore(res);
+      if (result.kind === 'tested') return res.redirect(302, `/admin/settings/sso?tested=${result.providerId}`);
+      if (result.kind === 'refused') {
+        if (result.testProviderId) return res.redirect(302, `/admin/settings/sso?tested=${result.testProviderId}`);
+        return res.redirect(302, `/?sso_error=${encodeURIComponent(result.error)}`);
+      }
+      // The same rotating refresh cookie a password sign-in sets; the app then asks for its access token with it, as it does on any page load.
+      res.cookie(this.cfg.REFRESH_COOKIE, result.refreshCookieValue, { ...this.cookieOptions('/api/auth'), expires: result.refreshExpiresAt });
+      res.redirect(302, result.redirectTo);
+    } catch (err) {
+      this.crashed(res, 'callback', err);
     }
-    // The same rotating refresh cookie a password sign-in sets; the app then asks for its access token with it, as it does on any page load.
-    res.cookie(this.cfg.REFRESH_COOKIE, result.refreshCookieValue, { ...this.cookieOptions('/api/auth'), expires: result.refreshExpiresAt });
-    res.redirect(302, result.redirectTo);
   }
 }

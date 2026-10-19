@@ -281,12 +281,12 @@ export class SsoProvidersService implements OnModuleInit {
     return this.settings();
   }
 
-  /** The address that starts "Test sign-in": a two-minute ticket proves an administrator asked for it. */
-  async testUrl(id: string, adminId: string): Promise<{ url: string }> {
+  /** What starts "Test sign-in": the address to open, and a two-minute ticket (to be set as a cookie, not put in the address) that proves an administrator asked for it. */
+  async testStart(id: string, adminId: string): Promise<{ url: string; ticket: string }> {
     const row = await platformDb(this.db).selectFrom('sso_providers').select('id').where('id', '=', id).executeTakeFirst();
     if (!row) throw new NotFoundException('No such provider.');
     const ticket = signTestTicket(id, adminId, this.cfg.JWT_ACCESS_SECRET);
-    return { url: `/api/auth/oidc/login?provider=${id}&ticket=${encodeURIComponent(ticket)}&returnTo=${encodeURIComponent('/admin/settings/sso')}` };
+    return { url: `/api/auth/oidc/login?provider=${id}&returnTo=${encodeURIComponent('/admin/settings/sso')}`, ticket };
   }
 
   /* ------------------------------- linking people ------------------------------- */

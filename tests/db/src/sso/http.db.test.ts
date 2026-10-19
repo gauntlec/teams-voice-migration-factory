@@ -19,6 +19,16 @@ vi.mock('../../../../apps/api/src/auth/login-rate-limit.guard', async () => {
   Injectable()(LoginRateLimitGuard);
   return { LoginRateLimitGuard };
 });
+vi.mock('../../../../apps/api/src/sso/sso-rate-limit.guard', async () => {
+  const { Injectable } = await import('@nestjs/common');
+  class SsoRateLimitGuard {
+    canActivate() {
+      return true;
+    }
+  }
+  Injectable()(SsoRateLimitGuard);
+  return { SsoRateLimitGuard, SSO_RATE_LIMIT: { points: 60, durationSeconds: 60 } };
+});
 
 import { AuditModule } from '../../../../apps/api/src/common/audit.service';
 import { ConfigModule } from '../../../../apps/api/src/common/config.module';

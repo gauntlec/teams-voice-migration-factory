@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { z } from 'zod';
 import {
   createUserSchema,
   searchQuerySchema,
@@ -56,6 +57,13 @@ export class UsersController {
   @RequirePermission('user:create')
   resendInvitation(@Param('id') id: string, @CurrentUser() user: AuthedUser) {
     return this.users.resendInvitation(id, this.actor(user));
+  }
+
+  /** Give or take away break-glass (a local Super Admin who keeps password sign-in when a provider switches local passwords off). docs/SSO.md 4.6. */
+  @Post(':id/break-glass')
+  @RequirePermission('sso:manage')
+  breakGlass(@Param('id') id: string, @Body(new ZodBody(z.object({ enabled: z.boolean() }).strict())) body: { enabled: boolean }, @CurrentUser() user: AuthedUser) {
+    return this.users.setBreakGlass(id, body.enabled, this.actor(user));
   }
 
   @Post(':id/disable')

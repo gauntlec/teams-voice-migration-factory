@@ -307,6 +307,7 @@ export const SSO_PUBLIC_ERRORS = {
   email_exists: 'An account with your email address already exists here but is not linked to this sign-in. Ask an administrator to link it (Users > Link to provider identity).',
   disabled: 'This account is switched off. Ask an administrator.',
   local_only: 'This account signs in with a password and authenticator on this installation, not through a provider.',
+  rate_limited: 'Too many single sign-on attempts from your network. Wait a minute and try again.',
 } as const;
 export type SsoPublicError = keyof typeof SSO_PUBLIC_ERRORS;
 

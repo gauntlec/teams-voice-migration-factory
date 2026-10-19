@@ -95,6 +95,8 @@ interface UserRow {
   totp_enrolled: boolean;
   msp_id: string | null;
   break_glass?: boolean;
+  /** False for an account that exists only through a single sign-on provider. */
+  has_password?: boolean;
   ssoProviders?: string[];
   tenants?: { id: string; name: string }[];
 }
@@ -358,6 +360,17 @@ export function AdminUsers() {
       notify(v.action === 'disable' ? `${v.name} disabled` : v.action === 'enable' ? `${v.name} enabled` : `Two-factor reset for ${v.name}`, {
         body: v.action === 'reset-mfa' ? 'They will set up two-factor again at their next sign-in.' : undefined,
       });
+    },
+    onError: (e) => notify('That did not work', { intent: 'error', body: e instanceof Error ? e.message : undefined }),
+  });
+
+  // Break-glass: a local Super Admin who keeps password sign-in when a provider switches local passwords off.
+  const breakGlass = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean; name: string }) =>
+      api(`/users/${id}/break-glass`, { method: 'POST', body: JSON.stringify({ enabled }) }),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ['users'] });
+      notify(v.enabled ? `${v.name} is now a break-glass administrator` : `${v.name} is no longer a break-glass administrator`);
     },
     onError: (e) => notify('That did not work', { intent: 'error', body: e instanceof Error ? e.message : undefined }),
   });
@@ -629,7 +642,16 @@ export function AdminUsers() {
                                 Link to provider identity…
                               </MenuItem>
                             )}
-                            {u.role !== 'SUPER_ADMIN' && (
+                            {can('sso:manage') && u.role === 'SUPER_ADMIN' && (u.break_glass || (u.has_password !== false && !u.ssoProviders?.length)) && (
+                              <MenuItem
+                                icon={<ShieldKeyholeRegular />}
+                                disabled={breakGlass.isPending}
+                                onClick={() => breakGlass.mutate({ id: u.id, enabled: !u.break_glass, name: u.display_name })}
+                              >
+                                {u.break_glass ? 'Remove break-glass (local sign-in)' : 'Make break-glass (keeps password sign-in)'}
+                              </MenuItem>
+                            )}
+                            {u.role !== 'SUPER_ADMIN' && u.has_password !== false && (
                               <>
                                 <MenuDivider />
                                 <MenuItem icon={<MailRegular />} disabled={resend.isPending} onClick={() => resend.mutate(u.id)}>
