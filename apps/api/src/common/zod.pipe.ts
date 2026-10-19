@@ -8,7 +8,10 @@ import type { ZodSchema } from 'zod';
 export class ZodBody<T> implements PipeTransform<unknown, T> {
   constructor(private readonly schema: ZodSchema<T>) {}
   transform(value: unknown): T {
-    const result = this.schema.safeParse(value);
+    // Express 5 leaves req.body undefined when a request has no body and no
+    // Content-Type (Express 4 gave {}). Keep the old behaviour so a bodyless
+    // POST/PATCH still reaches schemas whose fields are all optional.
+    const result = this.schema.safeParse(value === undefined ? {} : value);
     if (!result.success) {
       throw new BadRequestException({
         message: 'Validation failed',
