@@ -29,6 +29,7 @@ START=1
 ASSUME_YES=0
 SMTP_HOST="" SMTP_PORT="587" SMTP_SECURE="false" SMTP_USER="" SMTP_PASS="" MAIL_FROM_ADDR=""
 GENERATED_ADMIN_PASSWORD=0
+AUTO_UPDATE=""        # "" = ask (interactive) or no | daily | weekly | no
 
 # ---------------------------------------------------------------------------------------------------------- helpers
 if [ -t 1 ]; then B=$'\033[1m'; G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; N=$'\033[0m'; else B=""; G=""; Y=""; R=""; N=""; fi
@@ -65,6 +66,12 @@ Common:
 Email (optional; can be set later in $DIR/.env, and switched off in Administration > Platform settings):
   --smtp-host H --smtp-port P --smtp-secure true|false --smtp-user U --smtp-pass PW --mail-from ADDR
 
+Updates:
+  --auto-update [daily|weekly]  Install a cron job that updates Voxshift by itself (default daily, at a quiet hour
+                         between 02:00 and 04:59 chosen at random for this host). It backs up first, and only
+                         restarts when a new version is out. Change or remove it later: voxshift auto-update
+  --no-auto-update       Do not install the update job (the default when you answer no or run with -y)
+
 Other:
   --no-docker-install    Do not install Docker; stop if it is missing
   --open-firewall        Open ports 80/443 in ufw or firewalld if one is active
@@ -92,6 +99,9 @@ while [ $# -gt 0 ]; do
     --smtp-user) SMTP_USER="${2:-}"; shift 2 ;;
     --smtp-pass) SMTP_PASS="${2:-}"; shift 2 ;;
     --mail-from) MAIL_FROM_ADDR="${2:-}"; shift 2 ;;
+    --auto-update)
+      case "${2:-}" in daily|weekly) AUTO_UPDATE="$2"; shift 2 ;; *) AUTO_UPDATE="daily"; shift ;; esac ;;
+    --no-auto-update) AUTO_UPDATE="no"; shift ;;
     --no-docker-install) INSTALL_DOCKER=0; shift ;;
     --open-firewall) OPEN_FIREWALL=1; shift ;;
     --generate-only) START=0; INSTALL_DOCKER=0; shift ;;
@@ -160,6 +170,22 @@ case "$hostport" in \[*) HOST="${hostport%%]*}]" ;; esac
 PORT=""; case "$hostport" in *:*) PORT="${hostport##*:}" ;; esac
 case "$ADMIN_EMAIL" in *@*.*) ;; *) die "--admin-email does not look like an email address." ;; esac
 plain "$ADMIN_EMAIL" "--admin-email"
+
+if [ -z "$AUTO_UPDATE" ]; then
+  AUTO_UPDATE="no"
+  if [ "$ASSUME_YES" != 1 ] && [ -t 0 ] && [ "$START" = 1 ]; then
+    say ""
+    say "  Updates: Voxshift can check for a new version every night and install it by itself (backup first, restart only"
+    say "  when something new is out). You can still run 'voxshift update' by hand, and change this later."
+    reply=""
+    read -r -p "  Install updates automatically every night? [y/N]: " reply || true
+    case "$reply" in y|Y|yes|YES) AUTO_UPDATE="daily" ;; esac
+  fi
+fi
+if [ "$AUTO_UPDATE" != "no" ] && [ "$TAG" != "latest" ]; then
+  warn "--version $TAG pins an exact release, so there is nothing for an update job to fetch. Automatic updates left off."
+  AUTO_UPDATE="no"
+fi
 
 is_private_host() { case "$1" in localhost|127.*|10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|\[*\]|*.local|*.lan|*.internal|*.test|*.localdomain) return 0 ;; esac; case "$1" in *.*) return 1 ;; *) return 0 ;; esac; }
 is_ip() { case "$1" in *[!0-9.]*) return 1 ;; esac; case "$1" in *.*.*.*) return 0 ;; esac; return 1; }
@@ -580,6 +606,100 @@ wait_ready() {
   echo; echo "Not answering after 5 minutes. See: voxshift logs api" >&2; return 1
 }
 
+stamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+CRON_FILE=/etc/cron.d/voxshift-update
+LOG_FILE=/var/log/voxshift-update.log
+
+# The ids of every image this install uses, as they are on disk right now (to see whether a pull brought anything new).
+image_ids() { for i in $(dc config --images 2>/dev/null | sort -u); do docker image inspect -f '{{.Id}}' "$i" 2>/dev/null || echo "$i missing"; done; }
+
+# Cron has to exist and be running, or the job would silently never fire.
+ensure_cron() {
+  if command -v systemctl >/dev/null 2>&1; then
+    for u in cron crond; do
+      if systemctl list-unit-files "$u.service" 2>/dev/null | grep -q "$u.service"; then systemctl enable --now "$u" >/dev/null 2>&1 && return 0; fi
+    done
+  fi
+  echo "cron is not installed; installing it..."
+  if command -v apt-get >/dev/null 2>&1; then DEBIAN_FRONTEND=noninteractive apt-get install -y cron >/dev/null
+  elif command -v dnf >/dev/null 2>&1; then dnf install -y cronie >/dev/null
+  elif command -v yum >/dev/null 2>&1; then yum install -y cronie >/dev/null
+  else echo "Could not install cron on this system. Install it, then run: voxshift auto-update on" >&2; return 1; fi
+  for u in cron crond; do systemctl enable --now "$u" >/dev/null 2>&1 && return 0; done
+  echo "cron was installed but could not be started. Start it, then check: voxshift auto-update status" >&2; return 1
+}
+
+auto_update() {
+  case "${1:-status}" in
+    on)
+      when="${2:-daily}"
+      case "$when" in daily|weekly) ;; *) echo "Use: voxshift auto-update on [daily|weekly]" >&2; exit 1 ;; esac
+      tag="$(sed -n 's/^IMAGE_TAG=//p' .env | tail -n 1)"
+      [ -z "$tag" ] || [ "$tag" = latest ] || { echo "IMAGE_TAG is '$tag' (an exact release), so there is nothing new to fetch. Set IMAGE_TAG=latest in $DIR/.env first." >&2; exit 1; }
+      ensure_cron
+      # A quiet hour (02:00-04:59), minute picked at random once so a fleet of installs does not all pull at the same second.
+      min=$(( RANDOM % 60 )); hr=$(( 2 + RANDOM % 3 )); dow='*'; [ "$when" = weekly ] && dow=0
+      if [ -f "$CRON_FILE" ]; then
+        old="$(awk '!/^#/ && NF>=6 {print $1" "$2" "$5; exit}' "$CRON_FILE")"
+        [ -z "$old" ] || { min="${old%% *}"; rest="${old#* }"; hr="${rest%% *}"; }
+      fi
+      cat > "$CRON_FILE" <<CRON
+# Written by 'voxshift auto-update'. Remove it with: voxshift auto-update off
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+$min $hr * * $dow root $DIR/voxshift update --auto >> $LOG_FILE 2>&1
+CRON
+      chmod 644 "$CRON_FILE"
+      cat > /etc/logrotate.d/voxshift-update <<LR
+$LOG_FILE {
+    monthly
+    rotate 6
+    compress
+    missingok
+    notifempty
+}
+LR
+      printf 'Automatic updates are on: %s at %02d:%02d (this host time). Log: %s\n' "$when" "$hr" "$min" "$LOG_FILE"
+      echo "It backs up first and restarts only when a new version is out. Turn it off: voxshift auto-update off"
+      ;;
+    off)
+      rm -f "$CRON_FILE" /etc/logrotate.d/voxshift-update
+      echo "Automatic updates are off. Update by hand with: voxshift update"
+      ;;
+    status)
+      if [ -f "$CRON_FILE" ]; then
+        awk '!/^#/ && NF>=6 {printf "Automatic updates are ON: %s at %02d:%02d (this host time).\n", ($5 == "*" ? "daily" : "weekly"), $2, $1}' "$CRON_FILE"
+        if [ -f "$LOG_FILE" ]; then echo "Last log lines ($LOG_FILE):"; tail -n 5 "$LOG_FILE"; else echo "It has not run yet."; fi
+      else
+        echo "Automatic updates are OFF. Turn them on with: voxshift auto-update on [daily|weekly]"
+      fi
+      ;;
+    *) echo "Use: voxshift auto-update on [daily|weekly] | off | status" >&2; exit 1 ;;
+  esac
+}
+
+# What the cron job runs: quiet when there is nothing new, a backup and a restart when there is, one line per step in the log.
+auto_run() {
+  if command -v flock >/dev/null 2>&1; then
+    exec 9>/var/lock/voxshift-update.lock
+    flock -n 9 || { echo "$(stamp) another update is already running; skipping"; return 0; }
+  fi
+  tag="$(sed -n 's/^IMAGE_TAG=//p' .env | tail -n 1)"
+  if [ -n "$tag" ] && [ "$tag" != latest ]; then echo "$(stamp) IMAGE_TAG is '$tag' (pinned); skipping"; return 0; fi
+  before="$(image_ids)"
+  if ! dc pull -q >/dev/null 2>&1; then echo "$(stamp) could not pull the images (registry unreachable?); nothing changed"; return 1; fi
+  if [ "$before" = "$(image_ids)" ]; then echo "$(stamp) already up to date"; return 0; fi
+  echo "$(stamp) new version found; taking a backup"
+  "$0" backup >/dev/null || { echo "$(stamp) backup failed; NOT updating"; return 1; }
+  echo "$(stamp) restarting on the new version"
+  dc up -d >/dev/null 2>&1
+  if wait_ready >/dev/null 2>&1; then
+    echo "$(stamp) updated and answering"; docker image prune -f >/dev/null 2>&1 || true
+  else
+    echo "$(stamp) updated but NOT answering; look at: voxshift logs api  (the backup from just before is in $DIR/backups)"; return 1
+  fi
+}
+
 case "${1:-help}" in
   status)  dc ps ;;
   start)   need_root "$@"; dc up -d; wait_ready ;;
@@ -594,8 +714,10 @@ case "${1:-help}" in
     [ "${#pw}" -ge 12 ] || { echo "Use at least 12 characters. Nothing changed." >&2; exit 1; }
     BOOTSTRAP_ADMIN_RESET=true BOOTSTRAP_ADMIN_PASSWORD="$pw" dc exec -T -e BOOTSTRAP_ADMIN_RESET -e BOOTSTRAP_ADMIN_PASSWORD api node packages/db/dist/seed.js
     ;;
+  auto-update) need_root "$@"; shift; auto_update "$@" ;;
   update)
     need_root "$@"
+    if [ "${2:-}" = "--auto" ]; then auto_run; exit $?; fi
     echo "Taking a backup first..."; "$0" backup
     dc pull
     dc up -d
@@ -620,6 +742,8 @@ voxshift <command>
   start | stop      start or stop everything
   restart           re-apply .env and recreate the containers
   update            back up, pull the newest images, restart, wait until it answers
+  auto-update on [daily|weekly] | off | status
+                    a cron job that does 'update' by itself (quiet unless a new version is out)
   backup [DIR]      database + stored files + .env into DIR/<timestamp> (default $DIR/backups)
   logs [service]    follow logs (api, worker, web, caddy, postgres, redis)
   reset-admin       set a new password for the first Super Admin and unlock the account
@@ -633,6 +757,11 @@ CTL
 sed "s|@@DIR@@|$DIR|" "$DIR/voxshift" > "$DIR/voxshift.tmp" && mv "$DIR/voxshift.tmp" "$DIR/voxshift"
 chmod 755 "$DIR/voxshift"
 if [ "$START" = 1 ]; then install -m 755 "$DIR/voxshift" /usr/local/bin/voxshift; ok "installed the 'voxshift' command (works from any directory; asks for sudo itself)"; fi
+
+if [ "$START" = 1 ] && [ "$AUTO_UPDATE" != "no" ]; then
+  step "Automatic updates"
+  "$DIR/voxshift" auto-update on "$AUTO_UPDATE" || warn "Could not set up the update job. Install updates by hand with: voxshift update (or retry: voxshift auto-update on)"
+fi
 
 if [ "$START" = 0 ]; then
   step "Files written (nothing started)"
@@ -693,7 +822,7 @@ cat <<EOF
    1. Sign in, then open Administration > Platform settings to confirm the web address.
 $( [ -n "$SMTP_HOST" ] || printf '      To send email, set SMTP_HOST (and the other SMTP_ lines) in %s/.env, then run: voxshift restart\n' "$DIR" )
    2. Back up regularly:  voxshift backup   (copy the result off this host)
-   3. Upgrade later:      voxshift update
+$( if [ "$AUTO_UPDATE" != "no" ]; then printf '   3. Updates:            automatic (%s); see or change with: voxshift auto-update status\n' "$AUTO_UPDATE"; else printf '   3. Upgrade later:      voxshift update   (or let it do it for you: voxshift auto-update on)\n'; fi )
 EOF
 if [ "$TLS" = "internal" ]; then
   cat <<EOF

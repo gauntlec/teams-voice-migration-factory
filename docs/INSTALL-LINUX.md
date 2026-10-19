@@ -25,7 +25,7 @@ Leave the options out and it asks. When it finishes it prints the address, the s
 (also in `/opt/voxshift/.env`). Sign in, set up MFA when asked, then check **Administration > Platform settings**.
 
 Re-running refuses if `/opt/voxshift` already has an installation (re-running would generate new secrets and lock you out of
-stored data). To upgrade use `voxshift update`.
+stored data). To upgrade use `voxshift update`, or let the host do it for you (see [Automatic updates](#automatic-updates)).
 
 ### How the address is secured (`--tls`)
 
@@ -41,7 +41,7 @@ stored data). To upgrade use `voxshift update`.
 
 `--admin-password`, `--acme-email`, `--dir`, `--version latest|sha-<commit>`, the SMTP set (`--smtp-host --smtp-port --smtp-secure
 --smtp-user --smtp-pass --mail-from`), `--no-docker-install`, `--open-firewall` (opens 80/443 in ufw or firewalld if active),
-`--generate-only` (write the files and stop, to review) and `-y`. `bash install.sh --help` lists them.
+`--generate-only` (write the files and stop, to review), `--auto-update [daily|weekly]` / `--no-auto-update` (see below) and `-y`. `bash install.sh --help` lists them.
 
 ## Starting again: removing an installation
 
@@ -85,11 +85,38 @@ Everything restarts on its own after a reboot (`restart: unless-stopped`, Docker
 |---|---|
 | `voxshift status` | what is running |
 | `voxshift update` | takes a backup, pulls the newest images, restarts, waits until it answers. Database migrations run on start. |
+| `voxshift auto-update on [daily\|weekly]` / `off` / `status` | turns the automatic update job on or off, or shows its schedule and the last lines of its log |
 | `voxshift backup [DIR]` | database dump + stored files + `.env`, into `DIR/<timestamp>` (default `/opt/voxshift/backups`, last 14 kept). Copy it off the host. |
 | `voxshift restart` | re-applies `.env` (use after editing it) |
 | `voxshift reset-admin` | sets a new password for the first Super Admin and unlocks the account (recovery) |
 | `voxshift logs [api\|worker\|web\|caddy]` | follow logs |
 | `voxshift start` / `stop` | |
+
+## Automatic updates
+
+The installer asks "Install updates automatically every night?" (default **no**; with `-y` it only does it if you pass
+`--auto-update`). Saying yes writes `/etc/cron.d/voxshift-update`, which runs `voxshift update --auto` once a day (or once a week with
+`weekly`) at a quiet hour between 02:00 and 04:59, with the minute picked at random for this host so a fleet of installs does not all
+pull at once. The job:
+
+- pulls the newest images and **does nothing** if there is nothing new (it logs "already up to date");
+- when there is a new version: takes a backup (`voxshift backup`, last 14 kept), restarts on the new images, waits until the
+  application answers, then removes the old images. If the backup fails it does **not** update; if the application does not answer
+  afterwards it says so in the log and leaves the backup from just before for you to restore;
+- never runs twice at once, and skips itself when `IMAGE_TAG` in `.env` is an exact release (`sha-...`), because there is
+  nothing newer to fetch;
+- writes one line per step to `/var/log/voxshift-update.log` (rotated monthly, six kept).
+
+It installs cron (`cron` or `cronie`) if the host lacks it. Manage it any time with `voxshift auto-update on [daily|weekly]`,
+`off` or `status`. Changing between daily and weekly keeps the same time of day. `uninstall.sh` removes the job.
+
+Automatic updates apply database migrations without anyone watching, so for a system that must not change without a person
+there (a change window, for example) leave it off and run `voxshift update` yourself. An installation that is also connected to a
+Voxshift Hub keeps reporting its version there, so you can see who is behind. This installation's host needs outbound HTTPS to
+`ghcr.io` for the job, the same as for a manual update.
+
+Installations made before this existed do not have the `auto-update` command yet; it arrives with the `voxshift` command that a
+fresh install writes.
 
 ## Settings you will change after installing
 

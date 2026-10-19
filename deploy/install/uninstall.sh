@@ -116,6 +116,7 @@ if [ "$REMOVE_IMAGES" = 1 ]; then
   for img in $(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E '^(ghcr\.io/[^/]+/tvmf-(api|worker|web):.+|postgres:16-alpine|redis:7-alpine|caddy:2-alpine)$' || true); do run docker rmi "$img" >/dev/null 2>&1 || true; done
   did "images removed"
 fi
+if [ -f /etc/cron.d/voxshift-update ]; then run rm -f /etc/cron.d/voxshift-update /etc/logrotate.d/voxshift-update && did "removed the automatic update job"; fi
 if [ -L /usr/local/bin/voxshift ] || [ -f /usr/local/bin/voxshift ]; then run rm -f /usr/local/bin/voxshift && did "removed the voxshift command"; fi
 if [ "$DIR_PRESENT" = 1 ]; then run rm -rf -- "$DIR" && did "removed $DIR"; fi
 
