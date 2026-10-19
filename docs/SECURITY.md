@@ -9,10 +9,11 @@
 2. **No data is shared between customers.** Schema-per-tenant + a single
    resolution point for the target schema per request (see below).
 3. **Every change made to any customer tenant is audited** — one row per cmdlet
-   in that tenant's `deployment_changes`, append-only. Today that is enforced by the
-   application (no code path updates or deletes those rows), **not** by database
-   permissions: the app connects as the database owner, which can change any table
-   (see "Database access" below).
+   in that tenant's `deployment_changes`, append-only. The application never
+   updates or deletes those rows, and the database also refuses to (a trigger,
+   tenant migration `0054`), even for the account the application connects as. It does
+   not stop a database administrator, who can switch the trigger off (see "Database
+   access" below).
 
 ## Tenant isolation
 
@@ -136,13 +137,24 @@ with the hub are in [SSO.md](SSO.md); this is what protects it. Code: `apps/api/
   trustworthy.
 - **Database access.** The api, worker and migrations all connect with one
   Postgres account (`tvmf`, from `DATABASE_URL`), which is the image's bootstrap
-  superuser/owner. It owns every schema and table, so database permissions do not
-  stop an UPDATE or DELETE on the audit tables (`platform.platform_audit_log`,
-  `deployment_changes`, a tenant's `audit_log`): they are append-only because no
-  application code does either, and nothing else is reachable without that
-  database password. Postgres is not published on the host in the installer's compose or `deploy/dockge/compose.yaml` (compose network only); the development `docker-compose.yml` at the repo root does publish 5432, for developers.
+  superuser/owner. It owns every schema and table, so database *permissions* cannot
+  stop it changing the audit tables (`platform.platform_audit_log`,
+  `deployment_changes`, a tenant's `audit_log`). Instead a **database trigger on
+  each of those tables refuses UPDATE, DELETE and TRUNCATE** (error "audit table ... is
+  append-only"), for every account including the owner; INSERT is unaffected. It is
+  added by platform migration `0035` and tenant migration `0054`; the tenant one runs for
+  every existing customer when the api starts and for every customer created later, so
+  new customers are protected from the first day. Removing a whole customer (`DROP
+  SCHEMA ... CASCADE`) does not fire a row trigger and still works. There is no
+  application feature that needs to change an audit row, so there is deliberately no
+  switch or setting to bypass it. **What this does and does not do, plainly:** it stops
+  an application bug, a SQL injection or a compromised application code path from
+  rewriting or erasing the audit trail. It does **not** stop a database administrator
+  or anyone holding the owner password or root on the host: they can run
+  `ALTER TABLE ... DISABLE TRIGGER` (or drop the trigger, the table or the schema).
+  Only copying the audit log off the host protects against that. Postgres is not published on the host in the installer's compose or `deploy/dockge/compose.yaml` (compose network only); the development `docker-compose.yml` at the repo root does publish 5432, for developers.
   A separate low-privilege runtime role is not built; the design, what it would and would not protect, and the risks are in
-  [DB-LEAST-PRIVILEGE.md](DB-LEAST-PRIVILEGE.md).
+  [DB-LEAST-PRIVILEGE.md](DB-LEAST-PRIVILEGE.md) (the trigger step is built, the role split is what remains).
 - **Outbound traffic that carries customer data.** Besides the hub, the mail
   server, an identity provider and Microsoft (Teams PowerShell, Graph), two
   OpenStreetMap services are used. (1) When an engineer clicks *Get coordinates
@@ -178,7 +190,8 @@ with the hub are in [SSO.md](SSO.md); this is what protects it. Code: `apps/api/
 ## Audit
 
 - `platform_audit_log`: auth events, user/tenant admin actions, membership
-  changes, connection start/stop.
+  changes, connection start/stop. (This table, the tenant `audit_log` and
+  `deployment_changes` are append-only at the database: see "Database access".)
 - tenant `audit_log`: module-level actions (discovery submitted, build row
   changed, deployment started, handover generated).
 - tenant `deployment_changes`: the fine-grained per-cmdlet record. Written by the

@@ -26,7 +26,7 @@ Derived from the current artifacts:
 | `feature_requests` | id, title, area, status (`new`/`under_review`/`scheduled`/`in_development`/`deployed`/`declined`), priority (`low`/`medium`/`high`/`urgent`), problem, proposal, current_behavior, examples, acceptance, constraints, affected_roles (text[]), decision_note, submitted_by, created_at, updated_at, status_changed_at/by — the feature-request board. Staff submit; a SUPER_ADMIN moves a card to `in_development` (the cue for Claude Code) and to `deployed` on ship. Values in `packages/shared/src/domain.ts` |
 | `app_settings` | id (always `true` - one row), base_url (the address people reach this installation at; NULL = use `WEB_ORIGIN`), …, `sso_session_max_hours` (default 12), `sso_notify_admin_signin`, **`hub_sso_revocation_ack`** (the highest revocation line from the hub that was applied; 0 = none), updated_by, updated_at — see [`BASE-URL.md`](BASE-URL.md), [`PLATFORM-SETTINGS.md`](PLATFORM-SETTINGS.md) |
 | `maintenance_notice` | id (always `true` - one row at most), message, starts_at, created_by, created_at — the release maintenance notice, see [`ARCHITECTURE.md`](ARCHITECTURE.md#operations-releasing-safely) |
-| `platform_audit_log` | id, at, actor_user_id, actor_email, action, target_type, target_id, tenant_id, detail (jsonb), ip |
+| `platform_audit_log` | id, at, actor_user_id, actor_email, action, target_type, target_id, tenant_id, detail (jsonb), ip — **append-only at the database**: a trigger (`0035_audit_log_append_only.sql`) refuses UPDATE, DELETE and TRUNCATE for every account; INSERT works. A database owner can still disable the trigger, see [`SECURITY.md`](SECURITY.md) "Database access" |
 
 ## tenant `tenant_<shortid>` schema
 
@@ -111,7 +111,7 @@ single shared claim. |
 |-------|-------|
 | `connections` | id, started_by, method (`device_code`), status (`pending`/`active`/`expired`/`closed`), user_code, verification_uri, tenant_domain, upn, scopes, started_at, expires_at, closed_at — **no tokens**. (Migration 0014 added `graph_*` columns for a Graph device-inventory sign-in; 0015 drops them — the Graph device API was retired.) |
 | `deployments` | id, connection_id, mode (`dry_run`/`execute`), scope jsonb (`{siteId, sheets, waves?, rowIds?}` - every run acts on one site's Build rows at a time), status, created_by, started_at, finished_at, summary jsonb (counts: applied/skipped/failed/whatif) |
-| `deployment_changes` | id, deployment_id, seq, at, operator_user_id, correlation_id, object_type (`user`/`cap`/`resource_account`/`aa`/`cq`/`group`), object_id, cmdlet, parameters jsonb (redacted), before jsonb, after jsonb, result (`applied`/`skipped`/`failed`/`whatif`), message — **append-only** |
+| `deployment_changes` | id, deployment_id, seq, at, operator_user_id, correlation_id, object_type (`user`/`cap`/`resource_account`/`aa`/`cq`/`group`), object_id, cmdlet, parameters jsonb (redacted), before jsonb, after jsonb, result (`applied`/`skipped`/`failed`/`whatif`), message — **append-only**, enforced by a database trigger (tenant `0054_audit_tables_append_only.sql`: UPDATE, DELETE and TRUNCATE are refused; a deployment that has changes therefore cannot be deleted either, though nothing deletes deployments) |
 | `deployment_scripts` | id, deployment_id, filename, kind (`ps1`/`txt`), content — the "What-If" output |
 
 ### Service Handover
@@ -192,7 +192,7 @@ Chunk 8 (see [INTAKE.md](INTAKE.md)): tenant `incident_knowledge` (0053: `title`
 ### Common
 | Table | Notes |
 |-------|-------|
-| `audit_log` | id, at, actor_user_id, actor_email, action, target_type, target_id, detail jsonb |
+| `audit_log` | id, at, actor_user_id, actor_email, action, target_type, target_id, detail jsonb — append-only at the database, same trigger as `deployment_changes` (tenant `0054`) |
 
 Enum-like value lists (number types, policy kinds, routing methods, greeting
 types, call-forward target types, voicemail answering rules, languages,

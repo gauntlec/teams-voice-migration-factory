@@ -61,11 +61,14 @@ the worker renders a branded template and sends it via SMTP. See
 - **Schema-per-tenant** in one PostgreSQL instance.
 - `platform` schema holds cross-tenant tables: `tenants`, `users`,
   `tenant_memberships`, `auth_sessions`, `totp_secrets`, `invitations`,
-  `platform_audit_log`.
+  `platform_audit_log`. Append-only: a database trigger refuses UPDATE, DELETE and
+  TRUNCATE (migration `platform/0035`).
 - Each customer gets a schema `tenant_<shortid>` created from
   `packages/db/migrations/tenant/*.sql` at the moment a super admin creates the
   customer. It holds every piece of that customer's migration data plus its own
-  `audit_log`.
+  `audit_log`. Its `audit_log` and `deployment_changes` have the same append-only
+  trigger (tenant migration `0054`, applied to every existing customer on api start
+  and to every new one when it is created).
 - Every tenant-scoped API request resolves exactly one target schema from
   `(authenticated user, X-Tenant-Id header)` and all queries for that request go
   through `db.withSchema(schema)`. There is no code path that queries a tenant
