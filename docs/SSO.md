@@ -1,6 +1,6 @@
 # Single sign-on (OpenID Connect) - design
 
-Status: **decided 2026-10-18; phase 1 (the instance side) built 2026-10-18**, see section 8 for what exists, what was added to the contract while building it, and what is left. The hub side (phase 2) and the lifecycle work (phase 3) are not built in this repository. Owner decision: hub accounts (staff AND customers) can sign in to Voxshift installations without a second
+Status: **built and deployed 2026-10-19 (phases 1 and 2); phase 3 pending.** The instance side (this repository) and the hub side (private repository `voxshift-hub`) are both built and live; section 8 describes what exists, what was added to the contract while building it, and what is left. Phase 3 (the hub's revocation channel, customer-approved or time-limited administrator access, back-channel logout) is not built. For the person setting it up, start with [SSO-ADMIN-GUIDE.md](SSO-ADMIN-GUIDE.md). Owner decision: hub accounts (staff AND customers) can sign in to Voxshift installations without a second
 sign-in, and customers can use their own identity provider (for example Microsoft Entra ID) the same way. This file is the contract the instance side
 (this repository) and the hub side (private repository `voxshift-hub`) are both built against. The protocol is standard OpenID Connect; nothing in
 this file is secret.
@@ -18,7 +18,7 @@ Goals
   question about on-premises installs ("does it support SSO?").
 - Hub accounts for Voxshift staff, MSP engineers and customer people. What a person may do is set per installation at the hub, and capped by the
   customer on the installation.
-- Removing someone at the hub (or at the customer's provider) takes effect quickly everywhere.
+- Removing someone at the hub (or at the customer's provider) takes effect quickly everywhere. (**Phase 3, not built**: today new sign-ins stop at once but an open session on an installation lasts until its absolute cap.)
 - Passwords, password hashes and authenticator secrets never leave the system that owns them.
 
 Non-goals (first version)
@@ -131,6 +131,7 @@ SUPER_ADMIN users created locally (including the bootstrap administrator the set
 `allow_local_passwords = false` (flag `break_glass`, default true for local SUPER_ADMINs). The setting is explained in the UI and in `docs/SECURITY.md`.
 
 ### 4.7 Revocation
+**Design. Only the last bullet (checks at token refresh) is built; the hub's revocation channel (first bullet) is phase 3 and is NOT built.**
 - The `hub` provider: the heartbeat reply carries `ssoRevocations` (a list of `{sub, before}`, see section 5.3). The worker applies them: sessions
   of that identity created before `before` are revoked and the user is disabled if the hub says the grant was removed.
 - Any provider: a user whose role would now exceed the ceiling, or whose identity row is removed or user disabled, is signed out at the next
@@ -167,6 +168,8 @@ Served from `https://hub.voxshift.io`:
 - Audit at the hub: authorize, token issued (instance, user, role), refused (reason).
 
 ### 5.3 Revocation channel
+**Not built (phase 3).** The hub keeps the record it would need (`oidc_codes`), but the heartbeat reply does not carry `ssoRevocations` yet.
+
 The heartbeat reply gains `ssoRevocations: [{ sub, before }]`: entries for users whose grant for that instance was removed, who were disabled, or
 whose sessions were revoked since the instance's last acknowledged heartbeat. Entries are kept for 7 days; the heartbeat request carries
 `ssoRevocationsAck` (the highest id applied). This works whether or not remote access (the tunnel) is on.
@@ -180,30 +183,41 @@ whose sessions were revoked since the instance's last acknowledged heartbeat. En
 | Open redirect / redirect URI abuse | Exact-match registered URIs derived from the instance record. |
 | Account takeover via matching email | No automatic linking; explicit administrator link. |
 | Role escalation | Ceilings applied on the instance and editable by the customer; hub staff may reach `SUPER_ADMIN` by default (they do the setup), customer hub users and generic providers are capped lower; every provider sign-in as administrator is audited and notified; role re-evaluated each sign-in. |
-| Stale access after removal | Heartbeat revocations (about a minute), 15 minute access tokens, 12 hour absolute session cap. |
+| Stale access after removal | Designed: heartbeat revocations (about a minute) **(phase 3, not built)**. Today: new hub sign-ins are refused at once, an administrator on the installation can end access immediately (disable the user) or within 15 minutes (unlink, provider off, lower the ceiling), and a federated session ends by itself at the 12 hour absolute cap at the latest. |
 | Algorithm confusion / key substitution | Algorithm allow-list, key by `kid` from the pinned issuer's JWKS only, never accept `none`/HS256. |
 | Hub outage | Local sign-in unaffected; federated sessions already open continue until their cap. |
 | Credential exposure | No password or secret crosses the boundary; provider client secrets are encrypted at rest. |
 
 ## 7. Phases and acceptance
 
-1. **Instance relying party (this repository)**: sections 4.1-4.6 and 4.8 for generic OIDC providers, including the hub provider record and the
+1. **Instance relying party (this repository)** - built 2026-10-18: sections 4.1-4.6 and 4.8 for generic OIDC providers, including the hub provider record and the
    login-page buttons, with tests (a fake provider with a JWKS in the test suite: success, wrong `aud`/`iss`/`nonce`/expired/`alg=none`, replay,
-   unlinked email, ceiling, break glass, disabled user). Works end to end with Microsoft Entra ID.
-2. **Hub as provider (private repository)**: section 5.1-5.2 and the Open button flow, with tests (PKCE, redirect URI exact match, single use,
+   unlinked email, ceiling, break glass, disabled user). Meant to work with Microsoft Entra ID; it has been tested against a stand-in provider and the Voxshift Hub, not yet against a live Entra tenant.
+2. **Hub as provider (private repository)** - built and deployed 2026-10-18/19: section 5.1-5.2 and the Open button flow, with tests (PKCE, redirect URI exact match, single use,
    grant checks, key rotation).
-3. **Lifecycle**: 4.7 and 5.3 (revocation), session cap, hub-side customer users and invitations, customer-approved or time-limited
-   administrator access (optional).
+3. **Lifecycle** - **pending**: 4.7 and 5.3 (revocation through the heartbeat reply), customer-approved or time-limited administrator access (optional). (The session cap, hub-side customer users and invitations from this item were built in phases 1 and 2.)
 4. Later: SAML, SCIM, delegated customer administration, tenant claim mapping.
 
 Done means: a hub account assigned to an installation clicks Open and lands signed in (no second prompt), a Voxshift staff account with the
 administrator grant gets `SUPER_ADMIN` on a freshly connected installation and a customer account does not, a removed account is out within about
-a minute, a customer can lower the staff ceiling or turn the hub provider off and local sign-in still works, a customer can add Entra ID and sign in with it, and
+a minute (phase 3, not built), a customer can lower the staff ceiling or turn the hub provider off and local sign-in still works, a customer can add Entra ID and sign in with it, and
 `docs/SECURITY.md`, the on-premises guide and the hub documentation describe it.
 
-## 8. Phase 1 as built (this repository, 2026-10-18)
+## 8. As built (phases 1 and 2, 2026-10-18 and 2026-10-19)
 
-Everything in sections 4.1-4.6 and 4.8 works for the Voxshift Hub and for generic OpenID Connect providers, with tests. Nothing in section 5 (the hub side) is here. Phase 3 (4.7's hub revocation channel, customer-approved or time-limited administrator access, back-channel logout) is not built, except the parts that need no hub: **a lowered ceiling, a provider switched off, an identity removed or a disabled user signs the person out at their next token refresh** (`sso.revoked`, reasons `ceiling-lowered`, `provider-off`, `identity-removed`, `user-disabled`).
+Everything in sections 4.1-4.6 and 4.8 works for the Voxshift Hub and for generic OpenID Connect providers, with tests, and the hub side (section 5.1 and 5.2) is built and deployed in the private `voxshift-hub` repository (see its `docs/ARCHITECTURE.md`). A live test on 2026-10-19 signed a hub **customer** account in to an installation with no second prompt (role Engineer, the customer ceiling) and an administrator's **Test sign-in** worked; the staff-account sign-in as Administrator with a non-conflicting email, and a live Microsoft Entra ID tenant, have not yet been exercised. Phase 3 (4.7's hub revocation channel, customer-approved or time-limited administrator access, back-channel logout) is not built, except the parts that need no hub: **a lowered ceiling, a provider switched off, an identity removed or a disabled user signs the person out at their next token refresh** (`sso.revoked`, reasons `ceiling-lowered`, `provider-off`, `identity-removed`, `user-disabled`; a disabled user is also refused on the very next request). Because the revocation channel is not built, **removing a person at the hub does not reach an installation**: a session they already have lasts until the absolute cap (12 hours by default).
+
+### What changed since the design
+
+The decisions below were taken while building and are all reflected in the text that follows.
+
+- **Customer ceilings.** The hub provider has two ceilings chosen by the ID token's `vx_kind`: `role_ceiling_staff` (default `SUPER_ADMIN`) and `role_ceiling_customer` (default `ENGINEER`), both editable by the installation's administrator; generic providers have one (`PROJECT_MANAGER`). If `vx_kind` is missing the lower applies.
+- **The `sso` heartbeat field.** The heartbeat carries an optional boolean `sso` (hub provider exists and is on). The hub's Open button goes to the installation's hub sign-in only when it is true.
+- **Smart Open.** The hub's Open chooses between the installation's own address and the hub tunnel itself (same network, or a browser test of `<base URL>/version.json`); manual items exist. `/version.json` therefore stays public and uncached.
+- **Customers on the tunnel.** The remote-access switch ("People with a hub account can open this installation through the hub") covers every hub account, customers included; the ceiling is chosen by `vx_kind`, identically on the base URL and on the gate address.
+- **Backfill of the hub provider.** An installation connected to a hub before single sign-on existed gets its (switched off) hub provider record created from the saved connection, at API start and when the settings or login list are read.
+- **Roles are provider-managed, break-glass accounts are never federated, `default_role` is `CUSTOMER`** (details below).
+- **Hub side:** grants carry a role; accounts have a kind; invitations by email; signing key rotation; kill switches (hub-wide and per installation); the retired signing key stays published for 10 minutes. The hub always sends `vx_role`, `vx_kind` and `sid`.
 
 ### Where things are
 
@@ -245,14 +259,10 @@ These are the places the build went beyond or interpreted the text. The hub side
 
 - **Content-Security-Policy is unchanged** (`apps/web/security-headers.conf`): the flow is full-page redirects (the login button is a link, the callback is a redirect), so it needs no new `connect-src`, `form-action` or `frame-ancestors` entry; the browser only ever talks to this installation's own address and to the provider's page it is redirected to. The web build and the flow were checked with the policy as it is.
 
-### Setting up Microsoft Entra ID (for the customer's administrator)
+### Setting up Microsoft Entra ID, and the rest of the administrator's tasks
 
-1. In the Entra admin center: App registrations > New registration. Name it for example "Voxshift". Supported account types: this directory only. Redirect URI: platform **Web**, value = the "Redirect address to register" shown on Platform settings > Single sign-on > Add a provider (it is `<base URL>/api/auth/oidc/callback`).
-2. Certificates & secrets > New client secret. Copy the **value** now (it is shown once).
-3. Token configuration > Add optional claim > ID > `email` (so the address arrives as `email`). Optional: Add groups claim, or define App roles (Voxshift Admins and so on) and assign people, to use the role map.
-4. In Voxshift: Platform settings > Single sign-on > Add a provider. Provider address `https://login.microsoftonline.com/<Directory (tenant) ID>/v2.0`, Client ID = Application (client) ID, the secret. Choose the highest role, and optionally the role claim (`roles` for app roles) and role map lines such as `Voxshift Admins = Administrator`.
-5. Press **Test sign-in**, sign in with a work account, and check the result. Turn the provider on only when it works. (Entra reports `mfa` in `amr` when the sign-in used MFA; if your tenant does not enforce MFA the provider will be refused with "did not confirm two-step verification" unless you turn that requirement off for this provider.)
+The step-by-step instructions (Entra ID, the ceilings, linking, break-glass accounts, sessions, removing access, remote access, audit and a table of every refusal message and audit reason code) are in **[SSO-ADMIN-GUIDE.md](SSO-ADMIN-GUIDE.md)**. That page is the one canonical copy; do not repeat the steps here.
 
 ### Still to do
 
-Phase 2 (the hub as provider) and phase 3 (hub revocation channel, customer-approved or time-limited administrator access, back-channel logout), and in the later list SAML, SCIM, delegated administration and tenant claim mapping. Also not done: signing out of the provider when signing out here (local logout only), and per-provider tenant (customer) membership mapping: a `CUSTOMER` signs in with no customer memberships and an administrator adds them, as for any customer user.
+Phase 3 (hub revocation channel, customer-approved or time-limited administrator access, back-channel logout), and in the later list SAML, SCIM, delegated administration and tenant claim mapping. Also not done: signing out of the provider when signing out here (local logout only), per-provider tenant (customer) membership mapping (a `CUSTOMER`, or any person below Administrator, signs in with no customer memberships and an administrator adds them, as for any user), WebAuthn/passkeys as a sign-in method here (the second factor is the provider's), and a live test against a real Microsoft Entra ID tenant.
