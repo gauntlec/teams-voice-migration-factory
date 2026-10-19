@@ -299,7 +299,7 @@ function HubCard({ hub }: { hub: HubConnectionView }) {
         <div className={s.stack}>
           <Text weight="semibold">Voxshift hub</Text>
           <MutedText>
-            Lists this installation in a Voxshift hub so staff can see whether it is up and open it from one place. Once a minute it sends the hub two things: its version and whether it is healthy. No customer data is ever sent, and signing in here stays separate from the hub.
+            Lists this installation in a Voxshift hub so people with a hub account can see whether it is up and open it from one place. Once a minute it sends the hub a few facts: its version, whether it is healthy, whether remote access (below) is on and whether hub sign-in is on. No customer data is ever sent.
           </MutedText>
         </div>
         {hub.connected ? (
@@ -321,12 +321,13 @@ function HubCard({ hub }: { hub: HubConnectionView }) {
               <Switch
                 checked={hub.remoteAccess}
                 disabled={remote.isPending}
-                label={hub.remoteAccess ? 'Staff can open this installation through the hub' : 'Remote access through the hub is off'}
+                label={hub.remoteAccess ? 'People with a hub account can open this installation through the hub' : 'Remote access through the hub is off'}
                 onChange={(_, d) => remote.mutate(d.checked)}
               />
               <MutedText>
-                While this is on, people the hub has given access to can open this installation from the hub without a VPN. They still need a user name and password here, and the hub only
-                passes their traffic through: it keeps none of it. You can switch it off at any time and it takes effect within seconds. It is off until someone here turns it on.
+                While this is on, people who have a hub account (Voxshift staff, your MSP, or your own people) can open this installation from the hub without a VPN, but only if the hub has given them access
+                to it. Each person is signed in with single sign-on if you have switched that on (Single sign-on, below); otherwise they sign in with their local account here. The hub only passes their
+                traffic through: it keeps none of it. You can switch this off at any time and it takes effect within seconds. It is off until someone here turns it on.
               </MutedText>
               {hub.remoteAccess && (
                 <Text size={200} className={s.code}>

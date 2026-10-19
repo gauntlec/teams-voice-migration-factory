@@ -8,9 +8,9 @@ import { hubVersion } from './hub-heartbeat';
 
 /**
  * The connector: while the CUSTOMER's remote-access switch is on (Administration > Platform settings > Voxshift hub) this keeps one OUTBOUND
- * WebSocket open to the hub, so staff the hub allows can open this installation without any inbound firewall rule or VPN. The hub sends each
+ * WebSocket open to the hub, so the people the hub allows (anyone with a hub account who has been given access to this installation) can open it without any inbound firewall rule or VPN. The hub sends each
  * browser request down it; this answers from the installation's own web server and nothing else (the target is fixed, never chosen by the hub).
- * Customer data passes through to the signed-in staff member's browser and is not kept by either side.
+ * Customer data passes through to the signed-in person's browser and is not kept by either side.
  *
  * Frames are JSON text messages (bodies are base64), matching the hub's tunnel:
  *   hub -> here:  { t:'req', id, method, path, headers: [[name, value], ...] }  then  { t:'body', id, data, end }  or  { t:'abort', id }

@@ -212,6 +212,39 @@ describe('the address the provider sends the browser back to', () => {
     }
   });
 
+  it('gives a customer-kind hub identity the customer ceiling through the gate address, exactly as through the direct address', async () => {
+    await sso.providers.update(hubId, { roleCeilingStaff: 'SUPER_ADMIN', roleCeilingCustomer: 'ENGINEER' }, { id: admin.id });
+    // (the stand-in hub is on 127.0.0.1, so its "gate address" is <slug>.127.0.0.1: one label under the host of the hub address)
+    const gate = 'contoso.127.0.0.1';
+    const gateUri = `https://${gate}/api/auth/oidc/callback`;
+    const viaGate = async (p: ReturnType<typeof hubPerson>) => {
+      const { begun, result } = await signInAs(sso, hubId, hub, p, {}, { requestHost: gate });
+      if (!begun.ok) throw new Error('begin failed');
+      expect(new URL(begun.redirectUrl).searchParams.get('redirect_uri')).toBe(gateUri);
+      expect(hub.tokenRequests().at(-1)!.body.get('redirect_uri')).toBe(gateUri);
+      expect(result.kind).toBe('session');
+    };
+
+    const customer = hubPerson('SUPER_ADMIN', 'customer');
+    await viaGate(customer);
+    expect(await roleOf(customer.email)).toBe('ENGINEER'); // capped by the customer ceiling, not the staff one
+
+    const direct = hubPerson('SUPER_ADMIN', 'customer');
+    await signInAs(sso, hubId, hub, direct);
+    expect(await roleOf(direct.email)).toBe(await roleOf(customer.email)); // the same as through the direct address
+
+    const staff = hubPerson('SUPER_ADMIN', 'staff');
+    await viaGate(staff);
+    expect(await roleOf(staff.email)).toBe('SUPER_ADMIN');
+
+    // and the customer ceiling is the one that is re-checked when that session refreshes
+    const again = await signInAs(sso, hubId, hub, customer, {}, { requestHost: gate });
+    if (again.result.kind !== 'session') throw new Error('no session');
+    await sso.providers.update(hubId, { roleCeilingCustomer: 'CUSTOMER' }, { id: admin.id });
+    await expect(sso.auth.refresh(again.result.refreshCookieValue, META)).rejects.toThrow(/signed out/i);
+    await sso.providers.update(hubId, { roleCeilingCustomer: 'ENGINEER' }, { id: admin.id });
+  });
+
   it('is the one the provider is told in both the authorization request and the code exchange', async () => {
     const begun = await sso.signIn.begin({ providerId: hubId, meta: META });
     if (!begun.ok) throw new Error('begin failed');

@@ -1,5 +1,5 @@
 /**
- * The connection to a Voxshift Hub: the registry (https://hub.voxshift.io) that lists this installation and where staff open it from.
+ * The connection to a Voxshift Hub: the registry (https://hub.voxshift.io) that lists this installation and where people with a hub account open it from.
  * This installation reports in once a minute with a version and a health word, and NOTHING else: the shape below is the whole of it,
  * and the hub refuses any other field. A Super Admin connects it on Administration > Platform settings.
  */
@@ -32,7 +32,7 @@ export interface HubHeartbeat {
   version: string;
   health: 'ok' | 'degraded';
   uptimeSeconds: number;
-  /** The customer's switch: have they allowed staff to open this installation through the hub? */
+  /** The customer's switch: have they allowed people with a hub account to open this installation through the hub? */
   remoteAccess: boolean;
   /**
    * True exactly when this installation's `hub` sign-in provider exists and is switched on (single sign-on, docs/SSO.md), so the hub only
@@ -67,7 +67,7 @@ export interface HubConnectionView {
   lastOkAt: string | null;
   /** Why the last report failed, in words; null when it worked. */
   lastError: string | null;
-  /** The customer's switch: staff may open this installation through the hub only while it is on. */
+  /** The customer's switch: people with a hub account may open this installation through the hub only while it is on. */
   remoteAccess: boolean;
   tunnelState: HubTunnelState;
   /** Why the connection to the hub for remote access is not up, in words. */

@@ -1,7 +1,7 @@
 # Connecting an installation to a Voxshift Hub
 
 A **Voxshift Hub** (`https://hub.voxshift.io`, a separate private application) lists every Voxshift installation (the hosted service and each
-customer-premises one), shows whether each is up and which version it runs, and lets staff open them from one place. This installation's side
+customer-premises one), shows whether each is up and which version it runs, and lets people with a hub account (Voxshift staff, MSP engineers, and a customer's own people) open them from one place. This installation's side
 of that is small: it reports in once a minute.
 
 ## What is sent
@@ -38,9 +38,9 @@ there) the card says so in words; copy a fresh token from the hub and connect ag
 
 ## Remote access through the hub (the customer's switch)
 
-Beyond being listed, an installation can let staff open it **from the hub, with no VPN and no inbound firewall rule**. The customer controls this:
+Beyond being listed, an installation can let people with a hub account open it **from the hub, with no VPN and no inbound firewall rule**. The customer controls this:
 
-- **Administration > Platform settings > Voxshift hub > "Staff can open this installation through the hub"**: off until someone here turns it on. Switch it off at any time; it takes effect within seconds.
+- **Administration > Platform settings > Voxshift hub > "People with a hub account can open this installation through the hub"**: off until someone here turns it on. It covers every kind of hub account (staff and the customer's own people); each person still needs a grant for this installation at the hub, and signs in with single sign-on if that is on (otherwise with their local account). Switch it off at any time; it takes effect within seconds.
 - While it is on, the worker (`apps/worker/src/hub-tunnel.ts`) holds **one outbound WebSocket** to `<hub>/api/v1/tunnel`, authenticated with the same instance token. The hub sends each browser request of a person it has authorised down that connection, and the worker answers from this installation's own web server.
 - **Who can open it** is decided by the hub (people assigned to this customer, signed in with MFA, checked on every request). **Signing in here is unchanged unless single sign-on is switched on** (below): without it they still need a user name and password for this installation; with it, a person with a hub account and a grant for this installation is signed in by the hub's Open button without a second prompt.
 - **What passes through the hub:** the signed-in person's traffic, decrypted at the hub in transit and relayed, not stored or logged there. Tell the customer this when switching it on.

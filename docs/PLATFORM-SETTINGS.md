@@ -7,7 +7,7 @@
 | Email on/off | One switch that stops all email being generated or sent | [EMAIL.md](EMAIL.md#the-master-switch) |
 | **Menus and features** | Switch optional areas off for this installation (below) | this page |
 | **Single sign-on** | Let people sign in with the Voxshift Hub or their own Entra ID / Okta / Google Workspace: providers, the highest role each can give, test sign-in, session length (own page: Platform settings > Single sign-on) | [SSO.md](SSO.md) |
-| Voxshift hub | Connect to a Voxshift Hub: be listed there, let the hub's staff open this installation, send mail through the hub | [HUB-CONNECTION.md](HUB-CONNECTION.md) |
+| Voxshift hub | Connect to a Voxshift Hub: be listed there, let people with a hub account open this installation, send mail through the hub | [HUB-CONNECTION.md](HUB-CONNECTION.md) |
 | How email is sent | Own mail server, the hub's mail service, or nothing; with a test email | [EMAIL.md](EMAIL.md#where-email-is-set-up) |
 | Web address | The address people (and emails, and assistants) use to reach this installation | [BASE-URL.md](BASE-URL.md) |
 
