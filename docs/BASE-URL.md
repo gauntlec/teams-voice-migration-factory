@@ -26,6 +26,7 @@ a normal choice for a test install.
 | Links in every email (invitations, notices, incident, service request, discovery, deployment and number-port mails, incident reply links) | API: `cfg.WEB_ORIGIN`, kept current by `PlatformSettingsService`. Worker: `webOrigin(db)` from `@tvmf/db` (cached 30 s). |
 | Branded logo URLs in emails | worker, same resolver |
 | The cross-origin (CORS) allow-list | `main.ts`, read per request |
+| Single sign-on: the address a provider returns people to, `<base URL>/api/auth/oidc/callback` (shown on the Single sign-on screen) | `SsoSignInService.redirectUriFor`, from `cfg.WEB_ORIGIN` |
 | "Connect an assistant" details (`VOXSHIFT_URL`, REST base, alert intake, inbound email forwarder) | Administration > Platform settings and the intake sources panel |
 
 Examples in the docs and the reference agent use `https://www.voxshift.io`. On another installation, substitute its address.
@@ -37,7 +38,7 @@ Examples in the docs and the reference agent use `https://www.voxshift.io`. On a
 2. Open the installation by its new address, sign in as a Super Admin, and set **Administration > Platform settings**. The page
    offers "Fill in this address" when you are browsing at an address that is not the saved one.
 3. Check one email link, then update anything outside Voxshift that holds the old address: assistants' `VOXSHIFT_URL`,
-   monitoring tools posting alerts, the inbound-email forwarder, and webhooks' receivers if they allow-list it.
+   monitoring tools posting alerts, the inbound-email forwarder, and webhooks' receivers if they allow-list it. **If single sign-on is on:** register the new redirect address (`<new address>/api/auth/oidc/callback`) at each of your own providers (for example Entra ID), and have the hub administrator change this installation's address in the hub; until both are done sign-in through that provider fails with a "return address does not match" style refusal (see [SSO-ADMIN-GUIDE.md](SSO-ADMIN-GUIDE.md#14-troubleshooting)).
 
 Changing it does **not** move the application. It changes the address written into emails and shown to assistants, and the
 CORS allow-list. Sign-in cookies are host-only, so staff sign in again when they start using a different address.

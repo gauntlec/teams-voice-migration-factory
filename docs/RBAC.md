@@ -71,6 +71,21 @@ and submitting the discovery for review also stay with the project manager /
 engineer. `TenantGuard` resolves the scope onto `req.tenant.siteScope`; the Data
 Collection services filter every read and check every write against it.
 
+## Roles and single sign-on
+
+People can also sign in through the Voxshift Hub or the customer's own OpenID Connect provider (Entra ID and so on): see [SSO.md](SSO.md) and
+[SSO-ADMIN-GUIDE.md](SSO-ADMIN-GUIDE.md). The four roles are the same; only where the role comes from changes.
+
+- **The provider proposes, the installation caps.** The role a person gets is the lower of what the provider asks for (the hub's per-installation grant, or the
+  customer's own provider's role claim and map, else its default role, Customer) and the **ceiling** an administrator of the installation sets for that provider.
+  Order: `SUPER_ADMIN` > `PROJECT_MANAGER` > `ENGINEER` > `CUSTOMER`. Hub staff default ceiling: `SUPER_ADMIN`; hub accounts of the customer's own people: `ENGINEER`;
+  a customer's own provider: `PROJECT_MANAGER`. All editable by a Super Admin (`sso:manage`).
+- **The role is provider-managed.** It is set at every provider sign-in, so a role changed by hand under Users does not survive that person's next provider sign-in.
+- **Customer memberships are not provided by the provider.** A person created by a provider sign-in has the role but is assigned to no customers (except a Super Admin, who sees all);
+  an administrator adds them under Users, exactly as for a local account. A `CUSTOMER` created this way also needs a site scope or whole-customer membership.
+- **Break-glass.** A Super Admin created locally keeps password + authenticator sign-in whatever a provider says and cannot be linked to a provider.
+- Only a Super Admin can add or change providers, ceilings and links (`sso:manage`).
+
 ## Where sites are managed
 
 Site records (sitecode, address, map coordinates) are created and edited on the

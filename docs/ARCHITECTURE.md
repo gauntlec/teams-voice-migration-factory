@@ -27,7 +27,7 @@ depends on it.
 | Migrations | Plain **`.sql` files** + tiny runner | Fully legible; no ORM migration DSL to learn |
 | Job queue | **BullMQ** + Redis | Decouples the API from long-running tenant deployments and from sending email (`deployments` + `mail` queues) |
 | PowerShell execution | **`apps/worker`** container `FROM mcr.microsoft.com/powershell` + Node | `MicrosoftTeams` module cmdlets have no Graph equivalent; kept off the API |
-| Auth | Local accounts, Argon2id, JWT access + rotating refresh cookie, mandatory TOTP | No external IdP dependency (per decision) |
+| Auth | Local accounts (Argon2id, mandatory TOTP) always available; optional single sign-on through OpenID Connect (the Voxshift Hub, or the customer's own provider such as Entra ID); JWT access + rotating refresh cookie | Local sign-in never depends on an external provider, so a provider outage cannot lock everyone out; SSO is off until an administrator switches it on (see [SSO.md](SSO.md)) |
 | Packaging | Docker Compose (single host) | One command to stand up; migrate later to k8s if needed |
 
 ## Services
@@ -89,7 +89,8 @@ the worker renders a branded template and sends it via SMTP. See
 
 | Module | API prefix | Notes |
 |--------|-----------|-------|
-| auth | `/auth` | login, TOTP enrol/verify, refresh, logout |
+| auth | `/auth` | login, TOTP enrol/verify, refresh, logout; `/auth/providers`, `/auth/oidc/login`, `/auth/oidc/callback` (single sign-on) |
+| sso | `/sso` | Super Admin: providers, role ceilings, test sign-in, linking people to provider identities ([SSO.md](SSO.md)) |
 | users | `/users` | super admin: manage staff + customer users |
 | tenants | `/tenants` | super admin: create customer (provisions schema), manage memberships |
 | data-collection | `/t/:tenantId/discovery` | discovery forms; customer writeable |

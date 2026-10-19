@@ -12,6 +12,9 @@ Service Handover** — styled to feel like the Microsoft Teams Admin Center.
 - [`docs/SECURITY.md`](docs/SECURITY.md) — tenant isolation, no stored credentials, audit
 - [`docs/DATA-MODEL.md`](docs/DATA-MODEL.md) — tables, mapped to the current workbook
 - [`docs/EMAIL.md`](docs/EMAIL.md) — the queued email module + the invitation / first-sign-in flow
+- [`docs/SSO.md`](docs/SSO.md) — single sign-on (OpenID Connect): the design, the contract with the Voxshift Hub and what was built; **[`docs/SSO-ADMIN-GUIDE.md`](docs/SSO-ADMIN-GUIDE.md)** is the administrator's step-by-step guide and troubleshooting table
+- [`docs/HUB-CONNECTION.md`](docs/HUB-CONNECTION.md) — connecting an installation to a Voxshift Hub: heartbeat, remote access, hub sign-in
+- [`docs/PLATFORM-SETTINGS.md`](docs/PLATFORM-SETTINGS.md), [`docs/INSTALL-LINUX.md`](docs/INSTALL-LINUX.md) — installation-wide settings; installing on a Linux host
 
 ## What this scaffold contains
 
@@ -22,7 +25,8 @@ Working now:
 - `docker compose up --build` brings up Postgres, Redis, API, worker, web,
   Adminer.
 - **Auth**: local accounts, Argon2id, mandatory TOTP, JWT access + rotating
-  refresh cookie, session revocation. New users are emailed a one-time password
+  refresh cookie, session revocation; optional **single sign-on** (OpenID Connect) with
+  the Voxshift Hub or the customer's own provider, off until an administrator turns it on. New users are emailed a one-time password
   and must set their own password (then enrol MFA) on first sign-in.
 - **RBAC**: `SUPER_ADMIN` / `PROJECT_MANAGER` / `ENGINEER` / `CUSTOMER`, one
   shared permission matrix used by both API guards and the web UI.

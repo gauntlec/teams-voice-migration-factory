@@ -34,7 +34,7 @@ there) the card says so in words; copy a fresh token from the hub and connect ag
 - The worker reads the setting fresh every minute, so connecting and disconnecting need no restart.
 - The version is the release number (`APP_VERSION`, set by CI in the image) as `yyyy.mm.N` (see [VERSIONING.md](VERSIONING.md)); `dev` for a hand-built image.
 - Connecting and disconnecting are in the platform audit log (the hub address, never the token).
-- Only outbound HTTPS from the worker to the hub is needed. No inbound firewall rules.
+- Only outbound HTTPS is needed, no inbound firewall rules: from the worker to the hub (heartbeat, tunnel, mail), and, if hub sign-in is switched on, from the API to the hub at each sign-in (the one-time code is exchanged for the signed token, and the hub's public key set is read). People's browsers must be able to reach the hub (for the sign-in) and this installation.
 
 ## Remote access through the hub (the customer's switch)
 
@@ -46,6 +46,7 @@ Beyond being listed, an installation can let people with a hub account open it *
 - **What passes through the hub:** the signed-in person's traffic, decrypted at the hub in transit and relayed, not stored or logged there. Tell the customer this when switching it on.
 - **What the worker will and will not do:** it talks only to the installation's own web server (`HUB_TUNNEL_TARGET`, default `http://web:80`, which matches the compose files), never to an address the hub names; it refuses unusual methods and any path that does not start with a single `/`.
 - Stored in `platform.app_settings` (`hub_remote_access`, `hub_tunnel_state`, `hub_tunnel_error`, `hub_tunnel_at`; migration `0028_hub_remote_access.sql`). The heartbeat also reports the switch, so the hub can say "switched off by the customer".
+- **How the hub's Open button chooses the route.** If the browser's public address equals the one this installation reports in from, it opens the installation's own address (and shows "Did not load? Open through the hub"). Otherwise, if the tunnel is up and the installation's address is https, the person's browser tests `<web address>/version.json` (a no-cors request, two seconds, the result remembered for ten minutes in that browser tab) and goes direct if it answers, else through the tunnel. A plain-http address cannot be tested from the hub's https page and uses the same-network guess only. The test can be switched off in the hub (Settings). `/version.json` is public, uncached and carries no data; keep it that way. The hub row menu also offers "Open at its own address", "Open through the hub" and "Open without single sign-on".
 - The connector reconnects by itself (2 s, doubling to a minute) if the connection drops, and says in words on this card why it is not connected (for example "the hub does not accept this installation's token").
 
 ## Mail through the hub
@@ -57,7 +58,7 @@ See [EMAIL.md](EMAIL.md#through-the-voxshift-hub). The hub's heartbeat reply say
 ## Single sign-on through the hub
 
 Connecting to a hub also creates a **Voxshift Hub** sign-in provider on this installation (Administration > Platform settings > Single sign-on). It is created **switched off**: an administrator
-of this installation turns it on, normally the Voxshift person doing the setup, with the customer's agreement. The design and the exact contract with the hub are in [SSO.md](SSO.md); the short version:
+of this installation turns it on, normally the Voxshift person doing the setup, with the customer's agreement. (An installation that was connected before single sign-on existed gets the record, also off, when the API starts or the Single sign-on screen is opened.) Step by step: [SSO-ADMIN-GUIDE.md](SSO-ADMIN-GUIDE.md). The design and the exact contract with the hub are in [SSO.md](SSO.md); the short version:
 
 - The installation is an OpenID Connect client of the hub: client id = this installation's id at the hub (inside the instance token), client secret = the instance token, issuer = the hub address.
   Changing the token keeps the switch and the role limits; connecting to a **different** hub address switches it off, forgets the people it knew and ends their sessions. Disconnecting switches it off.
@@ -66,4 +67,4 @@ of this installation turns it on, normally the Voxshift person doing the setup, 
   "customer" role (starts at Engineer). The customer can lower either at any time; people above the new limit are signed out at their next token refresh (within 15 minutes).
 - Every sign-in as Administrator through the hub is recorded in the audit log and emailed to the administrators here.
 - If the hub is unreachable the hub button fails and **local sign-in still works**. Local administrators (break-glass accounts) always can sign in with a password and authenticator.
-- Revocation by the hub itself (removing someone at the hub takes effect at the next heartbeat) is phase 3 of the plan and is **not built yet**. Until then a person removed at the hub keeps an open session here until it ends (12 hours at most by default, a setting), unless an administrator here acts: disabling the user, unlinking the person, switching the provider off or lowering its role limit each end the session at the next token refresh (within 15 minutes).
+- Revocation by the hub itself (removing someone at the hub takes effect at the next heartbeat) is phase 3 of the plan and is **not built yet**. Until then a person removed at the hub cannot sign in again, but keeps a session they already have here until it ends (12 hours at most by default, a setting), unless an administrator here acts: disabling the user is effective at once, and unlinking the person, switching the provider off or lowering its role limit end the session within 15 minutes (the next token refresh).

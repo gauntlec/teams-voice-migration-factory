@@ -186,6 +186,9 @@ Tenant-side prerequisites (one-time):
    flag and returns an **`enrol`** token.
 4. The user then goes through the normal **MFA QR enrolment** and lands in the app.
 
+People who sign in through a single sign-on provider (the Voxshift Hub or the customer's own) are never sent an invitation or a temporary password: their account is
+created by their first sign-in and has no password. The only email single sign-on sends is [`sso_admin_signin`](#sso_admin_signin), to the administrators.
+
 `Resend invite` (`POST /users/:id/resend-invitation`) issues a fresh temp
 password, re-sets `must_change_password`, revokes any sessions, and re-sends —
 also usable as an admin "reset & re-invite".

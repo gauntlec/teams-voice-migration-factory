@@ -10,7 +10,7 @@ Used for a customer-premises install or any new host. The hosted service is run 
 |---|---|
 | Host | Linux on **x86-64** (the images are not built for ARM). Debian, Ubuntu, RHEL, Rocky, Alma, CentOS or Fedora get Docker installed for you; any other Linux needs Docker Engine and the compose plugin installed first. |
 | Size | 4 GB RAM or more, 10 GB free disk, 2 CPUs. |
-| Network | Outbound HTTPS to `ghcr.io` (the images) and to Docker's package sites. Inbound 80 and 443 from the people who will use it. |
+| Network | Outbound HTTPS to `ghcr.io` (the images) and to Docker's package sites. Inbound 80 and 443 from the people who will use it. If you will use the Voxshift Hub or single sign-on (optional, below): outbound HTTPS to `hub.voxshift.io`, and to your identity provider (for example `login.microsoftonline.com`) if you add one. |
 | A name | The address people will type, e.g. `https://voice.contoso.com`, with DNS pointing at the host. An IP address works too. |
 | Root | Run with `sudo`. |
 
@@ -97,6 +97,7 @@ Everything restarts on its own after a reboot (`restart: unless-stopped`, Docker
   switched off in Administration > Platform settings.
 - **Menus and features**: switch off the areas a customer's own installation does not need (the bug and feature boards, the MSP console) in Administration > Platform settings > Menus and features. See [PLATFORM-SETTINGS.md](PLATFORM-SETTINGS.md).
 - **The hub**: to list this installation in a Voxshift Hub and see it online there, connect it in Administration > Platform settings > Voxshift hub. See [HUB-CONNECTION.md](HUB-CONNECTION.md).
+- **Single sign-on (optional)**: to let people sign in with the Voxshift Hub, or with your own Microsoft Entra ID, Okta or Google Workspace, instead of a separate password here, follow [SSO-ADMIN-GUIDE.md](SSO-ADMIN-GUIDE.md): Administration > Platform settings > Single sign-on. Everything starts off, and the administrator made by the installer keeps password + authenticator sign-in whatever you choose (it is the "break-glass" account; keep its password safe). Do this after the web address is final, because providers return people to `<web address>/api/auth/oidc/callback`.
 - **The web address**: change it in Administration > Platform settings (no restart). `WEB_ORIGIN` in `.env` is only the starting value. See [BASE-URL.md](BASE-URL.md).
 - **The first admin's password**: `BOOTSTRAP_ADMIN_PASSWORD` in `.env` is used only to create the account on the first start. After that
   a restart never touches the account, so a password changed in the app stays. If it is lost, or the admin is locked out or
