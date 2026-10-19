@@ -55,7 +55,8 @@ Required (asked for if you run it in a terminal and leave them out):
 Common:
   --admin-password PW    At least 12 characters. Generated and shown once if you leave it out.
   --tls MODE             How the web address is secured (default: auto)
-                           auto      https + a public name -> acme; https + an IP or private name -> internal; http -> none
+                           auto      http -> none; https + an IP, a name with no dot or an internal suffix (.local .lan .corp ...) -> internal;
+                                     any other name -> acme, but only if it resolves from this host (else it stops: choose --tls yourself)
                            none      plain http (a test install, or behind a network you trust)
                            acme      a free Let's Encrypt certificate (the host must be reachable from the internet on 80/443)
                            internal  a certificate from Voxshift's own private CA (staff browsers must trust it once)
@@ -403,10 +404,22 @@ if [ "$AUTO_UPDATE" != "no" ] && [ "$TAG" != "latest" ]; then
   AUTO_UPDATE="no"
 fi
 
-is_private_host() { case "$1" in localhost|127.*|10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|\[*\]|*.local|*.lan|*.internal|*.test|*.localdomain) return 0 ;; esac; case "$1" in *.*) return 1 ;; *) return 0 ;; esac; }
+# True for a name or address that Let's Encrypt can never issue a certificate for: an address, a name with no dot (a bare host name), or a name
+# ending in a suffix that is reserved or only ever used inside a network (.local .lan .internal .corp .home .home.arpa ...). A dotted name with
+# some other, unlisted suffix cannot be judged from here (that needs the public suffix list), so the "auto" choice also checks DNS (below).
+is_private_host() {
+  h="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"; h="${h%.}"
+  case "$h" in
+    localhost|127.*|10.*|192.168.*|169.254.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*|\[*\]) return 0 ;;
+    *.local|*.lan|*.internal|*.intranet|*.private|*.corp|*.home|*.home.arpa|*.lab|*.localdomain|*.localhost|*.test|*.example|*.invalid|*.workgroup) return 0 ;;
+  esac
+  case "$h" in *.*) return 1 ;; *) return 0 ;; esac
+}
 is_ip() { case "$1" in *[!0-9.]*) return 1 ;; esac; case "$1" in *.*.*.*) return 0 ;; esac; return 1; }
 
+TLS_WAS_AUTO=0
 if [ "$TLS" = "auto" ]; then
+  TLS_WAS_AUTO=1
   if [ "$SCHEME" = "http" ]; then TLS="none"
   elif is_ip "$HOST" || is_private_host "$HOST"; then TLS="internal"
   else TLS="acme"; fi
@@ -434,6 +447,7 @@ case "$HSTS_MAX_AGE" in ''|*[!0-9]*) die "--hsts-max-age must be a whole number 
 HSTS_MAX_AGE=$((10#$HSTS_MAX_AGE))
 
 ok "Address: $BASE_URL   (secured: $TLS)"
+if [ "$TLS_WAS_AUTO" = 1 ] && [ "$TLS" = "internal" ]; then say "  '$HOST' looks like an internal name or address, which Let's Encrypt cannot issue for, so Voxshift's own certificate authority is used. Browsers warn until they trust it (see the end of this output); --tls custom uses your own certificate instead."; fi
 if [ "$TLS" = "none" ]; then
   [ "$HSTS_MAX_AGE" = "31536000" ] || warn "--hsts-max-age is ignored with --tls none: HSTS is only ever sent over https."
 elif [ "$HSTS_MAX_AGE" -gt 0 ]; then ok "HSTS: Strict-Transport-Security max-age=$HSTS_MAX_AGE (no includeSubDomains, no preload)"
@@ -480,7 +494,12 @@ if [ "$START" = 1 ]; then
   [ -z "$busy" ] || die "Port(s)$busy already in use on this host (a web server?). Stop it or free the port, then re-run."
   ok "ports free"
   if [ "$TLS" = "acme" ]; then
-    getent hosts "$HOST" >/dev/null 2>&1 || warn "'$HOST' does not resolve from this host yet. Let's Encrypt needs its DNS record to point here before it can issue the certificate."
+    if ! getent hosts "$HOST" >/dev/null 2>&1; then
+      # Chosen by "auto" and unknown to DNS: this is probably an internal name with a suffix we do not recognise, and Let's Encrypt would never issue for it.
+      # Say so and stop, rather than leave a web address that never gets a certificate. (A name asked for with --tls acme only gets the warning.)
+      [ "$TLS_WAS_AUTO" = 1 ] && die "'$HOST' does not resolve from this host, so the installer cannot tell whether it is a public name (Let's Encrypt) or one used only inside your network. Say which, and re-run: --tls acme (a public name: create its DNS record first), --tls internal (Voxshift's own certificate authority; browsers must trust it) or --tls custom (your own certificate)."
+      warn "'$HOST' does not resolve from this host yet. Let's Encrypt needs its DNS record to point here before it can issue the certificate."
+    fi
   fi
 fi
 

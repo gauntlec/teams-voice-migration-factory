@@ -31,9 +31,9 @@ stored data). To upgrade use `voxshift update`, or let the host do it for you (s
 
 | Mode | Use when | Needs |
 |---|---|---|
-| `auto` (default) | | picks one of the next three from the address |
+| `auto` (default) | | picks from the address: `http://` -> `none`; an IP address, a name with no dot, or a name ending in a suffix used only inside networks (`.local`, `.lan`, `.internal`, `.intranet`, `.private`, `.corp`, `.home`, `.home.arpa`, `.lab`, `.localdomain`, `.test` and the other reserved ones) -> `internal`; anything else -> `acme`. For that last case the installer also checks that the name resolves from this host: if it does not, it **stops with a message** (it cannot tell a public name whose DNS is not set up yet from an internal name with an unusual suffix) and you re-run with `--tls acme` (create the DNS record first), `--tls internal` or `--tls custom`. It never silently chooses Let's Encrypt for a name it recognises as internal, and `--tls acme` for such a name is refused |
 | `acme` | a public name | the name resolves to this host and ports 80/443 are reachable from the internet; a free Let's Encrypt certificate that renews itself |
-| `internal` | an IP, or a private name (`.local`, `.lan`, no dot) | Voxshift's own private CA. Browsers warn until the root certificate is trusted: `cd /opt/voxshift && docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt .`, then install it as a trusted root on staff computers |
+| `internal` | an IP, or a private name (`.local`, `.lan`, `.corp`, no dot, ...) | Voxshift's own private CA. Browsers warn until the root certificate is trusted: `cd /opt/voxshift && docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt .`, then install it as a trusted root on staff computers |
 | `custom` | the customer has its own certificate | `--cert fullchain.pem --key key.pem` |
 | `none` | a test install | an `http://` address (a port is allowed: `http://10.0.0.20:8080`). Passwords cross the network unencrypted. |
 
