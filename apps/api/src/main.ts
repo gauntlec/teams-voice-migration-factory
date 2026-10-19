@@ -3,7 +3,7 @@ import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import cookieParser from 'cookie-parser';
-import helmet from 'helmet';
+import { apiSecurityHeaders } from './common/security-headers';
 import { AppModule } from './app.module';
 import { APP_CONFIG, loadConfig, type AppConfig } from './common/config';
 
@@ -22,7 +22,7 @@ async function bootstrap() {
   // hop count of 2 trusts exactly those two proxies and no further.
   app.set('trust proxy', 2);
 
-  app.use(helmet());
+  app.use(apiSecurityHeaders());
   app.use(cookieParser());
   // The SPA is same-origin (served by the same nginx that proxies /api), so
   // CORS is only exercised if the API is reached from another origin. Keep the

@@ -22,6 +22,7 @@ TLS="auto"            # auto | none | acme | internal | custom
 CERT_FILE=""
 KEY_FILE=""
 ACME_EMAIL=""
+HSTS_MAX_AGE="31536000"   # seconds; 0 = no Strict-Transport-Security header. Only ever sent over https.
 TAG="latest"
 INSTALL_DOCKER=1
 OPEN_FIREWALL=0
@@ -61,6 +62,9 @@ Common:
                            custom    your own certificate: --cert FILE --key FILE
   --cert FILE --key FILE Certificate (full chain, PEM) and private key for --tls custom
   --acme-email EMAIL     Contact address for Let's Encrypt expiry notices (acme)
+  --hsts-max-age SECONDS Strict-Transport-Security for every https mode (default 31536000 = one year; 0 = do not send it). Never
+                         sent for --tls none. Deliberately without includeSubDomains and preload: those would also bind every
+                         other site on the same domain.
   --dir PATH             Install directory (default $DIR)
   --version TAG          Image tag: latest (default) or sha-<commit>
 
@@ -288,6 +292,7 @@ while [ $# -gt 0 ]; do
     --cert) CERT_FILE="${2:-}"; shift 2 ;;
     --key) KEY_FILE="${2:-}"; shift 2 ;;
     --acme-email) ACME_EMAIL="${2:-}"; shift 2 ;;
+    --hsts-max-age) HSTS_MAX_AGE="${2:-}"; shift 2 ;;
     --dir) DIR="${2:-}"; shift 2 ;;
     --version) TAG="${2:-}"; shift 2 ;;
     --smtp-host) SMTP_HOST="${2:-}"; shift 2 ;;
@@ -424,8 +429,15 @@ if [ -n "$ADMIN_PASSWORD" ]; then
   plain "$ADMIN_PASSWORD" "--admin-password"
 fi
 [ -z "$ACME_EMAIL" ] || plain "$ACME_EMAIL" "--acme-email"
+case "$HSTS_MAX_AGE" in ''|*[!0-9]*) die "--hsts-max-age must be a whole number of seconds (0 switches HSTS off)." ;; esac
+[ "${#HSTS_MAX_AGE}" -le 9 ] && [ "$HSTS_MAX_AGE" -le 63072000 ] || die "--hsts-max-age may be at most 63072000 (two years)."
+HSTS_MAX_AGE=$((10#$HSTS_MAX_AGE))
 
 ok "Address: $BASE_URL   (secured: $TLS)"
+if [ "$TLS" = "none" ]; then
+  [ "$HSTS_MAX_AGE" = "31536000" ] || warn "--hsts-max-age is ignored with --tls none: HSTS is only ever sent over https."
+elif [ "$HSTS_MAX_AGE" -gt 0 ]; then ok "HSTS: Strict-Transport-Security max-age=$HSTS_MAX_AGE (no includeSubDomains, no preload)"
+else ok "HSTS: off (--hsts-max-age 0)"; fi
 ok "Install directory: $DIR"
 
 if [ -f "$DIR/.env" ]; then
@@ -749,6 +761,11 @@ EOF
 cat -s "$DIR/compose.yaml" > "$DIR/compose.tmp" && mv "$DIR/compose.tmp" "$DIR/compose.yaml"
 
 # --- Caddyfile
+# HSTS is set here and nowhere else: the web container's nginx cannot tell whether the address is https, and the API (helmet) has its own HSTS
+# switched off (apps/api/src/main.ts), so a browser gets exactly one value. A tab-indented line inside the https site block; empty when off.
+HSTS_LINE=""
+if [ "$TLS" != "none" ] && [ "$HSTS_MAX_AGE" -gt 0 ]; then HSTS_LINE="	header Strict-Transport-Security \"max-age=$HSTS_MAX_AGE\"
+"; fi
 case "$TLS" in
   none)
     cat > "$DIR/Caddyfile" <<EOF
@@ -766,7 +783,7 @@ EOF
     cat >> "$DIR/Caddyfile" <<EOF
 $HOST {
 	encode gzip
-	reverse_proxy web:80
+${HSTS_LINE}	reverse_proxy web:80
 }
 EOF
     ;;
@@ -775,7 +792,7 @@ EOF
 $HOST {
 	tls internal
 	encode gzip
-	reverse_proxy web:80
+${HSTS_LINE}	reverse_proxy web:80
 }
 EOF
     ;;
@@ -784,7 +801,7 @@ EOF
 $HOST {
 	tls /certs/server.crt /certs/server.key
 	encode gzip
-	reverse_proxy web:80
+${HSTS_LINE}	reverse_proxy web:80
 }
 EOF
     ;;

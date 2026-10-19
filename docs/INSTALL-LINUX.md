@@ -37,9 +37,28 @@ stored data). To upgrade use `voxshift update`, or let the host do it for you (s
 | `custom` | the customer has its own certificate | `--cert fullchain.pem --key key.pem` |
 | `none` | a test install | an `http://` address (a port is allowed: `http://10.0.0.20:8080`). Passwords cross the network unencrypted. |
 
+Caddy also sends browsers that arrive on port 80 to the https address (automatic in `acme`, `internal` and `custom`; `none` stays on plain http).
+
+#### HSTS (`--hsts-max-age`)
+
+Every https mode (`acme`, `internal`, `custom`) sends `Strict-Transport-Security: max-age=31536000` (one year) from the Caddyfile, so a browser
+that has once reached the address over https will not try plain http again. It is **never** sent with `--tls none`. It is written without
+`includeSubDomains` and without `preload` on purpose: those would also bind every other site on the customer's domain (and a preloaded name
+cannot be taken back quickly), so they are not offered.
+
+- `--hsts-max-age 600` uses another lifetime in seconds (a short value is sensible for the first days of a new install); `--hsts-max-age 0`
+  does not send the header at all. The most allowed is 63072000 (two years).
+- HSTS is set in this one place. The web container's nginx does not set it (it cannot tell whether the address is https) and the API's own
+  header (helmet) has it switched off, so a browser sees exactly one value. If you put your own reverse proxy in front instead, set HSTS there.
+- With HSTS a browser no longer lets a person click through a certificate warning for that address. For `internal`, install the root
+  certificate on staff computers first (see above), and expect an expired `custom` certificate to lock people out until it is renewed.
+- The value is written when the install is created. To change it later edit `/opt/voxshift/Caddyfile` (the `header Strict-Transport-Security` line in the
+  site block; delete the line to switch it off) and run `cd /opt/voxshift && docker compose restart caddy`. Browsers keep honouring an
+  earlier value until its time runs out; to cancel it early the site must send `max-age=0` over https for a while.
+
 ### Other options
 
-`--admin-password`, `--acme-email`, `--dir`, `--version latest|sha-<commit>`, the SMTP set (`--smtp-host --smtp-port --smtp-secure
+`--admin-password`, `--acme-email`, `--hsts-max-age`, `--dir`, `--version latest|sha-<commit>`, the SMTP set (`--smtp-host --smtp-port --smtp-secure
 --smtp-user --smtp-pass --mail-from`), `--no-docker-install`, `--open-firewall` (opens 80/443 in ufw or firewalld if active),
 `--generate-only` (write the files and stop, to review), `--auto-update [daily|weekly]` / `--no-auto-update` (see below), `--refresh-command` (on an existing install: rewrite only the `voxshift` command) and `-y`. `bash install.sh --help` lists them.
 
