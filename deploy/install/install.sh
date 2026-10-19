@@ -29,6 +29,7 @@ START=1
 ASSUME_YES=0
 SMTP_HOST="" SMTP_PORT="587" SMTP_SECURE="false" SMTP_USER="" SMTP_PASS="" MAIL_FROM_ADDR=""
 GENERATED_ADMIN_PASSWORD=0
+REFRESH=0
 AUTO_UPDATE=""        # "" = ask (interactive) or no | daily | weekly | no
 
 # ---------------------------------------------------------------------------------------------------------- helpers
@@ -72,6 +73,10 @@ Updates:
                          restarts when a new version is out. Change or remove it later: voxshift auto-update
   --no-auto-update       Do not install the update job (the default when you answer no or run with -y)
 
+Existing installation:
+  --refresh-command      Only rewrite the 'voxshift' command (and, with --auto-update, switch the update job on). Touches no
+                         secrets, settings or containers. Normally run for you by: voxshift self-update
+
 Other:
   --no-docker-install    Do not install Docker; stop if it is missing
   --open-firewall        Open ports 80/443 in ufw or firewalld if one is active
@@ -79,6 +84,198 @@ Other:
   -y, --yes              Do not ask questions; use defaults
   -h, --help             This text
 EOF
+}
+
+# ---------------------------------------------------------------------------------------------------------- the voxshift command
+write_command() {
+# --- the control command
+cat > "$DIR/voxshift" <<'CTL'
+#!/usr/bin/env bash
+# Control command for this Voxshift installation. Run 'voxshift help'.
+set -Eeuo pipefail
+DIR="@@DIR@@"   # filled in by install.sh
+# Everything here needs root (the install directory is root-only), so ask for it rather than failing.
+if [ "$(id -u)" -ne 0 ]; then
+  command -v sudo >/dev/null 2>&1 || { echo "voxshift needs root. Run it as root." >&2; exit 1; }
+  exec sudo "$0" "$@"
+fi
+cd "$DIR"
+dc() { docker compose "$@"; }
+need_root() { [ "$(id -u)" -eq 0 ] || { echo "Run as root: sudo voxshift $*" >&2; exit 1; }; }
+
+wait_ready() {
+  printf 'Waiting for Voxshift to answer'
+  for _ in $(seq 1 60); do
+    # Capture first: wget exits non-zero on the 401 we are waiting for, which under pipefail would hide grep's match.
+    out="$(dc exec -T web wget -q -O /dev/null -S http://127.0.0.1/api/auth/me 2>&1 || true)"
+    case "$out" in *" 401 "*) echo ' - up.'; return 0 ;; esac
+    printf '.'; sleep 5
+  done
+  echo; echo "Not answering after 5 minutes. See: voxshift logs api" >&2; return 1
+}
+
+stamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+CRON_FILE=/etc/cron.d/voxshift-update
+LOG_FILE=/var/log/voxshift-update.log
+
+# The ids of every image this install uses, as they are on disk right now (to see whether a pull brought anything new).
+image_ids() { for i in $(dc config --images 2>/dev/null | sort -u); do docker image inspect -f '{{.Id}}' "$i" 2>/dev/null || echo "$i missing"; done; }
+
+# Cron has to exist and be running, or the job would silently never fire.
+ensure_cron() {
+  if command -v systemctl >/dev/null 2>&1; then
+    for u in cron crond; do
+      if systemctl list-unit-files "$u.service" 2>/dev/null | grep -q "$u.service"; then systemctl enable --now "$u" >/dev/null 2>&1 && return 0; fi
+    done
+  fi
+  echo "cron is not installed; installing it..."
+  if command -v apt-get >/dev/null 2>&1; then DEBIAN_FRONTEND=noninteractive apt-get install -y cron >/dev/null
+  elif command -v dnf >/dev/null 2>&1; then dnf install -y cronie >/dev/null
+  elif command -v yum >/dev/null 2>&1; then yum install -y cronie >/dev/null
+  else echo "Could not install cron on this system. Install it, then run: voxshift auto-update on" >&2; return 1; fi
+  for u in cron crond; do systemctl enable --now "$u" >/dev/null 2>&1 && return 0; done
+  echo "cron was installed but could not be started. Start it, then check: voxshift auto-update status" >&2; return 1
+}
+
+auto_update() {
+  case "${1:-status}" in
+    on)
+      when="${2:-daily}"
+      case "$when" in daily|weekly) ;; *) echo "Use: voxshift auto-update on [daily|weekly]" >&2; exit 1 ;; esac
+      tag="$(sed -n 's/^IMAGE_TAG=//p' .env | tail -n 1)"
+      [ -z "$tag" ] || [ "$tag" = latest ] || { echo "IMAGE_TAG is '$tag' (an exact release), so there is nothing new to fetch. Set IMAGE_TAG=latest in $DIR/.env first." >&2; exit 1; }
+      ensure_cron
+      # A quiet hour (02:00-04:59), minute picked at random once so a fleet of installs does not all pull at the same second.
+      min=$(( RANDOM % 60 )); hr=$(( 2 + RANDOM % 3 )); dow='*'; [ "$when" = weekly ] && dow=0
+      if [ -f "$CRON_FILE" ]; then
+        old="$(awk '!/^#/ && NF>=6 {print $1" "$2" "$5; exit}' "$CRON_FILE")"
+        [ -z "$old" ] || { min="${old%% *}"; rest="${old#* }"; hr="${rest%% *}"; }
+      fi
+      cat > "$CRON_FILE" <<CRON
+# Written by 'voxshift auto-update'. Remove it with: voxshift auto-update off
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+$min $hr * * $dow root $DIR/voxshift update --auto >> $LOG_FILE 2>&1
+CRON
+      chmod 644 "$CRON_FILE"
+      cat > /etc/logrotate.d/voxshift-update <<LR
+$LOG_FILE {
+    monthly
+    rotate 6
+    compress
+    missingok
+    notifempty
+}
+LR
+      printf 'Automatic updates are on: %s at %02d:%02d (this host time). Log: %s\n' "$when" "$hr" "$min" "$LOG_FILE"
+      echo "It backs up first and restarts only when a new version is out. Turn it off: voxshift auto-update off"
+      ;;
+    off)
+      rm -f "$CRON_FILE" /etc/logrotate.d/voxshift-update
+      echo "Automatic updates are off. Update by hand with: voxshift update"
+      ;;
+    status)
+      if [ -f "$CRON_FILE" ]; then
+        awk '!/^#/ && NF>=6 {printf "Automatic updates are ON: %s at %02d:%02d (this host time).\n", ($5 == "*" ? "daily" : "weekly"), $2, $1}' "$CRON_FILE"
+        if [ -f "$LOG_FILE" ]; then echo "Last log lines ($LOG_FILE):"; tail -n 5 "$LOG_FILE"; else echo "It has not run yet."; fi
+      else
+        echo "Automatic updates are OFF. Turn them on with: voxshift auto-update on [daily|weekly]"
+      fi
+      ;;
+    *) echo "Use: voxshift auto-update on [daily|weekly] | off | status" >&2; exit 1 ;;
+  esac
+}
+
+# What the cron job runs: quiet when there is nothing new, a backup and a restart when there is, one line per step in the log.
+auto_run() {
+  if command -v flock >/dev/null 2>&1; then
+    exec 9>/var/lock/voxshift-update.lock
+    flock -n 9 || { echo "$(stamp) another update is already running; skipping"; return 0; }
+  fi
+  tag="$(sed -n 's/^IMAGE_TAG=//p' .env | tail -n 1)"
+  if [ -n "$tag" ] && [ "$tag" != latest ]; then echo "$(stamp) IMAGE_TAG is '$tag' (pinned); skipping"; return 0; fi
+  before="$(image_ids)"
+  if ! dc pull -q >/dev/null 2>&1; then echo "$(stamp) could not pull the images (registry unreachable?); nothing changed"; return 1; fi
+  if [ "$before" = "$(image_ids)" ]; then echo "$(stamp) already up to date"; return 0; fi
+  echo "$(stamp) new version found; taking a backup"
+  "$0" backup >/dev/null || { echo "$(stamp) backup failed; NOT updating"; return 1; }
+  echo "$(stamp) restarting on the new version"
+  dc up -d >/dev/null 2>&1
+  if wait_ready >/dev/null 2>&1; then
+    echo "$(stamp) updated and answering"; docker image prune -f >/dev/null 2>&1 || true
+  else
+    echo "$(stamp) updated but NOT answering; look at: voxshift logs api  (the backup from just before is in $DIR/backups)"; return 1
+  fi
+}
+
+case "${1:-help}" in
+  status)  dc ps ;;
+  start)   need_root "$@"; dc up -d; wait_ready ;;
+  stop)    need_root "$@"; dc stop ;;
+  restart) need_root "$@"; dc up -d --force-recreate; wait_ready ;;
+  logs)    shift; dc logs --tail 200 -f "$@" ;;
+  reset-admin)
+    # Recovery: new password for the first Super Admin (from BOOTSTRAP_ADMIN_EMAIL), role/status/lockout put right.
+    read -r -s -p "New password for the first admin (12 or more characters): " pw; echo
+    read -r -s -p "Again: " pw2; echo
+    [ "$pw" = "$pw2" ] || { echo "The two passwords differ. Nothing changed." >&2; exit 1; }
+    [ "${#pw}" -ge 12 ] || { echo "Use at least 12 characters. Nothing changed." >&2; exit 1; }
+    BOOTSTRAP_ADMIN_RESET=true BOOTSTRAP_ADMIN_PASSWORD="$pw" dc exec -T -e BOOTSTRAP_ADMIN_RESET -e BOOTSTRAP_ADMIN_PASSWORD api node packages/db/dist/seed.js
+    ;;
+  auto-update) need_root "$@"; shift; auto_update "$@" ;;
+  self-update)
+    # Fetch the current installer and let it rewrite this command (nothing else). Same source and trust as the first install.
+    need_root "$@"; shift
+    tmp="$(mktemp)"
+    curl -fsSL https://raw.githubusercontent.com/gauntlec/teams-voice-migration-factory/main/deploy/install/install.sh -o "$tmp" || { rm -f "$tmp"; echo "Could not download the installer from GitHub (this host needs outbound HTTPS to raw.githubusercontent.com). Nothing changed." >&2; exit 1; }
+    bash -n "$tmp" || { rm -f "$tmp"; echo "The downloaded installer is damaged. Nothing changed." >&2; exit 1; }
+    bash "$tmp" --refresh-command --dir "$DIR" "$@"; rc=$?
+    rm -f "$tmp"
+    exit "$rc"
+    ;;
+  update)
+    need_root "$@"
+    if [ "${2:-}" = "--auto" ]; then auto_run; exit $?; fi
+    echo "Taking a backup first..."; "$0" backup
+    dc pull
+    dc up -d
+    wait_ready
+    docker image prune -f >/dev/null 2>&1 || true
+    ;;
+  backup)
+    need_root "$@"
+    dest="${2:-$DIR/backups}/$(date -u +%Y%m%d-%H%M%S)"
+    mkdir -p "$dest"; chmod 700 "$dest"
+    dc exec -T postgres pg_dump -U tvmf -Fc tvmf > "$dest/database.dump"
+    docker run --rm -v voxshift_filesdata:/data:ro -v "$dest":/out alpine tar czf /out/files.tar.gz -C /data .
+    cp .env "$dest/env"; chmod 600 "$dest/env"
+    echo "Backup written to $dest  (database, stored files and .env - keep it somewhere safe, off this host)."
+    # keep the last 14 local backups
+    ls -1dt "$(dirname "$dest")"/*/ 2>/dev/null | tail -n +15 | xargs -r rm -rf
+    ;;
+  *)
+    cat <<EOF
+voxshift <command>
+  status            what is running
+  start | stop      start or stop everything
+  restart           re-apply .env and recreate the containers
+  update            back up, pull the newest images, restart, wait until it answers
+  auto-update on [daily|weekly] | off | status
+                    a cron job that does 'update' by itself (quiet unless a new version is out)
+  self-update       fetch the current installer from GitHub and refresh this command (secrets, settings and data untouched)
+  backup [DIR]      database + stored files + .env into DIR/<timestamp> (default $DIR/backups)
+  logs [service]    follow logs (api, worker, web, caddy, postgres, redis)
+  reset-admin       set a new password for the first Super Admin and unlock the account
+Files: $DIR/.env (settings, secrets), $DIR/compose.yaml, $DIR/Caddyfile
+EOF
+    ;;
+esac
+CTL
+# The command is a real file in /usr/local/bin, not a link into $DIR: $DIR is root-only, and a link into it would look
+# like "command not found" to every other user. The directory it manages is written into it.
+sed "s|@@DIR@@|$DIR|" "$DIR/voxshift" > "$DIR/voxshift.tmp" && mv "$DIR/voxshift.tmp" "$DIR/voxshift"
+chmod 755 "$DIR/voxshift"
+if [ "$START" = 1 ]; then install -m 755 "$DIR/voxshift" /usr/local/bin/voxshift.new && mv -f /usr/local/bin/voxshift.new /usr/local/bin/voxshift; ok "installed the 'voxshift' command (works from any directory; asks for sudo itself)"; fi
 }
 
 # ---------------------------------------------------------------------------------------------------------- arguments
@@ -102,6 +299,7 @@ while [ $# -gt 0 ]; do
     --auto-update)
       case "${2:-}" in daily|weekly) AUTO_UPDATE="$2"; shift 2 ;; *) AUTO_UPDATE="daily"; shift ;; esac ;;
     --no-auto-update) AUTO_UPDATE="no"; shift ;;
+    --refresh-command) REFRESH=1; shift ;;
     --no-docker-install) INSTALL_DOCKER=0; shift ;;
     --open-firewall) OPEN_FIREWALL=1; shift ;;
     --generate-only) START=0; INSTALL_DOCKER=0; shift ;;
@@ -125,6 +323,19 @@ ask() { # ask VAR "Question" [default]
   printf -v "$var" '%s' "${reply:-$def}"
   [ -n "${!var}" ] || die "$q is required."
 }
+
+# ---------------------------------------------------------------------------------------------------------- refresh only
+if [ "$REFRESH" = 1 ]; then
+  case "$DIR" in /*) ;; *) die "--dir must be an absolute path." ;; esac
+  [ "$(uname -s)" = "Linux" ] && [ "$(id -u)" -eq 0 ] || die "Run it as root on the Linux host: sudo bash install.sh --refresh-command"
+  [ -f "$DIR/.env" ] && [ -f "$DIR/compose.yaml" ] || die "No Voxshift installation found in $DIR (it needs .env and compose.yaml). Nothing changed."
+  START=1
+  step "Refreshing the voxshift command in $DIR"
+  write_command
+  case "$AUTO_UPDATE" in daily|weekly) "$DIR/voxshift" auto-update on "$AUTO_UPDATE" ;; esac
+  say "  Settings, secrets, data and containers were not touched. Try: voxshift help"
+  exit 0
+fi
 
 # ---------------------------------------------------------------------------------------------------------- preflight
 step "Checking this host"
@@ -580,183 +791,8 @@ EOF
 esac
 ok "compose.yaml and Caddyfile"
 
-# --- the control command
-cat > "$DIR/voxshift" <<'CTL'
-#!/usr/bin/env bash
-# Control command for this Voxshift installation. Run 'voxshift help'.
-set -Eeuo pipefail
-DIR="@@DIR@@"   # filled in by install.sh
-# Everything here needs root (the install directory is root-only), so ask for it rather than failing.
-if [ "$(id -u)" -ne 0 ]; then
-  command -v sudo >/dev/null 2>&1 || { echo "voxshift needs root. Run it as root." >&2; exit 1; }
-  exec sudo "$0" "$@"
-fi
-cd "$DIR"
-dc() { docker compose "$@"; }
-need_root() { [ "$(id -u)" -eq 0 ] || { echo "Run as root: sudo voxshift $*" >&2; exit 1; }; }
+write_command
 
-wait_ready() {
-  printf 'Waiting for Voxshift to answer'
-  for _ in $(seq 1 60); do
-    # Capture first: wget exits non-zero on the 401 we are waiting for, which under pipefail would hide grep's match.
-    out="$(dc exec -T web wget -q -O /dev/null -S http://127.0.0.1/api/auth/me 2>&1 || true)"
-    case "$out" in *" 401 "*) echo ' - up.'; return 0 ;; esac
-    printf '.'; sleep 5
-  done
-  echo; echo "Not answering after 5 minutes. See: voxshift logs api" >&2; return 1
-}
-
-stamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
-CRON_FILE=/etc/cron.d/voxshift-update
-LOG_FILE=/var/log/voxshift-update.log
-
-# The ids of every image this install uses, as they are on disk right now (to see whether a pull brought anything new).
-image_ids() { for i in $(dc config --images 2>/dev/null | sort -u); do docker image inspect -f '{{.Id}}' "$i" 2>/dev/null || echo "$i missing"; done; }
-
-# Cron has to exist and be running, or the job would silently never fire.
-ensure_cron() {
-  if command -v systemctl >/dev/null 2>&1; then
-    for u in cron crond; do
-      if systemctl list-unit-files "$u.service" 2>/dev/null | grep -q "$u.service"; then systemctl enable --now "$u" >/dev/null 2>&1 && return 0; fi
-    done
-  fi
-  echo "cron is not installed; installing it..."
-  if command -v apt-get >/dev/null 2>&1; then DEBIAN_FRONTEND=noninteractive apt-get install -y cron >/dev/null
-  elif command -v dnf >/dev/null 2>&1; then dnf install -y cronie >/dev/null
-  elif command -v yum >/dev/null 2>&1; then yum install -y cronie >/dev/null
-  else echo "Could not install cron on this system. Install it, then run: voxshift auto-update on" >&2; return 1; fi
-  for u in cron crond; do systemctl enable --now "$u" >/dev/null 2>&1 && return 0; done
-  echo "cron was installed but could not be started. Start it, then check: voxshift auto-update status" >&2; return 1
-}
-
-auto_update() {
-  case "${1:-status}" in
-    on)
-      when="${2:-daily}"
-      case "$when" in daily|weekly) ;; *) echo "Use: voxshift auto-update on [daily|weekly]" >&2; exit 1 ;; esac
-      tag="$(sed -n 's/^IMAGE_TAG=//p' .env | tail -n 1)"
-      [ -z "$tag" ] || [ "$tag" = latest ] || { echo "IMAGE_TAG is '$tag' (an exact release), so there is nothing new to fetch. Set IMAGE_TAG=latest in $DIR/.env first." >&2; exit 1; }
-      ensure_cron
-      # A quiet hour (02:00-04:59), minute picked at random once so a fleet of installs does not all pull at the same second.
-      min=$(( RANDOM % 60 )); hr=$(( 2 + RANDOM % 3 )); dow='*'; [ "$when" = weekly ] && dow=0
-      if [ -f "$CRON_FILE" ]; then
-        old="$(awk '!/^#/ && NF>=6 {print $1" "$2" "$5; exit}' "$CRON_FILE")"
-        [ -z "$old" ] || { min="${old%% *}"; rest="${old#* }"; hr="${rest%% *}"; }
-      fi
-      cat > "$CRON_FILE" <<CRON
-# Written by 'voxshift auto-update'. Remove it with: voxshift auto-update off
-SHELL=/bin/sh
-PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-$min $hr * * $dow root $DIR/voxshift update --auto >> $LOG_FILE 2>&1
-CRON
-      chmod 644 "$CRON_FILE"
-      cat > /etc/logrotate.d/voxshift-update <<LR
-$LOG_FILE {
-    monthly
-    rotate 6
-    compress
-    missingok
-    notifempty
-}
-LR
-      printf 'Automatic updates are on: %s at %02d:%02d (this host time). Log: %s\n' "$when" "$hr" "$min" "$LOG_FILE"
-      echo "It backs up first and restarts only when a new version is out. Turn it off: voxshift auto-update off"
-      ;;
-    off)
-      rm -f "$CRON_FILE" /etc/logrotate.d/voxshift-update
-      echo "Automatic updates are off. Update by hand with: voxshift update"
-      ;;
-    status)
-      if [ -f "$CRON_FILE" ]; then
-        awk '!/^#/ && NF>=6 {printf "Automatic updates are ON: %s at %02d:%02d (this host time).\n", ($5 == "*" ? "daily" : "weekly"), $2, $1}' "$CRON_FILE"
-        if [ -f "$LOG_FILE" ]; then echo "Last log lines ($LOG_FILE):"; tail -n 5 "$LOG_FILE"; else echo "It has not run yet."; fi
-      else
-        echo "Automatic updates are OFF. Turn them on with: voxshift auto-update on [daily|weekly]"
-      fi
-      ;;
-    *) echo "Use: voxshift auto-update on [daily|weekly] | off | status" >&2; exit 1 ;;
-  esac
-}
-
-# What the cron job runs: quiet when there is nothing new, a backup and a restart when there is, one line per step in the log.
-auto_run() {
-  if command -v flock >/dev/null 2>&1; then
-    exec 9>/var/lock/voxshift-update.lock
-    flock -n 9 || { echo "$(stamp) another update is already running; skipping"; return 0; }
-  fi
-  tag="$(sed -n 's/^IMAGE_TAG=//p' .env | tail -n 1)"
-  if [ -n "$tag" ] && [ "$tag" != latest ]; then echo "$(stamp) IMAGE_TAG is '$tag' (pinned); skipping"; return 0; fi
-  before="$(image_ids)"
-  if ! dc pull -q >/dev/null 2>&1; then echo "$(stamp) could not pull the images (registry unreachable?); nothing changed"; return 1; fi
-  if [ "$before" = "$(image_ids)" ]; then echo "$(stamp) already up to date"; return 0; fi
-  echo "$(stamp) new version found; taking a backup"
-  "$0" backup >/dev/null || { echo "$(stamp) backup failed; NOT updating"; return 1; }
-  echo "$(stamp) restarting on the new version"
-  dc up -d >/dev/null 2>&1
-  if wait_ready >/dev/null 2>&1; then
-    echo "$(stamp) updated and answering"; docker image prune -f >/dev/null 2>&1 || true
-  else
-    echo "$(stamp) updated but NOT answering; look at: voxshift logs api  (the backup from just before is in $DIR/backups)"; return 1
-  fi
-}
-
-case "${1:-help}" in
-  status)  dc ps ;;
-  start)   need_root "$@"; dc up -d; wait_ready ;;
-  stop)    need_root "$@"; dc stop ;;
-  restart) need_root "$@"; dc up -d --force-recreate; wait_ready ;;
-  logs)    shift; dc logs --tail 200 -f "$@" ;;
-  reset-admin)
-    # Recovery: new password for the first Super Admin (from BOOTSTRAP_ADMIN_EMAIL), role/status/lockout put right.
-    read -r -s -p "New password for the first admin (12 or more characters): " pw; echo
-    read -r -s -p "Again: " pw2; echo
-    [ "$pw" = "$pw2" ] || { echo "The two passwords differ. Nothing changed." >&2; exit 1; }
-    [ "${#pw}" -ge 12 ] || { echo "Use at least 12 characters. Nothing changed." >&2; exit 1; }
-    BOOTSTRAP_ADMIN_RESET=true BOOTSTRAP_ADMIN_PASSWORD="$pw" dc exec -T -e BOOTSTRAP_ADMIN_RESET -e BOOTSTRAP_ADMIN_PASSWORD api node packages/db/dist/seed.js
-    ;;
-  auto-update) need_root "$@"; shift; auto_update "$@" ;;
-  update)
-    need_root "$@"
-    if [ "${2:-}" = "--auto" ]; then auto_run; exit $?; fi
-    echo "Taking a backup first..."; "$0" backup
-    dc pull
-    dc up -d
-    wait_ready
-    docker image prune -f >/dev/null 2>&1 || true
-    ;;
-  backup)
-    need_root "$@"
-    dest="${2:-$DIR/backups}/$(date -u +%Y%m%d-%H%M%S)"
-    mkdir -p "$dest"; chmod 700 "$dest"
-    dc exec -T postgres pg_dump -U tvmf -Fc tvmf > "$dest/database.dump"
-    docker run --rm -v voxshift_filesdata:/data:ro -v "$dest":/out alpine tar czf /out/files.tar.gz -C /data .
-    cp .env "$dest/env"; chmod 600 "$dest/env"
-    echo "Backup written to $dest  (database, stored files and .env - keep it somewhere safe, off this host)."
-    # keep the last 14 local backups
-    ls -1dt "$(dirname "$dest")"/*/ 2>/dev/null | tail -n +15 | xargs -r rm -rf
-    ;;
-  *)
-    cat <<EOF
-voxshift <command>
-  status            what is running
-  start | stop      start or stop everything
-  restart           re-apply .env and recreate the containers
-  update            back up, pull the newest images, restart, wait until it answers
-  auto-update on [daily|weekly] | off | status
-                    a cron job that does 'update' by itself (quiet unless a new version is out)
-  backup [DIR]      database + stored files + .env into DIR/<timestamp> (default $DIR/backups)
-  logs [service]    follow logs (api, worker, web, caddy, postgres, redis)
-  reset-admin       set a new password for the first Super Admin and unlock the account
-Files: $DIR/.env (settings, secrets), $DIR/compose.yaml, $DIR/Caddyfile
-EOF
-    ;;
-esac
-CTL
-# The command is a real file in /usr/local/bin, not a link into $DIR: $DIR is root-only, and a link into it would look
-# like "command not found" to every other user. The directory it manages is written into it.
-sed "s|@@DIR@@|$DIR|" "$DIR/voxshift" > "$DIR/voxshift.tmp" && mv "$DIR/voxshift.tmp" "$DIR/voxshift"
-chmod 755 "$DIR/voxshift"
-if [ "$START" = 1 ]; then install -m 755 "$DIR/voxshift" /usr/local/bin/voxshift; ok "installed the 'voxshift' command (works from any directory; asks for sudo itself)"; fi
 
 if [ "$START" = 1 ] && [ "$AUTO_UPDATE" != "no" ]; then
   step "Automatic updates"

@@ -41,7 +41,7 @@ stored data). To upgrade use `voxshift update`, or let the host do it for you (s
 
 `--admin-password`, `--acme-email`, `--dir`, `--version latest|sha-<commit>`, the SMTP set (`--smtp-host --smtp-port --smtp-secure
 --smtp-user --smtp-pass --mail-from`), `--no-docker-install`, `--open-firewall` (opens 80/443 in ufw or firewalld if active),
-`--generate-only` (write the files and stop, to review), `--auto-update [daily|weekly]` / `--no-auto-update` (see below) and `-y`. `bash install.sh --help` lists them.
+`--generate-only` (write the files and stop, to review), `--auto-update [daily|weekly]` / `--no-auto-update` (see below), `--refresh-command` (on an existing install: rewrite only the `voxshift` command) and `-y`. `bash install.sh --help` lists them.
 
 ## Starting again: removing an installation
 
@@ -86,6 +86,7 @@ Everything restarts on its own after a reboot (`restart: unless-stopped`, Docker
 | `voxshift status` | what is running |
 | `voxshift update` | takes a backup, pulls the newest images, restarts, waits until it answers. Database migrations run on start. |
 | `voxshift auto-update on [daily\|weekly]` / `off` / `status` | turns the automatic update job on or off, or shows its schedule and the last lines of its log |
+| `voxshift self-update` | fetches the current installer and rewrites the `voxshift` command only (see Automatic updates) |
 | `voxshift backup [DIR]` | database dump + stored files + `.env`, into `DIR/<timestamp>` (default `/opt/voxshift/backups`, last 14 kept). Copy it off the host. |
 | `voxshift restart` | re-applies `.env` (use after editing it) |
 | `voxshift reset-admin` | sets a new password for the first Super Admin and unlocks the account (recovery) |
@@ -115,8 +116,20 @@ there (a change window, for example) leave it off and run `voxshift update` your
 Voxshift Hub keeps reporting its version there, so you can see who is behind. This installation's host needs outbound HTTPS to
 `ghcr.io` for the job, the same as for a manual update.
 
-Installations made before this existed do not have the `auto-update` command yet; it arrives with the `voxshift` command that a
-fresh install writes.
+### Installations made before this existed
+
+Their `voxshift` command has no `auto-update` yet. Refresh just the command once (it touches no secrets, settings, data or
+containers):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gauntlec/teams-voice-migration-factory/main/deploy/install/install.sh -o install.sh
+sudo bash install.sh --refresh-command            # add --auto-update to switch the nightly job on in the same step
+```
+
+From then on, `voxshift self-update` does the same thing in one word (it downloads the current installer from GitHub, checks
+that it is intact, and rewrites only the command). Run it after a release that adds a command. It needs outbound HTTPS to
+`raw.githubusercontent.com`, and it trusts the same source as the first install. It does not change the compose file, so an
+installation made long ago keeps its old container settings; a fresh install is the way to get a newer compose file.
 
 ## Settings you will change after installing
 
