@@ -141,7 +141,8 @@ with the hub are in [SSO.md](SSO.md); this is what protects it. Code: `apps/api/
   `deployment_changes`, a tenant's `audit_log`): they are append-only because no
   application code does either, and nothing else is reachable without that
   database password. Postgres is not published on the host in the installer's compose or `deploy/dockge/compose.yaml` (compose network only); the development `docker-compose.yml` at the repo root does publish 5432, for developers.
-  A separate low-privilege runtime role is not built.
+  A separate low-privilege runtime role is not built; the design, what it would and would not protect, and the risks are in
+  [DB-LEAST-PRIVILEGE.md](DB-LEAST-PRIVILEGE.md).
 - **Outbound traffic that carries customer data.** Besides the hub, the mail
   server, an identity provider and Microsoft (Teams PowerShell, Graph), two
   OpenStreetMap services are used. (1) When an engineer clicks *Get coordinates
