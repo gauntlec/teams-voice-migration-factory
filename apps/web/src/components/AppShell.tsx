@@ -16,6 +16,7 @@ import {
   MenuPopover,
   MenuTrigger,
   MessageBar,
+  MessageBarActions,
   MessageBarBody,
   MessageBarTitle,
   Option,
@@ -57,6 +58,7 @@ import type { MaintenanceNoticeView, Permission } from '@tvmf/shared';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { TOASTER_ID } from '../hooks/useNotify';
+import { forgetSsoError, readSsoError } from '../lib/ssoError';
 import { useThemeMode } from '../ThemeMode';
 import { ErrorBoundary } from './ErrorBoundary';
 import { Wordmark } from './Logo';
@@ -235,6 +237,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { me, can, activeTenantId, setActiveTenant, logout } = useAuth();
   const { pathname } = useLocation();
   const [navOpen, setNavOpen] = useState(false);
+  // A refused or failed single sign-on lands here (not on the sign-in page) when this browser already has a session: say so, once.
+  const [ssoError, setSsoError] = useState(readSsoError);
+  useEffect(forgetSsoError, []);
   const { mode, setMode } = useThemeMode();
 
   // The drawer closes when you go somewhere, and on Escape.
@@ -448,6 +453,19 @@ export function AppShell({ children }: { children: ReactNode }) {
           )}
         </nav>
         <main id="main" tabIndex={-1} className={mergeClasses(s.content, ls.styled)}>
+          {ssoError && (
+            <MessageBar layout="multiline" intent="error" className={ls.mb16}>
+              <MessageBarBody>
+                <MessageBarTitle>Single sign-on did not complete</MessageBarTitle>
+                {ssoError}
+              </MessageBarBody>
+              <MessageBarActions>
+                <Button size="small" onClick={() => setSsoError(null)}>
+                  Dismiss
+                </Button>
+              </MessageBarActions>
+            </MessageBar>
+          )}
           {platformSettings.data?.emailEnabled === false && (
             <MessageBar intent="warning" className={ls.mb16}>
               <MessageBarBody>

@@ -14,34 +14,12 @@ import {
   shorthands,
   tokens,
 } from '@fluentui/react-components';
-import { SSO_PUBLIC_ERRORS, isSsoPublicError, type PublicSsoProvider, type PublicSsoProviders } from '@tvmf/shared';
+import type { PublicSsoProvider, PublicSsoProviders } from '@tvmf/shared';
 import { useAuth } from '../auth';
 import { ApiError, api } from '../api';
 import { Wordmark } from '../components/Logo';
 import { MutedText } from '../components/ui';
-
-/** Why single sign-on did not work, if the page was reached from a refused sign-in (`/?sso_error=<code>`). The code is looked up in a fixed list; nothing from the address is shown as it is. */
-function readSsoError(): string | null {
-  try {
-    const code = new URLSearchParams(window.location.search).get('sso_error');
-    return code === null ? null : SSO_PUBLIC_ERRORS[isSsoPublicError(code) ? code : 'failed'];
-  } catch {
-    return null;
-  }
-}
-
-/** Takes the code out of the address once it has been read, so a reload or a bookmark does not show the message again. */
-function forgetSsoError() {
-  try {
-    const params = new URLSearchParams(window.location.search);
-    if (!params.has('sso_error')) return;
-    params.delete('sso_error');
-    const rest = params.toString();
-    window.history.replaceState(null, '', `${window.location.pathname}${rest ? `?${rest}` : ''}${window.location.hash}`);
-  } catch {
-    /* the message simply stays in the address */
-  }
-}
+import { forgetSsoError, readSsoError } from '../lib/ssoError';
 
 const providerLabel = (p: PublicSsoProvider) => `Sign in with ${p.name}`;
 
