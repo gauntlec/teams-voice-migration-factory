@@ -1,5 +1,5 @@
 import { Spinner } from '@fluentui/react-components';
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router';
 import { STAFF_WAIT_PATH } from '@tvmf/shared';
 import { useAuth } from './auth';
 import { AppShell } from './components/AppShell';

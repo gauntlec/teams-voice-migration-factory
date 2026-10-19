@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink } from 'react-router';
 import { Badge, Button, Card, SearchBox, Spinner, Text, makeStyles, mergeClasses, shorthands, tokens } from '@fluentui/react-components';
 import { ArrowRightRegular, CheckmarkCircle16Filled, CheckmarkCircleRegular, Circle16Regular, Warning16Filled } from '@fluentui/react-icons';
 import type {

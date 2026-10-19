@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link as RouterLink, useSearchParams } from 'react-router-dom';
+import { Link as RouterLink, useSearchParams } from 'react-router';
 import { Button, Card, Field, Spinner, Text, Textarea, makeStyles, shorthands, tokens } from '@fluentui/react-components';
 import { Wordmark } from '../components/Logo';
 

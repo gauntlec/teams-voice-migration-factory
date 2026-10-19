@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { useMutation } from '@tanstack/react-query';
 import { Button, Text, tokens } from '@fluentui/react-components';
 import { LinkRegular } from '@fluentui/react-icons';

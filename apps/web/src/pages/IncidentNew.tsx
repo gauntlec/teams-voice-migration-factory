@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { Link as RouterLink, useNavigate } from 'react-router-dom';
+import { Link as RouterLink, useNavigate } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button, Card, Checkbox, Field, Input, Link, Radio, RadioGroup, Select, Text, Textarea, makeStyles, shorthands, tokens } from '@fluentui/react-components';
 import { ArrowLeftRegular, DeleteRegular, WarningRegular } from '@fluentui/react-icons';

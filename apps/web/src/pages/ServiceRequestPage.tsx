@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link as RouterLink, useParams } from 'react-router-dom';
+import { Link as RouterLink, useParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { Badge, Button, Card, Spinner, Tab, TabList, Text } from '@fluentui/react-components';
 import { ArrowLeftRegular, CheckmarkRegular, ChevronRightRegular } from '@fluentui/react-icons';

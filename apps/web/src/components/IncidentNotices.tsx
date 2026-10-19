@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink } from 'react-router';
 import { useState } from 'react';
 import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Select, Spinner, Text, makeStyles, shorthands, tokens } from '@fluentui/react-components';
 import { WarningRegular } from '@fluentui/react-icons';

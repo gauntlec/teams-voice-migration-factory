@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { Navigate, useNavigate, useSearchParams } from 'react-router';
 import { QueueTiles, SlaBadge, queueFilter, type QueueFilter } from '../components/SrTarget';
 import { ReportsDialog, SettingsDialog, useSrSettings } from './ServiceRequestAdmin';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
