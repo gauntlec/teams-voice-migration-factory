@@ -6,7 +6,7 @@
 #
 # What it does: installs Docker if missing, writes /opt/voxshift (compose file, Caddy front door, .env with freshly
 # generated secrets), pulls the images from ghcr.io, starts everything, waits until it answers, and installs the
-# `voxshift` command (status / update / backup / logs ...). Safe to read first; it asks before doing anything unusual.
+# `voxshift` command (status / update / backup / restore / logs ...). Safe to read first; it asks before doing anything unusual.
 # Full guide: docs/INSTALL-LINUX.md.
 set -Eeuo pipefail
 
@@ -213,6 +213,196 @@ auto_run() {
   fi
 }
 
+# ----- backup and restore helpers
+sum256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
+is_release() { [[ "$1" =~ ^[0-9]{4}\.[0-9]{1,2}\.[0-9]+$ ]]; }
+
+# The release (yyyy.mm.N) that is running now: asked of the web container (/version.json), else the pinned IMAGE_TAG; "unknown" if neither says.
+current_release() {
+  local v
+  v="$(dc exec -T web wget -q -O - http://127.0.0.1/version.json 2>/dev/null | sed -n 's/.*"version":"\([^"]*\)".*/\1/p' | head -n 1 || true)"
+  if ! is_release "$v"; then v="$(sed -n 's/^IMAGE_TAG=//p' .env | tail -n 1)"; fi
+  if is_release "$v"; then echo "$v"; else echo unknown; fi
+}
+
+# Keep the last 14 backups made by 'voxshift backup' and the last 3 safety backups made by 'voxshift restore' (pre-restore-...) in PARENT.
+# Only folders with those exact names are touched, so anything else the person keeps in the same folder is left alone.
+rotate_backups() {
+  local parent="$1" d
+  for d in $(ls -1 "$parent" 2>/dev/null | grep -E '^[0-9]{8}-[0-9]{6}$' | sort -r | tail -n +15); do rm -rf -- "${parent:?}/$d"; done
+  for d in $(ls -1 "$parent" 2>/dev/null | grep -E '^pre-restore-[0-9]{8}-[0-9]{6}$' | sort -r | tail -n +4); do rm -rf -- "${parent:?}/$d"; done
+}
+
+# do_backup PARENT [PREFIX]: writes PARENT/<PREFIX><timestamp> and sets BACKUP_DEST. It is built in a .partial folder and renamed at the very
+# end, so a backup that fails part-way leaves nothing that looks complete (and 'voxshift update' / the nightly job stop, as before).
+do_backup() {
+  local parent="$1" prefix="${2:-}" part f
+  umask 077
+  mkdir -p "$parent"
+  BACKUP_DEST="$parent/${prefix}$(date -u +%Y%m%d-%H%M%S)"
+  while [ -e "$BACKUP_DEST" ]; do sleep 1; BACKUP_DEST="$parent/${prefix}$(date -u +%Y%m%d-%H%M%S)"; done
+  part="$BACKUP_DEST.partial"
+  rm -rf "$part"; mkdir -m 700 "$part"
+  trap "rm -rf '$part'" EXIT
+  dc exec -T postgres pg_dump -U tvmf -Fc tvmf > "$part/database.dump"
+  [ -s "$part/database.dump" ] || { echo "The database dump is empty; stopping." >&2; return 1; }
+  docker run --rm -v voxshift_filesdata:/data:ro -v "$part":/out alpine tar czf /out/files.tar.gz -C /data .
+  cp .env "$part/env"
+  cp compose.yaml "$part/compose.yaml"
+  if [ -f Caddyfile ]; then cp Caddyfile "$part/Caddyfile"; fi
+  if [ -d certs ]; then cp -a certs "$part/certs"; fi
+  docker run --rm -v voxshift_caddydata:/data:ro -v "$part":/out alpine tar czf /out/caddy-data.tar.gz -C /data .
+  # folders 700, files 600: the backup holds the secrets, the private keys and the data
+  find "$part" -type d -exec chmod 700 {} +
+  find "$part" -type f -exec chmod 600 {} +
+  {
+    echo "# Voxshift backup manifest. 'voxshift restore' checks every file against its sha256 before it changes anything."
+    echo "format=1"
+    echo "created=$(stamp)"
+    echo "release=$(current_release)"
+    echo "image_tag=$(sed -n 's/^IMAGE_TAG=//p' .env | tail -n 1)"
+    echo "files:"
+    ( cd "$part" && find . -type f ! -name manifest.txt | sed 's|^\./||' | sort | while IFS= read -r f; do sum256 "$f"; done )
+  } > "$part/manifest.txt"
+  chmod 600 "$part/manifest.txt"
+  mv "$part" "$BACKUP_DEST"
+  trap - EXIT
+  rotate_backups "$parent"
+}
+
+# The value of KEY= in a backup's manifest.
+manifest_value() { sed -n "s/^$1=//p" "$2/manifest.txt" | head -n 1; }
+
+restore_cmd() {
+  local src="" yes=0 force=0 withcfg=0 arg
+  shift
+  for arg in "$@"; do
+    case "$arg" in
+      --yes|-y) yes=1 ;;
+      --force) force=1 ;;
+      --with-config) withcfg=1 ;;
+      -*) echo "Unknown option $arg. Use: voxshift restore <backup-folder> [--with-config] [--yes] [--force]" >&2; exit 1 ;;
+      *) [ -z "$src" ] || { echo "Give one backup folder only." >&2; exit 1; }; src="${arg%/}" ;;
+    esac
+  done
+  if [ -z "$src" ]; then
+    echo "Use: voxshift restore <backup-folder> [--with-config] [--yes] [--force]"
+    echo "Backups on this host ($DIR/backups):"
+    ls -1 "$DIR/backups" 2>/dev/null | grep -E '^(pre-restore-)?[0-9]{8}-[0-9]{6}$' | sort -r | sed 's|^|  |' || true
+    exit 1
+  fi
+  [ -d "$src" ] || { echo "$src is not a folder. Nothing changed." >&2; exit 1; }
+  src="$(cd "$src" && pwd)"
+  for f in database.dump files.tar.gz env; do [ -f "$src/$f" ] || { echo "$src has no $f - it is not a Voxshift backup (or it is incomplete). Nothing changed." >&2; exit 1; }; done
+
+  # 1. Is the backup whole, and is it for this release?
+  local created="unknown" brel="unknown" now
+  if [ -f "$src/manifest.txt" ]; then
+    created="$(manifest_value created "$src")"; brel="$(manifest_value release "$src")"
+    if ! grep -E '^[0-9a-f]{64}  ' "$src/manifest.txt" | ( cd "$src" && sum256 -c --quiet - ) >/dev/null 2>&1; then
+      echo "This backup is damaged or has been changed: a file does not match its checksum in manifest.txt. Nothing changed." >&2
+      grep -E '^[0-9a-f]{64}  ' "$src/manifest.txt" | ( cd "$src" && sum256 -c - 2>&1 | grep -v ': OK$' ) >&2 || true
+      exit 1
+    fi
+    echo "Checked: every file in the backup matches its checksum."
+  else
+    [ "$force" = 1 ] || { echo "This backup has no manifest.txt (it was made by an older Voxshift), so it cannot be checked. If you trust it, run again with --force. Nothing changed." >&2; exit 1; }
+    echo "Warning: no manifest.txt - the backup cannot be checked."
+  fi
+  if [ "$withcfg" = 1 ]; then
+    for f in compose.yaml caddy-data.tar.gz; do [ -f "$src/$f" ] || { echo "--with-config needs $f in the backup, and this one has none (older backups did not save it). Nothing changed." >&2; exit 1; }; done
+  fi
+  now="$(current_release)"
+  if is_release "$brel" && is_release "$now"; then
+    if [ "$brel" != "$now" ] && [ "$(printf '%s\n%s\n' "$brel" "$now" | sort -V | tail -n 1)" = "$brel" ]; then
+      if [ "$force" != 1 ]; then
+        echo "This backup was made on release $brel, which is NEWER than the release running here ($now). Database changes only move forward, so the older program cannot use it." >&2
+        echo "Update first (voxshift update), or set IMAGE_TAG in $DIR/.env to $brel or later and run voxshift restart, then restore again. To go ahead regardless: --force. Nothing changed." >&2
+        exit 1
+      fi
+      echo "Warning: the backup ($brel) is newer than what is running ($now); going ahead because of --force."
+    fi
+  else
+    if [ "$force" != 1 ]; then
+      echo "Cannot tell whether the backup (release: $brel) fits what is running here (release: $now). Make sure Voxshift is running (voxshift start) so its release can be read; to go ahead without the check: --force. Nothing changed." >&2
+      exit 1
+    fi
+    echo "Warning: the release could not be compared (backup: $brel, running: $now); going ahead because of --force."
+  fi
+
+  # 2. Say what will happen, and ask.
+  echo
+  echo "RESTORE will replace what is on this host with the backup:"
+  echo "  backup:        $src"
+  echo "  made:          $created   release: $brel   (running now: $now)"
+  echo "  replaced:      the database (all of it), the stored files, and the settings in .env"
+  echo "                 (.env keeps this host's database password and IMAGE_TAG; a copy of today's .env is kept)"
+  if [ "$withcfg" = 1 ]; then echo "  also replaced: compose.yaml, Caddyfile, certificates and Caddy's data volume (--with-config)"; else echo "  not replaced:  compose.yaml, Caddyfile, certificates, Caddy's data (add --with-config to restore these too)"; fi
+  echo "  first:         a safety backup of the current state, in $DIR/backups/pre-restore-<time>"
+  echo "  Voxshift is stopped while this runs (a few minutes). Anything entered since the backup was made is lost."
+  if [ "$yes" != 1 ]; then
+    [ -t 0 ] || { echo "Not a terminal. Pass --yes to confirm. Nothing changed." >&2; exit 1; }
+    read -r -p "Type RESTORE to continue: " reply || true
+    [ "${reply:-}" = "RESTORE" ] || { echo "Not confirmed. Nothing changed."; exit 1; }
+  fi
+
+  # 3. Safety backup, then the restore itself.
+  echo "Taking a safety backup of the current state first..."
+  do_backup "$DIR/backups" pre-restore-
+  safety="$BACKUP_DEST"
+  echo "Safety backup: $safety"
+  trap 'echo "The restore stopped part-way. Your data from just before it started is in $safety. To go back to it: voxshift restore $safety" >&2' ERR
+
+  ts="$(date -u +%Y%m%d-%H%M%S)"
+  dc stop api worker
+  [ "$withcfg" != 1 ] || dc stop caddy
+
+  cp .env ".env.before-restore-$ts"; chmod 600 ".env.before-restore-$ts"
+  cp "$src/env" .env.restoring; chmod 600 .env.restoring
+  for k in POSTGRES_PASSWORD DATABASE_URL IMAGE_TAG; do
+    line="$(grep -E "^$k=" ".env.before-restore-$ts" | tail -n 1 || true)"
+    [ -n "$line" ] || continue
+    { grep -vE "^$k=" .env.restoring || true; } > .env.restoring.new
+    printf '%s\n' "$line" >> .env.restoring.new
+    mv .env.restoring.new .env.restoring
+  done
+  mv .env.restoring .env; chmod 600 .env
+  echo "Restored .env (the previous one is .env.before-restore-$ts)."
+
+  dc up -d postgres redis
+  for _ in $(seq 1 30); do dc exec -T postgres pg_isready -U tvmf -d tvmf >/dev/null 2>&1 && break; sleep 2; done
+  echo "Restoring the database..."
+  rc=0; dc exec -T postgres pg_restore -U tvmf -d tvmf --clean --if-exists < "$src/database.dump" || rc=$?
+  if [ "$rc" != 0 ]; then
+    # pg_restore exits 1 for harmless messages too; it only counts as a failure if the data is not there.
+    echo "pg_restore reported problems (exit $rc; shown above). Checking the data arrived..." >&2
+    dc exec -T postgres psql -U tvmf -d tvmf -tAc "select count(*) from platform.users" >/dev/null || { echo "The database did not restore." >&2; false; }
+    echo "The data is there; the messages above were warnings."
+  fi
+
+  echo "Restoring the stored files..."
+  docker run --rm -v voxshift_filesdata:/data -v "$src":/in:ro alpine sh -ec 'find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} +; tar xzf /in/files.tar.gz -C /data'
+
+  if [ "$withcfg" = 1 ]; then
+    echo "Restoring the web server settings..."
+    cp compose.yaml "compose.yaml.before-restore-$ts"
+    cp "$src/compose.yaml" compose.yaml
+    if [ -f "$src/Caddyfile" ]; then [ ! -f Caddyfile ] || cp Caddyfile "Caddyfile.before-restore-$ts"; cp "$src/Caddyfile" Caddyfile; fi
+    if [ -d "$src/certs" ]; then
+      if [ -d certs ]; then mv certs "certs.before-restore-$ts"; fi
+      cp -a "$src/certs" certs
+    fi
+    docker run --rm -v voxshift_caddydata:/data -v "$src":/in:ro alpine sh -ec 'find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} +; tar xzf /in/caddy-data.tar.gz -C /data'
+  fi
+
+  echo "Starting everything..."
+  dc up -d --force-recreate
+  wait_ready
+  trap - ERR
+  echo "Restored from $src."
+  echo "Sign in and check. If it is not what you wanted, go back with: voxshift restore $safety"
+}
+
 case "${1:-help}" in
   status)  dc ps ;;
   start)   need_root "$@"; dc up -d; wait_ready ;;
@@ -249,15 +439,11 @@ case "${1:-help}" in
     ;;
   backup)
     need_root "$@"
-    dest="${2:-$DIR/backups}/$(date -u +%Y%m%d-%H%M%S)"
-    mkdir -p "$dest"; chmod 700 "$dest"
-    dc exec -T postgres pg_dump -U tvmf -Fc tvmf > "$dest/database.dump"
-    docker run --rm -v voxshift_filesdata:/data:ro -v "$dest":/out alpine tar czf /out/files.tar.gz -C /data .
-    cp .env "$dest/env"; chmod 600 "$dest/env"
-    echo "Backup written to $dest  (database, stored files and .env - keep it somewhere safe, off this host)."
-    # keep the last 14 local backups
-    ls -1dt "$(dirname "$dest")"/*/ 2>/dev/null | tail -n +15 | xargs -r rm -rf
+    do_backup "${2:-$DIR/backups}"
+    echo "Backup written to $BACKUP_DEST"
+    echo "  (database, stored files, .env, compose.yaml, Caddyfile, certificates and Caddy's data - it holds secrets and private keys: keep it somewhere safe, off this host)."
     ;;
+  restore) need_root "$@"; restore_cmd "$@" ;;
   *)
     cat <<EOF
 voxshift <command>
@@ -268,7 +454,10 @@ voxshift <command>
   auto-update on [daily|weekly] | off | status
                     a cron job that does 'update' by itself (quiet unless a new version is out)
   self-update       fetch the current installer from GitHub and refresh this command (secrets, settings and data untouched)
-  backup [DIR]      database + stored files + .env into DIR/<timestamp> (default $DIR/backups)
+  backup [DIR]      database, stored files, .env, compose.yaml, Caddyfile, certificates and Caddy's data into DIR/<timestamp> (default $DIR/backups)
+  restore FOLDER [--with-config] [--yes] [--force]
+                    put a backup back (takes a safety backup first; asks you to type RESTORE). --with-config also restores
+                    compose.yaml, the Caddyfile, certificates and Caddy's data. --force skips the "backup is newer" check
   logs [service]    follow logs (api, worker, web, caddy, postgres, redis)
   reset-admin       set a new password for the first Super Admin and unlock the account
 Files: $DIR/.env (settings, secrets), $DIR/compose.yaml, $DIR/Caddyfile

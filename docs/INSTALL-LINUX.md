@@ -76,7 +76,7 @@ firewall rule you opened.
 
 | Option | |
 |---|---|
-| `--backup-to DIR` | runs `voxshift backup DIR` first (needs a working install) |
+| `--backup-to DIR` | runs `voxshift backup DIR` first (needs a working install): the full backup described under Backups |
 | `--keep-certs` | keeps the certificate store, so a reinstall reuses the issued Let's Encrypt certificate (Let's Encrypt limits how many a name can get per week) |
 | `--remove-images` | also deletes the downloaded images (the reinstall downloads them again) |
 | `--dry-run`, `-y`, `--dir PATH` | |
@@ -106,7 +106,8 @@ Everything restarts on its own after a reboot (`restart: unless-stopped`, Docker
 | `voxshift update` | takes a backup, pulls the newest images, restarts, waits until it answers. Database migrations run on start. |
 | `voxshift auto-update on [daily\|weekly]` / `off` / `status` | turns the automatic update job on or off, or shows its schedule and the last lines of its log |
 | `voxshift self-update` | fetches the current installer and rewrites the `voxshift` command only (see Automatic updates) |
-| `voxshift backup [DIR]` | database dump + stored files + `.env`, into `DIR/<timestamp>` (default `/opt/voxshift/backups`, last 14 kept). Copy it off the host. |
+| `voxshift backup [DIR]` | everything needed to rebuild this installation, into `DIR/<timestamp>` (default `/opt/voxshift/backups`, last 14 kept): the database, the stored files, `.env`, `compose.yaml`, the `Caddyfile`, `certs/` (if you use your own certificate) and Caddy's data (its certificates and, for `--tls internal`, its own certificate authority), plus a `manifest.txt` with the date, the Voxshift release and a checksum of each file. Copy it off the host. It holds secrets and private keys. See Backups. |
+| `voxshift restore FOLDER [--with-config] [--yes] [--force]` | puts a backup back: checks it, takes a safety backup of today's state, asks you to type `RESTORE`, then restores the database, the stored files and `.env`, and starts everything. See Restoring. |
 | `voxshift restart` | re-applies `.env` (use after editing it) |
 | `voxshift reset-admin` | sets a new password for the first Super Admin and unlocks the account (recovery) |
 | `voxshift logs [api\|worker\|web\|caddy]` | follow logs |
@@ -120,7 +121,7 @@ The installer asks "Install updates automatically every night?" (default **no**;
 pull at once. The job:
 
 - pulls the newest images and **does nothing** if there is nothing new (it logs "already up to date");
-- when there is a new version: takes a backup (`voxshift backup`, last 14 kept), restarts on the new images, waits until the
+- when there is a new version: takes a backup (`voxshift backup`, last 14 kept; the same full backup as by hand), restarts on the new images, waits until the
   application answers, then removes the old images. If the backup fails it does **not** update; if the application does not answer
   afterwards it says so in the log and leaves the backup from just before for you to restore;
 - never runs twice at once, and skips itself when `IMAGE_TAG` in `.env` is an exact release (`2026.10.3` or `sha-...`), because there is
@@ -164,16 +165,72 @@ installation made long ago keeps its old container settings; a fresh install is 
   account back (Super Admin, active, unlocked). Nothing else is needed. You may delete `BOOTSTRAP_ADMIN_PASSWORD` from `.env`
   once you have signed in, but the API then cannot create the admin on a brand-new empty database.
 
+## Backups
+
+`voxshift backup` (and the automatic update, and `uninstall.sh --backup-to`) writes one folder, for example
+`/opt/voxshift/backups/20261019-020512/`:
+
+| File | What it is |
+|---|---|
+| `database.dump` | the whole database (every customer), as `pg_dump -Fc` |
+| `files.tar.gz` | the stored files (handover packs, logos, attachments) |
+| `env` | a copy of `.env`: the secrets. Without `DATA_ENCRYPTION_KEY` the stored secrets cannot be read |
+| `compose.yaml`, `Caddyfile`, `certs/` | how the containers and the web front door are set up (`certs/` only if you installed your own certificate) |
+| `caddy-data.tar.gz` | Caddy's data volume: the issued certificates and, for `--tls internal`, Voxshift's own certificate authority, so browsers that already trust it keep trusting it |
+| `manifest.txt` | the date, the Voxshift release (for example `2026.10.19`), and a `sha256` checksum of every other file |
+
+The folder and everything in it can only be read by root (700 / 600). **It contains the database, the passwords and keys and the private key
+of your certificate: keep it somewhere safe and off this host** (a copy on the same disk does not survive the disk). The newest 14 backups
+are kept in a folder; the safety backups that `voxshift restore` makes (`pre-restore-...`) are kept separately, the newest 3. Nothing else in
+the folder is deleted. A backup is built in a `.partial` folder and renamed when it is complete, so a failed backup leaves nothing that
+looks finished; `voxshift update` and the nightly job still stop when the backup fails. Backups made before this version have no
+`compose.yaml`, Caddy data or manifest; they can still be restored (see below).
+
 ## Restoring
 
-On a new host: run the installer, `voxshift stop`, put the backed-up `env` over `/opt/voxshift/.env` (the secrets must match the data),
-then load the data:
+An installation made before `voxshift restore` existed gets it (and the fuller backup) with `voxshift self-update`; nothing else changes.
+
+```bash
+voxshift restore /opt/voxshift/backups/20261019-020512
+```
+
+What it does, in order (nothing is changed until step 4):
+
+1. Checks the folder is a Voxshift backup and every file matches its checksum in `manifest.txt` (a changed or damaged file stops it).
+2. Compares the backup's release with the one running here. **A backup from a newer release is refused**: the database only moves forward, so
+   the older program cannot use it. Update first (`voxshift update`), or set `IMAGE_TAG` in `.env` to that release or later and run
+   `voxshift restart`, then restore again. A backup from an *older* release is fine; the migrations bring it up to date when the application
+   starts. If a release cannot be read (a hand-built image, Voxshift not running) it stops and asks for `--force`.
+3. Shows what will be replaced and asks you to type `RESTORE` (or pass `--yes`).
+4. Takes a **safety backup** of the current state in `/opt/voxshift/backups/pre-restore-<time>`, stops `api` and `worker`, keeps a copy of
+   today's `.env` as `.env.before-restore-<time>`, and puts the backup's `.env` in place. Two lines stay as they are on this host, because
+   they must match the database already running here: `POSTGRES_PASSWORD` / `DATABASE_URL`, and `IMAGE_TAG` (which release runs).
+5. Loads the database (`pg_restore --clean --if-exists`: the tables in the backup are dropped and recreated; a customer created after the
+   backup stays behind as an unused schema that nothing refers to), then the stored files.
+6. With **`--with-config`** also restores `compose.yaml`, the `Caddyfile`, `certs/` and Caddy's data (today's copies are kept as
+   `*.before-restore-<time>`). Use it on a new host or after losing the web front door's settings; leave it out to keep this host's own
+   network settings.
+7. Starts everything again and waits until it answers, like `voxshift update`.
+
+Everything entered after the backup was made is lost; Redis (the work queue) is not restored. If it does not turn out as you wanted, go
+back with `voxshift restore /opt/voxshift/backups/pre-restore-<time>`. If it stops part-way it says so and names that folder.
+
+**On a new host (the usual disaster-recovery case):** install Voxshift the normal way with the same version or newer, copy the backup folder
+onto the host, then `voxshift restore <folder> --with-config`. The settings and secrets come from the backup, so the same sign-ins and
+stored secrets work again. Check the web address in `.env` (`WEB_ORIGIN`) and in Administration > Platform settings still matches the new host.
+
+**A backup made by an older version** (only `database.dump`, `files.tar.gz`, `env`): run `voxshift restore <folder> --force`. It cannot be
+checked against a manifest and `--with-config` is not available for it.
+
+By hand (if the command itself cannot run), the same steps are:
 
 ```bash
 cd /opt/voxshift
+voxshift stop
+cp /path/to/env .env && chmod 600 .env          # keep this host's POSTGRES_PASSWORD / DATABASE_URL lines if it is a new host
 docker compose up -d postgres
 docker compose exec -T postgres pg_restore -U tvmf -d tvmf --clean --if-exists < /path/to/database.dump
-docker run --rm -v voxshift_filesdata:/data -v /path/to:/in alpine tar xzf /in/files.tar.gz -C /data
+docker run --rm -v voxshift_filesdata:/data -v /path/to:/in:ro alpine sh -c 'cd /data && rm -rf ./* && tar xzf /in/files.tar.gz -C /data'
 voxshift start
 ```
 
@@ -184,3 +241,5 @@ voxshift start
 - To remove it: `cd /opt/voxshift && docker compose down -v` deletes the containers **and all data**; then delete `/opt/voxshift`.
 - The images are public on ghcr.io. A host with no internet access cannot use this installer as is.
 - Tested file generation for every TLS mode and every input check on macOS; the full install (Docker, image pull, Caddy, health wait) needs a real Linux host.
+  The same goes for `voxshift backup` and `voxshift restore` against a real database: their logic (checks, order of steps, refusals, rotation) is tested with a
+  stand-in `docker`, and the first real restore should be tried on a test host before it is relied on.

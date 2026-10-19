@@ -111,7 +111,11 @@ with the hub are in [SSO.md](SSO.md); this is what protects it. Code: `apps/api/
   business data in Postgres are stored as they are. There is no application-level
   encryption at rest beyond the list above; protect the disks, volumes and backups
   of the host (disk encryption) for the rest. Without the key the listed secrets
-  cannot be read: back up `.env` with every database backup, and note that
+  cannot be read: `voxshift backup` saves `.env` with every database backup (and the
+  Caddy certificates and private keys, so a backup folder is as sensitive as the host
+  itself: root-only on the host, and keep a copy off the host; `voxshift restore` puts it back,
+  after checking each file's checksum and refusing a backup from a newer release; see
+  [INSTALL-LINUX.md](INSTALL-LINUX.md)), and note that
   changing the key makes them unreadable (people re-enrol TOTP, the SMTP password,
   hub token, SSO secrets and webhooks are entered again).
 - **Invitation passwords are not kept.** A new user's one-time password is shown to
