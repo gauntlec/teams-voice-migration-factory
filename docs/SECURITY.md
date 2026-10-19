@@ -101,7 +101,8 @@ with the hub are in [SSO.md](SSO.md); this is what protects it. Code: `apps/api/
 - `DATA_ENCRYPTION_KEY` (AES-256-GCM) encrypts, in the database, the secrets the
   application has to read back later: **TOTP secrets**, the **SMTP password**, the
   **hub instance token**, **single sign-on client secrets**, **assistant webhook
-  secrets** and **MSP Microsoft Teams webhook URLs**
+  secrets**, **MSP Microsoft Teams webhook URLs**, and (briefly) an **invitation's
+  one-time password** while its email waits to be sent
   (`apps/api/src/common/crypto.ts`; the worker has the matching decrypt). Each value
   is encrypted before it is written and never returned by the API.
   It does **not** encrypt anything else: queued Redis job payloads (which can hold
@@ -112,6 +113,11 @@ with the hub are in [SSO.md](SSO.md); this is what protects it. Code: `apps/api/
   cannot be read: back up `.env` with every database backup, and note that
   changing the key makes them unreadable (people re-enrol TOTP, the SMTP password,
   hub token, SSO secrets and webhooks are entered again).
+- **Invitation passwords are not kept.** A new user's one-time password is shown to
+  the administrator once, is stored encrypted only until the email has been handled
+  (then deleted from `platform.email_messages.context`), and is never written to
+  the worker log (`[hidden]` when no mail server is set up). Earlier releases kept
+  it in plain text; migration `0034` scrubbed those rows. See [EMAIL.md](EMAIL.md).
 - All secrets come from env / Docker secrets. `.env` is git-ignored;
   `.env.example` documents every key.
 

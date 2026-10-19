@@ -1,9 +1,9 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 
 /**
- * AES-256-GCM for values that must be stored encrypted at rest (currently only
- * TOTP secrets). Customer tenant tokens are never passed through here - they are
- * never persisted at all.
+ * AES-256-GCM for the secrets the application must read back later and so cannot hash: TOTP secrets, the SMTP password, the hub
+ * token, single sign-on client secrets, assistant webhook secrets, MSP Teams webhook URLs, and a queued invitation's one-time
+ * password. Customer tenant tokens are never passed through here - they are never persisted at all.
  */
 function keyFromEnv(): Buffer {
   const raw = process.env.DATA_ENCRYPTION_KEY ?? '';

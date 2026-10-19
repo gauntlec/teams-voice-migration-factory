@@ -16,6 +16,7 @@ import { resolveMspId } from '../common/msp-resolution.util';
 import { InjectDb, type Db } from '../db/db.module';
 import { MailService } from '../mail/mail.service';
 import { generateTempPassword } from './password.util';
+import { encryptSecret } from '../common/crypto';
 
 type UserActor = AuditActor & { role: Role };
 
@@ -249,7 +250,9 @@ export class UsersService {
         ).map((r) => r.name)
       : [];
 
-    const context: UserInvitationContext = {
+    // The one-time password is stored encrypted, only so the worker can put it in the email; the worker removes it once the
+    // message is handled (apps/worker/src/mail/invitation-secret.ts). The admin sees it once, in the Users screen.
+    const { tempPassword: _plain, ...rest }: UserInvitationContext = {
       displayName,
       inviterEmail: actor.email ?? 'the platform team',
       role,
@@ -257,6 +260,7 @@ export class UsersService {
       tempPassword,
       signInUrl: this.cfg.WEB_ORIGIN,
     };
+    const context = { ...rest, tempPasswordEnc: encryptSecret(tempPassword) };
 
     await this.mail.enqueue({
       template: 'user_invitation',

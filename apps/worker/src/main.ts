@@ -47,6 +47,7 @@ import { makeMailEnqueuer } from './mail/enqueue';
 import { sendHubHeartbeat } from './hub-heartbeat';
 import { HubTunnel } from './hub-tunnel';
 import { planDelivery } from './mail/sandbox';
+import { contextForRender, invitationPasswordMissing, maskSecrets, removeInvitationPassword as removeInvitationPasswordRow } from './mail/invitation-secret';
 import { deliverWebhooks, sweepAgents } from './agents';
 import { deliverMspNotifications } from './msp-notify';
 import { sweepIncidents } from './incidents';
@@ -993,6 +994,16 @@ async function loadEmailBranding(tenantId: string | null, mspId: string | null):
   return undefined;
 }
 
+/** Remove an invitation's stored password. A failure here is logged, never allowed to turn a delivered email into a retry. */
+async function removeInvitationPassword(id: string) {
+  try {
+    await removeInvitationPasswordRow(db, id);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[mail ${id}] could not remove the invitation password:`, (err as Error).message);
+  }
+}
+
 /**
  * Deliver one queued email. Renders from `platform.email_messages.template` +
  * `context`, sends via SMTP, and writes the outcome back to the row. Throwing
@@ -1011,18 +1022,35 @@ async function handleMail(job: Job) {
     console.warn(`[mail ${id}] no email_messages row - dropping job`);
     return;
   }
-  if (row.status === 'sent') return;
+  if (row.status === 'sent') {
+    await removeInvitationPassword(id);
+    return;
+  }
 
   // The master switch (Administration > Platform settings): a message queued before it was turned off is not sent.
   if (!(await emailEnabled(db, { fresh: true }))) {
     // eslint-disable-next-line no-console
     console.log(`[mail ${id}] email is switched off - not sent`);
     await platformDb(db).updateTable('email_messages').set({ status: 'skipped', error: 'Email is switched off for the platform' }).where('id', '=', id).execute();
+    await removeInvitationPassword(id);
     return;
   }
 
   const branding = await loadEmailBranding(row.tenant_id, row.msp_id);
-  const rendered = renderEmail(row.template, (row.context ?? {}) as Record<string, unknown>, branding);
+  // An invitation's one-time password lives encrypted in `context` until the message is handled for good, then it is removed
+  // (mail/invitation-secret.ts). It is never logged.
+  const renderCtx = contextForRender(row.context as Record<string, unknown> | null);
+  if (invitationPasswordMissing(row.template, renderCtx)) {
+    // eslint-disable-next-line no-console
+    console.warn(`[mail ${id}] invitation has no password left to send (removed after delivery) - not sent`);
+    await platformDb(db)
+      .updateTable('email_messages')
+      .set({ status: 'failed', error: 'The temporary password is no longer stored. Use Resend invitation on the Users page to issue a new one.' })
+      .where('id', '=', id)
+      .execute();
+    return;
+  }
+  const rendered = renderEmail(row.template, renderCtx, branding);
 
   // Test customers: redirect to whoever triggered it (or skip) - see mail/sandbox.ts.
   const delivery = await planDelivery(db, row, rendered.subject);
@@ -1034,6 +1062,7 @@ async function handleMail(job: Job) {
       .set({ status: 'skipped', error: delivery.reason, subject: rendered.subject, to_email: delivery.originalTo, original_to_email: null })
       .where('id', '=', id)
       .execute();
+    await removeInvitationPassword(id);
     return;
   }
   // Record where it actually goes before sending, so the email log never shows a redirected email as sent to the customer.
@@ -1048,13 +1077,14 @@ async function handleMail(job: Job) {
     // eslint-disable-next-line no-console
     console.log(
       `[mail ${id}] ${mailCfg.reason} - not sent.\n` +
-        `  to: ${delivery.to}\n  subject: ${delivery.subject}\n\n${rendered.text}\n`,
+        `  to: ${delivery.to}\n  subject: ${delivery.subject}\n\n${maskSecrets(rendered.text, renderCtx)}\n`,
     );
     await platformDb(db)
       .updateTable('email_messages')
       .set({ status: 'failed', error: mailCfg.reason, subject: delivery.subject })
       .where('id', '=', id)
       .execute();
+    await removeInvitationPassword(id);
     return;
   }
 
@@ -1078,6 +1108,7 @@ async function handleMail(job: Job) {
       })
       .where('id', '=', id)
       .execute();
+    await removeInvitationPassword(id);
     // eslint-disable-next-line no-console
     console.log(`[mail ${id}] sent to ${delivery.to}${delivery.originalTo ? ` (test customer - would have gone to ${delivery.originalTo})` : ''}`);
   } catch (err) {
@@ -1135,6 +1166,7 @@ mailWorker.on('failed', async (job, err) => {
         .set({ status: 'failed', error: err.message })
         .where('id', '=', (job.data as { id: string }).id)
         .execute();
+      await removeInvitationPassword((job.data as { id: string }).id);
     } catch {
       /* best effort */
     }

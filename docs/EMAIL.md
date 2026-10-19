@@ -115,13 +115,26 @@ The auditable comms log. Key columns: `to_email`, `template`, `context` (jsonb),
 `created_by`, `created_at`, `sent_at`, `original_to_email` (test customers -
 see above).
 
+**An invitation's one-time password is not kept.** The API stores it encrypted
+(`context.tempPasswordEnc`, `DATA_ENCRYPTION_KEY`) only so the worker can put it in
+the email. When the worker has handled the message for good - sent, skipped
+(test customer, email switched off) or failed (no mail server set up, or every
+retry used) - it deletes the password from `context` and leaves
+`tempPasswordRemoved: true` (`apps/worker/src/mail/invitation-secret.ts`). The
+admin who created or re-sent the invitation sees the password once, in the Users
+screen; if it is lost, **Resend invitation** issues a new one (nothing recovers
+the old one). **Resend** in the Email log is therefore not offered for such a
+message and the API answers 409. Migration `0034` removed the plain-text passwords
+that earlier releases had stored. When mail goes out through the Voxshift Hub's
+relay (instead of your own SMTP server) the email, password included, passes
+through the hub like any other email.
+
 ### Email log page
 
 `Administration -> Email log` (`/admin/email`, `audit:read:platform` -> SUPER_ADMIN)
 shows the current SMTP relay config and every message with its status, last SMTP
 error and retry count, and a **Resend** button for failed/queued rows. Backed by
-`GET /email-messages` (which never returns `context` - it can hold an invitation
-password) and `POST /email-messages/:id/resend`. Lower-level SMTP conversation
+`GET /email-messages` (which never returns `context`) and `POST /email-messages/:id/resend`. Lower-level SMTP conversation
 logs are only in the worker container's stdout (`docker logs`).
 
 ## SMTP configuration
@@ -139,12 +152,13 @@ MAIL_FROM=no-reply@voxshift.io
 MAIL_FROM_NAME=Teams Voice Migration Factory
 ```
 
-**When `SMTP_HOST` is empty** the worker logs the full rendered message (subject +
-text body, including the invitation's temporary password) to its container log
-and marks the row `failed` with `error = 'SMTP not configured'`. Inviting still
-works: the admin copies the temporary password from the Users screen (shown once)
-and shares it securely. Add real SMTP values and click **Resend invite** to
-deliver for real.
+**When `SMTP_HOST` is empty** the worker logs the rendered message (subject + text
+body, with an invitation's temporary password replaced by `[hidden]`) to its
+container log and marks the row `failed` with `error = 'SMTP not configured'`.
+Inviting still works: the admin copies the temporary password from the Users
+screen (shown once) and shares it securely. Add real SMTP values and use **Resend
+invitation** on the Users page to deliver a new one (the old password is no longer
+stored, so the failed message itself cannot be re-sent).
 
 ### Office 365
 

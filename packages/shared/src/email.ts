@@ -42,7 +42,10 @@ export interface UserInvitationContext {
   role: string;
   /** customer names the user was granted access to (may be empty) */
   tenantNames: string[];
-  /** one-time password the recipient signs in with */
+  /**
+   * One-time password the recipient signs in with. Only ever in memory, to render the email: what is stored in
+   * `platform.email_messages.context` is `tempPasswordEnc` (encrypted), removed once the message has been handled.
+   */
   tempPassword: string;
   /** absolute URL of the web app sign-in page */
   signInUrl: string;

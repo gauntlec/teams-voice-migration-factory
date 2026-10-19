@@ -22,6 +22,7 @@ import {
 } from '@fluentui/react-components';
 import { ArrowClockwiseRegular } from '@fluentui/react-icons';
 import { api } from '../../api';
+import { useNotify } from '../../hooks/useNotify';
 import { DataTable } from '../../components/DataTable';
 import { Page } from '../../components/Page';
 import { useDebounced } from '../../hooks/useDebounced';
@@ -49,6 +50,8 @@ interface EmailMessage {
   sent_at: string | null;
   /** set when a test customer's email was redirected - who it was really for */
   original_to_email: string | null;
+  /** an invitation whose one-time password has been removed: it can only be replaced (Users > Resend invitation), not re-sent */
+  password_removed: boolean;
 }
 
 interface EmailLogResponse {
@@ -80,6 +83,7 @@ const mono: React.CSSProperties = {
 export function AdminEmailLog() {
   const ls = useLocalStyles();
   const qc = useQueryClient();
+  const notify = useNotify();
 
   const [searchInput, setSearchInput] = useState('');
   const search = useDebounced(searchInput);
@@ -92,6 +96,7 @@ export function AdminEmailLog() {
   const resend = useMutation({
     mutationFn: (id: string) => api(`/email-messages/${id}/resend`, { method: 'POST' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['email-messages'] }),
+    onError: (e: Error) => notify('Could not resend', { intent: 'error', body: e.message }),
   });
 
   const smtp = q.data?.smtp;
@@ -203,7 +208,10 @@ export function AdminEmailLog() {
                     )}
                   </TableCell>
                   <TableCell>
-                    {(m.status === 'failed' || m.status === 'queued') && (
+                    {(m.status === 'failed' || m.status === 'queued') && m.password_removed && (
+                      <MutedText size={200}>Password removed. Use Resend invitation on the Users page.</MutedText>
+                    )}
+                    {(m.status === 'failed' || m.status === 'queued') && !m.password_removed && (
                       <Button
                         size="small"
                         icon={<ArrowClockwiseRegular />}
