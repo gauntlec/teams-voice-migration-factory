@@ -90,7 +90,7 @@ the worker renders a branded template and sends it via SMTP. See
 | Module | API prefix | Notes |
 |--------|-----------|-------|
 | auth | `/auth` | login, TOTP enrol/verify, refresh, logout; `/auth/providers`, `/auth/oidc/login`, `/auth/oidc/callback` (single sign-on) |
-| sso | `/sso` | Super Admin: providers, role ceilings, test sign-in, linking people to provider identities ([SSO.md](SSO.md)) |
+| sso | `/sso` | Super Admin: providers, role ceilings, test sign-in, linking people to provider identities, Voxshift staff access requests (`/sso/access`: list, approve, deny, end) ([SSO.md](SSO.md)); `/auth/staff-access/status` and `/continue` (public, cookie-bound) serve the waiting page |
 | users | `/users` | super admin: manage staff + customer users |
 | tenants | `/tenants` | super admin: create customer (provisions schema), manage memberships |
 | data-collection | `/t/:tenantId/discovery` | discovery forms; customer writeable |

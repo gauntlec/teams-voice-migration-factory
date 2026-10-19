@@ -85,6 +85,8 @@ People can also sign in through the Voxshift Hub or the customer's own OpenID Co
   an administrator adds them under Users, exactly as for a local account. A `CUSTOMER` created this way also needs a site scope or whole-customer membership.
 - **Break-glass.** A Super Admin created locally keeps password + authenticator sign-in whatever a provider says and cannot be linked to a provider.
 - Only a Super Admin can add or change providers, ceilings and links (`sso:manage`).
+- **The role does not decide who approves Voxshift staff.** When an installation requires approval for hub staff sign-ins ([SSO.md](SSO.md) 4.3a), approving, denying and ending a window are `sso:manage` actions, and in addition the Super Admin must **not** have signed in through the Voxshift Hub (so a hub staff Super Admin cannot approve themselves or loosen the rule). No new role or permission was added.
+- **Removal at the hub.** A person removed from the installation at the hub is signed out within about a minute; an account that exists only through the hub is switched off, so it no longer appears as a live Super Admin under Users ([SSO.md](SSO.md) 4.7).
 
 ## Where sites are managed
 
@@ -147,7 +149,7 @@ sso:manage
 | agent:manage (Administration -> Assistants: create agents, tokens, customer policies, webhooks, kill switches) | ✓ | | | |
 | tenantdiscovery:read / run (Discovery: connect to the customer's live Teams tenant) | ✓ | | ✓ | |
 | platform:operate (Release check page, set/clear the maintenance notice) | ✓ | | | |
-| sso:manage (Platform settings > Single sign-on: providers, role ceilings, linking people to provider identities; see [SSO.md](SSO.md)) | ✓ | | | |
+| sso:manage (Platform settings > Single sign-on: providers, role ceilings, linking people to provider identities, approving Voxshift staff access if the person did not sign in through the hub; see [SSO.md](SSO.md)) | ✓ | | | |
 
 ## Enforcement
 

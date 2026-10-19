@@ -1,6 +1,6 @@
 # Single sign-on (OpenID Connect) - design
 
-Status: **built and deployed 2026-10-19 (phases 1 and 2); phase 3 pending.** The instance side (this repository) and the hub side (private repository `voxshift-hub`) are both built and live; section 8 describes what exists, what was added to the contract while building it, and what is left. Phase 3 (the hub's revocation channel, customer-approved or time-limited administrator access, back-channel logout) is not built. For the person setting it up, start with [SSO-ADMIN-GUIDE.md](SSO-ADMIN-GUIDE.md). Owner decision: hub accounts (staff AND customers) can sign in to Voxshift installations without a second
+Status: **phases 1 and 2 built and deployed 2026-10-19; phase 3 built 2026-10-19 (not yet deployed at the time of writing).** The instance side (this repository) and the hub side (private repository `voxshift-hub`) are both built; section 8 describes what exists, what was added to the contract while building it, and what is left. Phase 3 is the hub's revocation channel (removing a person at the hub reaches an installation within about a minute) and customer-approved, time-limited access for Voxshift hub staff accounts; OIDC back-channel logout was deliberately left out (section 8, "Phase 3 as built"). For the person setting it up, start with [SSO-ADMIN-GUIDE.md](SSO-ADMIN-GUIDE.md). Owner decision: hub accounts (staff AND customers) can sign in to Voxshift installations without a second
 sign-in, and customers can use their own identity provider (for example Microsoft Entra ID) the same way. This file is the contract the instance side
 (this repository) and the hub side (private repository `voxshift-hub`) are both built against. The protocol is standard OpenID Connect; nothing in
 this file is secret.
@@ -18,7 +18,7 @@ Goals
   question about on-premises installs ("does it support SSO?").
 - Hub accounts for Voxshift staff, MSP engineers and customer people. What a person may do is set per installation at the hub, and capped by the
   customer on the installation.
-- Removing someone at the hub (or at the customer's provider) takes effect quickly everywhere. (**Phase 3, not built**: today new sign-ins stop at once but an open session on an installation lasts until its absolute cap.)
+- Removing someone at the hub takes effect quickly everywhere: new sign-ins stop at once and, through the revocation channel (4.7), an open session on an installation ends within about a minute. (Removing someone at a customer's own provider ends their session here at the next 15-minute token refresh; the hub's push channel exists only for the hub.)
 - Passwords, password hashes and authenticator secrets never leave the system that owns them.
 
 Non-goals (first version)
@@ -94,8 +94,7 @@ ceiling exists so a mistake or compromise at a provider cannot hand out more tha
 - **`hub` provider, two ceilings by the kind of hub account (`vx_kind`):**
   - `role_ceiling_staff` (Voxshift staff and MSP engineers): default **`SUPER_ADMIN`**. Voxshift staff normally install and configure an
     on-premises installation, so they need the top role through the hub. The customer sees this plainly on the Single sign-on screen ("Voxshift Hub staff
-    can sign in as: Administrator") and can lower it, for example to `ENGINEER` for day-to-day work (and later, in phase 3, require customer
-    approval or a time-limited window for administrator sign-in).
+    can sign in as: Administrator") and can lower it, for example to `ENGINEER` for day-to-day work, and can require approval for every staff sign-in (4.3a).
   - `role_ceiling_customer` (the customer's own people with hub accounts): default **`ENGINEER`**; a customer administrator can raise it.
 - **Generic `oidc` providers** (customer's own identity provider): one `role_ceiling`, default `PROJECT_MANAGER`.
 - The ceiling is always shown and editable by an administrator of the installation (SUPER_ADMIN, permission `sso:manage`). The role is re-evaluated
@@ -105,6 +104,17 @@ ceiling exists so a mistake or compromise at a provider cannot hand out more tha
 
 `CUSTOMER` users sign in with no customer (tenant) memberships; an administrator adds memberships afterwards (as for any customer user today). A
 later version may carry tenant mapping in a claim.
+
+### 4.3a Voxshift staff access: approval and time limit
+The hub provider has one more setting, chosen by an administrator of the installation (Platform settings > Single sign-on, "Voxshift staff access"): `staff_access` = `allowed` (the default: nothing changes), `needs_approval`, or `off`. It applies to a hub sign-in whose `vx_kind` is not `customer` (so `staff`, and also a missing or unknown kind, the stricter reading). The customer's own people with hub accounts (`vx_kind: customer`), the customer's own providers and local accounts (break-glass included) are never affected.
+- **`off`**: a staff sign-in is refused (`staff_access_off`, shown as "This installation has switched off sign-in for Voxshift staff"); no account is created.
+- **`needs_approval`**: the sign-in is verified in full (token, MFA claim, domain, no linking by email, ceiling, user rules) and then **no session is created**. A request (`platform.sso_access_requests`) is made, every active Super Admin who did not come in through the hub is emailed (`sso_staff_access_request`), and the browser is sent to the page `/sso/waiting`, holding a random wait token in an HttpOnly cookie (`tvmf_staff_wait`, path `/api/auth/staff-access`; only its hash is stored). An administrator **approves** for a number of hours (default 4, 1 to 24) or **denies**; an unanswered request lapses after 60 minutes. On approval the waiting page asks once for the session (`POST /api/auth/staff-access/continue`); the session's absolute end is the earlier of the window's end and the federated session cap, and the person's identity carries the window's end (`external_identities.access_until`), which the request guard checks on every call, so access ends exactly then (not at the next refresh). Another sign-in inside a running window needs no new request and ends with the same window. When the window ends the person must ask again.
+- **Who decides**: an administrator (`sso:manage`) who did **not** sign in through the Voxshift Hub: local password sign-in or the customer's own provider. Otherwise the person asking, or a colleague, could approve themselves. The same rule protects the setting: any administrator may **tighten** it, only one who did not come in through the hub may **loosen** it (from `off` or `needs_approval` towards `allowed`), so approved staff cannot switch the approval off for themselves.
+- **Changing the setting acts at once**: moving to `needs_approval` or `off` signs out every hub staff person who is in (the customer's own people stay), closes waiting requests and running windows (`cancelled`); moving to `allowed` closes them and removes every window limit.
+- **An administrator can end a window early** (End now): the person is signed out immediately.
+- A window gives the person the role the ceiling allows for the time chosen: **an approved administrator window is full administrator access** (they can change settings and add users like any administrator; the audit log shows it). Approve only what you expect, check Users afterwards, and lower the staff ceiling to Engineer when the work does not need administrator rights.
+- Audit (platform audit log): `sso.access.requested`, `sso.access.approved`, `sso.access.denied`, `sso.access.expired` (`stage` `window` or `request`), `sso.access.ended` (ended early, or closed because the setting changed), plus the usual `sso.login.success` (with `accessRequestId` and `accessWindowEndsAt`) and `sso.revoked` (`staff-access-restricted`, `access-window-ended`).
+- A person who asks again straight after a denial is shown the denial again for 10 minutes instead of starting a new request, so a refusal cannot become a stream of emails.
 
 ### 4.4 Users
 A new table `platform.external_identities`: `user_id`, `provider_id`, `subject` (the provider's `sub`), `email`, `created_at`, `last_login_at`,
@@ -131,16 +141,17 @@ SUPER_ADMIN users created locally (including the bootstrap administrator the set
 `allow_local_passwords = false` (flag `break_glass`, default true for local SUPER_ADMINs). The setting is explained in the UI and in `docs/SECURITY.md`.
 
 ### 4.7 Revocation
-**Design. Only the last bullet (checks at token refresh) is built; the hub's revocation channel (first bullet) is phase 3 and is NOT built.**
-- The `hub` provider: the heartbeat reply carries `ssoRevocations` (a list of `{sub, before}`, see section 5.3). The worker applies them: sessions
-  of that identity created before `before` are revoked and the user is disabled if the hub says the grant was removed.
-- Any provider: a user whose role would now exceed the ceiling, or whose identity row is removed or user disabled, is signed out at the next
-  token refresh (access tokens last 15 minutes).
-- Optional later: OIDC back-channel logout endpoint for generic providers.
+Three mechanisms, from fastest to slowest:
+- **The hub's revocation channel (built, phase 3).** The heartbeat reply carries `ssoRevocations` (lines `{id, sub, before, reason}`, see 5.3). The worker (`apps/worker/src/hub-heartbeat.ts`, applied by `applySsoRevocations` in `packages/db/src/sso-revocations.ts`) applies them: for the identity with that `sub` on the hub provider, every sign-in that began **before** `before` is over. Two things make that immediate rather than "at the next refresh": the identity's `revoked_before` is set to `before`, which the request guard (`JwtAuthGuard`) checks on every call made with a provider session (an access token issued at or before that second stops working), and the refresh cookies of those sign-ins are revoked. What else a line does depends on its reason:
+  - `grant_removed` (the person's access to this installation was taken away at the hub; audit reason `hub-grant-removed`): an account that exists **only through the hub** (it has no password) is **switched off**; a local account that an administrator **linked** to the hub identity (it has its own password) is **unlinked** and otherwise left alone. If the person has signed in again since the line's time (access was given back), only the sessions step applies, so a replayed old line cannot disable someone who is back.
+  - `user_disabled` (`hub-user-disabled`), `sessions_revoked` (a password or authenticator reset, a password change, `hub-session-revoked`) and `role_changed` (a grant's role or an account's kind changed, `hub-role-changed`): sessions end and nothing else is touched. The hub will not vouch for a disabled person, and after a role change the next sign-in simply gets the new role.
+  - Nothing happens for a `sub` this installation has never seen, break-glass accounts are never touched (they are never federated), and local password sessions of a linked account are not hub sign-ins and are not ended.
+- Any provider: a user whose role would now exceed the ceiling, whose identity row is removed, whose approved staff window has ended, or who is disabled, is signed out at the next token refresh (access tokens last 15 minutes). A removed identity or an ended window now also stops the access token at once (the guard checks the identity on every call).
+- Optional later: OIDC back-channel logout endpoint for generic providers (not built).
 
 ### 4.8 Audit and logging
 Audit events (platform audit): `sso.login.success`, `sso.login.refused` (reason code, never the token), `sso.user.created`, `sso.user.linked`,
-`sso.provider.changed`, `sso.revoked`. Each carries provider, subject, email and the hub's session id where available.
+`sso.provider.changed`, `sso.revoked`, and (4.3a) `sso.access.requested`, `sso.access.approved`, `sso.access.denied`, `sso.access.expired`, `sso.access.ended`. Each carries provider, subject, email and the hub's session id where available.
 
 ## 5. Hub side (private repository)
 
@@ -168,24 +179,29 @@ Served from `https://hub.voxshift.io`:
 - Audit at the hub: authorize, token issued (instance, user, role), refused (reason).
 
 ### 5.3 Revocation channel
-**Not built (phase 3).** The hub keeps the record it would need (`oidc_codes`), but the heartbeat reply does not carry `ssoRevocations` yet.
+**Built (phase 3).** When a person loses access the hub writes one line per installation they could be signed in to (`sso_revocations` in the hub's database): the installations they hold a grant for, plus any they completed a sign-in to in the last week. What queues a line: a grant removed (`grant_removed`, only that installation), a person switched off (`user_disabled`), a password or authenticator reset or the person changing their own password (`sessions_revoked`), a grant's role changed or an account's kind changed (`role_changed`). A hub sign-out by the person themselves does not.
 
-The heartbeat reply gains `ssoRevocations: [{ sub, before }]`: entries for users whose grant for that instance was removed, who were disabled, or
-whose sessions were revoked since the instance's last acknowledged heartbeat. Entries are kept for 7 days; the heartbeat request carries
-`ssoRevocationsAck` (the highest id applied). This works whether or not remote access (the tunnel) is on.
+The heartbeat reply gains `ssoRevocations: [{ id, sub, before, reason }]`: `sub` is the hub user id (the ID token's `sub`), `before` an ISO time on the hub's clock, `id` increasing, `reason` one of `grant_removed`, `user_disabled`, `sessions_revoked`, `role_changed` (an unknown reason is read as `sessions_revoked`). The request carries `ssoRevocationsAck` (the highest id applied; `0` before any). Lines are kept for 7 days and sent oldest first, at most 200 a reply, repeated until acknowledged. This works whether or not remote access (the tunnel) is on: it rides on the heartbeat every installation already sends, so a removal at the hub reaches the installation within about a minute.
+
+Compatibility, both ways:
+- The field is **optional on both sides** (the hub's strict `heartbeatSchema` allows `ssoRevocationsAck`; `buildHubHeartbeat` leaves it out when unknown). The hub only adds `ssoRevocations` to the reply when the request had `ssoRevocationsAck`, so an older installation gets exactly the reply it always did.
+- An older **hub** refuses a heartbeat with a field it does not know (400). The worker then sends the same report again at once without the field, and leaves it out for an hour before trying again, so nobody has to deploy the hub first (still advisable).
+- An acknowledgement the hub never issued (restored from an older copy; another hub) is treated as "nothing acknowledged" by the hub, so lines are never missed; applying a line twice does no harm. The installation forgets its acknowledgement when it is pointed at a different hub address, and never sends one when it has no hub sign-in provider record.
+- A `before` further than a minute ahead of the installation's clock is cut back to that (a cut-off in the future would keep someone out of every sign-in until then); keep the server clocks right (NTP) in any case.
 
 ## 6. Security analysis
 
 | Threat | Control |
 |---|---|
-| Hub compromised or hub admin abuse | Instance has its own switch (off until enabled), role ceilings the customer can lower, break-glass local admin, audit and administrator-sign-in notification on both sides; tokens are 5 minutes, audience-bound, single use. A compromised hub could sign in to instances that trust it, up to their ceiling (administrator for staff accounts by default), which is why trusting it is the customer's explicit choice and why the customer can lower the staff ceiling. Phase 3 adds customer-approved, time-limited administrator access. |
+| Hub compromised or hub admin abuse | Instance has its own switch (off until enabled), role ceilings the customer can lower, break-glass local admin, audit and administrator-sign-in notification on both sides; tokens are 5 minutes, audience-bound, single use. A compromised hub could sign in to instances that trust it, up to their ceiling (administrator for staff accounts by default), which is why trusting it is the customer's explicit choice and why the customer can lower the staff ceiling. Customer-approved, time-limited staff access (4.3a) lets the customer require approval for every staff sign-in, for a time they choose, or switch staff off. |
 | Token or code replay / theft | PKCE, `nonce`, single-use code and `jti`, TLS, exact redirect URI, back-channel code exchange. |
 | Open redirect / redirect URI abuse | Exact-match registered URIs derived from the instance record. |
 | Account takeover via matching email | No automatic linking; explicit administrator link. |
 | Role escalation | Ceilings applied on the instance and editable by the customer; hub staff may reach `SUPER_ADMIN` by default (they do the setup), customer hub users and generic providers are capped lower; every provider sign-in as administrator is audited and notified; role re-evaluated each sign-in. |
-| Stale access after removal | Designed: heartbeat revocations (about a minute) **(phase 3, not built)**. Today: new hub sign-ins are refused at once, an administrator on the installation can end access immediately (disable the user) or within 15 minutes (unlink, provider off, lower the ceiling), and a federated session ends by itself at the 12 hour absolute cap at the latest. |
+| Stale access after removal | The hub's revocation channel (4.7, 5.3): a removal, a switch-off, a reset or a role change at the hub ends the person's sessions here within about a minute, access tokens included. Backstops: new hub sign-ins are refused at once at the hub; an administrator here can disable the user (immediate) or unlink them (immediate); a lowered ceiling or provider switched off ends sessions at the next 15-minute refresh; the federated session ends by itself at its absolute cap (12 hours by default), and an approved staff window at its end. |
 | Algorithm confusion / key substitution | Algorithm allow-list, key by `kid` from the pinned issuer's JWKS only, never accept `none`/HS256. |
-| Hub outage | Local sign-in unaffected; federated sessions already open continue until their cap. |
+| Hub outage | Local sign-in unaffected; federated sessions already open continue until their cap (removals at the hub cannot reach the installation while it cannot hear the hub, and are applied, from the hub's week-long record, when it can). |
+| Hub staff approving themselves, or turning the approval off | The people who decide are administrators who did not come in through the hub; the setting can be tightened by any administrator but loosened only by one who did not come in through the hub (4.3a). |
 | Credential exposure | No password or secret crosses the boundary; provider client secrets are encrypted at rest. |
 
 ## 7. Phases and acceptance
@@ -195,17 +211,17 @@ whose sessions were revoked since the instance's last acknowledged heartbeat. En
    unlinked email, ceiling, break glass, disabled user). Meant to work with Microsoft Entra ID; it has been tested against a stand-in provider and the Voxshift Hub, not yet against a live Entra tenant.
 2. **Hub as provider (private repository)** - built and deployed 2026-10-18/19: section 5.1-5.2 and the Open button flow, with tests (PKCE, redirect URI exact match, single use,
    grant checks, key rotation).
-3. **Lifecycle** - **pending**: 4.7 and 5.3 (revocation through the heartbeat reply), customer-approved or time-limited administrator access (optional). (The session cap, hub-side customer users and invitations from this item were built in phases 1 and 2.)
+3. **Lifecycle** - built 2026-10-19: 4.7 and 5.3 (revocation through the heartbeat reply) and 4.3a (customer-approved, time-limited access for Voxshift staff accounts), with tests on both sides (a removal reaches the installation and ends the session, the acknowledgement advances, older hubs and older installations keep working; approval, denial, expiry, ending early, break-glass untouched). Back-channel logout was not built. (The session cap, hub-side customer users and invitations from this item were built in phases 1 and 2.)
 4. Later: SAML, SCIM, delegated customer administration, tenant claim mapping.
 
 Done means: a hub account assigned to an installation clicks Open and lands signed in (no second prompt), a Voxshift staff account with the
 administrator grant gets `SUPER_ADMIN` on a freshly connected installation and a customer account does not, a removed account is out within about
-a minute (phase 3, not built), a customer can lower the staff ceiling or turn the hub provider off and local sign-in still works, a customer can add Entra ID and sign in with it, and
+a minute, a customer can lower the staff ceiling or turn the hub provider off and local sign-in still works, a customer can add Entra ID and sign in with it, and
 `docs/SECURITY.md`, the on-premises guide and the hub documentation describe it.
 
-## 8. As built (phases 1 and 2, 2026-10-18 and 2026-10-19)
+## 8. As built (phases 1 and 2, 2026-10-18 and 2026-10-19; phase 3 below)
 
-Everything in sections 4.1-4.6 and 4.8 works for the Voxshift Hub and for generic OpenID Connect providers, with tests, and the hub side (section 5.1 and 5.2) is built and deployed in the private `voxshift-hub` repository (see its `docs/ARCHITECTURE.md`). A live test on 2026-10-19 signed a hub **customer** account in to an installation with no second prompt (role Engineer, the customer ceiling) and an administrator's **Test sign-in** worked; the staff-account sign-in as Administrator with a non-conflicting email, and a live Microsoft Entra ID tenant, have not yet been exercised. Phase 3 (4.7's hub revocation channel, customer-approved or time-limited administrator access, back-channel logout) is not built, except the parts that need no hub: **a lowered ceiling, a provider switched off, an identity removed or a disabled user signs the person out at their next token refresh** (`sso.revoked`, reasons `ceiling-lowered`, `provider-off`, `identity-removed`, `user-disabled`; a disabled user is also refused on the very next request). Because the revocation channel is not built, **removing a person at the hub does not reach an installation**: a session they already have lasts until the absolute cap (12 hours by default).
+Everything in sections 4.1-4.6 and 4.8 works for the Voxshift Hub and for generic OpenID Connect providers, with tests, and the hub side (section 5.1 and 5.2) is built and deployed in the private `voxshift-hub` repository (see its `docs/ARCHITECTURE.md`). A live test on 2026-10-19 signed a hub **customer** account in to an installation with no second prompt (role Engineer, the customer ceiling) and an administrator's **Test sign-in** worked; the staff-account sign-in as Administrator with a non-conflicting email, and a live Microsoft Entra ID tenant, have not yet been exercised. Phase 3 (the hub's revocation channel and customer-approved, time-limited staff access) is described at the end of this section. Before it, and still true for a customer's own provider: **a lowered ceiling, a provider switched off, an identity removed or a disabled user signs the person out at their next token refresh** (`sso.revoked`, reasons `ceiling-lowered`, `provider-off`, `identity-removed`, `user-disabled`; a disabled user is also refused on the very next request).
 
 ### What changed since the design
 
@@ -265,6 +281,31 @@ These are the places the build went beyond or interpreted the text. The hub side
 
 The step-by-step instructions (Entra ID, the ceilings, linking, break-glass accounts, sessions, removing access, remote access, audit and a table of every refusal message and audit reason code) are in **[SSO-ADMIN-GUIDE.md](SSO-ADMIN-GUIDE.md)**. That page is the one canonical copy; do not repeat the steps here.
 
+### Phase 3 as built (2026-10-19)
+
+Both repositories, with tests. Instance side: migrations `0032_sso_revocation.sql` and `0033_sso_staff_access.sql`; hub side: `0007_sso_revocations.sql`.
+
+| What | Where (instance) |
+|---|---|
+| Heartbeat acknowledgement, reply parsing, the older-hub fallback | `packages/shared/src/hub-connection.ts` (`buildHubHeartbeat`, `parseHubRevocations`), `apps/worker/src/hub-heartbeat.ts` |
+| Applying revocation lines, audit reasons `hub-*` | `packages/db/src/sso-revocations.ts` |
+| Cut-off and window checks on every request; refresh-time check | `apps/api/src/auth/jwt-auth.guard.ts`, `auth.service.ts` (`federatedSessionProblem`) |
+| Staff access: setting, requests, approve / deny / end, waiting page, sweep | `apps/api/src/sso/sso-staff-access.service.ts`, `sso-signin.service.ts` (`claimApproved`), `sso-auth.controller.ts` (`/auth/staff-access/status`, `/continue`), `sso-admin.controller.ts` (`/sso/access`), `packages/db/src/sso-staff-access.ts` (sweep, setting changes), `apps/web/src/pages/StaffAccessWait.tsx`, `pages/admin/Sso.tsx` |
+| Tests | `tests/db/src/sso/hub-revocation.db.test.ts`, `staff-access.db.test.ts`; hub: `apps/server/test/revocations.test.ts` |
+
+Decisions taken while building (all reflected in 4.3a, 4.7 and 5.3):
+
+- **The revocation lines carry `id` and `reason` as well as `sub` and `before`** (the contract listed `sub` and `before`): `id` is what is acknowledged, `reason` tells the installation whether to also switch an account off. Unknown reasons are read the safe way (sessions end, nothing else).
+- **Access tokens are cut off too, not only refresh cookies.** The access token is a self-contained 15-minute JWT; ending the refresh cookie alone would have left a removed person working for up to 15 minutes. The identity's `revoked_before` and `access_until` are checked on every call a provider session makes (one indexed query), so a removal is felt within the heartbeat interval. A side effect, intended: **unlinking a person now ends their access token at once** (before, within 15 minutes). The cut-off treats a token issued in the very second of the cut-off as ended (whole-second `iat`): a person who signs in again in that same second must do it once more.
+- **What "grant removed" does to the account.** An account that exists only through the hub is **switched off** (so it shows as disabled under Users, not as a live administrator); a local account an administrator linked (it has a password) is **unlinked** only. Giving access back at the hub therefore needs one step here: a Super Admin switches the account on again (provider-created accounts), or links the person again (linked local accounts); the person is refused with the plain "This account is switched off" / "already exists but is not linked" message meanwhile. This is deliberate: access removed at the hub should not come back here without the customer noticing. `user_disabled`, `sessions_revoked` and `role_changed` change nothing except ending the sessions, so a person switched off and on again at the hub (a lost laptop, a password reset) simply signs in again.
+- **A removal after the person signed in again is not repeated destructively.** If the identity's last sign-in is later than the line's `before`, only the session step runs. This is what makes it safe for the hub to replay a week of lines.
+- **Role or kind changes at the hub also end sessions** (reason `role_changed`) so a lowered role at the hub applies at once instead of at the next sign-in.
+- **The staff rule applies to every hub sign-in that is not marked `customer`**, a missing `vx_kind` included. It gates every staff sign-in, not only those that would become Administrator; the customer who wants approval only for administrator work sets the staff ceiling to Engineer and leaves approval off.
+- **The account is created (just in time) when the request is made**, before approval; it has no password and no session, and a denial leaves it as it is (disable it under Users if that person should never come back). Refusals that need no approval (unlinked email, disabled, break-glass, domain) happen before any request is made. In `off` mode nothing is created.
+- **Who decides is "not through the hub"** (4.3a), a simplification of "a local Super Admin": it also lets Super Admins who sign in through the customer's own provider decide. A hub *customer-kind* administrator therefore cannot; give them a local or own-provider account for this.
+- **The guard and the sweep share the work.** Window ends are exact because the guard checks `access_until`; the worker's one-minute sweep (and every look at the requests) only does the bookkeeping: marking windows expired, ending refresh cookies and writing `sso.access.expired`.
+- **Not done:** back-channel logout (skipped as agreed: the hub's channel covers the hub, and a customer's own provider is covered at each token refresh); showing the staff rule on the hub's Instances list (the heartbeat does not carry it; a staff member who opens such an installation sees the waiting page); the hub does not queue revocations for a deleted person or instance because the hub has no delete for people (instances cascade their lines away). Both repositories are covered by tests; nothing here has been exercised against the live hub yet.
+
 ### Still to do
 
-Phase 3 (hub revocation channel, customer-approved or time-limited administrator access, back-channel logout), and in the later list SAML, SCIM, delegated administration and tenant claim mapping. Also not done: signing out of the provider when signing out here (local logout only), per-provider tenant (customer) membership mapping (a `CUSTOMER`, or any person below Administrator, signs in with no customer memberships and an administrator adds them, as for any user), WebAuthn/passkeys as a sign-in method here (the second factor is the provider's), and a live test against a real Microsoft Entra ID tenant.
+SAML, SCIM, delegated administration and tenant claim mapping (the later list), and OIDC back-channel logout. Also not done: signing out of the provider when signing out here (local logout only), per-provider tenant (customer) membership mapping (a `CUSTOMER`, or any person below Administrator, signs in with no customer memberships and an administrator adds them, as for any user), WebAuthn/passkeys as a sign-in method here (the second factor is the provider's), and a live test against a real Microsoft Entra ID tenant.

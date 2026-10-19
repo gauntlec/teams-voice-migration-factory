@@ -6,7 +6,7 @@
 |---|---|---|
 | Email on/off | One switch that stops all email being generated or sent | [EMAIL.md](EMAIL.md#the-master-switch) |
 | **Menus and features** | Switch optional areas off for this installation (below) | this page |
-| **Single sign-on** | Let people sign in with the Voxshift Hub (staff, your MSP, your own people) or your own Entra ID / Okta / Google Workspace / Keycloak: providers (all start off), the highest role each can give, test sign-in, the 12-hour session limit, the email to administrators when someone signs in as Administrator (own page: Platform settings > Single sign-on) | [SSO-ADMIN-GUIDE.md](SSO-ADMIN-GUIDE.md), [SSO.md](SSO.md) |
+| **Single sign-on** | Let people sign in with the Voxshift Hub (staff, your MSP, your own people) or your own Entra ID / Okta / Google Workspace / Keycloak: providers (all start off), the highest role each can give, test sign-in, the 12-hour session limit, the email to administrators when someone signs in as Administrator, and approval with a time limit for Voxshift staff (own page: Platform settings > Single sign-on) | [SSO-ADMIN-GUIDE.md](SSO-ADMIN-GUIDE.md), [SSO.md](SSO.md) |
 | Voxshift hub | Connect to a Voxshift Hub: be listed there, the switch that lets people with a hub account (staff, your MSP, your own people) open this installation through the hub, send mail through the hub | [HUB-CONNECTION.md](HUB-CONNECTION.md) |
 | How email is sent | Own mail server, the hub's mail service, or nothing; with a test email | [EMAIL.md](EMAIL.md#where-email-is-set-up) |
 | Web address | The address people (and emails, and assistants) use to reach this installation | [BASE-URL.md](BASE-URL.md) |

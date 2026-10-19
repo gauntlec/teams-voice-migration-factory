@@ -187,7 +187,7 @@ Tenant-side prerequisites (one-time):
 4. The user then goes through the normal **MFA QR enrolment** and lands in the app.
 
 People who sign in through a single sign-on provider (the Voxshift Hub or the customer's own) are never sent an invitation or a temporary password: their account is
-created by their first sign-in and has no password. The only email single sign-on sends is [`sso_admin_signin`](#sso_admin_signin), to the administrators.
+created by their first sign-in and has no password. The only emails single sign-on sends are [`sso_admin_signin`](#sso_admin_signin) and [`sso_staff_access_request`](#sso_staff_access_request), both to the administrators.
 
 `Resend invite` (`POST /users/:id/resend-invitation`) issues a fresh temp
 password, re-sets `must_change_password`, revokes any sessions, and re-sends —
@@ -250,6 +250,10 @@ An assistant is never the sender of an email.
 ## `sso_admin_signin`
 
 Sent to every active Super Admin when someone signs in as Administrator through a single sign-on provider (the Voxshift Hub or the customer's own): who, which provider, the provider's own session reference when it sent one, the time and the address. It can be switched off on **Platform settings > Single sign-on** ("Email the administrators when someone signs in as Administrator..."); the master email switch also stops it. The sign-in itself is always recorded in the audit log (`sso.login.success`). See [SSO.md](SSO.md).
+
+## `sso_staff_access_request`
+
+Sent when a Voxshift staff sign-in is waiting for approval ([SSO.md](SSO.md) 4.3a): to every active Super Admin who did **not** come in through the Voxshift Hub (a person who signed in through the hub cannot approve, so is not asked). It names who is asking (name and email), the role the sign-in would get, the time and the address it came from, says that the administrator chooses how long to allow (the default is 4 hours, the most is 24) and that an unanswered request lapses after an hour, and links to Platform settings > Single sign-on, where the request is answered. One email per request: asking again while waiting, or straight after a denial, sends no second one. It is only sent when the installation's staff access setting is "Needs approval"; the master email switch also stops it (the request is still shown on the page and as a banner at the top of the application).
 
 ## Incident emails
 

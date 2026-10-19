@@ -1,7 +1,7 @@
 # Single sign-on: guide for the administrator of an installation
 
 For: a Super Admin (Administrator) of a Voxshift installation, for example the IT person at a customer who runs Voxshift on their own premises.
-Status: built and deployed 2026-10-19 (phases 1 and 2). The design and the exact technical contract are in [SSO.md](SSO.md); the security view is in
+Status: phases 1 and 2 built and deployed 2026-10-19; phase 3 (removals at the hub reach this installation within about a minute, and approval and a time limit for Voxshift staff) built 2026-10-19. The design and the exact technical contract are in [SSO.md](SSO.md); the security view is in
 [SECURITY.md](SECURITY.md) ("Single sign-on"); how the installation connects to a Voxshift Hub is in [HUB-CONNECTION.md](HUB-CONNECTION.md).
 This page is the one to follow when you set it up or when something goes wrong.
 
@@ -53,6 +53,7 @@ Do this when the installation is (or is about to be) managed through a Voxshift 
 2. At the hub, a hub administrator must register this installation with its **real own address** (the same address as your web address), and give each person access to it with a role (see [the note at the end of this page](#where-the-hub-side-is-described)).
 3. Open Administration > Platform settings > **Single sign-on**. On the **Voxshift Hub** card:
    - Check the two role ceilings (section 5) and lower them if you want.
+   - Decide **Voxshift staff access** (section 4a): Allowed (the default), Needs approval, or Off.
    - Keep "Create an account automatically the first time someone signs in" on (otherwise each person needs an account made first and then linked).
    - Keep "Only accept sign-ins where the hub confirms two-step verification" on.
    - Press **Test sign-in**. You are sent to the hub, sign in there, and come back to a result that says who you would have been signed in as and with which role, without anything being created. (The test needs a hub account of yours that has been given access to this installation.)
@@ -69,6 +70,27 @@ What people get:
 A person who is created this way can sign in but **sees no customers until you add them**: roles below Administrator only see customers they are assigned to (Administration > Users, add the person to the customer). Super Admins see everything.
 
 Every sign-in as Administrator through any provider is recorded in the audit log and emailed to the administrators (section 12).
+
+## 4a. Voxshift staff access: approval and a time limit
+
+On the **Voxshift Hub** card, **Voxshift staff access** says what happens when a Voxshift staff member (or an engineer from your MSP) signs in with a hub account. It does not apply to your own people who have hub accounts, to your own provider's accounts, or to local accounts (the break-glass administrators included).
+
+| Setting | What happens |
+|---|---|
+| **Allowed** (the default) | Staff who have been given access to this installation at the hub sign in straight away, up to the staff role limit (section 5). Nothing is different from before. |
+| **Needs approval** | A staff sign-in **waits for you**. They see a "Waiting for approval" page. Every administrator who did not sign in through the hub is emailed (who, which role, from which address), a banner appears at the top of the application for administrators, and the request is on this page under **Voxshift staff access**. You press **Approve** and choose how long (1, 2, 4, 8, 12 or 24 hours; 4 is pre-selected) or **Deny**. The waiting page then signs them in by itself. |
+| **Off** | Voxshift staff cannot sign in. Anyone who is signed in is signed out now. |
+
+How a window works:
+
+- The person's access, and their session, **end exactly when the time you chose is up**, even if they are in the middle of something. To come back they ask again. (A shorter session limit under "Sign-in sessions" still wins if it is shorter.)
+- While a window is running you can press **End now** next to it: the person is signed out immediately.
+- A request nobody answers lapses after an hour. If someone is denied and tries again within 10 minutes they are just shown the denial again (you are not emailed a second time).
+- If someone signs in again inside their running window (a second browser, after closing the first) they are let in without a new request, until the same end time.
+- Changing the setting acts at once: to **Needs approval** or **Off** signs out the staff who are in (not your own people) and closes anything waiting; to **Allowed** closes anything waiting and removes every time limit.
+- **Who can answer:** an administrator who signed in **with their own account on this installation** (a local administrator, or through your own identity provider), **not through the Voxshift Hub**. Otherwise the person asking, or a colleague of theirs, could approve themselves. For the same reason anybody can switch the setting to something stricter, but only such an administrator can make it looser.
+- **Be clear about what you approve.** The role they get is the role limit for Voxshift staff (section 5), which starts at Administrator. An approved Administrator window is full administrator access: they can change settings and add users like any administrator. Everything is recorded (section 12), so look at the audit log and Administration > Users afterwards. If the work does not need administrator rights, set the staff role limit to Engineer first.
+- If email is switched off or not working you will not be emailed, but the banner and this page still show the request.
 
 ## 5. Roles and ceilings
 
@@ -88,7 +110,7 @@ The effect:
 - **A person already signed in above the new ceiling is signed out at their next token refresh** (within 15 minutes) and has to sign in again, at the lower role.
 - The role is **managed by the provider**: it is set at every sign-in, for accounts the provider created and for accounts you linked. A role you set by hand under Users is replaced at that person's next provider sign-in.
 
-If you want Voxshift staff to need your help for administrator tasks, lower the staff ceiling to Engineer. The Single sign-on screen reminds you when it is at Administrator and the hub provider is on.
+If you want Voxshift staff to need your help for administrator tasks, lower the staff ceiling to Engineer. If you want to be asked before they come in at all, and for how long, use Voxshift staff access (section 4a). The Single sign-on screen reminds you when it is at Administrator and the hub provider is on.
 
 Edge cases:
 
@@ -172,21 +194,32 @@ So the way back in always exists: turning local passwords off needs a break-glas
 
 - A sign-in through a provider gives the same kind of session as a password sign-in: an access token that lasts **15 minutes** and is renewed in the background.
 - A provider session also has an **absolute limit**, 12 hours by default, that renewing never extends. After that the person signs in again at the provider. Change it under Single sign-on > **Sign-in sessions** ("Sign in again at the provider after (hours)", 1 to 720).
-- At every renewal (every 15 minutes) the installation checks: is the provider still on, does the person's link still exist, is the account still active, and is their role still within the ceiling? If not, they are signed out ("You have been signed out. Sign in again.").
+- At every renewal (every 15 minutes) the installation checks: is the provider still on, does the person's link still exist, is the account still active, is their role still within the ceiling, and (for Voxshift staff) is their approved time still running? If not, they are signed out ("You have been signed out. Sign in again.").
+- Some things end a session **at once**, without waiting for a renewal: the link to the provider being removed, a removal at the Voxshift Hub (section 10), the end of an approved Voxshift staff window, and ending that window early.
+- A staff session started from an approval ends with the approved time if that is sooner than the limit above.
 - **Signing out here signs the person out of this installation only**, not out of the provider or the hub.
 
-## 10. How access is removed today (read this)
+## 10. How access is removed
 
-| What you do | Effect |
+| What happens | Effect |
 |---|---|
+| **A person is removed or switched off at the Voxshift Hub** (their access to this installation is taken away, they are switched off, their password or authenticator is reset, or their role changes) | **Within about a minute** the hub tells this installation (in the answer to the report it sends every minute, whether or not remote access is on) and the person is signed out here, their open pages included. See "What a removal at the hub does here" below |
 | Disable the user (Users > Disable account) | Effective at once: every request from that person is refused ("Account unavailable") and their sessions are ended. They cannot sign in again |
-| Unlink the person (Link to provider identity > Unlink) | Their provider sessions are ended at once; the access they already hold works for at most 15 more minutes |
+| Unlink the person (Link to provider identity > Unlink) | Effective at once: their provider sessions end and the access they hold stops working |
+| End an approved Voxshift staff window early (section 4a) | Effective at once: the person is signed out |
 | Switch the provider off | Nobody can start a new sign-in with it; people already in are signed out at their next renewal (within 15 minutes) |
 | Lower the ceiling | Anyone above it is signed out at their next renewal (within 15 minutes) |
 | Remove the provider | Everyone who came in through it is signed out; the accounts stay |
 | Switch hub sign-in off for the whole installation | Same as switching the provider off |
+| Set Voxshift staff access to Needs approval or Off | Voxshift staff who are in are signed out at once; your own people are not |
 
-**What does not happen yet:** if a person is removed or switched off **at the hub** (or at your own identity provider), the installation is **not told**. Their new sign-ins are refused immediately (the hub or provider will not vouch for them), but a session they already have here continues until it ends by itself: **at most the 12-hour limit** (a setting), unless you act here as in the table above. This "push revocation" is phase 3 of the plan and is not built. If someone leaves in a hurry, disable their account here as well.
+**What a removal at the hub does here.** The person's sign-ins through the hub that began before the removal end at once (the open page stops working on its next request and cannot be renewed). Then, depending on why:
+
+- **Their access to this installation was taken away at the hub:** an account that exists only because of the hub (it has no password) is **switched off**, so it shows as disabled under Users and not as a live administrator. An account you linked to the hub person (it has its own password) is **unlinked** and otherwise left alone, so the person can still use their local password if you allow it. The audit entry is `sso.revoked` with the reason `hub-grant-removed`. If access is later given back at the hub, the person is refused with "This account is switched off" or "already exists here but is not linked" until you switch the account on or link it again: access taken away should not return without you noticing.
+- **They were switched off at the hub, their password or authenticator was reset, or their role changed:** their sessions end, nothing else here changes (reasons `hub-user-disabled`, `hub-session-revoked`, `hub-role-changed`). When the hub allows them again they sign in again as usual.
+- This works for a person the installation has seen. Local accounts that are not linked to the hub, and break-glass administrators, are never touched.
+- If this installation cannot reach the hub for a while (or the hub cannot reach it), nothing can be told to it; the hub keeps its notes for a week and the installation applies them as soon as it can hear the hub again. A person removed during that time keeps their session until then, or until the session limit (section 9), or until you act yourself as in the table above.
+- Removing someone at **your own identity provider** is different: this installation is not told. They cannot sign in again, and a session they already have ends at the next renewal if you also unlink or disable them here, otherwise at the session limit (12 hours by default). If someone leaves in a hurry, disable their account here as well.
 
 ## 11. Remote access through the hub
 
@@ -217,7 +250,8 @@ Everything is in Administration > Observability > **Platform Audit**.
 | `sso.user.created` | An account was created by a first sign-in |
 | `sso.user.linked`, `sso.user.unlinked` | You linked or unlinked someone |
 | `sso.provider.changed` | A provider was added, changed, switched on or off, removed, tested, or the general settings changed. Old and new values, never a secret |
-| `sso.revoked` | Someone was signed out at a renewal (reason `user-disabled`, `provider-off`, `identity-removed` or `ceiling-lowered`) |
+| `sso.revoked` | Someone was signed out. Reasons: `user-disabled`, `provider-off`, `identity-removed`, `ceiling-lowered` (found at a renewal); `hub-grant-removed`, `hub-user-disabled`, `hub-session-revoked`, `hub-role-changed` (the hub told this installation: the detail also says how many sessions ended and whether the account was switched off or unlinked); `access-window-ended` (an approved Voxshift staff window ran out); `staff-access-restricted` (the Voxshift staff access setting was made stricter) |
+| `sso.access.requested`, `sso.access.approved`, `sso.access.denied`, `sso.access.expired`, `sso.access.ended` | Voxshift staff access (section 4a). Requested: who, the role asked for and the role the limit allows, the hub's session reference. Approved: by whom, how many hours, when it ends. Denied: by whom, the note. Expired: the approved time ran out, or nobody answered (`stage` says which). Ended: ended early by an administrator, or closed because the setting was changed |
 | `auth.login.failed` with reason `local-passwords-off` or `federated-account` | A password was tried where passwords are off, or on an account that has no password |
 
 **Administrator-sign-in email:** every time someone signs in as Administrator through a provider, every active Administrator receives an email saying who, through which provider, the provider's session reference, when and from which address. It can be switched off (Single sign-on > Sign-in sessions > "Email the administrators when someone signs in as Administrator through a provider"); the platform-wide email switch also stops it. The audit entry is written either way.
@@ -251,6 +285,7 @@ The message appears on the login page, or as a dismissible bar at the top of the
 | "You do not have an account on this installation yet, and automatic account creation is off. Ask an administrator to set one up." | `no_identity_jit_off` | Switch on "Create an account automatically ...", or create the account and link it (section 7) |
 | "An account with your email address already exists here but is not linked to this sign-in. Ask an administrator to link it (Users > Link to provider identity)." | `email_exists_unlinked` | Link it (section 7) after checking it is the same person, or use the other account |
 | "This account is switched off. Ask an administrator." | `user_disabled` | Enable the account under Users, if appropriate |
+| "This installation has switched off sign-in for Voxshift staff. Ask the organisation that runs it." | `staff_access_off` | Voxshift staff access is **Off** (section 4a). Set it to Needs approval or Allowed if you want staff to be able to come in |
 | "Too many single sign-on attempts from your network. Wait a minute and try again." | (throttle: 60 a minute per address, separate from the password form) | Wait a minute; if a whole site is affected, check nothing is looping the sign-in button |
 | "This account signs in with a password and authenticator on this installation, not through a provider." | `break_glass_local_only` | This is a break-glass administrator. Sign in with the password on the **Administrator sign-in** form. To use a provider, sign in as a different account |
 
@@ -281,6 +316,8 @@ The message appears on the login page, or as a dismissible bar at the top of the
 | `token_missing_claim` | A required claim is missing (`sub`, `exp`, `iat`, ...) | Provider configuration |
 | `token_nonce` | The token was for a different sign-in attempt | Start again; a stale tab |
 | `token_replayed` | The token's identifier was seen before | Start again; if it keeps happening, tell your security team |
+| `staff_access_off` | A Voxshift staff sign-in while Voxshift staff access is Off | See 14.1 |
+| `access_not_approved`, `access_no_wait_token`, `access_identity_gone` | The waiting page asked for a session but the approval could not be used: not approved (yet), already used, ended or lapsed, no cookie from the sign-in, or the person is no longer linked or is no longer staff | The person signs in again to ask again |
 | `mfa_not_proven` | See 14.1 | |
 | `email_unverified`, `email_missing`, `domain_not_allowed`, `no_identity_jit_off`, `email_exists_unlinked`, `user_disabled`, `break_glass_local_only` | See 14.1 | |
 
@@ -290,7 +327,11 @@ A sign-in that is refused before it starts for a malformed link shows the genera
 
 | Where | Message | What it means and what to do |
 |---|---|---|
-| Anywhere in the app, after a while | "You have been signed out. Sign in again." (audit `sso.revoked` with reason `user-disabled`, `provider-off`, `identity-removed` or `ceiling-lowered`) | Something changed for this person at their last renewal. Find the reason in the audit log; fix it if it was not intended |
+| Waiting page (Voxshift staff) | "Waiting for approval" | Voxshift staff access is Needs approval and nobody has answered yet. An administrator who did not sign in through the hub approves or denies it on Single sign-on (section 4a) |
+| Waiting page | "An administrator of this installation did not approve this sign-in." / "Nobody answered in time..." / "This access was ended by an administrator..." / "The settings for Voxshift staff access were changed..." | The request ended without access. The person signs in again to ask again |
+| Top of the application (administrators) | "Someone from Voxshift is waiting for you to approve their sign-in" | A request is waiting. Open it from the banner |
+| Single sign-on screen, deciding | "Access for Voxshift staff has to be decided by an administrator who signed in with their own account on this installation, not through the Voxshift Hub." | You are signed in through the hub. Sign in with your own local or own-provider account to approve, deny, end or loosen the setting |
+| Anywhere in the app | "You have been signed out. Sign in again." (audit `sso.revoked`, with the reason) | Something changed for this person: found at a renewal (`user-disabled`, `provider-off`, `identity-removed`, `ceiling-lowered`), told by the hub (`hub-...`, section 10), or an approved Voxshift staff window ended (`access-window-ended`). Find the reason in the audit log; fix it if it was not intended |
 | Anywhere, after the limit | "Session expired" | The 12-hour provider session limit (or the normal refresh expiry) was reached. Sign in again |
 | Login page, password form | "Signing in with a password is switched off on this installation. Use single sign-on instead." | A provider has local passwords off. Use the provider button. Break-glass administrators use the **Administrator sign-in** link |
 | Login page, password form | "Invalid credentials" for a person who was created through a provider | That account has no password at all; use the provider button |
@@ -322,6 +363,7 @@ For the customer security team, the on-premises installation and security guide 
 | Task | Where |
 |---|---|
 | Providers, ceilings, test, session length, administrator email | Administration > Platform settings > Single sign-on (`/admin/settings/sso`) |
+| Voxshift staff access: the setting, requests, running windows | Administration > Platform settings > Single sign-on, the Voxshift Hub card and the "Voxshift staff access" card above it |
 | Hub connection and the remote-access switch | Administration > Platform settings > Voxshift hub |
 | Link a local account to a provider identity | Administration > Users > row menu > Link to provider identity |
 | Create a break-glass administrator | Administration > Users > add a user with the Super Admin role (or, for an existing local Super Admin, row menu > Make break-glass) |
