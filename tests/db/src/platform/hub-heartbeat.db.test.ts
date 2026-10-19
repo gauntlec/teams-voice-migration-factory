@@ -5,7 +5,7 @@ import { platformDb } from '@tvmf/db';
 import { HUB_TOKEN_RE } from '@tvmf/shared';
 import { PlatformSettingsService } from '../../../../apps/api/src/platform-ops/platform-settings.service';
 import type { AppConfig } from '../../../../apps/api/src/common/config';
-import { hubVersion, sendHubHeartbeat } from '../../../../apps/worker/src/hub-heartbeat';
+import { hubSsoEnabled, hubVersion, sendHubHeartbeat } from '../../../../apps/worker/src/hub-heartbeat';
 import { seedUser, useDb, useGlobalSettingsLock } from '../helpers';
 
 const handle = useDb();
@@ -27,6 +27,7 @@ const stub = (status = 200, throws?: Error) => {
 };
 
 beforeAll(async () => {
+  await platformDb(handle.db).deleteFrom('sso_providers').execute(); // (holding the settings lock: nothing else is using the hub provider)
   admin = await seedUser(handle, 'SUPER_ADMIN');
   svc = new PlatformSettingsService(handle.db, cfg, {} as never);
 });
@@ -58,7 +59,8 @@ describe('hub connection', () => {
     expect(calls[0]!.url).toBe('https://hub.voxshift.io/api/v1/heartbeat');
     expect(calls[0]!.headers.Authorization).toBe(`Bearer ${TOKEN}`);
     // the whole of what leaves this installation:
-    expect(Object.keys(calls[0]!.body).sort()).toEqual(['health', 'remoteAccess', 'uptimeSeconds', 'version']);
+    expect(Object.keys(calls[0]!.body).sort()).toEqual(['health', 'remoteAccess', 'sso', 'uptimeSeconds', 'version']);
+    expect(calls[0]!.body.sso).toBe(false); // no hub sign-in provider record here
     expect(calls[0]!.body.version).toBe(hubVersion());
     expect(calls[0]!.body.health).toBe('ok');
     expect((await svc.view()).hub).toMatchObject({ lastOkAt: '2026-10-15T12:00:00.000Z', lastError: null });
@@ -104,5 +106,43 @@ describe('hub connection', () => {
     await svc.set('https://other.contoso.local', admin.id);
     expect((await svc.view()).hub.connected).toBe(true);
     await svc.disconnectHub(admin.id);
+  });
+});
+
+describe('telling the hub whether hub sign-in is on', () => {
+  const sent = async () => {
+    const { calls, fetchFn } = stub();
+    expect(await sendHubHeartbeat(handle.db, { fetchFn })).toBe('sent');
+    return calls[0]!.body;
+  };
+
+  it('sends sso false when the hub provider is off or missing, and true only when it is on', async () => {
+    await platformDb(handle.db).deleteFrom('sso_providers').execute();
+    await svc.disconnectHub(admin.id);
+    await platformDb(handle.db).deleteFrom('sso_providers').execute();
+    await svc.connectHub('https://hub.voxshift.io', TOKEN, admin.id); // creates the provider record, off
+    expect((await sent()).sso).toBe(false);
+
+    await platformDb(handle.db).updateTable('sso_providers').set({ enabled: true }).where('kind', '=', 'hub').execute();
+    expect((await sent()).sso).toBe(true);
+
+    await platformDb(handle.db).updateTable('sso_providers').set({ enabled: false }).where('kind', '=', 'hub').execute();
+    expect((await sent()).sso).toBe(false);
+
+    await platformDb(handle.db).deleteFrom('sso_providers').execute(); // no record at all
+    expect((await sent()).sso).toBe(false);
+    await svc.disconnectHub(admin.id);
+  });
+
+  it('a generic provider being on does not count: only the hub\'s', async () => {
+    await platformDb(handle.db).deleteFrom('sso_providers').execute();
+    await platformDb(handle.db).insertInto('sso_providers').values({ kind: 'oidc', name: 'Other', issuer: 'https://idp.test', client_id: 'x', enabled: true }).execute();
+    expect(await hubSsoEnabled(handle.db)).toBe(false);
+    await platformDb(handle.db).deleteFrom('sso_providers').execute();
+  });
+
+  it('leaves the field out when the installation cannot tell (no table, or the query fails)', async () => {
+    const broken = { withSchema: () => ({ selectFrom: () => { throw new Error('relation "platform.sso_providers" does not exist'); } }) } as never;
+    expect(await hubSsoEnabled(broken)).toBeUndefined();
   });
 });

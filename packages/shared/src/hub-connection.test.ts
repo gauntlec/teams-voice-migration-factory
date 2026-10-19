@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { HUB_OK_WITHIN_SECONDS, HUB_TOKEN_RE, connectHubSchema, hubErrorText, hubLinkState, type HubConnectionView } from './hub-connection';
+import { HUB_OK_WITHIN_SECONDS, HUB_TOKEN_RE, buildHubHeartbeat, connectHubSchema, hubErrorText, hubLinkState, type HubConnectionView } from './hub-connection';
 
 const token = `vxh_b04e6c2c-d276-4c12-a477-0554a8b34d20_${'ab12'.repeat(12)}`;
 const view = (over: Partial<HubConnectionView> = {}): HubConnectionView => ({ connected: true, hubUrl: 'https://hub.voxshift.io', tokenHint: '…ab12', lastAttemptAt: null, lastOkAt: null, lastError: null, remoteAccess: false, tunnelState: 'off', tunnelError: null, ...over });
@@ -29,5 +29,21 @@ describe('link state', () => {
   it('words the failures without a token', () => {
     expect(hubErrorText(401)).toMatch(/rotated/);
     expect(hubErrorText(null, 'ENOTFOUND')).toBe('Could not reach the hub: ENOTFOUND.');
+  });
+});
+
+describe('the heartbeat body', () => {
+  const base = { version: '2026.10.9', uptimeSeconds: 120, remoteAccess: true };
+
+  it('says whether hub sign-in is on, and nothing else beyond the agreed fields', () => {
+    expect(buildHubHeartbeat({ ...base, sso: true })).toEqual({ version: '2026.10.9', health: 'ok', uptimeSeconds: 120, remoteAccess: true, sso: true });
+    expect(buildHubHeartbeat({ ...base, sso: false })).toMatchObject({ sso: false });
+  });
+
+  it('leaves `sso` out when it is not known, so an old or unmigrated installation never claims false', () => {
+    for (const unknown of [undefined, null]) {
+      const body = buildHubHeartbeat({ ...base, sso: unknown });
+      expect(Object.keys(body).sort()).toEqual(['health', 'remoteAccess', 'uptimeSeconds', 'version']);
+    }
   });
 });

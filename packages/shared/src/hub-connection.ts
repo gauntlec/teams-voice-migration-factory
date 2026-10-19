@@ -34,6 +34,22 @@ export interface HubHeartbeat {
   uptimeSeconds: number;
   /** The customer's switch: have they allowed staff to open this installation through the hub? */
   remoteAccess: boolean;
+  /**
+   * True exactly when this installation's `hub` sign-in provider exists and is switched on (single sign-on, docs/SSO.md), so the hub only
+   * offers one-click sign-in to installations that have it. Left out when the installation cannot tell (never `false` by guess).
+   */
+  sso?: boolean;
+}
+
+/** The heartbeat body. `sso` is included only when it is known; every other field is always sent, and nothing else ever is. */
+export function buildHubHeartbeat(f: { version: string; uptimeSeconds: number; remoteAccess: boolean; sso?: boolean | null }): HubHeartbeat {
+  return {
+    version: f.version,
+    health: 'ok',
+    uptimeSeconds: f.uptimeSeconds,
+    remoteAccess: f.remoteAccess,
+    ...(typeof f.sso === 'boolean' ? { sso: f.sso } : {}),
+  };
 }
 
 /** The customer's switch for remote access through the hub. */

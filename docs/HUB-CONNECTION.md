@@ -6,13 +6,16 @@ of that is small: it reports in once a minute.
 
 ## What is sent
 
-A version and a health word. Nothing else. Concretely, the worker (`apps/worker/src/hub-heartbeat.ts`) posts
+A version, a health word, the customer's remote-access switch, and whether hub sign-in is on. Nothing else. Concretely, the worker (`apps/worker/src/hub-heartbeat.ts`) posts
 
 ```json
-{ "version": "2026.10.3", "health": "ok", "uptimeSeconds": 86400, "remoteAccess": false }
+{ "version": "2026.10.3", "health": "ok", "uptimeSeconds": 86400, "remoteAccess": false, "sso": true }
 ```
 
-to `<hub>/api/v1/heartbeat` with `Authorization: Bearer <instance token>`. The hub refuses any other field. No customer, tenant, user or
+`sso` is `true` exactly when this installation's Voxshift Hub sign-in provider exists and is switched on (Platform settings > Single sign-on), `false` otherwise, so the hub offers its one-click sign-in
+only to installations that have it. If the installation cannot tell (for example its database is not yet migrated) the field is left out rather than sent as `false`. The hub's strict schema must accept `sso`: deploy the hub first.
+
+The worker posts it to `<hub>/api/v1/heartbeat` with `Authorization: Bearer <instance token>`. The hub refuses any other field. No customer, tenant, user or
 incident data is ever included. The heartbeat itself signs nobody in, in either direction. Signing in through the hub is a separate, opt-in feature
 (see [Single sign-on](#single-sign-on-through-the-hub) below): passwords, password hashes and authenticator secrets never leave the system that owns them either way.
 
