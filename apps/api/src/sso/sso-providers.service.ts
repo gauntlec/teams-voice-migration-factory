@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, type OnModuleInit } from '@nestjs/common';
 import { platformDb, localPasswordsAllowed, ssoNotifyAdminSignin, ssoSessionMaxHours } from '@tvmf/db';
 import {
   OIDC_CALLBACK_PATH,
@@ -17,6 +17,7 @@ import { AuditService, type AuditActor } from '../common/audit.service';
 import { APP_CONFIG, type AppConfig } from '../common/config';
 import { encryptSecret } from '../common/crypto';
 import { InjectDb, type Db } from '../db/db.module';
+import { ensureHubProvider } from './hub-provider';
 import { OidcClient } from './oidc/oidc-client';
 import { OidcError } from './oidc/oidc-error';
 import { signTestTicket } from './oidc/state-cookie';
@@ -28,13 +29,29 @@ const iso = (v: string | Date | null | undefined): string | null => (v ? new Dat
 
 /** Administration > Platform settings > Single sign-on: the providers, their role ceilings, and who is linked to whom (docs/SSO.md 4.1, 4.4, 4.5a). */
 @Injectable()
-export class SsoProvidersService {
+export class SsoProvidersService implements OnModuleInit {
+  private readonly log = new Logger(SsoProvidersService.name);
+
   constructor(
     @InjectDb() private readonly db: Db,
     @Inject(APP_CONFIG) private readonly cfg: AppConfig,
     @Inject(OIDC_CLIENT) private readonly oidc: OidcClient,
     private readonly audit: AuditService,
   ) {}
+
+  /** An installation connected to a hub before single sign-on existed gets its hub provider record (off) when the API starts. */
+  async onModuleInit(): Promise<void> {
+    await this.ensureHub();
+  }
+
+  /** Creates the hub provider record from the saved hub connection if it is missing (see `ensureHubProvider`). Never fails the caller. */
+  private async ensureHub(): Promise<void> {
+    try {
+      await ensureHubProvider(this.db);
+    } catch (err) {
+      this.log.warn(`Could not set up the Voxshift Hub sign-in provider from the hub connection: ${(err as Error).message}`);
+    }
+  }
 
   private rows() {
     return platformDb(this.db).selectFrom('sso_providers').selectAll().orderBy('kind', 'desc').orderBy('name').execute();
@@ -75,6 +92,7 @@ export class SsoProvidersService {
   }
 
   async settings(): Promise<SsoSettingsView> {
+    await this.ensureHub();
     const [rows, counts, hubConnected] = await Promise.all([
       this.rows(),
       platformDb(this.db).selectFrom('external_identities').select(['provider_id']).select(({ fn }) => fn.countAll<string>().as('n')).groupBy('provider_id').execute(),
@@ -93,12 +111,14 @@ export class SsoProvidersService {
 
   /** For the login page, no sign-in needed: id, name and kind of each provider that is switched on, and whether the password form is shown. */
   async publicList(): Promise<PublicSsoProviders> {
+    await this.ensureHub();
     const rows = await platformDb(this.db).selectFrom('sso_providers').select(['id', 'name', 'kind']).where('enabled', '=', true).orderBy('kind', 'desc').orderBy('name').execute();
     return { providers: rows.map((r) => ({ id: r.id, name: r.name, kind: r.kind })), localPasswords: await localPasswordsAllowed(this.db) };
   }
 
   /** The hub provider's id, for `?provider=hub`. */
   async hubProviderId(): Promise<string | null> {
+    await this.ensureHub();
     return (await platformDb(this.db).selectFrom('sso_providers').select('id').where('kind', '=', 'hub').executeTakeFirst())?.id ?? null;
   }
 

@@ -2,7 +2,7 @@ import type { Kysely } from 'kysely';
 import { platformDb, type DB } from '@tvmf/db';
 import { HUB_PROVIDER_NAME, instanceIdFromHubToken } from '@tvmf/shared';
 import { AuditService } from '../common/audit.service';
-import { encryptSecret } from '../common/crypto';
+import { decryptSecret, encryptSecret } from '../common/crypto';
 
 /**
  * Keeps the `hub` single sign-on provider in step with the hub connection (docs/SSO.md 4.1): issuer = the hub address, client id = this
@@ -72,4 +72,32 @@ export async function hubDisconnected(db: Kysely<DB>, userId: string | null): Pr
       detail: { kind: 'hub', change: 'switched off because the hub was disconnected', enabled: false },
     });
   }
+}
+
+/**
+ * Makes sure the `hub` provider record exists whenever a hub connection does (hub address + token saved). Installations connected to a hub
+ * BEFORE single sign-on existed have the connection but no provider record, and the token is stored masked so an administrator could not
+ * simply reconnect to create it. Safe to call any number of times and at any moment: it creates the record (switched OFF, from the saved
+ * connection) only when there is none, and never touches an existing one, so a switch or ceiling an administrator chose is never reset.
+ * Returns true when it created the record.
+ */
+export async function ensureHubProvider(db: Kysely<DB>): Promise<boolean> {
+  const p = platformDb(db);
+  if (await p.selectFrom('sso_providers').select('id').where('kind', '=', 'hub').executeTakeFirst()) return false;
+  const conn = await p.selectFrom('app_settings').select(['hub_url', 'hub_token_enc']).executeTakeFirst();
+  if (!conn?.hub_url || !conn.hub_token_enc) return false;
+  let token: string;
+  try {
+    token = decryptSecret(conn.hub_token_enc);
+  } catch {
+    return false; // an unreadable token (a changed encryption key) cannot be turned into a client secret; reconnecting fixes it
+  }
+  try {
+    await syncHubProvider(db, conn.hub_url, token, null);
+  } catch (err) {
+    // Another process created it a moment ago (one hub provider per installation): that is the outcome wanted.
+    if ((err as { code?: string }).code === '23505') return false;
+    throw err;
+  }
+  return true;
 }
