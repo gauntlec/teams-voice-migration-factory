@@ -51,6 +51,9 @@ export function readState(cookie: string | undefined, secret: string): OidcState
 /** Where the test ticket travels: an HttpOnly cookie set by the "Test sign-in" call and read (then cleared) when the sign-in starts. Never in the address. */
 export const TEST_COOKIE = 'tvmf_oidc_test';
 export const TEST_TICKET_TTL_SECONDS = 120;
+/** The cookie that proves the browser waiting for a Voxshift staff approval is the one that asked (docs/SSO.md 4.3a): a random token, only its hash is stored. */
+export const WAIT_COOKIE = 'tvmf_staff_wait';
+export const WAIT_TTL_SECONDS = 3600;
 
 /** Proof, for two minutes, that an administrator asked for "Test sign-in" on one provider. A browser navigation cannot carry the bearer token, so it goes in a short-lived cookie on the sign-in path. */
 export function signTestTicket(providerId: string, adminId: string, secret: string): string {

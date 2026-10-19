@@ -23,6 +23,7 @@ import {
   type ServiceRequestMessageContext,
   type ServiceRequestStatusChangedContext,
   type SsoAdminSigninContext,
+  type SsoStaffAccessRequestContext,
   type UserInvitationContext,
 } from '@tvmf/shared';
 import { renderHtml, renderText, type EmailBranding, type LayoutInput } from './layout';
@@ -84,6 +85,8 @@ export function renderEmail(template: string, context: Record<string, unknown>, 
       return incidentReview(context as unknown as IncidentReviewContext, branding);
     case 'sso_admin_signin':
       return ssoAdminSignin(context as unknown as SsoAdminSigninContext);
+    case 'sso_staff_access_request':
+      return ssoStaffAccessRequest(context as unknown as SsoStaffAccessRequestContext, branding);
     case 'mail_test':
       return mailTest(context as unknown as { installation: string; how: string; sentAt: string }, branding);
     default:
@@ -133,6 +136,25 @@ function ssoAdminSignin(c: SsoAdminSigninContext, branding?: EmailBranding): Ren
     ],
   };
   return { subject: `Administrator sign-in through ${c.providerName}`, html: renderHtml(layout, branding), text: renderText(layout) };
+}
+
+/** A Voxshift staff account is waiting at the sign-in page for an administrator to say yes or no (docs/SSO.md 4.3a). */
+function ssoStaffAccessRequest(c: SsoStaffAccessRequestContext, branding?: EmailBranding): RenderedEmail {
+  const layout: LayoutInput = {
+    previewText: `${c.displayName} is asking to sign in to ${c.installation}.`,
+    eyebrow: 'Approval needed',
+    heading: 'Voxshift staff are asking for access',
+    intro: [
+      `${c.displayName} (${c.email}) is asking to sign in to ${c.installation} as ${c.role}, at ${c.at}.`,
+      ...(c.ip ? [`The request came from ${c.ip}.`] : []),
+      'They are waiting at the sign-in page. You choose whether to allow it and for how long (the default is 4 hours, the most is 24). When the time is up their access ends and they must ask again.',
+    ],
+    cta: { label: 'Review the request', url: c.reviewUrl },
+    outro: [
+      'If you do not recognise this, press Deny, or simply leave it: an unanswered request lapses after an hour. You need to sign in with your own account (not through the Voxshift Hub) to answer.',
+    ],
+  };
+  return { subject: `Approval needed: ${c.displayName} is asking to sign in`, html: renderHtml(layout, branding), text: renderText(layout) };
 }
 
 /** The test message from Platform settings > Email: proves this installation can send mail the way it is set up. */

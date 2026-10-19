@@ -1,7 +1,9 @@
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, type OnModuleInit } from '@nestjs/common';
-import { platformDb, localPasswordsAllowed, ssoNotifyAdminSignin, ssoSessionMaxHours } from '@tvmf/db';
+import { platformDb, localPasswordsAllowed, ssoNotifyAdminSignin, ssoSessionMaxHours, staffAccessModeChanged } from '@tvmf/db';
 import {
   OIDC_CALLBACK_PATH,
+  STAFF_ACCESS_LABELS,
+  staffAccessRank,
   type CreateSsoProviderInput,
   type LinkIdentityInput,
   type PublicSsoProviders,
@@ -22,6 +24,7 @@ import { OidcClient } from './oidc/oidc-client';
 import { OidcError } from './oidc/oidc-error';
 import { signTestTicket } from './oidc/state-cookie';
 import { OIDC_CLIENT } from './sso-signin.service';
+import { SsoStaffAccessService } from './sso-staff-access.service';
 
 type Row = Awaited<ReturnType<SsoProvidersService['rows']>>[number];
 
@@ -37,6 +40,7 @@ export class SsoProvidersService implements OnModuleInit {
     @Inject(APP_CONFIG) private readonly cfg: AppConfig,
     @Inject(OIDC_CLIENT) private readonly oidc: OidcClient,
     private readonly audit: AuditService,
+    private readonly staffAccess: SsoStaffAccessService,
   ) {}
 
   /** An installation connected to a hub before single sign-on existed gets its hub provider record (off) when the API starts. */
@@ -82,6 +86,7 @@ export class SsoProvidersService implements OnModuleInit {
       roleMap: r.role_map ?? {},
       emailDomains: r.email_domains,
       allowLocalPasswords: r.allow_local_passwords,
+      staffAccess: r.staff_access,
       lastTestAt: iso(r.last_test_at),
       lastTestOk: r.last_test_ok,
       lastTestDetail: r.last_test_detail,
@@ -188,12 +193,18 @@ export class SsoProvidersService implements OnModuleInit {
     return (await this.settings()).providers.find((p) => p.id === id)!;
   }
 
-  async update(id: string, input: UpdateSsoProviderInput, actor: AuditActor): Promise<SsoProviderView> {
+  async update(id: string, input: UpdateSsoProviderInput, actor: AuditActor & { idp?: string }): Promise<SsoProviderView> {
     const before = await platformDb(this.db).selectFrom('sso_providers').selectAll().where('id', '=', id).executeTakeFirst();
     if (!before) throw new NotFoundException('No such provider.');
     if (before.kind === 'hub' && (input.issuer !== undefined || input.clientId !== undefined || input.clientSecret !== undefined || input.name !== undefined)) {
       throw new BadRequestException('The Voxshift Hub\'s name, address and credentials come from the hub connection (Platform settings > Voxshift hub).');
     }
+    if (input.staffAccess !== undefined && before.kind !== 'hub') throw new BadRequestException('Access for Voxshift staff applies to the Voxshift Hub only.');
+    // Tightening the rule is open to any administrator. Loosening it (from off or needs-approval towards allowed) is what the rule protects against, so it
+    // has to come from an administrator who did not sign in through the hub: otherwise approved staff could switch the approval off for themselves.
+    const staffBefore = before.staff_access;
+    const staffChanged = input.staffAccess !== undefined && input.staffAccess !== staffBefore;
+    if (staffChanged && staffAccessRank(input.staffAccess!) < staffAccessRank(staffBefore)) await this.staffAccess.assertCanDecide(actor);
     if (input.enabled === true && before.kind === 'hub' && !(await this.hubConnected())) {
       throw new ConflictException('Connect this installation to the Voxshift Hub first (Platform settings > Voxshift hub).');
     }
@@ -220,6 +231,7 @@ export class SsoProvidersService implements OnModuleInit {
       roleClaim: ['roleClaim', 'role_claim'],
       emailDomains: ['emailDomains', 'email_domains'],
       allowLocalPasswords: ['allowLocalPasswords', 'allow_local_passwords'],
+      staffAccess: ['staffAccess', 'staff_access'],
       clientId: ['clientId', 'client_id'],
     };
     const changes: Record<string, { from: unknown; to: unknown }> = {};
@@ -252,6 +264,11 @@ export class SsoProvidersService implements OnModuleInit {
     // Switching a provider off, or lowering what it may give, takes effect for people already signed in at their next token refresh (AuthService.refresh).
     if (Object.keys(changes).length > 0) {
       await this.audit.platform('sso.provider.changed', { actor, targetType: 'sso_provider', targetId: id, detail: { kind: before.kind, name: before.name, changes } });
+    }
+    // A new rule for Voxshift staff takes hold at once: waiting requests and running windows are closed, and staff already signed in under the old rule are signed out.
+    if (staffChanged) {
+      const effects = await staffAccessModeChanged(this.db, { providerId: id, from: staffBefore, to: input.staffAccess!, actor });
+      this.log.log(`Staff access for "${before.name}" changed from ${STAFF_ACCESS_LABELS[staffBefore]} to ${STAFF_ACCESS_LABELS[input.staffAccess!]}: ${effects.closed} request(s) closed, ${effects.signedOut} person(s) signed out.`);
     }
     return (await this.settings()).providers.find((p) => p.id === id)!;
   }

@@ -27,6 +27,7 @@ export const EMAIL_TEMPLATES = [
   'incident_review',
   'mail_test',
   'sso_admin_signin',
+  'sso_staff_access_request',
 ] as const;
 export type EmailTemplate = (typeof EMAIL_TEMPLATES)[number];
 
@@ -393,6 +394,19 @@ export interface SsoAdminSigninContext {
   installation: string;
   at: string;
   ip: string | null;
+}
+
+/** Context for the `sso_staff_access_request` template: a Voxshift staff account is waiting for an administrator of this installation to approve its sign-in. */
+export interface SsoStaffAccessRequestContext {
+  displayName: string;
+  email: string;
+  /** The role the sign-in would get, as the screens name it. */
+  role: string;
+  at: string;
+  ip: string | null;
+  installation: string;
+  /** Where to approve or deny. */
+  reviewUrl: string;
 }
 
 export type EmailContext = Record<string, unknown>;

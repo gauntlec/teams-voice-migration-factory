@@ -363,11 +363,12 @@ export class AuthService {
     if (!provider || !provider.enabled) return 'provider-off';
     const identity = await platformDb(this.db)
       .selectFrom('external_identities')
-      .select('account_kind')
+      .select(['account_kind', 'access_until'])
       .where('user_id', '=', user.id)
       .where('provider_id', '=', providerId)
       .executeTakeFirst();
     if (!identity) return 'identity-removed';
+    if (identity.access_until && new Date(identity.access_until).getTime() <= Date.now()) return 'access-window-ended';
     if (roleRank(user.role) > roleRank(ceilingForIdentity(provider, identity.account_kind))) return 'ceiling-lowered';
     return null;
   }

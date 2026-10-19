@@ -71,6 +71,7 @@ import { JwksCache } from '../../../../apps/api/src/sso/oidc/jwks-cache';
 import { OidcClient } from '../../../../apps/api/src/sso/oidc/oidc-client';
 import { SsoProvidersService } from '../../../../apps/api/src/sso/sso-providers.service';
 import { SsoSignInService } from '../../../../apps/api/src/sso/sso-signin.service';
+import { SsoStaffAccessService } from '../../../../apps/api/src/sso/sso-staff-access.service';
 import type { FakePerson, FakeProvider, TokenTweaks } from './fake-provider';
 
 export interface MailedMessage { template: string; to: { email: string }; context: Record<string, unknown> }
@@ -83,9 +84,10 @@ export function makeSso(handle: DbHandle, cfgOver: Partial<AppConfig> = {}) {
   const mail = { enqueue: async (m: MailedMessage) => (mailed.push(m), { id: 'queued' }) } as unknown as MailService;
   // no cooldown: the tests rotate keys on purpose
   const oidc = new OidcClient({ jwks: new JwksCache({ refreshCooldownMs: 0 }) });
-  const signIn = new SsoSignInService(handle.db, cfg, oidc, base.auth, base.audit, mail);
-  const providers = new SsoProvidersService(handle.db, cfg, oidc, base.audit);
-  return { ...base, cfg, mailed, oidc, signIn, providers };
+  const staffAccess = new SsoStaffAccessService(handle.db, cfg, base.audit, mail);
+  const signIn = new SsoSignInService(handle.db, cfg, oidc, base.auth, base.audit, mail, staffAccess);
+  const providers = new SsoProvidersService(handle.db, cfg, oidc, base.audit, staffAccess);
+  return { ...base, cfg, mailed, oidc, signIn, providers, staffAccess };
 }
 export type Sso = ReturnType<typeof makeSso>;
 

@@ -272,6 +272,8 @@ export interface SsoProvidersTable {
   role_map: ColumnType<Record<string, RoleName>, string | undefined, string>;
   email_domains: ColumnType<string[], string[] | undefined, string[]>;
   allow_local_passwords: ColumnType<boolean, boolean | undefined, boolean>;
+  /** The hub provider only: may hub STAFF accounts sign in (allowed), wait for an administrator's approval (needs_approval) or not at all (off)? 0033_sso_staff_access.sql */
+  staff_access: ColumnType<'allowed' | 'needs_approval' | 'off', 'allowed' | 'needs_approval' | 'off' | undefined, 'allowed' | 'needs_approval' | 'off'>;
   last_test_at: ColumnType<string | null, string | null | undefined, string | null>;
   last_test_ok: ColumnType<boolean | null, boolean | null | undefined, boolean | null>;
   last_test_detail: ColumnType<string | null, string | null | undefined, string | null>;
@@ -292,6 +294,38 @@ export interface ExternalIdentitiesTable {
   last_login_at: ColumnType<string | null, string | null | undefined, string | null>;
   /** Sign-ins through this identity that began before this moment are over, whatever access token they hold (0032_sso_revocation.sql). */
   revoked_before: ColumnType<string | null, string | null | undefined, string | null>;
+  /** The end of the approved window for a hub staff account (0033_sso_staff_access.sql); null = no limit. */
+  access_until: ColumnType<string | null, string | null | undefined, string | null>;
+}
+
+/** A hub staff sign-in waiting for an administrator of this installation, and the window it is given (0033_sso_staff_access.sql). */
+export interface SsoAccessRequestsTable {
+  id: Generated<string>;
+  provider_id: string;
+  user_id: string;
+  subject: string;
+  email: string;
+  display_name: string | null;
+  requested_role: string;
+  effective_role: string;
+  amr: ColumnType<string[], string[] | undefined, string[]>;
+  provider_session: string | null;
+  ip: string | null;
+  user_agent: string | null;
+  return_to: ColumnType<string, string | undefined, string>;
+  status: ColumnType<'pending' | 'approved' | 'denied' | 'expired' | 'ended' | 'cancelled', 'pending' | 'approved' | 'denied' | 'expired' | 'ended' | 'cancelled' | undefined, 'pending' | 'approved' | 'denied' | 'expired' | 'ended' | 'cancelled'>;
+  wait_token_hash: string;
+  requested_at: ColumnType<string, string | undefined, string>;
+  request_expires_at: string;
+  decided_by: ColumnType<string | null, string | null | undefined, string | null>;
+  decided_at: ColumnType<string | null, string | null | undefined, string | null>;
+  decision_note: ColumnType<string | null, string | null | undefined, string | null>;
+  window_hours: ColumnType<number | null, number | null | undefined, number | null>;
+  window_starts_at: ColumnType<string | null, string | null | undefined, string | null>;
+  window_ends_at: ColumnType<string | null, string | null | undefined, string | null>;
+  claimed_at: ColumnType<string | null, string | null | undefined, string | null>;
+  ended_at: ColumnType<string | null, string | null | undefined, string | null>;
+  ended_by: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** A sign-in refused because a local account with that email exists: offered to an administrator to link on purpose. */
@@ -1520,6 +1554,7 @@ export interface DB {
   sso_providers: SsoProvidersTable;
   external_identities: ExternalIdentitiesTable;
   sso_link_requests: SsoLinkRequestsTable;
+  sso_access_requests: SsoAccessRequestsTable;
   sso_replay_guard: SsoReplayGuardTable;
   invitations: InvitationsTable;
   email_messages: EmailMessagesTable;

@@ -47,13 +47,15 @@ export class JwtAuthGuard implements CanActivate {
     if (payload.idp) {
       const identity = await platformDb(this.db)
         .selectFrom('external_identities')
-        .select('revoked_before')
+        .select(['revoked_before', 'access_until'])
         .where('user_id', '=', user.id)
         .where('provider_id', '=', payload.idp)
         .executeTakeFirst();
       // `iat` is whole seconds. A token issued in the very second of the cut-off is ended too: signing in again costs a moment, letting an ended session run for 15 minutes does not.
       const olderThanCutoff = !!identity?.revoked_before && (payload.iat ?? 0) * 1000 <= new Date(identity.revoked_before).getTime();
-      if (!identity || olderThanCutoff) throw new UnauthorizedException('You have been signed out. Sign in again.');
+      // An approved window for Voxshift staff (docs/SSO.md 4.3a) ends exactly when it says, not at the next refresh.
+      const windowOver = !!identity?.access_until && new Date(identity.access_until).getTime() <= Date.now();
+      if (!identity || olderThanCutoff || windowOver) throw new UnauthorizedException('You have been signed out. Sign in again.');
     }
 
     const enrolOnly = payload.typ === 'enrol';

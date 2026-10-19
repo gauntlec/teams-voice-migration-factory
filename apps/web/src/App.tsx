@@ -1,9 +1,11 @@
 import { Spinner } from '@fluentui/react-components';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { STAFF_WAIT_PATH } from '@tvmf/shared';
 import { useAuth } from './auth';
 import { AppShell } from './components/AppShell';
 import { RequirePermission } from './components/RequirePermission';
 import { Login } from './pages/Login';
+import { StaffAccessWait } from './pages/StaffAccessWait';
 import { SetPassword } from './pages/SetPassword';
 import { EnrolTotp } from './pages/EnrolTotp';
 import { Dashboard } from './pages/Dashboard';
@@ -46,6 +48,8 @@ export function App() {
 
   // The "Is it fixed?" email links: answered signed out, so before any sign-in screen.
   if (pathname === '/incident-response') return <IncidentResponse />;
+  // A Voxshift staff sign-in waiting for an administrator's approval (docs/SSO.md 4.3a): not signed in yet, the cookie from the sign-in says who is waiting.
+  if (pathname === STAFF_WAIT_PATH) return <StaffAccessWait />;
 
   if (status === 'loading') {
     return (

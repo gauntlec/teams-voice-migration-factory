@@ -28,12 +28,19 @@ import { AddRegular, CopyRegular } from '@fluentui/react-icons';
 import {
   ROLES_BY_POWER,
   ROLE_LABELS,
+  STAFF_ACCESS_DEFAULT_HOURS,
+  STAFF_ACCESS_HOUR_CHOICES,
+  STAFF_ACCESS_LABELS,
+  STAFF_ACCESS_MODES,
   formatRoleMapText,
   parseRoleMapText,
   type CreateSsoProviderInput,
   type Role,
   type SsoProviderView,
   type SsoSettingsView,
+  type StaffAccessMode,
+  type StaffAccessOverview,
+  type StaffAccessRequestView,
   type UpdateSsoProviderInput,
 } from '@tvmf/shared';
 import { api } from '../../api';
@@ -109,6 +116,118 @@ function useProviderActions() {
   return { patch, test };
 }
 
+
+/** What each setting for Voxshift staff means, in plain words. */
+const STAFF_ACCESS_HELP: Record<StaffAccessMode, string> = {
+  allowed: 'Allowed: staff who have been given access to this installation at the hub sign in straight away, up to the role above.',
+  needs_approval: `Needs approval: a staff sign-in waits until you approve it, for a time you choose (${STAFF_ACCESS_DEFAULT_HOURS} hours unless you say otherwise, at most 24). You are emailed and see the request on this page. When the time is up their access ends and they have to ask again.`,
+  off: 'Off: Voxshift staff cannot sign in to this installation. Anyone who is in now is signed out.',
+};
+
+const whenText = (iso: string) => new Date(iso).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+const statusText = (r: StaffAccessRequestView): string => {
+  switch (r.status) {
+    case 'pending':
+      return 'Waiting for you';
+    case 'approved':
+      return `Approved for ${r.windowHours} ${r.windowHours === 1 ? 'hour' : 'hours'}${r.decidedByName ? ` by ${r.decidedByName}` : ''}`;
+    case 'denied':
+      return `Denied${r.decidedByName ? ` by ${r.decidedByName}` : ''}${r.decisionNote ? ` (${r.decisionNote})` : ''}`;
+    case 'expired':
+      return r.windowEndsAt ? 'Time ran out' : 'Nobody answered, so it lapsed';
+    case 'ended':
+      return `Ended early${r.endedByName ? ` by ${r.endedByName}` : ''}`;
+    default:
+      return 'Closed because the setting was changed';
+  }
+};
+
+/** Voxshift staff sign-ins waiting for approval, the access running now, and what happened recently (docs/SSO.md 4.3a). */
+function StaffAccessCard({ mode }: { mode: StaffAccessMode }) {
+  const s = useStyles();
+  const qc = useQueryClient();
+  const notify = useNotify();
+  const q = useQuery({ queryKey: ['sso-access'], queryFn: () => api<StaffAccessOverview>('/sso/access'), refetchInterval: 15_000 });
+  const [hours, setHours] = useState<Record<string, number>>({});
+  const act = useMutation({
+    mutationFn: ({ id, what, body }: { id: string; what: 'approve' | 'deny' | 'end'; body?: object }) => api<StaffAccessRequestView>(`/sso/access/${id}/${what}`, { method: 'POST', body: JSON.stringify(body ?? {}) }),
+    onSuccess: (_r, v) => {
+      qc.invalidateQueries({ queryKey: ['sso-access'] });
+      notify(v.what === 'approve' ? 'Approved' : v.what === 'deny' ? 'Denied' : 'Access ended');
+    },
+    onError: (e) => notify('Could not do that', { intent: 'error', body: (e as Error).message }),
+  });
+  const o = q.data;
+  if (!o) return null;
+  if (mode === 'allowed' && o.pending.length + o.windows.length + o.recent.length === 0) return null;
+  return (
+    <Card>
+      <div className={s.body}>
+        <Text weight="semibold" size={500}>
+          Voxshift staff access
+        </Text>
+        {mode !== 'needs_approval' && <MutedText>The setting is "{STAFF_ACCESS_LABELS[mode]}", so nothing new is waiting. This is what happened before.</MutedText>}
+        {mode === 'needs_approval' && o.pending.length === 0 && o.windows.length === 0 && <MutedText>Nobody is waiting and no staff access is running.</MutedText>}
+        {o.pending.map((r) => (
+          <div key={r.id} className={s.stack}>
+            <Text weight="semibold">{r.displayName ?? r.email} is asking to sign in</Text>
+            <MutedText>
+              {r.email}, as {ROLE_LABELS[r.effectiveRole]}
+              {r.requestedRole !== r.effectiveRole ? ` (the hub asked for ${ROLE_LABELS[r.requestedRole]}; your limit for Voxshift staff is lower)` : ''}, from {r.ip ?? 'an unknown address'}, asked at {whenText(r.requestedAt)}.
+            </MutedText>
+            <div className={s.row}>
+              <Field label="Allow for">
+                <Select
+                  value={String(hours[r.id] ?? STAFF_ACCESS_DEFAULT_HOURS)}
+                  onChange={(_, d) => setHours({ ...hours, [r.id]: Number(d.value) })}
+                >
+                  {STAFF_ACCESS_HOUR_CHOICES.map((h) => (
+                    <option key={h} value={h}>
+                      {h} {h === 1 ? 'hour' : 'hours'}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Button appearance="primary" disabled={act.isPending} onClick={() => act.mutate({ id: r.id, what: 'approve', body: { hours: hours[r.id] ?? STAFF_ACCESS_DEFAULT_HOURS } })}>
+                Approve
+              </Button>
+              <Button disabled={act.isPending} onClick={() => act.mutate({ id: r.id, what: 'deny' })}>
+                Deny
+              </Button>
+            </div>
+          </div>
+        ))}
+        {o.windows.map((r) => (
+          <div key={r.id} className={s.row}>
+            <div className={s.grow}>
+              <Text weight="semibold">{r.displayName ?? r.email}</Text>
+              <MutedText block>
+                {ROLE_LABELS[r.effectiveRole]}. {statusText(r)}. Access ends at {whenText(r.windowEndsAt!)}. {r.signedIn ? 'They are signed in.' : 'They have not signed in yet.'}
+              </MutedText>
+            </div>
+            <Button disabled={act.isPending} onClick={() => act.mutate({ id: r.id, what: 'end' })}>
+              End now
+            </Button>
+          </div>
+        ))}
+        {o.recent.length > 0 && (
+          <div className={s.stack}>
+            <Text weight="semibold">Recently</Text>
+            {o.recent.map((r) => (
+              <MutedText key={r.id} block>
+                {r.displayName ?? r.email}, {whenText(r.requestedAt)}: {statusText(r)}.
+              </MutedText>
+            ))}
+          </div>
+        )}
+        <MutedText>
+          You can only answer these if you signed in with your own account here, not through the Voxshift Hub. Everything is recorded in the audit log (sso.access.*). While staff hold an approved administrator window they can change settings and add users like any administrator, so approve only what you expect, and check Administration, Users afterwards.
+        </MutedText>
+      </div>
+    </Card>
+  );
+}
+
 /** The Voxshift Hub as a provider: off until someone here switches it on, with the two ceilings in plain words. */
 function HubCard({ p }: { p: SsoProviderView }) {
   const s = useStyles();
@@ -157,6 +276,19 @@ function HubCard({ p }: { p: SsoProviderView }) {
             <MessageBarBody>With this on, Voxshift staff who have been given access to this installation at the hub can sign in as Administrator. Every such sign-in is recorded and emailed to the administrators here.</MessageBarBody>
           </MessageBar>
         )}
+        <Field
+          label="Voxshift staff access"
+          hint="What happens when a Voxshift staff member (or an engineer from your MSP) signs in with a hub account. Your own people and the local administrators are not affected."
+        >
+          <Select value={p.staffAccess} disabled={patch.isPending} onChange={(_, d) => set({ staffAccess: d.value as StaffAccessMode })}>
+            {STAFF_ACCESS_MODES.map((m) => (
+              <option key={m} value={m}>
+                {STAFF_ACCESS_LABELS[m]}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <MutedText>{STAFF_ACCESS_HELP[p.staffAccess]}</MutedText>
         <RoleSelect
           label="People from your own organisation with Voxshift Hub accounts can sign in as"
           hint="At most this role, whatever the hub says they should have. Starts at Engineer."
@@ -470,6 +602,7 @@ export function AdminSso() {
               Local accounts keep working, and local administrators (break-glass accounts) can always sign in with a password and authenticator. Nothing is switched on until you turn a provider on here. A person's role is the lower of what the provider says and the highest role you allow for it, checked at every sign-in.
             </MessageBarBody>
           </MessageBar>
+          {hub && <StaffAccessCard mode={hub.staffAccess} />}
           {hub && <HubCard p={hub} />}
           {own.map((p) => (
             <OidcCard key={p.id} p={p} onEdit={() => setEditing(p)} onDelete={() => setRemoving(p)} />

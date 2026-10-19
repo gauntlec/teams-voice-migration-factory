@@ -1,14 +1,15 @@
-import { Controller, Get, Inject, Logger, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Controller, Get, Inject, Logger, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import type { AppRequest } from '../common/request';
-import { type PublicSsoProviders, safeReturnTo } from '@tvmf/shared';
+import { STAFF_WAIT_PATH, type PublicSsoProviders, type StaffWaitStatus, safeReturnTo } from '@tvmf/shared';
 import { APP_CONFIG, type AppConfig } from '../common/config';
 import { Public } from '../auth/auth.decorators';
-import { oidcCookieOptions, readTestTicket, STATE_COOKIE, STATE_TTL_SECONDS, TEST_COOKIE } from './oidc/state-cookie';
+import { oidcCookieOptions, readTestTicket, STATE_COOKIE, STATE_TTL_SECONDS, TEST_COOKIE, WAIT_COOKIE, WAIT_TTL_SECONDS } from './oidc/state-cookie';
 import { SsoRateLimitGuard } from './sso-rate-limit.guard';
 import { SsoProvidersService } from './sso-providers.service';
 import { SsoSignInService } from './sso-signin.service';
+import { SsoStaffAccessService } from './sso-staff-access.service';
 
 const loginQuery = z.object({
   provider: z.string().trim().min(1).max(64),
@@ -33,6 +34,7 @@ export class SsoAuthController {
   constructor(
     private readonly signIn: SsoSignInService,
     private readonly providers: SsoProvidersService,
+    private readonly staffAccess: SsoStaffAccessService,
     @Inject(APP_CONFIG) private readonly cfg: AppConfig,
   ) {}
 
@@ -124,11 +126,43 @@ export class SsoAuthController {
         if (result.testProviderId) return res.redirect(302, `/admin/settings/sso?tested=${result.testProviderId}`);
         return res.redirect(302, `/?sso_error=${encodeURIComponent(result.error)}`);
       }
+      // A Voxshift staff sign-in that waits for an administrator's approval (docs/SSO.md 4.3a): no session yet. The browser keeps a cookie that proves it is the one that asked, and waits.
+      if (result.kind === 'waiting') {
+        res.cookie(WAIT_COOKIE, result.waitToken, { ...this.cookieOptions('/api/auth/staff-access'), maxAge: WAIT_TTL_SECONDS * 1000 });
+        return res.redirect(302, STAFF_WAIT_PATH);
+      }
       // The same rotating refresh cookie a password sign-in sets; the app then asks for its access token with it, as it does on any page load.
       res.cookie(this.cfg.REFRESH_COOKIE, result.refreshCookieValue, { ...this.cookieOptions('/api/auth'), expires: result.refreshExpiresAt });
       res.redirect(302, result.redirectTo);
     } catch (err) {
       this.crashed(res, 'callback', err);
+    }
+  }
+
+  /** The waiting page asks every few seconds whether an administrator has answered. Only the browser that asked (its cookie) learns anything. */
+  @Public()
+  @UseGuards(SsoRateLimitGuard)
+  @Get('staff-access/status')
+  async waitStatus(@Req() req: Request, @Res({ passthrough: true }) res: Response): Promise<StaffWaitStatus> {
+    this.noStore(res);
+    return this.staffAccess.waitStatus((req as AppRequest).cookies?.[WAIT_COOKIE]);
+  }
+
+  /** Once approved, the waiting page asks for the session. It is given once; the session ends with the approved time. */
+  @Public()
+  @UseGuards(SsoRateLimitGuard)
+  @Post('staff-access/continue')
+  async waitContinue(@Req() req: Request, @Res({ passthrough: true }) res: Response): Promise<{ ok: boolean; redirectTo?: string }> {
+    this.noStore(res);
+    try {
+      const result = await this.signIn.claimApproved({ waitToken: (req as AppRequest).cookies?.[WAIT_COOKIE], meta: { ip: req.ip, userAgent: req.headers['user-agent'] } });
+      if (result.kind === 'refused') return { ok: false };
+      res.clearCookie(WAIT_COOKIE, this.cookieOptions('/api/auth/staff-access'));
+      res.cookie(this.cfg.REFRESH_COOKIE, result.refreshCookieValue, { ...this.cookieOptions('/api/auth'), expires: result.refreshExpiresAt });
+      return { ok: true, redirectTo: result.redirectTo };
+    } catch (err) {
+      this.log.error(`Single sign-on staff access continue failed: ${(err as Error)?.stack ?? String(err)}`);
+      return { ok: false };
     }
   }
 }

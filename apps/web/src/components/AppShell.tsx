@@ -54,7 +54,7 @@ import {
   Navigation24Regular,
   Dismiss24Regular,
 } from '@fluentui/react-icons';
-import type { MaintenanceNoticeView, Permission } from '@tvmf/shared';
+import type { MaintenanceNoticeView, Permission, StaffAccessOverview } from '@tvmf/shared';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { TOASTER_ID } from '../hooks/useNotify';
@@ -278,6 +278,14 @@ export function AppShell({ children }: { children: ReactNode }) {
     refetchInterval: 5 * 60_000,
   });
 
+  // Administrators are told while Voxshift staff are waiting for them to approve a sign-in (docs/SSO.md 4.3a).
+  const staffAccess = useQuery({
+    queryKey: ['sso-access'],
+    queryFn: () => api<StaffAccessOverview>('/sso/access'),
+    enabled: !!me && can('sso:manage'),
+    refetchInterval: 30_000,
+  });
+
   // Which release is running (written at image build, served by the web container); shown at the foot of the account menu.
   const release = useQuery({
     queryKey: ['release'],
@@ -482,6 +490,16 @@ export function AppShell({ children }: { children: ReactNode }) {
                   Dismiss
                 </Button>
               </MessageBarActions>
+            </MessageBar>
+          )}
+          {staffAccess.data && staffAccess.data.pending.length > 0 && (
+            <MessageBar layout="multiline" intent="warning" className={ls.mb16}>
+              <MessageBarBody>
+                <MessageBarTitle>
+                  {staffAccess.data.pending.length === 1 ? 'Someone from Voxshift is waiting for you to approve their sign-in' : `${staffAccess.data.pending.length} people from Voxshift are waiting for you to approve their sign-in`}
+                </MessageBarTitle>
+                {staffAccess.data.pending.map((r) => r.displayName ?? r.email).join(', ')}. <NavLink to="/admin/settings/sso">Review the request</NavLink>
+              </MessageBarBody>
             </MessageBar>
           )}
           {platformSettings.data?.emailEnabled === false && (

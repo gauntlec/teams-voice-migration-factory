@@ -8,6 +8,8 @@ export * from './app-settings';
 export * from './mail-config';
 export * from './sso-settings';
 export * from './sso-revocations';
+export * from './platform-audit';
+export * from './sso-staff-access';
 export * from './plan-rows';
 export { migratePlatform, provisionTenant, migrateAllTenants } from './migrate';
 

@@ -116,6 +116,91 @@ export function instanceIdFromHubToken(token: string): string | null {
   return m ? m[1]! : null;
 }
 
+/* --------------------- Voxshift staff access (docs/SSO.md 4.3a) --------------------- */
+
+/**
+ * What an installation does when a Voxshift hub STAFF account (Voxshift staff, the MSP's engineers) signs in:
+ * `allowed` (today's behaviour, the default), `needs_approval` (waits for an administrator of this installation, who sets how long it lasts) or `off`.
+ * The customer's own people with hub accounts and local accounts, break-glass included, are never affected.
+ */
+export const STAFF_ACCESS_MODES = ['allowed', 'needs_approval', 'off'] as const;
+export type StaffAccessMode = (typeof STAFF_ACCESS_MODES)[number];
+export const STAFF_ACCESS_LABELS: Record<StaffAccessMode, string> = {
+  allowed: 'Allowed',
+  needs_approval: 'Needs approval',
+  off: 'Off',
+};
+/** Tighter is higher: switching to a tighter mode is open to any administrator, loosening needs one who did not sign in through the hub. */
+export const staffAccessRank = (m: StaffAccessMode): number => STAFF_ACCESS_MODES.indexOf(m);
+export const STAFF_ACCESS_DEFAULT_HOURS = 4;
+export const STAFF_ACCESS_MAX_HOURS = 24;
+/** Hours offered when approving. */
+export const STAFF_ACCESS_HOUR_CHOICES = [1, 2, 4, 8, 12, 24] as const;
+/** A request nobody answers lapses after this long. */
+export const STAFF_ACCESS_REQUEST_MINUTES = 60;
+/** After a denial the same person is shown the denial again, rather than a new request, for this long. */
+export const STAFF_ACCESS_DENIED_COOLDOWN_MINUTES = 10;
+/** The page a person waits on; the browser that asked holds a cookie that proves it. */
+export const STAFF_WAIT_PATH = '/sso/waiting';
+
+export const approveStaffAccessSchema = z.object({ hours: z.number().int().min(1).max(STAFF_ACCESS_MAX_HOURS).default(STAFF_ACCESS_DEFAULT_HOURS) }).strict();
+export type ApproveStaffAccessInput = z.infer<typeof approveStaffAccessSchema>;
+export const denyStaffAccessSchema = z.object({ note: z.string().trim().max(300).optional() }).strict();
+export type DenyStaffAccessInput = z.infer<typeof denyStaffAccessSchema>;
+
+export type StaffAccessRequestStatus = 'pending' | 'approved' | 'denied' | 'expired' | 'ended' | 'cancelled';
+
+/** A staff sign-in request as the administrators' screen shows it. */
+export interface StaffAccessRequestView {
+  id: string;
+  displayName: string | null;
+  email: string;
+  /** What the hub asked for, and what this installation would give (the lower of that and the ceiling). */
+  requestedRole: Role;
+  effectiveRole: Role;
+  ip: string | null;
+  providerSessionId: string | null;
+  requestedAt: string;
+  /** Pending requests lapse here if nobody answers. */
+  requestExpiresAt: string;
+  status: StaffAccessRequestStatus;
+  decidedByName: string | null;
+  decidedAt: string | null;
+  decisionNote: string | null;
+  windowHours: number | null;
+  windowEndsAt: string | null;
+  /** The person has signed in on the strength of this approval. */
+  signedIn: boolean;
+  endedAt: string | null;
+  endedByName: string | null;
+}
+
+export interface StaffAccessOverview {
+  mode: StaffAccessMode | null;
+  pending: StaffAccessRequestView[];
+  /** Approved and still running. */
+  windows: StaffAccessRequestView[];
+  /** The most recent finished ones. */
+  recent: StaffAccessRequestView[];
+}
+
+/** What the waiting page asks for, once every few seconds. */
+export interface StaffWaitStatus {
+  state: 'pending' | 'approved' | 'denied' | 'expired' | 'ended' | 'cancelled' | 'unknown';
+  /** Pending: when the request lapses. Approved: when the window ends. */
+  until: string | null;
+  installation: string;
+}
+
+/** The plain words on the waiting page for each end state. */
+export const STAFF_WAIT_MESSAGES: Record<Exclude<StaffWaitStatus['state'], 'pending' | 'approved'>, string> = {
+  denied: 'An administrator of this installation did not approve this sign-in.',
+  expired: 'Nobody answered in time, so this request has lapsed. Sign in again to ask again.',
+  ended: 'This access was ended by an administrator of this installation.',
+  cancelled: 'The settings for Voxshift staff access were changed, so this request is no longer needed. Sign in again.',
+  unknown: 'This request is no longer here. Sign in again to ask again.',
+};
+
 /* ------------------------------ what the screens use ----------------------------- */
 
 export type SsoProviderKind = 'hub' | 'oidc';
@@ -155,6 +240,8 @@ export interface SsoProviderView {
   roleMap: Record<string, Role>;
   emailDomains: string[];
   allowLocalPasswords: boolean;
+  /** The hub only: may Voxshift staff accounts sign in, wait for approval, or not at all. */
+  staffAccess: StaffAccessMode;
   lastTestAt: string | null;
   lastTestOk: boolean | null;
   lastTestDetail: string | null;
@@ -241,6 +328,7 @@ const providerFields = {
   roleMap: roleMapSchema,
   emailDomains: domainsSchema,
   allowLocalPasswords: z.boolean(),
+  staffAccess: z.enum(STAFF_ACCESS_MODES),
 };
 
 /** Adding a customer's own provider. The secret is required here and never shown again. */
@@ -308,6 +396,7 @@ export const SSO_PUBLIC_ERRORS = {
   disabled: 'This account is switched off. Ask an administrator.',
   local_only: 'This account signs in with a password and authenticator on this installation, not through a provider.',
   rate_limited: 'Too many single sign-on attempts from your network. Wait a minute and try again.',
+  staff_off: 'This installation has switched off sign-in for Voxshift staff. Ask the organisation that runs it.',
 } as const;
 export type SsoPublicError = keyof typeof SSO_PUBLIC_ERRORS;
 

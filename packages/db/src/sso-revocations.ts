@@ -1,5 +1,6 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from './schema';
+import { writePlatformAudit } from './platform-audit';
 import { hasUsablePassword } from './sso-settings';
 
 /**
@@ -97,30 +98,23 @@ export async function applySsoRevocations(db: Kysely<DB>, lines: RevocationLine[
       }
 
       if (cutoffMoved || ended.rows.length > 0 || accountDisabled || unlinked) {
-        await t
-          .insertInto('platform_audit_log')
-          .values({
-            action: 'sso.revoked',
-            actor_user_id: null,
-            actor_email: null,
-            target_type: 'user',
-            target_id: identity.userId,
-            tenant_id: null,
-            ip: null,
-            detail: {
-              reason: HUB_REVOKE_AUDIT_REASON[line.reason],
-              source: 'hub',
-              providerId: hub.id,
-              subject: line.sub,
-              email: identity.email,
-              sessionsEnded: ended.rows.length,
-              accountDisabled,
-              identityRemoved: unlinked,
-              hubLine: line.id,
-            } as object,
-            at: now.toISOString(),
-          })
-          .execute();
+        await writePlatformAudit(trx, {
+          action: 'sso.revoked',
+          targetType: 'user',
+          targetId: identity.userId,
+          at: now,
+          detail: {
+            reason: HUB_REVOKE_AUDIT_REASON[line.reason],
+            source: 'hub',
+            providerId: hub.id,
+            subject: line.sub,
+            email: identity.email,
+            sessionsEnded: ended.rows.length,
+            accountDisabled,
+            identityRemoved: unlinked,
+            hubLine: line.id,
+          },
+        });
       }
     });
   }

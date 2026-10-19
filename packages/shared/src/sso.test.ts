@@ -11,7 +11,11 @@ import {
   linkIdentitySchema,
   parseRoleMapText,
   safeReturnTo,
+  staffAccessRank,
   updateSsoProviderSchema,
+  STAFF_ACCESS_MODES,
+  STAFF_ACCESS_MAX_HOURS,
+  approveStaffAccessSchema,
 } from './sso';
 
 describe('role ceiling', () => {
@@ -120,5 +124,26 @@ describe('the role map as typed', () => {
   it('round-trips', () => {
     const map = { 'A group': 'ENGINEER', B: 'SUPER_ADMIN' } as const;
     expect(parseRoleMapText(formatRoleMapText({ ...map }))).toEqual({ ok: true, map });
+  });
+});
+
+describe('Voxshift staff access', () => {
+  it('ranks the modes from loosest to tightest, so tightening can be told from loosening', () => {
+    expect(STAFF_ACCESS_MODES).toEqual(['allowed', 'needs_approval', 'off']);
+    expect(staffAccessRank('allowed')).toBeLessThan(staffAccessRank('needs_approval'));
+    expect(staffAccessRank('needs_approval')).toBeLessThan(staffAccessRank('off'));
+  });
+
+  it('is part of a provider update, as one of the three modes only', () => {
+    for (const m of STAFF_ACCESS_MODES) expect(updateSsoProviderSchema.safeParse({ staffAccess: m }).success).toBe(true);
+    for (const bad of ['', 'ask', 'ALLOWED', true, 1]) expect(updateSsoProviderSchema.safeParse({ staffAccess: bad }).success).toBe(false);
+    // a new provider cannot be given it: it is set on the hub provider afterwards
+    expect(createSsoProviderSchema.safeParse({ name: 'X', issuer: 'https://idp.example.com', clientId: 'a', clientSecret: 'b', staffAccess: 'off' }).success).toBe(false);
+  });
+
+  it('allows an approval of 1 to 24 whole hours and defaults to 4', () => {
+    expect(STAFF_ACCESS_MAX_HOURS).toBe(24);
+    expect(approveStaffAccessSchema.parse({}).hours).toBe(4);
+    expect(approveStaffAccessSchema.safeParse({ hours: 25 }).success).toBe(false);
   });
 });

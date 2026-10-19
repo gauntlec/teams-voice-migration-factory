@@ -13,7 +13,7 @@ useGlobalSettingsLock(handle);
 useGlobalSsoLock(handle);
 const sso = makeSso(handle);
 const db = platformDb(handle.db);
-const controller = new SsoAuthController(sso.signIn, sso.providers, sso.cfg);
+const controller = new SsoAuthController(sso.signIn, sso.providers, sso.staffAccess, sso.cfg);
 let fake: FakeProvider;
 let providerId: string;
 
@@ -142,7 +142,7 @@ describe('the sign-in round trip over HTTP', () => {
     expect(url).not.toContain(ticket);
 
     // The admin route sets the ticket as an HttpOnly cookie scoped to the sign-in path, and returns only the address.
-    const adminCtl = new SsoAdminController(sso.providers, sso.cfg);
+    const adminCtl = new SsoAdminController(sso.providers, sso.staffAccess, sso.cfg);
     const issued = fakeRes();
     const answer = await adminCtl.test(off, { id: admin.id, email: admin.email } as never, issued.res);
     expect(answer).toEqual({ url });
@@ -179,6 +179,7 @@ describe('when something goes wrong in the browser-facing routes', () => {
     const broken = new SsoAuthController(
       { begin: async () => { throw new Error('boom'); }, complete: async () => { throw new Error('boom'); } } as never,
       { hubProviderId: async () => null } as never,
+      sso.staffAccess,
       sso.cfg,
     );
     const a = fakeRes();

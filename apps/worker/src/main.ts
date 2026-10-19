@@ -12,7 +12,7 @@ import {
   resolveLiveCallQueueState,
   resolveLiveIdentityState,
   resolveLiveSharedCallingPolicyState,
-  tenantDb, emailEnabled, webOrigin as resolveWebOrigin } from '@tvmf/db';
+  tenantDb, emailEnabled, webOrigin as resolveWebOrigin, sweepStaffAccess } from '@tvmf/db';
 import { HUB_HEARTBEAT_SECONDS, buildColorRamp, type Branding, type DiscoverySiteOverview, type PortDocumentItemSummary } from '@tvmf/shared';
 import {
   collectAutoAttendantUserUpns,
@@ -291,6 +291,8 @@ void sweepIncidents(db, enqueueMail).catch((e) => console.warn('incident sweep f
 // The Voxshift Hub (if one is connected): report this installation's version and health once a minute.
 setInterval(() => void sendHubHeartbeat(db).catch((e) => console.warn('hub heartbeat failed', e)), HUB_HEARTBEAT_SECONDS * 1000).unref();
 setTimeout(() => void sendHubHeartbeat(db).catch((e) => console.warn('hub heartbeat failed', e)), 5_000).unref();
+// Voxshift staff access (single sign-on): approved windows that have run out end, and requests nobody answered lapse. The API also does this whenever they are looked at.
+setInterval(() => void sweepStaffAccess(db).catch((e) => console.warn('staff access sweep failed', e)), 60_000).unref();
 // Remote access through the hub: only while the customer's switch is on, one outbound connection the hub sends browser requests down.
 new HubTunnel(db).start();
 // AI agents: expire proposals, put incidents back in the queue when a lease lapses, clear old events, and push events to webhooks.

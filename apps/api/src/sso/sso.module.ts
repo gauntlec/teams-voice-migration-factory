@@ -7,11 +7,12 @@ import { SsoAuthController } from './sso-auth.controller';
 import { SsoRateLimitGuard } from './sso-rate-limit.guard';
 import { SsoProvidersService } from './sso-providers.service';
 import { OIDC_CLIENT, SsoSignInService } from './sso-signin.service';
+import { SsoStaffAccessService } from './sso-staff-access.service';
 
 /** Single sign-on, the installation's side (docs/SSO.md): OpenID Connect relying party, providers, linking. */
 @Module({
   imports: [AuthModule, MailModule],
   controllers: [SsoAuthController, SsoAdminController],
-  providers: [{ provide: OIDC_CLIENT, useFactory: () => new OidcClient() }, SsoSignInService, SsoProvidersService, SsoRateLimitGuard],
+  providers: [{ provide: OIDC_CLIENT, useFactory: () => new OidcClient() }, SsoSignInService, SsoStaffAccessService, SsoProvidersService, SsoRateLimitGuard],
 })
 export class SsoModule {}

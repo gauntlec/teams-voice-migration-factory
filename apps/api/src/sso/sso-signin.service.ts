@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { FEDERATED_PASSWORD_HASH, platformDb, ssoNotifyAdminSignin, ssoSessionMaxHours } from '@tvmf/db';
+import { FEDERATED_PASSWORD_HASH, platformDb, ssoNotifyAdminSignin, ssoSessionMaxHours, sweepStaffAccess } from '@tvmf/db';
 import {
   OIDC_CALLBACK_PATH,
   ROLE_LABELS,
@@ -14,10 +14,11 @@ import {
 import { timingSafeEqual } from 'node:crypto';
 import { AuditService } from '../common/audit.service';
 import { APP_CONFIG, type AppConfig } from '../common/config';
-import { decryptSecret } from '../common/crypto';
+import { decryptSecret, sha256 } from '../common/crypto';
 import { InjectDb, type Db } from '../db/db.module';
 import { AuthService } from '../auth/auth.service';
 import { MailService } from '../mail/mail.service';
+import { SsoStaffAccessService } from './sso-staff-access.service';
 import { OidcClient, createPkce, randomToken, type OidcClientRegistration } from './oidc/oidc-client';
 import { OidcError } from './oidc/oidc-error';
 import type { VerifiedIdToken } from './oidc/id-token';
@@ -37,6 +38,8 @@ export type BeginResult = { ok: true; redirectUrl: string; stateCookie: string }
 export type CompleteResult =
   | { kind: 'session'; redirectTo: string; refreshCookieValue: string; refreshExpiresAt: Date }
   | { kind: 'refused'; error: SsoPublicError; /** Set when this was an administrator's "Test sign-in": the page to return to shows the result. */ testProviderId?: string }
+  /** A Voxshift staff sign-in that needs an administrator's approval (docs/SSO.md 4.3a): no session yet; the browser keeps `waitToken` and waits. */
+  | { kind: 'waiting'; waitToken: string }
   | { kind: 'tested'; providerId: string };
 
 type ProviderRow = Awaited<ReturnType<SsoSignInService['loadProvider']>> & object;
@@ -68,6 +71,7 @@ export class SsoSignInService {
     private readonly auth: AuthService,
     private readonly audit: AuditService,
     private readonly mail: MailService,
+    private readonly staffAccess: SsoStaffAccessService,
   ) {}
 
   loadProvider(id: string) {
@@ -184,18 +188,43 @@ export class SsoSignInService {
       if (!domains.includes(domain)) return this.refuse('domain_not_allowed', 'domain', a.meta, { provider: prov, subject: token.subject, email });
     }
 
+    // Voxshift staff on a hub account (anyone the hub does not say is the customer's own person) may be held to the installation's own rule (docs/SSO.md 4.3a).
+    const staffAccount = p.kind === 'hub' && accountKind !== 'customer';
+    if (staffAccount && p.staff_access === 'off') return this.refuse('staff_access_off', 'staff_off', a.meta, { provider: prov, subject: token.subject, email });
+
     const found = await this.findOrCreateUser(p, token, email, effective, accountKind, a.meta);
     if (found.kind === 'refused') return found;
     const user = found.user;
 
     const hours = await ssoSessionMaxHours(this.db);
-    const session = await this.auth.issueFederatedLogin(
-      user.id,
-      effective,
-      user.email,
-      { idp: p.id, amr: token.amr, absoluteExpiresAt: new Date(Date.now() + hours * 3_600_000) },
-      a.meta,
-    );
+    let sessionEnds = new Date(Date.now() + hours * 3_600_000);
+    let windowEnds: Date | null = null;
+    if (staffAccount && p.staff_access === 'needs_approval') {
+      windowEnds = await this.staffAccess.activeWindow(p.id, user.id);
+      if (!windowEnds) {
+        const waiting = await this.staffAccess.begin({
+          providerId: p.id,
+          userId: user.id,
+          subject: token.subject,
+          email: user.email,
+          displayName: token.name,
+          requestedRole: requested.role,
+          effectiveRole: effective,
+          amr: token.amr,
+          providerSessionId: token.sessionId,
+          returnTo: st.returnTo,
+          meta: a.meta,
+        });
+        return { kind: 'waiting', waitToken: waiting.waitToken };
+      }
+      // the time limit applies to the session cap too: the session ends with the window
+      if (windowEnds < sessionEnds) sessionEnds = windowEnds;
+    } else if (p.kind === 'hub') {
+      // no approved window limits this person (the customer's own people, or staff while the rule is "allowed")
+      await platformDb(this.db).updateTable('external_identities').set({ access_until: null }).where('provider_id', '=', p.id).where('subject', '=', token.subject).where('access_until', 'is not', null).execute();
+    }
+
+    const session = await this.auth.issueFederatedLogin(user.id, effective, user.email, { idp: p.id, amr: token.amr, absoluteExpiresAt: sessionEnds }, a.meta);
     await this.audit.platform('sso.login.success', {
       actor: { id: user.id, email: user.email, ip: a.meta.ip },
       targetType: 'sso_provider',
@@ -212,11 +241,63 @@ export class SsoSignInService {
         providerSessionId: token.sessionId,
         amr: token.amr,
         created: found.created,
+        ...(windowEnds ? { accessWindowEndsAt: windowEnds.toISOString() } : {}),
       },
     });
     if (effective === 'SUPER_ADMIN') await this.notifyAdministrators(p.name, user, token.sessionId, a.meta);
 
     return { kind: 'session', redirectTo: st.returnTo, refreshCookieValue: session.refreshCookieValue, refreshExpiresAt: session.refreshExpiresAt };
+  }
+
+
+  /**
+   * Step 3 for a Voxshift staff sign-in that was waiting for approval: the waiting page, holding the token from its cookie, asks for the session.
+   * It is given once, only for an approved request that is still inside its window, and only if everything that was true at sign-in still is:
+   * the provider is on and still set to "needs approval", the account is active and not a break-glass administrator, the identity is still linked.
+   * The role is worked out again from the ceiling as it is now; the session ends with the window.
+   */
+  async claimApproved(a: { waitToken?: string; meta: Meta }): Promise<{ kind: 'session'; redirectTo: string; refreshCookieValue: string; refreshExpiresAt: Date } | { kind: 'refused'; error: SsoPublicError }> {
+    const db = platformDb(this.db);
+    if (!a.waitToken) return this.refuse('access_no_wait_token', 'failed', a.meta);
+    await sweepStaffAccess(this.db);
+    // One statement: two clicks, or two browsers with the same cookie, give one session.
+    const req = await db
+      .updateTable('sso_access_requests')
+      .set({ claimed_at: new Date().toISOString() })
+      .where('wait_token_hash', '=', sha256(a.waitToken))
+      .where('status', '=', 'approved')
+      .where('claimed_at', 'is', null)
+      .where('window_ends_at', '>', new Date().toISOString())
+      .returning(['id', 'provider_id', 'user_id', 'subject', 'email', 'effective_role', 'amr', 'provider_session', 'window_ends_at', 'return_to'])
+      .executeTakeFirst();
+    if (!req) return this.refuse('access_not_approved', 'failed', a.meta);
+
+    const p = await this.loadProvider(req.provider_id);
+    const prov = p ? { id: p.id, name: p.name } : null;
+    const who = { provider: prov, subject: req.subject, email: req.email, userId: req.user_id };
+    if (!p || !p.enabled || p.staff_access !== 'needs_approval') return this.refuse('provider_off', 'provider_off', a.meta, who);
+    const identity = await db.selectFrom('external_identities').select(['id', 'account_kind']).where('provider_id', '=', p.id).where('subject', '=', req.subject).executeTakeFirst();
+    const user = await db.selectFrom('users').select(['id', 'email', 'status', 'break_glass']).where('id', '=', req.user_id).executeTakeFirst();
+    if (!identity || !user || identity.account_kind === 'customer') return this.refuse('access_identity_gone', 'failed', a.meta, who);
+    if (user.status !== 'active') return this.refuse('user_disabled', 'disabled', a.meta, who);
+    if (user.break_glass) return this.refuse('break_glass_local_only', 'local_only', a.meta, who);
+
+    const ceiling = ceilingForIdentity(p, identity.account_kind);
+    const effective = capRole(req.effective_role as Role, ceiling);
+    await db.updateTable('users').set({ role: effective, updated_at: new Date().toISOString() }).where('id', '=', user.id).execute();
+    const windowEnds = new Date(req.window_ends_at!);
+    await db.updateTable('external_identities').set({ access_until: windowEnds.toISOString(), last_login_at: new Date().toISOString() }).where('id', '=', identity.id).execute();
+    const hours = await ssoSessionMaxHours(this.db);
+    const ends = new Date(Math.min(Date.now() + hours * 3_600_000, windowEnds.getTime()));
+    const session = await this.auth.issueFederatedLogin(user.id, effective, user.email, { idp: p.id, amr: req.amr, absoluteExpiresAt: ends }, a.meta);
+    await this.audit.platform('sso.login.success', {
+      actor: { id: user.id, email: user.email, ip: a.meta.ip },
+      targetType: 'sso_provider',
+      targetId: p.id,
+      detail: { provider: p.name, subject: req.subject, email: user.email, role: effective, ceiling, accountKind: identity.account_kind, providerSessionId: req.provider_session, amr: req.amr, accessRequestId: req.id, accessWindowEndsAt: windowEnds.toISOString() },
+    });
+    if (effective === 'SUPER_ADMIN') await this.notifyAdministrators(p.name, user, req.provider_session, a.meta);
+    return { kind: 'session', redirectTo: safeReturnTo(req.return_to), refreshCookieValue: session.refreshCookieValue, refreshExpiresAt: session.refreshExpiresAt };
   }
 
   /** The email the provider vouches for. Entra ID often sends the sign-in name (`preferred_username`) rather than `email`. */
