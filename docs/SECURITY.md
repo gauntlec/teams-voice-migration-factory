@@ -9,8 +9,10 @@
 2. **No data is shared between customers.** Schema-per-tenant + a single
    resolution point for the target schema per request (see below).
 3. **Every change made to any customer tenant is audited** — one row per cmdlet
-   in that tenant's `deployment_changes`, immutable (append-only; no UPDATE/DELETE
-   grants for the app role).
+   in that tenant's `deployment_changes`, append-only. Today that is enforced by the
+   application (no code path updates or deletes those rows), **not** by database
+   permissions: the app connects as the database owner, which can change any table
+   (see "Database access" below).
 
 ## Tenant isolation
 
@@ -47,7 +49,10 @@
   held in memory by the SPA; rotating refresh token in an `HttpOnly`, `Secure`,
   `SameSite=Lax` cookie, one row per session in `auth_sessions` so it can be
   revoked. Refresh rotates the token and detects reuse (revoke the family).
-- Lockout: 10 failed attempts in 15 min locks the account for 15 min. Password
+- Lockout: 10 failed attempts lock the account for 15 min. The count is cumulative,
+  not a rolling window: it is only reset by a sign-in that fully succeeds, so ten
+  failures spread over days still lock the account, and after the 15 minutes
+  are up the very next failure locks it again for another 15. Password
   and TOTP failures share one counter - a bad TOTP counts the same as a bad
   password, so a stolen/reused password alone cannot be used to grind MFA
   (`AuthService.login`/`confirmTotpEnrol`, `apps/api/src/auth/auth.service.ts`).
@@ -93,10 +98,20 @@ with the hub are in [SSO.md](SSO.md); this is what protects it. Code: `apps/api/
 
 ## Secrets & crypto
 
-- `DATA_ENCRYPTION_KEY` (AES-256-GCM) encrypts *queued job payloads only* while
-  they sit in Redis (they can contain UPNs and phone numbers, not credentials). It also
-  encrypts the stored secrets: TOTP secrets, the SMTP password, the hub instance token,
-  and single sign-on client secrets.
+- `DATA_ENCRYPTION_KEY` (AES-256-GCM) encrypts, in the database, the secrets the
+  application has to read back later: **TOTP secrets**, the **SMTP password**, the
+  **hub instance token**, **single sign-on client secrets**, **assistant webhook
+  secrets** and **MSP Microsoft Teams webhook URLs**
+  (`apps/api/src/common/crypto.ts`; the worker has the matching decrypt). Each value
+  is encrypted before it is written and never returned by the API.
+  It does **not** encrypt anything else: queued Redis job payloads (which can hold
+  UPNs, display names and phone numbers, never credentials) and all ordinary
+  business data in Postgres are stored as they are. There is no application-level
+  encryption at rest beyond the list above; protect the disks, volumes and backups
+  of the host (disk encryption) for the rest. Without the key the listed secrets
+  cannot be read: back up `.env` with every database backup, and note that
+  changing the key makes them unreadable (people re-enrol TOTP, the SMTP password,
+  hub token, SSO secrets and webhooks are entered again).
 - All secrets come from env / Docker secrets. `.env` is git-ignored;
   `.env.example` documents every key.
 
@@ -106,12 +121,36 @@ with the hub are in [SSO.md](SSO.md); this is what protects it. Code: `apps/api/
   only custom request header accepted.
 - In production terminate TLS at a reverse proxy in front of `web`; set
   `COOKIE_SECURE=true`.
-- `trust proxy` is a fixed hop count (2: OpenResty, then web's nginx -
+- `trust proxy` is a fixed hop count (2: the outer reverse proxy, then web's nginx -
+  Caddy with the Linux installer, OpenResty on the hosted service;
   `apps/api/src/main.ts`), not `true` (trust everything). The `api` container
   has no published host port in `deploy/dockge/compose.yaml` - it's reached
   only through that proxy chain, so `req.ip` can't be spoofed via a direct
   connection forging `X-Forwarded-For`, and audit-log IPs / login lockout stay
   trustworthy.
+- **Database access.** The api, worker and migrations all connect with one
+  Postgres account (`tvmf`, from `DATABASE_URL`), which is the image's bootstrap
+  superuser/owner. It owns every schema and table, so database permissions do not
+  stop an UPDATE or DELETE on the audit tables (`platform.platform_audit_log`,
+  `deployment_changes`, a tenant's `audit_log`): they are append-only because no
+  application code does either, and nothing else is reachable without that
+  database password. Postgres is not published on the host in the installer's compose or `deploy/dockge/compose.yaml` (compose network only); the development `docker-compose.yml` at the repo root does publish 5432, for developers.
+  A separate low-privilege runtime role is not built.
+- **Outbound traffic that carries customer data.** Besides the hub, the mail
+  server, an identity provider and Microsoft (Teams PowerShell, Graph), two
+  OpenStreetMap services are used. (1) When an engineer clicks *Get coordinates
+  from address* on a site, the API sends that **street address** over https to
+  OpenStreetMap's Nominatim geocoder (`nominatim.openstreetmap.org`,
+  `apps/api/src/modules/data-collection/geocode.service.ts`), with a generic
+  User-Agent and no customer or user name, at most one request a second, results
+  cached in API memory only (up to 500, lost on restart). Nothing is sent unless
+  someone clicks; there is no setting to switch it off, and no outbound HTTP-proxy
+  support, so the API host needs direct outbound https to reach it. An installation
+  that must not send addresses out should block that host (the button then says no
+  coordinates were found and they can be typed in). (2) The site map in the
+  *browser* loads map tiles from `*.tile.openstreetmap.org` (the CSP allows
+  exactly that); the tile numbers reveal roughly where the map is looking, never an
+  address.
 - Adminer (`deploy/dockge/compose.yaml`) is a full unauthenticated DB browser
   and does not start by default (`profiles: ["debug"]`) - bring it up
   deliberately from the host when needed, take it back down after.
@@ -225,7 +264,7 @@ with the hub are in [SSO.md](SSO.md); this is what protects it. Code: `apps/api/
   requested between sentinel markers; stderr is discarded; raw output is never
   logged. The `connections` table has no token columns by design.
 - Sessions end on `Disconnect-MicrosoftTeams` + process exit: after
-  `TEAMS_SESSION_TTL_MINUTES` idle (default 60), on worker restart (every
+  `TEAMS_SESSION_TTL_MINUTES` idle (default 240, in code and in the installer), on worker restart (every
   release - check *Administration → Release check* first, see
   [`ARCHITECTURE.md`](ARCHITECTURE.md#operations-releasing-safely)), or on any
   sign-in error. The row is marked `expired`; a new run needs a fresh sign-in.

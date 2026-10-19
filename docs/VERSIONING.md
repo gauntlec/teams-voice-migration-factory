@@ -25,4 +25,6 @@ A hand-built image (no CI) reports `dev`.
 
 ## Pinning and rolling back
 
-The compose files use `:latest`. To pin a host to a release, or go back to one, change the image tags to that number (for example `tvmf-api:2026.10.2`, and the same for `tvmf-worker` and `tvmf-web`) and Deploy. Database migrations only move forward, so rolling back across a release that added a migration is not supported without a backup restore.
+The compose files use `:latest`. To pin a host to a release, or go back to one, change the image tags to that number (for example `tvmf-api:2026.10.2`, and the same for `tvmf-worker` and `tvmf-web`) and Deploy.
+
+On a host set up by the Linux installer ([INSTALL-LINUX.md](INSTALL-LINUX.md)) the tag is one setting, `IMAGE_TAG` in `/opt/voxshift/.env` (all three images use it). It accepts `latest` (the default), a release number such as `2026.10.2`, or `sha-<commit>`; install with `--version 2026.10.2`, or edit `IMAGE_TAG` and run `voxshift update`. A pinned host (anything but `latest`) is skipped by the automatic update, and `voxshift auto-update on` refuses until `IMAGE_TAG=latest` is set again. Database migrations only move forward, so rolling back across a release that added a migration is not supported without a backup restore.

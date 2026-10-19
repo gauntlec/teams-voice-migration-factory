@@ -30,7 +30,7 @@ so nothing is compiled on the Dockge host.
    the MicrosoftTeams module, ~1 GB) so Discovery can drive the Teams PowerShell
    module. It builds slower than the others. Optional env: `TEAMS_EXECUTOR=pwsh`
    (default) or `simulated` (fake data, no Microsoft calls), and
-   `TEAMS_SESSION_TTL_MINUTES=60`. Running a Discovery needs an engineer with a
+   `TEAMS_SESSION_TTL_MINUTES=240` (the default). Running a Discovery needs an engineer with a
    **Teams Administrator** account in the customer tenant — they sign in with a
    device code each time; nothing is stored. See [`docs/DISCOVERY.md`](../../docs/DISCOVERY.md).
 

@@ -101,7 +101,7 @@ services:
     # Not published on the host: web's nginx reaches this over the compose
     # network by service name (apps/web/nginx.conf), so nothing legitimate
     # needs the host port - and leaving it open lets anyone who can reach it
-    # bypass OpenResty + web's nginx entirely, forge X-Forwarded-For, and have
+    # bypass the outer proxy + web's nginx entirely, forge X-Forwarded-For, and have
     # main.ts's `trust proxy` setting believe it (see docs/SECURITY.md).
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]

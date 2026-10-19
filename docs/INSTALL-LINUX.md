@@ -10,7 +10,7 @@ Used for a customer-premises install or any new host. The hosted service is run 
 |---|---|
 | Host | Linux on **x86-64** (the images are not built for ARM). Debian, Ubuntu, RHEL, Rocky, Alma, CentOS or Fedora get Docker installed for you; any other Linux needs Docker Engine and the compose plugin installed first. |
 | Size | 4 GB RAM or more, 10 GB free disk, 2 CPUs. |
-| Network | Outbound HTTPS to `ghcr.io` (the images) and to Docker's package sites. Inbound 80 and 443 from the people who will use it. If you will use the Voxshift Hub or single sign-on (optional, below): outbound HTTPS to `hub.voxshift.io`, and to your identity provider (for example `login.microsoftonline.com`) if you add one. |
+| Network | Outbound HTTPS to `ghcr.io` (the images) and to Docker's package sites. Inbound 80 and 443 from the people who will use it. If you will use the Voxshift Hub or single sign-on (optional, below): outbound HTTPS to `hub.voxshift.io`, and to your identity provider (for example `login.microsoftonline.com`) if you add one. The API also sends a site's street address to `nominatim.openstreetmap.org` (OpenStreetMap geocoding) when an engineer clicks *Get coordinates from address*, and people's browsers load map tiles from `*.tile.openstreetmap.org`; block those hosts if addresses must not leave, and enter coordinates by hand (see [SECURITY.md](SECURITY.md)). |
 | A name | The address people will type, e.g. `https://voice.contoso.com`, with DNS pointing at the host. An IP address works too. |
 | Root | Run with `sudo`. |
 
@@ -58,7 +58,7 @@ cannot be taken back quickly), so they are not offered.
 
 ### Other options
 
-`--admin-password`, `--acme-email`, `--hsts-max-age`, `--dir`, `--version latest|sha-<commit>`, the SMTP set (`--smtp-host --smtp-port --smtp-secure
+`--admin-password`, `--acme-email`, `--hsts-max-age`, `--dir`, `--version latest|<yyyy.mm.N>|sha-<commit>` (for example `--version 2026.10.3`), the SMTP set (`--smtp-host --smtp-port --smtp-secure
 --smtp-user --smtp-pass --mail-from`), `--no-docker-install`, `--open-firewall` (opens 80/443 in ufw or firewalld if active),
 `--generate-only` (write the files and stop, to review), `--auto-update [daily|weekly]` / `--no-auto-update` (see below), `--refresh-command` (on an existing install: rewrite only the `voxshift` command) and `-y`. `bash install.sh --help` lists them.
 
@@ -123,7 +123,7 @@ pull at once. The job:
 - when there is a new version: takes a backup (`voxshift backup`, last 14 kept), restarts on the new images, waits until the
   application answers, then removes the old images. If the backup fails it does **not** update; if the application does not answer
   afterwards it says so in the log and leaves the backup from just before for you to restore;
-- never runs twice at once, and skips itself when `IMAGE_TAG` in `.env` is an exact release (`sha-...`), because there is
+- never runs twice at once, and skips itself when `IMAGE_TAG` in `.env` is an exact release (`2026.10.3` or `sha-...`), because there is
   nothing newer to fetch;
 - writes one line per step to `/var/log/voxshift-update.log` (rotated monthly, six kept).
 

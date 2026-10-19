@@ -66,7 +66,7 @@ Common:
                          sent for --tls none. Deliberately without includeSubDomains and preload: those would also bind every
                          other site on the same domain.
   --dir PATH             Install directory (default $DIR)
-  --version TAG          Image tag: latest (default) or sha-<commit>
+  --version TAG          Image tag: latest (default), a release such as 2026.10.3 (yyyy.mm.N), or sha-<commit>
 
 Email (optional; can be set later in $DIR/.env, and switched off in Administration > Platform settings):
   --smtp-host H --smtp-port P --smtp-secure true|false --smtp-user U --smtp-pass PW --mail-from ADDR

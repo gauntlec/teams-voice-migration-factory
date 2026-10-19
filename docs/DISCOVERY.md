@@ -30,7 +30,7 @@ Voxshift so Data Collection, Design & Build and Deployment can reference reality
    nothing, because part of its data was never seen. Only a lost sign-in fails
    the run; anything else that throws marks the run `failed` rather than
    leaving it `running` (which would block new runs until the worker restarted).
-5. Sessions expire after `TEAMS_SESSION_TTL_MINUTES` idle (default 60) or when the
+5. Sessions expire after `TEAMS_SESSION_TTL_MINUTES` idle (default 240) or when the
    worker restarts — tokens only ever live inside the pwsh process.
 
 ### Who may use a session

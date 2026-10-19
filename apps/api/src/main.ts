@@ -12,7 +12,7 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: false });
 
   // Exactly two reverse-proxy hops sit in front of this process in every
-  // deployment: the outer OpenResty (terminates public TLS) and the web
+  // deployment: the outer reverse proxy (Caddy from the installer, OpenResty on the hosted service; terminates public TLS) and the web
   // container's nginx (proxies /api/ -> api:4000, apps/web/nginx.conf). Each
   // appends to X-Forwarded-For, so the real client is the header's 3rd entry
   // from the right. `true` (trust every hop, unbounded) lets anyone who can

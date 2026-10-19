@@ -24,7 +24,7 @@ RUN mkdir -p apps/worker/node_modules
 # PowerShell 7 + the MicrosoftTeams module (Discovery and deployments drive
 # it over an engineer's device-code sign-in) + Microsoft.Graph.Authentication
 # (an optional second, read-only device-code sign-in for M365 group lookup),
-# plus Node 20 for the worker itself. TEAMS_EXECUTOR=simulated skips pwsh entirely.
+# plus Node 26 for the worker itself. TEAMS_EXECUTOR=simulated skips pwsh entirely.
 FROM mcr.microsoft.com/powershell:7.4-debian-12 AS runtime
 ENV NODE_ENV=production \
     POWERSHELL_TELEMETRY_OPTOUT=1 \

@@ -78,7 +78,7 @@ the worker renders a branded template and sends it via SMTP. See
    **device-code** flow and returns the `user_code` + verification URL.
 3. Engineer completes sign-in in their own browser against the customer tenant.
 4. The resulting access/refresh tokens live **only in worker process memory**
-   for the life of the connection (hard TTL, default 60 min) and are wiped on
+   for the life of the connection (idle timeout, default 240 min, `TEAMS_SESSION_TTL_MINUTES`) and are wiped on
    completion, timeout, or worker restart. They are never written to Postgres,
    Redis, or logs.
 5. Every cmdlet the worker runs is written to the tenant's `deployment_changes`
