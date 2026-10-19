@@ -278,6 +278,18 @@ export function AppShell({ children }: { children: ReactNode }) {
     refetchInterval: 5 * 60_000,
   });
 
+  // Which release is running (written at image build, served by the web container); shown at the foot of the account menu.
+  const release = useQuery({
+    queryKey: ['release'],
+    queryFn: async () => {
+      const r = await fetch('/version.json', { cache: 'no-store' });
+      if (!r.ok) throw new Error('no version');
+      return (await r.json()) as { version?: string };
+    },
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+
   if (!me) return null;
 
   const activeTenant = tenants.find((t) => t.id === activeTenantId) ?? tenants[0];
@@ -417,6 +429,12 @@ export function AppShell({ children }: { children: ReactNode }) {
                 </MenuGroup>
                 <MenuDivider />
                 <MenuItem onClick={() => void logout()}>Sign out</MenuItem>
+                {release.data?.version && (
+                  <>
+                    <MenuDivider />
+                    <MenuItem disabled>Voxshift {release.data.version}</MenuItem>
+                  </>
+                )}
               </MenuList>
             </MenuPopover>
           </Menu>
