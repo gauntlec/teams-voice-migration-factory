@@ -135,6 +135,8 @@ export interface AppSettingsTable {
   mail_from: ColumnType<string | null, string | null | undefined, string | null>;
   mail_from_name: ColumnType<string | null, string | null | undefined, string | null>;
   hub_mail_relay: ColumnType<boolean | null, boolean | null | undefined, boolean | null>;
+  /** The highest revocation line from the hub that has been applied (0032_sso_revocation.sql); bigint, so it comes back as a string. */
+  hub_sso_revocation_ack: ColumnType<string, string | number | undefined, string | number>;
   /** Optional areas switched off for this installation (0030_disabled_features.sql). Empty = all on. */
   disabled_features: ColumnType<string[], string[] | undefined, string[]>;
   /** How long a federated (single sign-on) session lasts before the person signs in at the provider again, in hours (0031_sso.sql). */
@@ -288,6 +290,8 @@ export interface ExternalIdentitiesTable {
   account_kind: ColumnType<string | null, string | null | undefined, string | null>;
   created_at: Ts;
   last_login_at: ColumnType<string | null, string | null | undefined, string | null>;
+  /** Sign-ins through this identity that began before this moment are over, whatever access token they hold (0032_sso_revocation.sql). */
+  revoked_before: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** A sign-in refused because a local account with that email exists: offered to an administrator to link on purpose. */

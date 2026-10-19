@@ -40,6 +40,12 @@ describe('the heartbeat body', () => {
     expect(buildHubHeartbeat({ ...base, sso: false })).toMatchObject({ sso: false });
   });
 
+  it('carries the revocation acknowledgement only when it is a whole number (0 included), so an older hub can be sent the report without it', () => {
+    expect(buildHubHeartbeat({ ...base, ssoRevocationsAck: 0 })).toMatchObject({ ssoRevocationsAck: 0 });
+    expect(buildHubHeartbeat({ ...base, ssoRevocationsAck: 41 })).toMatchObject({ ssoRevocationsAck: 41 });
+    for (const bad of [undefined, null, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) expect(buildHubHeartbeat({ ...base, ssoRevocationsAck: bad })).not.toHaveProperty('ssoRevocationsAck');
+  });
+
   it('leaves `sso` out when it is not known, so an old or unmigrated installation never claims false', () => {
     for (const unknown of [undefined, null]) {
       const body = buildHubHeartbeat({ ...base, sso: unknown });

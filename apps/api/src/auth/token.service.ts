@@ -20,6 +20,8 @@ export interface AccessPayload {
   idp?: string;
   /** The authentication methods the provider reported. */
   amr?: string[];
+  /** When the token was issued, in seconds (added by the signer). */
+  iat?: number;
 }
 
 /** What a federated session carries from its first sign-in through every refresh. */

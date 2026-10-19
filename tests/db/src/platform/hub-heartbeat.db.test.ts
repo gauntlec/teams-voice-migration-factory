@@ -59,7 +59,8 @@ describe('hub connection', () => {
     expect(calls[0]!.url).toBe('https://hub.voxshift.io/api/v1/heartbeat');
     expect(calls[0]!.headers.Authorization).toBe(`Bearer ${TOKEN}`);
     // the whole of what leaves this installation:
-    expect(Object.keys(calls[0]!.body).sort()).toEqual(['health', 'remoteAccess', 'sso', 'uptimeSeconds', 'version']);
+    expect(Object.keys(calls[0]!.body).sort()).toEqual(['health', 'remoteAccess', 'sso', 'ssoRevocationsAck', 'uptimeSeconds', 'version']);
+    expect(calls[0]!.body.ssoRevocationsAck).toBe(0); // nothing from the hub applied yet (a number, never a person)
     expect(calls[0]!.body.sso).toBe(false); // no hub sign-in provider record here
     expect(calls[0]!.body.version).toBe(hubVersion());
     expect(calls[0]!.body.health).toBe('ok');

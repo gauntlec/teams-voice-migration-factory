@@ -46,6 +46,8 @@ export async function syncHubProvider(db: Kysely<DB>, hubUrl: string, token: str
     await p.deleteFrom('external_identities').where('provider_id', '=', existing.id).execute();
     await p.deleteFrom('sso_link_requests').where('provider_id', '=', existing.id).execute();
     await p.updateTable('auth_sessions').set({ revoked_at: new Date().toISOString() }).where('idp', '=', existing.id).where('revoked_at', 'is', null).execute();
+    // The other hub numbers its revocation lines from the start: what was acknowledged to the old one means nothing to it.
+    await p.updateTable('app_settings').set({ hub_sso_revocation_ack: 0 }).where('id', '=', true).execute();
   }
   await audit.platform('sso.provider.changed', {
     actor: { id: userId },

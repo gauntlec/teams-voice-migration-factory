@@ -39,17 +39,61 @@ export interface HubHeartbeat {
    * offers one-click sign-in to installations that have it. Left out when the installation cannot tell (never `false` by guess).
    */
   sso?: boolean;
+  /**
+   * The highest revocation line from the hub applied so far (docs/SSO.md 5.3). Sending it tells the hub this installation understands
+   * revocations, and the hub's reply then carries `ssoRevocations`. Left out when there is no hub sign-in provider here, and when the hub
+   * is an older release that refuses fields it does not know.
+   */
+  ssoRevocationsAck?: number;
 }
 
-/** The heartbeat body. `sso` is included only when it is known; every other field is always sent, and nothing else ever is. */
-export function buildHubHeartbeat(f: { version: string; uptimeSeconds: number; remoteAccess: boolean; sso?: boolean | null }): HubHeartbeat {
+/** The heartbeat body. `sso` and `ssoRevocationsAck` are included only when known; every other field is always sent, and nothing else ever is. */
+export function buildHubHeartbeat(f: { version: string; uptimeSeconds: number; remoteAccess: boolean; sso?: boolean | null; ssoRevocationsAck?: number | null }): HubHeartbeat {
   return {
     version: f.version,
     health: 'ok',
     uptimeSeconds: f.uptimeSeconds,
     remoteAccess: f.remoteAccess,
     ...(typeof f.sso === 'boolean' ? { sso: f.sso } : {}),
+    ...(typeof f.ssoRevocationsAck === 'number' && Number.isSafeInteger(f.ssoRevocationsAck) && f.ssoRevocationsAck >= 0 ? { ssoRevocationsAck: f.ssoRevocationsAck } : {}),
   };
+}
+
+/** Why the hub says a person's access ended (docs/SSO.md 5.3). Anything else the hub may send later is treated as `sessions_revoked`: the safe reading. */
+export const HUB_REVOCATION_REASONS = ['grant_removed', 'user_disabled', 'sessions_revoked', 'role_changed'] as const;
+export type HubRevocationReason = (typeof HUB_REVOCATION_REASONS)[number];
+
+/** One line of the hub's revocation channel: sessions this person started here before `before` are over. */
+export interface HubRevocation {
+  /** Increasing; the highest applied is sent back as the acknowledgement. */
+  id: number;
+  /** The hub's user id for the person: the `sub` of their ID tokens. */
+  sub: string;
+  /** ISO time on the hub's clock. */
+  before: string;
+  reason: HubRevocationReason;
+}
+
+/**
+ * Reads `ssoRevocations` from the hub's heartbeat reply. A reply without it (an older hub, or no acknowledgement asked) is an empty list. A line
+ * that is not well formed is dropped rather than failing the others, but never makes a later valid line unreachable: the caller acknowledges
+ * `maxId`, the highest id seen on any line that had one.
+ */
+export function parseHubRevocations(reply: unknown): { lines: HubRevocation[]; maxId: number } {
+  const raw = (reply as { ssoRevocations?: unknown } | null)?.ssoRevocations;
+  if (!Array.isArray(raw)) return { lines: [], maxId: 0 };
+  const lines: HubRevocation[] = [];
+  let maxId = 0;
+  for (const r of raw.slice(0, 1000)) {
+    const e = r as Partial<Record<keyof HubRevocation, unknown>> | null;
+    if (!e || typeof e.id !== 'number' || !Number.isSafeInteger(e.id) || e.id < 1) continue;
+    maxId = Math.max(maxId, e.id);
+    if (typeof e.sub !== 'string' || !e.sub || e.sub.length > 300) continue;
+    if (typeof e.before !== 'string' || Number.isNaN(Date.parse(e.before))) continue;
+    const reason = (HUB_REVOCATION_REASONS as readonly unknown[]).includes(e.reason) ? (e.reason as HubRevocationReason) : 'sessions_revoked';
+    lines.push({ id: e.id, sub: e.sub, before: e.before, reason });
+  }
+  return { lines, maxId };
 }
 
 /** The customer's switch for remote access through the hub. */

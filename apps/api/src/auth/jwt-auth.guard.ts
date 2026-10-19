@@ -42,6 +42,20 @@ export class JwtAuthGuard implements CanActivate {
       .executeTakeFirst();
     if (!user || user.status !== 'active') throw new UnauthorizedException('Account unavailable');
 
+    // A session that came through a single sign-on provider is only as good as the person's identity there. If the link has been removed, or the hub told
+    // this installation to end the sign-ins that began before a moment (docs/SSO.md 4.7), the access token stops working now, not at its next refresh.
+    if (payload.idp) {
+      const identity = await platformDb(this.db)
+        .selectFrom('external_identities')
+        .select('revoked_before')
+        .where('user_id', '=', user.id)
+        .where('provider_id', '=', payload.idp)
+        .executeTakeFirst();
+      // `iat` is whole seconds. A token issued in the very second of the cut-off is ended too: signing in again costs a moment, letting an ended session run for 15 minutes does not.
+      const olderThanCutoff = !!identity?.revoked_before && (payload.iat ?? 0) * 1000 <= new Date(identity.revoked_before).getTime();
+      if (!identity || olderThanCutoff) throw new UnauthorizedException('You have been signed out. Sign in again.');
+    }
+
     const enrolOnly = payload.typ === 'enrol';
     const pwresetOnly = payload.typ === 'pwreset';
     const allowEnrol = this.reflector.getAllAndOverride<boolean>(ALLOW_ENROL, [
