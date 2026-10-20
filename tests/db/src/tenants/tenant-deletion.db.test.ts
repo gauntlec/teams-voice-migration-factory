@@ -6,11 +6,13 @@ import { describe, expect, it } from 'vitest';
 import { migrateAllTenants } from '@tvmf/db';
 import { PLATFORM_TENANT_REFERENCES } from '../../../../apps/api/src/tenants/tenant-data-inventory';
 import { TenantGuard } from '../../../../apps/api/src/rbac/tenant.guard';
-import { useDb } from '../helpers';
+import { useDb, useGlobalAgentLock } from '../helpers';
 import { seedLocalUser } from '../sso/helpers';
 import { countWhere, exists, FakeQueue, makeDeletion, pdb, populateCustomer } from './deletion-helpers';
 
 const handle = useDb();
+// The populated customers get an assistant row, and assistants are shared by the whole platform: hold the same lock the agent tests use.
+useGlobalAgentLock(handle);
 const SUPER = { id: '', email: '' };
 const q = (text: string, params: unknown[] = []) => handle.pool.query(text, params);
 

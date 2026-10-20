@@ -151,7 +151,7 @@ export async function populateCustomer(handle: DbHandle, filesDir: string, name 
 
   // platform rows about the customer
   const msp = await q(handle, `insert into platform.msps (name, slug) values ($1, $2) returning id`, [`MSP ${randomUUID().slice(0, 4)}`, `msp-${randomUUID().slice(0, 8)}`]);
-  await q(handle, `insert into platform.msp_notifications (msp_id, tenant_id, kind, card) values ($1, $2, 'incident', '{"title":"secret card"}')`, [msp.rows[0].id, c.t.id]);
+  await q(handle, `insert into platform.msp_notifications (msp_id, tenant_id, kind, card, status, sent_at) values ($1, $2, 'incident', '{"title":"secret card"}', 'sent', now())`, [msp.rows[0].id, c.t.id]);
   await q(handle, `insert into platform.email_messages (to_email, template, context, tenant_id, status) values ($1, 'incident_opened', '{"title":"secret"}', $2, 'sent')`, [engineer.email, c.t.id]);
   await q(handle, `insert into platform.email_messages (to_email, template, context, status) values ($1, 'welcome', '{}', 'sent')`, [onlyHere[0].email]);
   await q(handle, `insert into platform.email_messages (to_email, template, context, status) values ($1, 'welcome', '{}', 'sent')`, [engineer.email]); // unrelated: stays
