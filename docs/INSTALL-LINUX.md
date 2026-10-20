@@ -166,9 +166,9 @@ head -1 certnew.cer
 cp certnew.cer server.crt
 
 # the chain: turn the .p7b into plain text
-openssl pkcs7 -in chain.p7b -print_certs | awk '/BEGIN CERTIFICATE/,/END CERTIFICATE/' > chain.pem
+openssl pkcs7 -in chain.p7b -print_certs | awk '/BEGIN CERT/,/END CERT/' > chain.pem
 # if that says "unable to load", use this instead:
-# openssl pkcs7 -inform DER -in chain.p7b -print_certs | awk '/BEGIN CERTIFICATE/,/END CERTIFICATE/' > chain.pem
+# openssl pkcs7 -inform DER -in chain.p7b -print_certs | awk '/BEGIN CERT/,/END CERT/' > chain.pem
 
 cat server.crt chain.pem > fullchain.pem
 ```
@@ -190,7 +190,7 @@ Replace `cert.pfx` with your file name. Each command asks for the password of th
 ```bash
 openssl pkcs12 -in cert.pfx -nocerts -nodes | openssl pkey -out server.key
 openssl pkcs12 -in cert.pfx -clcerts -nokeys | openssl x509 -out server.crt
-openssl pkcs12 -in cert.pfx -cacerts -nokeys -chain | awk '/BEGIN CERTIFICATE/,/END CERTIFICATE/' > chain.pem
+openssl pkcs12 -in cert.pfx -cacerts -nokeys -chain | awk '/BEGIN CERT/,/END CERT/' > chain.pem
 cat server.crt chain.pem > fullchain.pem
 ```
 
