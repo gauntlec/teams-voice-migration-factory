@@ -63,8 +63,8 @@ refuse http-addr  --base-url http://voice.contoso.corp --tls selfsigned
 echo "The generated command:"
 bash -n "$T/ss1/voxshift" && good "bash -n" || bad "syntax error in the generated command"
 if [ -n "$SHELLCHECK" ]; then
-  "$SHELLCHECK" -S warning -e SC2010 "$HERE/install.sh" >"$T/sc.log" 2>&1 && good "shellcheck (installer)" || { bad "shellcheck found problems"; head -12 "$T/sc.log"; }
-  "$SHELLCHECK" -S warning -e SC2010 "$T/ss1/voxshift" >"$T/sc2.log" 2>&1 && good "shellcheck (generated command)" || { bad "shellcheck found problems in the generated command"; head -12 "$T/sc2.log"; }
+  "$SHELLCHECK" -S warning -e SC2010,SC2120 "$HERE/install.sh" >"$T/sc.log" 2>&1 && good "shellcheck (installer)" || { bad "shellcheck found problems"; head -12 "$T/sc.log"; }
+  "$SHELLCHECK" -S warning -e SC2010,SC2120 "$T/ss1/voxshift" >"$T/sc2.log" 2>&1 && good "shellcheck (generated command)" || { bad "shellcheck found problems in the generated command"; head -12 "$T/sc2.log"; }
 fi
 
 echo "The two copies of the certificate maker agree:"

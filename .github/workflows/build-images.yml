@@ -11,11 +11,19 @@ on:
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
+      - 'deploy/install/check-*.sh'
+      - '.github/workflows/installer-checks.yml'
+      - '.github/workflows/codeql.yml'
+      - '.github/dependabot.yml'
   pull_request:
     branches: [main]
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
+      - 'deploy/install/check-*.sh'
+      - '.github/workflows/installer-checks.yml'
+      - '.github/workflows/codeql.yml'
+      - '.github/dependabot.yml'
   workflow_dispatch:
   # Weekly, unpinned worker-only build to a non-production :candidate tag -
   # surfaces a breaking MicrosoftTeams/Microsoft.Graph.Authentication
