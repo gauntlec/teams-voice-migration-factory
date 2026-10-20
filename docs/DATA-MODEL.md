@@ -7,11 +7,20 @@ Derived from the current artifacts:
 - `Teams-Migration-Build-*.ps1` — the cmdlets it runs (target state).
 - `Service Hand-Over Pack V1.18.docx` — the output document sections.
 
+## Deleting a customer
+
+Deleting a customer (Administration > Customers, Super Admin only; [SECURITY.md](SECURITY.md#deleting-a-customer)) removes the customer's schema `tenant_<id>` with
+`DROP SCHEMA ... CASCADE`, so every table in it goes without being listed. The `platform` tables are different: some rows must be removed by
+name. `apps/api/src/tenants/tenant-data-inventory.ts` lists every platform column that refers to a customer and how it is handled
+(`cascade`, `deleted`, `scrubbed`, `kept`). The test `tests/db/src/tenants/tenant-deletion.db.test.ts` reads the real foreign keys and column
+names from `information_schema` and **fails when a table or column appears that is not on that list**. **When you add a table or column
+that refers to a customer, add it to the list and make `TenantDeletionService` handle it.**
+
 ## `platform` schema
 
 | Table | Key columns |
 |-------|-------------|
-| `tenants` | id (uuid), slug, name, schema_name, status (`active`/`archived`), …, **`sandbox`** + `sandbox_email` (a test customer - its emails are redirected, see [`EMAIL.md`](EMAIL.md)), created_by, created_at |
+| `tenants` | id (uuid), slug, name, schema_name, status (`active`/`archived`/**`deleting`**: being deleted for good, hidden everywhere, migration `0036`), **`deletion_started_at`**, **`deletion_started_by`**, **`deletion_summary`** (the counts shown before the deletion was confirmed, numbers only), …, **`sandbox`** + `sandbox_email` (a test customer - its emails are redirected, see [`EMAIL.md`](EMAIL.md)), created_by, created_at |
 | `users` | id, email (citext, unique), password_hash, display_name, role (`SUPER_ADMIN`/`PROJECT_MANAGER`/`ENGINEER`/`CUSTOMER`), status (`active`/`disabled`), totp_enrolled, **`must_change_password`** (true until the forced first-sign-in reset), **`password_changed_at`**, failed_logins, locked_until, **`break_glass`** (a locally created Super Admin who keeps password + authenticator sign-in when a provider switches local passwords off; `password_hash` is `!federated` for an account that exists only through a single sign-on provider), created_at |
 | `tenant_memberships` | user_id, tenant_id, added_by, **`site_ids uuid[]`** (empty = whole customer; else the `discovery_sites.id` values a CUSTOMER "site contact" is limited to — no cross-schema FK, validated by the API), created_at  (PK user_id+tenant_id) |
 | `totp_secrets` | user_id (PK), secret_enc, confirmed_at |

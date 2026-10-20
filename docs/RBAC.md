@@ -8,7 +8,8 @@ the API guard and the web UI both import it so they can never drift.
 
 ### `SUPER_ADMIN`
 Complete control of the whole platform.
-- Manage tenants (create → provisions a schema, rename, archive, delete).
+- Manage tenants (create → provisions a schema, rename, archive). **Delete a customer and all of its data for good** (permission `tenant:delete`,
+  Super Admin only: needs the typed name and a fresh authenticator code, see [SECURITY.md](SECURITY.md#deleting-a-customer)).
 - Manage all users (create staff, assign roles, reset MFA, disable, delete).
   Delete is a hard delete (removes the account, its sessions, MFA and customer
   assignments); the API blocks deleting yourself or the last active super admin.
@@ -119,7 +120,8 @@ sso:manage
 
 | Permission | SUPER_ADMIN | PROJECT_MANAGER (assigned) | ENGINEER (assigned) | CUSTOMER (own tenant) |
 |---|:--:|:--:|:--:|:--:|
-| tenant:create / delete / archive | ✓ | | | |
+| tenant:create / archive | ✓ | | | |
+| **tenant:delete** (delete a customer and all its data, for good; also needs a fresh authenticator code) | ✓ | | | |
 | tenant:read | ✓ (all) | ✓ (assigned) | ✓ (assigned) | ✓ (own) |
 | tenant:update | ✓ | | | |
 | tenant:member:manage | ✓ | ✓ (CUSTOMER only, own) | ✓ (CUSTOMER only, own) | |

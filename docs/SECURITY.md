@@ -201,7 +201,8 @@ with the hub are in [SSO.md](SSO.md); this is what protects it. Code: `apps/api/
 
 ## Audit
 
-- `platform_audit_log`: auth events, user/tenant admin actions, membership
+- `platform_audit_log`: auth events, user/tenant admin actions (including deleting a
+  customer: `tenant.delete_started`, `tenant.deleted`, `tenant.delete_refused`), membership
   changes, connection start/stop. (This table, the tenant `audit_log` and
   `deployment_changes` are append-only at the database: see "Database access".)
 - tenant `audit_log`: module-level actions (discovery submitted, build row
@@ -210,9 +211,82 @@ with the hub are in [SSO.md](SSO.md); this is what protects it. Code: `apps/api/
   worker as it runs. Parameters are stored with a redaction pass
   (`password|secret|token|credential` keys → `***`).
 
+## Deleting a customer
+
+A Super Admin can delete a customer and **all** of its data for good: **Administration > Customers > Delete customer...** (route
+`POST /api/tenants/:id/delete`, permission `tenant:delete`, which only the Super Admin role holds: `docs/RBAC.md`). The server is the authority:
+every other role gets 403 whatever the page shows. This closes the earlier gap "no in-app per-customer erase". Code:
+`apps/api/src/tenants/tenant-deletion.service.ts`; the list of everything that refers to a customer:
+`apps/api/src/tenants/tenant-data-inventory.ts`.
+
+**It is deliberate, not accidental.** The dialog shows the customer's name and real counts (sites, stored files and their size, incidents,
+service requests, Discovery runs, deployments, number porting requests, email log entries, the people who will be deleted and the people
+who only lose access). It says the deletion cannot be undone and that backups already taken still hold the data. It needs (1) the
+customer's exact name typed and (2) a **current 6-digit code from the Super Admin's own authenticator app**, checked again at that moment
+(`AuthService.requireFreshMfa`; a wrong code counts towards the same lock-out as signing in, so it cannot be used to guess codes). A Super
+Admin who signed in through single sign-on and has no authenticator on the account is told to set one up first. Refused attempts (wrong name,
+wrong code, busy) are written to the audit log as `tenant.delete_refused` with a reason, never with what was typed.
+
+**It is refused, with a plain message, while work cannot be cut off safely**: a deployment that is running or waiting to run, or a Discovery
+run that is running or waiting to run. Wait for it to finish and try again (there is no cancel button for these runs). An open Microsoft
+Teams sign-in that is not running anything is not a reason to refuse: it is closed as part of the deletion.
+
+**What happens, in this order** (each step can be run again if one fails; the Customers page then shows the customer under "Deletion not
+finished" with a **Finish deleting** button, and the same dialog finishes the job):
+
+1. The customer is marked `deleting` (platform migration `0036`). From this moment it is hidden from every list, nobody can open it (the
+   tenant guard answers "not found"), the start-up migration skips it (it would otherwise create the dropped schema again) and the worker's
+   sweeps and jobs skip it. The counts shown in the dialog are saved on the row (numbers only).
+2. The people who will be deleted are disabled and their sign-in sessions revoked, so their access stops at once (every request re-reads the
+   account).
+3. The queue is cleared of this customer's jobs (waiting, delayed, finished and failed ones; the mail jobs for the email rows that go). The
+   worker is asked to close the customer's Microsoft Teams sign-ins (they live only in the worker's memory) and refuses any later job for the
+   customer. If the worker does not answer, nothing is deleted and the Super Admin is told to check the worker and try again.
+4. The customer's files are deleted from disk (`<files folder>/<schema>/...` and the logo under `branding/<customer id>/`).
+5. The customer's whole database schema is dropped (`DROP SCHEMA ... CASCADE`). The append-only triggers on the customer's own audit tables
+   refuse row changes but do not stop a schema being dropped (tested).
+6. In **one database transaction**: the platform rows are removed, the audit entry is written, and the customer row is deleted last.
+
+**What is deleted**: the customer's database schema (sites, discovered Microsoft Teams data, design, deployments, handover, incidents,
+service requests, files index, its own audit log); the files and logo on disk; its memberships, assistant permissions and events, monitoring
+sources, reply tokens, invitations, MSP Teams notifications; **customer-role people who belong only to this customer** (their account,
+sessions, authenticator, single sign-on links, memberships, and invitations to their address).
+**Never deleted**: Super Admins, project managers, engineers and any person who also belongs to another customer. They only lose their
+membership of this customer.
+
+**The email log.** Rows of `platform.email_messages` that are about the customer (`tenant_id`) or were sent to a person deleted with it are
+**deleted** (not scrubbed), because they hold names, addresses and the incident or request text in `context`. The same goes for
+`inbound_email_log` rows. Unrelated mail to staff stays. A bug report's "affected customer" field is emptied when it holds exactly the
+customer's name; free text inside a report is not searched.
+
+**The audit entry.** One `tenant.deleted` row in `platform_audit_log` records who deleted (id, email, address), when, the customer's id and
+name and slug, and **counts** of what was removed. It holds no customer content: no site names, people, ticket text, addresses or file
+names (tested). Two companion entries exist: `tenant.delete_started` (once, when the customer is marked) and `tenant.delete_refused`.
+
+**What can still hold something about the deleted customer** (be honest with the customer's security team):
+
+| Where | What | Why / what to do |
+|---|---|---|
+| Backups taken earlier (`voxshift backup`, off-host copies) | Everything, until the backup is deleted or expires | The deletion cannot reach them. Take a backup first if a copy may be needed; delete old backups to complete a legal erasure. |
+| The platform audit log | The customer's id, name and slug, the counts, who did what, and older entries that carry the customer's id (and, for example, the email of someone who signed in) | It is append-only by design. See "Erasure requests that cover the audit trail" below. |
+| Redis append-only file | Payloads of removed jobs, until Redis rewrites its file (`docker exec <redis> redis-cli BGREWRITEAOF` forces it) | Jobs hold ids, UPNs and names, never credentials. |
+| Postgres files and write-ahead log | Deleted platform rows stay in the table files until autovacuum reuses the space, and in any archived write-ahead log | The customer's own schema is dropped outright (its files are removed). |
+| Container logs | Anything the API or worker printed (capped at 3 x 10 MB per container) | They rotate out. |
+| Free text in platform boards | A bug or feature request that mentions the customer in its text | Not searched. Remove by hand if needed. |
+| Customers' own Microsoft 365 tenants | Nothing is stored there by Voxshift beyond what deployments changed | Not part of Voxshift. |
+| The Voxshift Hub | Nothing customer-specific: the heartbeat carries a version, a health word and two switches only | |
+
+**Erasure requests that cover the audit trail.** If a customer's legal request also covers the platform audit log, that is a **policy
+decision for the organisation, not something the application does**. The log is append-only on purpose, and it is how you can show who
+accessed or deleted what. The choices are to keep the minimal record (customer name, id, counts, actor) on the grounds of legitimate interest
+or a legal duty to keep security records, or to have a database administrator edit the rows by hand
+(`docs/DB-LEAST-PRIVILEGE.md` describes how, and says to record that action). Decide which applies before promising an erasure
+"including the audit trail", and put the decision in the customer contract.
+
 ## Known gaps in this scaffold (track as follow-ups)
 
 - No secret-manager integration yet (env only).
+- A customer's data can be deleted from the app ("Deleting a customer" above); the places it can still remain (backups, the audit log, Redis and Postgres files) are listed there.
 
 ## Worker PowerShell module version pinning
 
