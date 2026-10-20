@@ -153,8 +153,16 @@ export class HubTunnel {
     const method = String(f.method ?? '').toUpperCase();
     // Only plain paths on the installation's own web server: nothing the hub sends can name another host or scheme.
     if (!ALLOWED_METHODS.has(method) || typeof f.path !== 'string' || !f.path.startsWith('/') || f.path.startsWith('//')) return void fail('That request is not allowed.');
-    const headers: Record<string, string> = {};
-    for (const [k, v] of f.headers ?? []) headers[k.toLowerCase()] = headers[k.toLowerCase()] ? `${headers[k.toLowerCase()]}, ${v}` : v;
+    // Header names come from the hub: keep only valid header names (so "__proto__" and the like never become a property name) and build the
+    // list in a Map first.
+    const merged = new Map<string, string>();
+    for (const [k, v] of f.headers ?? []) {
+      const name = String(k).toLowerCase();
+      if (!/^[a-z0-9!#$%&'*+.^_`|~-]+$/.test(name)) continue;
+      const before = merged.get(name);
+      merged.set(name, before ? `${before}, ${v}` : String(v));
+    }
+    const headers: Record<string, string> = Object.fromEntries(merged);
     const req = http.request(
       { host: this.target.hostname, port: this.target.port || 80, method, path: f.path, headers },
       (res) => {

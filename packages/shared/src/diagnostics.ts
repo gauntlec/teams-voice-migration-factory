@@ -156,7 +156,8 @@ export interface DiagSuggestion {
 }
 
 const NUMBER_RE = /\+?\d[\d\s().-]{6,}\d/g;
-const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+// Lengths are bounded (RFC 5321: 64 before the @, 255 after) so text pasted into a request cannot make the match slow.
+const EMAIL_RE = /[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}/g;
 
 /** Digits only, with a leading + kept: the comparison form of a phone number. */
 export function diagNormaliseNumber(s: string): string {
@@ -247,7 +248,9 @@ const LIVE = new Set(['Enabled', 'Success', 'Active', 'Suspended']);
 export function diagHasTeamsPhoneLicence(plans: unknown[] | undefined, featureTypes: string[] | undefined): boolean | null {
   const list = Array.isArray(plans) ? (plans as Record<string, unknown>[]) : [];
   if (!list.length && !(featureTypes && featureTypes.length)) return null;
-  if (list.some((p) => /^MCOEV|TEAMSPHONE|MCOPSTN/i.test(String(p?.Capability ?? '')) && String(p?.CapabilityStatus ?? 'Enabled') !== 'Deleted')) return true;
+  // MCOEV must be the START of the capability name; TEAMSPHONE and MCOPSTN may appear anywhere in it.
+  const phoneCapability = (c: string) => /^MCOEV/i.test(c) || /TEAMSPHONE|MCOPSTN/i.test(c);
+  if (list.some((p) => phoneCapability(String(p?.Capability ?? '')) && String(p?.CapabilityStatus ?? 'Enabled') !== 'Deleted')) return true;
   return list.length ? false : null;
 }
 

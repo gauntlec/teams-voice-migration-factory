@@ -38,7 +38,10 @@ export async function webOrigin(db: Kysely<DB>, env: string | undefined = proces
   } catch {
     saved = null;
   }
-  return (saved ?? env ?? '').replace(/\/+$/, '');
+  let url = saved ?? env ?? '';
+  // Trailing slashes off. A loop, not /\/+$/: that pattern is quadratic on a long run of slashes.
+  while (url.endsWith('/')) url = url.slice(0, -1);
+  return url;
 }
 
 /** False when a Super Admin has switched email off. A failed read means "on", so a database blip never silences mail by itself. */

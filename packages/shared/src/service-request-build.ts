@@ -104,7 +104,8 @@ export type SrBuildMapping = { ok: true; draft: SrBuildDraft } | { ok: false; er
 
 /* ------------------------------ field readers ------------------------------ */
 
-const UPN_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// name@domain with at least one dot-separated label after the @ (no empty labels). Labels cannot contain a dot, so the match cannot backtrack badly.
+const UPN_RE = /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/;
 
 /** Plain text from a text answer or a picked { label } / { name } value. */
 function text(v: unknown): string {

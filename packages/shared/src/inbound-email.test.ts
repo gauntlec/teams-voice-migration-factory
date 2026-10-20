@@ -26,6 +26,17 @@ describe('addresses', () => {
     expect(emailOf('Cara <Cara@Contoso.com>')).toBe('cara@contoso.com');
     expect(emailOf(' a@b.c ')).toBe('a@b.c');
   });
+  it('takes the first <...> with something inside, as before', () => {
+    expect(emailOf('<>x <A@B.C>')).toBe('a@b.c');
+    expect(emailOf('<<a@b.c>')).toBe('<a@b.c');
+    expect(emailOf('no brackets <')).toBe('no brackets <');
+  });
+  it('stays fast on a long run of "<" (no quadratic regex)', () => {
+    const t = Date.now();
+    emailOf('<'.repeat(200_000));
+    emailOf('<>'.repeat(100_000));
+    expect(Date.now() - t).toBeLessThan(1000);
+  });
 });
 
 describe('auto replies', () => {

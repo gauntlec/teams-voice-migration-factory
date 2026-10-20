@@ -3,6 +3,7 @@ import {
   diagFinish,
   diagNormaliseNumber,
   diagOutcome,
+  diagHasTeamsPhoneLicence,
   diagSameNumber,
   diagSuggest,
   evalChanges,
@@ -207,5 +208,23 @@ describe('suggestions', () => {
   it('never suggests the same check twice', () => {
     const s = diagSuggest({ category: 'users', items: [{ kind: 'user', ref: 'a@x.com', label: null }], description: 'A@x.com again' });
     expect(s.filter((x) => x.runbook === 'user_voice')).toHaveLength(1);
+  });
+});
+
+describe('teams phone licence and pasted text', () => {
+  it('MCOEV must start the capability name; TEAMSPHONE and MCOPSTN may appear anywhere', () => {
+    const plan = (Capability: string) => [{ Capability, CapabilityStatus: 'Enabled' }];
+    expect(diagHasTeamsPhoneLicence(plan('MCOEV_VIRTUALUSER'), [])).toBe(true);
+    expect(diagHasTeamsPhoneLicence(plan('MCOPSTN1'), [])).toBe(true);
+    expect(diagHasTeamsPhoneLicence(plan('X_TEAMSPHONE_Y'), [])).toBe(true);
+    expect(diagHasTeamsPhoneLicence(plan('NOT_MCOEV'), [])).toBe(false);
+    expect(diagHasTeamsPhoneLicence([{ Capability: 'MCOEV', CapabilityStatus: 'Deleted' }], [])).toBe(false);
+  });
+  it('finds addresses in a description and stays fast on long junk', () => {
+    const found = diagSuggest({ category: 'calling', items: [], description: 'cannot call, user cara@contoso.com affected' });
+    expect(JSON.stringify(found)).toContain('cara@contoso.com');
+    const t = Date.now();
+    diagSuggest({ category: 'calling', items: [], description: '%'.repeat(100_000) + ' ' + 'a'.repeat(100_000) });
+    expect(Date.now() - t).toBeLessThan(2000);
   });
 });

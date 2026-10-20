@@ -17,8 +17,14 @@ export function inboundReplyAddress(base: string, token: string): string {
 
 /** The bare email address in "Name <a@b.c>" or "a@b.c". */
 export function emailOf(s: string): string {
-  const m = /<([^>]+)>/.exec(s);
-  return (m ? m[1]! : s).trim().toLowerCase();
+  // The text of the first <...> with something inside it. Walked by hand: the regex /<([^>]+)>/ is quadratic on a long run of "<".
+  let inner: string | null = null;
+  for (let i = s.indexOf('<'); i >= 0; i = s.indexOf('<', i + 1)) {
+    const j = s.indexOf('>', i + 1);
+    if (j < 0) break;
+    if (j > i + 1) { inner = s.slice(i + 1, j); break; }
+  }
+  return (inner ?? s).trim().toLowerCase();
 }
 
 export type InboundTarget = { kind: 'reply'; token: string } | { kind: 'raise'; hint: string | null } | null;
