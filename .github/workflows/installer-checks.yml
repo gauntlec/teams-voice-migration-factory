@@ -1,0 +1,25 @@
+# Runs the installer's own checks (they use stub tools, no Docker and no root) whenever the installer changes. A separate workflow on purpose:
+# it shows a red cross on a broken installer but never holds up a release (build-images.yml has its own gates).
+name: installer-checks
+
+on:
+  push:
+    branches: [main]
+    paths: ['deploy/install/**', '.github/workflows/installer-checks.yml']
+  pull_request:
+    paths: ['deploy/install/**', '.github/workflows/installer-checks.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the tools the checks use
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq age shellcheck
+      - run: bash deploy/install/check-render.sh
+      - run: bash deploy/install/check-certificate.sh
+      - run: bash deploy/install/check-selfupdate.sh
+      - run: bash deploy/install/check-backup.sh

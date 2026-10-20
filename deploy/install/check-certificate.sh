@@ -49,7 +49,7 @@ openssl x509 -in "$C" -noout -text | grep -q "TLS Web Server Authentication" && 
 openssl x509 -in "$C" -noout -text | grep -q "CA:FALSE" && good "not a certificate authority" || bad "must not be a CA"
 openssl x509 -in "$C" -noout -checkend $((399*86400)) >/dev/null && openssl x509 -in "$C" -noout -checkend $((402*86400)) >/dev/null 2>&1 && bad "lasts longer than 400 days" || good "lasts about the 400 days asked for"
 [ "$(openssl x509 -in "$C" -noout -pubkey | openssl sha256)" = "$(openssl pkey -in "$K" -pubout | openssl sha256)" ] && good "key matches the certificate" || bad "key does not match"
-[ "$(stat -f %Lp "$K" 2>/dev/null || stat -c %a "$K")" = 600 ] && good "key is mode 600" || bad "key must be mode 600"
+[ "$(stat -c %a "$K" 2>/dev/null || stat -f %Lp "$K")" = 600 ] && good "key is mode 600" || bad "key must be mode 600"
 grep -q '^	tls /certs/server.crt /certs/server.key$' "$T/ss1/Caddyfile" && [ "$(count 'Strict-Transport-Security' "$T/ss1/Caddyfile")" = 1 ] && good "Caddyfile uses the files and sends HSTS once" || bad "Caddyfile wrong"
 [ "$(count './certs:/certs:ro' "$T/ss1/compose.yaml")" = 1 ] && good "compose mounts the certificate folder once" || bad "compose mount wrong"
 render ssip --base-url https://10.1.2.3 --tls selfsigned && [ "$(san_of "$T/ssip/certs/server.crt")" = "IP Address:10.1.2.3" ] && good "an IP address gets an IP entry" || bad "IP certificate wrong"
