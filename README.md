@@ -9,7 +9,7 @@ Service Handover** — styled to feel like the Microsoft Teams Admin Center.
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — services, stack, why
 - [`docs/RBAC.md`](docs/RBAC.md) — the four roles and the permission matrix
-- [`docs/SECURITY.md`](docs/SECURITY.md) — tenant isolation, no stored credentials, audit
+- [`docs/SECURITY.md`](docs/SECURITY.md) — tenant isolation, no stored credentials, audit; **[`SECURITY.md`](SECURITY.md)** is the policy for reporting a vulnerability
 - [`docs/DATA-MODEL.md`](docs/DATA-MODEL.md) — tables, mapped to the current workbook
 - [`docs/EMAIL.md`](docs/EMAIL.md) — the queued email module + the invitation / first-sign-in flow
 - [`docs/SSO.md`](docs/SSO.md) — single sign-on (OpenID Connect): the design, the contract with the Voxshift Hub and what was built; **[`docs/SSO-ADMIN-GUIDE.md`](docs/SSO-ADMIN-GUIDE.md)** is the administrator's step-by-step guide and troubleshooting table

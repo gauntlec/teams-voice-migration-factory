@@ -366,3 +366,4 @@ voxshift start
   stand-in `docker`, and the first real restore should be tried on a test host before it is relied on. `bash deploy/install/check-backup.sh` runs that
   stand-in check, including the encryption round trip with the real `age` program (it needs `age` on the machine running it).
   `bash deploy/install/check-selfupdate.sh` does the same for `voxshift self-update` (a stand-in `curl` and `cosign`); the real signature check needs a published, signed release.
+- Found a security problem in Voxshift or its installer? Report it privately as described in [SECURITY.md](../SECURITY.md) (repository root); do not post it publicly.

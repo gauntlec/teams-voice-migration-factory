@@ -1,5 +1,9 @@
 # Security model
 
+> **Found a vulnerability?** Please report it privately, following [SECURITY.md](../SECURITY.md) in the repository root (GitHub private
+> report, or the security email address given there; the same details are served at `/.well-known/security.txt`). We acknowledge within
+> 3 working days and fix in the newest release.
+
 ## Non-negotiables (from the project brief)
 
 1. **No customer tenant credentials are ever stored.** Not in Postgres, not in
@@ -371,3 +375,5 @@ Reviewed 2026-10-16. What the images do, and what is still open:
   ```
 
   `voxshift self-update` does this itself: it takes `install.sh` from the newest release, requires it to match that release's `SHA256SUMS`, verifies the signature when `cosign` is installed (one-line notice when it is not), and changes nothing on a mismatch. It falls back to the old unchecked `main` address, with a visible warning, only when the newest release has no `SHA256SUMS` at all. What this proves and does not prove is written out in [INSTALL-LINUX.md](INSTALL-LINUX.md#installer-checks-and-pinning-a-release): in short, the file is the one this repository's workflow published and was not altered in transit; it does not prove the code has no mistakes. The program images are not cosign-signed (SBOM and build provenance are attached to each).
+
+- **Reporting a vulnerability (2026-10-20).** The policy is [SECURITY.md](../SECURITY.md) in the repository root (GitHub shows it as the repository's Security policy): how to report privately (GitHub private vulnerability reporting, or email), what to include, what we do (acknowledge within 3 working days, assess, fix in the newest release because there are no back-ports, credit on request), what is in and out of scope and a modest safe-harbour statement. The same contact is published as `/.well-known/security.txt` (RFC 9116) by every web container (`apps/web/public/.well-known/security.txt`; `apps/web/nginx.conf` serves it as `text/plain; charset=utf-8` with the usual security headers and a one-hour cache, never the app's HTML page; `.github/scripts/smoke-image.sh` checks that before an image is pushed). **The contact email address is kept in exactly one place, `deploy/security/SECURITY_CONTACT_EMAIL`.** Change it with `bash deploy/security/set-contact.sh <address>`, which updates SECURITY.md and security.txt; the `verify` job runs `set-contact.sh --check` and fails if they disagree. Until the real address is chosen both say `security-contact-to-be-confirmed`. The `Expires` line in security.txt is one year ahead (2027-10-20) and must be renewed before then; the image smoke test warns when it is within 30 days. GitHub's private vulnerability reporting is a repository setting that must be switched on (Settings > Code security) for the first reporting route to work.

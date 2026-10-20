@@ -72,6 +72,10 @@ jobs:
       # a number never freed, change history lost, a run stuck 'queued'.
       - run: npm run test:db
 
+      # SECURITY.md and /.well-known/security.txt must show the same contact address (it lives in deploy/security/SECURITY_CONTACT_EMAIL).
+      - name: Security contact is the same everywhere
+        run: bash deploy/security/set-contact.sh --check
+
   # The release number: yyyy.mm.N, N counting from 1 within the month (UTC), e.g. 2026.10.1, 2026.10.2, then 2026.11.1. Worked out ONCE here
   # (the three image builds run in parallel and must agree) from the existing v<yyyy.mm.N> tags. It is only TAGGED by `release` below, after
   # every image built, so a failed build never uses up a number. Docs-only pushes do not build (paths-ignore above) and so are not releases.

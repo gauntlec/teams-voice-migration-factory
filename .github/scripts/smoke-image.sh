@@ -45,6 +45,20 @@ case "$name" in
     done
     curl -fsSI http://127.0.0.1:8081/ | grep -i '^server:' | grep -q '[0-9]\.[0-9]' && fail "nginx announces its version"
     echo "security headers present on the app shell, assets and /version.json"
+    # The security contact (RFC 9116) is its own route: plain UTF-8 text with a Contact line, cached for an hour, and never the app's HTML page.
+    sec=$(curl -fsSi http://127.0.0.1:8081/.well-known/security.txt) || fail "GET /.well-known/security.txt failed"
+    echo "$sec" | grep -qi '^content-type: text/plain; charset=utf-8' || fail "/.well-known/security.txt is not served as text/plain; charset=utf-8"
+    echo "$sec" | grep -qi '^cache-control: public, max-age=3600' || fail "/.well-known/security.txt is not cached for an hour"
+    echo "$sec" | grep -q '^Contact: ' || fail "/.well-known/security.txt has no Contact line"
+    echo "$sec" | grep -qi '<!doctype html' && fail "/.well-known/security.txt returned the app page"
+    for h in "x-content-type-options: nosniff" "x-frame-options: DENY" "content-security-policy: default-src"; do
+      echo "$sec" | grep -qi "$h" || fail "/.well-known/security.txt is missing the $h header"
+    done
+    # Reminders, not failures: the address is still the placeholder, or the Expires date is near.
+    echo "$sec" | grep -q '^Contact: mailto:security-contact-to-be-confirmed' && echo "::warning::security.txt still has the placeholder contact address (deploy/security/set-contact.sh)"
+    exp=$(echo "$sec" | tr -d '\r' | sed -n 's/^Expires: //p')
+    if [ -n "$exp" ] && [ "$(date -u -d "$exp" +%s 2>/dev/null || echo 0)" -lt "$(( $(date -u +%s) + 2592000 ))" ]; then echo "::warning::security.txt Expires ($exp) is less than 30 days away or past: extend it"; fi
+    echo "/.well-known/security.txt is served as text/plain with a Contact line and the security headers"
     ;;
   *) fail "unknown image name" ;;
 esac
