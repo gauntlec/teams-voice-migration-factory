@@ -1,0 +1,42 @@
+# Dependabot opens pull requests for newer versions: npm packages, the GitHub Actions the workflows use, and the base images of the three
+# Dockerfiles. Nothing is merged by itself: each pull request runs the normal checks (build-images.yml verify/check) and a person merges it.
+# Minor and patch updates of one kind arrive together in ONE pull request a week; a major update arrives on its own, because that is where a
+# change in behaviour is likely. At most 5 pull requests are open per kind at once.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directories:
+      - /apps/api
+      - /apps/worker
+      - /apps/web
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      docker-minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # The Node version is chosen on purpose and moved up by hand (see Container images in docs/SECURITY.md): never offer a new major.
+      - dependency-name: node
+        update-types: [version-update:semver-major]

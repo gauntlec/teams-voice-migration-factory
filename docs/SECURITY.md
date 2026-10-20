@@ -363,6 +363,12 @@ Reviewed 2026-10-16. What the images do, and what is still open:
 
 ## Build and supply chain
 
+- **What runs automatically (2026-10-20).** Separate from the release workflow, so none of it can hold up or block a release:
+  - **Release gates** (`build-images.yml`, unchanged): typecheck and all tests (`verify`), then build + smoke test + Trivy scan of each image (`check`), then publish and release. Details under Container images above.
+  - **Code scanning, CodeQL** (`.github/workflows/codeql.yml`): GitHub's static analysis of the TypeScript / JavaScript code (injection, unsafe redirects, path traversal, weak crypto, secrets in logs and similar). Runs on every push to `main`, on every pull request and once a week (Wednesday), with the `security-extended` query set and `build-mode: none` (reads the source; no build). Permissions: `contents: read`, `security-events: write`. Results are under Security > Code scanning on GitHub. It reports; it does not fail a release. Someone has to look at the alerts: a new alert on a pull request is shown as a check on that request.
+  - **Dependency updates, Dependabot** (`.github/dependabot.yml`): every Monday, pull requests for newer npm packages (one grouped request for minor and patch updates, each major update on its own), for the versions of the GitHub Actions the workflows use, and for the base images of the three Dockerfiles (never a new Node major; that is moved by hand). At most 5 requests open per kind. Nothing merges by itself: each request runs the normal checks and a person merges it. Dependabot's own *security* alerts and automatic security pull requests are a separate repository setting (Settings > Code security) and are not switched on by this file.
+  - **Secret scanning with push protection** is a repository setting and is on.
+  - **Not covered:** the private Voxshift Hub repository cannot use CodeQL (it needs GitHub Advanced Security on a private repository), so it has no static analysis yet; its images get the Trivy scan.
 - **Installer integrity (2026-10-20).** Each release (`release` job in `.github/workflows/build-images.yml`) attaches `install.sh`, `uninstall.sh`, a `SHA256SUMS` file for them and `SHA256SUMS.sigstore.json`, a keyless [Sigstore](https://www.sigstore.dev) signature of `SHA256SUMS` made with `cosign` using the workflow's GitHub identity (no signing key exists to leak). If signing fails the release is still made, without the signature file, and the job summary says so. To check a download by hand, or to pin a release instead of `main`:
 
   ```bash
