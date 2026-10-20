@@ -115,7 +115,11 @@ with the hub are in [SSO.md](SSO.md); this is what protects it. Code: `apps/api/
   Caddy certificates and private keys, so a backup folder is as sensitive as the host
   itself: root-only on the host, and keep a copy off the host; `voxshift restore` puts it back,
   after checking each file's checksum and refusing a backup from a newer release; see
-  [INSTALL-LINUX.md](INSTALL-LINUX.md)), and note that
+  [INSTALL-LINUX.md](INSTALL-LINUX.md)). **Backups can be encrypted** (`voxshift backup-encryption on <public key>`,
+  optional, off by default): each backup then becomes one `.tar.age` file ([age](https://age-encryption.org) public-key
+  encryption), so the host holds only a public key and cannot read its own backups; the private key is kept off the host
+  and is needed to restore. If the private key is lost the encrypted backups cannot be read. While encryption is on a backup is
+  never saved unencrypted (it fails instead), and the nightly update and `uninstall.sh --backup-to` follow the same rule. Note that
   changing the key makes them unreadable (people re-enrol TOTP, the SMTP password,
   hub token, SSO secrets and webhooks are entered again).
 - **Invitation passwords are not kept.** A new user's one-time password is shown to

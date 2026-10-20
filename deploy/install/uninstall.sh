@@ -28,7 +28,8 @@ usage() {
 Usage: sudo bash uninstall.sh [options]
 
   --dir PATH         Install directory (default $DIR)
-  --backup-to DIR    Run 'voxshift backup DIR' first (database, files, .env, Caddy settings and data), then remove
+  --backup-to DIR    Run 'voxshift backup DIR' first (database, files, .env, Caddy settings and data), then remove. If backup
+                     encryption is on the backup is an encrypted .tar.age file, and nothing is removed if it cannot be made
   --keep-certs       Keep Caddy's certificate store, so a reinstall reuses the issued Let's Encrypt certificate
                      (Let's Encrypt limits how many certificates one name can get per week)
   --remove-images    Also delete the downloaded Voxshift, Postgres, Redis and Caddy images (the reinstall downloads them again)

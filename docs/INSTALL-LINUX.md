@@ -60,7 +60,7 @@ cannot be taken back quickly), so they are not offered.
 
 `--admin-password`, `--acme-email`, `--hsts-max-age`, `--dir`, `--version latest|<yyyy.mm.N>|sha-<commit>` (for example `--version 2026.10.3`), the SMTP set (`--smtp-host --smtp-port --smtp-secure
 --smtp-user --smtp-pass --mail-from`), `--no-docker-install`, `--open-firewall` (opens 80/443 in ufw or firewalld if active),
-`--generate-only` (write the files and stop, to review), `--auto-update [daily|weekly]` / `--no-auto-update` (see below), `--refresh-command` (on an existing install: rewrite only the `voxshift` command) and `-y`. `bash install.sh --help` lists them.
+`--generate-only` (write the files and stop, to review), `--auto-update [daily|weekly]` / `--no-auto-update` (see below), `--backup-recipient KEY` (encrypt backups, see [Encrypting backups](#encrypting-backups-optional)), `--refresh-command` (on an existing install: rewrite only the `voxshift` command) and `-y`. `bash install.sh --help` lists them.
 
 ## Starting again: removing an installation
 
@@ -107,7 +107,8 @@ Everything restarts on its own after a reboot (`restart: unless-stopped`, Docker
 | `voxshift auto-update on [daily\|weekly]` / `off` / `status` | turns the automatic update job on or off, or shows its schedule and the last lines of its log |
 | `voxshift self-update` | fetches the current installer and rewrites the `voxshift` command only (see Automatic updates) |
 | `voxshift backup [DIR]` | everything needed to rebuild this installation, into `DIR/<timestamp>` (default `/opt/voxshift/backups`, last 14 kept): the database, the stored files, `.env`, `compose.yaml`, the `Caddyfile`, `certs/` (if you use your own certificate) and Caddy's data (its certificates and, for `--tls internal`, its own certificate authority), plus a `manifest.txt` with the date, the Voxshift release and a checksum of each file. Copy it off the host. It holds secrets and private keys. See Backups. |
-| `voxshift restore FOLDER [--with-config] [--yes] [--force]` | puts a backup back: checks it, takes a safety backup of today's state, asks you to type `RESTORE`, then restores the database, the stored files and `.env`, and starts everything. See Restoring. |
+| `voxshift backup-encryption on KEY \| off \| status \| remove-unencrypted` | optional: makes every backup an encrypted `.tar.age` file that only the owner of a private key (kept off this host) can open. See [Encrypting backups](#encrypting-backups-optional). |
+| `voxshift restore FOLDER\|FILE.tar.age [--identity KEYFILE] [--with-config] [--yes] [--force]` | puts a backup back: checks it, takes a safety backup of today's state, asks you to type `RESTORE`, then restores the database, the stored files and `.env`, and starts everything. An encrypted backup also needs `--identity`. See Restoring. |
 | `voxshift restart` | re-applies `.env` (use after editing it) |
 | `voxshift reset-admin` | sets a new password for the first Super Admin and unlocks the account (recovery) |
 | `voxshift logs [api\|worker\|web\|caddy]` | follow logs |
@@ -186,6 +187,59 @@ the folder is deleted. A backup is built in a `.partial` folder and renamed when
 looks finished; `voxshift update` and the nightly job still stop when the backup fails. Backups made before this version have no
 `compose.yaml`, Caddy data or manifest; they can still be restored (see below).
 
+### Encrypting backups (optional)
+
+By default a backup is a plain folder, readable by anyone who gets a copy of it. If you copy backups off the host (and you should), switch on
+encryption: then every backup is **one file, `<timestamp>.tar.age`**, that nobody can open without a private key which is **never kept on the
+Voxshift host**. The host holds only a *public* key: it can lock a backup but cannot unlock one, so someone who breaks into the host, or finds a
+copy of the backup, cannot read the database, the secrets or the certificate private keys. It uses [age](https://age-encryption.org), a small,
+widely reviewed encryption program.
+
+**1. Make the key pair on your own computer, not on the Voxshift host** (install `age` there: `brew install age`, `apt install age`,
+`dnf install age`, or download it from the age releases page):
+
+```bash
+age-keygen -o voxshift-backup-key.txt
+```
+
+It prints `Public key: age1...`. That line is the **public key**: safe to share, it goes on the Voxshift host. The file
+`voxshift-backup-key.txt` holds the **private key** (a line starting `AGE-SECRET-KEY-`). Do not copy it to the Voxshift host. Keep it in a
+password manager or a safe, and keep a second copy somewhere else (a different building or person). To make two people able to restore, make
+two key pairs and give the host both public keys.
+
+> **If every copy of the private key is lost, the encrypted backups cannot be read by anyone, including Voxshift. There is no reset and no
+> back door.** A restore needs the private key, so test that you can find it: restore one backup on a test host before relying on it.
+
+**2. Give the host the public key.** At install time: `--backup-recipient age1...` (it also asks when you run the installer in a terminal).
+On an installation that exists already (one made before this feature needs `voxshift self-update` first, to get the new command):
+
+```bash
+sudo voxshift backup-encryption on age1...your-public-key
+sudo voxshift backup-encryption status
+```
+
+`on` installs `age` from the system's own package repository if it is missing (Debian and Ubuntu: `apt`; RHEL, Rocky, Alma, CentOS: `dnf`/`yum`,
+using EPEL when needed) and stops with a message if it cannot. It refuses a private key (a file or text starting `AGE-SECRET-KEY-`) so that one is
+never left on the host. The public keys are kept in `/opt/voxshift/backup-recipients` (mode 600), not in `.env`. You can give several keys, or a file
+with one key per line; any one of the matching private keys can open a backup. `voxshift backup-encryption off` switches it off again.
+
+**What changes once it is on:**
+
+- `voxshift backup`, the nightly update's backup, the safety backup that `voxshift restore` takes and `uninstall.sh --backup-to` all write a
+  `<timestamp>.tar.age` file plus `<timestamp>.tar.age.sha256` beside it (the size and checksum, for checking a copy you moved). The files inside
+  are the same as before (see the table above). The 14-backup and 3-safety-backup rotation works as before.
+- While a backup is being built a plain working folder (`<timestamp>.partial`) exists in the backups folder, readable only by root; it is removed
+  as soon as the encrypted file is written and checked. Voxshift cannot read the result back (it has no private key), so the check is that the file
+  exists, is not empty, starts with the age header and is a plausible size.
+- **It never falls back to a plain backup.** If encryption is on and `age` is missing or the key file is empty, `voxshift backup` stops with a
+  message and writes nothing. The nightly update then does not update (the log says why), and `uninstall.sh --backup-to` stops before removing anything.
+- Backups made *before* you switched it on stay plain folders until newer ones push them out of the 14. Remove them at once with
+  `voxshift backup-encryption remove-unencrypted` (it lists them and asks you to type `DELETE`; copy anything you need first).
+- The host's disk holds only the encrypted file, but the *database password and secrets on the running host* are of course still in `/opt/voxshift/.env`.
+  Encryption protects the **backups** (the copies that travel), not the live host.
+- After a total loss you reinstall, then restore with your private key, then run `voxshift backup-encryption on <public-key>` again (the key
+  list is part of the host, not of the backup).
+
 ## Restoring
 
 An installation made before `voxshift restore` existed gets it (and the fuller backup) with `voxshift self-update`; nothing else changes.
@@ -193,6 +247,18 @@ An installation made before `voxshift restore` existed gets it (and the fuller b
 ```bash
 voxshift restore /opt/voxshift/backups/20261019-020512
 ```
+
+An **encrypted** backup (`....tar.age`) is restored the same way, with the private key file you made with `age-keygen`:
+
+```bash
+voxshift restore /opt/voxshift/backups/20261019-020512.tar.age --identity /root/voxshift-backup-key.txt
+```
+
+Without `--identity` it stops, says the backup is encrypted and changes nothing. Voxshift opens the backup into a private, root-only folder next to
+the backups (so the host needs room for one extra copy of it), checks it exactly like a plain backup (step 1 below), and **removes that opened copy
+when the command ends, whether it finished, failed or was interrupted**. Copy the private key onto the host only for the restore and delete it afterwards.
+A wrong key, or a damaged file, gives "could not be opened" and changes nothing. The safety backup taken before the restore is encrypted as well when
+encryption is on; to go back to it, give the same `--identity`.
 
 What it does, in order (nothing is changed until step 4):
 
@@ -242,4 +308,5 @@ voxshift start
 - The images are public on ghcr.io. A host with no internet access cannot use this installer as is.
 - Tested file generation for every TLS mode and every input check on macOS; the full install (Docker, image pull, Caddy, health wait) needs a real Linux host.
   The same goes for `voxshift backup` and `voxshift restore` against a real database: their logic (checks, order of steps, refusals, rotation) is tested with a
-  stand-in `docker`, and the first real restore should be tried on a test host before it is relied on.
+  stand-in `docker`, and the first real restore should be tried on a test host before it is relied on. `bash deploy/install/check-backup.sh` runs that
+  stand-in check, including the encryption round trip with the real `age` program (it needs `age` on the machine running it).

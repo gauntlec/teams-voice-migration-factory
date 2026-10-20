@@ -32,6 +32,7 @@ SMTP_HOST="" SMTP_PORT="587" SMTP_SECURE="false" SMTP_USER="" SMTP_PASS="" MAIL_
 GENERATED_ADMIN_PASSWORD=0
 REFRESH=0
 AUTO_UPDATE=""        # "" = ask (interactive) or no | daily | weekly | no
+BACKUP_RECIPIENTS=()  # public keys (or files of them) that backups are encrypted to; empty = backups are not encrypted
 
 # ---------------------------------------------------------------------------------------------------------- helpers
 if [ -t 1 ]; then B=$'\033[1m'; G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; N=$'\033[0m'; else B=""; G=""; Y=""; R=""; N=""; fi
@@ -78,6 +79,11 @@ Updates:
                          restarts when a new version is out. Change or remove it later: voxshift auto-update
   --no-auto-update       Do not install the update job (the default when you answer no or run with -y)
 
+Backups:
+  --backup-recipient KEY Encrypt every backup to this PUBLIC key (starts with age1; or a file of public keys). Make the key pair on
+                         your own computer with age-keygen and keep the private key OFF this host. Can be given more than once.
+                         Installs the 'age' program if it is missing. Change it later: voxshift backup-encryption
+
 Existing installation:
   --refresh-command      Only rewrite the 'voxshift' command (and, with --auto-update, switch the update job on). Touches no
                          secrets, settings or containers. Normally run for you by: voxshift self-update
@@ -120,6 +126,17 @@ wait_ready() {
 }
 
 stamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# Anything half-made (a backup being built, a decrypted copy being restored) is removed however this command ends: normally, on an error, or
+# when it is interrupted. Every place that makes such a thing registers it here and forgets it when it is finished with it.
+TMP_PATHS=()
+track_tmp() { TMP_PATHS+=("$1"); }
+forget_tmp() { local p keep=(); for p in ${TMP_PATHS[@]+"${TMP_PATHS[@]}"}; do [ "$p" = "$1" ] || keep+=("$p"); done; TMP_PATHS=(${keep[@]+"${keep[@]}"}); }
+cleanup() { local p; for p in ${TMP_PATHS[@]+"${TMP_PATHS[@]}"}; do [ -z "$p" ] || rm -rf -- "$p"; done; }
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 CRON_FILE=/etc/cron.d/voxshift-update
 LOG_FILE=/var/log/voxshift-update.log
 
@@ -225,25 +242,151 @@ current_release() {
   if is_release "$v"; then echo "$v"; else echo unknown; fi
 }
 
-# Keep the last 14 backups made by 'voxshift backup' and the last 3 safety backups made by 'voxshift restore' (pre-restore-...) in PARENT.
-# Only folders with those exact names are touched, so anything else the person keeps in the same folder is left alone.
-rotate_backups() {
-  local parent="$1" d
-  for d in $(ls -1 "$parent" 2>/dev/null | grep -E '^[0-9]{8}-[0-9]{6}$' | sort -r | tail -n +15); do rm -rf -- "${parent:?}/$d"; done
-  for d in $(ls -1 "$parent" 2>/dev/null | grep -E '^pre-restore-[0-9]{8}-[0-9]{6}$' | sort -r | tail -n +4); do rm -rf -- "${parent:?}/$d"; done
+# ----- backup encryption (optional). The host keeps only PUBLIC keys, in RECIPIENTS; the private key stays with the owner, off this host.
+RECIPIENTS="$DIR/backup-recipients"
+enc_enabled() { [ -e "$RECIPIENTS" ]; }
+recipient_lines() { grep -vE '^[[:space:]]*(#|$)' "$1" || true; }
+
+# Installs 'age' (https://age-encryption.org) the way the other prerequisites are installed: from the system's own package repository.
+ensure_age() {
+  command -v age >/dev/null 2>&1 && return 0
+  echo "age (the program that encrypts backups) is not installed; installing it..."
+  if command -v apt-get >/dev/null 2>&1; then
+    DEBIAN_FRONTEND=noninteractive apt-get install -y age >/dev/null 2>&1 \
+      || { apt-get update -qq >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y age >/dev/null 2>&1; } || true
+  else
+    for pm in dnf yum; do
+      command -v "$pm" >/dev/null 2>&1 || continue
+      "$pm" install -y age >/dev/null 2>&1 || { "$pm" install -y epel-release >/dev/null 2>&1 && "$pm" install -y age >/dev/null 2>&1; } || true
+      break
+    done
+  fi
+  command -v age >/dev/null 2>&1 && return 0
+  echo "Could not install 'age' automatically on this system. Install it yourself (Debian/Ubuntu: apt install age; RHEL family: dnf install epel-release age;" >&2
+  echo "or download the single program for Linux from https://github.com/FiloSottile/age/releases), then run this command again. Backup encryption was NOT switched on." >&2
+  return 1
 }
 
-# do_backup PARENT [PREFIX]: writes PARENT/<PREFIX><timestamp> and sets BACKUP_DEST. It is built in a .partial folder and renamed at the very
-# end, so a backup that fails part-way leaves nothing that looks complete (and 'voxshift update' / the nightly job stop, as before).
+# Why a backup cannot be made while encryption is on (and never falls back to an unencrypted one).
+check_encryption_ready() {
+  command -v age >/dev/null 2>&1 || {
+    echo "Backup encryption is switched on, but 'age' is not installed, so NO backup was made (a backup is never saved unencrypted while encryption is on)." >&2
+    echo "Install the tool with: voxshift backup-encryption on     or switch encryption off with: voxshift backup-encryption off" >&2
+    return 1
+  }
+  [ -n "$(recipient_lines "$RECIPIENTS")" ] || {
+    echo "Backup encryption is switched on, but $RECIPIENTS holds no public key, so NO backup was made. Give one: voxshift backup-encryption on <public-key>     or switch encryption off: voxshift backup-encryption off" >&2
+    return 1
+  }
+}
+
+# Backups on this host that are NOT encrypted: <timestamp> folders (and pre-restore- ones).
+plain_backups() { ls -1 "${1:-$DIR/backups}" 2>/dev/null | grep -E '^(pre-restore-)?[0-9]{8}-[0-9]{6}$' || true; }
+
+backup_encryption() {
+  local sub="${1:-status}" arg new n plain
+  case "$sub" in
+    on)
+      shift
+      if [ $# -eq 0 ]; then
+        enc_enabled || { echo "Use: voxshift backup-encryption on <public-key | file-with-public-keys> [more keys...]" >&2; exit 1; }
+        ensure_age || exit 1
+        echo "Backup encryption is on and age is installed."; return 0
+      fi
+      ensure_age || exit 1
+      umask 077
+      new="$RECIPIENTS.new"; : > "$new"; track_tmp "$new"
+      for arg in "$@"; do
+        if [ -f "$arg" ]; then
+          if grep -q 'AGE-SECRET-KEY-' "$arg"; then
+            echo "$arg holds a PRIVATE key. Never put the private key on this host. Nothing changed." >&2
+            echo "On your own computer, get the matching public key with:  age-keygen -y $arg   and give that to this command." >&2
+            exit 1
+          fi
+          recipient_lines "$arg" >> "$new"
+        else
+          case "$arg" in
+            AGE-SECRET-KEY-*) echo "That is a PRIVATE key. Never put it on this host. Give the PUBLIC key instead (it starts with age1). Nothing changed." >&2; exit 1 ;;
+            age1*|ssh-ed25519\ *|ssh-rsa\ *) printf '%s\n' "$arg" >> "$new" ;;
+            *) echo "'$arg' is not a public key (it starts with age1...) and is not a file I can read. Nothing changed." >&2; exit 1 ;;
+          esac
+        fi
+      done
+      n="$(wc -l < "$new" | tr -d ' ')"
+      [ "$n" -ge 1 ] || { echo "No public key found in what you gave. Nothing changed." >&2; exit 1; }
+      # Let age itself judge the keys: encrypt a few bytes to them.
+      if ! printf 'voxshift' | age -R "$new" > /dev/null 2> "$new.err"; then
+        track_tmp "$new.err"
+        echo "age does not accept that key:" >&2; sed 's/^/  /' "$new.err" >&2
+        echo "Nothing changed." >&2; exit 1
+      fi
+      rm -f "$new.err"
+      mv "$new" "$RECIPIENTS"; chmod 600 "$RECIPIENTS"; forget_tmp "$new"
+      echo "Backup encryption is ON ($n public key(s) in $RECIPIENTS). From now on 'voxshift backup', the nightly update job and the safety backup before a restore"
+      echo "write one encrypted file (.tar.age) instead of a folder. This host holds only the public key: it can make backups but cannot read them."
+      echo "To restore you need the PRIVATE key, which must be kept OFF this host. If every private key is lost, the encrypted backups cannot be read by anyone."
+      plain="$(plain_backups | wc -l | tr -d ' ')"
+      if [ "$plain" -gt 0 ]; then
+        echo "Note: $plain older backup(s) in $DIR/backups are NOT encrypted. They are removed as newer ones push them out, or remove them now: voxshift backup-encryption remove-unencrypted"
+      fi
+      ;;
+    off)
+      if enc_enabled; then rm -f "$RECIPIENTS"; echo "Backup encryption is OFF. New backups are plain folders again."; else echo "Backup encryption was already off."; fi
+      echo "Backups already made as .tar.age files stay encrypted and still need their private key to be restored."
+      ;;
+    status)
+      if enc_enabled; then
+        echo "Backup encryption: ON ($(recipient_lines "$RECIPIENTS" | wc -l | tr -d ' ') public key(s) in $RECIPIENTS)"
+        if command -v age >/dev/null 2>&1; then echo "age: installed ($(age --version 2>&1 | head -n 1))"; else echo "age: NOT installed - backups will fail until it is: voxshift backup-encryption on"; fi
+        echo "The private key is not on this host, and is needed to restore. If it is lost, the encrypted backups cannot be read."
+      else
+        echo "Backup encryption: OFF. Backups are plain folders holding the database, the secrets in .env and the private keys of the certificates."
+        echo "Switch it on: voxshift backup-encryption on <public-key>   (see docs/INSTALL-LINUX.md, Backups)"
+      fi
+      echo "Backups in $DIR/backups: $(ls -1 "$DIR/backups" 2>/dev/null | grep -cE '^(pre-restore-)?[0-9]{8}-[0-9]{6}\.tar\.age$' || true) encrypted, $(plain_backups | wc -l | tr -d ' ') not encrypted"
+      ;;
+    remove-unencrypted)
+      plain="$(plain_backups)"
+      [ -n "$plain" ] || { echo "There are no unencrypted backups in $DIR/backups."; return 0; }
+      echo "These backups are not encrypted and would be deleted:"; printf '%s\n' "$plain" | sed 's|^|  |'
+      echo "Copy anything you still need first. Encrypted backups (.tar.age) are not touched."
+      [ -t 0 ] || { echo "Not a terminal. Nothing deleted." >&2; exit 1; }
+      read -r -p "Type DELETE to continue: " reply || true
+      [ "${reply:-}" = "DELETE" ] || { echo "Not confirmed. Nothing deleted."; exit 1; }
+      for n in $plain; do rm -rf -- "${DIR:?}/backups/$n"; done
+      echo "Deleted."
+      ;;
+    *) echo "Use: voxshift backup-encryption on <public-key | file> [more keys...] | off | status | remove-unencrypted" >&2; exit 1 ;;
+  esac
+}
+
+# Keep the last 14 backups made by 'voxshift backup' and the last 3 safety backups made by 'voxshift restore' (pre-restore-...) in PARENT, whether
+# they are plain folders or encrypted files (with their .sha256). Only names of exactly that shape are touched, so anything else the person keeps
+# in the same folder is left alone.
+rotate_backups() {
+  local parent="$1" n
+  for n in $(ls -1 "$parent" 2>/dev/null | sed -nE 's/^([0-9]{8}-[0-9]{6})(\.tar\.age)?$/\1/p' | sort -ur | tail -n +15); do
+    rm -rf -- "${parent:?}/$n" "${parent:?}/$n.tar.age" "${parent:?}/$n.tar.age.sha256"
+  done
+  for n in $(ls -1 "$parent" 2>/dev/null | sed -nE 's/^(pre-restore-[0-9]{8}-[0-9]{6})(\.tar\.age)?$/\1/p' | sort -ur | tail -n +4); do
+    rm -rf -- "${parent:?}/$n" "${parent:?}/$n.tar.age" "${parent:?}/$n.tar.age.sha256"
+  done
+}
+
+# do_backup PARENT [PREFIX]: writes PARENT/<PREFIX><timestamp> (a folder) or, when backup encryption is on, PARENT/<PREFIX><timestamp>.tar.age
+# (one encrypted file, plus a .sha256 beside it), and sets BACKUP_DEST. It is built in a .partial name and renamed at the very end, so a backup
+# that fails part-way leaves nothing that looks complete (and 'voxshift update' / the nightly job stop). The plain folder only exists while the
+# backup is being made; with encryption on it is removed as soon as the encrypted file has been checked.
 do_backup() {
-  local parent="$1" prefix="${2:-}" part f
+  local parent="$1" prefix="${2:-}" part f out enc=0 size sum
+  if enc_enabled; then enc=1; check_encryption_ready || return 1; fi
   umask 077
   mkdir -p "$parent"
   BACKUP_DEST="$parent/${prefix}$(date -u +%Y%m%d-%H%M%S)"
-  while [ -e "$BACKUP_DEST" ]; do sleep 1; BACKUP_DEST="$parent/${prefix}$(date -u +%Y%m%d-%H%M%S)"; done
+  while [ -e "$BACKUP_DEST" ] || [ -e "$BACKUP_DEST.tar.age" ]; do sleep 1; BACKUP_DEST="$parent/${prefix}$(date -u +%Y%m%d-%H%M%S)"; done
   part="$BACKUP_DEST.partial"
   rm -rf "$part"; mkdir -m 700 "$part"
-  trap "rm -rf '$part'" EXIT
+  track_tmp "$part"
   dc exec -T postgres pg_dump -U tvmf -Fc tvmf > "$part/database.dump"
   [ -s "$part/database.dump" ] || { echo "The database dump is empty; stopping." >&2; return 1; }
   docker run --rm -v voxshift_filesdata:/data:ro -v "$part":/out alpine tar czf /out/files.tar.gz -C /data .
@@ -265,8 +408,28 @@ do_backup() {
     ( cd "$part" && find . -type f ! -name manifest.txt | sed 's|^\./||' | sort | while IFS= read -r f; do sum256 "$f"; done )
   } > "$part/manifest.txt"
   chmod 600 "$part/manifest.txt"
-  mv "$part" "$BACKUP_DEST"
-  trap - EXIT
+  if [ "$enc" = 1 ]; then
+    out="$BACKUP_DEST.tar.age"
+    track_tmp "$out.partial"
+    tar -C "$part" -cf - . | age -R "$RECIPIENTS" > "$out.partial"
+    # Without the private key the content cannot be read back here, so check what can be checked: it exists, is not empty, starts with the
+    # age header, and is bigger than nothing-but-a-header. Its size and sha256 are written next to it, for checking a copy later.
+    [ -s "$out.partial" ] || { echo "The encrypted backup came out empty; stopping." >&2; return 1; }
+    [ "$(head -c 21 "$out.partial")" = "age-encryption.org/v1" ] || { echo "The encrypted backup does not start with the age header; stopping." >&2; return 1; }
+    size="$(wc -c < "$out.partial" | tr -d ' ')"
+    [ "$size" -gt 200 ] || { echo "The encrypted backup is only $size bytes; stopping." >&2; return 1; }
+    sum="$(sum256 "$out.partial" | cut -d' ' -f1)"
+    printf '%s  %s\n' "$sum" "${out##*/}" > "$out.sha256"
+    mv "$out.partial" "$out"
+    forget_tmp "$out.partial"
+    rm -rf "$part"; forget_tmp "$part"
+    [ ! -e "$part" ] || { echo "Could not remove the unencrypted working folder $part - delete it yourself." >&2; return 1; }
+    BACKUP_DEST="$out"; BACKUP_NOTE="encrypted, $size bytes, sha256 $sum"
+  else
+    mv "$part" "$BACKUP_DEST"
+    forget_tmp "$part"
+    BACKUP_NOTE=""
+  fi
   rotate_backups "$parent"
 }
 
@@ -274,26 +437,64 @@ do_backup() {
 manifest_value() { sed -n "s/^$1=//p" "$2/manifest.txt" | head -n 1; }
 
 restore_cmd() {
-  local src="" yes=0 force=0 withcfg=0 arg
+  local src="" yes=0 force=0 withcfg=0 identity="" shown tmp="" n f back
   shift
-  for arg in "$@"; do
-    case "$arg" in
+  while [ $# -gt 0 ]; do
+    case "$1" in
       --yes|-y) yes=1 ;;
       --force) force=1 ;;
       --with-config) withcfg=1 ;;
-      -*) echo "Unknown option $arg. Use: voxshift restore <backup-folder> [--with-config] [--yes] [--force]" >&2; exit 1 ;;
-      *) [ -z "$src" ] || { echo "Give one backup folder only." >&2; exit 1; }; src="${arg%/}" ;;
+      --identity) shift; identity="${1:-}"; [ -n "$identity" ] || { echo "--identity needs the file holding your private key." >&2; exit 1; } ;;
+      -*) echo "Unknown option $1. Use: voxshift restore <backup> [--identity <private-key-file>] [--with-config] [--yes] [--force]" >&2; exit 1 ;;
+      *) [ -z "$src" ] || { echo "Give one backup only." >&2; exit 1; }; src="${1%/}" ;;
     esac
+    shift
   done
   if [ -z "$src" ]; then
-    echo "Use: voxshift restore <backup-folder> [--with-config] [--yes] [--force]"
+    echo "Use: voxshift restore <backup> [--identity <private-key-file>] [--with-config] [--yes] [--force]"
+    echo "  <backup> is a folder, or an encrypted file ending .tar.age (that one needs --identity)."
     echo "Backups on this host ($DIR/backups):"
-    ls -1 "$DIR/backups" 2>/dev/null | grep -E '^(pre-restore-)?[0-9]{8}-[0-9]{6}$' | sort -r | sed 's|^|  |' || true
+    ls -1 "$DIR/backups" 2>/dev/null | grep -E '^(pre-restore-)?[0-9]{8}-[0-9]{6}(\.tar\.age)?$' | sort -r | sed 's|^|  |' || true
     exit 1
   fi
-  [ -d "$src" ] || { echo "$src is not a folder. Nothing changed." >&2; exit 1; }
-  src="$(cd "$src" && pwd)"
-  for f in database.dump files.tar.gz env; do [ -f "$src/$f" ] || { echo "$src has no $f - it is not a Voxshift backup (or it is incomplete). Nothing changed." >&2; exit 1; }; done
+  shown="$src"
+
+  # 0. An encrypted backup is opened first (into a private folder that is removed however this command ends), then handled like a plain one.
+  case "$src" in
+    *.tar.age)
+      [ -f "$src" ] || { echo "$src is not a file. Nothing changed." >&2; exit 1; }
+      if [ -z "$identity" ]; then
+        echo "$src is an ENCRYPTED backup. To restore it, give the private key that goes with the public key this host encrypts to:" >&2
+        echo "  voxshift restore $src --identity /path/to/private-key.txt" >&2
+        echo "The private key was made when encryption was switched on and is kept off this host. If it is lost, this backup cannot be read. Nothing changed." >&2
+        exit 1
+      fi
+      [ -f "$identity" ] && [ -r "$identity" ] || { echo "Cannot read the private key file '$identity'. Nothing changed." >&2; exit 1; }
+      command -v age >/dev/null 2>&1 || { ensure_age || exit 1; }
+      src="$(cd "$(dirname "$src")" && pwd)/$(basename "$src")"
+      if [ -f "$src.sha256" ] && ! ( cd "$(dirname "$src")" && sum256 -c --quiet "$(basename "$src").sha256" ) >/dev/null 2>&1; then
+        echo "This backup file is damaged: it does not match the checksum saved beside it ($src.sha256). Nothing changed." >&2; exit 1
+      fi
+      mkdir -p "$DIR/backups"
+      # Left over from an earlier restore that was killed hard: remove, so decrypted data is never left lying about.
+      for n in "$DIR"/backups/.restore-*; do [ ! -d "$n" ] || rm -rf -- "$n"; done
+      tmp="$(mktemp -d "$DIR/backups/.restore-XXXXXX")"   # next to the backups: same disk, root only
+      chmod 700 "$tmp"; track_tmp "$tmp"
+      echo "Opening the encrypted backup..."
+      if ! age -d -i "$identity" "$src" | tar --no-same-owner -x -C "$tmp"; then
+        echo "The backup could not be opened. Either this is not the private key that goes with it, or the file is damaged. Nothing changed." >&2
+        exit 1
+      fi
+      if [ -n "$(find "$tmp" -type l | head -n 1)" ]; then echo "The backup contains a link, which a Voxshift backup never does. Nothing changed." >&2; exit 1; fi
+      src="$tmp"
+      ;;
+    *)
+      [ -d "$src" ] || { echo "$src is not a folder. Nothing changed." >&2; exit 1; }
+      [ -z "$identity" ] || echo "Note: --identity is only needed for an encrypted (.tar.age) backup; ignored."
+      src="$(cd "$src" && pwd)"
+      ;;
+  esac
+  for f in database.dump files.tar.gz env; do [ -f "$src/$f" ] || { echo "$shown has no $f - it is not a Voxshift backup (or it is incomplete). Nothing changed." >&2; exit 1; }; done
 
   # 1. Is the backup whole, and is it for this release?
   local created="unknown" brel="unknown" now
@@ -333,7 +534,7 @@ restore_cmd() {
   # 2. Say what will happen, and ask.
   echo
   echo "RESTORE will replace what is on this host with the backup:"
-  echo "  backup:        $src"
+  echo "  backup:        $shown$([ -z "$tmp" ] || echo "  (encrypted; opened for this restore only)")"
   echo "  made:          $created   release: $brel   (running now: $now)"
   echo "  replaced:      the database (all of it), the stored files, and the settings in .env"
   echo "                 (.env keeps this host's database password and IMAGE_TAG; a copy of today's .env is kept)"
@@ -351,7 +552,8 @@ restore_cmd() {
   do_backup "$DIR/backups" pre-restore-
   safety="$BACKUP_DEST"
   echo "Safety backup: $safety"
-  trap 'echo "The restore stopped part-way. Your data from just before it started is in $safety. To go back to it: voxshift restore $safety" >&2' ERR
+  back="voxshift restore $safety"; [ ! -f "$safety" ] || back="$back --identity <your-private-key-file>"
+  trap 'echo "The restore stopped part-way. Your data from just before it started is in $safety. To go back to it: $back" >&2' ERR
 
   ts="$(date -u +%Y%m%d-%H%M%S)"
   dc stop api worker
@@ -399,8 +601,9 @@ restore_cmd() {
   dc up -d --force-recreate
   wait_ready
   trap - ERR
-  echo "Restored from $src."
-  echo "Sign in and check. If it is not what you wanted, go back with: voxshift restore $safety"
+  echo "Restored from $shown."
+  echo "Sign in and check. If it is not what you wanted, go back with: $back"
+  [ -z "$tmp" ] || echo "The opened (decrypted) copy of the backup has been removed. If you copied your private key onto this host for the restore, delete that copy now."
 }
 
 case "${1:-help}" in
@@ -440,9 +643,12 @@ case "${1:-help}" in
   backup)
     need_root "$@"
     do_backup "${2:-$DIR/backups}"
-    echo "Backup written to $BACKUP_DEST"
-    echo "  (database, stored files, .env, compose.yaml, Caddyfile, certificates and Caddy's data - it holds secrets and private keys: keep it somewhere safe, off this host)."
+    echo "Backup written to $BACKUP_DEST${BACKUP_NOTE:+  ($BACKUP_NOTE)}"
+    echo "  (database, stored files, .env, compose.yaml, Caddyfile, certificates and Caddy's data - copy it somewhere safe, off this host)."
+    if [ -n "$BACKUP_NOTE" ]; then echo "  It is encrypted: only the private key that goes with this host's public key can open it."
+    else echo "  It is NOT encrypted and holds secrets and private keys. Switch encryption on: voxshift backup-encryption on <public-key>"; fi
     ;;
+  backup-encryption) need_root "$@"; shift; backup_encryption "$@" ;;
   restore) need_root "$@"; restore_cmd "$@" ;;
   *)
     cat <<EOF
@@ -454,10 +660,14 @@ voxshift <command>
   auto-update on [daily|weekly] | off | status
                     a cron job that does 'update' by itself (quiet unless a new version is out)
   self-update       fetch the current installer from GitHub and refresh this command (secrets, settings and data untouched)
-  backup [DIR]      database, stored files, .env, compose.yaml, Caddyfile, certificates and Caddy's data into DIR/<timestamp> (default $DIR/backups)
-  restore FOLDER [--with-config] [--yes] [--force]
-                    put a backup back (takes a safety backup first; asks you to type RESTORE). --with-config also restores
-                    compose.yaml, the Caddyfile, certificates and Caddy's data. --force skips the "backup is newer" check
+  backup [DIR]      database, stored files, .env, compose.yaml, Caddyfile, certificates and Caddy's data into DIR/<timestamp> (default $DIR/backups);
+                    one encrypted DIR/<timestamp>.tar.age file instead when backup encryption is on
+  backup-encryption on <public-key | file> | off | status | remove-unencrypted
+                    encrypt every backup so that only the owner of a private key (kept OFF this host) can read it
+  restore FOLDER|FILE.tar.age [--identity KEYFILE] [--with-config] [--yes] [--force]
+                    put a backup back (takes a safety backup first; asks you to type RESTORE). An encrypted backup needs --identity,
+                    the file holding your private key. --with-config also restores compose.yaml, the Caddyfile, certificates and
+                    Caddy's data. --force skips the "backup is newer" check
   logs [service]    follow logs (api, worker, web, caddy, postgres, redis)
   reset-admin       set a new password for the first Super Admin and unlock the account
 Files: $DIR/.env (settings, secrets), $DIR/compose.yaml, $DIR/Caddyfile
@@ -494,6 +704,7 @@ while [ $# -gt 0 ]; do
     --auto-update)
       case "${2:-}" in daily|weekly) AUTO_UPDATE="$2"; shift 2 ;; *) AUTO_UPDATE="daily"; shift ;; esac ;;
     --no-auto-update) AUTO_UPDATE="no"; shift ;;
+    --backup-recipient) [ -n "${2:-}" ] || die "--backup-recipient needs a public key (age1...) or a file of them."; BACKUP_RECIPIENTS+=("$2"); shift 2 ;;
     --refresh-command) REFRESH=1; shift ;;
     --no-docker-install) INSTALL_DOCKER=0; shift ;;
     --open-firewall) OPEN_FIREWALL=1; shift ;;
@@ -519,6 +730,22 @@ ask() { # ask VAR "Question" [default]
   [ -n "${!var}" ] || die "$q is required."
 }
 
+# A quick look at --backup-recipient values before anything is installed (the voxshift command lets the age program judge them properly later).
+check_backup_recipients() {
+  local r
+  for r in ${BACKUP_RECIPIENTS[@]+"${BACKUP_RECIPIENTS[@]}"}; do
+    if [ -f "$r" ]; then
+      ! grep -q 'AGE-SECRET-KEY-' "$r" || die "$r holds a PRIVATE key. Never put the private key on the Voxshift host. Give the public key (age-keygen -y $r prints it) instead."
+    else
+      case "$r" in
+        AGE-SECRET-KEY-*) die "--backup-recipient was given a PRIVATE key. Never put it on the Voxshift host. Give the public key (it starts with age1)." ;;
+        age1*|ssh-ed25519\ *|ssh-rsa\ *) ;;
+        *) die "--backup-recipient '$r' is not a public key (it starts with age1...) and is not a file I can read." ;;
+      esac
+    fi
+  done
+}
+
 # ---------------------------------------------------------------------------------------------------------- refresh only
 if [ "$REFRESH" = 1 ]; then
   case "$DIR" in /*) ;; *) die "--dir must be an absolute path." ;; esac
@@ -526,8 +753,10 @@ if [ "$REFRESH" = 1 ]; then
   [ -f "$DIR/.env" ] && [ -f "$DIR/compose.yaml" ] || die "No Voxshift installation found in $DIR (it needs .env and compose.yaml). Nothing changed."
   START=1
   step "Refreshing the voxshift command in $DIR"
+  check_backup_recipients
   write_command
   case "$AUTO_UPDATE" in daily|weekly) "$DIR/voxshift" auto-update on "$AUTO_UPDATE" ;; esac
+  [ ${#BACKUP_RECIPIENTS[@]} -eq 0 ] || "$DIR/voxshift" backup-encryption on "${BACKUP_RECIPIENTS[@]}"
   say "  Settings, secrets, data and containers were not touched. Try: voxshift help"
   exit 0
 fi
@@ -593,6 +822,17 @@ if [ "$AUTO_UPDATE" != "no" ] && [ "$TAG" != "latest" ]; then
   AUTO_UPDATE="no"
 fi
 
+if [ ${#BACKUP_RECIPIENTS[@]} -eq 0 ] && [ "$ASSUME_YES" != 1 ] && [ -t 0 ] && [ "$START" = 1 ]; then
+  say ""
+  say "  Backups: 'voxshift backup' saves the database, the secrets and the certificate private keys. They can be encrypted so that a stolen or"
+  say "  copied backup is useless without your private key. For that, make a key pair on your OWN computer (age-keygen; see docs/INSTALL-LINUX.md,"
+  say "  Backups) and keep the private key off this host: this host is only given the public key (starts with age1)."
+  reply=""
+  read -r -p "  Public key to encrypt backups to (Enter to leave backups unencrypted for now): " reply || true
+  [ -z "$reply" ] || BACKUP_RECIPIENTS+=("$reply")
+fi
+check_backup_recipients
+
 # True for a name or address that Let's Encrypt can never issue a certificate for: an address, a name with no dot (a bare host name), or a name
 # ending in a suffix that is reserved or only ever used inside a network (.local .lan .internal .corp .home .home.arpa ...). A dotted name with
 # some other, unlisted suffix cannot be judged from here (that needs the public suffix list), so the "auto" choice also checks DNS (below).
@@ -651,6 +891,23 @@ fi
 rand_hex()   { head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'; }
 rand_b64()   { head -c "$1" /dev/urandom | base64 | tr -d '\n'; }
 rand_alnum() { LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c "$1" || true; }
+
+# ---------------------------------------------------------------------------------------------------------- backup encryption tool
+# Done before anything is installed or started: if encryption was asked for and the tool cannot be installed, stop now, with nothing changed.
+if [ "$START" = 1 ] && [ ${#BACKUP_RECIPIENTS[@]} -gt 0 ] && ! command -v age >/dev/null 2>&1; then
+  step "Backup encryption (the 'age' program)"
+  if command -v apt-get >/dev/null 2>&1; then
+    DEBIAN_FRONTEND=noninteractive apt-get install -y age >/dev/null 2>&1 || { apt-get update -qq >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y age >/dev/null 2>&1; } || true
+  else
+    for pm in dnf yum; do
+      command -v "$pm" >/dev/null 2>&1 || continue
+      "$pm" install -y age >/dev/null 2>&1 || { "$pm" install -y epel-release >/dev/null 2>&1 && "$pm" install -y age >/dev/null 2>&1; } || true
+      break
+    done
+  fi
+  command -v age >/dev/null 2>&1 || die "Backup encryption was asked for, but the 'age' program could not be installed here. Install it (Debian/Ubuntu: apt install age; RHEL family: dnf install epel-release age; or https://github.com/FiloSottile/age/releases) and re-run, or leave out --backup-recipient and switch encryption on later. Nothing was installed."
+  ok "age installed ($(age --version 2>&1 | head -n 1))"
+fi
 
 # ---------------------------------------------------------------------------------------------------------- docker
 if [ "$START" = 1 ]; then
@@ -1024,6 +1281,11 @@ if [ "$START" = 1 ] && [ "$AUTO_UPDATE" != "no" ]; then
   "$DIR/voxshift" auto-update on "$AUTO_UPDATE" || warn "Could not set up the update job. Install updates by hand with: voxshift update (or retry: voxshift auto-update on)"
 fi
 
+if [ "$START" = 1 ] && [ ${#BACKUP_RECIPIENTS[@]} -gt 0 ]; then
+  step "Backup encryption"
+  "$DIR/voxshift" backup-encryption on "${BACKUP_RECIPIENTS[@]}" || die "Voxshift is installed, but backup encryption could NOT be switched on (see above), so backups would be unencrypted. Fix it and run: voxshift backup-encryption on <public-key>"
+fi
+
 if [ "$START" = 0 ]; then
   step "Files written (nothing started)"
   say "  Review $DIR, then start with:  cd $DIR && docker compose up -d"
@@ -1083,6 +1345,7 @@ cat <<EOF
    1. Sign in, then open Administration > Platform settings to confirm the web address.
 $( [ -n "$SMTP_HOST" ] || printf '      To send email, set SMTP_HOST (and the other SMTP_ lines) in %s/.env, then run: voxshift restart\n' "$DIR" )
    2. Back up regularly:  voxshift backup   (copy the result off this host)
+$( if [ ${#BACKUP_RECIPIENTS[@]} -gt 0 ]; then printf '      Backups are ENCRYPTED. Keep the matching private key OFF this host; without it they cannot be read.\n'; else printf '      Backups are not encrypted yet: voxshift backup-encryption on <public-key>   (docs/INSTALL-LINUX.md, Backups)\n'; fi )
 $( if [ "$AUTO_UPDATE" != "no" ]; then printf '   3. Updates:            automatic (%s); see or change with: voxshift auto-update status\n' "$AUTO_UPDATE"; else printf '   3. Upgrade later:      voxshift update   (or let it do it for you: voxshift auto-update on)\n'; fi )
 EOF
 if [ "$TLS" = "internal" ]; then
