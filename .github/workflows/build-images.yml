@@ -242,7 +242,7 @@ jobs:
           sha256sum install.sh uninstall.sh > SHA256SUMS
           cat SHA256SUMS
 
-      - uses: sigstore/cosign-installer@v4
+      - uses: sigstore/cosign-installer@v4.1.2
         with:
           cosign-release: 'v3.1.3'
 
