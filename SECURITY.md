@@ -9,7 +9,7 @@ Please report it **privately**. Do not open a public issue, and do not post deta
 
 1. **GitHub private report (preferred):** [report a vulnerability on this repository](https://github.com/gauntlec/teams-voice-migration-factory/security/advisories/new).
    Only the repository's maintainers can see it.
-2. **Email:** <!--SECURITY_CONTACT_EMAIL-->security-contact-to-be-confirmed<!--/SECURITY_CONTACT_EMAIL-->
+2. **Email:** <!--SECURITY_CONTACT_EMAIL-->security@voxshift.io<!--/SECURITY_CONTACT_EMAIL-->
 
 The same details are published in machine-readable form at <https://www.voxshift.io/.well-known/security.txt>.
 

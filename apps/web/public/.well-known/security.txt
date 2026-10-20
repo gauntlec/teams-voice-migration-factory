@@ -1,6 +1,6 @@
 # Voxshift security contact (RFC 9116). The address on the next line comes from deploy/security/SECURITY_CONTACT_EMAIL;
 # change it there and run deploy/security/set-contact.sh. Renew the Expires date once a year.
-Contact: mailto:security-contact-to-be-confirmed
+Contact: mailto:security@voxshift.io
 Contact: https://github.com/gauntlec/teams-voice-migration-factory/security/advisories/new
 Expires: 2027-10-20T00:00:00.000Z
 Preferred-Languages: en
