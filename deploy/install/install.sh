@@ -4,7 +4,7 @@
 #   curl -fsSL https://github.com/gauntlec/teams-voice-migration-factory/releases/latest/download/install.sh -o install.sh
 #   sudo bash install.sh --base-url https://voice.contoso.com --admin-email admin@contoso.com
 #
-# To check the download first (checksum, and the signature if you have cosign), see "Installer checks" in docs/INSTALL-LINUX.md.
+# To check the download first (checksum, and the signature if you have cosign), see "Installer checks" in docs/INSTALL-LINUX-REFERENCE.md.
 # (A release made before installers were attached to releases has no install.sh: use the file under deploy/install/ on the main branch for that one case.)
 #
 # What it does: installs Docker if missing, writes /opt/voxshift (compose file, Caddy front door, .env with freshly
@@ -344,7 +344,7 @@ backup_encryption() {
         echo "The private key is not on this host, and is needed to restore. If it is lost, the encrypted backups cannot be read."
       else
         echo "Backup encryption: OFF. Backups are plain folders holding the database, the secrets in .env and the private keys of the certificates."
-        echo "Switch it on: voxshift backup-encryption on <public-key>   (see docs/INSTALL-LINUX.md, Backups)"
+        echo "Switch it on: voxshift backup-encryption on <public-key>   (see docs/INSTALL-LINUX-REFERENCE.md, Backups)"
       fi
       echo "Backups in $DIR/backups: $(ls -1 "$DIR/backups" 2>/dev/null | grep -cE '^(pre-restore-)?[0-9]{8}-[0-9]{6}\.tar\.age$' || true) encrypted, $(plain_backups | wc -l | tr -d ' ') not encrypted"
       ;;
@@ -875,7 +875,7 @@ fi
 if [ ${#BACKUP_RECIPIENTS[@]} -eq 0 ] && [ "$ASSUME_YES" != 1 ] && [ -t 0 ] && [ "$START" = 1 ]; then
   say ""
   say "  Backups: 'voxshift backup' saves the database, the secrets and the certificate private keys. They can be encrypted so that a stolen or"
-  say "  copied backup is useless without your private key. For that, make a key pair on your OWN computer (age-keygen; see docs/INSTALL-LINUX.md,"
+  say "  copied backup is useless without your private key. For that, make a key pair on your OWN computer (age-keygen; see docs/INSTALL-LINUX-REFERENCE.md,"
   say "  Backups) and keep the private key off this host: this host is only given the public key (starts with age1)."
   reply=""
   read -r -p "  Public key to encrypt backups to (Enter to leave backups unencrypted for now): " reply || true
@@ -1395,7 +1395,7 @@ cat <<EOF
    1. Sign in, then open Administration > Platform settings to confirm the web address.
 $( [ -n "$SMTP_HOST" ] || printf '      To send email, set SMTP_HOST (and the other SMTP_ lines) in %s/.env, then run: voxshift restart\n' "$DIR" )
    2. Back up regularly:  voxshift backup   (copy the result off this host)
-$( if [ ${#BACKUP_RECIPIENTS[@]} -gt 0 ]; then printf '      Backups are ENCRYPTED. Keep the matching private key OFF this host; without it they cannot be read.\n'; else printf '      Backups are not encrypted yet: voxshift backup-encryption on <public-key>   (docs/INSTALL-LINUX.md, Backups)\n'; fi )
+$( if [ ${#BACKUP_RECIPIENTS[@]} -gt 0 ]; then printf '      Backups are ENCRYPTED. Keep the matching private key OFF this host; without it they cannot be read.\n'; else printf '      Backups are not encrypted yet: voxshift backup-encryption on <public-key>   (docs/INSTALL-LINUX-REFERENCE.md, Backups)\n'; fi )
 $( if [ "$AUTO_UPDATE" != "no" ]; then printf '   3. Updates:            automatic (%s); see or change with: voxshift auto-update status\n' "$AUTO_UPDATE"; else printf '   3. Upgrade later:      voxshift update   (or let it do it for you: voxshift auto-update on)\n'; fi )
 EOF
 if [ "$TLS" = "internal" ]; then

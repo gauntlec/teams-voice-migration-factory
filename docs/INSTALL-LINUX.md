@@ -1,369 +1,370 @@
-# Installing Voxshift on a new Linux host
+# Installing Voxshift on a Linux server
 
-One script installs everything: Docker (if missing), the application, its database, and a web front door with HTTPS.
-Used for a customer-premises install or any new host. The hosted service is run differently (Dockge, see
-`deploy/dockge/README.md`).
+This guide takes you from a blank Linux server to a working Voxshift with a proper HTTPS certificate. Follow the steps in order.
+The more detailed material (every installer option, backup encryption, restore, how it works) is in
+[INSTALL-LINUX-REFERENCE.md](INSTALL-LINUX-REFERENCE.md). You do not need it for a normal install.
 
-## What you need
+Every command here is run on the server, in a terminal. Lines that start with `#` are notes, not commands.
 
-| | |
-|---|---|
-| Host | Linux on **x86-64** (the images are not built for ARM). Debian, Ubuntu, RHEL, Rocky, Alma, CentOS or Fedora get Docker installed for you; any other Linux needs Docker Engine and the compose plugin installed first. |
-| Size | 4 GB RAM or more, 10 GB free disk, 2 CPUs. |
-| Network | Outbound HTTPS to `ghcr.io` (the images) and to Docker's package sites. Inbound 80 and 443 from the people who will use it. If you will use the Voxshift Hub or single sign-on (optional, below): outbound HTTPS to `hub.voxshift.io`, and to your identity provider (for example `login.microsoftonline.com`) if you add one. The API also sends a site's street address to `nominatim.openstreetmap.org` (OpenStreetMap geocoding) when an engineer clicks *Get coordinates from address*, and people's browsers load map tiles from `*.tile.openstreetmap.org`; block those hosts if addresses must not leave, and enter coordinates by hand (see [SECURITY.md](SECURITY.md)). |
-| A name | The address people will type, e.g. `https://voice.contoso.com`, with DNS pointing at the host. An IP address works too. |
-| Root | Run with `sudo`. |
+## Before you start
 
-## Install
+You need:
+
+- A Linux server on x86-64 (not ARM). Debian, Ubuntu, RHEL, Rocky, Alma, CentOS and Fedora all work.
+- 4 GB of memory, 2 CPUs and 10 GB of free disk space.
+- A DNS name for Voxshift, for example `voice.contoso.com`, pointing at the server.
+- Ports 80 and 443 open from the people who will use Voxshift to the server.
+- Internet access from the server (to `ghcr.io`, where the program is downloaded).
+- An account that can use `sudo`.
+
+Decide on the address now. People will type it in their browser, and the certificate has to be made for exactly that name.
+
+## Step 1. Download the installer
 
 ```bash
 curl -fsSL https://github.com/gauntlec/teams-voice-migration-factory/releases/latest/download/install.sh -o install.sh
+```
+
+To check the download before you run it, see "Installer checks" in [INSTALL-LINUX-REFERENCE.md](INSTALL-LINUX-REFERENCE.md#installer-checks-and-pinning-a-release).
+
+## Step 2. Get a certificate for your address
+
+The certificate is what makes the padlock appear in the browser. Pick the one line that describes you:
+
+- **A.** The name works on the internet (anyone can look it up) and the server can be reached from the internet.
+  Nothing to prepare. Go to Step 3 and use **Install A**. The certificate is free and renews itself.
+- **B.** The name only works inside your network and you have a **Microsoft internal certificate authority** (AD CS). Follow **2.1 to 2.4** and **2.5 (Microsoft CA)**.
+- **C.** You buy certificates from an **external certificate authority** (DigiCert, Sectigo, GoDaddy and so on). Follow **2.1 to 2.4** and **2.5 (external CA)**.
+- **D.** This is only a test. Go to Step 3 and use **Install D**. Browsers will show a warning.
+
+A public authority will not issue a certificate for a name that only works inside your network (such as `voice.contoso.local`).
+For those names use your Microsoft CA (B).
+
+### 2.1 Make a working folder
+
+Do this on the Voxshift server. The private key is made here and never needs to leave it.
+
+```bash
+mkdir ~/voxshift-cert
+chmod 700 ~/voxshift-cert
+cd ~/voxshift-cert
+```
+
+### 2.2 Make the certificate request
+
+Replace `voice.contoso.com` with your address (the name only, no `https://`). Then paste all of this into the terminal:
+
+```bash
+NAME=voice.contoso.com
+cat > server.cnf <<EOF
+[req]
+distinguished_name = dn
+req_extensions = san
+prompt = no
+[dn]
+CN = $NAME
+[san]
+subjectAltName = DNS:$NAME
+EOF
+openssl req -new -newkey rsa:2048 -nodes -keyout server.key -out server.csr -config server.cnf
+```
+
+This creates two files:
+
+- `server.key` is the private key. Keep it secret. Never email it, and never send it to the certificate authority.
+- `server.csr` is the request. This is what you give to the certificate authority.
+
+Some authorities ask for a company name and country. If yours does, add two lines under `[dn]` before you run the last command:
+`O = Contoso Ltd` and `C = US`.
+
+### 2.3 Check the request
+
+```bash
+openssl req -in server.csr -noout -text | grep -E "Subject:|DNS:"
+```
+
+You should see your name twice: once after `CN =` and once after `DNS:`. If not, repeat 2.2.
+
+### 2.4 Show the request so you can copy it
+
+```bash
+cat server.csr
+```
+
+It starts with `-----BEGIN CERTIFICATE REQUEST-----`. Copy everything from that line to the `-----END` line. You will paste it in the next step.
+
+### 2.5 Send the request to the authority
+
+#### Microsoft CA (path B)
+
+Ask your CA administrator which certificate template to use. It is usually called **Web Server**. The finished certificate must contain your name
+in the "Subject Alternative Name" field. If it does not, browsers will refuse it, and the administrator has to change the template or the CA setting.
+
+Pick the way that suits you.
+
+**Way 1: the CA's web page (if your CA has it).**
+
+1. On a computer inside your network, open `https://<your-ca-server>/certsrv` in a browser.
+2. Click **Request a certificate**, then **advanced certificate request**.
+3. Click **Submit a certificate request by using a base-64-encoded CMC or PKCS #10 file**.
+4. Paste the request from 2.4 into the large box.
+5. Under **Certificate Template** choose **Web Server** (or the template your administrator named). Click **Submit**.
+6. Choose **Base 64 encoded**, then click **Download certificate**. Save the file (it is called `certnew.cer`).
+7. Go back to the CA's home page and click **Download a CA certificate, certificate chain, or CRL**.
+8. Choose **Base 64**, then click **Download CA certificate chain**. Save the file (it is called `certnew.p7b`; rename it `chain.p7b`).
+
+**Way 2: from a Windows computer on your domain.**
+
+Copy `server.csr` to the Windows computer, then open Command Prompt and run these two commands. Use your CA's name (written `ServerName\CAName`) and the template name your administrator gave you
+(the template's name has no spaces, for example `WebServer`):
+
+```
+certreq -submit -config "CAserver\CAName" -attrib "CertificateTemplate:WebServer" server.csr certnew.cer
+certutil -config "CAserver\CAName" -ca.chain chain.p7b
+```
+
+If the CA needs an administrator to approve the request, `certreq` prints a request ID and stops. After approval run
+`certreq -retrieve -config "CAserver\CAName" <ID> certnew.cer`.
+
+**Way 3: give the file to your CA administrator.** Send them `server.csr` (only the request, never the key) and ask for two things:
+the certificate for your server as a Base 64 (PEM) file, and the CA's certificate chain (root and issuing CA).
+
+Copy the files back to the Voxshift server, into `~/voxshift-cert`. For example, from a Windows or Mac computer:
+
+```bash
+scp certnew.cer chain.p7b youruser@voice.contoso.com:voxshift-cert/
+```
+
+Then go to **2.6**.
+
+#### External authority (path C)
+
+1. Sign in to your certificate provider and start a new certificate order for your address.
+2. When it asks for the request (CSR), paste the text you copied in 2.4. Choose the server type **Other**, **nginx** or **Apache** if it asks.
+3. Complete the checks the provider asks for. This is usually a DNS record, an email to an address on your domain, or a small file on a website.
+4. When the certificate is ready, download these two things:
+   - your certificate (often called `your_domain.crt`);
+   - the intermediate or CA bundle (often called `ca-bundle.crt` or `intermediate.crt`).
+5. Copy both files to the Voxshift server, into `~/voxshift-cert`. For example:
+
+```bash
+scp voice_contoso_com.crt ca-bundle.crt youruser@voice.contoso.com:voxshift-cert/
+```
+
+Then go to **2.6**.
+
+### 2.6 Put the files in the right shape
+
+Voxshift needs two files: `fullchain.pem` (your certificate followed by the authority's chain) and `server.key` (the key from 2.2).
+Do the part that matches what you were given. All commands run in `~/voxshift-cert` on the server.
+
+**You have a certificate file `certnew.cer` and a chain file `chain.p7b` (Microsoft CA).**
+
+```bash
+# the certificate: if this prints a line starting with -----BEGIN it is ready, else see the note below
+head -1 certnew.cer
+cp certnew.cer server.crt
+
+# the chain: turn the .p7b into plain text
+openssl pkcs7 -in chain.p7b -print_certs | awk '/BEGIN CERTIFICATE/,/END CERTIFICATE/' > chain.pem
+# if that says "unable to load", use this instead:
+# openssl pkcs7 -inform DER -in chain.p7b -print_certs | awk '/BEGIN CERTIFICATE/,/END CERTIFICATE/' > chain.pem
+
+cat server.crt chain.pem > fullchain.pem
+```
+
+If `head -1 certnew.cer` does not show `-----BEGIN CERTIFICATE-----`, the file is in the other format. Convert it with
+`openssl x509 -inform DER -in certnew.cer -out server.crt` instead of the `cp` line.
+
+**You have a certificate file and a CA bundle (external authority).**
+
+```bash
+cat voice_contoso_com.crt ca-bundle.crt > fullchain.pem
+```
+
+Use your own file names. Your certificate must come first.
+
+**You were given a `.pfx` file** (some administrators and providers make the key for you, which is less safe, but it works).
+Replace `cert.pfx` with your file name. Each command asks for the password of the `.pfx` file.
+
+```bash
+openssl pkcs12 -in cert.pfx -nocerts -nodes | openssl pkey -out server.key
+openssl pkcs12 -in cert.pfx -clcerts -nokeys | openssl x509 -out server.crt
+openssl pkcs12 -in cert.pfx -cacerts -nokeys -chain | awk '/BEGIN CERTIFICATE/,/END CERTIFICATE/' > chain.pem
+cat server.crt chain.pem > fullchain.pem
+```
+
+### 2.7 Check the files
+
+Check that the certificate is for your name and has not expired:
+
+```bash
+openssl x509 -in fullchain.pem -noout -subject -issuer -dates
+openssl x509 -in fullchain.pem -noout -text | grep -A1 "Alternative Name"
+```
+
+Your name must appear after `DNS:`. Check the dates, and put a reminder in your calendar for a month before `notAfter`.
+
+Check that the key belongs to the certificate. These two commands must print the **same** line:
+
+```bash
+openssl x509 -in fullchain.pem -noout -pubkey | openssl sha256
+openssl pkey -in server.key -pubout | openssl sha256
+```
+
+If they differ, the certificate was made from a different request. Start again at 2.2, or find the right key.
+
+Check that the file holds more than your own certificate. This should print 2 or more (it prints 1 if the chain is missing):
+
+```bash
+grep -c "BEGIN CERTIFICATE" fullchain.pem
+```
+
+Your two files are ready: `~/voxshift-cert/fullchain.pem` and `~/voxshift-cert/server.key`.
+
+## Step 3. Install
+
+Use the line for your path. Change the address and the email to yours. The email becomes the first administrator's sign-in.
+
+**Install A (public name, free certificate):**
+
+```bash
 sudo bash install.sh --base-url https://voice.contoso.com --admin-email admin@contoso.com
 ```
 
-That downloads the installer attached to the newest release. To check it before you run it (a checksum, and a signature if you have `cosign`), or to
-pin a release, see [Installer checks](#installer-checks-and-pinning-a-release). (A release made before the installer was attached to releases has no
-`install.sh`; use `https://raw.githubusercontent.com/gauntlec/teams-voice-migration-factory/main/deploy/install/install.sh` for that one case.)
-
-Leave the options out and it asks. When it finishes it prints the address, the sign-in name and a generated password
-(also in `/opt/voxshift/.env`). Sign in, set up MFA when asked, then check **Administration > Platform settings**.
-
-Re-running refuses if `/opt/voxshift` already has an installation (re-running would generate new secrets and lock you out of
-stored data). To upgrade use `voxshift update`, or let the host do it for you (see [Automatic updates](#automatic-updates)).
-
-### Installer checks and pinning a release
-
-Every release carries the installer files and a signed list of their checksums:
-
-| Release file | |
-|---|---|
-| `install.sh`, `uninstall.sh` | the installer and the removal script, exactly as at that release |
-| `SHA256SUMS` | the SHA-256 checksum of each of them |
-| `SHA256SUMS.sigstore.json` | a [Sigstore](https://www.sigstore.dev) signature of `SHA256SUMS`, made by the release job of this repository's build workflow (keyless: no secret key exists to be stolen) |
-
-**Check the checksum** (needs nothing but the Linux tools already on the host):
+**Install B or C (your own certificate):**
 
 ```bash
-BASE=https://github.com/gauntlec/teams-voice-migration-factory/releases/latest/download
-curl -fsSLO $BASE/install.sh
-curl -fsSLO $BASE/SHA256SUMS
-grep ' install.sh$' SHA256SUMS | sha256sum -c -        # must print: install.sh: OK
+sudo bash install.sh --base-url https://voice.contoso.com --admin-email admin@contoso.com \
+  --tls custom --cert ~/voxshift-cert/fullchain.pem --key ~/voxshift-cert/server.key
 ```
 
-**Check the signature too** (optional; needs [`cosign`](https://docs.sigstore.dev/cosign/system_config/installation/)). This proves the checksum list was made by this
-repository's release workflow and not by someone who merely uploaded a file:
+**Install D (test, Voxshift's own certificate):**
 
 ```bash
-curl -fsSLO $BASE/SHA256SUMS.sigstore.json
-cosign verify-blob --bundle SHA256SUMS.sigstore.json \
-  --certificate-identity https://github.com/gauntlec/teams-voice-migration-factory/.github/workflows/build-images.yml@refs/heads/main \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  SHA256SUMS                                           # must print: Verified OK
+sudo bash install.sh --base-url https://voice.contoso.com --admin-email admin@contoso.com --tls internal
 ```
 
-Run the installer only after both say OK. If either fails, do not run it.
+The installer asks a few questions (answer them, or press Enter for the suggestion). It installs Docker if it is missing, downloads Voxshift and starts it.
+When it finishes it prints the address, the sign-in name and a generated password. Write the password down. It is also in `/opt/voxshift/.env`.
 
-**Pin a release** instead of taking "the newest": put the release tag in the address, for example the release `2026.10.20` is tag `v2026.10.20`:
+If the installer stops, it says why in plain words. Fix that and run the same command again.
+
+## Step 4. Sign in and check
+
+1. Open your address in a browser. You should see the padlock and no warning.
+2. Sign in with the email and password from the installer.
+3. Set up your authenticator app when asked.
+4. Open **Administration > Platform settings** and check that the web address is right.
+
+If the browser shows a warning, see "If something goes wrong" below.
+
+## Step 5. Set up the essentials
+
+- **Email.** In **Administration > Platform settings > Email**, choose how Voxshift sends mail, then click **Send test**. No email is sent until this is done.
+- **Backups.** Run `sudo voxshift backup`, then copy the folder it names to another computer. Do this regularly. A backup holds the private key and passwords, so keep it safe.
+  To encrypt backups, see [INSTALL-LINUX-REFERENCE.md](INSTALL-LINUX-REFERENCE.md#encrypting-backups-optional).
+- **Updates.** Run `sudo voxshift update` when a new version is out, or switch on automatic updates with `sudo voxshift auto-update on`.
+
+## Renewing or replacing the certificate
+
+Do this before the old certificate expires. If it expires, people cannot open Voxshift (the browser remembers the site must use a valid certificate).
+
+**Public name with a free certificate (Install A):** nothing to do. It renews itself.
+
+**Your own certificate (Install B or C):**
+
+1. Repeat steps 2.2 to 2.7 in the same folder (`cd ~/voxshift-cert`). The new files replace the old ones. To keep your current private key and only ask for a new certificate,
+   use this in 2.2 instead of the last command: `openssl req -new -key server.key -out server.csr -config server.cnf`.
+2. Copy the new files into place and restart the front door:
 
 ```bash
-BASE=https://github.com/gauntlec/teams-voice-migration-factory/releases/download/v2026.10.20
+sudo cp ~/voxshift-cert/fullchain.pem /opt/voxshift/certs/server.crt
+sudo cp ~/voxshift-cert/server.key /opt/voxshift/certs/server.key
+sudo chmod 600 /opt/voxshift/certs/server.key
+cd /opt/voxshift && sudo docker compose restart caddy
 ```
 
-and use `$BASE` in the commands above. A pinned address never changes, so it gives you the same installer tomorrow as today. (It only works for a
-release that has these files attached; the first ones are those made after this feature was added. `--version 2026.10.20` is a separate thing: it
-pins the program images the installer pulls.) Avoid the `main` branch address for anything that matters: it changes with every commit and is not signed.
+3. Open the address in a browser and check the new expiry date (click the padlock).
 
-What this does and does not prove: it shows the installer is the one this repository's release workflow published, and that it was not changed on
-the way. It does not show the code is free of mistakes, and the first download still trusts GitHub (https) to be GitHub. The images the installer
-pulls from `ghcr.io` carry build provenance and a bill of materials but are not signed with cosign.
+### Moving an existing install to your own certificate
 
-`voxshift self-update` makes the same checks for you: it downloads `install.sh` from the newest release, compares it with that release's
-`SHA256SUMS`, verifies the signature when `cosign` is installed (and tells you in one line when it is not), and stops without changing anything if
-either check fails. Only when the newest release has no `SHA256SUMS` at all (one made before this existed) does it fall back, with a warning, to the
-old unchecked source; it never falls back when checksums exist and do not match.
+If Voxshift was installed with Install A or D and you now want your own certificate, first get the two files (Step 2). Then:
 
-### How the address is secured (`--tls`)
+```bash
+sudo mkdir -p /opt/voxshift/certs
+sudo cp ~/voxshift-cert/fullchain.pem /opt/voxshift/certs/server.crt
+sudo cp ~/voxshift-cert/server.key /opt/voxshift/certs/server.key
+sudo chmod 600 /opt/voxshift/certs/server.key
+sudo nano /opt/voxshift/Caddyfile
+```
 
-| Mode | Use when | Needs |
-|---|---|---|
-| `auto` (default) | | picks from the address: `http://` -> `none`; an IP address, a name with no dot, or a name ending in a suffix used only inside networks (`.local`, `.lan`, `.internal`, `.intranet`, `.private`, `.corp`, `.home`, `.home.arpa`, `.lab`, `.localdomain`, `.test` and the other reserved ones) -> `internal`; anything else -> `acme`. For that last case the installer also checks that the name resolves from this host: if it does not, it **stops with a message** (it cannot tell a public name whose DNS is not set up yet from an internal name with an unusual suffix) and you re-run with `--tls acme` (create the DNS record first), `--tls internal` or `--tls custom`. It never silently chooses Let's Encrypt for a name it recognises as internal, and `--tls acme` for such a name is refused |
-| `acme` | a public name | the name resolves to this host and ports 80/443 are reachable from the internet; a free Let's Encrypt certificate that renews itself |
-| `internal` | an IP, or a private name (`.local`, `.lan`, `.corp`, no dot, ...) | Voxshift's own private CA. Browsers warn until the root certificate is trusted: `cd /opt/voxshift && docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt .`, then install it as a trusted root on staff computers |
-| `custom` | the customer has its own certificate | `--cert fullchain.pem --key key.pem` |
-| `none` | a test install | an `http://` address (a port is allowed: `http://10.0.0.20:8080`). Passwords cross the network unencrypted. |
+In the Caddyfile, inside the block that starts with your address, make one line say exactly this (replace the `tls internal` line if there is one, otherwise add it as the first line inside the block):
 
-Caddy also sends browsers that arrive on port 80 to the https address (automatic in `acme`, `internal` and `custom`; `none` stays on plain http).
+```
+tls /certs/server.crt /certs/server.key
+```
 
-#### HSTS (`--hsts-max-age`)
+Save (Ctrl+O, Enter) and close (Ctrl+X). Then open the compose file:
 
-Every https mode (`acme`, `internal`, `custom`) sends `Strict-Transport-Security: max-age=31536000` (one year) from the Caddyfile, so a browser
-that has once reached the address over https will not try plain http again. It is **never** sent with `--tls none`. It is written without
-`includeSubDomains` and without `preload` on purpose: those would also bind every other site on the customer's domain (and a preloaded name
-cannot be taken back quickly), so they are not offered.
+```bash
+sudo nano /opt/voxshift/compose.yaml
+```
 
-- `--hsts-max-age 600` uses another lifetime in seconds (a short value is sensible for the first days of a new install); `--hsts-max-age 0`
-  does not send the header at all. The most allowed is 63072000 (two years).
-- HSTS is set in this one place. The web container's nginx does not set it (it cannot tell whether the address is https) and the API's own
-  header (helmet) has it switched off, so a browser sees exactly one value. If you put your own reverse proxy in front instead, set HSTS there.
-- With HSTS a browser no longer lets a person click through a certificate warning for that address. For `internal`, install the root
-  certificate on staff computers first (see above), and expect an expired `custom` certificate to lock people out until it is renewed.
-- The value is written when the install is created. To change it later edit `/opt/voxshift/Caddyfile` (the `header Strict-Transport-Security` line in the
-  site block; delete the line to switch it off) and run `cd /opt/voxshift && docker compose restart caddy`. Browsers keep honouring an
-  earlier value until its time runs out; to cancel it early the site must send `max-age=0` over https for a while.
+Find the `caddy:` service. Under its `volumes:` list, after the line `- caddyconfig:/config`, add this line with the same indentation:
 
-### Other options
+```
+      - ./certs:/certs:ro
+```
 
-`--admin-password`, `--acme-email`, `--hsts-max-age`, `--dir`, `--version latest|<yyyy.mm.N>|sha-<commit>` (for example `--version 2026.10.3`), the SMTP set (`--smtp-host --smtp-port --smtp-secure
---smtp-user --smtp-pass --mail-from`), `--no-docker-install`, `--open-firewall` (opens 80/443 in ufw or firewalld if active),
-`--generate-only` (write the files and stop, to review), `--auto-update [daily|weekly]` / `--no-auto-update` (see below), `--backup-recipient KEY` (encrypt backups, see [Encrypting backups](#encrypting-backups-optional)), `--refresh-command` (on an existing install: rewrite only the `voxshift` command) and `-y`. `bash install.sh --help` lists them.
+Save and close, then apply it:
 
-## Starting again: removing an installation
+```bash
+sudo voxshift restart
+```
+
+## Everyday commands
+
+```bash
+sudo voxshift status          # is everything running?
+sudo voxshift update          # back up, then install the newest version
+sudo voxshift backup          # make a backup
+sudo voxshift logs            # watch the logs (Ctrl+C to stop)
+sudo voxshift restart         # restart everything (a short outage)
+sudo voxshift reset-admin     # set a new password for the first administrator
+```
+
+Everything starts again by itself after the server reboots.
+
+## If something goes wrong
+
+**The browser says the connection is not private.**
+- Own certificate: the browser computer does not trust your authority yet. Computers joined to your domain normally trust a Microsoft CA already.
+  If yours do not, ask your administrator to deploy the CA's root certificate to them (Group Policy).
+- Install D: the browser does not trust Voxshift's own certificate. This is expected. For real use, use B or C.
+- The name in the browser must be exactly the name in the certificate. An IP address or a different name will give this warning.
+
+**The installer says it cannot read the certificate or key.** Check the file names and that you ran the commands in `~/voxshift-cert`.
+
+**Voxshift will not start after changing the certificate.** Check that the two files match (the two `sha256` lines in 2.7 must be identical) and that `fullchain.pem`
+starts with your own certificate, not the CA's. Then run `sudo voxshift logs caddy` to see the exact message.
+
+**The certificate request keeps getting refused.** Ask the CA administrator or your provider to check that the name in the request is the one you typed in Step 1.
+
+**Public name (Install A) will not get a certificate.** The name must already point at this server and ports 80 and 443 must be reachable from the internet.
+Fix the DNS record or the firewall, then run `sudo voxshift restart`.
+
+## Removing an installation
+
+This deletes Voxshift **and all of its data**. Make a backup first if you may need anything.
 
 ```bash
 curl -fsSL https://github.com/gauntlec/teams-voice-migration-factory/releases/latest/download/uninstall.sh -o uninstall.sh
-sudo bash uninstall.sh --dry-run          # shows what would go, changes nothing
-sudo bash uninstall.sh                    # lists it again and asks you to type DELETE
+sudo bash uninstall.sh --dry-run     # shows what would go, changes nothing
+sudo bash uninstall.sh               # asks you to type DELETE
 ```
 
-It removes the containers, the **database and stored files**, `/opt/voxshift` (including `.env` and its secrets) and the
-`voxshift` command, so `install.sh` can then be run again on a clean host. It leaves Docker, your other containers and any
-firewall rule you opened.
+## More detail
 
-| Option | |
-|---|---|
-| `--backup-to DIR` | runs `voxshift backup DIR` first (needs a working install): the full backup described under Backups |
-| `--keep-certs` | keeps the certificate store, so a reinstall reuses the issued Let's Encrypt certificate (Let's Encrypt limits how many a name can get per week) |
-| `--remove-images` | also deletes the downloaded images (the reinstall downloads them again) |
-| `--dry-run`, `-y`, `--dir PATH` | |
-
-The data volumes must go too: a new install generates a new database password, and an old database would not accept it.
-The script refuses any directory that is not clearly a Voxshift install (it needs `compose.yaml` named `voxshift` and a `.env`), and refuses `/`, `/opt` and
-other system directories.
-
-## What gets installed
-
-`/opt/voxshift` (mode 700):
-
-| File | |
-|---|---|
-| `.env` | every setting and secret, freshly generated for this host (mode 600). **Back it up**: `DATA_ENCRYPTION_KEY` protects stored secrets and cannot be recovered. |
-| `compose.yaml` | postgres, redis, api, worker, web and caddy. Only Caddy is published (80, and 443 with HTTPS). |
-| `Caddyfile` | the front door and certificate handling |
-| `voxshift` | the control command. A copy is installed as `/usr/local/bin/voxshift`, so it works from any directory and any user; it asks for `sudo` itself (the install directory is root-only) |
-
-Everything restarts on its own after a reboot (`restart: unless-stopped`, Docker enabled at boot).
-
-## Day to day: the `voxshift` command
-
-| | |
-|---|---|
-| `voxshift status` | what is running |
-| `voxshift update` | takes a backup, pulls the newest images, restarts, waits until it answers. Database migrations run on start. |
-| `voxshift auto-update on [daily\|weekly]` / `off` / `status` | turns the automatic update job on or off, or shows its schedule and the last lines of its log |
-| `voxshift self-update` | fetches the installer from the newest release, checks its checksum (and signature, with `cosign`) and rewrites the `voxshift` command only (see Automatic updates) |
-| `voxshift backup [DIR]` | everything needed to rebuild this installation, into `DIR/<timestamp>` (default `/opt/voxshift/backups`, last 14 kept): the database, the stored files, `.env`, `compose.yaml`, the `Caddyfile`, `certs/` (if you use your own certificate) and Caddy's data (its certificates and, for `--tls internal`, its own certificate authority), plus a `manifest.txt` with the date, the Voxshift release and a checksum of each file. Copy it off the host. It holds secrets and private keys. See Backups. |
-| `voxshift backup-encryption on KEY \| off \| status \| remove-unencrypted` | optional: makes every backup an encrypted `.tar.age` file that only the owner of a private key (kept off this host) can open. See [Encrypting backups](#encrypting-backups-optional). |
-| `voxshift restore FOLDER\|FILE.tar.age [--identity KEYFILE] [--with-config] [--yes] [--force]` | puts a backup back: checks it, takes a safety backup of today's state, asks you to type `RESTORE`, then restores the database, the stored files and `.env`, and starts everything. An encrypted backup also needs `--identity`. See Restoring. |
-| `voxshift restart` | re-applies `.env` (use after editing it) |
-| `voxshift reset-admin` | sets a new password for the first Super Admin and unlocks the account (recovery) |
-| `voxshift logs [api\|worker\|web\|caddy]` | follow logs |
-| `voxshift start` / `stop` | |
-
-## Automatic updates
-
-The installer asks "Install updates automatically every night?" (default **no**; with `-y` it only does it if you pass
-`--auto-update`). Saying yes writes `/etc/cron.d/voxshift-update`, which runs `voxshift update --auto` once a day (or once a week with
-`weekly`) at a quiet hour between 02:00 and 04:59, with the minute picked at random for this host so a fleet of installs does not all
-pull at once. The job:
-
-- pulls the newest images and **does nothing** if there is nothing new (it logs "already up to date");
-- when there is a new version: takes a backup (`voxshift backup`, last 14 kept; the same full backup as by hand), restarts on the new images, waits until the
-  application answers, then removes the old images. If the backup fails it does **not** update; if the application does not answer
-  afterwards it says so in the log and leaves the backup from just before for you to restore;
-- never runs twice at once, and skips itself when `IMAGE_TAG` in `.env` is an exact release (`2026.10.3` or `sha-...`), because there is
-  nothing newer to fetch;
-- writes one line per step to `/var/log/voxshift-update.log` (rotated monthly, six kept).
-
-It installs cron (`cron` or `cronie`) if the host lacks it. Manage it any time with `voxshift auto-update on [daily|weekly]`,
-`off` or `status`. Changing between daily and weekly keeps the same time of day. `uninstall.sh` removes the job.
-
-Automatic updates apply database migrations without anyone watching, so for a system that must not change without a person
-there (a change window, for example) leave it off and run `voxshift update` yourself. An installation that is also connected to a
-Voxshift Hub keeps reporting its version there, so you can see who is behind. This installation's host needs outbound HTTPS to
-`ghcr.io` for the job, the same as for a manual update.
-
-### Installations made before this existed
-
-Their `voxshift` command has no `auto-update` yet. Refresh just the command once (it touches no secrets, settings, data or
-containers):
-
-```bash
-curl -fsSL https://github.com/gauntlec/teams-voice-migration-factory/releases/latest/download/install.sh -o install.sh
-sudo bash install.sh --refresh-command            # add --auto-update to switch the nightly job on in the same step
-```
-
-From then on, `voxshift self-update` does the same thing in one word (it downloads the installer from the newest release, checks its
-checksum and, if `cosign` is installed, the signature, and rewrites only the command; see [Installer checks](#installer-checks-and-pinning-a-release)). Run it after a release that adds a command. It needs outbound HTTPS to
-`github.com` (and the download servers GitHub redirects to). It does not change the compose file, so an
-installation made long ago keeps its old container settings; a fresh install is the way to get a newer compose file.
-
-## Settings you will change after installing
-
-- **Email**: set it up in the app, in Administration > Platform settings > Email (your own mail server, or the Voxshift Hub's mail service), and use "Send test". The installer's `--smtp-*` options and the `SMTP_*` values in `.env` still work as the starting point until something is saved there. Until email is set up none is delivered. The whole platform's email can be
-  switched off in Administration > Platform settings.
-- **Menus and features**: switch off the areas a customer's own installation does not need (the bug and feature boards, the MSP console) in Administration > Platform settings > Menus and features. See [PLATFORM-SETTINGS.md](PLATFORM-SETTINGS.md).
-- **The hub**: to list this installation in a Voxshift Hub and see it online there, connect it in Administration > Platform settings > Voxshift hub. See [HUB-CONNECTION.md](HUB-CONNECTION.md).
-- **Single sign-on (optional)**: to let people sign in with the Voxshift Hub, or with your own Microsoft Entra ID, Okta or Google Workspace, instead of a separate password here, follow [SSO-ADMIN-GUIDE.md](SSO-ADMIN-GUIDE.md): Administration > Platform settings > Single sign-on. Everything starts off, and the administrator made by the installer keeps password + authenticator sign-in whatever you choose (it is the "break-glass" account; keep its password safe). Do this after the web address is final, because providers return people to `<web address>/api/auth/oidc/callback`.
-- **The web address**: change it in Administration > Platform settings (no restart). `WEB_ORIGIN` in `.env` is only the starting value. See [BASE-URL.md](BASE-URL.md).
-- **The first admin's password**: `BOOTSTRAP_ADMIN_PASSWORD` in `.env` is used only to create the account on the first start. After that
-  a restart never touches the account, so a password changed in the app stays. If it is lost, or the admin is locked out or
-  disabled, run `voxshift reset-admin`: it asks for a new password (12+ characters, not stored in `.env`) and puts the
-  account back (Super Admin, active, unlocked). Nothing else is needed. You may delete `BOOTSTRAP_ADMIN_PASSWORD` from `.env`
-  once you have signed in, but the API then cannot create the admin on a brand-new empty database.
-
-## Backups
-
-`voxshift backup` (and the automatic update, and `uninstall.sh --backup-to`) writes one folder, for example
-`/opt/voxshift/backups/20261019-020512/`:
-
-| File | What it is |
-|---|---|
-| `database.dump` | the whole database (every customer), as `pg_dump -Fc` |
-| `files.tar.gz` | the stored files (handover packs, logos, attachments) |
-| `env` | a copy of `.env`: the secrets. Without `DATA_ENCRYPTION_KEY` the stored secrets cannot be read |
-| `compose.yaml`, `Caddyfile`, `certs/` | how the containers and the web front door are set up (`certs/` only if you installed your own certificate) |
-| `caddy-data.tar.gz` | Caddy's data volume: the issued certificates and, for `--tls internal`, Voxshift's own certificate authority, so browsers that already trust it keep trusting it |
-| `manifest.txt` | the date, the Voxshift release (for example `2026.10.19`), and a `sha256` checksum of every other file |
-
-The folder and everything in it can only be read by root (700 / 600). **It contains the database, the passwords and keys and the private key
-of your certificate: keep it somewhere safe and off this host** (a copy on the same disk does not survive the disk). The newest 14 backups
-are kept in a folder; the safety backups that `voxshift restore` makes (`pre-restore-...`) are kept separately, the newest 3. Nothing else in
-the folder is deleted. A backup is built in a `.partial` folder and renamed when it is complete, so a failed backup leaves nothing that
-looks finished; `voxshift update` and the nightly job still stop when the backup fails. Backups made before this version have no
-`compose.yaml`, Caddy data or manifest; they can still be restored (see below).
-
-### Encrypting backups (optional)
-
-By default a backup is a plain folder, readable by anyone who gets a copy of it. If you copy backups off the host (and you should), switch on
-encryption: then every backup is **one file, `<timestamp>.tar.age`**, that nobody can open without a private key which is **never kept on the
-Voxshift host**. The host holds only a *public* key: it can lock a backup but cannot unlock one, so someone who breaks into the host, or finds a
-copy of the backup, cannot read the database, the secrets or the certificate private keys. It uses [age](https://age-encryption.org), a small,
-widely reviewed encryption program.
-
-**1. Make the key pair on your own computer, not on the Voxshift host** (install `age` there: `brew install age`, `apt install age`,
-`dnf install age`, or download it from the age releases page):
-
-```bash
-age-keygen -o voxshift-backup-key.txt
-```
-
-It prints `Public key: age1...`. That line is the **public key**: safe to share, it goes on the Voxshift host. The file
-`voxshift-backup-key.txt` holds the **private key** (a line starting `AGE-SECRET-KEY-`). Do not copy it to the Voxshift host. Keep it in a
-password manager or a safe, and keep a second copy somewhere else (a different building or person). To make two people able to restore, make
-two key pairs and give the host both public keys.
-
-> **If every copy of the private key is lost, the encrypted backups cannot be read by anyone, including Voxshift. There is no reset and no
-> back door.** A restore needs the private key, so test that you can find it: restore one backup on a test host before relying on it.
-
-**2. Give the host the public key.** At install time: `--backup-recipient age1...` (it also asks when you run the installer in a terminal).
-On an installation that exists already (one made before this feature needs `voxshift self-update` first, to get the new command):
-
-```bash
-sudo voxshift backup-encryption on age1...your-public-key
-sudo voxshift backup-encryption status
-```
-
-`on` installs `age` from the system's own package repository if it is missing (Debian and Ubuntu: `apt`; RHEL, Rocky, Alma, CentOS: `dnf`/`yum`,
-using EPEL when needed) and stops with a message if it cannot. It refuses a private key (a file or text starting `AGE-SECRET-KEY-`) so that one is
-never left on the host. The public keys are kept in `/opt/voxshift/backup-recipients` (mode 600), not in `.env`. You can give several keys, or a file
-with one key per line; any one of the matching private keys can open a backup. `voxshift backup-encryption off` switches it off again.
-
-**What changes once it is on:**
-
-- `voxshift backup`, the nightly update's backup, the safety backup that `voxshift restore` takes and `uninstall.sh --backup-to` all write a
-  `<timestamp>.tar.age` file plus `<timestamp>.tar.age.sha256` beside it (the size and checksum, for checking a copy you moved). The files inside
-  are the same as before (see the table above). The 14-backup and 3-safety-backup rotation works as before.
-- While a backup is being built a plain working folder (`<timestamp>.partial`) exists in the backups folder, readable only by root; it is removed
-  as soon as the encrypted file is written and checked. Voxshift cannot read the result back (it has no private key), so the check is that the file
-  exists, is not empty, starts with the age header and is a plausible size.
-- **It never falls back to a plain backup.** If encryption is on and `age` is missing or the key file is empty, `voxshift backup` stops with a
-  message and writes nothing. The nightly update then does not update (the log says why), and `uninstall.sh --backup-to` stops before removing anything.
-- Backups made *before* you switched it on stay plain folders until newer ones push them out of the 14. Remove them at once with
-  `voxshift backup-encryption remove-unencrypted` (it lists them and asks you to type `DELETE`; copy anything you need first).
-- The host's disk holds only the encrypted file, but the *database password and secrets on the running host* are of course still in `/opt/voxshift/.env`.
-  Encryption protects the **backups** (the copies that travel), not the live host.
-- After a total loss you reinstall, then restore with your private key, then run `voxshift backup-encryption on <public-key>` again (the key
-  list is part of the host, not of the backup).
-
-## Restoring
-
-An installation made before `voxshift restore` existed gets it (and the fuller backup) with `voxshift self-update`; nothing else changes.
-
-```bash
-voxshift restore /opt/voxshift/backups/20261019-020512
-```
-
-An **encrypted** backup (`....tar.age`) is restored the same way, with the private key file you made with `age-keygen`:
-
-```bash
-voxshift restore /opt/voxshift/backups/20261019-020512.tar.age --identity /root/voxshift-backup-key.txt
-```
-
-Without `--identity` it stops, says the backup is encrypted and changes nothing. Voxshift opens the backup into a private, root-only folder next to
-the backups (so the host needs room for one extra copy of it), checks it exactly like a plain backup (step 1 below), and **removes that opened copy
-when the command ends, whether it finished, failed or was interrupted**. Copy the private key onto the host only for the restore and delete it afterwards.
-A wrong key, or a damaged file, gives "could not be opened" and changes nothing. The safety backup taken before the restore is encrypted as well when
-encryption is on; to go back to it, give the same `--identity`.
-
-What it does, in order (nothing is changed until step 4):
-
-1. Checks the folder is a Voxshift backup and every file matches its checksum in `manifest.txt` (a changed or damaged file stops it).
-2. Compares the backup's release with the one running here. **A backup from a newer release is refused**: the database only moves forward, so
-   the older program cannot use it. Update first (`voxshift update`), or set `IMAGE_TAG` in `.env` to that release or later and run
-   `voxshift restart`, then restore again. A backup from an *older* release is fine; the migrations bring it up to date when the application
-   starts. If a release cannot be read (a hand-built image, Voxshift not running) it stops and asks for `--force`.
-3. Shows what will be replaced and asks you to type `RESTORE` (or pass `--yes`).
-4. Takes a **safety backup** of the current state in `/opt/voxshift/backups/pre-restore-<time>`, stops `api` and `worker`, keeps a copy of
-   today's `.env` as `.env.before-restore-<time>`, and puts the backup's `.env` in place. Two lines stay as they are on this host, because
-   they must match the database already running here: `POSTGRES_PASSWORD` / `DATABASE_URL`, and `IMAGE_TAG` (which release runs).
-5. Loads the database (`pg_restore --clean --if-exists`: the tables in the backup are dropped and recreated; a customer created after the
-   backup stays behind as an unused schema that nothing refers to), then the stored files.
-6. With **`--with-config`** also restores `compose.yaml`, the `Caddyfile`, `certs/` and Caddy's data (today's copies are kept as
-   `*.before-restore-<time>`). Use it on a new host or after losing the web front door's settings; leave it out to keep this host's own
-   network settings.
-7. Starts everything again and waits until it answers, like `voxshift update`.
-
-Everything entered after the backup was made is lost; Redis (the work queue) is not restored. If it does not turn out as you wanted, go
-back with `voxshift restore /opt/voxshift/backups/pre-restore-<time>`. If it stops part-way it says so and names that folder.
-
-**On a new host (the usual disaster-recovery case):** install Voxshift the normal way with the same version or newer, copy the backup folder
-onto the host, then `voxshift restore <folder> --with-config`. The settings and secrets come from the backup, so the same sign-ins and
-stored secrets work again. Check the web address in `.env` (`WEB_ORIGIN`) and in Administration > Platform settings still matches the new host.
-
-**A backup made by an older version** (only `database.dump`, `files.tar.gz`, `env`): run `voxshift restore <folder> --force`. It cannot be
-checked against a manifest and `--with-config` is not available for it.
-
-By hand (if the command itself cannot run), the same steps are:
-
-```bash
-cd /opt/voxshift
-voxshift stop
-cp /path/to/env .env && chmod 600 .env          # keep this host's POSTGRES_PASSWORD / DATABASE_URL lines if it is a new host
-docker compose up -d postgres
-docker compose exec -T postgres pg_restore -U tvmf -d tvmf --clean --if-exists < /path/to/database.dump
-docker run --rm -v voxshift_filesdata:/data -v /path/to:/in:ro alpine sh -c 'cd /data && rm -rf ./* && tar xzf /in/files.tar.gz -C /data'
-voxshift start
-```
-
-## Notes and limits
-
-- The API trusts exactly two proxy hops (Caddy, then the web container's nginx) to learn the real client address. That is why Caddy is always
-  the front door, even for plain http. Putting another reverse proxy in front of Caddy changes the hop count; ask before doing that.
-- To remove it: `cd /opt/voxshift && docker compose down -v` deletes the containers **and all data**; then delete `/opt/voxshift`.
-- The images are public on ghcr.io. A host with no internet access cannot use this installer as is.
-- Tested file generation for every TLS mode and every input check on macOS; the full install (Docker, image pull, Caddy, health wait) needs a real Linux host.
-  The same goes for `voxshift backup` and `voxshift restore` against a real database: their logic (checks, order of steps, refusals, rotation) is tested with a
-  stand-in `docker`, and the first real restore should be tried on a test host before it is relied on. `bash deploy/install/check-backup.sh` runs that
-  stand-in check, including the encryption round trip with the real `age` program (it needs `age` on the machine running it).
-  `bash deploy/install/check-selfupdate.sh` does the same for `voxshift self-update` (a stand-in `curl` and `cosign`); the real signature check needs a published, signed release.
-- Found a security problem in Voxshift or its installer? Report it privately as described in [SECURITY.md](../SECURITY.md) (repository root); do not post it publicly.
+[INSTALL-LINUX-REFERENCE.md](INSTALL-LINUX-REFERENCE.md) covers the installer options, how the address is secured, automatic updates, backups,
+encrypted backups, restoring, and what has and has not been tested. To report a security problem, see [SECURITY.md](../SECURITY.md) in the repository root.

@@ -14,7 +14,7 @@ Service Handover** — styled to feel like the Microsoft Teams Admin Center.
 - [`docs/EMAIL.md`](docs/EMAIL.md) — the queued email module + the invitation / first-sign-in flow
 - [`docs/SSO.md`](docs/SSO.md) — single sign-on (OpenID Connect): the design, the contract with the Voxshift Hub and what was built; **[`docs/SSO-ADMIN-GUIDE.md`](docs/SSO-ADMIN-GUIDE.md)** is the administrator's step-by-step guide and troubleshooting table
 - [`docs/HUB-CONNECTION.md`](docs/HUB-CONNECTION.md) — connecting an installation to a Voxshift Hub: heartbeat, remote access, hub sign-in
-- [`docs/PLATFORM-SETTINGS.md`](docs/PLATFORM-SETTINGS.md), [`docs/INSTALL-LINUX.md`](docs/INSTALL-LINUX.md) — installation-wide settings; installing on a Linux host
+- [`docs/PLATFORM-SETTINGS.md`](docs/PLATFORM-SETTINGS.md), [`docs/INSTALL-LINUX.md`](docs/INSTALL-LINUX.md) (step-by-step install, with certificates) and [`docs/INSTALL-LINUX-REFERENCE.md`](docs/INSTALL-LINUX-REFERENCE.md) — installation-wide settings; installing on a Linux host
 
 ## What this scaffold contains
 
