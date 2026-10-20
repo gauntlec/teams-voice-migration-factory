@@ -216,17 +216,51 @@ jobs:
             GIT_SHA=${{ github.sha }}
 
   # Tags the commit v<release number> and publishes a GitHub release with notes, once all three images are built and pushed.
+  # The release also carries the installer (install.sh, uninstall.sh) and SHA256SUMS, a checksum file for them that is SIGNED here with
+  # Sigstore (keyless: the signature proves this workflow in this repository made it, no key to keep). `voxshift self-update` and the
+  # verified-install steps in docs/INSTALL-LINUX.md check these. If signing fails (Sigstore down), the release is still made without the
+  # signature file and the job summary says so: the images are already published, so a missing signature must not leave them without a release.
   release:
     needs: [version, publish]
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write   # lets cosign get a short-lived certificate for this workflow's identity (GitHub OIDC)
     steps:
-      - env:
+      - uses: actions/checkout@v4
+
+      - name: Checksums of the installer files
+        run: |
+          mkdir -p release-assets
+          cp deploy/install/install.sh deploy/install/uninstall.sh release-assets/
+          cd release-assets
+          sha256sum install.sh uninstall.sh > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: sigstore/cosign-installer@v4
+        with:
+          cosign-release: 'v3.1.3'
+
+      - name: Sign the checksums (Sigstore, keyless)
+        id: sign
+        continue-on-error: true
+        working-directory: release-assets
+        run: cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS
+
+      - name: Create the release
+        env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.version.outputs.version }}
-        run: gh release create "v${VERSION}" --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" --title "${VERSION}" --generate-notes
+        run: |
+          files=(release-assets/install.sh release-assets/uninstall.sh release-assets/SHA256SUMS)
+          if [ -s release-assets/SHA256SUMS.sigstore.json ]; then
+            files+=(release-assets/SHA256SUMS.sigstore.json)
+          else
+            echo "::warning::The checksums were NOT signed (Sigstore signing failed). The release has install.sh, uninstall.sh and SHA256SUMS but no SHA256SUMS.sigstore.json."
+            echo "### Release ${VERSION}: checksums not signed - see the 'Sign the checksums' step" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          gh release create "v${VERSION}" "${files[@]}" --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" --title "${VERSION}" --generate-notes
 
   # Weekly only - see the `on.schedule` comment above. Builds just the
   # worker image, unpinned, to ghcr.io/.../tvmf-worker:candidate (never

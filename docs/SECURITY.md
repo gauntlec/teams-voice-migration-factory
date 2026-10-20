@@ -356,3 +356,18 @@ Reviewed 2026-10-16. What the images do, and what is still open:
 - **Container hardening** (`deploy/dockge/compose.yaml`, the compose the installer writes, and the hub's `deploy/compose.yaml`): every service has `no-new-privileges` and all Linux capabilities dropped, with only the few each image needs added back (postgres: CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID; redis: CHOWN, DAC_OVERRIDE, SETGID, SETUID (its start-up step runs as root and must read redis's own 0700 appendonlydir); api: CHOWN, SETGID, SETUID for the entrypoint that hands an older root-owned files volume to the app user; web: CHOWN, SETGID, SETUID, NET_BIND_SERVICE; worker and hub: none; caddy: NET_BIND_SERVICE). api, web, redis and the hub have a read-only root filesystem (writable only on their volumes and small tmpfs mounts). api, worker and web have healthchecks (the worker touches `/tmp/worker-alive` every 15 s and the check fails if that goes stale). Logs are capped at 3 x 10 MB per container. Not read-only: postgres and the worker (PowerShell and its modules keep state in the home directory). No memory limits are set: a large tenant discovery can legitimately use a lot.
 - **Open:** a host firewall for the published web port (5173) and the hub's (5190) so only the reverse proxy can reach them.
 - Images are not signed; the SBOM and provenance are attached to each image in GHCR.
+
+## Build and supply chain
+
+- **Installer integrity (2026-10-20).** Each release (`release` job in `.github/workflows/build-images.yml`) attaches `install.sh`, `uninstall.sh`, a `SHA256SUMS` file for them and `SHA256SUMS.sigstore.json`, a keyless [Sigstore](https://www.sigstore.dev) signature of `SHA256SUMS` made with `cosign` using the workflow's GitHub identity (no signing key exists to leak). If signing fails the release is still made, without the signature file, and the job summary says so. To check a download by hand, or to pin a release instead of `main`:
+
+  ```bash
+  BASE=https://github.com/gauntlec/teams-voice-migration-factory/releases/latest/download   # or .../releases/download/v2026.10.20
+  curl -fsSLO $BASE/install.sh && curl -fsSLO $BASE/SHA256SUMS && curl -fsSLO $BASE/SHA256SUMS.sigstore.json
+  grep ' install.sh$' SHA256SUMS | sha256sum -c -
+  cosign verify-blob --bundle SHA256SUMS.sigstore.json \
+    --certificate-identity https://github.com/gauntlec/teams-voice-migration-factory/.github/workflows/build-images.yml@refs/heads/main \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
+  ```
+
+  `voxshift self-update` does this itself: it takes `install.sh` from the newest release, requires it to match that release's `SHA256SUMS`, verifies the signature when `cosign` is installed (one-line notice when it is not), and changes nothing on a mismatch. It falls back to the old unchecked `main` address, with a visible warning, only when the newest release has no `SHA256SUMS` at all. What this proves and does not prove is written out in [INSTALL-LINUX.md](INSTALL-LINUX.md#installer-checks-and-pinning-a-release): in short, the file is the one this repository's workflow published and was not altered in transit; it does not prove the code has no mistakes. The program images are not cosign-signed (SBOM and build provenance are attached to each).

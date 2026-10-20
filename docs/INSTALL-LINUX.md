@@ -17,15 +17,70 @@ Used for a customer-premises install or any new host. The hosted service is run 
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/gauntlec/teams-voice-migration-factory/main/deploy/install/install.sh -o install.sh
+curl -fsSL https://github.com/gauntlec/teams-voice-migration-factory/releases/latest/download/install.sh -o install.sh
 sudo bash install.sh --base-url https://voice.contoso.com --admin-email admin@contoso.com
 ```
+
+That downloads the installer attached to the newest release. To check it before you run it (a checksum, and a signature if you have `cosign`), or to
+pin a release, see [Installer checks](#installer-checks-and-pinning-a-release). (A release made before the installer was attached to releases has no
+`install.sh`; use `https://raw.githubusercontent.com/gauntlec/teams-voice-migration-factory/main/deploy/install/install.sh` for that one case.)
 
 Leave the options out and it asks. When it finishes it prints the address, the sign-in name and a generated password
 (also in `/opt/voxshift/.env`). Sign in, set up MFA when asked, then check **Administration > Platform settings**.
 
 Re-running refuses if `/opt/voxshift` already has an installation (re-running would generate new secrets and lock you out of
 stored data). To upgrade use `voxshift update`, or let the host do it for you (see [Automatic updates](#automatic-updates)).
+
+### Installer checks and pinning a release
+
+Every release carries the installer files and a signed list of their checksums:
+
+| Release file | |
+|---|---|
+| `install.sh`, `uninstall.sh` | the installer and the removal script, exactly as at that release |
+| `SHA256SUMS` | the SHA-256 checksum of each of them |
+| `SHA256SUMS.sigstore.json` | a [Sigstore](https://www.sigstore.dev) signature of `SHA256SUMS`, made by the release job of this repository's build workflow (keyless: no secret key exists to be stolen) |
+
+**Check the checksum** (needs nothing but the Linux tools already on the host):
+
+```bash
+BASE=https://github.com/gauntlec/teams-voice-migration-factory/releases/latest/download
+curl -fsSLO $BASE/install.sh
+curl -fsSLO $BASE/SHA256SUMS
+grep ' install.sh$' SHA256SUMS | sha256sum -c -        # must print: install.sh: OK
+```
+
+**Check the signature too** (optional; needs [`cosign`](https://docs.sigstore.dev/cosign/system_config/installation/)). This proves the checksum list was made by this
+repository's release workflow and not by someone who merely uploaded a file:
+
+```bash
+curl -fsSLO $BASE/SHA256SUMS.sigstore.json
+cosign verify-blob --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity https://github.com/gauntlec/teams-voice-migration-factory/.github/workflows/build-images.yml@refs/heads/main \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  SHA256SUMS                                           # must print: Verified OK
+```
+
+Run the installer only after both say OK. If either fails, do not run it.
+
+**Pin a release** instead of taking "the newest": put the release tag in the address, for example the release `2026.10.20` is tag `v2026.10.20`:
+
+```bash
+BASE=https://github.com/gauntlec/teams-voice-migration-factory/releases/download/v2026.10.20
+```
+
+and use `$BASE` in the commands above. A pinned address never changes, so it gives you the same installer tomorrow as today. (It only works for a
+release that has these files attached; the first ones are those made after this feature was added. `--version 2026.10.20` is a separate thing: it
+pins the program images the installer pulls.) Avoid the `main` branch address for anything that matters: it changes with every commit and is not signed.
+
+What this does and does not prove: it shows the installer is the one this repository's release workflow published, and that it was not changed on
+the way. It does not show the code is free of mistakes, and the first download still trusts GitHub (https) to be GitHub. The images the installer
+pulls from `ghcr.io` carry build provenance and a bill of materials but are not signed with cosign.
+
+`voxshift self-update` makes the same checks for you: it downloads `install.sh` from the newest release, compares it with that release's
+`SHA256SUMS`, verifies the signature when `cosign` is installed (and tells you in one line when it is not), and stops without changing anything if
+either check fails. Only when the newest release has no `SHA256SUMS` at all (one made before this existed) does it fall back, with a warning, to the
+old unchecked source; it never falls back when checksums exist and do not match.
 
 ### How the address is secured (`--tls`)
 
@@ -65,7 +120,7 @@ cannot be taken back quickly), so they are not offered.
 ## Starting again: removing an installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/gauntlec/teams-voice-migration-factory/main/deploy/install/uninstall.sh -o uninstall.sh
+curl -fsSL https://github.com/gauntlec/teams-voice-migration-factory/releases/latest/download/uninstall.sh -o uninstall.sh
 sudo bash uninstall.sh --dry-run          # shows what would go, changes nothing
 sudo bash uninstall.sh                    # lists it again and asks you to type DELETE
 ```
@@ -105,7 +160,7 @@ Everything restarts on its own after a reboot (`restart: unless-stopped`, Docker
 | `voxshift status` | what is running |
 | `voxshift update` | takes a backup, pulls the newest images, restarts, waits until it answers. Database migrations run on start. |
 | `voxshift auto-update on [daily\|weekly]` / `off` / `status` | turns the automatic update job on or off, or shows its schedule and the last lines of its log |
-| `voxshift self-update` | fetches the current installer and rewrites the `voxshift` command only (see Automatic updates) |
+| `voxshift self-update` | fetches the installer from the newest release, checks its checksum (and signature, with `cosign`) and rewrites the `voxshift` command only (see Automatic updates) |
 | `voxshift backup [DIR]` | everything needed to rebuild this installation, into `DIR/<timestamp>` (default `/opt/voxshift/backups`, last 14 kept): the database, the stored files, `.env`, `compose.yaml`, the `Caddyfile`, `certs/` (if you use your own certificate) and Caddy's data (its certificates and, for `--tls internal`, its own certificate authority), plus a `manifest.txt` with the date, the Voxshift release and a checksum of each file. Copy it off the host. It holds secrets and private keys. See Backups. |
 | `voxshift backup-encryption on KEY \| off \| status \| remove-unencrypted` | optional: makes every backup an encrypted `.tar.age` file that only the owner of a private key (kept off this host) can open. See [Encrypting backups](#encrypting-backups-optional). |
 | `voxshift restore FOLDER\|FILE.tar.age [--identity KEYFILE] [--with-config] [--yes] [--force]` | puts a backup back: checks it, takes a safety backup of today's state, asks you to type `RESTORE`, then restores the database, the stored files and `.env`, and starts everything. An encrypted backup also needs `--identity`. See Restoring. |
@@ -143,13 +198,13 @@ Their `voxshift` command has no `auto-update` yet. Refresh just the command once
 containers):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/gauntlec/teams-voice-migration-factory/main/deploy/install/install.sh -o install.sh
+curl -fsSL https://github.com/gauntlec/teams-voice-migration-factory/releases/latest/download/install.sh -o install.sh
 sudo bash install.sh --refresh-command            # add --auto-update to switch the nightly job on in the same step
 ```
 
-From then on, `voxshift self-update` does the same thing in one word (it downloads the current installer from GitHub, checks
-that it is intact, and rewrites only the command). Run it after a release that adds a command. It needs outbound HTTPS to
-`raw.githubusercontent.com`, and it trusts the same source as the first install. It does not change the compose file, so an
+From then on, `voxshift self-update` does the same thing in one word (it downloads the installer from the newest release, checks its
+checksum and, if `cosign` is installed, the signature, and rewrites only the command; see [Installer checks](#installer-checks-and-pinning-a-release)). Run it after a release that adds a command. It needs outbound HTTPS to
+`github.com` (and the download servers GitHub redirects to). It does not change the compose file, so an
 installation made long ago keeps its old container settings; a fresh install is the way to get a newer compose file.
 
 ## Settings you will change after installing
@@ -310,3 +365,4 @@ voxshift start
   The same goes for `voxshift backup` and `voxshift restore` against a real database: their logic (checks, order of steps, refusals, rotation) is tested with a
   stand-in `docker`, and the first real restore should be tried on a test host before it is relied on. `bash deploy/install/check-backup.sh` runs that
   stand-in check, including the encryption round trip with the real `age` program (it needs `age` on the machine running it).
+  `bash deploy/install/check-selfupdate.sh` does the same for `voxshift self-update` (a stand-in `curl` and `cosign`); the real signature check needs a published, signed release.

@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Voxshift installer for a new Linux host (Debian/Ubuntu, RHEL/Rocky/Alma/CentOS/Fedora, or any Linux that already has Docker).
 #
-#   curl -fsSL https://raw.githubusercontent.com/gauntlec/teams-voice-migration-factory/main/deploy/install/install.sh -o install.sh
+#   curl -fsSL https://github.com/gauntlec/teams-voice-migration-factory/releases/latest/download/install.sh -o install.sh
 #   sudo bash install.sh --base-url https://voice.contoso.com --admin-email admin@contoso.com
+#
+# To check the download first (checksum, and the signature if you have cosign), see "Installer checks" in docs/INSTALL-LINUX.md.
+# (A release made before installers were attached to releases has no install.sh: use the file under deploy/install/ on the main branch for that one case.)
 #
 # What it does: installs Docker if missing, writes /opt/voxshift (compose file, Caddy front door, .env with freshly
 # generated secrets), pulls the images from ghcr.io, starts everything, waits until it answers, and installs the
@@ -433,6 +436,61 @@ do_backup() {
   rotate_backups "$parent"
 }
 
+# ----- self-update: fetch the installer from the latest RELEASE, check it, and let it rewrite this command (nothing else)
+REPO="gauntlec/teams-voice-migration-factory"
+RELEASE_URL="https://github.com/$REPO/releases/latest/download"
+OLD_URL="https://raw.githubusercontent.com/$REPO/main/deploy/install/install.sh"
+# Who signs the release checksums: the release job of this repository's build workflow, on main (GitHub's identity for that workflow).
+SIGNER_IDENTITY="https://github.com/$REPO/.github/workflows/build-images.yml@refs/heads/main"
+SIGNER_ISSUER="https://token.actions.githubusercontent.com"
+
+# fetch URL FILE: prints the HTTP status (000 when the host could not be reached at all).
+fetch() { curl -sSL --max-time 120 -o "$2" -w '%{http_code}' "$1" 2>/dev/null || true; }
+
+self_update() {
+  local d code want got rc=0
+  d="$(mktemp -d)"; track_tmp "$d"
+  code="$(fetch "$RELEASE_URL/SHA256SUMS" "$d/SHA256SUMS")"
+  case "$code" in
+    200)
+      [ "$(fetch "$RELEASE_URL/install.sh" "$d/install.sh")" = 200 ] || { echo "Could not download install.sh from the latest release ($RELEASE_URL). Nothing changed." >&2; exit 1; }
+      want="$(awk '$2 == "install.sh" {print $1; exit}' "$d/SHA256SUMS")"
+      [[ "$want" =~ ^[0-9a-f]{64}$ ]] || { echo "The release's SHA256SUMS does not list install.sh. Nothing changed." >&2; exit 1; }
+      got="$(sum256 "$d/install.sh" | cut -d' ' -f1)"
+      if [ "$got" != "$want" ]; then
+        echo "The downloaded installer does NOT match the checksum published with the release, so it was not used." >&2
+        echo "  published: $want" >&2; echo "  received:  $got" >&2
+        echo "Try again in a few minutes; if it keeps happening, do not continue and tell Voxshift. Nothing changed." >&2
+        exit 1
+      fi
+      echo "Checked: install.sh matches the checksum published with the latest release."
+      if command -v cosign >/dev/null 2>&1; then
+        [ "$(fetch "$RELEASE_URL/SHA256SUMS.sigstore.json" "$d/SHA256SUMS.sigstore.json")" = 200 ] || {
+          echo "cosign is installed here, so the signature on the checksums is required, but this release has no SHA256SUMS.sigstore.json. Nothing changed." >&2
+          echo "(Try again later; to rely on the checksum alone, remove cosign from this host.)" >&2; exit 1; }
+        if ! cosign verify-blob --bundle "$d/SHA256SUMS.sigstore.json" --certificate-identity "$SIGNER_IDENTITY" --certificate-oidc-issuer "$SIGNER_ISSUER" "$d/SHA256SUMS" >"$d/cosign.log" 2>&1; then
+          echo "The signature on the release checksums did NOT verify, so the installer was not used. Nothing changed." >&2
+          sed 's/^/  /' "$d/cosign.log" >&2; exit 1
+        fi
+        echo "Checked: the checksums are signed by this repository's release workflow (cosign)."
+      else
+        echo "Note: cosign is not installed, so the signature on the checksums was not checked (only the checksum itself). Install cosign for that."
+      fi
+      ;;
+    404)
+      # The latest release has no SHA256SUMS (a release from before this existed, or none yet): the one case where the old source is used.
+      echo "Warning: the latest release has no SHA256SUMS yet, so the installer cannot be checked. Using the old, unchecked source ($OLD_URL)." >&2
+      echo "         This stops once a newer release is out." >&2
+      [ "$(fetch "$OLD_URL" "$d/install.sh")" = 200 ] || { echo "Could not download the installer from GitHub (this host needs outbound HTTPS to github.com and raw.githubusercontent.com). Nothing changed." >&2; exit 1; }
+      ;;
+    *)
+      echo "Could not reach GitHub to check for the installer (answer: $code). This host needs outbound HTTPS to github.com. Nothing changed." >&2; exit 1 ;;
+  esac
+  bash -n "$d/install.sh" || { echo "The downloaded installer is damaged. Nothing changed." >&2; exit 1; }
+  bash "$d/install.sh" --refresh-command --dir "$DIR" "$@" || rc=$?
+  exit "$rc"
+}
+
 # The value of KEY= in a backup's manifest.
 manifest_value() { sed -n "s/^$1=//p" "$2/manifest.txt" | head -n 1; }
 
@@ -621,16 +679,7 @@ case "${1:-help}" in
     BOOTSTRAP_ADMIN_RESET=true BOOTSTRAP_ADMIN_PASSWORD="$pw" dc exec -T -e BOOTSTRAP_ADMIN_RESET -e BOOTSTRAP_ADMIN_PASSWORD api node packages/db/dist/seed.js
     ;;
   auto-update) need_root "$@"; shift; auto_update "$@" ;;
-  self-update)
-    # Fetch the current installer and let it rewrite this command (nothing else). Same source and trust as the first install.
-    need_root "$@"; shift
-    tmp="$(mktemp)"
-    curl -fsSL https://raw.githubusercontent.com/gauntlec/teams-voice-migration-factory/main/deploy/install/install.sh -o "$tmp" || { rm -f "$tmp"; echo "Could not download the installer from GitHub (this host needs outbound HTTPS to raw.githubusercontent.com). Nothing changed." >&2; exit 1; }
-    bash -n "$tmp" || { rm -f "$tmp"; echo "The downloaded installer is damaged. Nothing changed." >&2; exit 1; }
-    bash "$tmp" --refresh-command --dir "$DIR" "$@"; rc=$?
-    rm -f "$tmp"
-    exit "$rc"
-    ;;
+  self-update) need_root "$@"; shift; self_update "$@" ;;
   update)
     need_root "$@"
     if [ "${2:-}" = "--auto" ]; then auto_run; exit $?; fi
@@ -659,7 +708,8 @@ voxshift <command>
   update            back up, pull the newest images, restart, wait until it answers
   auto-update on [daily|weekly] | off | status
                     a cron job that does 'update' by itself (quiet unless a new version is out)
-  self-update       fetch the current installer from GitHub and refresh this command (secrets, settings and data untouched)
+  self-update       fetch the installer from the latest release, check its checksum (and signature, if cosign is installed) and refresh
+                    this command (secrets, settings and data untouched)
   backup [DIR]      database, stored files, .env, compose.yaml, Caddyfile, certificates and Caddy's data into DIR/<timestamp> (default $DIR/backups);
                     one encrypted DIR/<timestamp>.tar.age file instead when backup encryption is on
   backup-encryption on <public-key | file> | off | status | remove-unencrypted
