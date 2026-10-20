@@ -84,12 +84,36 @@ export async function provisionTenant(pool: Pool, schema: string): Promise<strin
 }
 
 /**
+ * Removes a customer's whole database schema, every table and every row in it, for good. Part of deleting a customer
+ * (apps/api/src/tenants/tenant-deletion.service.ts). Safe to run again: a schema that is already gone is not an error.
+ *
+ * The audit tables inside a tenant schema refuse UPDATE, DELETE and TRUNCATE (migration tenant/0054), but DROP SCHEMA does not
+ * fire those triggers, so the whole schema can still be dropped. The name is checked against the pattern provisionTenant uses
+ * so nothing but a tenant schema can ever be dropped here.
+ */
+export async function dropTenantSchema(pool: Pool, schema: string): Promise<void> {
+  if (!/^tenant_[a-z0-9_]+$/.test(schema)) {
+    throw new Error(`refusing to drop unexpected schema name: ${schema}`);
+  }
+  const client = await pool.connect();
+  try {
+    // Give up rather than wait for ever behind someone else's open transaction on this customer's tables.
+    await client.query(`SET lock_timeout = '15s'`);
+    await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+  } finally {
+    await client.query('RESET lock_timeout').catch(() => undefined);
+    client.release();
+  }
+}
+
+/**
  * Bring every existing tenant schema up to the latest tenant migration.
  * Runs on API start so schema changes roll out to customers created earlier.
  */
 export async function migrateAllTenants(pool: Pool): Promise<Record<string, string[]>> {
+  // A customer being deleted is skipped: provisioning would create its schema again after the deletion has dropped it.
   const { rows } = await pool.query<{ schema_name: string }>(
-    `SELECT schema_name FROM platform.tenants ORDER BY created_at`,
+    `SELECT schema_name FROM platform.tenants WHERE status <> 'deleting' ORDER BY created_at`,
   );
   const result: Record<string, string[]> = {};
   for (const { schema_name } of rows) {

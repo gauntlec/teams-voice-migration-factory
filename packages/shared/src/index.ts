@@ -34,6 +34,7 @@ export * from './hub-connection';
 export * from './sso';
 export * from './mail-settings';
 export * from './platform-features';
+export * from './tenant-deletion';
 
 import type { CmdletInvocation } from './deployment';
 

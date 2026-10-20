@@ -11,7 +11,7 @@ export * from './sso-revocations';
 export * from './platform-audit';
 export * from './sso-staff-access';
 export * from './plan-rows';
-export { migratePlatform, provisionTenant, migrateAllTenants } from './migrate';
+export { migratePlatform, provisionTenant, migrateAllTenants, dropTenantSchema } from './migrate';
 
 export interface DbHandle {
   db: Kysely<DB>;

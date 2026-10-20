@@ -12,7 +12,8 @@ export interface TenantsTable {
   name: string;
   schema_name: string;
   primary_domain: string | null;
-  status: ColumnType<'active' | 'archived', 'active' | 'archived' | undefined, 'active' | 'archived'>;
+  /** 'deleting' = being erased for good (0036): hidden everywhere, nobody can open it, background work skips it. */
+  status: ColumnType<'active' | 'archived' | 'deleting', 'active' | 'archived' | 'deleting' | undefined, 'active' | 'archived' | 'deleting'>;
   /** When true, the platform must never send a write cmdlet to this customer's live Microsoft Teams tenant - see 0006_tenant_teams_read_only.sql. */
   teams_read_only: ColumnType<boolean, boolean | undefined, boolean>;
   /** null = default Voxshift branding everywhere (web theme, Logo, emails) - see 0008_tenant_branding.sql. */
@@ -33,6 +34,11 @@ export interface TenantsTable {
   sandbox_email: string | null;
   created_by: string | null;
   created_at: Ts;
+  /** Set when a Super Admin started deleting this customer - see 0036_tenant_deleting.sql. */
+  deletion_started_at: ColumnType<string | null, string | null | undefined, string | null>;
+  deletion_started_by: ColumnType<string | null, string | null | undefined, string | null>;
+  /** Counts shown before the deletion was confirmed (numbers only), kept so a retry can still report them. */
+  deletion_summary: ColumnType<Record<string, number> | null, string | null | undefined, string | null>;
 }
 
 export interface UsersTable {
