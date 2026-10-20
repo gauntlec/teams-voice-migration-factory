@@ -591,6 +591,13 @@ export class TenantDiscoveryService {
     ]);
     const dataCollectionLinksCleared = Number(linkedRow?.n ?? 0);
 
+    // A calling-policy mapping (Design & Build) points at a discovered policy with ON DELETE RESTRICT, which would stop the delete below
+    // ("violates foreign key constraint calling_policy_site_map_tenant_policy_id_fkey"). It cannot outlive the policy it names, so it goes
+    // first; the site and the calling policy it joined are the customer's own design data and stay.
+    const mappingRows = await s.selectFrom('calling_policy_site_map').select((eb) => eb.fn.countAll<number>().as('n')).executeTakeFirst();
+    const callingPolicyMappingsRemoved = Number(mappingRows?.n ?? 0);
+    await s.deleteFrom('calling_policy_site_map').execute();
+
     // tenant_objects first: cascades to tenant_users + tenant_policies +
     // tenant_object_versions, and clears discovery_users.tenant_user_id (SET
     // NULL). Then the now-unreferenced runs.
@@ -602,7 +609,7 @@ export class TenantDiscoveryService {
     // The M365 group cache is discovered data too (Graph sign-in / each run).
     await s.deleteFrom('tenant_groups').execute();
 
-    const result = { objects, versions, users, policies, runs, groups, dataCollectionLinksCleared };
+    const result = { objects, versions, users, policies, runs, groups, dataCollectionLinksCleared, callingPolicyMappingsRemoved };
     await this.audit.tenant(t.schema, 'tenant_discovery.purged', {
       actor: actorOf(user),
       targetType: 'tenant',

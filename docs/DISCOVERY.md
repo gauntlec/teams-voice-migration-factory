@@ -201,13 +201,15 @@ Other modules should read `GET policies` (e.g. Design & Build policy pickers) an
 
 `DELETE /t/:tenantId/tenant-discovery` (`tenantdiscovery:run`, and the **Delete
 discovered data** button on the Overview tab) wipes the whole inventory for one
-customer: `tenant_objects` (which cascades to `tenant_users`, `tenant_policies`
+customer: first the Design & Build calling-policy mappings (`calling_policy_site_map`: its
+`tenant_policy_id` is `ON DELETE RESTRICT`, so one left in place made the whole purge fail with a
+foreign-key error; the site and the calling policy it joined stay), then `tenant_objects` (which cascades to `tenant_users`, `tenant_policies`
 and `tenant_object_versions`), then `tenant_discovery_runs` and the M365 group
 cache (`tenant_groups`). Data Collection users are kept —
 their `discovery_users.tenant_user_id` link is set null by the FK. `connections`
 are untouched. Blocked while a run is `queued`/`running`. Not reversible; re-run
 discovery to rebuild. Audited as `tenant_discovery.purged` (tenant + platform)
-with the deleted row counts.
+with the deleted row counts (including `callingPolicyMappingsRemoved`).
 
 ## Operations
 

@@ -760,6 +760,7 @@ export function PurgeCard({
       <Text size={200} className={s.muted}>
         Removes every discovered object, the Users and Policies projections, the M365 group cache
         and the run history for this customer. Data Collection entries are kept, but lose their link to a discovered user.
+        Design &amp; Build calling-policy choices that point at a discovered policy are removed too (the sites and calling policies themselves stay).
         Re-run discovery to rebuild. This cannot be undone.
       </Text>
       <div className={s.row}>
@@ -792,7 +793,7 @@ export function PurgeCard({
               {total === 1 ? '' : 's'}, the Users and Policies projections
               {summary?.groupsCount ? `, ${summary.groupsCount.toLocaleString()} cached M365 groups` : ''}
               {summary?.lastRun ? ' and the run history' : ''}. Any Data Collection users stay, but
-              lose their link to a discovered identity. This cannot be undone.
+              lose their link to a discovered identity, and any Design &amp; Build calling-policy choice that points at a discovered policy is removed. This cannot be undone.
               {running && (
                 <Text className={ls.blockMt8Danger}>
                   A discovery is running — wait for it to finish first.
