@@ -1,8 +1,9 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, Req, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
   addMembershipSchema,
   createTenantSchema,
+  deleteTenantSchema,
   searchQuerySchema,
   updateMembershipSchema,
   updateTenantBrandingSchema,
@@ -11,6 +12,7 @@ import {
   updateTenantSandboxSchema,
   updateTenantSchema,
   type CreateTenantInput,
+  type DeleteTenantInput,
   type SearchQuery,
   type UpdateTenantBrandingInput,
   type UpdateTenantInput,
@@ -22,11 +24,15 @@ import { CurrentUser } from '../auth/auth.decorators';
 import type { AuthedUser } from '../common/request';
 import { ZodBody } from '../common/zod.pipe';
 import { RequirePermission } from '../rbac/require-permission.decorator';
+import { TenantDeletionService } from './tenant-deletion.service';
 import { TenantsService } from './tenants.service';
 
 @Controller('tenants')
 export class TenantsController {
-  constructor(private readonly tenants: TenantsService) {}
+  constructor(
+    private readonly tenants: TenantsService,
+    private readonly deletion: TenantDeletionService,
+  ) {}
 
   private actor(u: AuthedUser) {
     return { id: u.id, email: u.email, role: u.role };
@@ -36,6 +42,13 @@ export class TenantsController {
   @RequirePermission('tenant:read')
   list(@CurrentUser() user: AuthedUser, @Query(new ZodBody(searchQuerySchema)) query: SearchQuery) {
     return this.tenants.list(user, query.q);
+  }
+
+  /** Customers whose deletion started and did not finish (Super Admin). Declared before the `:tenantId` routes. */
+  @Get('pending-deletion')
+  @RequirePermission('tenant:delete')
+  pendingDeletion() {
+    return this.deletion.pending();
   }
 
   @Post()
@@ -155,5 +168,28 @@ export class TenantsController {
     @CurrentUser() user: AuthedUser,
   ) {
     return this.tenants.removeMember(tenantId, userId, this.actor(user));
+  }
+
+  /** What deleting this customer would remove, in numbers, and whether anything stops it now. Changes nothing. */
+  @Get(':tenantId/deletion-summary')
+  @RequirePermission('tenant:delete')
+  deletionSummary(@Param('tenantId') tenantId: string) {
+    return this.deletion.summary(tenantId);
+  }
+
+  /**
+   * Deletes the customer and all of its data for good (docs/SECURITY.md "Deleting a customer"). Needs the typed name and a fresh
+   * authenticator code. Can be sent again to finish a deletion that stopped part way.
+   */
+  @Post(':tenantId/delete')
+  @HttpCode(200)
+  @RequirePermission('tenant:delete')
+  deleteTenant(
+    @Param('tenantId') tenantId: string,
+    @Body(new ZodBody(deleteTenantSchema)) body: DeleteTenantInput,
+    @CurrentUser() user: AuthedUser,
+    @Req() req: { ip?: string },
+  ) {
+    return this.deletion.delete(tenantId, body, { id: user.id, email: user.email, ip: req.ip });
   }
 }

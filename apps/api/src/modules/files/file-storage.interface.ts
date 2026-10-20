@@ -9,6 +9,10 @@ export interface FileStorageBackend {
   read(relativePath: string): Promise<Buffer>;
   delete(relativePath: string): Promise<void>;
   exists(relativePath: string): Promise<boolean>;
+  /** Removes a whole folder and everything in it. Not an error when it is already gone, so a deletion can be run again. */
+  deleteFolder(relativePath: string): Promise<void>;
+  /** How many files a folder holds (in every sub-folder) and their total size in bytes. A folder that is not there holds none. */
+  folderStats(relativePath: string): Promise<{ files: number; bytes: number }>;
 }
 
 export const FILE_STORAGE_BACKEND = Symbol('FILE_STORAGE_BACKEND');

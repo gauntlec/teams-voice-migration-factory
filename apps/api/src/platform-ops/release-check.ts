@@ -17,8 +17,8 @@ import { currentMaintenance, iso } from './maintenance';
  * those rows, across every customer schema. Read-only.
  */
 export async function collectReleaseCheck(db: Kysely<DB>, now: Date = new Date()): Promise<ReleaseCheck> {
-  // Same population the sweep walks: every tenant, archived included.
-  const tenants = await platformDb(db).selectFrom('tenants').select(['id', 'name', 'schema_name']).orderBy('name').execute();
+  // Same population the sweep walks: every tenant, archived included. A customer being deleted is skipped: its work was already stopped.
+  const tenants = await platformDb(db).selectFrom('tenants').select(['id', 'name', 'schema_name']).where('status', '!=', 'deleting').orderBy('name').execute();
 
   const connections: ReleaseCheckConnection[] = [];
   const discoveryRuns: ReleaseCheckDiscoveryRun[] = [];

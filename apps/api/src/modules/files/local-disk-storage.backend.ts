@@ -34,6 +34,40 @@ export class LocalDiskStorageBackend implements FileStorageBackend {
     await fs.unlink(this.resolve(relativePath)).catch(() => undefined);
   }
 
+  async deleteFolder(relativePath: string): Promise<void> {
+    const full = this.resolveFolder(relativePath);
+    await fs.rm(full, { recursive: true, force: true });
+  }
+
+  async folderStats(relativePath: string): Promise<{ files: number; bytes: number }> {
+    const total = { files: 0, bytes: 0 };
+    const walk = async (dir: string): Promise<void> => {
+      let entries;
+      try {
+        entries = await fs.readdir(dir, { withFileTypes: true });
+      } catch {
+        return; // not there
+      }
+      for (const e of entries) {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) await walk(p);
+        else if (e.isFile()) {
+          total.files += 1;
+          total.bytes += (await fs.stat(p).catch(() => ({ size: 0 }))).size;
+        }
+      }
+    };
+    await walk(this.resolveFolder(relativePath));
+    return total;
+  }
+
+  /** Like resolve(), but never the storage root itself: a folder to remove must be named. */
+  private resolveFolder(relativePath: string): string {
+    const normalized = normalize(relativePath).replace(/[\\/]+$/, '');
+    if (!normalized || normalized === '.') throw new Error('Refusing to use the storage root as a folder');
+    return this.resolve(normalized);
+  }
+
   async exists(relativePath: string): Promise<boolean> {
     try {
       await fs.access(this.resolve(relativePath));

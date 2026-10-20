@@ -28,6 +28,8 @@ export class TenantsService {
     let q = platformDb(this.db)
       .selectFrom('tenants')
       .select(['id', 'slug', 'name', 'primary_domain', 'status', 'teams_read_only', 'managed_services_enabled', 'msp_id', 'branding', 'sandbox', 'sandbox_email', 'created_at'])
+      // A customer being deleted is gone as far as every list is concerned (the Customers page shows it in its own notice).
+      .where('status', '!=', 'deleting')
       .orderBy('name');
     if (user.role !== 'SUPER_ADMIN') {
       q = q
@@ -417,7 +419,7 @@ export class TenantsService {
       .select(['id', 'status', 'schema_name', 'branding'])
       .where('id', '=', tenantId)
       .executeTakeFirst();
-    if (!t) throw new NotFoundException('tenant not found');
+    if (!t || t.status === 'deleting') throw new NotFoundException('tenant not found');
     return t;
   }
 

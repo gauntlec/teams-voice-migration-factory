@@ -80,6 +80,8 @@ beforeAll(async () => {
     read: async (p: string) => mem.get(p)!,
     delete: async (p: string) => void mem.delete(p),
     exists: async (p: string) => mem.has(p),
+    deleteFolder: async () => {},
+    folderStats: async () => ({ files: 0, bytes: 0 }),
   };
   files = new FilesService(handle.db, storage);
   svc = new HandoverService(handle.db, files, new HandoverDocumentService(), new AuditService(handle.db));

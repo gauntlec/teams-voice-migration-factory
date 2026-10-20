@@ -46,7 +46,7 @@ export function incidentServices(handle: DbHandle, mail: Pick<MailService, 'enqu
   const claims = new IncidentClaimsService(handle.db, events, notifier);
   const agentView = new IncidentAgentView(handle.db, claims);
   const major = new IncidentMajorService(handle.db, audit, notifier, events);
-  const files = new FilesService(handle.db, { write: async () => {}, read: async () => Buffer.alloc(0), delete: async () => {}, exists: async () => true });
+  const files = new FilesService(handle.db, { write: async () => {}, read: async () => Buffer.alloc(0), delete: async () => {}, exists: async () => true, deleteFolder: async () => {}, folderStats: async () => ({ files: 0, bytes: 0 }) });
   const svc = new IncidentsService(handle.db, audit, files, notifier, major, events, claims, agentView);
   const problems = new ProblemsService(handle.db, audit, notifier);
   const diagnostics = new IncidentDiagnosticsService(handle.db);

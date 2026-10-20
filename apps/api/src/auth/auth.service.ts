@@ -138,6 +138,42 @@ export class AuthService {
     return this.issueLogin(user.id, user.role, user.email, meta);
   }
 
+  /**
+   * "Recent MFA": asks for a current code from the person's own authenticator app right before a dangerous action (deleting a
+   * customer). The signed-in session is not enough on its own. It uses the same failure counter and lock-out as signing in, so it
+   * cannot be used to guess codes. Fails with 403 (not 401, which would make the page try to refresh the session) and a `code`
+   * the page can react to: `mfa_not_set_up` or `mfa_incorrect`.
+   */
+  async requireFreshMfa(userId: string, email: string, code: string, meta: Meta): Promise<void> {
+    const user = await platformDb(this.db)
+      .selectFrom('users')
+      .select(['failed_logins', 'locked_until', 'totp_enrolled'])
+      .where('id', '=', userId)
+      .executeTakeFirst();
+    if (!user) throw new UnauthorizedException('Account unavailable');
+    if (user.locked_until && new Date(user.locked_until).getTime() > Date.now()) {
+      throw new ForbiddenException({ code: 'mfa_incorrect', message: 'Your account is temporarily locked after too many wrong codes. Try again in a few minutes.' });
+    }
+    const secretRow = await platformDb(this.db)
+      .selectFrom('totp_secrets')
+      .select('secret_enc')
+      .where('user_id', '=', userId)
+      .where('confirmed_at', 'is not', null)
+      .executeTakeFirst();
+    if (!user.totp_enrolled || !secretRow) {
+      throw new ForbiddenException({
+        code: 'mfa_not_set_up',
+        message: 'This needs a code from your authenticator app, and none is set up on your account. Set one up under your account first, then try again.',
+      });
+    }
+    if (!this.totp.verify(code, decryptSecret(secretRow.secret_enc))) {
+      await this.recordFailedAttempt(userId, user.failed_logins);
+      await this.audit.platform('auth.recent_mfa.failed', { actor: { id: userId, email, ip: meta.ip } });
+      throw new ForbiddenException({ code: 'mfa_incorrect', message: 'That code is not right, or it has expired. Enter the current 6-digit code from your authenticator app.' });
+    }
+    await this.clearFailedAttempts(userId, user.failed_logins);
+  }
+
   /** Increments the shared login-failure counter and locks the account once it hits MAX_FAILED. */
   private async recordFailedAttempt(userId: string, currentFailed: number): Promise<void> {
     const failed = currentFailed + 1;

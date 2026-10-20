@@ -147,6 +147,11 @@ export class UsersService {
     if (input.role === 'CUSTOMER' && tenantIds.length !== 1) {
       throw new BadRequestException('Customer users must belong to exactly one tenant');
     }
+    if (tenantIds.length) {
+      // Not a customer that is being deleted, and not one that does not exist.
+      const live = await platformDb(this.db).selectFrom('tenants').select('id').where('id', 'in', tenantIds).where('status', '!=', 'deleting').execute();
+      if (live.length !== new Set(tenantIds).size) throw new BadRequestException('Unknown customer');
+    }
 
     // Site scoping only applies to a customer user (who has exactly one tenant).
     const siteIds = input.role === 'CUSTOMER' ? [...new Set(input.siteIds ?? [])] : [];

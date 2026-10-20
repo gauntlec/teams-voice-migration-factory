@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { writeFileSync } from 'node:fs';
-import { Worker, type Job } from 'bullmq';
+import { UnrecoverableError, Worker, type Job } from 'bullmq';
 import IORedis from 'ioredis';
 import { sql } from 'kysely';
 import {
@@ -38,6 +38,7 @@ import {
 } from '@tvmf/shared';
 import { SimulatedTeamsExecutor, type TeamsExecutor } from './teams/executor';
 import { PwshTeamsExecutor } from './teams/pwsh-executor';
+import { CustomerBeingDeletedError, refuseJobForDeletedCustomer, releaseTenantSessions } from './tenant-release';
 import { handleTenantDiscoveryRun, syncTenantGroups } from './discovery/run';
 import { beforeStateResolver, planIdentityRows, planResourceAccountRows, verifyDeployment } from './deployment-verify';
 import { renderEmail } from './mail/templates';
@@ -127,7 +128,7 @@ setInterval(() => {
  * so the UI asks for a fresh sign-in / lets a new run start instead of hanging.
  */
 async function expireOrphanedWork() {
-  const tenants = await platformDb(db).selectFrom('tenants').select('schema_name').execute();
+  const tenants = await platformDb(db).selectFrom('tenants').select('schema_name').where('status', '!=', 'deleting').execute();
   let conns = 0;
   let runs = 0;
   let deployments = 0;
@@ -219,7 +220,7 @@ async function resolvePortRecipients(
  */
 async function sweepPortDocumentReminders() {
   const webOrigin = await resolveWebOrigin(db);
-  const tenants = await platformDb(db).selectFrom('tenants').select(['id', 'schema_name', 'name']).execute();
+  const tenants = await platformDb(db).selectFrom('tenants').select(['id', 'schema_name', 'name']).where('status', '!=', 'deleting').execute();
   let sent = 0;
   for (const tenant of tenants) {
     const scoped = tenantDb(db, tenant.schema_name);
@@ -1128,6 +1129,17 @@ async function handleMail(job: Job) {
 const worker = new Worker(
   QUEUE_NAME,
   async (job) => {
+    // Close a deleted customer's Teams sign-ins (asked by the API when a Super Admin deletes a customer; docs/SECURITY.md).
+    if (job.name === 'tenant.release') {
+      return { closed: await releaseTenantSessions(executors, executorSchema, (job.data as { schema: string }).schema) };
+    }
+    // Everything else: never for a customer that is being deleted, and no retries.
+    try {
+      await refuseJobForDeletedCustomer(db, job.data);
+    } catch (e) {
+      if (e instanceof CustomerBeingDeletedError) throw new UnrecoverableError(e.message);
+      throw e;
+    }
     switch (job.name) {
       case 'connection.start':
         return handleConnectionStart(job);
