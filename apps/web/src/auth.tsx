@@ -54,7 +54,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const m = await api<Me>('/auth/me');
     setMe(m);
     setStatus('authenticated');
-    if (!apiAuth.getActiveTenant() && m.tenants[0]) setActiveTenant(m.tenants[0].id);
+    // No customer chosen yet, or the chosen one is gone (deleted) or no longer open to this person: pick the first one.
+    const current = apiAuth.getActiveTenant();
+    if ((!current || !m.tenants.some((t) => t.id === current)) && m.tenants[0]) setActiveTenant(m.tenants[0].id);
   }, [setActiveTenant]);
 
   useEffect(() => {

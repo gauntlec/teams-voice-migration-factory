@@ -30,6 +30,7 @@ import {
   makeStyles,
   shorthands,
 } from '@fluentui/react-components';
+import { DeleteRegular } from '@fluentui/react-icons';
 import type { Branding } from '@tvmf/shared';
 import { api, apiUpload } from '../../api';
 import { useAuth } from '../../auth';
@@ -37,6 +38,7 @@ import { DataTable } from '../../components/DataTable';
 import { Page } from '../../components/Page';
 import { Wordmark } from '../../components/Logo';
 import { useDebounced } from '../../hooks/useDebounced';
+import { DeleteCustomerDialog } from './DeleteCustomerDialog';
 import { LoadError } from '../DataCollection';
 import { DangerText, MutedText } from '../../components/ui';
 import { TableSkeleton } from '../../components/states';
@@ -56,6 +58,8 @@ const useLocalStyles = makeStyles({
   flexWrapGap4: { display: "flex", ...shorthands.gap('4px'), flexWrap: "wrap" },
   flexWrapItemsEndGap8: { display: "flex", ...shorthands.gap('8px'), alignItems: "end", flexWrap: "wrap" },
   minW260: { minWidth: '260px' },
+  dangerZone: { color: tokens.colorPaletteRedForeground1, borderLeft: `1px solid ${tokens.colorNeutralStroke2}`, paddingLeft: '12px' },
+  pendingRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', ...shorthands.gap('12px'), flexWrap: 'wrap' },
 });
 
 
@@ -106,6 +110,7 @@ export function AdminTenants() {
   const [err, setErr] = useState<string | null>(null);
   const [sandboxErr, setSandboxErr] = useState<string | null>(null);
   const [brandingFor, setBrandingFor] = useState<Tenant | null>(null);
+  const [deleting, setDeleting] = useState<{ id: string; name: string; resume?: boolean } | null>(null);
 
   const [searchInput, setSearchInput] = useState('');
   const search = useDebounced(searchInput);
@@ -117,6 +122,12 @@ export function AdminTenants() {
   // different concern (which customer to manage members for) and shouldn't
   // shrink/disappear just because the branding table above is being searched.
   const allTenants = useQuery({ queryKey: ['tenants', 'all'], queryFn: () => api<Tenant[]>('/tenants') });
+  // Customers whose deletion started and did not finish. They are hidden everywhere else; only a Super Admin sees them, here.
+  const pendingDeletion = useQuery({
+    queryKey: ['tenants', 'pending-deletion'],
+    enabled: can('tenant:delete'),
+    queryFn: () => api<{ id: string; name: string; slug: string }[]>('/tenants/pending-deletion'),
+  });
   const setReadOnly = useMutation({
     mutationFn: ({ id, teamsReadOnly }: { id: string; teamsReadOnly: boolean }) =>
       api(`/tenants/${id}`, { method: 'PATCH', body: JSON.stringify({ teamsReadOnly }) }),
@@ -219,6 +230,23 @@ export function AdminTenants() {
         {err && <DangerText>{err}</DangerText>}
       </Card>
 
+      {can('tenant:delete') && (pendingDeletion.data?.length ?? 0) > 0 && (
+        <Card>
+          <Text weight="semibold">Deletion not finished</Text>
+          <MutedText size={200}>
+            These customers are hidden and nobody can open them, but part of their data is still stored. Finish the deletion to remove it.
+          </MutedText>
+          {pendingDeletion.data!.map((t) => (
+            <div key={t.id} className={ls.pendingRow}>
+              <Text>{t.name}</Text>
+              <Button size="small" appearance="secondary" onClick={() => setDeleting({ id: t.id, name: t.name, resume: true })}>
+                Finish deleting…
+              </Button>
+            </div>
+          ))}
+        </Card>
+      )}
+
       <Card>
         <SearchBox
           size="small"
@@ -232,7 +260,7 @@ export function AdminTenants() {
         ) : list.isError ? (
           <LoadError message={(list.error as Error).message} />
         ) : (
-          <DataTable size="small" minWidth={940}>
+          <DataTable size="small" minWidth={can('tenant:delete') ? 1120 : 940}>
             <TableHeader>
               <TableRow>
                 <TableHeaderCell>Name</TableHeaderCell>
@@ -244,6 +272,7 @@ export function AdminTenants() {
                 <TableHeaderCell>Managed Services</TableHeaderCell>
                 {featureOn('msp') && <TableHeaderCell>MSP</TableHeaderCell>}
                 <TableHeaderCell>Test customer</TableHeaderCell>
+                {can('tenant:delete') && <TableHeaderCell>Danger zone</TableHeaderCell>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -360,6 +389,13 @@ export function AdminTenants() {
                       '—'
                     )}
                   </TableCell>
+                  {can('tenant:delete') && (
+                    <TableCell className={ls.dangerZone}>
+                      <Button size="small" appearance="subtle" icon={<DeleteRegular />} className={ls.dangerZone} onClick={() => setDeleting({ id: t.id, name: t.name })}>
+                        Delete customer…
+                      </Button>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>
@@ -371,6 +407,12 @@ export function AdminTenants() {
           mode is requested. Discovery and validation (read-only) are unaffected.
         </MutedText>
         {sandboxErr && <DangerText>{sandboxErr}</DangerText>}
+        {can('tenant:delete') && (
+          <MutedText size={200}>
+            "Delete customer…" removes a customer and all of its data for good. You are asked to type the customer's name and a code from your
+            authenticator app first. It is refused while a deployment or a Discovery run is in progress. Backups taken earlier still hold the data.
+          </MutedText>
+        )}
         <MutedText size={200}>
           A test customer never emails its real recipients: every email for it goes to the person who
           triggered it, with the subject starting "[TEST - would have gone to ...]". Emails nobody
@@ -389,6 +431,8 @@ export function AdminTenants() {
           }}
         />
       )}
+
+      {deleting && <DeleteCustomerDialog tenant={deleting} resume={deleting.resume} onClose={() => setDeleting(null)} />}
 
       {allTenants.data && allTenants.data.length > 0 && <CustomerMembers tenants={allTenants.data} />}
     </Page>
