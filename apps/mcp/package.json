@@ -17,7 +17,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
     "@tvmf/shared": "0.1.0",
-    "zod": "3.25.76"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/node": "20.14.15",
