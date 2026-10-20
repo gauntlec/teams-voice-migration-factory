@@ -36,6 +36,10 @@ The certificate is what makes the padlock appear in the browser. Pick the one li
 - **B.** The name only works inside your network and you have a **Microsoft internal certificate authority** (AD CS). Follow **2.1 to 2.4** and **2.5 (Microsoft CA)**.
 - **C.** You buy certificates from an **external certificate authority** (DigiCert, Sectigo, GoDaddy and so on). Follow **2.1 to 2.4** and **2.5 (external CA)**.
 - **D.** This is only a test. Go to Step 3 and use **Install D**. Browsers will show a warning.
+- **E.** You have no certificate authority and do not want to buy a certificate. Voxshift makes a **self-signed certificate** on the server for you.
+  Go to Step 3 and use **Install E**, then do "Trusting a self-signed certificate" (below) so browsers accept it.
+  A self-signed certificate lasts one year by default, and each computer has to be told to trust the new one after every renewal.
+  If you have a few computers and want to trust something once, use D and trust Voxshift's own root certificate instead.
 
 A public authority will not issue a certificate for a name that only works inside your network (such as `voice.contoso.local`).
 For those names use your Microsoft CA (B).
@@ -245,6 +249,15 @@ sudo bash install.sh --base-url https://voice.contoso.com --admin-email admin@co
 sudo bash install.sh --base-url https://voice.contoso.com --admin-email admin@contoso.com --tls internal
 ```
 
+**Install E (a self-signed certificate made on the server):**
+
+```bash
+sudo bash install.sh --base-url https://voice.contoso.com --admin-email admin@contoso.com --tls selfsigned
+```
+
+This makes the certificate for exactly the address you typed (a name or an IP address) and installs it. It is valid for 365 days. To choose another length
+add `--selfsigned-days 730` (30 to 825 days are allowed).
+
 The installer asks a few questions (answer them, or press Enter for the suggestion). It installs Docker if it is missing, downloads Voxshift and starts it.
 When it finishes it prints the address, the sign-in name and a generated password. Write the password down. It is also in `/opt/voxshift/.env`.
 
@@ -252,7 +265,8 @@ If the installer stops, it says why in plain words. Fix that and run the same co
 
 ## Step 4. Sign in and check
 
-1. Open your address in a browser. You should see the padlock and no warning.
+1. Open your address in a browser. You should see the padlock and no warning. (With Install D or E you will see a warning until you have done
+   "Trusting a self-signed certificate" below.)
 2. Sign in with the email and password from the installer.
 3. Set up your authenticator app when asked.
 4. Open **Administration > Platform settings** and check that the web address is right.
@@ -266,6 +280,61 @@ If the browser shows a warning, see "If something goes wrong" below.
   To encrypt backups, see [INSTALL-LINUX-REFERENCE.md](INSTALL-LINUX-REFERENCE.md#encrypting-backups-optional).
 - **Updates.** Run `sudo voxshift update` when a new version is out, or switch on automatic updates with `sudo voxshift auto-update on`.
 
+## Trusting a self-signed certificate (Install D or E)
+
+A browser only accepts a certificate that its computer trusts. Your own authority's certificates are already trusted on computers joined to your domain.
+A self-signed certificate (Install E) and Voxshift's own certificate (Install D) are not, so you tell each computer to trust it once.
+
+On the server, save the public certificate (it holds no secrets) into your home folder:
+
+```bash
+sudo voxshift certificate export
+```
+
+It writes `voxshift-certificate.crt` in the folder you are in. For Install E that is the server's certificate. For Install D it is Voxshift's root certificate.
+Copy it to each computer, for example from that computer:
+
+```bash
+scp youruser@voice.contoso.com:voxshift-certificate.crt .
+```
+
+Then install it on each computer:
+
+**Windows.** Right-click the file, choose **Install Certificate**, choose **Local Machine**, then **Place all certificates in the following store**,
+click **Browse**, pick **Trusted Root Certification Authorities**, and finish. Or, in an administrator PowerShell:
+
+```
+Import-Certificate -FilePath .\voxshift-certificate.crt -CertStoreLocation Cert:\LocalMachine\Root
+```
+
+For many computers, deploy the file with Group Policy: **Computer Configuration > Policies > Windows Settings > Security Settings > Public Key Policies >
+Trusted Root Certification Authorities > Import**.
+
+**Mac.** Double-click the file (it opens Keychain Access). Add it to the **System** keychain. Then double-click the certificate in the list, open **Trust**,
+and set **When using this certificate** to **Always Trust**.
+
+**Linux (Debian, Ubuntu):**
+
+```bash
+sudo cp voxshift-certificate.crt /usr/local/share/ca-certificates/voxshift.crt
+sudo update-ca-certificates
+```
+
+**Linux (RHEL, Rocky, Alma, Fedora):**
+
+```bash
+sudo cp voxshift-certificate.crt /etc/pki/ca-trust/source/anchors/voxshift.crt
+sudo update-ca-trust
+```
+
+**Firefox** keeps its own list. Open **Settings > Privacy & Security > Certificates > View Certificates > Authorities > Import**, choose the file and tick
+**Trust this CA to identify websites**. (Or switch on `security.enterprise_roots.enabled` in `about:config` so Firefox uses the computer's list.)
+
+Close and reopen the browser, then open Voxshift. The padlock should appear with no warning.
+
+Voxshift tells browsers to use only https for a year (HSTS), and a browser then refuses to let people click past a certificate warning. So trust the certificate
+before people first visit, or install with `--hsts-max-age 600` for the first few days.
+
 ## Renewing or replacing the certificate
 
 Do this before the old certificate expires. If it expires, people cannot open Voxshift (the browser remembers the site must use a valid certificate).
@@ -276,52 +345,39 @@ Do this before the old certificate expires. If it expires, people cannot open Vo
 
 1. Repeat steps 2.2 to 2.7 in the same folder (`cd ~/voxshift-cert`). The new files replace the old ones. To keep your current private key and only ask for a new certificate,
    use this in 2.2 instead of the last command: `openssl req -new -key server.key -out server.csr -config server.cnf`.
-2. Copy the new files into place and restart the front door:
+2. Install them. Voxshift checks them first (the key must match, the certificate must be for your address and not expired), swaps them in, restarts the front door and
+   puts the old files back by itself if anything goes wrong:
 
 ```bash
-sudo cp ~/voxshift-cert/fullchain.pem /opt/voxshift/certs/server.crt
-sudo cp ~/voxshift-cert/server.key /opt/voxshift/certs/server.key
-sudo chmod 600 /opt/voxshift/certs/server.key
-cd /opt/voxshift && sudo docker compose restart caddy
+sudo voxshift certificate install --cert ~/voxshift-cert/fullchain.pem --key ~/voxshift-cert/server.key
 ```
 
-3. Open the address in a browser and check the new expiry date (click the padlock).
-
-### Moving an existing install to your own certificate
-
-If Voxshift was installed with Install A or D and you now want your own certificate, first get the two files (Step 2). Then:
+3. Check the result:
 
 ```bash
-sudo mkdir -p /opt/voxshift/certs
-sudo cp ~/voxshift-cert/fullchain.pem /opt/voxshift/certs/server.crt
-sudo cp ~/voxshift-cert/server.key /opt/voxshift/certs/server.key
-sudo chmod 600 /opt/voxshift/certs/server.key
-sudo nano /opt/voxshift/Caddyfile
+sudo voxshift certificate status
 ```
 
-In the Caddyfile, inside the block that starts with your address, make one line say exactly this (replace the `tls internal` line if there is one, otherwise add it as the first line inside the block):
+   It shows the address, who issued the certificate and when it runs out. Then open the address in a browser.
 
-```
-tls /certs/server.crt /certs/server.key
-```
-
-Save (Ctrl+O, Enter) and close (Ctrl+X). Then open the compose file:
+**A self-signed certificate (Install E):** make a new one and trust it again on the computers (see "Trusting a self-signed certificate"):
 
 ```bash
-sudo nano /opt/voxshift/compose.yaml
+sudo voxshift certificate selfsigned
+sudo voxshift certificate export
 ```
 
-Find the `caddy:` service. Under its `volumes:` list, after the line `- caddyconfig:/config`, add this line with the same indentation:
+### Moving an existing install to another certificate
 
-```
-      - ./certs:/certs:ro
-```
-
-Save and close, then apply it:
+If Voxshift was installed with Install A or D and you now want your own certificate, first get the two files (Step 2), then use the same command:
 
 ```bash
-sudo voxshift restart
+sudo voxshift certificate install --cert ~/voxshift-cert/fullchain.pem --key ~/voxshift-cert/server.key
 ```
+
+To switch to a self-signed certificate instead: `sudo voxshift certificate selfsigned`.
+
+An installation made before this command existed does not have it yet. Run `sudo voxshift self-update` first (it refreshes only the `voxshift` command).
 
 ## Everyday commands
 
@@ -329,6 +385,7 @@ sudo voxshift restart
 sudo voxshift status          # is everything running?
 sudo voxshift update          # back up, then install the newest version
 sudo voxshift backup          # make a backup
+sudo voxshift certificate status   # which certificate is in use and when it runs out
 sudo voxshift logs            # watch the logs (Ctrl+C to stop)
 sudo voxshift restart         # restart everything (a short outage)
 sudo voxshift reset-admin     # set a new password for the first administrator
@@ -341,10 +398,14 @@ Everything starts again by itself after the server reboots.
 **The browser says the connection is not private.**
 - Own certificate: the browser computer does not trust your authority yet. Computers joined to your domain normally trust a Microsoft CA already.
   If yours do not, ask your administrator to deploy the CA's root certificate to them (Group Policy).
-- Install D: the browser does not trust Voxshift's own certificate. This is expected. For real use, use B or C.
+- Install D or E: the browser does not trust Voxshift's own or the self-signed certificate yet. This is expected until you do "Trusting a self-signed certificate" above. For a service many people use, B or C is easier.
+- It worked before and now shows a warning: the certificate may have run out. Run `sudo voxshift certificate status`. A self-signed certificate lasts 365 days unless you chose otherwise; make a new one with `sudo voxshift certificate selfsigned` and trust it again.
 - The name in the browser must be exactly the name in the certificate. An IP address or a different name will give this warning.
 
 **The installer says it cannot read the certificate or key.** Check the file names and that you ran the commands in `~/voxshift-cert`.
+
+**`voxshift certificate install` refuses the files.** It says why in plain words: the key does not match the certificate (it was made from another request), the certificate has
+expired, or it is for a different name. Nothing is changed when it refuses. Fix the file, or ask the authority for the right certificate.
 
 **Voxshift will not start after changing the certificate.** Check that the two files match (the two `sha256` lines in 2.7 must be identical) and that `fullchain.pem`
 starts with your own certificate, not the CA's. Then run `sudo voxshift logs caddy` to see the exact message.
