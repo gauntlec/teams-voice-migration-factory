@@ -23,7 +23,7 @@ render() {
   if [ "$mode" = acme ]; then grep -q 'tls internal' "$cf" && bad "$label: acme must not use the internal CA"; fi
   if [ "$mode" = internal ]; then grep -q '^	tls internal$' "$cf" || bad "$label: internal mode lacks 'tls internal'"; fi
   [ "$mode" != none ] || grep -q 'auto_https off' "$cf" || bad "$label: none mode must switch automatic https off"
-  if [ "$mode" = selfsigned ]; then grep -q '^\ttls /certs/server.crt /certs/server.key$' "$cf" || bad "$label: selfsigned mode lacks the certificate files"; [ -s "$d/certs/server.crt" ] && [ -s "$d/certs/server.key" ] || bad "$label: no certificate was made"; fi
+  if [ "$mode" = selfsigned ]; then grep -q "^$(printf '\t')tls /certs/server.crt /certs/server.key$" "$cf" || bad "$label: selfsigned mode lacks the certificate files"; [ -s "$d/certs/server.crt" ] && [ -s "$d/certs/server.key" ] || bad "$label: no certificate was made"; fi
   if command -v ruby >/dev/null 2>&1; then ruby -ryaml -e 'begin; YAML.load_file(ARGV[0], aliases: true); rescue ArgumentError; YAML.load_file(ARGV[0]); end' "$d/compose.yaml" 2>/dev/null || bad "$label: compose.yaml does not parse"; fi
 }
 
