@@ -21,7 +21,8 @@ DIR="/opt/voxshift"
 BASE_URL=""
 ADMIN_EMAIL=""
 ADMIN_PASSWORD=""
-TLS="auto"            # auto | none | acme | internal | custom
+TLS="auto"            # auto | none | acme | internal | custom | selfsigned
+SELFSIGNED_DAYS="365"  # how long a --tls selfsigned certificate lasts
 CERT_FILE=""
 KEY_FILE=""
 ACME_EMAIL=""
@@ -65,7 +66,9 @@ Common:
                            acme      a free Let's Encrypt certificate (the host must be reachable from the internet on 80/443)
                            internal  a certificate from Voxshift's own private CA (staff browsers must trust it once)
                            custom    your own certificate: --cert FILE --key FILE
+                           selfsigned  a self-signed certificate made on this server (browsers must be told to trust it; see --selfsigned-days)
   --cert FILE --key FILE Certificate (full chain, PEM) and private key for --tls custom
+  --selfsigned-days N    How long a --tls selfsigned certificate lasts (default 365; 30 to 825)
   --acme-email EMAIL     Contact address for Let's Encrypt expiry notices (acme)
   --hsts-max-age SECONDS Strict-Transport-Security for every https mode (default 31536000 = one year; 0 = do not send it). Never
                          sent for --tls none. Deliberately without includeSubDomains and preload: those would also bind every
@@ -101,6 +104,18 @@ EOF
 }
 
 # ---------------------------------------------------------------------------------------------------------- the voxshift command
+# make_selfsigned NAME DAYS OUTDIR: writes OUTDIR/server.crt and OUTDIR/server.key, a self-signed certificate valid for that name or IP address.
+# (The generated 'voxshift' command has the same function, cert_make_selfsigned: keep the two in step; check-certificate.sh compares them.)
+make_selfsigned() {
+  local name="$1" days="$2" out="$3" san cnf
+  name="${name#\[}"; name="${name%\]}"
+  case "$name" in *:*) san="IP:$name" ;; *[!0-9.]*) san="DNS:$name" ;; *) san="IP:$name" ;; esac
+  cnf="$out/server.cnf"
+  printf '[req]\ndistinguished_name = dn\nx509_extensions = v3\nprompt = no\n[dn]\nCN = %s\n[v3]\nsubjectAltName = %s\nbasicConstraints = critical,CA:FALSE\nkeyUsage = critical,digitalSignature,keyEncipherment\nextendedKeyUsage = serverAuth\nsubjectKeyIdentifier = hash\n' "$name" "$san" > "$cnf"
+  if ! ( umask 077; openssl req -x509 -newkey rsa:2048 -nodes -days "$days" -keyout "$out/server.key" -out "$out/server.crt" -config "$cnf" >/dev/null 2>&1 ); then rm -f "$cnf"; return 1; fi
+  rm -f "$cnf"
+}
+
 write_command() {
 # --- the control command
 cat > "$DIR/voxshift" <<'CTL'
@@ -113,6 +128,7 @@ if [ "$(id -u)" -ne 0 ]; then
   command -v sudo >/dev/null 2>&1 || { echo "voxshift needs root. Run it as root." >&2; exit 1; }
   exec sudo "$0" "$@"
 fi
+ORIG_PWD="$PWD"
 cd "$DIR"
 dc() { docker compose "$@"; }
 need_root() { [ "$(id -u)" -eq 0 ] || { echo "Run as root: sudo voxshift $*" >&2; exit 1; }; }
@@ -664,6 +680,208 @@ restore_cmd() {
   [ -z "$tmp" ] || echo "The opened (decrypted) copy of the backup has been removed. If you copied your private key onto this host for the restore, delete that copy now."
 }
 
+# ---------------------------------------------------------------- certificates: voxshift certificate status | selfsigned | install | export
+# The web address Caddy serves: the first site line of the Caddyfile (not the global { } block, not :80).
+cert_host() { awk '/^[A-Za-z0-9.:_-]+ \{[[:space:]]*$/ && $1 != ":80" {print $1; exit}' "$DIR/Caddyfile"; }
+# none | internal | custom (a certificate in /certs: your own, or self-signed) | acme
+cert_mode() {
+  if grep -q '^[[:space:]]*auto_https off' "$DIR/Caddyfile"; then echo none
+  elif grep -q '^[[:space:]]*tls internal' "$DIR/Caddyfile"; then echo internal
+  elif grep -q '^[[:space:]]*tls /certs/' "$DIR/Caddyfile"; then echo custom
+  else echo acme; fi
+}
+need_openssl() {
+  command -v openssl >/dev/null 2>&1 && return 0
+  echo "openssl is not installed on this host. Install it (apt install openssl, or dnf install openssl) and run this again." >&2; return 1
+}
+# cert_make_selfsigned NAME DAYS OUTDIR: writes OUTDIR/server.crt and OUTDIR/server.key (a self-signed certificate for that name or IP address).
+cert_make_selfsigned() {
+  local name="$1" days="$2" out="$3" san cnf
+  need_openssl || return 1
+  name="${name#\[}"; name="${name%\]}"
+  case "$name" in ''|*[!A-Za-z0-9.:_-]*) echo "'$name' is not a usable name or address." >&2; return 1 ;; esac
+  [ "${#name}" -le 64 ] || { echo "'$name' is longer than 64 characters, which a certificate name cannot be." >&2; return 1; }
+  case "$name" in *:*) san="IP:$name" ;; *[!0-9.]*) san="DNS:$name" ;; *) san="IP:$name" ;; esac
+  cnf="$out/server.cnf"
+  printf '[req]\ndistinguished_name = dn\nx509_extensions = v3\nprompt = no\n[dn]\nCN = %s\n[v3]\nsubjectAltName = %s\nbasicConstraints = critical,CA:FALSE\nkeyUsage = critical,digitalSignature,keyEncipherment\nextendedKeyUsage = serverAuth\nsubjectKeyIdentifier = hash\n' "$name" "$san" > "$cnf"
+  if ! ( umask 077; openssl req -x509 -newkey rsa:2048 -nodes -days "$days" -keyout "$out/server.key" -out "$out/server.crt" -config "$cnf" >/dev/null 2>&1 ); then
+    rm -f "$cnf"; echo "openssl could not create the certificate." >&2; return 1
+  fi
+  rm -f "$cnf"
+}
+# The names a certificate is valid for, one per line (lower case).
+cert_names() { openssl x509 -in "$1" -noout -text 2>/dev/null | awk '/Subject Alternative Name/ {getline; print}' | tr ',' '\n' | sed -nE 's/^[[:space:]]*(DNS|IP Address):[[:space:]]*//p' | tr 'A-Z' 'a-z'; }
+cert_covers() { # cert host
+  local h n; h="$(printf '%s' "${2#\[}" | tr 'A-Z' 'a-z')"; h="${h%\]}"
+  while IFS= read -r n; do
+    [ -n "$n" ] || continue
+    [ "$n" = "$h" ] && return 0
+    case "$n" in '*.'*) case "$h" in *."${n#\*.}") [ "${h%."${n#\*.}"}" = "${h%%.*}" ] && return 0 ;; esac ;; esac
+  done < <(cert_names "$1")
+  return 1
+}
+# cert_check CERT KEY HOST FORCE: refuses (returns 1, with a plain reason) a certificate that cannot work.
+cert_check() {
+  local crt="$1" key="$2" host="$3" force="$4" a b
+  need_openssl || return 1
+  openssl x509 -in "$crt" -noout >/dev/null 2>&1 || { echo "$crt is not a readable certificate. It should be a text (PEM) file that starts with -----BEGIN CERTIFICATE-----." >&2; return 1; }
+  openssl pkey -in "$key" -noout -passin pass: </dev/null >/dev/null 2>&1 || { echo "$key is not a readable private key. It should be a text (PEM) file without a password." >&2; return 1; }
+  a="$(openssl x509 -in "$crt" -noout -pubkey | openssl sha256)"; b="$(openssl pkey -in "$key" -passin pass: -pubout | openssl sha256)"
+  [ "$a" = "$b" ] || { echo "The key does not belong to this certificate (it was made from a different request). Nothing was changed." >&2; return 1; }
+  openssl x509 -in "$crt" -noout -checkend 0 >/dev/null 2>&1 || { echo "This certificate has already expired. Nothing was changed." >&2; return 1; }
+  if ! cert_covers "$crt" "$host"; then
+    echo "This certificate is not valid for $host. It is valid for: $(cert_names "$crt" | tr '\n' ' ')" >&2
+    [ "$force" = 1 ] || { echo "Nothing was changed. Get a certificate for $host (browsers refuse any other name), or add --force if you know better." >&2; return 1; }
+    echo "Continuing because of --force." >&2
+  fi
+  if [ "$(grep -c 'BEGIN CERTIFICATE' "$crt")" -lt 2 ] && [ "$(openssl x509 -in "$crt" -noout -subject)" != "$(openssl x509 -in "$crt" -noout -issuer | sed 's/^issuer=/subject=/')" ]; then
+    echo "  note: the file holds only your own certificate, not the authority's chain after it. Some computers may then say the certificate is not trusted. Put the chain after it (see the install guide) if they do."
+  fi
+}
+# cert_apply CERT KEY HOST: puts the files in /opt/voxshift/certs, points the Caddyfile at them, makes sure Caddy can see the folder, restarts Caddy,
+# and puts everything back if Caddy does not stay up.
+cert_apply() {
+  local crt="$1" key="$2" host="$3" tmpf
+  rm -rf Caddyfile.before-cert compose.yaml.before-cert certs.before-cert
+  cp -p Caddyfile Caddyfile.before-cert; cp -p compose.yaml compose.yaml.before-cert
+  if [ -d certs ]; then cp -a certs certs.before-cert; fi
+  mkdir -p certs; chmod 700 certs
+  [ "$crt" -ef certs/server.crt ] || cp "$crt" certs/server.crt
+  [ "$key" -ef certs/server.key ] || cp "$key" certs/server.key
+  chmod 644 certs/server.crt; chmod 600 certs/server.key
+  tmpf="$(mktemp "$DIR/.Caddyfile.XXXXXX")"
+  awk -v host="$host" '
+    inblk == 0 && $1 == host && $2 == "{" { print; print "\ttls /certs/server.crt /certs/server.key"; inblk = 1; next }
+    inblk == 1 && /^[ \t]*tls[ \t]/ { next }
+    inblk == 1 && /^}/ { inblk = 0 }
+    { print }' Caddyfile > "$tmpf"
+  grep -q '^[[:space:]]*tls /certs/server.crt /certs/server.key' "$tmpf" || { rm -f "$tmpf"; echo "Could not find the site block for $host in the Caddyfile, so nothing was changed." >&2; return 1; }
+  cat "$tmpf" > Caddyfile; rm -f "$tmpf"
+  if ! grep -q './certs:/certs' compose.yaml; then
+    tmpf="$(mktemp "$DIR/.compose.XXXXXX")"
+    awk '{ print } /^[ \t]*- caddyconfig:\/config[ \t]*$/ && !d { print "      - ./certs:/certs:ro"; d = 1 }' compose.yaml > "$tmpf"
+    grep -q './certs:/certs' "$tmpf" || { rm -f "$tmpf"; cert_rollback; echo "Could not add the certificate folder to compose.yaml, so nothing was changed." >&2; return 1; }
+    cat "$tmpf" > compose.yaml; rm -f "$tmpf"
+  fi
+  echo "Restarting the web front door (a few seconds)..."
+  dc up -d caddy >/dev/null 2>&1 || true
+  sleep "${CERT_WAIT:-8}"
+  if ! dc ps --services --filter status=running 2>/dev/null | grep -qx caddy; then
+    echo "The front door did not start with the new certificate. Putting the old settings back." >&2
+    dc logs --tail 15 caddy >&2 2>/dev/null || true
+    cert_rollback; dc up -d caddy >/dev/null 2>&1 || true
+    return 1
+  fi
+}
+cert_rollback() {
+  [ -f Caddyfile.before-cert ] && cp -p Caddyfile.before-cert Caddyfile
+  [ -f compose.yaml.before-cert ] && cp -p compose.yaml.before-cert compose.yaml
+  if [ -d certs.before-cert ]; then rm -rf certs; cp -a certs.before-cert certs; else rm -rf certs; fi
+}
+cert_summary() {
+  local f="$1"
+  openssl x509 -in "$f" -noout -subject -issuer -enddate 2>/dev/null | sed 's/^/    /'
+  cert_names "$f" | sed 's/^/    valid for: /'
+}
+cert_cmd() {
+  local sub="${1:-help}" host mode name days crt key force tmp dest owner
+  shift || true
+  host="$(cert_host)"; mode="$(cert_mode)"
+  case "$sub" in
+    status)
+      [ -n "$host" ] || { echo "Could not read the web address from the Caddyfile." >&2; exit 1; }
+      echo "Address:  $host"
+      case "$mode" in
+        none) echo "Secured:  no. This installation serves plain http (installed with --tls none)." ;;
+        acme) echo "Secured:  by a free public certificate (Let's Encrypt) that renews itself." ;;
+        internal) echo "Secured:  by Voxshift's own certificate authority. Browsers must trust its root certificate once (voxshift certificate export)." ;;
+        custom) echo "Secured:  by the certificate in $DIR/certs/server.crt" ;;
+      esac
+      if [ "$mode" = custom ] && [ -f certs/server.crt ]; then
+        need_openssl || exit 1
+        cert_summary certs/server.crt
+        if [ "$(openssl x509 -in certs/server.crt -noout -subject)" = "$(openssl x509 -in certs/server.crt -noout -issuer | sed 's/^issuer=/subject=/')" ]; then echo "    type: self-signed (each computer must be told to trust it: voxshift certificate export)"; fi
+        if ! openssl x509 -in certs/server.crt -noout -checkend 0 >/dev/null 2>&1; then echo "    STATUS: EXPIRED. People cannot open Voxshift until it is replaced." 
+        elif ! openssl x509 -in certs/server.crt -noout -checkend 2592000 >/dev/null 2>&1; then echo "    STATUS: expires within 30 days. Replace it soon: voxshift certificate help"
+        else echo "    status: valid for more than 30 days"; fi
+      elif [ "$mode" != none ] && command -v openssl >/dev/null 2>&1; then
+        echo "    (what the server is presenting now:)"
+        # shellcheck disable=SC2015
+        echo | openssl s_client -connect 127.0.0.1:443 -servername "$host" 2>/dev/null | openssl x509 -noout -subject -issuer -enddate 2>/dev/null | sed 's/^/    /' || true
+      fi
+      ;;
+    selfsigned)
+      name=""; days=365
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --name) name="${2:-}"; shift 2 ;;
+          --days) days="${2:-}"; shift 2 ;;
+          *) echo "Use: voxshift certificate selfsigned [--name NAME-OR-IP] [--days N]" >&2; exit 1 ;;
+        esac
+      done
+      case "$days" in ''|*[!0-9]*) echo "--days must be a whole number." >&2; exit 1 ;; esac
+      [ "$days" -ge 30 ] && [ "$days" -le 825 ] || { echo "--days must be between 30 and 825." >&2; exit 1; }
+      [ "$mode" != none ] || { echo "This installation serves plain http, so there is no certificate to change. Install again with an https:// address." >&2; exit 1; }
+      [ -n "$host" ] || { echo "Could not read the web address from the Caddyfile." >&2; exit 1; }
+      [ -n "$name" ] || name="$host"
+      if [ "$name" != "$host" ]; then echo "Note: the certificate will be for $name, but this installation is served at $host. Browsers only accept it at $name."; fi
+      tmp="$(mktemp -d "$DIR/.selfsigned.XXXXXX")"; chmod 700 "$tmp"
+      cert_make_selfsigned "$name" "$days" "$tmp" || { rm -rf "$tmp"; exit 1; }
+      if ! cert_check "$tmp/server.crt" "$tmp/server.key" "$name" 1; then rm -rf "$tmp"; exit 1; fi
+      if ! cert_apply "$tmp/server.crt" "$tmp/server.key" "$host"; then rm -rf "$tmp"; exit 1; fi
+      rm -rf "$tmp"
+      echo "A self-signed certificate is installed (valid $days days):"
+      cert_summary certs/server.crt
+      echo "Browsers will warn until each computer trusts it. Copy it with: sudo voxshift certificate export   (then follow the install guide, Trusting a self-signed certificate)."
+      ;;
+    install)
+      crt=""; key=""; force=0
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --cert) crt="${2:-}"; shift 2 ;;
+          --key) key="${2:-}"; shift 2 ;;
+          --force) force=1; shift ;;
+          *) echo "Use: voxshift certificate install --cert FULLCHAIN.PEM --key SERVER.KEY [--force]" >&2; exit 1 ;;
+        esac
+      done
+      [ -n "$crt" ] && [ -n "$key" ] || { echo "Use: voxshift certificate install --cert FULLCHAIN.PEM --key SERVER.KEY" >&2; exit 1; }
+      [ -r "$crt" ] || { echo "Cannot read $crt" >&2; exit 1; }
+      [ -r "$key" ] || { echo "Cannot read $key" >&2; exit 1; }
+      [ "$mode" != none ] || { echo "This installation serves plain http, so there is no certificate to change. Install again with an https:// address." >&2; exit 1; }
+      [ -n "$host" ] || { echo "Could not read the web address from the Caddyfile." >&2; exit 1; }
+      cert_check "$crt" "$key" "$host" "$force" || exit 1
+      cert_apply "$crt" "$key" "$host" || exit 1
+      echo "Your certificate is installed:"
+      cert_summary certs/server.crt
+      echo "Open $host in a browser and check the padlock."
+      ;;
+    export)
+      [ "$mode" != none ] || { echo "This installation serves plain http: there is no certificate." >&2; exit 1; }
+      dest="${1:-${ORIG_PWD:-$DIR}/voxshift-certificate.crt}"
+      case "$mode" in
+        acme) echo "This installation uses a free public certificate. Every computer already trusts it: there is nothing to install." ; exit 0 ;;
+        internal) dc cp caddy:/data/caddy/pki/authorities/local/root.crt "$dest" >/dev/null 2>&1 || { echo "Could not read Voxshift's root certificate. Is the front door running? voxshift status" >&2; exit 1; } ;;
+        custom) cp certs/server.crt "$dest" ;;
+      esac
+      chmod 644 "$dest"
+      owner="${SUDO_USER:-}"; [ -z "$owner" ] || chown "$owner" "$dest" 2>/dev/null || true
+      echo "The public certificate is saved as $dest (it holds no secrets)."
+      echo "Copy it to each computer that should trust Voxshift and install it as a trusted certificate (see the install guide)."
+      ;;
+    *)
+      cat <<EOF
+voxshift certificate <command>
+  status                          which certificate is in use and when it runs out
+  selfsigned [--name N] [--days D]  make a self-signed certificate on this server and use it (default 365 days; browsers must be told to trust it)
+  install --cert FILE --key FILE [--force]
+                                  use your own certificate (full chain, PEM) and its private key; checks them first and puts the old
+                                  settings back if the front door does not start
+  export [FILE]                   save the public certificate to FILE (default ./voxshift-certificate.crt) so you can trust it on computers
+EOF
+      ;;
+  esac
+}
+
 case "${1:-help}" in
   status)  dc ps ;;
   start)   need_root "$@"; dc up -d; wait_ready ;;
@@ -699,6 +917,7 @@ case "${1:-help}" in
     ;;
   backup-encryption) need_root "$@"; shift; backup_encryption "$@" ;;
   restore) need_root "$@"; restore_cmd "$@" ;;
+  certificate) need_root "$@"; shift; cert_cmd "$@" ;;
   *)
     cat <<EOF
 voxshift <command>
@@ -718,6 +937,9 @@ voxshift <command>
                     put a backup back (takes a safety backup first; asks you to type RESTORE). An encrypted backup needs --identity,
                     the file holding your private key. --with-config also restores compose.yaml, the Caddyfile, certificates and
                     Caddy's data. --force skips the "backup is newer" check
+  certificate status | selfsigned | install | export
+                    see which HTTPS certificate is in use and when it runs out; make a self-signed one; install your own (checked first,
+                    the old settings come back if the front door does not start); save the public certificate to trust it on computers
   logs [service]    follow logs (api, worker, web, caddy, postgres, redis)
   reset-admin       set a new password for the first Super Admin and unlock the account
 Files: $DIR/.env (settings, secrets), $DIR/compose.yaml, $DIR/Caddyfile
@@ -741,6 +963,7 @@ while [ $# -gt 0 ]; do
     --tls) TLS="${2:-}"; shift 2 ;;
     --cert) CERT_FILE="${2:-}"; shift 2 ;;
     --key) KEY_FILE="${2:-}"; shift 2 ;;
+    --selfsigned-days) SELFSIGNED_DAYS="${2:-}"; shift 2 ;;
     --acme-email) ACME_EMAIL="${2:-}"; shift 2 ;;
     --hsts-max-age) HSTS_MAX_AGE="${2:-}"; shift 2 ;;
     --dir) DIR="${2:-}"; shift 2 ;;
@@ -903,11 +1126,25 @@ if [ "$TLS" = "auto" ]; then
   elif is_ip "$HOST" || is_private_host "$HOST"; then TLS="internal"
   else TLS="acme"; fi
 fi
-case "$TLS" in none|acme|internal|custom) ;; *) die "--tls must be auto, none, acme, internal or custom." ;; esac
+case "$TLS" in none|acme|internal|custom|selfsigned) ;; *) die "--tls must be auto, none, acme, internal, custom or selfsigned." ;; esac
 if [ "$TLS" = "none" ] && [ "$SCHEME" = "https" ]; then die "--tls none serves plain http, but the base URL is https://. Use an http:// address, or choose a TLS mode."; fi
 if [ "$TLS" != "none" ] && [ "$SCHEME" = "http" ]; then die "A TLS mode needs an https:// base URL."; fi
 if [ "$TLS" != "none" ] && [ -n "$PORT" ] && [ "$PORT" != "443" ]; then die "TLS modes use ports 80 and 443; leave the port out of the base URL."; fi
 if [ "$TLS" = "acme" ] && { is_ip "$HOST" || is_private_host "$HOST"; }; then die "Let's Encrypt cannot issue a certificate for '$HOST'. Use --tls internal or --tls custom."; fi
+if [ "$TLS" = "selfsigned" ]; then
+  [ -z "$CERT_FILE$KEY_FILE" ] || die "--tls selfsigned makes its own certificate; leave --cert and --key out (or use --tls custom for your own)."
+  case "$SELFSIGNED_DAYS" in ''|*[!0-9]*) die "--selfsigned-days must be a whole number of days." ;; esac
+  [ "$SELFSIGNED_DAYS" -ge 30 ] && [ "$SELFSIGNED_DAYS" -le 825 ] || die "--selfsigned-days must be between 30 and 825."
+  case "$HOST" in \[*) die "--tls selfsigned does not support an IPv6 address; use --tls custom." ;; esac
+  [ "${#HOST}" -le 64 ] || die "A certificate name can be at most 64 characters; '$HOST' is longer. Use --tls custom."
+  if [ "$START" = 1 ] && ! command -v openssl >/dev/null 2>&1; then
+    say "  Installing openssl (needed to make the certificate)..."
+    if command -v apt-get >/dev/null 2>&1; then DEBIAN_FRONTEND=noninteractive apt-get install -y openssl >/dev/null 2>&1 || { apt-get update -qq >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y openssl >/dev/null 2>&1; } || true
+    elif command -v dnf >/dev/null 2>&1; then dnf install -y openssl >/dev/null 2>&1 || true
+    elif command -v yum >/dev/null 2>&1; then yum install -y openssl >/dev/null 2>&1 || true; fi
+  fi
+  command -v openssl >/dev/null 2>&1 || die "openssl is needed to make a self-signed certificate and could not be installed. Install it (apt install openssl / dnf install openssl) and re-run."
+fi
 if [ "$TLS" = "custom" ]; then
   [ -n "$CERT_FILE" ] && [ -n "$KEY_FILE" ] || die "--tls custom needs --cert FILE and --key FILE."
   [ -r "$CERT_FILE" ] || die "Cannot read certificate $CERT_FILE"
@@ -1074,6 +1311,14 @@ if [ "$TLS" = "custom" ]; then
   mkdir -p "$DIR/certs"
   cp "$CERT_FILE" "$DIR/certs/server.crt"; cp "$KEY_FILE" "$DIR/certs/server.key"
   chmod 600 "$DIR/certs/server.key"
+  CERT_MOUNT='
+      - ./certs:/certs:ro'
+fi
+if [ "$TLS" = "selfsigned" ]; then
+  mkdir -p "$DIR/certs"; chmod 700 "$DIR/certs"
+  make_selfsigned "$HOST" "$SELFSIGNED_DAYS" "$DIR/certs" || die "Could not make the self-signed certificate."
+  chmod 644 "$DIR/certs/server.crt"; chmod 600 "$DIR/certs/server.key"
+  ok "self-signed certificate for $HOST (valid $SELFSIGNED_DAYS days)"
   CERT_MOUNT='
       - ./certs:/certs:ro'
 fi
@@ -1311,7 +1556,7 @@ ${HSTS_LINE}	reverse_proxy web:80
 }
 EOF
     ;;
-  custom)
+  custom|selfsigned)
     cat > "$DIR/Caddyfile" <<EOF
 $HOST {
 	tls /certs/server.crt /certs/server.key
@@ -1404,6 +1649,15 @@ if [ "$TLS" = "internal" ]; then
   Certificate: you chose Voxshift's private CA, so browsers will warn until they trust it. To get the root certificate:
      cd $DIR && docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./voxshift-root.crt
   and install it as a trusted root on staff computers (or use --tls custom with your own certificate next time).
+EOF
+fi
+if [ "$TLS" = "selfsigned" ]; then
+  cat <<EOF
+
+  Certificate: you chose a self-signed certificate (valid $SELFSIGNED_DAYS days), so browsers will warn until each computer trusts it.
+  Save the public certificate with:  sudo voxshift certificate export
+  then install that file as a trusted certificate on each computer (the install guide has the steps).
+  Check it any time with:  voxshift certificate status
 EOF
 fi
 if [ "$TLS" = "none" ]; then
