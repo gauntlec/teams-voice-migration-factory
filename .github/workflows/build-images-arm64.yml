@@ -177,6 +177,7 @@ jobs:
           for name in api worker web; do
             archs=$(docker buildx imagetools inspect "$owner/tvmf-$name:$VERSION" --raw | jq -r '[.manifests[]?.platform | select(.architecture != "unknown") | .architecture] | unique | join(" ")')
             echo "tvmf-$name:$VERSION -> $archs"
-            case " $archs " in *" amd64 "*" arm64 "*|*" arm64 "*" amd64 "*) ;; *) echo "Missing a CPU type in $name"; exit 1 ;; esac
+            case " $archs " in *" amd64 "*) ;; *) echo "Missing amd64 in $name"; exit 1 ;; esac
+            case " $archs " in *" arm64 "*) ;; *) echo "Missing arm64 in $name"; exit 1 ;; esac
           done
           echo "ARM64 images are available for release $VERSION." >> "$GITHUB_STEP_SUMMARY"
