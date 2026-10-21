@@ -51,5 +51,21 @@ refuse acme-for-ip      --base-url https://10.1.2.3 --tls acme
 refuse tls-on-http      --base-url http://voice.contoso.com --tls internal
 refuse selfsigned-http  --base-url http://voice.contoso.com --tls selfsigned
 
+# CPU types: a stub uname and id make the installer believe it is root on another CPU; a stub docker that is "not running" (and a no-op systemctl) stops it
+# right after the CPU and disk checks, so nothing is installed or pulled.
+STUBCPU="$TMP/cpu-stub"; mkdir -p "$STUBCPU"
+printf '#!/bin/sh\n[ "$1" = "-s" ] && echo Linux && exit 0\n[ "$1" = "-m" ] && echo "$FAKE_CPU" && exit 0\n/usr/bin/uname "$@"\n' > "$STUBCPU/uname"
+printf '#!/bin/sh\n[ "$1" = "-u" ] && echo 0 && exit 0\n/usr/bin/id "$@"\n' > "$STUBCPU/id"
+printf '#!/bin/sh\nexit 1\n' > "$STUBCPU/docker"; printf '#!/bin/sh\nexit 0\n' > "$STUBCPU/systemctl"; chmod +x "$STUBCPU"/*
+cpu_case() { # cpu expected-text-in-output
+  FAKE_CPU="$1" PATH="$STUBCPU:/usr/bin:/bin:/usr/sbin:/sbin" bash "$HERE/install.sh" -y --admin-email admin@example.com --dir "$TMP/cpu-$1/vx" --base-url http://10.0.0.20 --no-docker-install >"$TMP/cpu-$1.log" 2>&1
+  grep -q "$2" "$TMP/cpu-$1.log" || bad "CPU $1: expected '$2' in the output: $(tail -2 "$TMP/cpu-$1.log")"
+}
+cpu_case x86_64   "x86-64 CPU"
+cpu_case aarch64  "EXPERIMENTAL"
+cpu_case armv7l   "32-bit ARM"
+cpu_case riscv64  "x86-64 (and, experimentally"
+grep -q "x86-64 CPU" "$TMP/cpu-aarch64.log" && bad "aarch64 must not be reported as an x86-64 CPU"
+
 [ "$fail" = 0 ] && echo "installer render checks: all passed"
 exit "$fail"

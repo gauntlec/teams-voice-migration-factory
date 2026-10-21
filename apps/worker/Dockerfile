@@ -1,3 +1,8 @@
+# Which CPU this image is for (set by BuildKit from --platform; the default only matters for a very old Docker without BuildKit). The runtime
+# stage below is picked by it: Microsoft's PowerShell image for x86-64, and Debian with Microsoft's PowerShell release for ARM64 (the Microsoft
+# image is not published for ARM64). Everything after that is the same for both.
+ARG TARGETARCH=amd64
+
 # ---- build ---------------------------------------------------------------
 FROM node:26-bookworm-slim AS build
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
@@ -25,7 +30,23 @@ RUN mkdir -p apps/worker/node_modules
 # it over an engineer's device-code sign-in) + Microsoft.Graph.Authentication
 # (an optional second, read-only device-code sign-in for M365 group lookup),
 # plus Node 26 for the worker itself. TEAMS_EXECUTOR=simulated skips pwsh entirely.
-FROM mcr.microsoft.com/powershell:7.4-debian-12 AS runtime
+FROM mcr.microsoft.com/powershell:7.4-debian-12 AS runtime-base-amd64
+
+# ARM64 (experimental, e.g. a 64-bit Raspberry Pi): the same PowerShell 7.4 from Microsoft's release page, unpacked where Microsoft's image puts it, with the
+# libraries it needs. The download is checked against Microsoft's published checksum file; the build stops if it does not match.
+FROM debian:bookworm-slim AS runtime-base-arm64
+ARG PWSH_VERSION=7.4.21
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libicu72 libssl3 libgssapi-krb5-2 zlib1g libstdc++6 libgcc-s1 tzdata less \
+  && curl -fsSL -o /tmp/pwsh.tar.gz "https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/powershell-${PWSH_VERSION}-linux-arm64.tar.gz" \
+  && curl -fsSL -o /tmp/hashes.sha256 "https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/hashes.sha256" \
+  && want="$(grep -F "powershell-${PWSH_VERSION}-linux-arm64.tar.gz" /tmp/hashes.sha256 | head -1 | cut -d' ' -f1)" \
+  && [ -n "$want" ] && echo "$want  /tmp/pwsh.tar.gz" | sha256sum -c - \
+  && mkdir -p /opt/microsoft/powershell/7 && tar -xzf /tmp/pwsh.tar.gz -C /opt/microsoft/powershell/7 && chmod +x /opt/microsoft/powershell/7/pwsh \
+  && ln -s /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh \
+  && apt-get purge -y curl && apt-get autoremove -y && rm -rf /tmp/pwsh.tar.gz /tmp/hashes.sha256 /var/lib/apt/lists/* \
+  && pwsh -NoLogo -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()'
+
+FROM runtime-base-${TARGETARCH} AS runtime
 ENV NODE_ENV=production \
     POWERSHELL_TELEMETRY_OPTOUT=1 \
     DOTNET_CLI_TELEMETRY_OPTOUT=1

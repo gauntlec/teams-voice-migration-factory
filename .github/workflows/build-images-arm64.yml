@@ -1,0 +1,182 @@
+# Adds ARM64 images (experimental: a 64-bit Raspberry Pi) to a release that build-images.yml has already published for x86-64.
+#
+# It runs after a successful build-images run on main (or by hand for a release number), on GitHub's ARM runners: it builds the three images
+# for ARM64 from the SAME commit, runs the same smoke test and the same blocking vulnerability scan, pushes them as <release>-arm64, and only
+# when all three pass does it re-point <release>, latest and sha-<commit> at a multi-architecture image (x86-64 + ARM64). Anything that fails
+# here leaves the x86-64 images exactly as they were: this workflow can never block or change a normal release.
+name: build-images-arm64
+
+on:
+  workflow_run:
+    workflows: [build-images]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release number to add ARM64 images to, for example 2026.10.25 (empty = the newest release)'
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.76.0
+
+concurrency:
+  group: arm64-${{ github.event.workflow_run.head_sha || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  which:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      ok: ${{ steps.r.outputs.ok }}
+      version: ${{ steps.r.outputs.version }}
+      sha: ${{ steps.r.outputs.sha }}
+      newest: ${{ steps.r.outputs.newest }}
+    steps:
+      - id: r
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          newest=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName --jq '.[0].tagName' | sed 's/^v//')
+          version="${INPUT_VERSION:-$newest}"
+          if ! [[ "$version" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]+$ ]]; then echo "No usable release number ('$version')."; echo "ok=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          sha=$(gh api "repos/${GITHUB_REPOSITORY}/commits/v${version}" --jq .sha)
+          ok=true
+          # After a build-images run, only act when the newest release is the one that run just made (a run that made no release does nothing).
+          if [ "$EVENT" = workflow_run ] && [ "$sha" != "$HEAD_SHA" ]; then ok=false; echo "The newest release (v$version) is not from this run's commit; nothing to do."; fi
+          {
+            echo "ok=$ok"; echo "version=$version"; echo "sha=$sha"
+            if [ "$version" = "$newest" ]; then echo "newest=true"; else echo "newest=false"; fi
+          } >> "$GITHUB_OUTPUT"
+
+  arm:
+    needs: which
+    if: needs.which.outputs.ok == 'true'
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            dockerfile: apps/api/Dockerfile
+          - name: worker
+            dockerfile: apps/worker/Dockerfile
+          - name: web
+            dockerfile: apps/web/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.which.outputs.sha }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 1. Build it locally for ARM64 (nothing is pushed yet), 2. prove it starts and runs unprivileged, 3. scan it. Same checks as x86-64.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          load: true
+          push: false
+          platforms: linux/arm64
+          tags: tvmf-${{ matrix.name }}:ci
+          cache-from: type=gha,scope=${{ matrix.name }}-arm64
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}-arm64
+          build-args: |
+            APP_VERSION=${{ needs.which.outputs.version }}
+            GIT_SHA=${{ needs.which.outputs.sha }}
+
+      - name: Smoke test
+        run: .github/scripts/smoke-image.sh ${{ matrix.name }} tvmf-${{ matrix.name }}:ci
+
+      - name: Scan for vulnerabilities and secrets
+        run: |
+          mkdir -p "$HOME/.cache/trivy"
+          skip=(--skip-files "**/_manifest/spdx_2.2/manifest.spdx.json" --skip-files "usr/local/share/powershell/Modules/*/*/_manifest/spdx_2.2/manifest.spdx.json")
+          rc=0
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/" "$TRIVY_IMAGE" image \
+            --scanners vuln,secret --severity HIGH,CRITICAL --ignore-unfixed "${skip[@]}" --no-progress --exit-code 1 \
+            "tvmf-${{ matrix.name }}:ci" > scan.txt 2>&1 || rc=$?
+          { echo "### tvmf-${{ matrix.name }} ARM64 image scan (fixable HIGH and CRITICAL)"; echo '```'; cat scan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          cat scan.txt
+          exit "$rc"
+
+      # Pushed under its own tag first; nothing a user pulls changes until `merge` has seen all three succeed.
+      - name: Push as <release>-arm64
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          platforms: linux/arm64
+          tags: ghcr.io/${{ github.repository_owner }}/tvmf-${{ matrix.name }}:${{ needs.which.outputs.version }}-arm64
+          sbom: true
+          provenance: mode=max
+          cache-from: type=gha,scope=${{ matrix.name }}-arm64
+          build-args: |
+            APP_VERSION=${{ needs.which.outputs.version }}
+            GIT_SHA=${{ needs.which.outputs.sha }}
+
+  # Only after ALL THREE ARM64 images passed: re-point the release's tags at a multi-architecture image (the existing x86-64 image plus the new
+  # ARM64 one). Anyone pulling on x86-64 gets exactly the image they got before; an ARM64 host now gets the ARM64 one.
+  merge:
+    needs: [which, arm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Make the multi-architecture images
+        env:
+          VERSION: ${{ needs.which.outputs.version }}
+          SHA: ${{ needs.which.outputs.sha }}
+          NEWEST: ${{ needs.which.outputs.newest }}
+        run: |
+          owner="ghcr.io/${GITHUB_REPOSITORY_OWNER}"
+          for name in api worker web; do
+            img="$owner/tvmf-$name"
+            archs=$(docker buildx imagetools inspect "$img:$VERSION" --raw | jq -r '[.manifests[]?.platform.architecture] | join(" ")')
+            case " $archs " in *" arm64 "*) echo "$img:$VERSION already has ARM64; leaving it as it is."; continue ;; esac
+            amd=$(docker buildx imagetools inspect "$img:$VERSION" --format '{{json .Manifest}}' | jq -r .digest)
+            arm=$(docker buildx imagetools inspect "$img:$VERSION-arm64" --format '{{json .Manifest}}' | jq -r .digest)
+            [ -n "$amd" ] && [ -n "$arm" ] || { echo "Could not read the image digests for $name"; exit 1; }
+            tags=(-t "$img:$VERSION" -t "$img:sha-$SHA")
+            if [ "$NEWEST" = true ]; then tags+=(-t "$img:latest"); fi
+            docker buildx imagetools create "${tags[@]}" "$img@$amd" "$img@$arm"
+          done
+
+      - name: Check the result
+        env:
+          VERSION: ${{ needs.which.outputs.version }}
+        run: |
+          owner="ghcr.io/${GITHUB_REPOSITORY_OWNER}"
+          for name in api worker web; do
+            archs=$(docker buildx imagetools inspect "$owner/tvmf-$name:$VERSION" --raw | jq -r '[.manifests[]?.platform | select(.architecture != "unknown") | .architecture] | unique | join(" ")')
+            echo "tvmf-$name:$VERSION -> $archs"
+            case " $archs " in *" amd64 "*" arm64 "*|*" arm64 "*" amd64 "*) ;; *) echo "Missing a CPU type in $name"; exit 1 ;; esac
+          done
+          echo "ARM64 images are available for release $VERSION." >> "$GITHUB_STEP_SUMMARY"

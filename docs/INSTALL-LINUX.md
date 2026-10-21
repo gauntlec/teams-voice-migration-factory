@@ -10,7 +10,8 @@ Every command here is run on the server, in a terminal. Lines that start with `#
 
 You need:
 
-- A Linux server on x86-64 (not ARM). Debian, Ubuntu, RHEL, Rocky, Alma, CentOS and Fedora all work.
+- A Linux server on x86-64. Debian, Ubuntu, RHEL, Rocky, Alma, CentOS and Fedora all work.
+  (A 64-bit Raspberry Pi 4 or 5 can run an experimental ARM64 build: see "Raspberry Pi and other 64-bit ARM" in [INSTALL-LINUX-REFERENCE.md](INSTALL-LINUX-REFERENCE.md#raspberry-pi-and-other-64-bit-arm-experimental).)
 - 4 GB of memory, 2 CPUs and 10 GB of free disk space.
 - A DNS name for Voxshift, for example `voice.contoso.com`, pointing at the server.
 - Ports 80 and 443 open from the people who will use Voxshift to the server.

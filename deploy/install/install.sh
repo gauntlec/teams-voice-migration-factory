@@ -34,6 +34,7 @@ START=1
 ASSUME_YES=0
 SMTP_HOST="" SMTP_PORT="587" SMTP_SECURE="false" SMTP_USER="" SMTP_PASS="" MAIL_FROM_ADDR=""
 GENERATED_ADMIN_PASSWORD=0
+ARM64=0               # 1 on a 64-bit ARM host (experimental)
 REFRESH=0
 AUTO_UPDATE=""        # "" = ask (interactive) or no | daily | weekly | no
 BACKUP_RECIPIENTS=()  # public keys (or files of them) that backups are encrypted to; empty = backups are not encrypted
@@ -1041,7 +1042,12 @@ if [ "$START" = 1 ]; then
   [ "$(id -u)" -eq 0 ] || die "Run it as root: sudo bash install.sh ..."
   case "$(uname -m)" in
     x86_64|amd64) ok "x86-64 CPU" ;;
-    *) die "Voxshift images are built for x86-64 only; this host is $(uname -m)." ;;
+    aarch64|arm64)
+      ARM64=1
+      warn "64-bit ARM CPU ($(uname -m)): ARM64 support is EXPERIMENTAL (for example a Raspberry Pi 4 or 5). Use x86-64 for anything that matters."
+      ;;
+    armv7l|armv6l|armhf|arm*) die "This host runs a 32-bit ARM system ($(uname -m)). Voxshift needs a 64-bit operating system (on a Raspberry Pi: Raspberry Pi OS Lite, 64-bit). Reinstall it with the 64-bit image and run this again." ;;
+    *) die "Voxshift images are built for x86-64 (and, experimentally, 64-bit ARM) only; this host is $(uname -m)." ;;
   esac
 fi
 
@@ -1057,6 +1063,10 @@ if [ "$START" = 1 ]; then
   mkdir -p "$(dirname "$DIR")"
   free_kb="$(df -Pk "$(dirname "$DIR")" | awk 'NR==2 {print $4}')"
   [ "$free_kb" -ge 10000000 ] || warn "Less than 10 GB free for $DIR. Images, the database and files need room."
+  if [ "$ARM64" = 1 ]; then
+    root_dev="$(findmnt -no SOURCE / 2>/dev/null || true)"
+    case "$root_dev" in *mmcblk*) warn "This system runs from an SD card ($root_dev). The database writes all the time and wears an SD card out, and it is slow: use a USB SSD." ;; esac
+  fi
   if ! command -v curl >/dev/null 2>&1; then die "curl is required. Install it (apt install curl / dnf install curl) and re-run."; fi
 fi
 
@@ -1219,6 +1229,18 @@ if [ "$START" = 1 ]; then
   code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 https://ghcr.io/v2/ || true)"
   case "$code" in 200|401) ok "ghcr.io reachable (the images come from there)" ;;
     *) die "Cannot reach https://ghcr.io (got '$code'). This host needs outbound HTTPS to ghcr.io; behind a proxy, configure Docker's proxy first." ;; esac
+  if [ "$ARM64" = 1 ]; then
+    # The images only carry an ARM64 build once a release has been through the ARM64 workflow; say so now rather than fail in the middle of a pull.
+    mf="$(docker manifest inspect "ghcr.io/$IMAGE_OWNER/tvmf-api:$TAG" 2>/dev/null || true)"
+    if [ -n "$mf" ]; then
+      case "$mf" in
+        *'"architecture": "arm64"'*|*'"architecture":"arm64"'*) ok "this release has ARM64 images" ;;
+        *) die "Release '$TAG' has no ARM64 images (ARM64 images are added a little after each release, and only releases made after ARM64 support began have them). Try again in a few minutes, or choose a newer release with --version." ;;
+      esac
+    else
+      warn "Could not check whether '$TAG' has ARM64 images; carrying on (the download will say if it does not)."
+    fi
+  fi
   busy=""
   for p in "$HTTP_PORT" $([ "$TLS" != "none" ] && echo "$HTTPS_PORT"); do
     listening="$(ss -ltn 2>/dev/null | awk '{print $4}' || true)"

@@ -12,7 +12,7 @@ You do not need it for a normal install.
 - **Map data.** The API sends a site's street address to `nominatim.openstreetmap.org` (OpenStreetMap geocoding) when an engineer clicks
   *Get coordinates from address*, and people's browsers load map tiles from `*.tile.openstreetmap.org`. Block those hosts if addresses must
   not leave, and enter coordinates by hand (see [SECURITY.md](SECURITY.md)).
-- **Supported hosts.** Linux on x86-64 (the images are not built for ARM). Debian, Ubuntu, RHEL, Rocky, Alma, CentOS and Fedora get Docker installed
+- **Supported hosts.** Linux on x86-64. 64-bit ARM (a Raspberry Pi 4 or 5) is experimental: see below. Debian, Ubuntu, RHEL, Rocky, Alma, CentOS and Fedora get Docker installed
   for you; any other Linux needs Docker Engine and the compose plugin installed first.
 
 ## Installer checks and pinning a release
@@ -348,3 +348,15 @@ voxshift start
   stand-in check, including the encryption round trip with the real `age` program (it needs `age` on the machine running it).
   `bash deploy/install/check-selfupdate.sh` does the same for `voxshift self-update` (a stand-in `curl` and `cosign`); the real signature check needs a published, signed release.
 - Found a security problem in Voxshift or its installer? Report it privately as described in [SECURITY.md](../SECURITY.md) (repository root); do not post it publicly.
+
+## Raspberry Pi and other 64-bit ARM (experimental)
+
+Voxshift images are also built for 64-bit ARM, but this is **experimental**: it has had no real-world use yet, so use x86-64 for anything that matters.
+
+- **What you need:** a Raspberry Pi 4 or 5 running a **64-bit** operating system (Raspberry Pi OS Lite, 64-bit; `uname -m` prints `aarch64`). A 32-bit system (`armv7l`) is refused with a message.
+  8 GB of memory is comfortable; 4 GB works for light use but PowerShell discovery runs will be slow. Use a **USB SSD**, not an SD card: the database writes all the time and wears a card out.
+  Keep at least 10 GB free. The installer warns when it sees an SD card, little memory or little disk.
+- **Install the usual way** (`INSTALL-LINUX.md`). On ARM64 the installer says so, installs Docker if needed, and checks that the release you are installing has ARM64 images before it starts pulling.
+- **When a release has ARM64 images:** they are built a little after each normal release (about half an hour: a separate workflow on GitHub's ARM machines runs the same smoke test and vulnerability scan, then adds the ARM64 image to the release's tags). Until then the installer stops with a message ("has no ARM64 images"); try again later or use a newer release. The x86-64 images are never changed by this.
+- **What differs from x86-64:** only the worker. Microsoft publishes no PowerShell container image for ARM, so the worker image unpacks Microsoft's own PowerShell 7.4 ARM64 release (the download is checked against Microsoft's published checksum) onto Debian 12. The Microsoft Teams module is the same version. It has not been tested against a live Microsoft tenant on ARM.
+- **Everything else is the same:** updates (`voxshift update`), backups, restore, certificates. A backup made on x86-64 can be restored on ARM64 and the other way round (the database and files do not depend on the CPU).
