@@ -1,7 +1,7 @@
-# Which CPU this image is for (set by BuildKit from --platform; the default only matters for a very old Docker without BuildKit). The runtime
+# Which CPU this image is for (BuildKit sets it from --platform; Docker 23 and later use BuildKit by default). The runtime
 # stage below is picked by it: Microsoft's PowerShell image for x86-64, and Debian with Microsoft's PowerShell release for ARM64 (the Microsoft
 # image is not published for ARM64). Everything after that is the same for both.
-ARG TARGETARCH=amd64
+ARG TARGETARCH
 
 # ---- build ---------------------------------------------------------------
 FROM node:26-bookworm-slim AS build
