@@ -8,6 +8,7 @@ import { api, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { AutoAttendantWizard } from '../components/AutoAttendantWizard';
 import { CallQueueWizard } from '../components/CallQueueWizard';
+import { ImportRangesDialog } from '../components/ImportRangesDialog';
 import { ImportUsersDialog } from '../components/ImportUsersDialog';
 import { Page } from '../components/Page';
 import { WizardTiles, useTeamChoices } from '../components/WizardTiles';
@@ -30,6 +31,7 @@ export function SiteWorkspace() {
   const qc = useQueryClient();
   const [tab, setTab] = useState<TabKey>('overview');
   const [importOpen, setImportOpen] = useState(false);
+  const [importRangesOpen, setImportRangesOpen] = useState(false);
 
   const tid = activeTenantId;
   const base = `/t/${tid}/discovery`;
@@ -246,9 +248,16 @@ export function SiteWorkspace() {
           readOnly={locked}
           onChanged={refreshSummary}
           headerActions={
-            <Link to={`/data-collection/sites/${siteId}/number-porting`}>
-              <Button size="small">Number porting</Button>
-            </Link>
+            <>
+              {!locked && (
+                <Button size="small" icon={<ArrowUploadRegular />} onClick={() => setImportRangesOpen(true)}>
+                  Import from Excel…
+                </Button>
+              )}
+              <Link to={`/data-collection/sites/${siteId}/number-porting`}>
+                <Button size="small">Number porting</Button>
+              </Link>
+            </>
           }
           columns={[
             { key: 'range_start', label: 'From' },
@@ -422,6 +431,19 @@ export function SiteWorkspace() {
             { key: 'access_port_id', label: 'Access port ID' },
             { key: 'comments', label: 'Comments', type: 'textarea', full: true },
           ]}
+        />
+      )}
+
+      {importRangesOpen && (
+        <ImportRangesDialog
+          base={base}
+          siteId={siteId}
+          onClose={() => setImportRangesOpen(false)}
+          onDone={() => {
+            qc.invalidateQueries({ queryKey: ['ranges', tid, siteId] });
+            qc.invalidateQueries({ queryKey: ['site-numbers'] });
+            refreshSummary();
+          }}
         />
       )}
 

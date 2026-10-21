@@ -412,6 +412,20 @@ export const discoveryNumberRangeSchema = z
   .strict();
 export type DiscoveryNumberRangeInput = z.infer<typeof discoveryNumberRangeSchema>;
 
+/** Bulk-create number ranges for one site from a spreadsheet (columns DID-START, DID-END). */
+export const numberRangesImportSchema = z
+  .object({
+    site_id: z.string().uuid(),
+    kind: z.enum(NUMBER_RANGE_KINDS),
+    carrier: optStr(160),
+    rows: z
+      .array(z.object({ range_start: e164ish, range_end: e164ish }).strict())
+      .min(1)
+      .max(500),
+  })
+  .strict();
+export type NumberRangesImportInput = z.infer<typeof numberRangesImportSchema>;
+
 /* --------------------- Number-port document collection --------------------- */
 // "LOA Data Collection and Tracking" - a number-port request's document
 // checklist. See docs on the three-tier model: port_document_types (global

@@ -8,6 +8,7 @@ import {
   discoveryCapSchema,
   discoveryListQuerySchema,
   discoveryNumberRangeSchema,
+  numberRangesImportSchema,
   discoveryResourceAccountSchema,
   discoveryUserBulkPatchSchema,
   discoveryUserSchema,
@@ -20,6 +21,7 @@ import {
   type DiscoveryCapInput,
   type DiscoveryListQuery,
   type DiscoveryNumberRangeInput,
+  type NumberRangesImportInput,
   type DiscoveryResourceAccountInput,
   type DiscoveryUserBulkPatchInput,
   type DiscoveryUserInput,
@@ -136,6 +138,17 @@ export class TelephonyController {
     @Body(new ZodBody(discoveryNumberRangeSchema)) body: DiscoveryNumberRangeInput,
   ) {
     return this.svc.addRange(t, u, body, this.review(u));
+  }
+
+  /** Bulk-create ranges for a site from parsed spreadsheet rows (DID-START, DID-END). */
+  @Post('number-ranges/import')
+  @RequirePermission('discovery:write')
+  importRanges(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() u: AuthedUser,
+    @Body(new ZodBody(numberRangesImportSchema)) body: NumberRangesImportInput,
+  ) {
+    return this.svc.importRanges(t, u, body, this.review(u));
   }
 
   @Patch('number-ranges/:id')

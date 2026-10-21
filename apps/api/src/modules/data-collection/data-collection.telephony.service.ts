@@ -13,6 +13,7 @@ import {
   type DiscoveryCapInput,
   type DiscoveryListQuery,
   type DiscoveryNumberRangeInput,
+  type NumberRangesImportInput,
   type DiscoveryResourceAccountInput,
   type DiscoveryUserBulkPatchInput,
   type DiscoveryUserInput,
@@ -511,7 +512,12 @@ export class TelephonyService {
     await this.base.assertEditable(t, canReview);
     const e164s = expandRange(i.range_start, i.range_end);
     await this.siteByCode(t, i.sitecode);
+    const { range, generated } = await this.insertRange(t, u, i, e164s);
+    return { range, generated, skipped: e164s.length - generated };
+  }
 
+  /** Insert one range row plus its generated numbers (numbers already in the inventory are left alone). */
+  private async insertRange(t: TenantContext, u: AuthedUser, i: DiscoveryNumberRangeInput, e164s: string[]) {
     const range = await this.s(t)
       .insertInto('discovery_number_ranges')
       .values({
@@ -545,7 +551,65 @@ export class TelephonyService {
       targetId: range.id,
       detail: { requested: e164s.length, generated },
     });
-    return { range, generated, skipped: e164s.length - generated };
+    return { range, generated };
+  }
+
+  /**
+   * Bulk-create ranges for one site from spreadsheet rows (DID-START / DID-END). Each row is
+   * checked on its own: a bad row is reported and the rest still go in, and a row whose numbers
+   * are all in the inventory already is skipped, so a half-finished import can be run again.
+   */
+  async importRanges(t: TenantContext, u: AuthedUser, input: NumberRangesImportInput, canReview: boolean) {
+    await this.base.assertEditable(t, canReview);
+    assertSiteInScope(t, input.site_id);
+    const site = await this.s(t)
+      .selectFrom('discovery_sites')
+      .select(['id', 'sitecode'])
+      .where('id', '=', input.site_id)
+      .executeTakeFirst();
+    if (!site?.sitecode) throw new BadRequestException('Unknown site for this customer.');
+
+    let created = 0;
+    let numbers = 0;
+    let skipped = 0;
+    const errors: { row: number; message: string }[] = [];
+    for (let idx = 0; idx < input.rows.length; idx++) {
+      const row = input.rows[idx];
+      try {
+        const e164s = expandRange(row.range_start, row.range_end);
+        const existing = new Set<string>();
+        for (let k = 0; k < e164s.length; k += 1000) {
+          const found = await this.s(t)
+            .selectFrom('phone_numbers')
+            .select('e164')
+            .where('e164', 'in', e164s.slice(k, k + 1000))
+            .execute();
+          for (const f of found) existing.add(f.e164);
+        }
+        if (existing.size === e164s.length) {
+          skipped += 1;
+          continue;
+        }
+        const { generated } = await this.insertRange(
+          t,
+          u,
+          { sitecode: site.sitecode, range_start: row.range_start, range_end: row.range_end, kind: input.kind, carrier: input.carrier },
+          e164s,
+        );
+        created += 1;
+        numbers += generated;
+      } catch (e) {
+        errors.push({ row: idx + 1, message: (e as Error).message });
+      }
+    }
+
+    await this.audit.tenant(t.schema, 'discovery.ranges_imported', {
+      actor: actorOf(u),
+      targetType: 'discovery_site',
+      targetId: site.id,
+      detail: { created, numbers, skipped, failed: errors.length },
+    });
+    return { created, numbers, skipped, errors };
   }
 
   async updateRange(
