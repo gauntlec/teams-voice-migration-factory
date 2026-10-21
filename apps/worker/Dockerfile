@@ -30,7 +30,7 @@ RUN mkdir -p apps/worker/node_modules
 # it over an engineer's device-code sign-in) + Microsoft.Graph.Authentication
 # (an optional second, read-only device-code sign-in for M365 group lookup),
 # plus Node 26 for the worker itself. TEAMS_EXECUTOR=simulated skips pwsh entirely.
-FROM mcr.microsoft.com/powershell:7.4-debian-12 AS runtime-base-amd64
+FROM mcr.microsoft.com/powershell:7.5-debian-12 AS runtime-base-amd64
 
 # ARM64 (experimental, e.g. a 64-bit Raspberry Pi): the same PowerShell 7.4 from Microsoft's release page, unpacked where Microsoft's image puts it, with the
 # libraries it needs. Docker itself downloads the file and refuses it unless its SHA-256 is exactly the one pinned below (taken from Microsoft's published
