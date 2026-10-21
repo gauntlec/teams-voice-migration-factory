@@ -33,18 +33,19 @@ RUN mkdir -p apps/worker/node_modules
 FROM mcr.microsoft.com/powershell:7.4-debian-12 AS runtime-base-amd64
 
 # ARM64 (experimental, e.g. a 64-bit Raspberry Pi): the same PowerShell 7.4 from Microsoft's release page, unpacked where Microsoft's image puts it, with the
-# libraries it needs. The download is checked against Microsoft's published checksum file; the build stops if it does not match.
+# libraries it needs. Docker itself downloads the file and refuses it unless its SHA-256 is exactly the one pinned below (taken from Microsoft's published
+# hashes.sha256 for v7.4.21), so a changed or tampered download stops the build. To move to another 7.4.x release, change the version in the URL and the hash.
 FROM debian:bookworm-slim AS runtime-base-arm64
-ARG PWSH_VERSION=7.4.21
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libicu72 libssl3 libgssapi-krb5-2 zlib1g libstdc++6 libgcc-s1 tzdata less \
-  && curl -fsSL -o /tmp/pwsh.tar.gz "https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/powershell-${PWSH_VERSION}-linux-arm64.tar.gz" \
-  && curl -fsSL -o /tmp/hashes.sha256 "https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/hashes.sha256" \
-  && want="$(grep -F "powershell-${PWSH_VERSION}-linux-arm64.tar.gz" /tmp/hashes.sha256 | head -1 | cut -d' ' -f1)" \
-  && [ -n "$want" ] && echo "$want  /tmp/pwsh.tar.gz" | sha256sum -c - \
-  && mkdir -p /opt/microsoft/powershell/7 && tar -xzf /tmp/pwsh.tar.gz -C /opt/microsoft/powershell/7 && chmod +x /opt/microsoft/powershell/7/pwsh \
-  && ln -s /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh \
-  && apt-get purge -y curl && apt-get autoremove -y && rm -rf /tmp/pwsh.tar.gz /tmp/hashes.sha256 /var/lib/apt/lists/* \
-  && pwsh -NoLogo -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()'
+ADD --checksum=sha256:d0c216cec4c6c866fc15a105f039740228b53206f8576d2ed0bcd656a35ed6f6 https://github.com/PowerShell/PowerShell/releases/download/v7.4.21/powershell-7.4.21-linux-arm64.tar.gz /tmp/pwsh.tar.gz
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates libicu72 libssl3 libgssapi-krb5-2 zlib1g libstdc++6 libgcc-s1 tzdata less; \
+    mkdir -p /opt/microsoft/powershell/7; \
+    tar -xzf /tmp/pwsh.tar.gz -C /opt/microsoft/powershell/7; \
+    chmod +x /opt/microsoft/powershell/7/pwsh; \
+    ln -s /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh; \
+    rm -rf /tmp/pwsh.tar.gz /var/lib/apt/lists/*; \
+    pwsh -NoLogo -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()'
 
 FROM runtime-base-${TARGETARCH} AS runtime
 ENV NODE_ENV=production \
