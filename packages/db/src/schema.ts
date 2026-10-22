@@ -669,6 +669,8 @@ interface BuildIdentityRowBase {
   comments: string | null;
   /** results of validating this row against the live tenant (snapshot from the last "Validate" action) */
   validation: Json;
+  /** the engineer's accept/reject of a number change (see 0059_build_number_decision.sql); null = undecided */
+  number_decision: ColumnType<unknown, unknown | undefined, unknown>;
   /** requested/completed dates + applied flags */
   status: Json;
   errors: string | null;

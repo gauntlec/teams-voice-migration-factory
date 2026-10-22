@@ -50,3 +50,55 @@ describe('siteIssues', () => {
     await expect(build.siteIssues(c.t, "x'; drop table")).rejects.toThrow(/site id/);
   });
 });
+
+describe('number changes', () => {
+  async function liveUser(upn: string, lineUri: string | null) {
+    const obj = await c.s.insertInto('tenant_objects').values({ object_type: 'user', object_key: upn, display_name: upn, data: {} } as never).returning('id').executeTakeFirstOrThrow();
+    await c.s.insertInto('tenant_users').values({ object_id: obj.id, upn, display_name: upn, entra_id: `eid-${upn}`, account_enabled: true, enterprise_voice_enabled: !!lineUri, voicemail_enabled: false, line_uri: lineUri } as never).execute();
+  }
+  const engineer = { id: '00000000-0000-0000-0000-000000000001', email: 'eng@example.test', displayName: 'Eng' } as never;
+  const numberChange = async (upn: string) => (await build.siteIssues(c.t, siteId)).filter((r) => r.upn === upn && r.issue.code === 'number_change');
+
+  it('flags a user who already has a different number live, and asks again if a number changes after the decision', async () => {
+    await liveUser('moved@contoso.test', 'tel:+12125550200');
+    await liveUser('same@contoso.test', 'tel:+12125550201');
+    const moved = await c.s.insertInto('build_users').values({ site_id: siteId, upn: 'moved@contoso.test', e164: '+12125550299', number_type: 'CallingPlan' } as never).returning('id').executeTakeFirstOrThrow();
+    await c.s.insertInto('build_users').values({ site_id: siteId, upn: 'same@contoso.test', e164: '+1 (212) 555-0201', number_type: 'CallingPlan' } as never).execute();
+
+    const [pending] = await numberChange('moved@contoso.test');
+    expect(pending.issue).toMatchObject({ severity: 'warning', decision: 'pending' });
+    expect(pending.issue.detail).toContain('+12125550200');
+    expect(await numberChange('same@contoso.test')).toEqual([]);
+
+    await build.decideNumberChange(c.t, engineer, 'build_users', moved.id, 'accepted');
+    expect((await numberChange('moved@contoso.test'))[0].issue).toMatchObject({ severity: 'info', decision: 'accepted' });
+
+    // the engineer picks yet another number: the old answer no longer applies
+    await c.s.updateTable('build_users').set({ e164: '+12125550298' }).where('id', '=', moved.id).execute();
+    expect((await numberChange('moved@contoso.test'))[0].issue.decision).toBe('pending');
+
+    await build.decideNumberChange(c.t, engineer, 'build_users', moved.id, 'rejected');
+    expect((await numberChange('moved@contoso.test'))[0].issue.decision).toBe('rejected');
+    await build.decideNumberChange(c.t, engineer, 'build_users', moved.id, 'reset');
+    expect((await numberChange('moved@contoso.test'))[0].issue.decision).toBe('pending');
+  });
+
+  it('flags a number that differs from Data Collection only once the site has been submitted', async () => {
+    const [n] = await seedNumbers(c.s, 'NYC01', ['+12125550301']);
+    const dc = await c.s.insertInto('discovery_users').values({ site_id: siteId, upn: 'dc@contoso.test', display_name: 'Dee Cee' } as never).returning('id').executeTakeFirstOrThrow();
+    await c.s.updateTable('phone_numbers').set({ status: 'assigned', holder_type: 'user', holder_id: dc.id }).where('id', '=', n.id).execute();
+    await liveUser('dc@contoso.test', null);
+    await c.s.insertInto('build_users').values({ site_id: siteId, upn: 'dc@contoso.test', e164: '+12125550399', number_type: 'CallingPlan', discovery_user_id: dc.id } as never).execute();
+
+    expect(await numberChange('dc@contoso.test')).toEqual([]); // still a draft
+    await c.s.updateTable('discovery_sites').set({ review_status: 'submitted' }).where('id', '=', siteId).execute();
+    const [change] = await numberChange('dc@contoso.test');
+    expect(change.issue.detail).toContain('+12125550301');
+    expect(change.issue.detail).not.toContain('already has');
+  });
+
+  it('will not record a decision where there is no number change', async () => {
+    const [{ id }] = await c.s.selectFrom('build_users').select('id').where('upn', '=', 'same@contoso.test').execute();
+    await expect(build.decideNumberChange(c.t, engineer, 'build_users', id, 'accepted')).rejects.toThrow(/no number change/);
+  });
+});

@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, UseGuards, UseInterceptors } from '@nestjs/common';
 import {
   can,
   buildAutoAttendantCreateSchema,
@@ -23,6 +23,7 @@ import {
   buildTemplateListQuerySchema,
   buildTemplatePatchSchema,
   buildValidateSchema,
+  buildNumberDecisionSchema,
   callingPolicyMapListQuerySchema,
   callingPolicySiteMapSetSchema,
   type BuildAutoAttendantCreateInput,
@@ -47,6 +48,7 @@ import {
   type BuildTemplateListQuery,
   type BuildTemplatePatchInput,
   type BuildValidateInput,
+  type BuildNumberDecisionInput,
   type CallingPolicyMapListQuery,
   type CallingPolicySiteMapSetInput,
 } from '@tvmf/shared';
@@ -373,6 +375,19 @@ export class BuildController {
   }
 
   /* validate */
+
+  @Post(':kind/:id/number-decision')
+  @RequirePermission('build:write')
+  decideNumberChange(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Param('kind') kind: string,
+    @Param('id') id: string,
+    @Body(new ZodBody(buildNumberDecisionSchema)) body: BuildNumberDecisionInput,
+  ) {
+    if (kind !== 'users' && kind !== 'caps') throw new NotFoundException();
+    return this.svc.decideNumberChange(t, user, kind === 'users' ? 'build_users' : 'build_caps', id, body.decision);
+  }
 
   @Get('issues')
   @RequirePermission('build:read')

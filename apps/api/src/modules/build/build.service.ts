@@ -144,8 +144,8 @@ export class BuildService {
     const siteIds = sites.map((si) => si.id);
 
     const [users, caps, ras, deployments] = await Promise.all([
-      s.selectFrom('build_users').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids', 'discovery_user_id']).where('site_id', 'in', siteIds).execute(),
-      s.selectFrom('build_caps').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids']).where('site_id', 'in', siteIds).execute(),
+      s.selectFrom('build_users').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids', 'discovery_user_id', 'number_decision']).where('site_id', 'in', siteIds).execute(),
+      s.selectFrom('build_caps').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids', 'discovery_cap_id', 'number_decision']).where('site_id', 'in', siteIds).execute(),
       s.selectFrom('build_resource_accounts').select(['id', 'site_id']).where('site_id', 'in', siteIds).execute(),
       // One row per site (its own latest), not the tenant's latest 500 rows
       // overall - a flat `.limit(500)` silently dropped a quieter site's
@@ -454,6 +454,8 @@ export class BuildService {
         policies: Record<string, string | null> | null;
         policy_ids: Record<string, string | null> | null;
         discovery_user_id?: string | null;
+        discovery_cap_id?: string | null;
+        number_decision?: unknown;
       }[],
     );
     // phone_number_id is a native column now (see 0017_build_phone_number_id) -
@@ -2044,6 +2046,33 @@ export class BuildService {
     return file;
   }
 
+  /**
+   * The engineer's answer to a number change (see BuildRowValidation.numberChange). Remembers the numbers it was
+   * decided against, so a later change to any of them asks again. 'reset' withdraws the answer.
+   */
+  async decideNumberChange(t: TenantContext, u: AuthedUser, table: 'build_users' | 'build_caps', id: string, decision: 'accepted' | 'rejected' | 'reset') {
+    const s = this.s(t);
+    const row = await s.selectFrom(table).selectAll().where('id', '=', id).executeTakeFirst();
+    if (!row) throw new NotFoundException('row not found');
+    await this.assertNotSrLocked(t, [id]);
+    if (decision === 'reset') {
+      await s.updateTable(table).set({ number_decision: null }).where('id', '=', id).execute();
+    } else {
+      const v = (await this.validation.validateRows(t, [row])).get(id);
+      const change = v?.numberChange;
+      if (!change) throw new BadRequestException('There is no number change to decide on this row.');
+      const decided = { decision, designed: change.designed, live: change.live, dataCollection: change.dataCollection, by: u.id, byName: u.displayName || u.email, at: new Date().toISOString() };
+      await s.updateTable(table).set({ number_decision: decided }).where('id', '=', id).execute();
+    }
+    await this.audit.tenant(t.schema, 'build.number_change_decided', {
+      actor: actorOf(u),
+      targetType: table,
+      targetId: id,
+      detail: { upn: row.upn, decision, designed: row.e164 },
+    });
+    return this.getIdentity(t, table, id);
+  }
+
   /* ============================== validate ============================== */
 
   /**
@@ -2055,8 +2084,8 @@ export class BuildService {
     if (!/^[0-9a-f-]{36}$/i.test(siteId)) throw new BadRequestException('siteId must be a site id');
     const s = this.s(t);
     const [users, caps, ras] = await Promise.all([
-      s.selectFrom('build_users').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids', 'discovery_user_id']).where('site_id', '=', siteId).where('hidden', '=', false).execute(),
-      s.selectFrom('build_caps').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids', 'discovery_cap_id', 'display_name']).where('site_id', '=', siteId).where('hidden', '=', false).execute(),
+      s.selectFrom('build_users').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids', 'discovery_user_id', 'number_decision']).where('site_id', '=', siteId).where('hidden', '=', false).execute(),
+      s.selectFrom('build_caps').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids', 'discovery_cap_id', 'number_decision', 'display_name']).where('site_id', '=', siteId).where('hidden', '=', false).execute(),
       s.selectFrom('build_resource_accounts').select(['id', 'upn', 'display_name', 'phone_number', 'number_type', 'voice_routing_policy', 'voice_routing_policy_id', 'application_id']).where('site_id', '=', siteId).execute(),
     ]);
     const raRows = ras.map((r) => ({
@@ -2102,8 +2131,8 @@ export class BuildService {
   async validateSite(t: TenantContext, u: AuthedUser, siteId: string, live = true): Promise<BuildValidateResult> {
     const s = this.s(t);
     const [users, caps, resourceAccounts, autoAttendants, callQueues] = await Promise.all([
-      s.selectFrom('build_users').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids', 'discovery_user_id']).where('site_id', '=', siteId).execute(),
-      s.selectFrom('build_caps').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids']).where('site_id', '=', siteId).execute(),
+      s.selectFrom('build_users').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids', 'discovery_user_id', 'number_decision']).where('site_id', '=', siteId).execute(),
+      s.selectFrom('build_caps').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids', 'discovery_cap_id', 'number_decision']).where('site_id', '=', siteId).execute(),
       s.selectFrom('build_resource_accounts').select(['id', 'upn', 'phone_number', 'number_type', 'voice_routing_policy', 'voice_routing_policy_id', 'application_id']).where('site_id', '=', siteId).execute(),
       s.selectFrom('build_auto_attendants').select(['id', 'name', 'default_call_flow']).where('site_id', '=', siteId).execute(),
       s.selectFrom('build_call_queues').select(['id', 'name', 'routing_method']).where('site_id', '=', siteId).execute(),

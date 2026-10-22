@@ -137,7 +137,19 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
     enabled: !!tid && !embedded,
     queryFn: () => api<BuildIssueRow[]>(`${base}/issues?siteId=${siteId}`),
   });
+  const decideNumber = useMutation({
+    mutationFn: (v: { row: BuildIssueRow; decision: 'accepted' | 'rejected' | 'reset' }) =>
+      api(`${base}/${v.row.sheet}/${v.row.rowId}/number-decision`, { method: 'POST', body: JSON.stringify({ decision: v.decision }) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['build-issues', tid, siteId] });
+      qc.invalidateQueries({ queryKey: ['users', tid, siteId] });
+      qc.invalidateQueries({ queryKey: ['caps', tid, siteId] });
+      qc.invalidateQueries({ queryKey: ['build-summary', tid] });
+    },
+  });
   const blockingCount = (issuesQ.data ?? []).filter((i) => i.issue.severity === 'blocking').length;
+  // The tab's count is what needs the engineer: not the settings that will simply change, nor decided number changes.
+  const attentionCount = (issuesQ.data ?? []).filter((i) => i.issue.severity !== 'info').length;
 
   const [populateError, setPopulateError] = useState<string | null>(null);
   const populate = useMutation({
@@ -489,9 +501,9 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
         {!embedded && (
           <Tab value="issues">
             Validation issues
-            {issuesQ.data && issuesQ.data.length > 0 && (
+            {attentionCount > 0 && (
               <Badge className={ls.ml6} size="small" appearance="tint" color={blockingCount > 0 ? 'danger' : 'warning'}>
-                {issuesQ.data.length}
+                {attentionCount}
               </Badge>
             )}
           </Tab>
@@ -505,6 +517,9 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           error={issuesQ.error}
           onRefresh={() => void issuesQ.refetch()}
           onOpen={setTab}
+          canDecide={canWrite}
+          onDecide={(row, decision) => decideNumber.mutate({ row, decision })}
+          deciding={decideNumber.isPending}
         />
       )}
 

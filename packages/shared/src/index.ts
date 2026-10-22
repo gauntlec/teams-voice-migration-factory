@@ -364,6 +364,16 @@ export interface TenantDiscoverySummary {
  * joining against Discovery's tenant_users/tenant_policies - the replacement
  * for the build workbook's manually-refreshed `G-*` columns.
  */
+/** A designed number that differs from the live one or from Data Collection's - see BuildRowValidation.numberChange. */
+export interface NumberChange {
+  designed: string;
+  /** the number the user has live in the tenant now, when it differs from the designed one */
+  live: string | null;
+  /** the number Data Collection assigned, when the site has been submitted and it differs from the designed one */
+  dataCollection: string | null;
+  decision: 'pending' | 'accepted' | 'rejected';
+}
+
 export interface BuildRowValidation {
   /** false if the UPN isn't found in the tenant at all (Discovery hasn't seen it, or it doesn't exist) */
   existsInTenant: boolean;
@@ -395,6 +405,12 @@ export interface BuildRowValidation {
    * Absent on validation stored before this check existed.
    */
   requestedNumberMismatch?: { requested: string; assigned: string | null } | null;
+  /**
+   * The designed number differs from the number the user has live in the tenant, or (once the site has been
+   * submitted for review) from the one Data Collection assigned. The engineer accepts or rejects the change.
+   * null when the numbers agree or there is no number. Absent on validation stored before this check existed.
+   */
+  numberChange?: NumberChange | null;
   /** each target policy whose live effective assignment differs (or is unset) */
   policyMismatches: { key: import('./domain').PolicyKey; label: string; target: string; live: string | null }[];
   /** target policy names that don't exist anywhere in tenant_policies for their type - likely a typo */

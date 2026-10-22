@@ -1104,6 +1104,10 @@ export type BuildImportAndLinkResourceAccountInput = z.infer<typeof buildImportA
  * completes - recomputes validation from the now-fresher data without
  * triggering another live check (see BuildService.validateSite).
  */
+/** The engineer's answer to a number change on a user or common area phone. */
+export const buildNumberDecisionSchema = z.object({ decision: z.enum(['accepted', 'rejected', 'reset']) }).strict();
+export type BuildNumberDecisionInput = z.infer<typeof buildNumberDecisionSchema>;
+
 export const buildValidateSchema = buildPopulateSchema.extend({ live: z.boolean().optional() }).strict();
 export type BuildValidateInput = z.infer<typeof buildValidateSchema>;
 

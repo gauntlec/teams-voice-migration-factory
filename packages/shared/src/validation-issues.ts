@@ -17,6 +17,7 @@ export type ValidationIssueCode =
   | 'number_conflict'
   | 'unknown_policy'
   | 'requested_number_mismatch'
+  | 'number_change'
   | 'account_disabled'
   | 'no_phone_licence'
   | 'usage_location'
@@ -31,6 +32,8 @@ export interface ValidationIssue {
   label: string;
   /** the full sentence */
   detail: string;
+  /** number_change only: where the engineer's accept/reject stands */
+  decision?: 'pending' | 'accepted' | 'rejected';
 }
 
 /** Every issue on one row, most serious first. A row with no stored validation has none. */
@@ -71,6 +74,23 @@ export function validationIssues(v: BuildRowValidation | null | undefined): Vali
       detail: rn.assigned
         ? `The customer asked for ${rn.requested} but ${rn.assigned} is assigned. Assign the requested number or clear the request.`
         : `The customer asked for ${rn.requested} but no number is assigned. Assign it or clear the request.`,
+    });
+  }
+  const nc = v.numberChange;
+  if (nc) {
+    const bits: string[] = [];
+    if (nc.live) bits.push(`the user already has ${nc.live} in the tenant`);
+    if (nc.dataCollection) bits.push(`Data Collection has ${nc.dataCollection} assigned`);
+    out.push({
+      code: 'number_change',
+      // an undecided change needs the engineer; once decided it is just a record
+      severity: nc.decision === 'pending' ? 'warning' : 'info',
+      label: nc.decision === 'pending' ? 'Number will change' : nc.decision === 'accepted' ? 'Number change accepted' : 'Number change rejected',
+      detail:
+        nc.decision === 'pending'
+          ? `The design assigns ${nc.designed}, but ${bits.join(' and ')}. Accept the change or reject it.`
+          : `The design assigns ${nc.designed}; ${bits.join(' and ')}. The engineer ${nc.decision} this change.`,
+      decision: nc.decision,
     });
   }
   if (v.accountDisabled) {
@@ -131,7 +151,7 @@ export function blockingIssues(v: BuildRowValidation | null | undefined): Valida
 
 /** True when the row needs an engineer's attention (a blocking issue, a warning or a policy that will change). Renames alone do not count. */
 export function hasValidationIssue(v: BuildRowValidation | null | undefined): boolean {
-  return validationIssues(v).some((i) => i.code !== 'policy_renamed');
+  return validationIssues(v).some((i) => i.code !== 'policy_renamed' && !(i.code === 'number_change' && i.decision !== 'pending'));
 }
 
 /** One line of the Validation issues tab: an issue and the row it is on. */

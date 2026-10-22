@@ -1,5 +1,5 @@
 import { sql } from 'kysely';
-import { POLICY_KINDS, POLICY_KIND_TO_TENANT_TYPE, policyMatchesLive, usageLocationMismatch, userAccountProblems, blockingIssues, type BuildRowValidation, type PolicyKey } from '@tvmf/shared';
+import { POLICY_KINDS, POLICY_KIND_TO_TENANT_TYPE, lineUriToNumber, policyMatchesLive, usageLocationMismatch, userAccountProblems, blockingIssues, type BuildRowValidation, type NumberChange, type PolicyKey } from '@tvmf/shared';
 import type { Scoped } from './live-state';
 
 export interface IdentityRow {
@@ -13,6 +13,10 @@ export interface IdentityRow {
   site_id?: string | null;
   /** the Data Collection user this row came from, for the requested-number check (users only) */
   discovery_user_id?: string | null;
+  /** the Data Collection common area phone this row came from, for the number change check (CAPs only) */
+  discovery_cap_id?: string | null;
+  /** the engineer's accept/reject of a number change (build_users/build_caps.number_decision) */
+  number_decision?: unknown;
   /** false for a resource account with no number: it needs no phone licence (default true) */
   needsPhoneLicence?: boolean;
 }
@@ -45,11 +49,9 @@ export async function validateIdentityRows(s: Scoped, rows: IdentityRow[]): Prom
 
     // The country of each site, as the ISO code Teams uses for a usage location.
     const siteIds = [...new Set(rows.map((r) => r.site_id).filter((v): v is string => !!v))];
-    const siteCountry = new Map(
-      siteIds.length
-        ? (await s.selectFrom('discovery_sites').select(['id', 'country']).where('id', 'in', siteIds).execute()).map((r) => [r.id, r.country] as const)
-        : [],
-    );
+    const siteRows = siteIds.length ? await s.selectFrom('discovery_sites').select(['id', 'country', 'review_status']).where('id', 'in', siteIds).execute() : [];
+    const siteCountry = new Map(siteRows.map((r) => [r.id, r.country] as const));
+    const siteReview = new Map(siteRows.map((r) => [r.id, r.review_status] as const));
 
     // Every distinct target policy value in play, grouped by the tenant policy
     // type it would be granted against, so "does this policy exist" is one
@@ -127,6 +129,18 @@ export async function validateIdentityRows(s: Scoped, rows: IdentityRow[]): Prom
       }
     }
 
+    // The number Data Collection assigned to each person. Only compared once the site has been submitted for
+    // review: before that the design is still being shaped and a different number is no surprise.
+    const assignedByHolder = new Map<string, string>();
+    for (const [holderType, ids] of [
+      ['user', dUserIds],
+      ['cap', [...new Set(rows.map((r) => r.discovery_cap_id).filter((v): v is string => !!v))]],
+    ] as const) {
+      if (!ids.length) continue;
+      const held = await s.selectFrom('phone_numbers').select(['holder_id', 'e164']).where('holder_type', '=', holderType).where('holder_id', 'in', ids).execute();
+      for (const h of held) if (h.holder_id) assignedByHolder.set(`${holderType}:${h.holder_id}`, h.e164);
+    }
+
     for (const row of rows) {
       const live = byUpn.get(row.upn.toLowerCase());
       const policyMismatches: BuildRowValidation['policyMismatches'] = [];
@@ -172,6 +186,28 @@ export async function validateIdentityRows(s: Scoped, rows: IdentityRow[]): Prom
             row.needsPhoneLicence ?? true,
           )
         : { accountDisabled: false, noPhoneLicence: false };
+      // A designed number that differs from the live one, or from Data Collection's once the site is submitted.
+      let numberChange: NumberChange | null = null;
+      if (row.e164) {
+        const liveNumber = lineUriToNumber(live?.line_uri);
+        const dcNumber = row.discovery_user_id ? assignedByHolder.get(`user:${row.discovery_user_id}`) : row.discovery_cap_id ? assignedByHolder.get(`cap:${row.discovery_cap_id}`) : undefined;
+        const submitted = !!row.site_id && siteReview.get(row.site_id) !== undefined && siteReview.get(row.site_id) !== 'draft';
+        const liveDiffers = !!liveNumber && numKey(liveNumber) !== numKey(row.e164);
+        const dcDiffers = submitted && !!dcNumber && numKey(dcNumber) !== numKey(row.e164);
+        if (liveDiffers || dcDiffers) {
+          numberChange = { designed: row.e164, live: liveDiffers ? liveNumber : null, dataCollection: dcDiffers ? dcNumber! : null, decision: 'pending' };
+          // a decision only stands for the very numbers it was made against
+          const d = row.number_decision as { decision?: string; designed?: string; live?: string | null; dataCollection?: string | null } | null | undefined;
+          if (
+            d && (d.decision === 'accepted' || d.decision === 'rejected') &&
+            numKey(d.designed) === numKey(numberChange.designed) &&
+            numKey(d.live) === numKey(numberChange.live) &&
+            numKey(d.dataCollection) === numKey(numberChange.dataCollection)
+          ) {
+            numberChange.decision = d.decision;
+          }
+        }
+      }
       out.set(row.id, {
         existsInTenant: !!live,
         usageLocationMismatch: live ? usageLocationMismatch(live.usage_location, row.site_id ? siteCountry.get(row.site_id) : null) : null,
@@ -181,6 +217,7 @@ export async function validateIdentityRows(s: Scoped, rows: IdentityRow[]): Prom
         liveLineUri: live?.line_uri ?? null,
         numberConflict: !!row.e164 && (dupeCounts.get(row.e164) ?? 0) > 1,
         numberTypeMissing: !!row.e164 && !row.number_type,
+        numberChange,
         requestedNumberMismatch: (row.discovery_user_id && requestedByDUser.get(row.discovery_user_id)) || null,
         policyMismatches,
         unknownPolicies,

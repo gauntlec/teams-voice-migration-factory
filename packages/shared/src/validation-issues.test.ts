@@ -60,4 +60,15 @@ describe('validationIssues', () => {
     expect(validationIssues(v)).toHaveLength(1);
     expect(hasValidationIssue(v)).toBe(false);
   });
+
+  it('asks for a decision on a number change until the engineer has made one', () => {
+    const change = { designed: '+12125550299', live: '+12125550200', dataCollection: null };
+    const pending = validationIssues({ ...clean, numberChange: { ...change, decision: 'pending' } });
+    expect(pending[0]).toMatchObject({ code: 'number_change', severity: 'warning', decision: 'pending' });
+    expect(hasValidationIssue({ ...clean, numberChange: { ...change, decision: 'pending' } })).toBe(true);
+    const accepted: BuildRowValidation = { ...clean, numberChange: { ...change, decision: 'accepted' } };
+    expect(validationIssues(accepted)[0]).toMatchObject({ severity: 'info', decision: 'accepted' });
+    expect(hasValidationIssue(accepted)).toBe(false);
+    expect(blockingIssues({ ...clean, numberChange: { ...change, decision: 'pending' } })).toEqual([]);
+  });
 });

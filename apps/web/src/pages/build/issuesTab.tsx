@@ -37,12 +37,19 @@ export function ValidationIssuesTab({
   error,
   onRefresh,
   onOpen,
+  canDecide,
+  onDecide,
+  deciding,
 }: {
   issues: BuildIssueRow[] | undefined;
   loading: boolean;
   error: unknown;
   onRefresh: () => void;
   onOpen: (tab: BuildTab) => void;
+  /** may accept or reject a number change */
+  canDecide: boolean;
+  onDecide: (row: BuildIssueRow, decision: 'accepted' | 'rejected' | 'reset') => void;
+  deciding: boolean;
 }) {
   const s = useStyles();
   const [filter, setFilter] = useState<ValidationSeverity | 'all'>('all');
@@ -108,6 +115,24 @@ export function ValidationIssuesTab({
                   <TableCell>{i.issue.label}</TableCell>
                   <TableCell className={s.wrap}>{i.issue.detail}</TableCell>
                   <TableCell>
+                    {i.issue.code === 'number_change' && canDecide && i.sheet !== 'resource-accounts' && (
+                      i.issue.decision === 'pending' ? (
+                        <>
+                          <Button size="small" appearance="primary" disabled={deciding} onClick={() => onDecide(i, 'accepted')} title="Go ahead with the designed number">
+                            Accept
+                          </Button>{' '}
+                          <Button size="small" disabled={deciding} onClick={() => onDecide(i, 'rejected')} title="Record that this change is not wanted. The design is not changed: edit the row's number if it should be different.">
+                            Reject
+                          </Button>{' '}
+                        </>
+                      ) : (
+                        <>
+                          <Button size="small" appearance="subtle" disabled={deciding} onClick={() => onDecide(i, 'reset')} title="Ask again">
+                            Undo
+                          </Button>{' '}
+                        </>
+                      )
+                    )}
                     <Button size="small" appearance="subtle" onClick={() => onOpen(i.sheet)}>
                       Open {SHEET_LABEL[i.sheet].toLowerCase()}
                     </Button>
