@@ -30,6 +30,12 @@ export type LicensingModel = (typeof LICENSING_MODELS)[number];
 export const SITE_REGIONS = ['AMER', 'EMEA', 'APAC'] as const;
 export type SiteRegion = (typeof SITE_REGIONS)[number];
 
+/** A stored site region as AMER / EMEA / APAC, or '' when it is empty or an older free-text value. */
+export function asSiteRegion(v: unknown): SiteRegion | '' {
+  const u = String(v ?? '').trim().toUpperCase();
+  return (SITE_REGIONS as readonly string[]).includes(u) ? (u as SiteRegion) : '';
+}
+
 /** discovery_number_ranges.kind */
 export const NUMBER_RANGE_KINDS = ['new', 'port', 'retain'] as const;
 export type NumberRangeKind = (typeof NUMBER_RANGE_KINDS)[number];

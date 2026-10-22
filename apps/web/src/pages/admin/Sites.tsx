@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Spinner } from '@fluentui/react-components';
+import { SITE_REGIONS } from '@tvmf/shared';
 import { api } from '../../api';
 import { useAuth } from '../../auth';
 import { Page } from '../../components/Page';
@@ -75,7 +76,7 @@ export function AdminSites() {
             { key: 'name', label: 'Site name' },
             { key: 'address', label: 'Address', type: 'textarea', full: true },
             { key: 'country', label: 'Country' },
-            { key: 'region', label: 'Region' },
+            { key: 'region', label: 'Region', type: 'select', options: SITE_REGIONS },
             { key: 'latitude', label: 'Latitude', type: 'number', placeholder: '38.9201' },
             { key: 'longitude', label: 'Longitude', type: 'number', placeholder: '-94.6559' },
           ]}

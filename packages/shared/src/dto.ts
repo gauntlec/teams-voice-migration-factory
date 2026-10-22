@@ -30,6 +30,7 @@ import {
   HANDOVER_NOTE_SECTIONS,
   NETWORK_TYPES,
   NUMBER_RANGE_KINDS,
+  SITE_REGIONS,
   NUMBER_STATUSES,
   NUMBER_TYPES,
   RESOURCE_ACCOUNT_KINDS,
@@ -333,6 +334,9 @@ const siteIdRef = z.preprocess(
   z.string().uuid().nullable().optional(),
 );
 
+/** A site's delivery region: AMER, EMEA or APAC ('' clears it). */
+export const siteRegionSchema = z.enum(SITE_REGIONS).or(z.literal(''));
+
 export const discoveryGeneralSchema = z
   .object({
     migrationId: optStr(80),
@@ -353,6 +357,8 @@ export type DiscoveryGeneralInput = z.infer<typeof discoveryGeneralSchema>;
  */
 export const discoverySiteOverviewSchema = discoveryGeneralSchema
   .extend({
+    /** The site's delivery region. Stored on discovery_sites.region (the one place it lives), not in the overview JSON. */
+    region: siteRegionSchema.optional(),
     assignedUserIds: z.array(z.string().uuid()).max(50).optional(),
     /** Days between number-port document reminder emails for this site (default 7). */
     portDocReminderDays: z.coerce.number().int().min(1).max(90).optional(),
@@ -383,7 +389,7 @@ export const discoverySiteSchema = z
     name: optStr(200),
     address: optStr(500),
     country: optStr(80),
-    region: optStr(120),
+    region: siteRegionSchema.optional(),
     latitude,
     longitude,
     paging: z.record(z.unknown()).optional(),

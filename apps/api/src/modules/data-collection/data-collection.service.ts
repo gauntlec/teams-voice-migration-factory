@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { sql } from 'kysely';
 import { platformDb, tenantDb } from '@tvmf/db';
+import { asSiteRegion } from '@tvmf/shared';
 import type {
   DiscoveryFlowInput,
   DiscoveryListQuery,
@@ -177,7 +178,11 @@ export class DataCollectionService {
       numberSummary.total += Number(r.n);
     }
 
-    const overview = (site.overview ?? {}) as DiscoverySiteOverview;
+    // Region lives on the site row (the same value the site creation form sets); the overview shows it from there.
+    const overview = {
+      ...((site.overview ?? {}) as DiscoverySiteOverview),
+      region: asSiteRegion(site.region),
+    };
     const assignedStaff = await this.resolveStaff(overview.assignedUserIds ?? []);
 
     return { site, status: discovery.status, callingPolicies, numberSummary, overview, assignedStaff };
@@ -221,10 +226,16 @@ export class DataCollectionService {
     await this.assertEditable(t, canReview);
     const site = await this.scoped(t)
       .selectFrom('discovery_sites')
-      .select(['id', 'overview'])
+      .select(['id', 'overview', 'region'])
       .where('id', '=', siteId)
       .executeTakeFirst();
     if (!site) throw new NotFoundException('site not found');
+
+    // Region is stored on the site row, not in the overview JSON.
+    // An older free-text value shows as not set here, so only write it when the choice actually changed.
+    const { region: sentRegion, ...overviewPatch } = patch;
+    const region = sentRegion !== undefined && sentRegion !== asSiteRegion(site.region) ? sentRegion : undefined;
+    patch = overviewPatch;
 
     if (patch.assignedUserIds && patch.assignedUserIds.length) {
       const ids = [...new Set(patch.assignedUserIds)];
@@ -246,18 +257,19 @@ export class DataCollectionService {
     const next = { ...((site.overview ?? {}) as DiscoverySiteOverview), ...patch };
     const row = await this.scoped(t)
       .updateTable('discovery_sites')
-      .set({ overview: next })
+      .set({ overview: next, ...(region !== undefined ? { region: region || null } : {}) })
       .where('id', '=', siteId)
-      .returning(['id', 'overview'])
+      .returning(['id', 'overview', 'region'])
       .executeTakeFirstOrThrow();
     await this.audit.tenant(t.schema, 'discovery.site_overview_updated', {
       actor: actorOf(user),
       targetType: 'discovery_site',
       targetId: siteId,
-      detail: { fields: Object.keys(patch) },
+      detail: { fields: [...Object.keys(patch), ...(region !== undefined ? ['region'] : [])] },
     });
     return {
       ...row,
+      overview: { ...(row.overview as DiscoverySiteOverview), region: asSiteRegion(row.region) },
       assignedStaff: await this.resolveStaff((row.overview as DiscoverySiteOverview).assignedUserIds ?? []),
     };
   }
