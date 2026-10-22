@@ -61,7 +61,7 @@ export function isFlowStale(r: Row): boolean {
 export const TAB_LABEL: Record<TabKey, string> = {
   overview: 'Overview',
   ranges: 'Number ranges',
-  numbers: 'Numbers',
+  numbers: 'Number assignments',
   users: 'Users',
   caps: 'Common area phones',
   'resource-accounts': 'Resource accounts',
