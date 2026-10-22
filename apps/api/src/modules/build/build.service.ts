@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { sql, type Kysely } from 'kysely';
-import { tenantDb, type DB } from '@tvmf/db';
+import { resolveLiveNumberTypes, tenantDb, type DB } from '@tvmf/db';
 import {
   CALL_QUEUE_NO_AGENT_ACTIONS,
   CALL_QUEUE_NO_AGENT_APPLY_TO,
@@ -38,6 +38,7 @@ import {
   type BuildTemplateCreateInput,
   type BuildTemplatePatchInput,
   type BuildIssueRow,
+  type BuildQuickAddResult,
   type BuildValidateResult,
   type CallingPolicySiteMapSetInput,
   type CallQueueWizardAnswers,
@@ -53,6 +54,8 @@ import {
   srDesignLocksRows,
   srReference,
   hasValidationIssue,
+  lineUriToNumber,
+  upnSchema,
   validationIssues,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
@@ -252,6 +255,98 @@ export class BuildService {
   }
   async deleteUser(t: TenantContext, u: AuthedUser, id: string) {
     return this.deleteIdentity(t, u, 'build_users', id);
+  }
+  /**
+   * Quick add: the engineer types only UPNs and each row is imported from the discovered tenant data - the live number
+   * (and its type), the live policy assignments and, once a Validate check has read it, the voicemail settings. For a
+   * common area phone the tenant's display name too. Linked to the site's Data Collection record when it has one.
+   * A UPN that is not in the discovered data is reported, not added: Validate against tenant can find it live.
+   */
+  async quickAddIdentity(t: TenantContext, u: AuthedUser, table: 'build_users' | 'build_caps', objectType: 'user' | 'cap', siteId: string, rawUpns: string[]): Promise<BuildQuickAddResult> {
+    const s = this.s(t);
+    const result: BuildQuickAddResult = { added: [], alreadyThere: [], notFound: [] };
+    const upns: string[] = [];
+    for (const raw of rawUpns.flatMap((r) => r.split(/[\s,;]+/)).filter(Boolean)) {
+      const parsed = upnSchema.safeParse(raw);
+      if (!parsed.success) result.notFound.push(raw);
+      else if (!upns.includes(parsed.data)) upns.push(parsed.data);
+    }
+    if (!upns.length) return result;
+
+    const live = await s
+      .selectFrom('tenant_users')
+      .select(['upn', 'display_name', 'line_uri', 'voicemail_enabled', 'voicemail_prompt_language'])
+      .where('removed_at', 'is', null)
+      .where(sql`lower(upn)`, 'in', upns)
+      .execute();
+    const liveByUpn = new Map(live.map((r) => [r.upn.toLowerCase(), r]));
+    const numbers = live.map((r) => lineUriToNumber(r.line_uri)).filter((n): n is string => !!n);
+    const [numberTypes, inventory, links] = await Promise.all([
+      resolveLiveNumberTypes(s, numbers),
+      numbers.length ? s.selectFrom('phone_numbers').select(['id', 'e164']).where('e164', 'in', numbers).execute() : Promise.resolve([]),
+      objectType === 'user'
+        ? s.selectFrom('discovery_users').select(['id', 'upn']).where('site_id', '=', siteId).where(sql`lower(upn)`, 'in', upns).execute()
+        : s.selectFrom('discovery_caps').select(['id', 'upn']).where('site_id', '=', siteId).where(sql`lower(upn)`, 'in', upns).execute(),
+    ]);
+    const inventoryByNumber = new Map(inventory.map((n) => [n.e164, n.id]));
+    const linkByUpn = new Map(links.map((l) => [(l.upn ?? '').toLowerCase(), l.id]));
+    const defaultType = await this.siteNumberTypeDefault(t, siteId);
+
+    const created: { id: string; upn: string; policies: Record<string, string | null>; policy_ids: Record<string, string | null> }[] = [];
+    for (const upn of upns) {
+      const l = liveByUpn.get(upn);
+      if (!l) {
+        result.notFound.push(upn);
+        continue;
+      }
+      const e164 = lineUriToNumber(l.line_uri);
+      const row = await s
+        .insertInto(table)
+        .values({
+          site_id: siteId,
+          upn: l.upn,
+          ...(objectType === 'user' ? { discovery_user_id: linkByUpn.get(upn) ?? null } : { discovery_cap_id: linkByUpn.get(upn) ?? null, display_name: l.display_name }),
+          e164,
+          phone_number_id: e164 ? (inventoryByNumber.get(e164) ?? null) : null,
+          number_type: e164 ? (numberTypes.get(e164) ?? defaultType) : null,
+          policies: {},
+          policy_ids: {},
+          voicemail: l.voicemail_enabled === null ? {} : { enabled: l.voicemail_enabled, language: l.voicemail_prompt_language },
+          call_forwarding: {},
+          delegates: [],
+          pickup_group: {},
+          validation: {},
+          status: {},
+        } as never)
+        .onConflict((oc) => oc.expression(sql`site_id, lower(upn)`).doNothing())
+        .returning(['id', 'upn'])
+        .executeTakeFirst();
+      if (!row) {
+        result.alreadyThere.push(l.upn);
+        continue;
+      }
+      created.push({ id: row.id, upn: row.upn, policies: {}, policy_ids: {} });
+      result.added.push({ id: row.id, upn: row.upn, displayName: l.display_name, number: e164 });
+    }
+
+    // The live policy assignments become the starting targets (the same backfill Validate uses).
+    const backfills = await this.backfillPolicyTargets(t, created);
+    for (const [id, patch] of backfills) await s.updateTable(table).set(patch as never).where('id', '=', id).execute();
+
+    await this.audit.tenant(t.schema, `build.${objectType}s_quick_added`, {
+      actor: actorOf(u),
+      targetType: 'discovery_site',
+      targetId: siteId,
+      detail: { added: result.added.length, alreadyThere: result.alreadyThere.length, notFound: result.notFound.length },
+    });
+    return result;
+  }
+
+  quickAddUsers(t: TenantContext, u: AuthedUser, siteId: string, upns: string[]) {
+    return this.quickAddIdentity(t, u, 'build_users', 'user', siteId, upns);
+  }
+  quickAddCaps(t: TenantContext, u: AuthedUser, siteId: string, upns: string[]) {
+    return this.quickAddIdentity(t, u, 'build_caps', 'cap', siteId, upns);
   }
   async populateUsers(t: TenantContext, u: AuthedUser, siteId: string) {
     const s = this.s(t);

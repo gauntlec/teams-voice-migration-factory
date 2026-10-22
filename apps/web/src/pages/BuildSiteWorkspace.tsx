@@ -12,6 +12,7 @@ import { numKey, AA_TIME_ZONE_CHOICES, AA_LANGUAGE_CHOICES, withSrTags, BUILD_TA
 import { EmbeddedShell, LinkDiscoveredResourceAccountDialog } from './build/buildDialogs';
 import { bulkIdentityFields, identityFields, policyColumns } from './build/buildFields';
 import { ValidationIssuesTab } from './build/issuesTab';
+import { QuickAddDialog } from './build/quickAddDialog';
 import { AutoAttendantFlowDialog, CallQueueFlowDialog } from './build/flowDialogs';
 import { CallingPolicyMapDialog, CallingSettingsDialog } from './build/callingDialogs';
 import { TemplatesDialog } from './build/templatesDialog';
@@ -151,6 +152,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
   // The tab's count is what needs the engineer: not the settings that will simply change, nor decided number changes.
   const attentionCount = (issuesQ.data ?? []).filter((i) => i.issue.severity !== 'info').length;
 
+  const [quickAdd, setQuickAdd] = useState<'users' | 'caps' | null>(null);
   const [populateError, setPopulateError] = useState<string | null>(null);
   const populate = useMutation({
     mutationFn: (kind: 'users' | 'caps' | 'resource-accounts') =>
@@ -491,6 +493,20 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
       )}
       {cqFlowFor && <CallQueueFlowDialog row={cqFlowFor} onClose={() => setCqFlowFor(null)} />}
 
+      {quickAdd && (
+        <QuickAddDialog
+          base={base}
+          kind={quickAdd}
+          siteId={siteId}
+          onClose={() => setQuickAdd(null)}
+          onDone={() => {
+            qc.invalidateQueries({ queryKey: [quickAdd, tid, siteId] });
+            qc.invalidateQueries({ queryKey: ['build-issues', tid, siteId] });
+            qc.invalidateQueries({ queryKey: ['build-summary', tid] });
+          }}
+        />
+      )}
+
       <TabList selectedValue={tab} onTabSelect={(_, d) => setTab(d.value as typeof tab)}>
         <Tab value="users">Users</Tab>
         <Tab value="caps">Common area phones</Tab>
@@ -541,6 +557,9 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           headerActions={
             siteTools && (
               <>
+                <Button size="small" onClick={() => setQuickAdd('users')}>
+                  Quick add
+                </Button>
                 <Button size="small" disabled={populate.isPending} onClick={() => populate.mutate('users')}>
                   Populate from Discovery
                 </Button>
@@ -611,6 +630,9 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           headerActions={
             siteTools && (
               <>
+                <Button size="small" onClick={() => setQuickAdd('caps')}>
+                  Quick add
+                </Button>
                 <Button size="small" disabled={populate.isPending} onClick={() => populate.mutate('caps')}>
                   Populate from Discovery
                 </Button>

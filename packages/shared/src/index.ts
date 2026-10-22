@@ -426,6 +426,16 @@ export interface BuildRowValidation {
   untracked: import('./domain').PolicyKey[];
 }
 
+/** Result of a quick add (POST build/users|caps/quick-add): what happened to each UPN that was typed. */
+export interface BuildQuickAddResult {
+  /** imported from the discovered tenant data and added to the site */
+  added: { id: string; upn: string; displayName: string | null; number: string | null }[];
+  /** already on this site's grid */
+  alreadyThere: string[];
+  /** not in the discovered tenant data (or not a valid UPN): nothing was added */
+  notFound: string[];
+}
+
 /** Result of POST build/validate - see BuildService.validateSite. */
 export interface BuildValidateResult {
   rows: number;

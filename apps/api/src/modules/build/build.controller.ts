@@ -24,6 +24,7 @@ import {
   buildTemplatePatchSchema,
   buildValidateSchema,
   buildNumberDecisionSchema,
+  buildQuickAddSchema,
   callingPolicyMapListQuerySchema,
   callingPolicySiteMapSetSchema,
   type BuildAutoAttendantCreateInput,
@@ -49,6 +50,7 @@ import {
   type BuildTemplatePatchInput,
   type BuildValidateInput,
   type BuildNumberDecisionInput,
+  type BuildQuickAddInput,
   type CallingPolicyMapListQuery,
   type CallingPolicySiteMapSetInput,
 } from '@tvmf/shared';
@@ -375,6 +377,18 @@ export class BuildController {
   }
 
   /* validate */
+
+  @Post('users/quick-add')
+  @RequirePermission('build:write')
+  quickAddUsers(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Body(new ZodBody(buildQuickAddSchema)) body: BuildQuickAddInput) {
+    return this.svc.quickAddUsers(t, user, body.site_id, body.upns);
+  }
+
+  @Post('caps/quick-add')
+  @RequirePermission('build:write')
+  quickAddCaps(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Body(new ZodBody(buildQuickAddSchema)) body: BuildQuickAddInput) {
+    return this.svc.quickAddCaps(t, user, body.site_id, body.upns);
+  }
 
   @Post(':kind/:id/number-decision')
   @RequirePermission('build:write')

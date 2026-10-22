@@ -1086,6 +1086,12 @@ export type BuildCapCreateInput = z.infer<typeof buildCapCreateSchema>;
 export const buildCapPatchSchema = buildIdentityPatchSchema.extend(buildCapWritable);
 export type BuildCapPatchInput = z.infer<typeof buildCapPatchSchema>;
 
+/** Quick add: just the UPNs; each is imported from the discovered tenant data. One per line or separated by commas, up to 200. */
+export const buildQuickAddSchema = z
+  .object({ site_id: z.string().uuid(), upns: z.array(z.string().trim().min(1).max(320)).min(1).max(200) })
+  .strict();
+export type BuildQuickAddInput = z.infer<typeof buildQuickAddSchema>;
+
 /** Bulk-seed build_users/build_caps from that site's discovery_users/discovery_caps. Idempotent. */
 export const buildPopulateSchema = z.object({ site_id: z.string().uuid() }).strict();
 export type BuildPopulateInput = z.infer<typeof buildPopulateSchema>;
