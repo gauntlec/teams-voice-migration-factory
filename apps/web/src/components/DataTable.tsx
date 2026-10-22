@@ -26,6 +26,20 @@ import { Table, makeStyles, mergeClasses, shorthands, tokens } from '@fluentui/r
  * `<div style={{ whiteSpace: 'pre-wrap' }}>` — the row grows instead of the
  * text spilling.
  */
+/**
+ * The nearest ancestor that scrolls vertically, if any, and the space the elements between it and `el` keep below their
+ * content (padding, border, margin): a box that ends at the scroll area's edge would otherwise push past it by that much.
+ */
+function scrollParent(el: HTMLElement): { parent: HTMLElement; below: number } | null {
+  let below = 0;
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const cs = getComputedStyle(p);
+    if (cs.overflowY === 'auto' || cs.overflowY === 'scroll') return { parent: p, below: below + (parseFloat(cs.paddingBottom) || 0) };
+    below += (parseFloat(cs.paddingBottom) || 0) + (parseFloat(cs.borderBottomWidth) || 0) + (parseFloat(cs.marginBottom) || 0);
+  }
+  return null;
+}
+
 export function DataTable({
   children,
   minWidth = 720,
@@ -44,7 +58,12 @@ export function DataTable({
       frame = 0;
       const el = ref.current;
       if (!el) return;
-      setMaxHeight(Math.max(220, Math.floor(window.innerHeight - el.getBoundingClientRect().top - 12)));
+      // To the bottom of whatever scrolls the page (the content area, less its bottom padding), or of the window if nothing does,
+      // so the page never gets a second scroll bar of its own next to the table's.
+      let bottom = window.innerHeight;
+      const found = scrollParent(el);
+      if (found) bottom = Math.min(bottom, found.parent.getBoundingClientRect().bottom - found.below);
+      setMaxHeight(Math.max(220, Math.floor(bottom - el.getBoundingClientRect().top - 2)));
     };
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(measure);

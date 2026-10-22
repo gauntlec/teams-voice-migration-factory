@@ -15,6 +15,9 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
 });
 
+// The browser's default 8px body margin would make the whole page scroll by 16px next to the content area's own scroll bar.
+document.body.style.margin = '0';
+
 // The provider's min-height stays an inline style on purpose. Fluent copies a provider's className onto the layer it draws menus,
 // dropdowns, dialogs and tooltips in, so a class here would stretch that layer over the whole page (a white screen) when one opens.
 function Themed() {
