@@ -39,6 +39,8 @@ interface Connection {
   graph_user_code: string | null;
   graph_verification_uri: string | null;
   graph_upn: string | null;
+  /** why the last group-lookup sign-in failed, when it did */
+  graph_error: string | null;
 }
 
 /** Steps that carry more than one object type - only these get an expander. */
@@ -464,13 +466,16 @@ export function ConnectCard({
                     </div>
                   </div>
                 ) : (
-                  <Spinner size="tiny" label="Requesting a device code…" />
+                  <Spinner
+                    size="tiny"
+                    label="Requesting a device code… if the session is busy with a sync this stops after a minute or so and says why."
+                  />
                 )
               ) : (
                 <div className={s.row}>
                   <Text size={200} className={s.muted}>
                     {c.graph_status === 'failed'
-                      ? 'Group-lookup sign-in failed — a Global Admin may need to approve Microsoft Graph PowerShell. '
+                      ? `${c.graph_error ?? 'Group-lookup sign-in failed — a Global Admin may need to approve Microsoft Graph PowerShell.'} `
                       : 'M365 groups (Shared Voicemail targets) are typed by Object ID until this is connected. '}
                   </Text>
                   <Button

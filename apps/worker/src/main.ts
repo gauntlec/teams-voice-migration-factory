@@ -364,21 +364,40 @@ async function handleConnectionStart(job: Job) {
  * sub-session stays alive, so the cache doesn't just freeze at this first
  * sign-in.
  */
+/** How long to wait for the device code to appear before giving up: it only appears once the session is free to run the sign-in. */
+const GRAPH_CODE_WAIT_MS = 90_000;
+
 async function handleGraphConnect(job: Job) {
   const { schema, connectionId } = job.data as { schema: string; connectionId: string };
   const scoped = tenantDb(db, schema);
-  const exec = executors.get(connectionId);
-  if (!exec) {
-    await scoped
+  const fail = (message: string) =>
+    scoped
       .updateTable('connections')
-      .set({ graph_status: 'failed' })
+      .set({ graph_status: 'failed', graph_user_code: null, graph_error: message })
       .where('id', '=', connectionId)
       .execute()
       .catch(() => undefined);
+  const exec = executors.get(connectionId);
+  if (!exec) {
+    await fail('The tenant connection is no longer available on the worker. Sign in to the tenant again.');
     throw new Error('the tenant connection is no longer available on the worker - sign in again');
   }
   try {
-    const prompt = await exec.beginGraphDeviceCode();
+    // The sign-in shares the session with everything else, which runs one command at a time. If the session is busy the code
+    // cannot appear: give up cleanly after a short wait, and drop the queued sign-in so it never runs later unseen.
+    let timer: NodeJS.Timeout | undefined;
+    const busy = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        exec.cancelGraphSignIn();
+        reject(new GraphBusyError());
+      }, GRAPH_CODE_WAIT_MS);
+    });
+    let prompt: Awaited<ReturnType<typeof exec.beginGraphDeviceCode>>;
+    try {
+      prompt = await Promise.race([exec.beginGraphDeviceCode(), busy]);
+    } finally {
+      clearTimeout(timer);
+    }
     await scoped
       .updateTable('connections')
       .set({
@@ -386,28 +405,45 @@ async function handleGraphConnect(job: Job) {
         graph_user_code: prompt.userCode,
         graph_verification_uri: prompt.verificationUri,
         graph_expires_at: prompt.expiresAt.toISOString(),
+        graph_error: null,
       })
       .where('id', '=', connectionId)
       .execute();
 
     const signIn = await exec.awaitGraphSignIn();
-    const syncedCount = await syncTenantGroups(scoped, exec);
-
+    // Connected as soon as the sign-in succeeds. The group list is cached afterwards and best-effort: it queues behind any sync
+    // already running on this session, and the connection must not wait for that to show as connected.
     await scoped
       .updateTable('connections')
-      .set({ graph_status: 'active', graph_upn: signIn.upn, graph_user_code: null })
+      .set({ graph_status: 'active', graph_upn: signIn.upn, graph_user_code: null, graph_error: null })
       .where('id', '=', connectionId)
       .execute();
     // eslint-disable-next-line no-console
-    console.log(`[connection ${connectionId}] graph active as ${signIn.upn} (${syncedCount} group(s) synced)`);
+    console.log(`[connection ${connectionId}] graph active as ${signIn.upn}`);
+    try {
+      const syncedCount = await syncTenantGroups(scoped, exec);
+      // eslint-disable-next-line no-console
+      console.log(`[connection ${connectionId}] ${syncedCount} group(s) synced`);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn(`[connection ${connectionId}] group sync after sign-in failed: ${(e as Error).message}`);
+    }
   } catch (err) {
-    await scoped
-      .updateTable('connections')
-      .set({ graph_status: 'failed', graph_user_code: null })
-      .where('id', '=', connectionId)
-      .execute()
-      .catch(() => undefined);
+    const message = (err as Error).message ?? '';
+    await fail(
+      err instanceof GraphBusyError
+        ? err.message
+        : /timed out|expired/i.test(message)
+          ? 'The sign-in code expired before the sign-in was completed. Add group lookup again.'
+          : `Group lookup sign-in failed: ${message.slice(0, 300) || 'no reason given'}`,
+    );
     throw err;
+  }
+}
+
+class GraphBusyError extends Error {
+  constructor() {
+    super('The session is busy with a sync or another job, so no sign-in code could be shown. Try again when it has finished.');
   }
 }
 

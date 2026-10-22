@@ -98,8 +98,23 @@ export class TenantDiscoveryService {
     return conn;
   }
 
+  /** A group-lookup sign-in that outlived its code is over: mark it failed so the screen shows why and the session is free again. */
+  private async expireStaleGraph(t: TenantContext) {
+    await this.s(t)
+      .updateTable('connections')
+      .set({
+        graph_status: 'failed',
+        graph_user_code: null,
+        graph_error: 'The sign-in code expired before the sign-in was completed. Add group lookup again.',
+      })
+      .where('graph_status', '=', 'pending')
+      .where('graph_expires_at', '<', new Date().toISOString())
+      .execute();
+  }
+
   /** A connection may only be read by the engineer who established it or a SUPER_ADMIN. */
   async getConnection(t: TenantContext, id: string, user: AuthedUser) {
+    await this.expireStaleGraph(t);
     const row = await this.deployments.getConnection(t, id);
     if (row.started_by !== user.id && user.role !== 'SUPER_ADMIN') {
       throw new ForbiddenException('This customer-tenant session belongs to another engineer.');
@@ -119,6 +134,19 @@ export class TenantDiscoveryService {
     if (conn.status !== 'active') {
       throw new ForbiddenException('Connection is not active - sign in to the customer tenant first');
     }
+    if (conn.graph_status === 'pending') {
+      throw new BadRequestException('A group lookup sign-in is already waiting for its code. Finish it, or wait for it to expire.');
+    }
+    // The sign-in and a sync share one PowerShell session that runs one command at a time: started now it would sit behind the
+    // sync (or hold the sync up) with no code shown.
+    const running = await this.s(t)
+      .selectFrom('tenant_discovery_runs')
+      .select('id')
+      .where('status', 'in', ['queued', 'running'])
+      .executeTakeFirst();
+    if (running) {
+      throw new BadRequestException('A sync is running on this session. Add group lookup when it has finished.');
+    }
     await this.s(t)
       .updateTable('connections')
       .set({
@@ -126,7 +154,9 @@ export class TenantDiscoveryService {
         graph_user_code: null,
         graph_verification_uri: null,
         graph_upn: null,
-        graph_expires_at: null,
+        // Replaced by the code's own expiry once it is shown; until then this stops a lost request leaving the sign-in pending forever.
+        graph_expires_at: new Date(Date.now() + 17 * 60_000).toISOString(),
+        graph_error: null,
       })
       .where('id', '=', id)
       .execute();
@@ -338,6 +368,16 @@ export class TenantDiscoveryService {
       );
     }
 
+    // The other way round: a pending group-lookup sign-in holds the session until its code is used or expires.
+    await this.expireStaleGraph(t);
+    const graph = await this.s(t).selectFrom('connections').select(['graph_status', 'graph_expires_at']).where('id', '=', conn.id).executeTakeFirst();
+    if (graph?.graph_status === 'pending') {
+      const mins = graph.graph_expires_at ? Math.max(1, Math.ceil((new Date(graph.graph_expires_at).getTime() - Date.now()) / 60_000)) : null;
+      throw new BadRequestException(
+        `The group lookup sign-in is waiting for its code. Finish it${mins ? `, or wait for it to expire (about ${mins} min)` : ''}, before running a sync.`,
+      );
+    }
+
     // de-dup + stable order; null = full run
     const scope = scopeTypes?.length
       ? TENANT_OBJECT_TYPES.filter((x) => scopeTypes.includes(x))
@@ -406,6 +446,10 @@ export class TenantDiscoveryService {
     const conns = await this.deployments.listConnections(t);
     const conn = conns.find((c) => c.status === 'active' && (c.started_by === user.id || user.role === 'SUPER_ADMIN'));
     if (!conn) return null; // no eligible live session - caller falls back to the DB-only result
+    // A pending group-lookup sign-in holds the session: fall back to the DB-only result rather than queue behind it.
+    await this.expireStaleGraph(t);
+    const graph = await this.s(t).selectFrom('connections').select('graph_status').where('id', '=', conn.id).executeTakeFirst();
+    if (graph?.graph_status === 'pending') return null;
     // An update is minutes away: fall back to the DB-only result rather than start a run it would kill.
     if ((await currentMaintenance(this.db))?.phase === 'freeze') return null;
 

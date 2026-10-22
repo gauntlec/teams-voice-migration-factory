@@ -72,6 +72,11 @@ export interface TeamsExecutor {
    */
   beginGraphDeviceCode(): Promise<DeviceCodePrompt>;
   awaitGraphSignIn(): Promise<{ upn: string }>;
+  /**
+   * Give up on a Graph sign-in that has not started yet because the session is busy with other work. Without this the queued
+   * sign-in would run later and hold the session for up to 15 minutes waiting for a code nobody is shown.
+   */
+  cancelGraphSignIn(): void;
   /** GET a Graph collection, following `@odata.nextLink`; returns the merged `value`. */
   graphList(path: string): Promise<unknown[]>;
   /** True once the Graph sign-in is complete and usable. */
@@ -228,6 +233,10 @@ export class SimulatedTeamsExecutor implements TeamsExecutor {
       verificationUri: 'https://microsoft.com/devicelogin',
       expiresAt: new Date(Date.now() + 15 * 60_000),
     };
+  }
+
+  cancelGraphSignIn(): void {
+    /* the simulated sign-in never waits behind other work */
   }
 
   async awaitGraphSignIn(): Promise<{ upn: string }> {

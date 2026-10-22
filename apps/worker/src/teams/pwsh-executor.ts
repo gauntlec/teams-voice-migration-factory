@@ -70,6 +70,8 @@ export class PwshTeamsExecutor implements TeamsExecutor {
   private graphPrompt: { resolve: (p: DeviceCodePrompt) => void; reject: (e: Error) => void } | null = null;
   private graphSignIn: Promise<{ upn: string }> | null = null;
   private graphSignedIn = false;
+  /** Set by cancelGraphSignIn(): a Graph sign-in still waiting in the queue is dropped instead of run. */
+  private graphCancelled = false;
 
   constructor(private readonly opts: { signInTimeoutMs?: number; commandTimeoutMs?: number } = {}) {}
 
@@ -207,8 +209,11 @@ export class PwshTeamsExecutor implements TeamsExecutor {
   private exec(
     script: string,
     timeoutMs = this.opts.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS,
+    /** Checked when the command reaches the front of the queue: true = drop it without running it. */
+    skipIf?: () => boolean,
   ): Promise<string> {
     const run = async (): Promise<string> => {
+      if (skipIf?.()) throw new Error('cancelled before it started');
       if (this.stalled) {
         const earlier = this.stalled;
         if (!(await settlesWithin(earlier.done, timeoutMs))) {
@@ -329,9 +334,12 @@ try {
   async beginGraphDeviceCode(): Promise<DeviceCodePrompt> {
     if (!this.signedIn) throw new Error('not connected');
     this.ensureChild();
+    this.graphCancelled = false;
     const prompt = new Promise<DeviceCodePrompt>((resolve, reject) => {
       this.graphPrompt = { resolve, reject };
     });
+    // A caller that gave up waiting (cancelGraphSignIn) must not leave an unhandled rejection behind.
+    prompt.catch(() => undefined);
     this.graphSignIn = this.exec(
       `Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
 try {
@@ -340,6 +348,7 @@ try {
   Write-Output ('__GSIGNIN__' + (@{ upn = [string]$acct } | ConvertTo-Json -Compress))
 } catch { Write-Output ('__GSIGNINERR__' + $_.Exception.Message) }`,
       this.opts.signInTimeoutMs ?? 16 * 60_000,
+      () => this.graphCancelled,
     ).then((out) => {
       const ok = out.split('\n').find((l) => l.startsWith('__GSIGNIN__'));
       if (!ok) {
@@ -352,6 +361,12 @@ try {
     });
     this.graphSignIn.catch((e) => this.graphPrompt?.reject(e as Error));
     return prompt;
+  }
+
+  cancelGraphSignIn(): void {
+    this.graphCancelled = true;
+    this.graphPrompt?.reject(new Error('cancelled before it started'));
+    this.graphPrompt = null;
   }
 
   awaitGraphSignIn(): Promise<{ upn: string }> {

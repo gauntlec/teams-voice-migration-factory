@@ -892,6 +892,8 @@ export interface ConnectionsTable {
   graph_verification_uri: string | null;
   graph_upn: string | null;
   graph_expires_at: string | null;
+  /** Why the last group-lookup sign-in failed, for the engineer to act on; null otherwise. */
+  graph_error: string | null;
   /* deliberately NO token columns - see docs/SECURITY.md */
 }
 
