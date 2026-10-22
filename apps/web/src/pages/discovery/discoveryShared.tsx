@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Tab, TabList, Text, makeStyles, shorthands, tokens } from '@fluentui/react-components';
 import { CheckmarkRegular, ChevronLeftRegular, ChevronRightRegular, CopyRegular } from '@fluentui/react-icons';
-import { TENANT_OBJECT_CHANGE_KIND_LABELS, type Paginated, type TenantDiscoveryChangeCounts, type TenantDiscoveryRun, type TenantObject, type TenantObjectChangeKind } from '@tvmf/shared';
+import { TENANT_OBJECT_CHANGE_KIND_LABELS, type Paginated, type TenantDiscoveryChangeCounts, type TenantDiscoveryRun, type TenantObject, type TenantObjectChangeKind, type TenantObjectType } from '@tvmf/shared';
 import { api } from '../../api';
 import { JsonTree } from '../../components/JsonTree';
 import { Page } from '../../components/Page';
@@ -29,6 +29,7 @@ export const useStyles = makeStyles({
   step: { display: 'flex', alignItems: 'center', ...shorthands.gap('8px'), fontSize: tokens.fontSizeBase200 },
   stats: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', ...shorthands.gap('10px') },
   stat: { ...shorthands.padding('12px'), display: 'grid', ...shorthands.gap('2px') },
+  statLink: { cursor: 'pointer', ':hover': { backgroundColor: tokens.colorNeutralBackground1Hover } },
   statN: { fontSize: tokens.fontSizeHero700, fontWeight: tokens.fontWeightSemibold, lineHeight: '1.1' },
   toolbar: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', ...shorthands.gap('8px'), flexWrap: 'wrap' },
   chips: { display: 'flex', ...shorthands.gap('4px'), flexWrap: 'wrap' },
@@ -274,6 +275,22 @@ export const TABS: { key: TabKey; label: string }[] = [
   { key: 'devices', label: 'Devices' },
   { key: 'groups', label: 'M365 groups' },
 ];
+
+/** The tab that lists what each Overview tile counts. */
+export const TILE_TAB: Partial<Record<TenantObjectType, TabKey>> = {
+  user: 'users',
+  resource_account: 'resource_accounts',
+  phone_number: 'numbers',
+  policy: 'policies',
+  pstn_usage: 'voice_routing',
+  voice_route: 'voice_routing',
+  pstn_gateway: 'voice_routing',
+  emergency_location: 'emergency',
+  civic_address: 'emergency',
+  auto_attendant: 'voice_apps',
+  call_queue: 'voice_apps',
+  schedule: 'voice_apps',
+};
 
 export const str = (o: TenantObject, k: string) => {
   const v = o.data[k];

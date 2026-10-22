@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Card, Tab, TabList, Text } from '@fluentui/react-components';
+import { Card, Tab, TabList, Text, mergeClasses } from '@fluentui/react-components';
 import { TENANT_OBJECT_TYPE_LABELS, type TenantDiscoverySummary, type TenantObjectType } from '@tvmf/shared';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { Page } from '../components/Page';
 import { LoadError, NoTenant } from '../components/records';
-import { useStyles, str, TABS, type TabKey } from './discovery/discoveryShared';
+import { useStyles, str, TABS, TILE_TAB, type TabKey } from './discovery/discoveryShared';
 import { ChangesTab } from './discovery/history';
 import { PurgeCard, ConnectCard, RunCard } from './discovery/connect';
 import { PoliciesTable, ResourceAccountsTab, ObjectsTable, EndpointsTable, GroupsTable, UsersTable } from './discovery/tables';
@@ -79,25 +79,10 @@ export function Discovery() {
             {(Object.keys(TENANT_OBJECT_TYPE_LABELS) as TenantObjectType[])
               .filter((t) => t !== 'tenant')
               .map((t) => (
-                <Card key={t} className={s.stat}>
-                  <span className={s.statN}>{(counts[t] ?? 0).toLocaleString()}</span>
-                  <Text size={200} className={s.muted}>
-                    {TENANT_OBJECT_TYPE_LABELS[t]}
-                  </Text>
-                </Card>
+                <StatTile key={t} count={counts[t] ?? 0} label={TENANT_OBJECT_TYPE_LABELS[t]} to={TILE_TAB[t]} onOpen={setTab} />
               ))}
-            <Card className={s.stat}>
-              <span className={s.statN}>{(sm?.linkedDiscoveryUsers ?? 0).toLocaleString()}</span>
-              <Text size={200} className={s.muted}>
-                Linked to Data Collection
-              </Text>
-            </Card>
-            <Card className={s.stat}>
-              <span className={s.statN}>{(sm?.groupsCount ?? 0).toLocaleString()}</span>
-              <Text size={200} className={s.muted}>
-                M365 groups
-              </Text>
-            </Card>
+            <StatTile count={sm?.linkedDiscoveryUsers ?? 0} label="Linked to Data Collection" to="users" onOpen={setTab} />
+            <StatTile count={sm?.groupsCount ?? 0} label="M365 groups" to="groups" onOpen={setTab} />
           </div>
           <PurgeCard
             base={base}
@@ -166,5 +151,34 @@ export function Discovery() {
 
       {tab === 'groups' && <GroupsTable base={base} />}
     </Page>
+  );
+}
+
+/** A count on the Overview. When it has a tab, the whole tile is a button that opens it. */
+function StatTile({ count, label, to, onOpen }: { count: number; label: string; to?: TabKey; onOpen: (tab: TabKey) => void }) {
+  const s = useStyles();
+  return (
+    <Card
+      className={to ? mergeClasses(s.stat, s.statLink) : s.stat}
+      {...(to
+        ? {
+            role: 'button',
+            tabIndex: 0,
+            'aria-label': `${label}: ${count.toLocaleString()}. Open the ${TABS.find((t) => t.key === to)?.label ?? ''} tab`,
+            onClick: () => onOpen(to),
+            onKeyDown: (e: React.KeyboardEvent) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onOpen(to);
+              }
+            },
+          }
+        : {})}
+    >
+      <span className={s.statN}>{count.toLocaleString()}</span>
+      <Text size={200} className={s.muted}>
+        {label}
+      </Text>
+    </Card>
   );
 }
