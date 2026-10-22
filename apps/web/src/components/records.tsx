@@ -47,7 +47,7 @@ import {
   EditRegular,
   TableSettingsRegular,
 } from '@fluentui/react-icons';
-import { compareSorted, type Paginated } from '@tvmf/shared';
+import { compareSorted, isCoordinateText, parseCoordinatePair, type Paginated } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { DataTable } from './DataTable';
 import { DangerText } from './ui';
@@ -393,6 +393,7 @@ export function RecordDialog({
   const s = useRecordStyles();
   const [values, setValues] = useState<Record<string, string>>({});
   const [geoBusy, setGeoBusy] = useState(false);
+  const isCoordinateField = (key: string) => !!geocode && (key === geocode.latField || key === geocode.lonField);
   const [geoMsg, setGeoMsg] = useState<string | null>(null);
   const [suggestMsg, setSuggestMsg] = useState<{ text: string; found: boolean } | null>(null);
 
@@ -551,11 +552,27 @@ export function RecordDialog({
                     </Dropdown>
                   ) : (
                     <Input
-                      type={f.type === 'number' ? 'number' : 'text'}
+                      // A browser's number box strips the comma and dot out of pasted text, so the coordinate boxes are text
+                      // boxes that take "lat, long" pasted from a map site (split across both boxes) or one number at a time.
+                      type={f.type === 'number' && !isCoordinateField(f.key) ? 'number' : 'text'}
+                      inputMode={isCoordinateField(f.key) ? 'decimal' : undefined}
                       placeholder={f.placeholder}
                       value={values[f.key] ?? ''}
                       disabled={disabled}
-                      onChange={(_, d) => setValues((v) => ({ ...v, [f.key]: d.value }))}
+                      onPaste={
+                        geocode && isCoordinateField(f.key)
+                          ? (e) => {
+                              const pair = parseCoordinatePair(e.clipboardData.getData('text'));
+                              if (!pair) return;
+                              e.preventDefault();
+                              setValues((v) => ({ ...v, [geocode.latField]: pair.latitude, [geocode.lonField]: pair.longitude }));
+                            }
+                          : undefined
+                      }
+                      onChange={(_, d) => {
+                        if (isCoordinateField(f.key) && !isCoordinateText(d.value)) return;
+                        setValues((v) => ({ ...v, [f.key]: d.value }));
+                      }}
                       onBlur={
                         suggest && f.key === suggest.field
                           ? (e) => void runSuggest(e.currentTarget.value)

@@ -35,6 +35,7 @@ export * from './sso';
 export * from './mail-settings';
 export * from './platform-features';
 export * from './tenant-deletion';
+export * from './coordinates';
 
 import type { CmdletInvocation } from './deployment';
 
