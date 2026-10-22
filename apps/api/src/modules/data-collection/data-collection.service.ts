@@ -248,7 +248,7 @@ export class DataCollectionService {
     return rows.map((r) => ({ id: r.id, displayName: r.display_name, email: r.email, role: r.role }));
   }
 
-  /** Active users who can be picked for a site's roles: engineers and project managers, plus this customer's own users. */
+  /** Active users who can be picked for a site's roles: all staff (super admins, engineers, project managers), plus this customer's own users. */
   async listContactCandidates(t: TenantContext) {
     const rows = await platformDb(this.db)
       .selectFrom('users as u')
@@ -256,7 +256,7 @@ export class DataCollectionService {
       .where('u.status', '=', 'active')
       .where((eb) =>
         eb.or([
-          eb('u.role', 'in', ['ENGINEER', 'PROJECT_MANAGER']),
+          eb('u.role', 'in', ['SUPER_ADMIN', 'ENGINEER', 'PROJECT_MANAGER']),
           eb('u.id', 'in', eb.selectFrom('tenant_memberships').select('user_id').where('tenant_id', '=', t.id)),
         ]),
       )
@@ -309,7 +309,7 @@ export class DataCollectionService {
       if (picked.length) {
         const ok = new Set((await this.listContactCandidates(t)).map((u) => u.id));
         if (picked.some((id) => !ok.has(id))) {
-          throw new ConflictException("Picked people must be active engineers, project managers or this customer's users.");
+          throw new ConflictException("Picked people must be active staff or this customer's users.");
         }
       }
     }
