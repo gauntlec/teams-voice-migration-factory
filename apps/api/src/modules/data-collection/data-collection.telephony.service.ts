@@ -401,7 +401,18 @@ export class TelephonyService {
       .innerJoin('discovery_number_ranges as r', 'r.id', 'n.range_id');
     if (codes) b = b.where('r.sitecode', 'in', codes);
     if (q.status) b = b.where('n.status', '=', q.status);
-    if (q.q) b = b.where('n.e164', 'ilike', `%${q.q}%`);
+    if (q.q) {
+      // The number, or who holds it: the user's UPN and display name, the common area phone's, or the resource account's name.
+      const like = `%${q.q}%`;
+      b = b.where((eb) =>
+        eb.or([
+          eb('n.e164', 'ilike', like),
+          sql<boolean>`(n.holder_type = 'user' and exists (select 1 from ${sql.table(`${t.schema}.discovery_users`)} hu where hu.id = n.holder_id and (hu.upn ilike ${like} or hu.display_name ilike ${like})))`,
+          sql<boolean>`(n.holder_type = 'cap' and exists (select 1 from ${sql.table(`${t.schema}.discovery_caps`)} hc where hc.id = n.holder_id and (hc.upn ilike ${like} or hc.display_name ilike ${like})))`,
+          sql<boolean>`(n.holder_type = 'resource_account' and exists (select 1 from ${sql.table(`${t.schema}.discovery_resource_accounts`)} hr where hr.id = n.holder_id and hr.name ilike ${like}))`,
+        ]),
+      );
+    }
     const [items, cnt] = await Promise.all([
       b
         .select([

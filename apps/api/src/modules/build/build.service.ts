@@ -416,9 +416,20 @@ export class BuildService {
     if (q.hidden !== undefined) base = base.where('hidden', '=', q.hidden);
     else base = base.where('hidden', '=', false);
     if (q.q) {
+      // The UPN, the number and the person's name. A row has no name of its own (a CAP does), so the name is looked up from the
+      // tenant user with that UPN and from the Data Collection record the row was populated from.
       const like = `%${q.q}%`;
+      const linkTable = table === 'build_users' ? 'discovery_users' : 'discovery_caps';
+      const linkCol = table === 'build_users' ? 'discovery_user_id' : 'discovery_cap_id';
       base = base.where((eb) =>
-        eb.or([eb('upn', 'ilike', like), eb('e164', 'ilike', like), eb('did', 'ilike', like)]),
+        eb.or([
+          eb('upn', 'ilike', like),
+          eb('e164', 'ilike', like),
+          eb('did', 'ilike', like),
+          sql<boolean>`exists (select 1 from ${sql.table(`${t.schema}.tenant_users`)} tu where lower(tu.upn) = lower(${sql.ref(`${table}.upn`)}) and tu.removed_at is null and tu.display_name ilike ${like})`,
+          sql<boolean>`exists (select 1 from ${sql.table(`${t.schema}.${linkTable}`)} d where d.id = ${sql.ref(`${table}.${linkCol}`)} and d.display_name ilike ${like})`,
+          ...(table === 'build_caps' ? [sql<boolean>`${sql.ref('build_caps.display_name')} ilike ${like}`] : []),
+        ]),
       );
     }
     const [{ n }] = await base.select((eb) => eb.fn.countAll<number>().as('n')).execute();
@@ -428,6 +439,7 @@ export class BuildService {
       .limit(q.limit)
       .offset((q.page - 1) * q.limit)
       .execute();
+    const names = await this.nameLookup(t, table, rows);
     const validated = await this.validation.validateRows(
       t,
       rows as {
@@ -441,8 +453,46 @@ export class BuildService {
     );
     // phone_number_id is a native column now (see 0017_build_phone_number_id) -
     // no separate holder lookup needed to know "what number is this row's".
-    const items = await this.withSrRefs(t, rows.map((r) => ({ ...r, validation: validated.get(r.id) ?? null })));
+    const items = await this.withSrRefs(
+      t,
+      rows.map((r) => ({
+        ...r,
+        // the person's name, so a search by name shows who matched (a CAP keeps the name it was given)
+        display_name: ('display_name' in r && (r as { display_name?: string | null }).display_name) || names.get(r.id) || null,
+        validation: validated.get(r.id) ?? null,
+      })),
+    );
     return { items, total: Number(n), page: q.page, limit: q.limit } satisfies Paginated<unknown>;
+  }
+
+  /** Each row's person name: the tenant user with that UPN, else the Data Collection record the row came from. */
+  private async nameLookup(
+    t: TenantContext,
+    table: 'build_users' | 'build_caps',
+    rows: { id: string; upn: string; discovery_user_id?: string | null; discovery_cap_id?: string | null }[],
+  ): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    if (rows.length === 0) return out;
+    const s = this.s(t);
+    const upns = [...new Set(rows.map((r) => r.upn.toLowerCase()))];
+    const tenant = new Map(
+      (await s.selectFrom('tenant_users').select(['upn', 'display_name']).where('removed_at', 'is', null).where(sql`lower(upn)`, 'in', upns).execute()).map((r) => [r.upn.toLowerCase(), r.display_name]),
+    );
+    const linkIds = [...new Set(rows.map((r) => (table === 'build_users' ? r.discovery_user_id : r.discovery_cap_id)).filter((v): v is string => !!v))];
+    const linked = new Map<string, string>();
+    if (linkIds.length) {
+      const found =
+        table === 'build_users'
+          ? await s.selectFrom('discovery_users').select(['id', 'display_name']).where('id', 'in', linkIds).execute()
+          : await s.selectFrom('discovery_caps').select(['id', 'display_name']).where('id', 'in', linkIds).execute();
+      for (const f of found) if (f.display_name) linked.set(f.id, f.display_name);
+    }
+    for (const r of rows) {
+      const link = table === 'build_users' ? r.discovery_user_id : r.discovery_cap_id;
+      const name = tenant.get(r.upn.toLowerCase()) || (link ? linked.get(link) : undefined);
+      if (name) out.set(r.id, name);
+    }
+    return out;
   }
 
   private async getIdentity(t: TenantContext, table: 'build_users' | 'build_caps', id: string) {

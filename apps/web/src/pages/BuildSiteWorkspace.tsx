@@ -508,6 +508,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           }
           columns={[
             withSrTags({ key: 'upn', label: 'UPN' }),
+            { key: 'display_name', label: 'Name' },
             { key: 'e164', label: 'Number' },
             ...policyColumns(),
             {
