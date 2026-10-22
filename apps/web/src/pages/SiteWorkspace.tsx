@@ -280,7 +280,7 @@ export function SiteWorkspace() {
             { key: 'carrier', label: 'Carrier' },
             {
               key: 'port_status',
-              label: 'Port status',
+              label: 'Porting Documentation Status',
               render: (r) => (r.kind === 'retain' ? 'not applicable' : r.port_status ? String(r.port_status).replace(/_/g, ' ') : '—'),
             },
           ]}
