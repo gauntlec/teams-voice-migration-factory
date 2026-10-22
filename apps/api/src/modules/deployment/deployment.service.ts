@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { sql } from 'kysely';
 import {
   buildAutoAttendantCrossRef,
+  identitySkipReasons,
   resolveAutoAttendantDeepContext,
   resolveLiveAutoAttendantState,
   resolveLiveCallQueueState,
@@ -57,11 +58,6 @@ import { FilesService } from '../files/files.service';
 import { DeploymentDocumentService } from './deployment-document.service';
 
 type SheetName = 'users' | 'caps' | 'resource_accounts' | 'shared_calling_policies' | 'call_queues' | 'auto_attendants';
-
-/** Last-10-digits comparison key, matching the same check ImportUsersDialog and
- * SiteWorkspace's "Requested +N" badge use client-side - kept in sync by hand
- * since api and web don't share a UI-logic layer. */
-const numKey = (v: unknown) => String(v ?? '').replace(/\D/g, '').slice(-10);
 
 @Injectable()
 export class DeploymentService {
@@ -214,6 +210,8 @@ export class DeploymentService {
         let q = s.selectFrom(table).selectAll().where('site_id', '=', query.siteId).where('hidden', '=', false);
         if (rowIds?.length) q = q.where('id', 'in', rowIds);
         const rows = await q.execute();
+        // Errors are triaged in Design & Build: a row with a blocking problem is shown as not deployed, not refused.
+        const skipReasons = await identitySkipReasons(s, rows);
         const [liveNames, liveState] = await Promise.all([
           resolveLivePolicyNames(
             s,
@@ -246,7 +244,8 @@ export class DeploymentService {
             liveState.get(row.upn.toLowerCase()),
           );
           const warnings = identityRowWarnings({ e164: row.e164, number_type: row.number_type, policies });
-          if (calls.length === 0 && warnings.length === 0) continue;
+          const skipped = skipReasons.get(row.id) ?? [];
+          if (calls.length === 0 && warnings.length === 0 && skipped.length === 0) continue;
           out.push({
             rowId: row.id,
             objectType,
@@ -254,6 +253,7 @@ export class DeploymentService {
             calls,
             renderedCommands: calls.map(renderCommand),
             warnings,
+            skipReasons: skipped,
             autoIncluded: autoIncluded.has(row.id),
           });
         }
@@ -468,38 +468,6 @@ export class DeploymentService {
   }
 
   /**
-   * Blocks generating the change document - the "about to deploy" checkpoint
-   * for a site - while any user still has a requested number (from an Excel
-   * import, or hand-typed) that doesn't match the number actually assigned
-   * to them. Surfaced in the Users table as an amber "Requested +N" badge;
-   * this is what makes that a hard stop rather than something easy to miss.
-   */
-  private async assertNoUnresolvedNumberMismatches(t: TenantContext, siteId: string) {
-    const s = tenantDb(this.db, t.schema);
-    const users = await s
-      .selectFrom('discovery_users as u')
-      .leftJoin('phone_numbers as n', (join) =>
-        join.onRef('n.holder_id', '=', 'u.id').on('n.holder_type', '=', 'user'),
-      )
-      .select(['u.upn as upn', 'u.requested_number as requested_number', 'n.e164 as e164'])
-      .where('u.site_id', '=', siteId)
-      .where('u.requested_number', 'is not', null)
-      .execute();
-    const mismatched = users.filter((u) => {
-      const req = numKey(u.requested_number);
-      return req !== '' && req !== numKey(u.e164);
-    });
-    if (mismatched.length > 0) {
-      throw new BadRequestException(
-        `${mismatched.length} user(s) have a requested number that doesn't match the one assigned to them - resolve in the Users tab before deploying: ${mismatched
-          .slice(0, 5)
-          .map((u) => `${u.upn} (${u.requested_number})`)
-          .join(', ')}${mismatched.length > 5 ? ', ...' : ''}`,
-      );
-    }
-  }
-
-  /**
    * Generates the branded "change recording" .docx for a site's planned
    * changes (per the user's own framing: "describes what the changes are
    * going to do and include the actual powershell commands") and stores it
@@ -520,8 +488,6 @@ export class DeploymentService {
       .where('id', '=', siteId)
       .executeTakeFirst();
     if (!site) throw new NotFoundException('site not found');
-
-    await this.assertNoUnresolvedNumberMismatches(t, siteId);
 
     const rows = await this.previewChanges(t, {
       siteId,
@@ -649,7 +615,6 @@ export class DeploymentService {
     // Same hard stop generateChangeDocument already applies - a requested
     // number that doesn't match what's actually assigned must be resolved
     // before ANY deploy path runs, not just before the change document.
-    await this.assertNoUnresolvedNumberMismatches(t, input.scope.siteId);
     const conn = await this.getConnection(t, input.connectionId);
     if (conn.started_by !== user.id && user.role !== 'SUPER_ADMIN') {
       throw new ForbiddenException(

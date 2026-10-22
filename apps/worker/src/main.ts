@@ -13,7 +13,7 @@ import {
   resolveLiveIdentityState,
   resolveLiveSharedCallingPolicyState,
   tenantDb, emailEnabled, webOrigin as resolveWebOrigin, sweepStaffAccess } from '@tvmf/db';
-import { HUB_HEARTBEAT_SECONDS, buildColorRamp, siteContactTargets, type Branding, type DiscoverySiteOverview, type PortDocumentItemSummary } from '@tvmf/shared';
+import { HUB_HEARTBEAT_SECONDS, NOT_DEPLOYED_CMDLET, buildColorRamp, siteContactTargets, type Branding, type DiscoverySiteOverview, type PortDocumentItemSummary } from '@tvmf/shared';
 import {
   collectAutoAttendantUserUpns,
   collectCallQueueTargetUpns,
@@ -652,6 +652,32 @@ async function handleDeploymentRun(job: Job) {
   };
 
   /**
+   * Notes that a user or common area phone was left out (or stopped part way) on the deployment, as a
+   * 'skipped' row with a marker cmdlet. Nothing is sent to Teams. The change document and the deployment
+   * result list these under "Not deployed".
+   */
+  const recordNotDeployed = async (row: { objectType: string; id: string; upn: string }, reason: string) => {
+    counts.skipped += 1;
+    await scoped
+      .insertInto('deployment_changes')
+      .values({
+        deployment_id: deploymentId,
+        seq: ++seq,
+        operator_user_id: operatorUserId,
+        correlation_id: `${deploymentId}:${seq}`,
+        object_type: row.objectType,
+        object_id: row.id,
+        cmdlet: NOT_DEPLOYED_CMDLET,
+        parameters: { upn: row.upn } as object,
+        before: {} as object,
+        after: {} as object,
+        result: 'skipped',
+        message: reason,
+      })
+      .execute();
+  };
+
+  /**
    * A `deferred` call (e.g. New-CsOnlineApplicationInstance) always needs a
    * manual licensing step a Teams Administrator can't do - it must never run
    * live, in either mode. Render it to the exported script and record it as
@@ -720,13 +746,27 @@ async function handleDeploymentRun(job: Job) {
   // what it's about to change for the rollback script.
   const rowFilter = scope.rowIds?.length ? scope.rowIds : undefined;
   const identityRows = [
-    ...(scope.sheets.includes('users') ? await planIdentityRows(scoped, 'build_users', 'user', scope.siteId, rowFilter) : []),
-    ...(scope.sheets.includes('caps') ? await planIdentityRows(scoped, 'build_caps', 'cap', scope.siteId, rowFilter) : []),
+    ...(scope.sheets.includes('users') ? await planIdentityRows(scoped, 'build_users', 'user', scope.siteId, rowFilter, true) : []),
+    ...(scope.sheets.includes('caps') ? await planIdentityRows(scoped, 'build_caps', 'cap', scope.siteId, rowFilter, true) : []),
     ...(scope.sheets.includes('resource_accounts') ? await planResourceAccountRows(scoped, scope.siteId, rowFilter) : []),
   ];
   const beforeOf = await beforeStateResolver(scoped, identityRows);
   for (const row of identityRows) {
-    for (const call of row.calls) await runCall(call, beforeOf(row, call));
+    // Errors are triaged in Design & Build, not here: a row with a blocking problem is left out and the
+    // run carries on with the rest. The reasons go on the record and into the change document.
+    if (row.skipReasons.length) {
+      await recordNotDeployed(row, row.skipReasons.join(' '));
+      continue;
+    }
+    for (const [i, call] of row.calls.entries()) {
+      const result = await runCall(call, beforeOf(row, call));
+      // One failed command stops that user (later commands usually depend on it); the others still deploy.
+      if (result === 'failed' && i < row.calls.length - 1) {
+        const left = row.calls.length - 1 - i;
+        await recordNotDeployed(row, `Stopped after ${call.cmdlet} failed. ${left} later command${left === 1 ? ' was' : 's were'} not run for this ${row.objectType === 'cap' ? 'common area phone' : 'user'}.`);
+        break;
+      }
+    }
   }
 
   if (scope.sheets.includes('shared_calling_policies')) {

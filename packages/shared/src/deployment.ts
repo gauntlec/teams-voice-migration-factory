@@ -145,6 +145,12 @@ function isPsEmptyArray(v: unknown): v is PsEmptyArray {
   return typeof v === 'object' && v !== null && (v as PsEmptyArray).$ps === '@()';
 }
 
+/**
+ * The `cmdlet` of a deployment_changes row that records a user or common area phone left out of a run
+ * (or stopped part way) instead of a command sent to Teams. Its `message` says why.
+ */
+export const NOT_DEPLOYED_CMDLET = '(not deployed)';
+
 export interface CmdletInvocation {
   cmdlet: string;
   parameters: Record<string, unknown>;

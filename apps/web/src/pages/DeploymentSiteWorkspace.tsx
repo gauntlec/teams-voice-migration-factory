@@ -579,7 +579,22 @@ export function DeploymentSiteWorkspace() {
                         </TableCell>
                         <TableCell>{OBJECT_TYPE_LABEL[r.objectType]}</TableCell>
                         <TableCell>
-                          {r.renderedCommands.length > 0 && <pre className={cs.commands}>{r.renderedCommands.join('\n')}</pre>}
+                          {(r.skipReasons?.length ?? 0) > 0 ? (
+                            <>
+                              <Badge appearance="tint" color="informative" title="This row is left out of the deployment until the problem is fixed in Design & Build. The rest of the deployment goes ahead.">
+                                not deployed
+                              </Badge>
+                              {r.skipReasons!.map((reason) => (
+                                <div key={reason} className={cs.warningRow}>
+                                  <WarningRegular className={cs.warningIcon} />
+                                  <span>{reason}</span>
+                                </div>
+                              ))}
+                              <RouterLink to={`/build/sites/${siteId}?tab=issues`}>Fix in Design &amp; Build</RouterLink>
+                            </>
+                          ) : (
+                            r.renderedCommands.length > 0 && <pre className={cs.commands}>{r.renderedCommands.join('\n')}</pre>
+                          )}
                           {r.warnings.map((w) => (
                             <div key={w} className={cs.warningRow}>
                               <WarningRegular className={cs.warningIcon} />

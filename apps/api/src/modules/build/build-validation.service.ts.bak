@@ -1,0 +1,18 @@
+import { Injectable } from '@nestjs/common';
+import { tenantDb, validateIdentityRows, type DB, type IdentityRow } from '@tvmf/db';
+import type { BuildRowValidation } from '@tvmf/shared';
+import type { TenantContext } from '../../common/request';
+import { InjectDb, type Db } from '../../db/db.module';
+
+/**
+ * Live-vs-target validation for Design & Build rows. The comparison itself lives in
+ * @tvmf/db (validateIdentityRows) so a deployment can leave out the rows it flags.
+ */
+@Injectable()
+export class BuildValidationService {
+  constructor(@InjectDb() private readonly db: Db) {}
+
+  validateRows(t: TenantContext, rows: IdentityRow[]): Promise<Map<string, BuildRowValidation>> {
+    return validateIdentityRows(tenantDb(this.db, t.schema), rows);
+  }
+}

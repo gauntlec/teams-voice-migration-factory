@@ -468,6 +468,11 @@ export interface DeploymentPreviewRow {
    */
   warnings: string[];
   /**
+   * Why a deployment leaves this user or common area phone out: its blocking validation issues, fixed in
+   * Design & Build. Absent or empty means it deploys.
+   */
+  skipReasons?: string[];
+  /**
    * True when this row wasn't in the caller's own `rowIds` selection but was
    * pulled in by DeploymentService.expandScopeWithDependencies - a Call
    * Queue/Auto Attendant's agent or target UPN that matches one of this

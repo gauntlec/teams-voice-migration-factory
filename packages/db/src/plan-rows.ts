@@ -7,6 +7,7 @@ import {
   type LiveIdentityState,
   type PickupGroupSettings,
 } from '@tvmf/shared';
+import { identitySkipReasons } from './validate-rows';
 import { resolveLiveIdentityState, resolveLivePolicyNames, type Scoped } from './live-state';
 
 /*
@@ -23,6 +24,11 @@ export interface PlannedIdentityRow {
   upn: string;
   calls: CmdletInvocation[];
   live: LiveIdentityState | undefined;
+  /**
+   * Why a deployment leaves this row out (its blocking validation issues). Only filled in when asked for
+   * (`withSkipReasons`); empty means it deploys.
+   */
+  skipReasons: string[];
 }
 
 /**
@@ -30,6 +36,8 @@ export interface PlannedIdentityRow {
  * main.ts handleDeploymentRun) and its post-deploy re-check below, so "did
  * the design land?" is answered by exactly the diff the deployment used.
  * `rowIds` undefined = every row on the site; an empty list = none.
+ * `withSkipReasons` also checks each row against the tenant and fills in `skipReasons` - what a deployment
+ * uses to leave out a row it cannot apply correctly.
  */
 export async function planIdentityRows(
   s: Scoped,
@@ -37,11 +45,13 @@ export async function planIdentityRows(
   objectType: 'user' | 'cap',
   siteId: string,
   rowIds?: string[],
+  withSkipReasons = false,
 ): Promise<PlannedIdentityRow[]> {
   if (rowIds && rowIds.length === 0) return [];
   let q = s.selectFrom(table).selectAll().where('site_id', '=', siteId).where('hidden', '=', false);
   if (rowIds) q = q.where('id', 'in', rowIds);
   const rows = await q.execute();
+  const skipReasons = withSkipReasons ? await identitySkipReasons(s, rows) : new Map<string, string[]>();
   const [liveNames, liveState] = await Promise.all([
     resolveLivePolicyNames(
       s,
@@ -79,7 +89,7 @@ export async function planIdentityRows(
       objectType,
       live,
     );
-    return { objectType, id: row.id, upn: row.upn, calls, live };
+    return { objectType, id: row.id, upn: row.upn, calls, live, skipReasons: skipReasons.get(row.id) ?? [] };
   });
 }
 
@@ -110,7 +120,7 @@ export async function planResourceAccountRows(s: Scoped, siteId: string, rowIds?
       },
       live,
     );
-    return { objectType: 'resource_account' as const, id: row.id, upn: row.upn, calls, live };
+    return { objectType: 'resource_account' as const, id: row.id, upn: row.upn, calls, live, skipReasons: [] };
   });
 }
 
