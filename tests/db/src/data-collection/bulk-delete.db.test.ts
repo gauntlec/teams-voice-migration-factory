@@ -1,8 +1,8 @@
 // Data Collection bulk delete: the ticked rows, or every row of a kind on one
 // site. Each row must go exactly as a single delete would - its numbers back
 // to the free pool, Design & Build rows kept but unlinked - and the usual
-// lock and site-scope rules apply.
-import { ConflictException, ForbiddenException } from '@nestjs/common';
+// site-scope rules apply, and a change to a submitted site is recorded for the engineer.
+import { ForbiddenException } from '@nestjs/common';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { AuditService } from '../../../../apps/api/src/common/audit.service';
 import { DataCollectionService } from '../../../../apps/api/src/modules/data-collection/data-collection.service';
@@ -76,14 +76,24 @@ describe('Data Collection bulk delete', () => {
     expect(await number(n4)).toEqual({ status: 'available', holder_id: null });
   });
 
-  it('respects site scope and the Data Collection lock', async () => {
+  it('respects site scope', async () => {
     await addUser(siteA, 'a4@contoso.test');
     const siteContact = { ...c.t, siteScope: [siteB] };
     await expect(svc.bulkDelete(siteContact, engineer, 'user', { site_id: siteA, all: true }, false)).rejects.toBeInstanceOf(ForbiddenException);
-
-    await c.s.updateTable('discovery').set({ status: 'accepted' }).execute();
-    await expect(svc.bulkDelete(c.t, engineer, 'user', { site_id: siteA, all: true }, true)).rejects.toBeInstanceOf(ConflictException);
-    await c.s.updateTable('discovery').set({ status: 'draft' }).execute();
     expect(await usersOn(siteA)).toEqual([{ upn: 'a4@contoso.test' }]);
+  });
+
+  it('is never locked by the review, but records the change once the site has been submitted', async () => {
+    const changes = () => c.s.selectFrom('discovery_site_changes').select(['entity', 'entity_label', 'action']).where('site_id', '=', siteA).execute();
+    // a draft site: nothing is recorded
+    expect(await svc.bulkDelete(c.t, engineer, 'user', { site_id: siteA, all: true }, true)).toEqual({ deleted: 1 });
+    expect(await changes()).toEqual([]);
+
+    // a submitted (or accepted) site: still deletable, and the engineer is told
+    await c.s.updateTable('discovery_sites').set({ review_status: 'accepted' }).where('id', '=', siteA).execute();
+    await addUser(siteA, 'a5@contoso.test');
+    expect(await svc.bulkDelete(c.t, engineer, 'user', { site_id: siteA, all: true }, true)).toEqual({ deleted: 1 });
+    expect(await changes()).toEqual([{ entity: 'User', entity_label: 'a5@contoso.test', action: 'removed' }]);
+    await c.s.updateTable('discovery_sites').set({ review_status: 'draft' }).where('id', '=', siteA).execute();
   });
 });

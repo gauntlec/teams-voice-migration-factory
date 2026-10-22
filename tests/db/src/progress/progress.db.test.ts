@@ -28,8 +28,8 @@ beforeAll(async () => {
   const build = new BuildService(handle.db, new AuditService(handle.db), new BuildValidationService(handle.db), unused('discovery'), unused('documentBuilder'), unused('files'));
   progress = new ProgressService(handle.db, build);
 
-  // the one discovery row is seeded by tenant migration 0001
-  await c.s.updateTable('discovery').set({ status: 'submitted' }).execute();
+  // The review is per site: all three are submitted.
+  await c.s.updateTable('discovery_sites').set({ review_status: 'submitted' }).execute();
   await c.s
     .insertInto('discovery_users')
     .values([
@@ -96,7 +96,7 @@ describe('GET /t/:tenantId/progress', () => {
   it('derives each site’s stage for an engineer, with blockers in plain words', async () => {
     const p = await progress.progress(c.t, engineer);
     expect(p.fullView).toBe(true);
-    expect(p.discoveryStatus).toBe('submitted');
+    expect(p.dataCollection).toEqual({ sites: 3, draft: 0, submitted: 3, accepted: 0, withChanges: 0 });
     expect(p.sites.map((s) => s.sitecode)).toEqual(['LON01', 'NYC01', 'PAR01']);
     const [l, n, x] = p.sites;
 
@@ -119,7 +119,7 @@ describe('GET /t/:tenantId/progress', () => {
     expect(p.openServiceRequests).toBe(1);
     expect(p.lastDiscoverySync).toBeNull();
     expect(p.items.filter((i) => i.attention).map((i) => i.message)).toEqual([
-      'Data Collection is submitted and waiting for review',
+      '3 sites submitted and waiting for review',
       'The customer tenant has never been synced in Discovery',
       '1 new service request waiting to be planned',
     ]);
@@ -133,6 +133,21 @@ describe('GET /t/:tenantId/progress', () => {
     expect(n.stages.map((s) => s.key)).toEqual(['data_collection', 'delivery', 'handover', 'operations']);
     expect(n.blockers).toEqual([]);
     expect(p.items.every((i) => !i.attention)).toBe(true);
+  });
+
+  it('tells an engineer, and only an engineer, about changes made to a site after it was submitted', async () => {
+    await c.s.insertInto('discovery_site_changes').values({ site_id: nyc, entity: 'User', entity_label: 'x@contoso.test', action: 'added' } as never).execute();
+    try {
+      const e = await progress.progress(c.t, engineer);
+      expect(e.dataCollection.withChanges).toBe(1);
+      expect(e.items.filter((i) => i.attention).map((i) => i.message)).toContain('1 site changed since being submitted');
+
+      const cust = await progress.progress(c.t, customer);
+      expect(cust.dataCollection.withChanges).toBe(0);
+      expect(cust.items.map((i) => i.message)).not.toContain('1 site changed since being submitted');
+    } finally {
+      await c.s.deleteFrom('discovery_site_changes').execute();
+    }
   });
 
   it('a site contact only sees their own sites', async () => {
