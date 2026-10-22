@@ -941,6 +941,22 @@ export const tenantResourceAccountsImportSchema = z
   .strict();
 export type TenantResourceAccountsImportInput = z.infer<typeof tenantResourceAccountsImportSchema>;
 
+/**
+ * Add selected discovered objects to a site, in Data Collection and (optionally) Design & Build. Each item names the exact
+ * object - a tenant_users id for a user or common area phone account, a tenant_objects id for resource accounts, auto attendants
+ * and call queues - never a display name, which can repeat.
+ */
+export const ADD_FROM_DISCOVERY_KINDS = ['account', 'resource_account', 'call_queue', 'auto_attendant'] as const;
+export const addFromDiscoverySchema = z
+  .object({
+    kind: z.enum(ADD_FROM_DISCOVERY_KINDS),
+    // `as` only applies to an account: routed to Users or Common area phones. Left out, it is detected from the account's licence plan.
+    items: z.array(z.object({ id: z.string().uuid(), siteId: z.string().uuid(), as: z.enum(['user', 'cap']).optional() }).strict()).min(1).max(500),
+    alsoBuild: z.boolean().default(true),
+  })
+  .strict();
+export type AddFromDiscoveryInput = z.infer<typeof addFromDiscoverySchema>;
+
 /* ------------------------- Design & Build DTOs ------------------------- */
 /* Every build_* row is reached through a site workspace (see docs/DATA-MODEL.md). */
 

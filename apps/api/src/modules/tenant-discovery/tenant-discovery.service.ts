@@ -21,6 +21,8 @@ import {
   type TenantObjectsQuery,
   type TenantResourceAccountsImportInput,
   type TenantUsersImportInput,
+  type AddFromDiscoveryItemResult,
+  isCommonAreaPhone,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
 import { assertNoMaintenanceFreeze, currentMaintenance } from '../../platform-ops/maintenance';
@@ -234,7 +236,6 @@ export class TenantDiscoveryService {
    */
   async listEndpoints(t: TenantContext): Promise<{ items: TenantEndpoint[] }> {
     const s = this.s(t);
-    const CAP_PLAN = /MCOCAP|COMMON_?AREA/i;
     const num = (v: unknown): string | null => {
       const raw = String(v ?? '').replace(/^tel:/i, '').trim();
       return raw || null;
@@ -242,24 +243,18 @@ export class TenantDiscoveryService {
 
     const users = await s
       .selectFrom('tenant_users')
-      .select(['upn', 'display_name', 'line_uri', 'account_enabled', 'policies', 'assigned_plans', 'telephone_numbers'])
+      .select(['id', 'upn', 'display_name', 'line_uri', 'account_enabled', 'policies', 'assigned_plans', 'telephone_numbers'])
       .where('removed_at', 'is', null)
       .execute();
     const caps = users
-      .filter((u) => {
-        const plans = Array.isArray(u.assigned_plans) ? (u.assigned_plans as Record<string, unknown>[]) : [];
-        return plans.some(
-          (p) =>
-            CAP_PLAN.test(String(p?.Capability ?? '')) &&
-            ['Enabled', 'Warning'].includes(String(p?.CapabilityStatus ?? '')),
-        );
-      })
+      .filter((u) => isCommonAreaPhone(u.assigned_plans))
       .map((u) => {
         const nums = Array.isArray(u.telephone_numbers)
           ? (u.telephone_numbers as { number?: string }[])
           : [];
         const pol = (u.policies ?? {}) as Record<string, string | null>;
         return {
+          id: u.id,
           kind: 'common_area_phone' as const,
           name: u.display_name,
           upn: u.upn,
@@ -272,7 +267,7 @@ export class TenantDiscoveryService {
 
     const ras = await s
       .selectFrom('tenant_objects')
-      .select(['display_name', 'data'])
+      .select(['id', 'display_name', 'data'])
       .where('object_type', '=', 'resource_account')
       .where('removed_at', 'is', null)
       .execute();
@@ -282,6 +277,7 @@ export class TenantDiscoveryService {
         const n = num(d.PhoneNumber);
         return n
           ? {
+              id: r.id,
               kind: 'resource_account' as const,
               name: r.display_name,
               upn: (d.UserPrincipalName as string) ?? null,
@@ -1073,6 +1069,168 @@ export class TenantDiscoveryService {
       };
     });
     return { candidates };
+  }
+
+  /**
+   * The Data Collection half of "add to site" for objects picked on a Discovery tab. Every object is matched on its own key and
+   * never on a display name, which can repeat: a user or common area phone on its UPN, a resource account, auto attendant or call
+   * queue on its tenant object id (the exact discovered object, which carries the Teams GUID). A voice app and the resource
+   * account(s) it is associated with (the GUIDs in its ApplicationInstances) count as one thing, so adding both does not make
+   * two rows. An object already on the chosen site is left alone; one on another site is reported and not moved.
+   * Returns each item's result plus the Data Collection row it ended up on, for the Design & Build step.
+   */
+  async captureSelected(
+    t: TenantContext,
+    user: AuthedUser,
+    kind: 'account' | 'resource_account' | 'call_queue' | 'auto_attendant',
+    items: { id: string; siteId: string; as?: 'user' | 'cap' }[],
+  ): Promise<{ results: AddFromDiscoveryItemResult[]; dcIds: Map<string, string> }> {
+    const s = this.s(t);
+    await this.assertSitesUsable(t, new Set(items.map((i) => i.siteId)));
+    const sites = await this.siteLookup(t);
+    const siteCode = (id: string | null) => (id ? (sites.byId.get(id) ?? null) : null);
+    const siteOf = new Map(items.map((i) => [i.id, i.siteId]));
+    const ids = [...siteOf.keys()];
+    const results: AddFromDiscoveryItemResult[] = [];
+    const dcIds = new Map<string, string>();
+    const added = new Map<string, number>(); // siteId -> count, for the change log
+    const off = 'off' as const;
+    const missing = (id: string): AddFromDiscoveryItemResult => ({ id, label: id, key: id, dataCollection: 'not_found', designAndBuild: off, note: 'Not in the discovered data any more.' });
+
+    if (kind === 'account') {
+      // A common area phone is an account like any other in the tenant data, so each one is routed: to Users, or to Common area
+      // phones. The engineer's choice (`as`) wins; otherwise it is detected from the licence plan.
+      const found = await s
+        .selectFrom('tenant_users')
+        .select(['id', 'upn', 'display_name', 'assigned_plans'])
+        .where('removed_at', 'is', null)
+        .where('id', 'in', ids)
+        .execute();
+      const upns = found.map((f) => f.upn.toLowerCase());
+      const [dcUsers, dcCaps] = upns.length
+        ? await Promise.all([
+            s.selectFrom('discovery_users').select(['id', 'upn', 'site_id']).where(sql`lower(upn)`, 'in', upns).execute(),
+            s.selectFrom('discovery_caps').select(['id', 'upn', 'site_id']).where(sql`lower(upn)`, 'in', upns).execute(),
+          ])
+        : [[], []];
+      const userByUpn = new Map(dcUsers.map((e) => [e.upn.toLowerCase(), e]));
+      const capByUpn = new Map(dcCaps.map((e) => [(e.upn ?? '').toLowerCase(), e]));
+      const asOf = new Map(items.map((i) => [i.id, i.as]));
+      for (const id of ids) {
+        const row = found.find((f) => f.id === id);
+        if (!row) {
+          results.push(missing(id));
+          continue;
+        }
+        const label = row.display_name ?? row.upn;
+        const siteId = siteOf.get(id)!;
+        const as: 'user' | 'cap' = asOf.get(id) ?? (isCommonAreaPhone(row.assigned_plans) ? 'cap' : 'user');
+        const key = row.upn.toLowerCase();
+        const have = as === 'user' ? userByUpn.get(key) : capByUpn.get(key);
+        const other = as === 'user' ? capByUpn.get(key) : userByUpn.get(key);
+        if (have) {
+          dcIds.set(id, have.id);
+          const same = have.site_id === siteId;
+          results.push({ id, label, key: row.upn, as, dataCollection: same ? 'already_on_site' : 'on_other_site', designAndBuild: off, otherSite: same ? null : siteCode(have.site_id) });
+          continue;
+        }
+        if (other) {
+          // already captured, but as the other kind: not added twice, and not silently re-typed
+          const same = other.site_id === siteId;
+          results.push({
+            id, label, key: row.upn, as,
+            dataCollection: same ? 'already_on_site' : 'on_other_site',
+            designAndBuild: off,
+            otherSite: same ? null : siteCode(other.site_id),
+            note: `Already in Data Collection as ${as === 'user' ? 'a common area phone' : 'a user'}. Remove it there first to add it as ${as === 'user' ? 'a user' : 'a common area phone'}.`,
+          });
+          continue;
+        }
+        const created =
+          as === 'user'
+            ? await s.insertInto('discovery_users').values({ site_id: siteId, upn: row.upn, display_name: row.display_name, tenant_user_id: row.id }).returning('id').executeTakeFirstOrThrow()
+            : await s.insertInto('discovery_caps').values({ site_id: siteId, display_name: row.display_name ?? row.upn, upn: row.upn }).returning('id').executeTakeFirstOrThrow();
+        dcIds.set(id, created.id);
+        added.set(`${as}:${siteId}`, (added.get(`${as}:${siteId}`) ?? 0) + 1);
+        results.push({ id, label, key: row.upn, as, dataCollection: 'added', designAndBuild: off });
+      }
+    } else {
+      const objectType = kind === 'resource_account' ? 'resource_account' : kind;
+      const found = await s
+        .selectFrom('tenant_objects')
+        .select(['id', 'object_key', 'display_name', 'data'])
+        .where('removed_at', 'is', null)
+        .where('object_type', '=', objectType)
+        .where('id', 'in', ids)
+        .execute();
+      // The voice app <-> resource account associations, by GUID: a voice app lists its resource accounts' ids.
+      const raRows = await s.selectFrom('tenant_objects').select(['id', 'object_key']).where('object_type', '=', 'resource_account').where('removed_at', 'is', null).execute();
+      const raIdByKey = new Map(raRows.map((r) => [r.object_key.toLowerCase(), r.id]));
+      const raKeyById = new Map(raRows.map((r) => [r.id, r.object_key.toLowerCase()]));
+      const voiceApps = await s.selectFrom('tenant_objects').select(['id', 'data']).where('object_type', 'in', ['call_queue', 'auto_attendant']).where('removed_at', 'is', null).execute();
+      const instancesOf = (data: unknown): string[] => {
+        const v = (data as Record<string, unknown> | null)?.ApplicationInstances;
+        return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').map((x) => x.toLowerCase()) : [];
+      };
+      // for each picked object: the ids that mean the same logical thing (itself, plus what it is associated with)
+      const related = new Map<string, string[]>();
+      for (const f of found) {
+        const rel = new Set<string>([f.id]);
+        if (kind === 'resource_account') {
+          const key = f.object_key.toLowerCase();
+          for (const v of voiceApps) if (instancesOf(v.data).includes(key)) rel.add(v.id);
+        } else {
+          for (const k of instancesOf(f.data)) {
+            const raId = raIdByKey.get(k);
+            if (raId) rel.add(raId);
+          }
+        }
+        related.set(f.id, [...rel]);
+      }
+      const allRel = [...new Set([...related.values()].flat())];
+      const dcRows = allRel.length ? await s.selectFrom('discovery_resource_accounts').select(['id', 'site_id', 'tenant_object_id']).where('tenant_object_id', 'in', allRel).execute() : [];
+      const kindByAppId = new Map(Object.entries(RESOURCE_ACCOUNT_APPLICATION_IDS).map(([k, v]) => [v, k]));
+      void raKeyById;
+      for (const id of ids) {
+        const f = found.find((x) => x.id === id);
+        if (!f) {
+          results.push(missing(id));
+          continue;
+        }
+        const label = f.display_name ?? f.object_key;
+        const siteId = siteOf.get(id)!;
+        const have = dcRows.find((r) => (related.get(id) ?? []).includes(r.tenant_object_id ?? ''));
+        if (have) {
+          dcIds.set(id, have.id);
+          const same = have.site_id === siteId;
+          results.push({ id, label, key: f.object_key, dataCollection: same ? 'already_on_site' : 'on_other_site', designAndBuild: off, otherSite: same ? null : siteCode(have.site_id) });
+          continue;
+        }
+        const d = (f.data ?? {}) as Record<string, unknown>;
+        const dcKind = kind === 'resource_account' ? ((typeof d.ApplicationId === 'string' ? kindByAppId.get(d.ApplicationId) : undefined) ?? 'auto_attendant') : kind;
+        const created = await s
+          .insertInto('discovery_resource_accounts')
+          .values({ site_id: siteId, name: label, kind: dcKind as 'auto_attendant' | 'call_queue', tenant_object_id: f.id })
+          .returning('id')
+          .executeTakeFirstOrThrow();
+        dcIds.set(id, created.id);
+        added.set(`voice:${siteId}`, (added.get(`voice:${siteId}`) ?? 0) + 1);
+        results.push({ id, label, key: f.object_key, dataCollection: 'added', designAndBuild: off });
+      }
+    }
+
+    await this.audit.tenant(t.schema, 'discovery.added_to_site', {
+      actor: actorOf(user),
+      targetType: 'discovery_site',
+      detail: { kind, requested: ids.length, added: results.filter((r) => r.dataCollection === 'added').length },
+    });
+    const entityOf = (k: string) => (k === 'user' ? 'User' : k === 'cap' ? 'Common area phone' : 'Voice app');
+    for (const [key, n] of added) {
+      const [k, siteId] = key.split(':') as [string, string];
+      const entity = kind === 'resource_account' ? 'Resource account' : entityOf(k);
+      await this.dataCollection.trackChange(t, user, { siteId, entity, action: 'added', label: `${n} added from Discovery` });
+    }
+    return { results, dcIds };
   }
 
   async importResourceAccounts(t: TenantContext, user: AuthedUser, input: TenantResourceAccountsImportInput, canReview: boolean) {

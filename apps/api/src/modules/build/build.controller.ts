@@ -24,6 +24,7 @@ import {
   buildTemplatePatchSchema,
   buildValidateSchema,
   buildNumberDecisionSchema,
+  addFromDiscoverySchema,
   buildQuickAddSchema,
   callingPolicyMapListQuerySchema,
   callingPolicySiteMapSetSchema,
@@ -50,6 +51,7 @@ import {
   type BuildTemplatePatchInput,
   type BuildValidateInput,
   type BuildNumberDecisionInput,
+  type AddFromDiscoveryInput,
   type BuildQuickAddInput,
   type CallingPolicyMapListQuery,
   type CallingPolicySiteMapSetInput,
@@ -377,6 +379,12 @@ export class BuildController {
   }
 
   /* validate */
+
+  @Post('add-from-discovery')
+  @RequirePermission('build:write', 'discovery:write', 'tenantdiscovery:read')
+  addFromDiscovery(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Body(new ZodBody(addFromDiscoverySchema)) body: AddFromDiscoveryInput) {
+    return this.svc.addFromDiscovery(t, user, body);
+  }
 
   @Post('users/quick-add')
   @RequirePermission('build:write')

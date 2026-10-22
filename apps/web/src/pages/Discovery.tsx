@@ -32,7 +32,13 @@ export function Discovery() {
       return 20000;
     },
   });
-  const invalidateAll = () => qc.invalidateQueries({ queryKey: ['tdisc'] });
+  const invalidateAll = () => {
+    qc.invalidateQueries({ queryKey: ['tdisc'] });
+    // what was just added to a site shows up in Data Collection and Design & Build
+    qc.invalidateQueries({ queryKey: ['build-summary'] });
+  };
+  // Adding a discovered object to a site writes to Data Collection and to Design & Build, so it needs both.
+  const canAdd = can('discovery:write') && can('build:write');
 
   if (!tid) return <NoTenant />;
 
@@ -95,10 +101,10 @@ export function Discovery() {
 
       {tab === 'changes' && <ChangesTab base={base} />}
 
-      {tab === 'users' && <UsersTable base={base} canImport={can('discovery:write')} onImported={invalidateAll} />}
+      {tab === 'users' && <UsersTable base={base} canImport={can('discovery:write')} canAdd={canAdd} onImported={invalidateAll} />}
 
       {tab === 'resource_accounts' && (
-        <ResourceAccountsTab base={base} canImport={can('discovery:write')} onImported={invalidateAll} />
+        <ResourceAccountsTab base={base} canImport={can('discovery:write')} canAdd={canAdd} onImported={invalidateAll} />
       )}
 
       {tab === 'numbers' && (
@@ -141,13 +147,13 @@ export function Discovery() {
 
       {tab === 'voice_apps' && (
         <>
-          <ObjectsTable base={base} type="auto_attendant" flowType="auto_attendant" columns={[{ label: 'Name', render: (o) => o.display_name ?? o.object_key }, { label: 'Language', render: (o) => str(o, 'LanguageId') }, { label: 'Time zone', render: (o) => str(o, 'TimeZoneId') }]} />
-          <ObjectsTable base={base} type="call_queue" flowType="call_queue" columns={[{ label: 'Name', render: (o) => o.display_name ?? o.object_key }, { label: 'Routing', render: (o) => str(o, 'RoutingMethod') }, { label: 'Agents', render: (o) => String((o.data.Agents as unknown[] | undefined)?.length ?? '—') }]} />
+          <ObjectsTable base={base} type="auto_attendant" flowType="auto_attendant" addToSite={canAdd ? { kind: 'auto_attendant', onAdded: invalidateAll } : undefined} columns={[{ label: 'Name', render: (o) => o.display_name ?? o.object_key }, { label: 'Language', render: (o) => str(o, 'LanguageId') }, { label: 'Time zone', render: (o) => str(o, 'TimeZoneId') }]} />
+          <ObjectsTable base={base} type="call_queue" flowType="call_queue" addToSite={canAdd ? { kind: 'call_queue', onAdded: invalidateAll } : undefined} columns={[{ label: 'Name', render: (o) => o.display_name ?? o.object_key }, { label: 'Routing', render: (o) => str(o, 'RoutingMethod') }, { label: 'Agents', render: (o) => String((o.data.Agents as unknown[] | undefined)?.length ?? '—') }]} />
           <ObjectsTable base={base} type="schedule" columns={[{ label: 'Name', render: (o) => o.display_name ?? o.object_key }, { label: 'Type', render: (o) => str(o, 'Type') }]} />
         </>
       )}
 
-      {tab === 'devices' && <EndpointsTable base={base} />}
+      {tab === 'devices' && <EndpointsTable base={base} canAdd={canAdd} onAdded={invalidateAll} />}
 
       {tab === 'groups' && <GroupsTable base={base} />}
     </Page>

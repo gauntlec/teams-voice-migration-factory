@@ -37,6 +37,8 @@ import {
   type BuildTemplateApplyInput,
   type BuildTemplateCreateInput,
   type BuildTemplatePatchInput,
+  type AddFromDiscoveryInput,
+  type AddFromDiscoveryItemResult,
   type BuildIssueRow,
   type BuildQuickAddResult,
   type BuildValidateResult,
@@ -340,6 +342,61 @@ export class BuildService {
       detail: { added: result.added.length, alreadyThere: result.alreadyThere.length, notFound: result.notFound.length },
     });
     return result;
+  }
+
+  /**
+   * "Add to site" for objects picked on a Discovery tab: Data Collection first (TenantDiscoveryService.captureSelected, which
+   * matches on UPN / tenant object id, never on a name), then - unless switched off - the Design & Build row, filled from the
+   * discovered data the same way Quick add and Populate do. An account is routed to Users or Common area phones.
+   */
+  async addFromDiscovery(t: TenantContext, u: AuthedUser, input: AddFromDiscoveryInput): Promise<AddFromDiscoveryItemResult[]> {
+    const s = this.s(t);
+    const { results, dcIds } = await this.discovery.captureSelected(t, u, input.kind, input.items);
+    if (!input.alsoBuild) return results;
+    const siteOf = new Map(input.items.map((i) => [i.id, i.siteId]));
+    const eligible = results.filter((r) => dcIds.has(r.id) && !r.note && (r.dataCollection === 'added' || r.dataCollection === 'already_on_site'));
+    for (const r of results) if (!eligible.includes(r)) r.designAndBuild = 'not_added';
+
+    if (input.kind === 'account') {
+      for (const as of ['user', 'cap'] as const) {
+        const bySite = new Map<string, AddFromDiscoveryItemResult[]>();
+        for (const r of eligible.filter((x) => x.as === as)) bySite.set(siteOf.get(r.id)!, [...(bySite.get(siteOf.get(r.id)!) ?? []), r]);
+        for (const [siteId, group] of bySite) {
+          const res = await this.quickAddIdentity(t, u, as === 'user' ? 'build_users' : 'build_caps', as, siteId, group.map((g) => g.key));
+          const already = new Set(res.alreadyThere.map((x) => x.toLowerCase()));
+          const added = new Set(res.added.map((x) => x.upn.toLowerCase()));
+          for (const g of group) {
+            const k = g.key.toLowerCase();
+            g.designAndBuild = added.has(k) ? 'added' : already.has(k) ? 'already_on_site' : 'not_added';
+            if (g.designAndBuild === 'not_added') g.note = 'Not found in the discovered data for Design & Build.';
+          }
+        }
+      }
+      return results;
+    }
+
+    // Resource accounts, auto attendants and call queues: one Design & Build row per Data Collection row, matched by id.
+    const bySite = new Map<string, AddFromDiscoveryItemResult[]>();
+    for (const r of eligible) bySite.set(siteOf.get(r.id)!, [...(bySite.get(siteOf.get(r.id)!) ?? []), r]);
+    for (const [siteId, group] of bySite) {
+      const dc = group.map((g) => dcIds.get(g.id)!);
+      const linked = async () => {
+        const [ra, aa, cq] = await Promise.all([
+          s.selectFrom('build_resource_accounts').select('discovery_resource_account_id').where('discovery_resource_account_id', 'in', dc).execute(),
+          s.selectFrom('build_auto_attendants').select('discovery_resource_account_id').where('discovery_resource_account_id', 'in', dc).execute(),
+          s.selectFrom('build_call_queues').select('discovery_resource_account_id').where('discovery_resource_account_id', 'in', dc).execute(),
+        ]);
+        return new Set([...ra, ...aa, ...cq].map((r) => r.discovery_resource_account_id));
+      };
+      const before = await linked();
+      await this.populateResourceAccounts(t, u, siteId, dc);
+      const after = await linked();
+      for (const g of group) {
+        const id = dcIds.get(g.id)!;
+        g.designAndBuild = before.has(id) ? 'already_on_site' : after.has(id) ? 'added' : 'not_added';
+      }
+    }
+    return results;
   }
 
   quickAddUsers(t: TenantContext, u: AuthedUser, siteId: string, upns: string[]) {
@@ -1137,9 +1194,11 @@ export class BuildService {
    * Only `comments` maps onto call_queues (-> notes); the rest are AA-only,
    * matching the "no CQ narrative fields" note in buildCallQueueWritable.
    */
-  async populateResourceAccounts(t: TenantContext, u: AuthedUser, siteId: string) {
+  async populateResourceAccounts(t: TenantContext, u: AuthedUser, siteId: string, onlyIds?: string[]) {
     const s = this.s(t);
-    const source = await s.selectFrom('discovery_resource_accounts').selectAll().where('site_id', '=', siteId).execute();
+    let sourceQ = s.selectFrom('discovery_resource_accounts').selectAll().where('site_id', '=', siteId);
+    if (onlyIds) sourceQ = sourceQ.where('id', 'in', onlyIds.length ? onlyIds : ['00000000-0000-0000-0000-000000000000']);
+    const source = await sourceQ.execute();
     // build_resource_accounts/build_auto_attendants/build_call_queues each
     // carry their own independent discovery_resource_account_id FK (no FK
     // between the three) - checking only build_resource_accounts let a
@@ -1160,15 +1219,35 @@ export class BuildService {
     // see the "reverse-engineer OVP012" plan) starts with its real UPN and
     // application_id already set, instead of looking like a brand new
     // account New-CsOnlineApplicationInstance still needs to create.
-    const liveRas = await s.selectFrom('tenant_objects').select(['display_name', 'data']).where('object_type', '=', 'resource_account').where('removed_at', 'is', null).execute();
+    const liveRas = await s.selectFrom('tenant_objects').select(['id', 'object_key', 'display_name', 'data']).where('object_type', '=', 'resource_account').where('removed_at', 'is', null).execute();
     const liveRaByName = new Map(
       liveRas.filter((r) => r.display_name).map((r) => [r.display_name!.toLowerCase(), r.data as Record<string, unknown>]),
     );
+    // Rows added from Discovery name the exact object they came from (tenant_object_id): match on that, never on a name that can
+    // repeat. A resource account row IS that object; an auto attendant / call queue row reaches its resource account through the
+    // GUIDs in the voice app's ApplicationInstances. Older rows with no id keep matching on name.
+    const raById = new Map(liveRas.map((r) => [r.id, r.data as Record<string, unknown>]));
+    const raByKey = new Map(liveRas.map((r) => [r.object_key.toLowerCase(), r.data as Record<string, unknown>]));
+    const objIds = [...new Set(source.map((d) => d.tenant_object_id).filter((v): v is string => !!v))];
+    const pointedAt = objIds.length ? await s.selectFrom('tenant_objects').select(['id', 'object_type', 'data']).where('id', 'in', objIds).execute() : [];
+    const liveRaFor = (d: { name: string; tenant_object_id: string | null }): Record<string, unknown> | undefined => {
+      if (!d.tenant_object_id) return liveRaByName.get(d.name.toLowerCase());
+      const o = pointedAt.find((x) => x.id === d.tenant_object_id);
+      if (!o) return undefined;
+      if (o.object_type === 'resource_account') return raById.get(o.id);
+      const inst = (o.data as Record<string, unknown>)?.ApplicationInstances;
+      const keys = Array.isArray(inst) ? inst.filter((x): x is string => typeof x === 'string') : [];
+      for (const k of keys) {
+        const hit = raByKey.get(k.toLowerCase());
+        if (hit) return hit;
+      }
+      return undefined;
+    };
     let created = 0;
     const createdDiscoveryIds: string[] = [];
     for (const d of source) {
       if (linked.has(d.id)) continue;
-      const live = liveRaByName.get(d.name.toLowerCase());
+      const live = liveRaFor(d);
       const liveUpn = live && typeof live.UserPrincipalName === 'string' ? live.UserPrincipalName : undefined;
       // Bug: a linked resource account's Number column stayed blank forever
       // even once live, because only UserPrincipalName/ApplicationId were
@@ -1271,8 +1350,8 @@ export class BuildService {
    */
   private async populateStructuredFromLive(s: Scoped, siteId: string, createdDiscoveryIds: string[]) {
     const [createdAa, createdCq] = await Promise.all([
-      s.selectFrom('build_auto_attendants').select(['id', 'name']).where('discovery_resource_account_id', 'in', createdDiscoveryIds).execute(),
-      s.selectFrom('build_call_queues').select(['id', 'name']).where('discovery_resource_account_id', 'in', createdDiscoveryIds).execute(),
+      s.selectFrom('build_auto_attendants').select(['id', 'name', 'discovery_resource_account_id']).where('discovery_resource_account_id', 'in', createdDiscoveryIds).execute(),
+      s.selectFrom('build_call_queues').select(['id', 'name', 'discovery_resource_account_id']).where('discovery_resource_account_id', 'in', createdDiscoveryIds).execute(),
     ]);
     if (createdAa.length === 0 && createdCq.length === 0) return;
 
@@ -1307,6 +1386,33 @@ export class BuildService {
     ]);
     const aaByName = new Map(liveAa.filter((r) => r.display_name).map((r) => [r.display_name!.toLowerCase(), r.data as Record<string, unknown>]));
     const cqByName = new Map(liveCq.filter((r) => r.display_name).map((r) => [r.display_name!.toLowerCase(), r.data as Record<string, unknown>]));
+
+    // Rows added from Discovery name the exact object they came from (discovery_resource_accounts.tenant_object_id), so a name
+    // that two voice apps share cannot pick the wrong one. That object is the voice app itself, or a resource account whose
+    // voice app is the one listing its GUID in ApplicationInstances. Rows with no id fall back to the name match above.
+    const dcRows = await s.selectFrom('discovery_resource_accounts').select(['id', 'kind', 'tenant_object_id']).where('id', 'in', createdDiscoveryIds).execute();
+    const pointIds = dcRows.map((d) => d.tenant_object_id).filter((v): v is string => !!v);
+    const idLive = new Map<string, Record<string, unknown>>(); // discovery_resource_accounts.id -> the live voice app
+    if (pointIds.length) {
+      const pointed = await s.selectFrom('tenant_objects').select(['id', 'object_type', 'object_key', 'data']).where('id', 'in', pointIds).execute();
+      const apps = await s.selectFrom('tenant_objects').select(['object_type', 'data']).where('object_type', 'in', ['auto_attendant', 'call_queue']).where('removed_at', 'is', null).execute();
+      for (const d of dcRows) {
+        const o = pointed.find((p) => p.id === d.tenant_object_id);
+        if (!o) continue;
+        if (o.object_type === d.kind) {
+          idLive.set(d.id, o.data as Record<string, unknown>);
+        } else if (o.object_type === 'resource_account') {
+          const key = o.object_key.toLowerCase();
+          const owner = apps.find((a) => a.object_type === d.kind && ((a.data as Record<string, unknown>).ApplicationInstances as unknown[] | undefined)?.some((i) => typeof i === 'string' && i.toLowerCase() === key));
+          if (owner) idLive.set(d.id, owner.data as Record<string, unknown>);
+        }
+      }
+    }
+    const withId = new Set(dcRows.filter((d) => d.tenant_object_id).map((d) => d.id));
+    const liveFor = (row: { name: string; discovery_resource_account_id: string | null }, byName: Map<string, Record<string, unknown>>) =>
+      row.discovery_resource_account_id && withId.has(row.discovery_resource_account_id)
+        ? idLive.get(row.discovery_resource_account_id)
+        : byName.get(row.name.toLowerCase());
     const scheduleByGuid = new Map(liveSchedules.map((r) => [r.object_key, r.data as Record<string, unknown>]));
     const upnByObjectId = new Map(liveUsers.map((r) => [r.entra_id!.toLowerCase(), r.upn]));
 
@@ -1315,11 +1421,11 @@ export class BuildService {
     // buildId (deployment.ts's app-enforced reference), not a dangling GUID.
     const liveIdToBuild = new Map<string, { kind: 'auto_attendant' | 'call_queue'; buildId: string }>();
     for (const row of createdAa) {
-      const live = aaByName.get(row.name.toLowerCase());
+      const live = liveFor(row, aaByName);
       if (live && typeof live.Identity === 'string') liveIdToBuild.set(live.Identity.toLowerCase(), { kind: 'auto_attendant', buildId: row.id });
     }
     for (const row of createdCq) {
-      const live = cqByName.get(row.name.toLowerCase());
+      const live = liveFor(row, cqByName);
       if (live && typeof live.Identity === 'string') liveIdToBuild.set(live.Identity.toLowerCase(), { kind: 'call_queue', buildId: row.id });
     }
 
@@ -1327,7 +1433,7 @@ export class BuildService {
     // AA/CQ that account is associated with - same mapping
     // resolveAutoAttendantDeepContext uses at deploy time.
     const ownerByInstance = new Map<string, string>();
-    for (const d of [...aaByName.values(), ...cqByName.values()]) {
+    for (const d of [...aaByName.values(), ...cqByName.values(), ...idLive.values()]) {
       if (typeof d.Identity !== 'string' || !Array.isArray(d.ApplicationInstances)) continue;
       for (const i of d.ApplicationInstances as unknown[]) if (typeof i === 'string') ownerByInstance.set(i.toLowerCase(), d.Identity.toLowerCase());
     }
@@ -1354,7 +1460,7 @@ export class BuildService {
     // sees, instead of two independent implementations that could quietly
     // drift and make every freshly-populated row look "changed".
     for (const row of createdAa) {
-      const live = aaByName.get(row.name.toLowerCase());
+      const live = liveFor(row, aaByName);
       if (!live) continue;
       const structured = liveAutoAttendantToStructured(live, scheduleByGuid, resolveTarget);
       const patch: Record<string, unknown> = {
@@ -1372,7 +1478,7 @@ export class BuildService {
     }
 
     for (const row of createdCq) {
-      const live = cqByName.get(row.name.toLowerCase());
+      const live = liveFor(row, cqByName);
       if (!live) continue;
       const agentUpns = Array.isArray(live.Agents)
         ? (live.Agents as Record<string, unknown>[])

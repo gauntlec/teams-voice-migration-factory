@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { Badge, Button, Card, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Dropdown, Field, MessageBar, MessageBarBody, Option, SearchBox, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text , makeStyles, shorthands, mergeClasses } from '@fluentui/react-components';
 import { EyeRegular } from '@fluentui/react-icons';
-import { buildAutoAttendantFlowGraphFromLive, buildCallQueueFlowGraphFromLive, TENANT_OBJECT_TYPE_LABELS, TENANT_POLICY_TYPE_LABELS, TENANT_POLICY_TYPES, type Paginated, type TenantEndpoint, type TenantObject, type TenantObjectType, type TenantPolicySummary, type TenantPolicyType, type TenantUserSummary, type TenantGroupSummary } from '@tvmf/shared';
+import { buildAutoAttendantFlowGraphFromLive, buildCallQueueFlowGraphFromLive, isCommonAreaPhone, TENANT_OBJECT_TYPE_LABELS, TENANT_POLICY_TYPE_LABELS, TENANT_POLICY_TYPES, type Paginated, type TenantEndpoint, type TenantObject, type TenantObjectType, type TenantPolicySummary, type TenantPolicyType, type TenantUserSummary, type TenantGroupSummary } from '@tvmf/shared';
 import { api, ApiError } from '../../api';
 import { useAuth } from '../../auth';
 import { CallFlowDiagram } from '../../components/CallFlowDiagram';
@@ -11,6 +11,7 @@ import { LoadError } from '../../components/records';
 import { useDebounced } from '../../hooks/useDebounced';
 import { useStyles, fmt, Pager, JsonDialog, str, fetchAllPages } from './discoveryShared';
 import { HistoryButton } from './history';
+import { AddToSiteDialog, useRowSelection, type AddItem } from './addToSite';
 import { TableSkeleton } from '../../components/states';
 
 const useLocalStyles = makeStyles({
@@ -147,8 +148,11 @@ export function ObjectsTable({
   columns,
   flowType,
   actions,
+  addToSite,
 }: {
   base: string;
+  /** adds an "Add to site" tick box, button and row action; `kind` is what the object becomes on the site */
+  addToSite?: { kind: 'resource_account' | 'call_queue' | 'auto_attendant'; onAdded: () => void };
   type: TenantObjectType;
   title?: string;
   columns?: { label: string; render: (o: TenantObject) => ReactNode }[];
@@ -164,6 +168,9 @@ export function ObjectsTable({
   const [page, setPage] = useState(1);
   const [view, setView] = useState<TenantObject | null>(null);
   const [flowFor, setFlowFor] = useState<TenantObject | null>(null);
+  const sel = useRowSelection();
+  const [addItems, setAddItems] = useState<AddItem[] | null>(null);
+  const toItem = (o: TenantObject): AddItem => ({ id: o.id, label: o.display_name ?? o.object_key, kind: addToSite!.kind, detail: o.object_key });
   const limit = 50;
   useEffect(() => setPage(1), [q]);
 
@@ -192,6 +199,11 @@ export function ObjectsTable({
         <div className={s.row}>
           <SearchBox size="small" placeholder="Search…" value={qInput} onChange={(_, d) => setQInput(d.value)} className={ls.minW220} />
           {actions}
+          {addToSite && (
+            <Button size="small" appearance="primary" disabled={sel.count === 0} onClick={() => setAddItems(sel.items)}>
+              Add to site… ({sel.count})
+            </Button>
+          )}
         </div>
       </div>
       {list.isLoading ? (
@@ -207,6 +219,15 @@ export function ObjectsTable({
           <DataTable size="small" minWidth={Math.max(560, (cols.length + 2) * 150)}>
             <TableHeader>
               <TableRow>
+                {addToSite && (
+                  <TableHeaderCell>
+                    <Checkbox
+                      aria-label="Select all on this page"
+                      checked={items.length > 0 && items.every((o) => sel.has(o.id))}
+                      onChange={(_, d) => sel.setMany(items.map(toItem), !!d.checked)}
+                    />
+                  </TableHeaderCell>
+                )}
                 {cols.map((c) => (
                   <TableHeaderCell key={c.label}>{c.label}</TableHeaderCell>
                 ))}
@@ -217,6 +238,11 @@ export function ObjectsTable({
             <TableBody>
               {items.map((o) => (
                 <TableRow key={o.id}>
+                  {addToSite && (
+                    <TableCell>
+                      <Checkbox aria-label={`Select ${o.display_name ?? o.object_key}`} checked={sel.has(o.id)} onChange={() => sel.toggle(toItem(o))} />
+                    </TableCell>
+                  )}
                   {cols.map((c) => (
                     <TableCell key={c.label}>{c.render(o)}</TableCell>
                   ))}
@@ -231,6 +257,11 @@ export function ObjectsTable({
                           Call flow
                         </Button>
                       )}
+                      {addToSite && (
+                        <Button size="small" appearance="subtle" onClick={() => setAddItems([toItem(o)])}>
+                          Add to site…
+                        </Button>
+                      )}
                       <HistoryButton base={base} objectId={o.id} title={o.display_name ?? o.object_key} />
                     </div>
                   </TableCell>
@@ -243,6 +274,16 @@ export function ObjectsTable({
       )}
       {view && <JsonDialog title={view.display_name ?? view.object_key} data={view.data} onClose={() => setView(null)} />}
       {flowFor && flowType && <LiveCallFlowDialog base={base} type={flowType} row={flowFor} onClose={() => setFlowFor(null)} />}
+      {addItems && addToSite && (
+        <AddToSiteDialog
+          items={addItems}
+          onClose={() => {
+            setAddItems(null);
+            sel.clear();
+          }}
+          onDone={addToSite.onAdded}
+        />
+      )}
     </Card>
   );
 }
@@ -365,7 +406,7 @@ export function PoliciesTable({ base }: { base: string }) {
 /** Get-CsOnlineUser AccountType values, spelled exactly as Teams returns them (the filter is an exact match). */
 const ACCOUNT_TYPES = ['User', 'ResourceAccount', 'Guest', 'IneligibleUser', 'SfbOnPremUser', 'Unknown'] as const;
 
-export function UsersTable({ base, canImport, onImported }: { base: string; canImport: boolean; onImported: () => void }) {
+export function UsersTable({ base, canImport, canAdd, onImported }: { base: string; canImport: boolean; canAdd: boolean; onImported: () => void }) {
   const ls = useLocalStyles();
   const s = useStyles();
   const [qInput, setQInput] = useState('');
@@ -375,6 +416,16 @@ export function UsersTable({ base, canImport, onImported }: { base: string; canI
   const [acctType, setAcctType] = useState('');
   const [view, setView] = useState<TenantUserSummary | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const sel = useRowSelection();
+  const [addItems, setAddItems] = useState<AddItem[] | null>(null);
+  // A common area phone is an account like any other here; its licence plan says which it is, and the dialog lets you change it.
+  const toItem = (u: TenantUserSummary): AddItem => ({
+    id: u.id,
+    label: u.display_name ?? u.upn,
+    detail: u.display_name ? u.upn : undefined,
+    kind: 'account',
+    as: isCommonAreaPhone(u.assigned_plans) ? 'cap' : 'user',
+  });
   const limit = 50;
   useEffect(() => setPage(1), [q, evOnly, acctType]);
 
@@ -421,6 +472,11 @@ export function UsersTable({ base, canImport, onImported }: { base: string; canI
               Import into Data Collection…
             </Button>
           )}
+          {canAdd && (
+            <Button size="small" appearance="primary" disabled={sel.count === 0} onClick={() => setAddItems(sel.items)}>
+              Add to site… ({sel.count})
+            </Button>
+          )}
         </div>
       </div>
       {list.isLoading ? (
@@ -436,6 +492,15 @@ export function UsersTable({ base, canImport, onImported }: { base: string; canI
           <DataTable size="small" minWidth={1100}>
             <TableHeader>
               <TableRow>
+                {canAdd && (
+                  <TableHeaderCell>
+                    <Checkbox
+                      aria-label="Select all on this page"
+                      checked={items.length > 0 && items.every((u) => sel.has(u.id))}
+                      onChange={(_, d) => sel.setMany(items.map(toItem), !!d.checked)}
+                    />
+                  </TableHeaderCell>
+                )}
                 <TableHeaderCell>UPN</TableHeaderCell>
                 <TableHeaderCell>Name</TableHeaderCell>
                 <TableHeaderCell>Type</TableHeaderCell>
@@ -451,9 +516,21 @@ export function UsersTable({ base, canImport, onImported }: { base: string; canI
             <TableBody>
               {items.map((u) => (
                 <TableRow key={u.id}>
+                  {canAdd && (
+                    <TableCell>
+                      <Checkbox aria-label={`Select ${u.upn}`} checked={sel.has(u.id)} onChange={() => sel.toggle(toItem(u))} />
+                    </TableCell>
+                  )}
                   <TableCell title={u.upn}>{u.upn}</TableCell>
                   <TableCell title={u.display_name ?? ''}>{u.display_name ?? '—'}</TableCell>
-                  <TableCell>{u.account_type ?? '—'}</TableCell>
+                  <TableCell>
+                    {u.account_type ?? '—'}
+                    {isCommonAreaPhone(u.assigned_plans) && (
+                      <Badge appearance="tint" size="small" title="Has a common area phone licence plan">
+                        CAP
+                      </Badge>
+                    )}
+                  </TableCell>
                   <TableCell>
                     {u.enterprise_voice_enabled ? (
                       <Badge appearance="tint" color="success" size="small">
@@ -492,6 +569,11 @@ export function UsersTable({ base, canImport, onImported }: { base: string; canI
                       <Button size="small" appearance="subtle" icon={<EyeRegular />} onClick={() => setView(u)}>
                         View
                       </Button>
+                      {canAdd && (
+                        <Button size="small" appearance="subtle" onClick={() => setAddItems([toItem(u)])}>
+                          Add to site…
+                        </Button>
+                      )}
                       <HistoryButton base={base} objectId={u.object_id} title={u.display_name ?? u.upn} />
                     </div>
                   </TableCell>
@@ -503,6 +585,16 @@ export function UsersTable({ base, canImport, onImported }: { base: string; canI
         </>
       )}
       {view && <JsonDialog title={view.display_name ?? view.upn} data={view} onClose={() => setView(null)} />}
+      {addItems && (
+        <AddToSiteDialog
+          items={addItems}
+          onClose={() => {
+            setAddItems(null);
+            sel.clear();
+          }}
+          onDone={onImported}
+        />
+      )}
       {importOpen && (
         <ImportDialog
           base={base}
@@ -518,7 +610,7 @@ export function UsersTable({ base, canImport, onImported }: { base: string; canI
   );
 }
 
-export function ResourceAccountsTab({ base, canImport, onImported }: { base: string; canImport: boolean; onImported: () => void }) {
+export function ResourceAccountsTab({ base, canImport, canAdd, onImported }: { base: string; canImport: boolean; canAdd: boolean; onImported: () => void }) {
   const [importOpen, setImportOpen] = useState(false);
 
   return (
@@ -526,6 +618,7 @@ export function ResourceAccountsTab({ base, canImport, onImported }: { base: str
       <ObjectsTable
         base={base}
         type="resource_account"
+        addToSite={canAdd ? { kind: 'resource_account', onAdded: onImported } : undefined}
         columns={[
           { label: 'Name', render: (o) => o.display_name ?? o.object_key },
           { label: 'UPN', render: (o) => str(o, 'UserPrincipalName') },
@@ -850,7 +943,7 @@ export function GroupsTable({ base }: { base: string }) {
  * retired the Graph device-inventory API, so there is no hardware model /
  * serial / firmware to show.)
  */
-export function EndpointsTable({ base }: { base: string }) {
+export function EndpointsTable({ base, canAdd, onAdded }: { base: string; canAdd: boolean; onAdded: () => void }) {
   const ls = useLocalStyles();
   const s = useStyles();
   const list = useQuery({
@@ -858,9 +951,23 @@ export function EndpointsTable({ base }: { base: string }) {
     queryFn: () => api<{ items: TenantEndpoint[] }>(`${base}/endpoints`),
   });
   const items = list.data?.items ?? [];
+  const sel = useRowSelection();
+  const [addItems, setAddItems] = useState<AddItem[] | null>(null);
+  // A common area phone is added as a common area phone; a phone-enabled resource account as a resource account.
+  const toItem = (e: TenantEndpoint): AddItem =>
+    e.kind === 'common_area_phone'
+      ? { id: e.id, label: e.name ?? e.upn ?? e.id, detail: e.upn ?? undefined, kind: 'account', as: 'cap' }
+      : { id: e.id, label: e.name ?? e.upn ?? e.id, detail: e.upn ?? undefined, kind: 'resource_account' };
 
   return (
     <div className={ls.gridGap10}>
+      {canAdd && (
+        <div className={ls.flexGap8}>
+          <Button size="small" appearance="primary" disabled={sel.count === 0} onClick={() => setAddItems(sel.items)}>
+            Add to site… ({sel.count})
+          </Button>
+        </div>
+      )}
       <MessageBar intent="info">
         <MessageBarBody>
           Common Area Phones and phone-enabled resource accounts found in the tenant. Microsoft
@@ -880,6 +987,11 @@ export function EndpointsTable({ base }: { base: string }) {
         <DataTable minWidth={720}>
           <TableHeader>
             <TableRow>
+              {canAdd && (
+                <TableHeaderCell>
+                  <Checkbox aria-label="Select all" checked={items.length > 0 && items.every((e) => sel.has(e.id))} onChange={(_, d) => sel.setMany(items.map(toItem), !!d.checked)} />
+                </TableHeaderCell>
+              )}
               <TableHeaderCell>Type</TableHeaderCell>
               <TableHeaderCell>Name</TableHeaderCell>
               <TableHeaderCell>UPN</TableHeaderCell>
@@ -887,11 +999,17 @@ export function EndpointsTable({ base }: { base: string }) {
               <TableHeaderCell>Calling policy</TableHeaderCell>
               <TableHeaderCell>IP phone policy</TableHeaderCell>
               <TableHeaderCell>Enabled</TableHeaderCell>
+              {canAdd && <TableHeaderCell />}
             </TableRow>
           </TableHeader>
           <TableBody>
             {items.map((e, i) => (
-              <TableRow key={`${e.kind}-${e.upn ?? e.name ?? i}`}>
+              <TableRow key={`${e.kind}-${e.id}-${i}`}>
+                {canAdd && (
+                  <TableCell>
+                    <Checkbox aria-label={`Select ${e.name ?? e.upn ?? ''}`} checked={sel.has(e.id)} onChange={() => sel.toggle(toItem(e))} />
+                  </TableCell>
+                )}
                 <TableCell>
                   <Badge appearance="tint" size="small">
                     {e.kind === 'common_area_phone' ? 'Common area phone' : 'Resource account'}
@@ -903,10 +1021,27 @@ export function EndpointsTable({ base }: { base: string }) {
                 <TableCell>{e.callingPolicy ?? '—'}</TableCell>
                 <TableCell>{e.ipPhonePolicy ?? '—'}</TableCell>
                 <TableCell>{e.enabled == null ? '—' : e.enabled ? 'Yes' : 'No'}</TableCell>
+                {canAdd && (
+                  <TableCell>
+                    <Button size="small" appearance="subtle" onClick={() => setAddItems([toItem(e)])}>
+                      Add to site…
+                    </Button>
+                  </TableCell>
+                )}
               </TableRow>
             ))}
           </TableBody>
         </DataTable>
+      )}
+      {addItems && (
+        <AddToSiteDialog
+          items={addItems}
+          onClose={() => {
+            setAddItems(null);
+            sel.clear();
+          }}
+          onDone={onAdded}
+        />
       )}
     </div>
   );

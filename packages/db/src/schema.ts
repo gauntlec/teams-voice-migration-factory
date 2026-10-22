@@ -586,6 +586,8 @@ export interface DiscoveryResourceAccountsTable {
   site_id: string | null;
   name: string;
   kind: 'auto_attendant' | 'call_queue';
+  /** FK -> tenant_objects.id: the exact discovered object this row was added from (see 0060); null for older rows, which match on name. */
+  tenant_object_id: string | null;
   directory_entry: string | null;
   business_hours: string | null;
   who_answers: string | null;

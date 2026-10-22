@@ -39,6 +39,7 @@ export * from './coordinates';
 export * from './country';
 export * from './site-contacts';
 export * from './validation-issues';
+export * from './common-area-phone';
 
 import type { CmdletInvocation } from './deployment';
 
@@ -316,6 +317,8 @@ export interface TenantConnectionInfo {
  * "which phone endpoints exist", not hardware model / serial / firmware.
  */
 export interface TenantEndpoint {
+  /** tenant_users.id for a common area phone, tenant_objects.id for a resource account: what "add to site" names */
+  id: string;
   kind: 'common_area_phone' | 'resource_account';
   name: string | null;
   upn: string | null;
@@ -424,6 +427,23 @@ export interface BuildRowValidation {
   renamedPolicies: { key: import('./domain').PolicyKey; label: string; storedName: string; liveName: string }[];
   /** target policy keys Discovery doesn't currently track live (see POLICY_KIND_TO_TENANT_TYPE) */
   untracked: import('./domain').PolicyKey[];
+}
+
+/** What happened to one discovered object an engineer added to a site (see addFromDiscoverySchema). */
+export interface AddFromDiscoveryItemResult {
+  id: string;
+  /** what to show: the display name, or the UPN when there is none */
+  label: string;
+  /** the unique key it was matched on: the UPN, or the object's own id/GUID */
+  key: string;
+  dataCollection: 'added' | 'already_on_site' | 'on_other_site' | 'not_found';
+  /** an account added as a user or as a common area phone: where it was routed */
+  as?: 'user' | 'cap';
+  /** Design & Build: not attempted when switched off or Data Collection did not take it */
+  designAndBuild: 'added' | 'already_on_site' | 'not_added' | 'off';
+  /** the site code it is on, when that is not the one chosen */
+  otherSite?: string | null;
+  note?: string;
 }
 
 /** Result of a quick add (POST build/users|caps/quick-add): what happened to each UPN that was typed. */
