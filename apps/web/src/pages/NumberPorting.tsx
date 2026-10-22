@@ -16,7 +16,6 @@ import {
   Field,
   Input,
   Spinner,
-  Switch,
   TableBody,
   TableCell,
   TableHeader,
@@ -60,7 +59,6 @@ interface DocumentType {
   key: string;
   label: string;
   ordinal: number;
-  active: boolean;
 }
 
 interface SiteDocumentType {
@@ -225,20 +223,14 @@ function DocumentCatalogCard({ base }: { base: string }) {
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Save failed'),
   });
 
-  const toggleActive = useMutation({
-    mutationFn: (row: DocumentType) =>
-      api(`${base}/document-types/${row.id}`, { method: 'PATCH', body: JSON.stringify({ active: !row.active }) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['port-doctypes', base] }),
-  });
-
   return (
     <Card className={s.card}>
       <div className={s.cardHead}>
         <div>
           <Text weight="semibold">Document catalog</Text>
           <Text size={200} className={s.muted} block>
-            Every document type Voxshift has ever needed, across every country. Enable the ones a site actually
-            requires below.
+            Every document type Voxshift has ever needed, across every country. Switch on the ones this site
+            needs under Active for this site, below.
           </Text>
         </div>
         <Button
@@ -256,14 +248,13 @@ function DocumentCatalogCard({ base }: { base: string }) {
       </div>
 
       {list.isLoading ? (
-        <TableSkeleton rows={4} cols={5} />
+        <TableSkeleton rows={4} cols={2} />
       ) : (
         <DataTable size="small" minWidth={480}>
           <TableHeader>
             <TableRow>
               <TableHeaderCell>Key</TableHeaderCell>
               <TableHeaderCell>Label</TableHeaderCell>
-              <TableHeaderCell>Active</TableHeaderCell>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -271,13 +262,6 @@ function DocumentCatalogCard({ base }: { base: string }) {
               <TableRow key={row.id}>
                 <TableCell>{row.key}</TableCell>
                 <TableCell>{row.label}</TableCell>
-                <TableCell>
-                  <Switch
-                    checked={row.active}
-                    disabled={toggleActive.isPending}
-                    onChange={() => toggleActive.mutate(row)}
-                  />
-                </TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -344,7 +328,7 @@ function SiteEnablementCard({ base, tid, siteId }: { base: string; tid: string; 
   return (
     <Card className={s.card}>
       <div>
-        <Text weight="semibold">Enabled for this site</Text>
+        <Text weight="semibold">Active for this site</Text>
         <Text size={200} className={s.muted} block>
           Only these show up when building a port request's checklist below.
         </Text>
@@ -498,13 +482,13 @@ function RangeChecklistCard({
           {canReview && request?.status !== 'complete' && (
             <div className={ls.gridGap8}>
               <Text size={200} className={s.muted}>
-                Checklist — pick the documents this port needs (only site-enabled types shown).
+                Checklist — pick the documents this port needs (only types active for this site shown).
               </Text>
               {enabledTypesLoading ? (
                 <Spinner size="tiny" />
               ) : enabledTypes.length === 0 ? (
                 <Text size={200} className={s.muted}>
-                  No document types are enabled for this site yet — enable some above.
+                  No document types are active for this site yet — switch some on above.
                 </Text>
               ) : (
                 enabledTypes.map((t) => {

@@ -99,7 +99,6 @@ export class NumberPortService {
         join.onRef('s.document_type_id', '=', 'dt.id').on('s.site_id', '=', siteId),
       )
       .select(['dt.id', 'dt.key', 'dt.label', 'dt.ordinal', sql<boolean>`coalesce(s.enabled, false)`.as('enabled')])
-      .where('dt.active', '=', true)
       .orderBy('dt.ordinal')
       .execute();
     return rows;
