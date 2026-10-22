@@ -20,6 +20,9 @@ import { FilesService } from '../files/files.service';
 type Actor = Pick<AuthedUser, 'id' | 'email'>;
 const actorOf = (u: AuthedUser): Actor => ({ id: u.id, email: u.email });
 
+/** A re-point range keeps its numbers where they are, so there is nothing to port. */
+const RE_POINT_NO_PORTING = "A re-point range doesn't need porting.";
+
 /**
  * "LOA Data Collection and Tracking" - PM/Engineer builds a per-number-range
  * document checklist (from a site-enabled subset of a global catalog),
@@ -125,7 +128,7 @@ export class NumberPortService {
     const row = await this.s(t)
       .selectFrom('discovery_number_ranges as r')
       .innerJoin('discovery_sites as s', 's.sitecode', 'r.sitecode')
-      .select(['s.id as site_id', 's.name as site_name', 's.sitecode', 's.overview', 'r.range_start', 'r.range_end'])
+      .select(['s.id as site_id', 's.name as site_name', 's.sitecode', 's.overview', 'r.range_start', 'r.range_end', 'r.kind'])
       .where('r.id', '=', rangeId)
       .executeTakeFirst();
     if (!row) throw new NotFoundException('number range not found (or has no site)');
@@ -150,6 +153,7 @@ export class NumberPortService {
         's.overview',
         'r.range_start',
         'r.range_end',
+        'r.kind',
       ])
       .where('req.id', '=', requestId)
       .executeTakeFirst();
@@ -180,7 +184,8 @@ export class NumberPortService {
 
   /** Fetches the request for a number range, creating an empty draft on first access. */
   async getOrCreateRequest(t: TenantContext, rangeId: string) {
-    await this.resolveRangeSite(t, rangeId);
+    const range = await this.resolveRangeSite(t, rangeId);
+    if (range.kind === 'retain') throw new BadRequestException(RE_POINT_NO_PORTING);
     let request = await this.s(t)
       .selectFrom('number_port_requests')
       .selectAll()
@@ -276,6 +281,7 @@ export class NumberPortService {
 
   async submitRequest(t: TenantContext, u: AuthedUser, requestId: string) {
     const req = await this.resolveRequestSite(t, requestId);
+    if (req.kind === 'retain') throw new BadRequestException(RE_POINT_NO_PORTING);
     if (req.status !== 'draft') {
       throw new ConflictException('This request has already been submitted.');
     }

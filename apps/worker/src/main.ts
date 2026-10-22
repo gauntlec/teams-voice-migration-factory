@@ -230,6 +230,7 @@ async function sweepPortDocumentReminders() {
       .innerJoin('discovery_sites as s', 's.sitecode', 'r.sitecode')
       .select(['req.id', 'req.submitted_at', 'req.reminder_sent_at', 'r.range_start', 'r.range_end', 's.id as site_id', 's.name as site_name', 's.sitecode', 's.overview'])
       .where('req.status', '=', 'awaiting_documents')
+      .where('r.kind', '<>', 'retain') // a re-point range has no porting requirements, so no reminders
       .execute();
     for (const row of due) {
       const overview = (row.overview ?? {}) as DiscoverySiteOverview;

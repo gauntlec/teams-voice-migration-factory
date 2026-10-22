@@ -278,7 +278,7 @@ export function SiteWorkspace() {
             {
               key: 'port_status',
               label: 'Port status',
-              render: (r) => (r.port_status ? String(r.port_status).replace(/_/g, ' ') : '—'),
+              render: (r) => (r.kind !== 'retain' && r.port_status ? String(r.port_status).replace(/_/g, ' ') : '—'),
             },
           ]}
           fields={[
