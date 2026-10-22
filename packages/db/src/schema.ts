@@ -433,6 +433,27 @@ export interface DiscoverySitesTable {
   mode: ColumnType<'project' | 'operations', 'project' | 'operations' | undefined, 'project' | 'operations'>;
   mode_changed_at: string | null;
   mode_changed_by: string | null;
+  /** The site's Data Collection review. Nothing is locked; changes after submission are recorded in discovery_site_changes. */
+  review_status: ColumnType<'draft' | 'submitted' | 'accepted', 'draft' | 'submitted' | 'accepted' | undefined, 'draft' | 'submitted' | 'accepted'>;
+  submitted_by: string | null;
+  submitted_at: string | null;
+  accepted_by: string | null;
+  accepted_at: string | null;
+}
+
+/** A change made to a site after it was submitted, for the engineer to see and acknowledge. */
+export interface DiscoverySiteChangesTable {
+  id: Generated<string>;
+  site_id: string;
+  changed_at: Ts;
+  actor_id: string | null;
+  actor_name: string | null;
+  entity: string;
+  entity_label: string | null;
+  action: 'added' | 'changed' | 'removed';
+  detail: string | null;
+  acknowledged_at: string | null;
+  acknowledged_by: string | null;
 }
 
 export interface DiscoveryNumberRangesTable {
@@ -1583,6 +1604,7 @@ export interface DB {
   // tenant
   discovery: DiscoveryTable;
   discovery_sites: DiscoverySitesTable;
+  discovery_site_changes: DiscoverySiteChangesTable;
   discovery_number_ranges: DiscoveryNumberRangesTable;
   port_document_types: PortDocumentTypesTable;
   site_port_document_types: SitePortDocumentTypesTable;

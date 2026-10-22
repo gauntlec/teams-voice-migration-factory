@@ -19,7 +19,9 @@ export interface SiteSummary {
     country: string | null;
     region: string | null;
   };
-  status: 'draft' | 'submitted' | 'accepted';
+  review: import('./siteReview').SiteReview;
+  /** changes made after the site was submitted that nobody has acknowledged yet */
+  pendingChanges: number;
   callingPolicies: (Row & { name: string })[];
   numberSummary: { total: number; available: number; reserved: number; assigned: number };
   overview: DiscoverySiteOverview;

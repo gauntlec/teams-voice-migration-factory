@@ -45,24 +45,53 @@ export class ProgressService {
     const s = tenantDb(this.db, t.schema);
     const fullView = can(user.role, 'build:read') && can(user.role, 'deployment:read');
 
-    let sitesQ = s.selectFrom('discovery_sites').select(['id', 'sitecode', 'name', 'mode']).orderBy('sitecode');
+    let sitesQ = s.selectFrom('discovery_sites').select(['id', 'sitecode', 'name', 'mode', 'review_status']).orderBy('sitecode');
     if (isSiteScoped(t)) sitesQ = sitesQ.where('id', 'in', t.siteScope);
-    const [discovery, sites] = await Promise.all([s.selectFrom('discovery').select('status').executeTakeFirst(), sitesQ.execute()]);
-    const discoveryStatus: DiscoveryStatus = discovery?.status ?? 'draft';
+    const sites = await sitesQ.execute();
     const siteIds = sites.map((x) => x.id);
+    const canReview = can(user.role, 'discovery:review');
+
+    // Changes made to a site after it was submitted that nobody has acknowledged: only the people who review them are told.
+    const changedSites = new Set<string>();
+    if (canReview && siteIds.length) {
+      const pending = await s
+        .selectFrom('discovery_site_changes')
+        .select('site_id')
+        .where('site_id', 'in', siteIds)
+        .where('acknowledged_at', 'is', null)
+        .groupBy('site_id')
+        .execute();
+      for (const r of pending) changedSites.add(r.site_id);
+    }
+    const dataCollection = {
+      sites: sites.length,
+      draft: sites.filter((x) => x.review_status === 'draft').length,
+      submitted: sites.filter((x) => x.review_status === 'submitted').length,
+      accepted: sites.filter((x) => x.review_status === 'accepted').length,
+      withChanges: changedSites.size,
+    };
 
     const items: CustomerProgressItem[] = [];
-    if (discoveryStatus === 'draft') {
-      items.push({ kind: 'data_collection', message: 'Data Collection has not been submitted yet', attention: true });
-    } else if (discoveryStatus === 'submitted') {
+    const sitesWord = (n: number) => `${n} ${n === 1 ? 'site' : 'sites'}`;
+    if (dataCollection.draft > 0) {
+      items.push({ kind: 'data_collection', message: `Data Collection has not been submitted for ${sitesWord(dataCollection.draft)}`, attention: true });
+    }
+    if (dataCollection.submitted > 0) {
       items.push({
         kind: 'data_collection',
-        message: 'Data Collection is submitted and waiting for review',
-        attention: can(user.role, 'discovery:review'),
+        message: `${sitesWord(dataCollection.submitted)} submitted and waiting for review`,
+        attention: canReview,
+      });
+    }
+    if (dataCollection.withChanges > 0) {
+      items.push({
+        kind: 'data_collection',
+        message: `${sitesWord(dataCollection.withChanges)} changed since being submitted`,
+        attention: true,
       });
     }
 
-    const out: CustomerProgress = { discoveryStatus, fullView, sites: [], items };
+    const out: CustomerProgress = { dataCollection, fullView, sites: [], items };
     if (can(user.role, 'tenantdiscovery:read')) await this.addDiscoverySync(t, out);
     if (t.managedServices && can(user.role, 'sr:read')) await this.addServiceRequests(t, user, out);
     if (siteIds.length === 0) return out;
@@ -142,7 +171,7 @@ export class ProgressService {
       const firstLiveAt = firstLive.find((x) => x.site_id === site.id);
 
       const input: SiteProgressInput = {
-        discoveryStatus,
+        discoveryStatus: site.review_status,
         captured: {
           users: capUsers.get(site.id) ?? 0,
           caps: capCaps.get(site.id) ?? 0,

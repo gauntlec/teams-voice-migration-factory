@@ -74,22 +74,38 @@ export class DataCollectionController {
     return this.svc.updateSiteOverview(t, u, siteId, body, this.review(u));
   }
 
-  @Post('submit')
+  /* ----------------------------- site review ----------------------------- */
+
+  /** Submit one site for review. Anyone who can write it, including a site contact limited to that site. */
+  @Post('sites/:siteId/submit')
   @RequirePermission('discovery:write')
-  submit(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser) {
-    return this.svc.submit(t, u);
+  submitSite(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Param('siteId') siteId: string) {
+    return this.svc.submitSite(t, u, siteId);
   }
 
-  @Post('accept')
+  @Post('sites/:siteId/accept')
   @RequirePermission('discovery:review')
-  accept(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser) {
-    return this.svc.accept(t, u);
+  acceptSite(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Param('siteId') siteId: string) {
+    return this.svc.acceptSite(t, u, siteId);
   }
 
-  @Post('reopen')
+  @Post('sites/:siteId/reopen')
   @RequirePermission('discovery:review')
-  reopen(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser) {
-    return this.svc.reopen(t, u);
+  reopenSite(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Param('siteId') siteId: string) {
+    return this.svc.reopenSite(t, u, siteId);
+  }
+
+  /** Changes made to the site since it was submitted that nobody has acknowledged yet. */
+  @Get('sites/:siteId/changes')
+  @RequirePermission('discovery:review')
+  listSiteChanges(@TenantCtx() t: TenantContext, @Param('siteId') siteId: string) {
+    return this.svc.listSiteChanges(t, siteId);
+  }
+
+  @Post('sites/:siteId/changes/acknowledge')
+  @RequirePermission('discovery:review')
+  acknowledgeSiteChanges(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Param('siteId') siteId: string) {
+    return this.svc.acknowledgeSiteChanges(t, u, siteId);
   }
 
   /* -------------------------------- sites -------------------------------- */

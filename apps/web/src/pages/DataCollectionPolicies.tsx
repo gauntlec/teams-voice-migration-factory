@@ -8,7 +8,6 @@ import { Page } from '../components/Page';
 import { CrudSection, LoadError, NoTenant, type Row } from '../components/records';
 
 interface PoliciesResponse {
-  discovery: { status: 'draft' | 'submitted' | 'accepted' } | null;
   callingPolicies: (Row & { name: string })[];
 }
 
@@ -33,10 +32,8 @@ export function DataCollectionPolicies() {
   if (q.isLoading) return <Spinner label="Loading…" />;
   if (q.isError) return <LoadError message={(q.error as Error).message} />;
 
-  const status = q.data!.discovery?.status ?? 'draft';
-  const canReview = can('discovery:review');
-  const locked =
-    !can('discovery:write') || status === 'accepted' || (status === 'submitted' && !canReview);
+  // Not tied to one site, so the site reviews don't lock it: it is editable by anyone who can write Data Collection.
+  const locked = !can('discovery:write');
 
   return (
     <Page

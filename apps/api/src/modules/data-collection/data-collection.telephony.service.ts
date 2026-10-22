@@ -134,7 +134,6 @@ export class TelephonyService {
    * them stay, just unlinked), in one transaction and one audit row.
    */
   async bulkDelete(t: TenantContext, u: AuthedUser, kind: 'user' | 'cap' | 'resource_account', body: DiscoveryBulkDeleteInput, canReview: boolean) {
-    await this.base.assertEditable(t, canReview);
     const table = ({ user: 'discovery_users', cap: 'discovery_caps', resource_account: 'discovery_resource_accounts' } as const)[kind];
     let ids: string[];
     let siteId: string | null = null;
@@ -149,6 +148,7 @@ export class TelephonyService {
       ids = (await this.s(t).selectFrom(table).select('id').where('site_id', '=', siteId).execute()).map((r) => r.id);
     }
     if (ids.length === 0) return { deleted: 0 };
+    const tracked = await this.holderRows(t, table, ids);
 
     await this.db.transaction().execute(async (trx) => {
       const x = tenantDb(trx as unknown as Kysely<DB>, t.schema);
@@ -169,6 +169,7 @@ export class TelephonyService {
       targetId: siteId ?? undefined,
       detail: { count: ids.length, all: !!siteId, ids: ids.slice(0, 500) },
     });
+    await this.trackRows(t, u, tracked, ({ user: 'User', cap: 'Common area phone', resource_account: 'Resource account' } as const)[kind], 'removed');
     return { deleted: ids.length };
   }
 
@@ -459,7 +460,6 @@ export class TelephonyService {
 
   async addCallingPolicy(t: TenantContext, u: AuthedUser, i: CallingPolicyInput, canReview: boolean) {
     assertCustomerWide(t, 'Outbound calling policies');
-    await this.base.assertEditable(t, canReview);
     try {
       const row = await this.s(t)
         .insertInto('discovery_calling_policies')
@@ -493,7 +493,6 @@ export class TelephonyService {
     canReview: boolean,
   ) {
     assertCustomerWide(t, 'Outbound calling policies');
-    await this.base.assertEditable(t, canReview);
     const set: Record<string, unknown> = { updated_at: new Date().toISOString() };
     for (const k of [
       'name',
@@ -523,7 +522,6 @@ export class TelephonyService {
 
   async deleteCallingPolicy(t: TenantContext, u: AuthedUser, id: string, canReview: boolean) {
     assertCustomerWide(t, 'Outbound calling policies');
-    await this.base.assertEditable(t, canReview);
     const res = await this.s(t).deleteFrom('discovery_calling_policies').where('id', '=', id).executeTakeFirst();
     if (!Number(res.numDeletedRows)) throw new NotFoundException('calling policy not found');
     await this.audit.tenant(t.schema, 'discovery.calling_policy_deleted', {
@@ -537,10 +535,10 @@ export class TelephonyService {
   /* ========================= number ranges ========================= */
 
   async addRange(t: TenantContext, u: AuthedUser, i: DiscoveryNumberRangeInput, canReview: boolean) {
-    await this.base.assertEditable(t, canReview);
     const e164s = expandRange(i.range_start, i.range_end);
     await this.siteByCode(t, i.sitecode);
     const { range, generated } = await this.insertRange(t, u, i, e164s);
+    await this.base.trackChange(t, u, { sitecode: i.sitecode, entity: 'Number range', action: 'added', label: `${i.range_start} – ${i.range_end}` });
     return { range, generated, skipped: e164s.length - generated };
   }
 
@@ -588,7 +586,6 @@ export class TelephonyService {
    * are all in the inventory already is skipped, so a half-finished import can be run again.
    */
   async importRanges(t: TenantContext, u: AuthedUser, input: NumberRangesImportInput, canReview: boolean) {
-    await this.base.assertEditable(t, canReview);
     assertSiteInScope(t, input.site_id);
     const site = await this.s(t)
       .selectFrom('discovery_sites')
@@ -637,6 +634,7 @@ export class TelephonyService {
       targetId: site.id,
       detail: { created, numbers, skipped, failed: errors.length },
     });
+    if (created > 0) await this.base.trackChange(t, u, { siteId: site.id, entity: 'Number range', action: 'added', label: `${created} range${created === 1 ? '' : 's'} imported`, detail: `${numbers} numbers` });
     return { created, numbers, skipped, errors };
   }
 
@@ -647,7 +645,6 @@ export class TelephonyService {
     patch: Partial<DiscoveryNumberRangeInput>,
     canReview: boolean,
   ) {
-    await this.base.assertEditable(t, canReview);
     await this.assertRangeInScope(t, id);
     // Bounds are fixed once numbers are generated - recreate the range to change them.
     const set: Record<string, unknown> = {};
@@ -667,12 +664,13 @@ export class TelephonyService {
       targetType: 'discovery_number_range',
       targetId: id,
     });
+    await this.base.trackChange(t, u, { sitecode: row.sitecode, entity: 'Number range', action: 'changed', label: `${row.range_start} – ${row.range_end}`, detail: Object.keys(set).join(', ') });
     return row;
   }
 
   async deleteRange(t: TenantContext, u: AuthedUser, id: string, canReview: boolean) {
-    await this.base.assertEditable(t, canReview);
     await this.assertRangeInScope(t, id);
+    const prevRange = await this.s(t).selectFrom('discovery_number_ranges').select(['sitecode', 'range_start', 'range_end']).where('id', '=', id).executeTakeFirst();
     const inUse = await this.s(t)
       .selectFrom('phone_numbers')
       .select((eb) => eb.fn.countAll<string>().as('n'))
@@ -692,11 +690,11 @@ export class TelephonyService {
       targetType: 'discovery_number_range',
       targetId: id,
     });
+    if (prevRange) await this.base.trackChange(t, u, { sitecode: prevRange.sitecode, entity: 'Number range', action: 'removed', label: `${prevRange.range_start} – ${prevRange.range_end}` });
     return { ok: true };
   }
 
   async reserveNumber(t: TenantContext, u: AuthedUser, id: string, reserved: boolean, canReview: boolean) {
-    await this.base.assertEditable(t, canReview);
     await this.assertNumberInScope(t, id);
     const n = await this.s(t).selectFrom('phone_numbers').selectAll().where('id', '=', id).executeTakeFirst();
     if (!n) throw new NotFoundException('phone number not found');
@@ -712,6 +710,8 @@ export class TelephonyService {
       targetType: 'phone_number',
       targetId: id,
     });
+    const owner = await this.s(t).selectFrom('discovery_number_ranges').select('sitecode').where('id', '=', row.range_id).executeTakeFirst();
+    await this.base.trackChange(t, u, { sitecode: owner?.sitecode, entity: 'Number', action: 'changed', label: row.e164, detail: reserved ? 'reserved' : 'released' });
     return row;
   }
 
@@ -807,7 +807,6 @@ export class TelephonyService {
   }
 
   async addUser(t: TenantContext, u: AuthedUser, i: DiscoveryUserInput, canReview: boolean) {
-    await this.base.assertEditable(t, canReview);
     const siteId = await this.resolveHolderSite(t, i.site_id);
     if (nz(i.phone_number_id)) await this.assertNumberInScope(t, nz(i.phone_number_id)!);
     const tenantUserId = await this.tenantUserIdFor(t, i.upn);
@@ -843,6 +842,7 @@ export class TelephonyService {
       targetType: 'discovery_user',
       targetId: row.id,
     });
+    await this.base.trackChange(t, u, { siteId: row.site_id, entity: 'User', action: 'added', label: row.upn });
     return row;
   }
 
@@ -853,7 +853,6 @@ export class TelephonyService {
     patch: Partial<DiscoveryUserInput>,
     canReview: boolean,
   ) {
-    await this.base.assertEditable(t, canReview);
     await this.assertHolderInScope(t, 'discovery_users', id, 'user not found');
     const set: Record<string, unknown> = { updated_at: new Date().toISOString() };
     for (const k of [
@@ -892,14 +891,15 @@ export class TelephonyService {
       targetType: 'discovery_user',
       targetId: id,
     });
+    await this.base.trackChange(t, u, { siteId: row.site_id, entity: 'User', action: 'changed', label: row.upn, detail: Object.keys(patch).join(', ') });
     return row;
   }
 
   /** Select many users, set a handful of fields once, apply to all of them -
    * see applyBulkPatch (shared with Design & Build's identical action). */
   async bulkUpdateUsers(t: TenantContext, u: AuthedUser, body: DiscoveryUserBulkPatchInput, canReview: boolean) {
-    await this.base.assertEditable(t, canReview);
     await this.assertHolderIdsInScope(t, 'discovery_users', body.ids);
+    const tracked = await this.holderRows(t, 'discovery_users', body.ids);
     const { updated, appliedPatch } = await applyBulkPatch(this.s(t), 'discovery_users', body.ids, body.patch);
     await auditBulkPatch(this.audit, t.schema, 'discovery.users_bulk_updated', {
       actor: actorOf(u),
@@ -908,12 +908,13 @@ export class TelephonyService {
       updated,
       patch: appliedPatch,
     });
+    await this.trackRows(t, u, tracked, 'User', 'changed', Object.keys(appliedPatch).join(', '));
     return { updated };
   }
 
   async deleteUser(t: TenantContext, u: AuthedUser, id: string, canReview: boolean) {
-    await this.base.assertEditable(t, canReview);
     await this.assertHolderInScope(t, 'discovery_users', id, 'user not found');
+    const tracked = await this.holderRows(t, 'discovery_users', [id]);
     await this.releaseHolder(t, 'user', id);
     const res = await this.s(t).deleteFrom('discovery_users').where('id', '=', id).executeTakeFirst();
     if (!Number(res.numDeletedRows)) throw new NotFoundException('user not found');
@@ -922,6 +923,7 @@ export class TelephonyService {
       targetType: 'discovery_user',
       targetId: id,
     });
+    await this.trackRows(t, u, tracked, 'User', 'removed');
     return { ok: true };
   }
 
@@ -937,7 +939,6 @@ export class TelephonyService {
    * has none recorded.
    */
   async relinkUsers(t: TenantContext, u: AuthedUser, siteId: string, canReview: boolean) {
-    await this.base.assertEditable(t, canReview);
     assertSiteInScope(t, siteId);
     const s = this.s(t);
     const tenantUsersRef = sql.table(`${t.schema}.tenant_users`);
@@ -1014,7 +1015,6 @@ export class TelephonyService {
     rows: ImportUserRow[],
     canReview: boolean,
   ) {
-    await this.base.assertEditable(t, canReview);
     assertSiteInScope(t, siteId);
     const s = this.s(t);
 
@@ -1102,13 +1102,13 @@ export class TelephonyService {
       targetId: siteId,
       detail: { created, skipped, errors: errors.length },
     });
+    if (created > 0) await this.base.trackChange(t, u, { siteId, entity: 'User', action: 'added', label: `${created} user${created === 1 ? '' : 's'} imported` });
     return { created, skipped, errors };
   }
 
   /* ============================== caps ============================== */
 
   async addCap(t: TenantContext, u: AuthedUser, i: DiscoveryCapInput, canReview: boolean) {
-    await this.base.assertEditable(t, canReview);
     const siteId = await this.resolveHolderSite(t, i.site_id);
     if (nz(i.phone_number_id)) await this.assertNumberInScope(t, nz(i.phone_number_id)!);
     const row = await this.s(t)
@@ -1133,6 +1133,7 @@ export class TelephonyService {
       targetType: 'discovery_cap',
       targetId: row.id,
     });
+    await this.base.trackChange(t, u, { siteId: row.site_id, entity: 'Common area phone', action: 'added', label: row.display_name });
     return row;
   }
 
@@ -1143,7 +1144,6 @@ export class TelephonyService {
     patch: Partial<DiscoveryCapInput>,
     canReview: boolean,
   ) {
-    await this.base.assertEditable(t, canReview);
     await this.assertHolderInScope(t, 'discovery_caps', id, 'CAP not found');
     const set: Record<string, unknown> = { updated_at: new Date().toISOString() };
     for (const k of [
@@ -1176,14 +1176,15 @@ export class TelephonyService {
       targetType: 'discovery_cap',
       targetId: id,
     });
+    await this.base.trackChange(t, u, { siteId: row.site_id, entity: 'Common area phone', action: 'changed', label: row.display_name, detail: Object.keys(patch).join(', ') });
     return row;
   }
 
   /** Select many CAPs, set a handful of fields once, apply to all of them -
    * see applyBulkPatch (shared with Design & Build's identical action). */
   async bulkUpdateCaps(t: TenantContext, u: AuthedUser, body: DiscoveryCapBulkPatchInput, canReview: boolean) {
-    await this.base.assertEditable(t, canReview);
     await this.assertHolderIdsInScope(t, 'discovery_caps', body.ids);
+    const tracked = await this.holderRows(t, 'discovery_caps', body.ids);
     const { updated, appliedPatch } = await applyBulkPatch(this.s(t), 'discovery_caps', body.ids, body.patch);
     await auditBulkPatch(this.audit, t.schema, 'discovery.caps_bulk_updated', {
       actor: actorOf(u),
@@ -1192,12 +1193,13 @@ export class TelephonyService {
       updated,
       patch: appliedPatch,
     });
+    await this.trackRows(t, u, tracked, 'Common area phone', 'changed', Object.keys(appliedPatch).join(', '));
     return { updated };
   }
 
   async deleteCap(t: TenantContext, u: AuthedUser, id: string, canReview: boolean) {
-    await this.base.assertEditable(t, canReview);
     await this.assertHolderInScope(t, 'discovery_caps', id, 'CAP not found');
+    const tracked = await this.holderRows(t, 'discovery_caps', [id]);
     await this.releaseHolder(t, 'cap', id);
     const res = await this.s(t).deleteFrom('discovery_caps').where('id', '=', id).executeTakeFirst();
     if (!Number(res.numDeletedRows)) throw new NotFoundException('CAP not found');
@@ -1206,6 +1208,7 @@ export class TelephonyService {
       targetType: 'discovery_cap',
       targetId: id,
     });
+    await this.trackRows(t, u, tracked, 'Common area phone', 'removed');
     return { ok: true };
   }
 
@@ -1217,7 +1220,6 @@ export class TelephonyService {
     i: DiscoveryResourceAccountInput,
     canReview: boolean,
   ) {
-    await this.base.assertEditable(t, canReview);
     const siteId = await this.resolveHolderSite(t, i.site_id);
     const row = await this.s(t)
       .insertInto('discovery_resource_accounts')
@@ -1242,6 +1244,7 @@ export class TelephonyService {
       targetType: 'discovery_resource_account',
       targetId: row.id,
     });
+    await this.base.trackChange(t, u, { siteId: row.site_id, entity: 'Resource account', action: 'added', label: row.name });
     return row;
   }
 
@@ -1252,7 +1255,6 @@ export class TelephonyService {
     patch: Partial<DiscoveryResourceAccountInput>,
     canReview: boolean,
   ) {
-    await this.base.assertEditable(t, canReview);
     await this.assertHolderInScope(t, 'discovery_resource_accounts', id, 'resource account not found');
     const set: Record<string, unknown> = { updated_at: new Date().toISOString() };
     for (const k of [
@@ -1283,12 +1285,13 @@ export class TelephonyService {
       targetType: 'discovery_resource_account',
       targetId: id,
     });
+    await this.base.trackChange(t, u, { siteId: row.site_id, entity: 'Resource account', action: 'changed', label: row.name, detail: Object.keys(patch).join(', ') });
     return row;
   }
 
   async deleteResourceAccount(t: TenantContext, u: AuthedUser, id: string, canReview: boolean) {
-    await this.base.assertEditable(t, canReview);
     await this.assertHolderInScope(t, 'discovery_resource_accounts', id, 'resource account not found');
+    const tracked = await this.holderRows(t, 'discovery_resource_accounts', [id]);
     await this.releaseHolder(t, 'resource_account', id);
     const res = await this.s(t)
       .deleteFrom('discovery_resource_accounts')
@@ -1300,11 +1303,11 @@ export class TelephonyService {
       targetType: 'discovery_resource_account',
       targetId: id,
     });
+    await this.trackRows(t, u, tracked, 'Resource account', 'removed');
     return { ok: true };
   }
 
   async attachRaNumber(t: TenantContext, u: AuthedUser, raId: string, numberId: string, canReview: boolean) {
-    await this.base.assertEditable(t, canReview);
     await this.assertHolderInScope(t, 'discovery_resource_accounts', raId, 'resource account not found');
     await this.assertNumberInScope(t, numberId);
     const ra = await this.s(t)
@@ -1320,11 +1323,11 @@ export class TelephonyService {
       targetId: raId,
       detail: { numberId },
     });
+    await this.trackRows(t, u, await this.holderRows(t, 'discovery_resource_accounts', [raId]), 'Resource account number', 'added');
     return { ok: true };
   }
 
   async detachRaNumber(t: TenantContext, u: AuthedUser, raId: string, numberId: string, canReview: boolean) {
-    await this.base.assertEditable(t, canReview);
     await this.assertHolderInScope(t, 'discovery_resource_accounts', raId, 'resource account not found');
     const res = await this.s(t)
       .updateTable('phone_numbers')
@@ -1340,7 +1343,39 @@ export class TelephonyService {
       targetId: raId,
       detail: { numberId },
     });
+    await this.trackRows(t, u, await this.holderRows(t, 'discovery_resource_accounts', [raId]), 'Resource account number', 'removed');
     return { ok: true };
+  }
+
+  /** Site and name of rows about to change or go, read first so a delete can still be recorded afterwards. */
+  private async holderRows(t: TenantContext, table: 'discovery_users' | 'discovery_caps' | 'discovery_resource_accounts', ids: string[]) {
+    if (ids.length === 0) return [];
+    const s = this.s(t);
+    if (table === 'discovery_users') {
+      return (await s.selectFrom(table).select(['site_id', 'upn as label']).where('id', 'in', ids).execute()) as { site_id: string | null; label: string | null }[];
+    }
+    if (table === 'discovery_caps') {
+      return (await s.selectFrom(table).select(['site_id', 'display_name as label']).where('id', 'in', ids).execute()) as { site_id: string | null; label: string | null }[];
+    }
+    return (await s.selectFrom(table).select(['site_id', 'name as label']).where('id', 'in', ids).execute()) as { site_id: string | null; label: string | null }[];
+  }
+
+  /** One change per site for a group of rows, named by the first few. */
+  private async trackRows(
+    t: TenantContext,
+    u: AuthedUser,
+    rows: { site_id: string | null; label: string | null }[],
+    entity: string,
+    action: 'added' | 'changed' | 'removed',
+    detail?: string,
+  ) {
+    const bySite = new Map<string, string[]>();
+    for (const r of rows) if (r.site_id) bySite.set(r.site_id, [...(bySite.get(r.site_id) ?? []), r.label ?? '']);
+    for (const [siteId, labels] of bySite) {
+      const named = labels.filter(Boolean);
+      const label = named.slice(0, 3).join(', ') + (labels.length > 3 ? ` and ${labels.length - 3} more` : '');
+      await this.base.trackChange(t, u, { siteId, entity, action, label: label || `${labels.length}`, detail });
+    }
   }
 
   private dupName(e: unknown, what: string): Error {

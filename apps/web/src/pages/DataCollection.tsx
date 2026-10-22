@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Link, Navigate, useNavigate } from 'react-router';
 import { RowLink } from '../components/RowLink';
+import { ReviewStatusBadge } from '../components/ReviewStatusBadge';
+import type { DiscoveryStatus } from '@tvmf/shared';
 import {
-  Badge,
-  Button,
   Card,
   MessageBar,
   MessageBarBody,
@@ -47,6 +47,9 @@ interface SiteRollup extends Row {
   region: string | null;
   latitude: number | null;
   longitude: number | null;
+  review_status: DiscoveryStatus;
+  /** changes made after submission that nobody has acknowledged yet (reviewers only) */
+  pendingChanges: number;
   counts: {
     users: number;
     caps: number;
@@ -59,17 +62,10 @@ interface SiteRollup extends Row {
   };
 }
 interface LandingResponse {
-  discovery: { id: string; status: 'draft' | 'submitted' | 'accepted' } | null;
   callingPolicies: (Row & { name: string })[];
   siteScope: string[] | null;
   sites: SiteRollup[];
 }
-
-const STATUS_COLOR: Record<string, 'informative' | 'warning' | 'success'> = {
-  draft: 'informative',
-  submitted: 'warning',
-  accepted: 'success',
-};
 
 export function DataCollection() {
   const ls = useLocalStyles();
@@ -78,9 +74,7 @@ export function DataCollection() {
   const { activeTenantId, can, me } = useAuth();
   const activeTenant = me?.tenants.find((t) => t.id === activeTenantId);
   const siteScoped = !!activeTenant?.siteScoped;
-  const qc = useQueryClient();
   const key = ['discovery', activeTenantId];
-  const refetch = () => qc.invalidateQueries({ queryKey: key });
   // Sites default to the list; the last choice is remembered per browser.
   const [view, setViewState] = useState<'map' | 'list'>(() => {
     const saved = localStorage.getItem('tvmf.sitesView');
@@ -98,22 +92,12 @@ export function DataCollection() {
     queryFn: () => api<LandingResponse>(`/t/${activeTenantId}/discovery`),
   });
 
-  const action = useMutation({
-    mutationFn: (verb: 'submit' | 'accept' | 'reopen') =>
-      api(`/t/${activeTenantId}/discovery/${verb}`, { method: 'POST' }),
-    onSuccess: refetch,
-  });
-
   if (!activeTenantId) return <NoTenant />;
   if (q.isLoading) return <Spinner label="Loading discovery…" />;
   if (q.isError) return <LoadError message={(q.error as Error).message} />;
 
   const d = q.data!;
-  const status = d.discovery?.status ?? 'draft';
-  const canWrite = can('discovery:write');
-  const canReview = can('discovery:review');
   const canManageSites = can('discovery:sites:manage');
-  const locked = !canWrite || status === 'accepted' || (status === 'submitted' && !canReview);
   const open = (id: string) => navigate(`/data-collection/sites/${id}`);
 
   // A site contact tied to exactly one site goes straight into that site.
@@ -131,55 +115,19 @@ export function DataCollection() {
     <Page
       title="Data Collection"
       subtitle="Pick a site to capture its overview, numbers, users, CAPs and resource accounts."
-      actions={
-        <div className={ls.flexGap8}>
-          {canWrite && status === 'draft' && !siteScoped && (
-            <Button appearance="primary" disabled={action.isPending} onClick={() => action.mutate('submit')}>
-              Submit for review
-            </Button>
-          )}
-          {canReview && status === 'submitted' && (
-            <Button appearance="primary" disabled={action.isPending} onClick={() => action.mutate('accept')}>
-              Accept
-            </Button>
-          )}
-          {canReview && status !== 'draft' && (
-            <Button disabled={action.isPending} onClick={() => action.mutate('reopen')}>
-              Reopen
-            </Button>
-          )}
-        </div>
-      }
     >
-      <div className={ls.flexWrapItemsCenterGap10}>
-        <Text>Status:</Text>
-        <Badge appearance="tint" color={STATUS_COLOR[status]}>
-          {status}
-        </Badge>
-        {locked && (
-          <Text size={200} className={s.muted}>
-            {status === 'accepted'
-              ? 'Accepted and locked — reopen to edit.'
-              : status === 'submitted'
-                ? 'Submitted for engineer review.'
-                : 'Read-only for your role.'}
-          </Text>
-        )}
-        {!siteScoped && (
-          <>
-            <Text className={s.muted}>·</Text>
-            <Link to="/data-collection/policies">Outbound calling policies →</Link>
-          </>
-        )}
-      </div>
-      {action.isError && <LoadError message={(action.error as Error).message} />}
+      {!siteScoped && (
+        <div className={ls.flexWrapItemsCenterGap10}>
+          <Link to="/data-collection/policies">Outbound calling policies →</Link>
+        </div>
+      )}
 
       {siteScoped && (
         <MessageBar intent="info">
           <MessageBarBody>
-            You are a site contact for this customer. Only your assigned sites are shown. Each
-            site's overview, the calling policies and submitting for review are handled by the
-            migration team.
+            You are a site contact for this customer. Only your assigned sites are shown. You can submit
+            each of your sites for review from its page; the site overview and the calling policies are
+            handled by the migration team.
           </MessageBarBody>
         </MessageBar>
       )}
@@ -257,6 +205,7 @@ export function DataCollection() {
                   <TableHeaderCell>Sitecode</TableHeaderCell>
                   <TableHeaderCell>Name</TableHeaderCell>
                   <TableHeaderCell>Country</TableHeaderCell>
+                  <TableHeaderCell>Review</TableHeaderCell>
                   <TableHeaderCell>Users</TableHeaderCell>
                   <TableHeaderCell>Numbers</TableHeaderCell>
                   <TableHeaderCell>CAPs</TableHeaderCell>
@@ -271,6 +220,9 @@ export function DataCollection() {
                   </TableCell>
                     <TableCell>{r.name || '—'}</TableCell>
                     <TableCell>{r.country || '—'}</TableCell>
+                    <TableCell>
+                      <ReviewStatusBadge status={r.review_status} pendingChanges={r.pendingChanges} />
+                    </TableCell>
                     <TableCell>{r.counts?.users ?? 0}</TableCell>
                     <TableCell>
                       {r.counts ? `${r.counts.numbersAssigned}/${r.counts.numbers}` : '0/0'}

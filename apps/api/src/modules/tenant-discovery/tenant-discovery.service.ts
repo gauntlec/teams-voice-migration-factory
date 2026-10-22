@@ -892,7 +892,6 @@ export class TenantDiscoveryService {
    * to..." convenience), and is skipped if neither is given.
    */
   async importUsers(t: TenantContext, user: AuthedUser, input: TenantUsersImportInput, canReview: boolean) {
-    await this.dataCollection.assertEditable(t, canReview);
     const s = this.s(t);
     const assignmentMap = new Map(input.assignments.map((a) => [a.id, a.siteId]));
     await this.assertSitesUsable(t, new Set([...assignmentMap.values(), ...(input.siteId ? [input.siteId] : [])]));
@@ -928,6 +927,7 @@ export class TenantDiscoveryService {
 
     let created = 0;
     let skipped = 0;
+    const perSite = new Map<string, number>();
     for (const r of rows) {
       const siteId = assignmentMap.get(r.id) ?? input.siteId;
       if (!siteId) {
@@ -945,6 +945,7 @@ export class TenantDiscoveryService {
         })
         .execute();
       created += 1;
+      perSite.set(siteId, (perSite.get(siteId) ?? 0) + 1);
     }
 
     const result = { created, skipped, linked: Number(relinked?.numUpdatedRows ?? 0) };
@@ -954,6 +955,7 @@ export class TenantDiscoveryService {
       targetId: input.siteId,
       detail: { created, skipped, linked: result.linked, onlyEnterpriseVoice: input.onlyEnterpriseVoice },
     });
+    for (const [siteId, n] of perSite) await this.dataCollection.trackChange(t, user, { siteId, entity: 'User', action: 'added', label: `${n} user${n === 1 ? '' : 's'} imported from the tenant` });
     return result;
   }
 
@@ -1030,7 +1032,6 @@ export class TenantDiscoveryService {
   }
 
   async importResourceAccounts(t: TenantContext, user: AuthedUser, input: TenantResourceAccountsImportInput, canReview: boolean) {
-    await this.dataCollection.assertEditable(t, canReview);
     const s = this.s(t);
     const assignmentMap = new Map(input.assignments.map((a) => [a.id, a.siteId]));
     await this.assertSitesUsable(t, new Set([...assignmentMap.values(), ...(input.siteId ? [input.siteId] : [])]));
@@ -1049,6 +1050,7 @@ export class TenantDiscoveryService {
 
     let created = 0;
     let skipped = 0;
+    const perSite = new Map<string, number>();
     for (const r of rows) {
       const siteId = assignmentMap.get(r.id) ?? input.siteId;
       if (!siteId || !r.display_name) {
@@ -1062,6 +1064,7 @@ export class TenantDiscoveryService {
         .values({ site_id: siteId, name: r.display_name, kind: kind as 'auto_attendant' | 'call_queue' })
         .execute();
       created += 1;
+      perSite.set(siteId, (perSite.get(siteId) ?? 0) + 1);
     }
 
     await this.audit.tenant(t.schema, 'discovery.resource_accounts_imported', {
@@ -1070,6 +1073,7 @@ export class TenantDiscoveryService {
       targetId: input.siteId,
       detail: { created, skipped },
     });
+    for (const [siteId, n] of perSite) await this.dataCollection.trackChange(t, user, { siteId, entity: 'Resource account', action: 'added', label: `${n} imported from the tenant` });
     return { created, skipped };
   }
 }

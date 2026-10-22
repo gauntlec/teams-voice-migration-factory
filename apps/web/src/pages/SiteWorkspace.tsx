@@ -15,6 +15,7 @@ import { WizardTiles, useTeamChoices } from '../components/WizardTiles';
 import { BulkEditDialog, LoadError, NoTenant, PagedSection, useRecordStyles, type Choice, type FieldDef, type Row } from '../components/records';
 import { RelinkUsersButton, TAB_LABEL, isFlowStale, TABS, numKey, type SiteSummary, type TabKey } from './site/siteShared';
 import { OverviewTab, NetworkDiagramCard } from './site/siteOverview';
+import { SiteChangesCard, SiteReviewBar } from './site/siteReview';
 import { NumberInventory, FlowImportButton, RaNumbersButton } from './site/siteNumbers';
 
 const useLocalStyles = makeStyles({
@@ -116,9 +117,10 @@ export function SiteWorkspace() {
   if (summary.isLoading) return <Spinner label="Loading site…" />;
   if (summary.isError) return <LoadError message={(summary.error as Error).message} />;
 
-  const { site, status, callingPolicies, numberSummary, overview, contactUsers } = summary.data!;
+  const { site, review, pendingChanges, callingPolicies, numberSummary, overview, contactUsers } = summary.data!;
   const canReview = can('discovery:review');
-  const locked = !can('discovery:write') || status === 'accepted' || (status === 'submitted' && !canReview);
+  // Nothing is locked by the review: data keeps changing until the migration, and changes after submission are tracked.
+  const locked = !can('discovery:write');
   const canManageOverview = can('discovery:sites:manage');
 
   const policyChoices: Choice[] = callingPolicies.map((p) => ({ value: p.id, label: p.name }));
@@ -183,12 +185,18 @@ export function SiteWorkspace() {
         <Text size={200}>
           Assigned: <b>{numberSummary.assigned}</b>
         </Text>
-        {locked && (
-          <Badge appearance="tint" color="warning">
-            {status === 'accepted' ? 'accepted — locked' : 'submitted — read-only'}
-          </Badge>
-        )}
       </div>
+
+      <SiteReviewBar
+        base={base}
+        siteId={siteId}
+        review={review}
+        pendingChanges={pendingChanges}
+        canWrite={can('discovery:write')}
+        canReview={canReview}
+        onChanged={refreshSummary}
+      />
+      {canReview && pendingChanges > 0 && <SiteChangesCard base={base} siteId={siteId} onChanged={refreshSummary} />}
 
       {!locked && (
         <WizardTiles

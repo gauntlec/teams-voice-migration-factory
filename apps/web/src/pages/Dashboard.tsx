@@ -217,7 +217,9 @@ function ProgressView({ data, tenant, can }: { data: CustomerProgress; tenant: M
         )}
         <div className={s.summary}>
           <Text size={200}>
-            Data Collection: <DiscoveryBadge status={data.discoveryStatus} />
+            Data Collection: <b>{data.dataCollection.accepted} of {data.dataCollection.sites}</b> sites accepted
+            {data.dataCollection.submitted > 0 && ` · ${data.dataCollection.submitted} awaiting review`}
+            {data.dataCollection.withChanges > 0 && ` · ${data.dataCollection.withChanges} changed since submitted`}
           </Text>
           {info.map((i) => (
             <Text key={i.message} size={200} className={rs.muted}>
@@ -349,15 +351,5 @@ function StageChip({ stage, current, to }: { stage: ProgressStage; current: bool
     <div className={cls} aria-current={current ? 'step' : undefined} title={title} aria-label={title}>
       {body}
     </div>
-  );
-}
-
-function DiscoveryBadge({ status }: { status: CustomerProgress['discoveryStatus'] }) {
-  const color = status === 'accepted' ? 'success' : status === 'submitted' ? 'informative' : 'subtle';
-  const label = status === 'accepted' ? 'Accepted' : status === 'submitted' ? 'Submitted' : 'Draft';
-  return (
-    <Badge appearance="tint" color={color}>
-      {label}
-    </Badge>
   );
 }

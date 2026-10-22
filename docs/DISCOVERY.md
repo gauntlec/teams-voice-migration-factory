@@ -180,8 +180,9 @@ without a second datastore to run, sync and back up.
   live tenant user; the table shows a **Linked** badge.
 - **Bulk import:** Discovery → Users → *Import into Data Collection…* creates a
   Data Collection user for every discovered (optionally EV-enabled) tenant user
-  not yet captured, under a chosen site, and links unlinked matches. Respects the
-  draft/submitted/accepted lock.
+  not yet captured, under a chosen site, and links unlinked matches. For a site
+  that has been submitted for review, the import is recorded in the site's changes
+  since submission.
 
 ## API
 

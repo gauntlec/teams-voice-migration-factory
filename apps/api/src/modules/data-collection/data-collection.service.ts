@@ -1,7 +1,7 @@
 import {
   ConflictException,
-  ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { sql } from 'kysely';
@@ -25,6 +25,8 @@ const actorOf = (u: AuthedUser): Actor => ({ id: u.id, email: u.email });
 
 @Injectable()
 export class DataCollectionService {
+  private readonly log = new Logger(DataCollectionService.name);
+
   constructor(
     @InjectDb() private readonly db: Db,
     private readonly audit: AuditService,
@@ -34,34 +36,42 @@ export class DataCollectionService {
     return tenantDb(this.db, t.schema);
   }
 
-  private async discoveryRow(t: TenantContext) {
-    const row = await this.scoped(t).selectFrom('discovery').selectAll().executeTakeFirst();
-    if (!row) {
-      // Should exist (seeded in tenant migration 0001); create defensively.
-      return this.scoped(t)
-        .insertInto('discovery')
-        .values({ status: 'draft', general: {} })
-        .returningAll()
-        .executeTakeFirstOrThrow();
-    }
-    return row;
-  }
-
-  /** Guards every mutation: draft is open, submitted needs review rights, accepted is locked. */
-  async assertEditable(t: TenantContext, canReview: boolean) {
-    const { status } = await this.discoveryRow(t);
-    if (status === 'accepted') {
-      throw new ConflictException('Discovery is accepted and locked. Reopen it to make changes.');
-    }
-    if (status === 'submitted' && !canReview) {
-      throw new ForbiddenException(
-        'Discovery has been submitted for review. Ask an engineer to reopen it.',
-      );
+  /**
+   * Records a change to a site that has already been submitted, so the engineer can see what is new since the submission.
+   * Nothing is recorded while the site is still a draft, and nothing is ever locked. A failure to record never fails the
+   * change itself.
+   */
+  async trackChange(
+    t: TenantContext,
+    user: AuthedUser,
+    c: { siteId?: string | null; sitecode?: string | null; entity: string; action: 'added' | 'changed' | 'removed'; label?: string | null; detail?: string | null },
+  ) {
+    try {
+      let q = this.scoped(t).selectFrom('discovery_sites').select(['id', 'review_status']);
+      if (c.siteId) q = q.where('id', '=', c.siteId);
+      else if (c.sitecode) q = q.where('sitecode', '=', c.sitecode);
+      else return;
+      const site = await q.executeTakeFirst();
+      if (!site || site.review_status === 'draft') return;
+      await this.scoped(t)
+        .insertInto('discovery_site_changes')
+        .values({
+          site_id: site.id,
+          actor_id: user.id,
+          actor_name: user.displayName || user.email,
+          entity: c.entity,
+          entity_label: c.label ?? null,
+          action: c.action,
+          detail: c.detail ?? null,
+        })
+        .execute();
+    } catch (e) {
+      this.log.warn(`Could not record a ${c.entity} change: ${(e as Error).message}`);
     }
   }
 
   /**
-   * Landing payload for the Data Collection module: the discovery row, the
+   * Landing payload for the Data Collection module: the
    * customer-wide calling policies, and every site the caller may see with a
    * per-site rollup of how much has been captured. Per-entity lists (users,
    * numbers, …) are fetched separately, one site at a time, paginated.
@@ -72,8 +82,7 @@ export class DataCollectionService {
     let sitesQ = s.selectFrom('discovery_sites').selectAll().orderBy('sitecode');
     if (scope) sitesQ = sitesQ.where('id', 'in', scope);
 
-    const [discovery, sites, callingPolicies] = await Promise.all([
-      this.discoveryRow(t),
+    const [sites, callingPolicies] = await Promise.all([
       sitesQ.execute(),
       s.selectFrom('discovery_calling_policies').selectAll().orderBy('name').execute(),
     ]);
@@ -86,11 +95,21 @@ export class DataCollectionService {
         )
       : {};
     const empty = { users: 0, caps: 0, resourceAccounts: 0, network: 0, flows: 0, ranges: 0, numbers: 0, numbersAssigned: 0 };
+    const pending = sites.length
+      ? await this.scoped(t)
+          .selectFrom('discovery_site_changes')
+          .select('site_id')
+          .select(sql<string>`count(*)`.as('n'))
+          .where('site_id', 'in', sites.map((x) => x.id))
+          .where('acknowledged_at', 'is', null)
+          .groupBy('site_id')
+          .execute()
+      : [];
+    const pendingBySite = new Map(pending.map((r) => [r.site_id, Number(r.n)]));
     return {
-      discovery,
       callingPolicies,
       siteScope: scope,
-      sites: sites.map((x) => ({ ...x, counts: counts[x.id] ?? empty })),
+      sites: sites.map((x) => ({ ...x, counts: counts[x.id] ?? empty, pendingChanges: pendingBySite.get(x.id) ?? 0 })),
     };
   }
 
@@ -159,8 +178,7 @@ export class DataCollectionService {
     const s = this.scoped(t);
     const site = await s.selectFrom('discovery_sites').selectAll().where('id', '=', siteId).executeTakeFirst();
     if (!site) throw new NotFoundException('site not found');
-    const [discovery, callingPolicies, statusRows] = await Promise.all([
-      this.discoveryRow(t),
+    const [callingPolicies, statusRows, pendingChanges] = await Promise.all([
       s.selectFrom('discovery_calling_policies').selectAll().orderBy('name').execute(),
       s
         .selectFrom('phone_numbers as n')
@@ -170,6 +188,12 @@ export class DataCollectionService {
         .where('r.sitecode', '=', site.sitecode)
         .groupBy('n.status')
         .execute(),
+      s
+        .selectFrom('discovery_site_changes')
+        .select(sql<string>`count(*)`.as('n'))
+        .where('site_id', '=', siteId)
+        .where('acknowledged_at', 'is', null)
+        .executeTakeFirst(),
     ]);
     const numberSummary = { total: 0, available: 0, reserved: 0, assigned: 0 };
     for (const r of statusRows) {
@@ -185,7 +209,12 @@ export class DataCollectionService {
     const overview = { ...stored, region: asSiteRegion(site.region), contacts };
     const contactUsers = await this.resolveContactUsers(contactUserIds(contacts));
 
-    return { site, status: discovery.status, callingPolicies, numberSummary, overview, contactUsers };
+    const review = {
+      status: site.review_status,
+      submitted_at: site.submitted_at,
+      accepted_at: site.accepted_at,
+    };
+    return { site, review, pendingChanges: Number(pendingChanges?.n ?? 0), callingPolicies, numberSummary, overview, contactUsers };
   }
 
   /**
@@ -248,7 +277,6 @@ export class DataCollectionService {
     patch: DiscoverySiteOverviewInput,
     canReview: boolean,
   ) {
-    await this.assertEditable(t, canReview);
     const site = await this.scoped(t)
       .selectFrom('discovery_sites')
       .select(['id', 'overview', 'region'])
@@ -304,6 +332,12 @@ export class DataCollectionService {
       targetType: 'discovery_site',
       targetId: siteId,
       detail: { fields: [...Object.keys(patch), ...(region !== undefined ? ['region'] : []), ...(contacts ? ['contacts'] : [])] },
+    });
+    await this.trackChange(t, user, {
+      siteId,
+      entity: 'Site overview',
+      action: 'changed',
+      detail: [...Object.keys(patch), ...(region !== undefined ? ['region'] : []), ...(contacts ? ['people'] : [])].join(', '),
     });
     const saved = row.overview as DiscoverySiteOverview;
     const savedContacts = await this.effectiveContacts(saved);
@@ -362,71 +396,103 @@ export class DataCollectionService {
     return { items, total: Number(cnt?.n ?? 0), page, limit };
   }
 
-  async submit(t: TenantContext, user: AuthedUser) {
-    assertCustomerWide(t, 'Submitting the discovery for review');
-    const current = await this.discoveryRow(t);
-    if (current.status !== 'draft') {
-      throw new ConflictException(`Cannot submit discovery from status "${current.status}".`);
+  /* ----------------------------- site review ----------------------------- */
+
+  private async siteForReview(t: TenantContext, siteId: string) {
+    assertSiteInScope(t, siteId);
+    const site = await this.scoped(t)
+      .selectFrom('discovery_sites')
+      .select(['id', 'sitecode', 'review_status'])
+      .where('id', '=', siteId)
+      .executeTakeFirst();
+    if (!site) throw new NotFoundException('site not found');
+    return site;
+  }
+
+  /** Marks a site's Data Collection as submitted for review. Nothing is locked; later changes are recorded for the engineer. */
+  async submitSite(t: TenantContext, user: AuthedUser, siteId: string) {
+    const site = await this.siteForReview(t, siteId);
+    if (site.review_status !== 'draft') {
+      throw new ConflictException(`This site is already ${site.review_status}.`);
     }
     const row = await this.scoped(t)
-      .updateTable('discovery')
-      .set({
-        status: 'submitted',
-        submitted_by: user.id,
-        submitted_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .returning(['id', 'status', 'submitted_at'])
+      .updateTable('discovery_sites')
+      .set({ review_status: 'submitted', submitted_by: user.id, submitted_at: new Date().toISOString(), accepted_by: null, accepted_at: null })
+      .where('id', '=', siteId)
+      .returning(['id', 'review_status', 'submitted_at'])
       .executeTakeFirstOrThrow();
-    await this.audit.tenant(t.schema, 'discovery.submitted', { actor: actorOf(user) });
-    await this.audit.platform('discovery.submitted', { actor: actorOf(user), tenantId: t.id });
+    await this.audit.tenant(t.schema, 'discovery.site_submitted', { actor: actorOf(user), targetType: 'discovery_site', targetId: siteId });
+    await this.audit.platform('discovery.site_submitted', { actor: actorOf(user), tenantId: t.id, detail: { siteId } });
     return row;
   }
 
-  async accept(t: TenantContext, user: AuthedUser) {
-    const current = await this.discoveryRow(t);
-    if (current.status !== 'submitted') {
-      throw new ConflictException(`Cannot accept discovery from status "${current.status}".`);
+  /** The engineer accepts a submitted site. Changes made up to now count as reviewed. */
+  async acceptSite(t: TenantContext, user: AuthedUser, siteId: string) {
+    const site = await this.siteForReview(t, siteId);
+    if (site.review_status !== 'submitted') {
+      throw new ConflictException(`Cannot accept a site that is ${site.review_status}.`);
     }
+    const now = new Date().toISOString();
     const row = await this.scoped(t)
-      .updateTable('discovery')
-      .set({
-        status: 'accepted',
-        accepted_by: user.id,
-        accepted_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .returning(['id', 'status', 'accepted_at'])
+      .updateTable('discovery_sites')
+      .set({ review_status: 'accepted', accepted_by: user.id, accepted_at: now })
+      .where('id', '=', siteId)
+      .returning(['id', 'review_status', 'accepted_at'])
       .executeTakeFirstOrThrow();
-    await this.audit.tenant(t.schema, 'discovery.accepted', { actor: actorOf(user) });
-    await this.audit.platform('discovery.accepted', { actor: actorOf(user), tenantId: t.id });
+    await this.acknowledgeAll(t, user, siteId, now);
+    await this.audit.tenant(t.schema, 'discovery.site_accepted', { actor: actorOf(user), targetType: 'discovery_site', targetId: siteId });
+    await this.audit.platform('discovery.site_accepted', { actor: actorOf(user), tenantId: t.id, detail: { siteId } });
     return row;
   }
 
-  async reopen(t: TenantContext, user: AuthedUser) {
-    const current = await this.discoveryRow(t);
-    if (current.status === 'draft') return { id: current.id, status: 'draft' as const };
+  /** Back to draft: the review starts again, and the changes recorded so far are cleared. */
+  async reopenSite(t: TenantContext, user: AuthedUser, siteId: string) {
+    const site = await this.siteForReview(t, siteId);
+    if (site.review_status === 'draft') return { id: site.id, review_status: 'draft' as const };
     const row = await this.scoped(t)
-      .updateTable('discovery')
-      .set({
-        status: 'draft',
-        submitted_by: null,
-        submitted_at: null,
-        accepted_by: null,
-        accepted_at: null,
-        updated_at: new Date().toISOString(),
-      })
-      .returning(['id', 'status'])
+      .updateTable('discovery_sites')
+      .set({ review_status: 'draft', submitted_by: null, submitted_at: null, accepted_by: null, accepted_at: null })
+      .where('id', '=', siteId)
+      .returning(['id', 'review_status'])
       .executeTakeFirstOrThrow();
-    await this.audit.tenant(t.schema, 'discovery.reopened', { actor: actorOf(user) });
+    await this.acknowledgeAll(t, user, siteId, new Date().toISOString());
+    await this.audit.tenant(t.schema, 'discovery.site_reopened', { actor: actorOf(user), targetType: 'discovery_site', targetId: siteId });
     return row;
+  }
+
+  private async acknowledgeAll(t: TenantContext, user: AuthedUser, siteId: string, at: string) {
+    await this.scoped(t)
+      .updateTable('discovery_site_changes')
+      .set({ acknowledged_at: at, acknowledged_by: user.id })
+      .where('site_id', '=', siteId)
+      .where('acknowledged_at', 'is', null)
+      .execute();
+  }
+
+  /** The engineer has seen the changes recorded since the site was submitted. */
+  async acknowledgeSiteChanges(t: TenantContext, user: AuthedUser, siteId: string) {
+    await this.siteForReview(t, siteId);
+    await this.acknowledgeAll(t, user, siteId, new Date().toISOString());
+    await this.audit.tenant(t.schema, 'discovery.site_changes_acknowledged', { actor: actorOf(user), targetType: 'discovery_site', targetId: siteId });
+    return { ok: true };
+  }
+
+  /** Changes made to a site since it was submitted that nobody has acknowledged yet, newest first. */
+  async listSiteChanges(t: TenantContext, siteId: string) {
+    await this.siteForReview(t, siteId);
+    const s = this.scoped(t);
+    const base = s.selectFrom('discovery_site_changes').where('site_id', '=', siteId).where('acknowledged_at', 'is', null);
+    const [items, cnt] = await Promise.all([
+      base.selectAll().orderBy('changed_at', 'desc').limit(200).execute(),
+      base.select((eb) => eb.fn.countAll<string>().as('n')).executeTakeFirst(),
+    ]);
+    return { items, total: Number(cnt?.n ?? 0) };
   }
 
   /* -------------------------------- sites -------------------------------- */
 
   async addSite(t: TenantContext, user: AuthedUser, input: DiscoverySiteInput, canReview: boolean) {
     assertCustomerWide(t, 'Sites');
-    await this.assertEditable(t, canReview);
     return this.insertSite(t, user, input);
   }
 
@@ -477,7 +543,6 @@ export class DataCollectionService {
     canReview: boolean,
   ) {
     assertCustomerWide(t, 'Sites');
-    await this.assertEditable(t, canReview);
     const set = cleanPatch(patch);
     if ('sitecode' in set && set.sitecode == null) {
       throw new ConflictException('A site must have a site code.');
@@ -502,12 +567,12 @@ export class DataCollectionService {
       targetType: 'discovery_site',
       targetId: id,
     });
+    await this.trackChange(t, user, { siteId: id, entity: 'Site details', action: 'changed', label: row.sitecode, detail: Object.keys(set).join(', ') });
     return row;
   }
 
   async deleteSite(t: TenantContext, user: AuthedUser, id: string, canReview: boolean) {
     assertCustomerWide(t, 'Sites');
-    await this.assertEditable(t, canReview);
     const res = await this.scoped(t).deleteFrom('discovery_sites').where('id', '=', id).executeTakeFirst();
     if (!res.numDeletedRows) throw new NotFoundException('site not found');
     await this.audit.tenant(t.schema, 'discovery.site_deleted', {
@@ -550,7 +615,6 @@ export class DataCollectionService {
     input: DiscoveryNetworkInput,
     canReview: boolean,
   ) {
-    await this.assertEditable(t, canReview);
     assertSiteInScope(t, input.site_id ?? null);
     const row = await this.scoped(t)
       .insertInto('discovery_network')
@@ -570,6 +634,7 @@ export class DataCollectionService {
       targetType: 'discovery_network',
       targetId: row.id,
     });
+    await this.trackChange(t, user, { siteId: row.site_id, entity: 'Network (E911)', action: 'added', label: row.subnet });
     return row;
   }
 
@@ -580,7 +645,6 @@ export class DataCollectionService {
     patch: Partial<DiscoveryNetworkInput>,
     canReview: boolean,
   ) {
-    await this.assertEditable(t, canReview);
     await this.assertRowSiteInScope(t, 'discovery_network', id, 'subnet not found');
     if ('site_id' in patch) assertSiteInScope(t, patch.site_id ?? null);
     const row = await this.scoped(t)
@@ -595,12 +659,13 @@ export class DataCollectionService {
       targetType: 'discovery_network',
       targetId: id,
     });
+    await this.trackChange(t, user, { siteId: row.site_id, entity: 'Network (E911)', action: 'changed', label: row.subnet });
     return row;
   }
 
   async deleteNetwork(t: TenantContext, user: AuthedUser, id: string, canReview: boolean) {
-    await this.assertEditable(t, canReview);
     await this.assertRowSiteInScope(t, 'discovery_network', id, 'subnet not found');
+    const prev = await this.scoped(t).selectFrom('discovery_network').select(['site_id', 'subnet']).where('id', '=', id).executeTakeFirst();
     const res = await this.scoped(t).deleteFrom('discovery_network').where('id', '=', id).executeTakeFirst();
     if (!res.numDeletedRows) throw new NotFoundException('subnet not found');
     await this.audit.tenant(t.schema, 'discovery.network_deleted', {
@@ -608,13 +673,13 @@ export class DataCollectionService {
       targetType: 'discovery_network',
       targetId: id,
     });
+    await this.trackChange(t, user, { siteId: prev?.site_id, entity: 'Network (E911)', action: 'removed', label: prev?.subnet });
     return { ok: true };
   }
 
   /* -------------------------------- flows ------------------------------- */
 
   async addFlow(t: TenantContext, user: AuthedUser, input: DiscoveryFlowInput, canReview: boolean) {
-    await this.assertEditable(t, canReview);
     assertSiteInScope(t, input.site_id ?? null);
     const row = await this.scoped(t)
       .insertInto('discovery_flows')
@@ -637,6 +702,7 @@ export class DataCollectionService {
       targetType: 'discovery_flow',
       targetId: row.id,
     });
+    await this.trackChange(t, user, { siteId: row.site_id, entity: 'Call flow', action: 'added', label: row.name });
     return row;
   }
 
@@ -647,7 +713,6 @@ export class DataCollectionService {
     patch: Partial<DiscoveryFlowInput>,
     canReview: boolean,
   ) {
-    await this.assertEditable(t, canReview);
     await this.assertRowSiteInScope(t, 'discovery_flows', id, 'flow not found');
     if ('site_id' in patch) assertSiteInScope(t, patch.site_id ?? null);
     const row = await this.scoped(t)
@@ -662,12 +727,13 @@ export class DataCollectionService {
       targetType: 'discovery_flow',
       targetId: id,
     });
+    await this.trackChange(t, user, { siteId: row.site_id, entity: 'Call flow', action: 'changed', label: row.name });
     return row;
   }
 
   async deleteFlow(t: TenantContext, user: AuthedUser, id: string, canReview: boolean) {
-    await this.assertEditable(t, canReview);
     await this.assertRowSiteInScope(t, 'discovery_flows', id, 'flow not found');
+    const prev = await this.scoped(t).selectFrom('discovery_flows').select(['site_id', 'name']).where('id', '=', id).executeTakeFirst();
     const res = await this.scoped(t).deleteFrom('discovery_flows').where('id', '=', id).executeTakeFirst();
     if (!res.numDeletedRows) throw new NotFoundException('flow not found');
     await this.audit.tenant(t.schema, 'discovery.flow_deleted', {
@@ -675,6 +741,7 @@ export class DataCollectionService {
       targetType: 'discovery_flow',
       targetId: id,
     });
+    await this.trackChange(t, user, { siteId: prev?.site_id, entity: 'Call flow', action: 'removed', label: prev?.name });
     return { ok: true };
   }
 }

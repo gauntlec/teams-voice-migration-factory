@@ -110,7 +110,8 @@ export interface CustomerProgressItem {
 
 /** GET /t/:tenantId/progress */
 export interface CustomerProgress {
-  discoveryStatus: DiscoveryStatus;
+  /** Data Collection review, site by site: how many sites are in each state and how many changed after submission. */
+  dataCollection: { sites: number; draft: number; submitted: number; accepted: number; withChanges: number };
   /** the caller sees designed/validated/dry_run/deployed rather than one 'delivery' stage */
   fullView: boolean;
   sites: SiteProgressRow[];
