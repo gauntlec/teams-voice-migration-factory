@@ -1,4 +1,4 @@
-import type { ComponentProps, ReactNode } from 'react';
+import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import { Table, makeStyles, mergeClasses, shorthands, tokens } from '@fluentui/react-components';
 
 /**
@@ -17,6 +17,10 @@ import { Table, makeStyles, mergeClasses, shorthands, tokens } from '@fluentui/r
  * Pass `minWidth` sized to the table's columns (rule of thumb: ~130px per
  * column, a little more when a column holds long free text).
  *
+ * `fitScreen` is for long, wide lists that stay one list (no pages): the box stops at the bottom of the window and scrolls inside, so the
+ * sideways scrollbar is always on screen instead of far below the last row. The column headings stay in view while the rows scroll, and
+ * headings wrap and cells sit closer together, so fewer columns run off the right edge.
+ *
  * Put `<TableHeader>` / `<TableBody>` inside exactly as with `<Table>`. For a
  * cell that must wrap (long pre-formatted text), put the content in an inner
  * `<div style={{ whiteSpace: 'pre-wrap' }}>` — the row grows instead of the
@@ -26,13 +30,38 @@ export function DataTable({
   children,
   minWidth = 720,
   className,
+  fitScreen = false,
   ...rest
-}: ComponentProps<typeof Table> & { minWidth?: number; children: ReactNode }) {
+}: ComponentProps<typeof Table> & { minWidth?: number; children: ReactNode; fitScreen?: boolean }) {
   const s = useStyles();
+  const ref = useRef<HTMLDivElement>(null);
+  // How tall the box may be: from where it starts to the bottom of the window, re-measured as the page scrolls or the window resizes.
+  const [maxHeight, setMaxHeight] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    if (!fitScreen) return;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const el = ref.current;
+      if (!el) return;
+      setMaxHeight(Math.max(220, Math.floor(window.innerHeight - el.getBoundingClientRect().top - 12)));
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(measure);
+    };
+    measure();
+    window.addEventListener('resize', schedule);
+    window.addEventListener('scroll', schedule, { passive: true, capture: true });
+    return () => {
+      window.removeEventListener('resize', schedule);
+      window.removeEventListener('scroll', schedule, { capture: true });
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [fitScreen]);
   return (
-    <div className={s.scroller}>
+    <div ref={ref} className={mergeClasses(s.scroller, fitScreen && s.fit)} style={fitScreen && maxHeight ? { maxHeight } : undefined}>
       <div style={{ minWidth }}>
-        <Table {...rest} className={mergeClasses(s.table, className)}>
+        <Table {...rest} className={mergeClasses(s.table, fitScreen && s.tableFit, className)}>
           {children}
         </Table>
       </div>
@@ -53,6 +82,22 @@ const useStyles = makeStyles({
     backgroundPosition: 'left center, right center, left center, right center',
     backgroundSize: '40px 100%, 40px 100%, 12px 100%, 12px 100%',
     backgroundAttachment: 'local, local, scroll, scroll',
+  },
+  // Scrolls in both directions inside a box that ends at the bottom of the window.
+  fit: { overflowY: 'auto', overscrollBehavior: 'contain', ...shorthands.padding('0') },
+  // Closer cells, headings that wrap onto two or three short lines instead of one long one, and headings pinned while the rows scroll.
+  tableFit: {
+    '& th, & td': { paddingLeft: '8px', paddingRight: '8px', maxWidth: '220px' },
+    '& th': {
+      whiteSpace: 'normal',
+      lineHeight: '1.2',
+      verticalAlign: 'bottom',
+      position: 'sticky',
+      top: 0,
+      zIndex: 3,
+      backgroundColor: tokens.colorNeutralBackground1,
+      boxShadow: `inset 0 -1px 0 ${tokens.colorNeutralStroke2}`,
+    },
   },
   table: {
     width: '100%',

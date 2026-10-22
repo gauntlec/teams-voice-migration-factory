@@ -479,6 +479,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
 
       {tab === 'users' && (
         <PagedSection
+          fitScreen
           title="Users"
           hint="Teams users with Enterprise Voice - target numbers and policies for this site. Replaces the USERS build sheet."
           endpoint={`${base}/users`}
@@ -548,6 +549,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
 
       {tab === 'caps' && (
         <PagedSection
+          fitScreen
           title="Common area phones"
           hint="Phones logged in permanently (lobbies, meeting rooms) - target numbers and policies. Replaces the CAPS build sheet."
           endpoint={`${base}/caps`}
@@ -617,6 +619,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
 
       {tab === 'resource-accounts' && (
         <PagedSection
+          fitScreen
           title="Resource accounts"
           hint="Identity + number for Auto Attendant / Call Queue resource accounts. Model a new one before it exists live, then use Request accounts below to ask the customer to create and license it - see the note below."
           endpoint={`${base}/resource-accounts`}
@@ -726,6 +729,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
 
       {tab === 'shared-calling-policies' && (
         <PagedSection
+          fitScreen
           title="Shared calling policies"
           hint="Manage the TeamsSharedCallingRoutingPolicy objects themselves - name, resource account (used as outbound/callback caller ID), and emergency callback numbers. Grant an existing policy to a user on the Users/CAPs tab's Policies field."
           endpoint={`${base}/shared-calling-policies`}
@@ -771,6 +775,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
 
       {tab === 'call-queues' && (
         <PagedSection
+          fitScreen
           title="Call queues"
           hint="Routing, agents and overflow/timeout behaviour for Call Queue resource accounts. New rows are seeded by Populate from Discovery on the Resource accounts tab."
           endpoint={`${base}/call-queues`}
@@ -839,6 +844,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
 
       {tab === 'auto-attendants' && (
         <PagedSection
+          fitScreen
           title="Auto attendants"
           hint="Language/voice and the real call-flow menu (business hours, after hours, holidays) for Auto Attendant resource accounts. Populate from Discovery pre-fills these from a live tenant; for a greenfield site, add one by hand and link resource accounts to it in Configure… - it just won't get a phone number until that account is created and licensed."
           endpoint={`${base}/auto-attendants`}

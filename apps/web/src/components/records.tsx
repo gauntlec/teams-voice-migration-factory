@@ -133,7 +133,7 @@ export const useRecordStyles = makeStyles({
   dialogForm: { display: 'grid', ...shorthands.gap('12px'), minWidth: '440px' },
   rowActions: { display: 'flex', ...shorthands.gap('4px'), justifyContent: 'flex-end' },
   muted: { color: tokens.colorNeutralForeground3 },
-  tableTools: { display: 'flex', justifyContent: 'flex-end', ...shorthands.margin('0', '0', '4px') },
+  tableTools: { display: 'flex', justifyContent: 'flex-end', alignItems: 'center', ...shorthands.gap('8px'), ...shorthands.margin('0', '0', '4px') },
   // The row's identifier (and its checkbox) stay put while the rest of a wide grid scrolls sideways.
   stickyCheck: { position: 'sticky', left: 0, zIndex: 2, backgroundColor: tokens.colorNeutralBackground1, width: '40px', minWidth: '40px', maxWidth: '40px' },
   stickyFirst: { position: 'sticky', zIndex: 1, backgroundColor: tokens.colorNeutralBackground1, boxShadow: `inset -1px 0 0 ${tokens.colorNeutralStroke2}` },
@@ -783,6 +783,7 @@ export function PagedSection({
   onSelectedChange,
   onEditRow,
   bulkDelete,
+  fitScreen,
 }: {
   title: string;
   hint?: string;
@@ -821,6 +822,12 @@ export function PagedSection({
    * selection itself. `note` says what else happens (e.g. numbers freed).
    */
   bulkDelete?: { noun: string; plural: string; note?: string };
+  /**
+   * For a long, wide list that stays one list: the table scrolls inside a box that ends at the bottom of the window (so its sideways
+   * scrollbar is always on screen), keeps its headings in view, packs the cells closer, and leaves out policy columns nobody has filled
+   * in (a "Show empty columns" link brings them back).
+   */
+  fitScreen?: boolean;
 }) {
   const ls = useLocalStyles();
   const s = useRecordStyles();
@@ -969,6 +976,7 @@ export function PagedSection({
             selectable={canSelect}
             selected={sel}
             onSelectedChange={setSel}
+            fitScreen={fitScreen}
           />
           {pages > 1 && (
             <div className={s.pager}>
@@ -1131,6 +1139,7 @@ function RecordTable({
   selectable,
   selected,
   onSelectedChange,
+  fitScreen,
 }: {
   /** Names this table for remembering which columns a person hid. */
   tableId?: string;
@@ -1144,11 +1153,24 @@ function RecordTable({
   selectable?: boolean;
   selected?: Set<string>;
   onSelectedChange?: (next: Set<string>) => void;
+  fitScreen?: boolean;
 }) {
   const s = useRecordStyles();
   // Delete asks once, in the row itself - a stray click used to remove the row (and free its number) outright.
   const [confirming, setConfirming] = useState<string | null>(null);
-  const { visible, hiddenKeys, setVisibleKeys } = useColumnPrefs(tableId, columns);
+  const { visible: chosen, hiddenKeys, setVisibleKeys } = useColumnPrefs(tableId, columns);
+  // In a fit-to-screen list, policy columns with nothing in them on any row are left out: most of a site's policy columns are empty, and
+  // each one costs a screen-width of sideways scrolling. The person's own choice in Columns still applies to the rest.
+  const [showEmpty, setShowEmpty] = useState(false);
+  const emptyPolicyKeys = useMemo(() => {
+    if (!fitScreen) return new Set<string>();
+    return new Set(
+      columns
+        .filter((c) => c.key.startsWith('policies.') && rows.every((r) => !((r.policies as Record<string, unknown> | null | undefined)?.[c.key.slice('policies.'.length)])))
+        .map((c) => c.key),
+    );
+  }, [fitScreen, columns, rows]);
+  const visible = showEmpty ? chosen : chosen.filter((c) => !emptyPolicyKeys.has(c.key));
   const [sort, setSort] = useState<{ key: string; dir: 'ascending' | 'descending' } | null>(null);
   const sortedRows = useMemo(() => {
     const col = sort && columns.find((c) => c.key === sort.key);
@@ -1157,7 +1179,7 @@ function RecordTable({
     return [...rows].sort((a, b) => compareSorted(sortValueOf(col, a), sortValueOf(col, b), sign));
   }, [rows, columns, sort]);
   const stickyIdentifier = columns.length >= 6;
-  const minWidth = Math.max(560, visible.length * 132 + (readOnly ? 0 : 96) + (selectable ? 40 : 0));
+  const minWidth = Math.max(560, visible.length * (fitScreen ? 108 : 132) + (readOnly ? 0 : 96) + (selectable ? 40 : 0));
   const allOnPageSelected = selectable && rows.length > 0 && rows.every((r) => selected?.has(r.id));
   const someOnPageSelected = selectable && rows.some((r) => selected?.has(r.id));
   const toggleAll = () => {
@@ -1178,8 +1200,13 @@ function RecordTable({
     <>
       {columns.length > 6 && (
         <div className={s.tableTools}>
+          {fitScreen && emptyPolicyKeys.size > 0 && (
+            <Button size="small" appearance="subtle" onClick={() => setShowEmpty((v) => !v)}>
+              {showEmpty ? `Hide ${emptyPolicyKeys.size} empty columns` : `Show ${emptyPolicyKeys.size} empty columns`}
+            </Button>
+          )}
           <Menu
-            checkedValues={{ columns: visible.map((c) => c.key) }}
+            checkedValues={{ columns: chosen.map((c) => c.key) }}
             onCheckedValueChange={(_, d) => setVisibleKeys(d.checkedItems)}
           >
             <MenuTrigger disableButtonEnhancement>
@@ -1199,7 +1226,7 @@ function RecordTable({
           </Menu>
         </div>
       )}
-    <DataTable size="small" minWidth={minWidth}>
+    <DataTable size="small" minWidth={minWidth} fitScreen={fitScreen}>
       <TableHeader>
         <TableRow>
           {selectable && (
