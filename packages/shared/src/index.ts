@@ -378,6 +378,10 @@ export interface BuildRowValidation {
    * on the deployment preview - this flag mirrors it for the Build grid.
    */
   numberTypeMissing: boolean;
+  /** the account is disabled in the tenant: it cannot sign in or take calls (found once the user is in the synced data, e.g. after the live check) */
+  accountDisabled: boolean;
+  /** the account has licence data but no Teams Phone licence, so a number cannot be assigned until it gets one */
+  noPhoneLicence: boolean;
   /** each target policy whose live effective assignment differs (or is unset) */
   policyMismatches: { key: import('./domain').PolicyKey; label: string; target: string; live: string | null }[];
   /** target policy names that don't exist anywhere in tenant_policies for their type - likely a typo */

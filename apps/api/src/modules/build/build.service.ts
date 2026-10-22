@@ -2042,6 +2042,7 @@ export class BuildService {
       policies: { voice_routing_policy: r.voice_routing_policy },
       policy_ids: { voice_routing_policy: r.voice_routing_policy_id },
       created: !!r.application_id,
+      needsPhoneLicence: !!r.phone_number,
     }));
     const raValidated = raRows.length ? await this.validation.validateRows(t, raRows) : new Map<string, BuildRowValidation>();
     for (const row of raRows) {
@@ -2445,6 +2446,8 @@ function hasIssue(v: BuildRowValidation): boolean {
     !v.existsInTenant ||
     v.numberConflict ||
     v.numberTypeMissing ||
+    v.accountDisabled ||
+    v.noPhoneLicence ||
     v.policyMismatches.length > 0 ||
     v.unknownPolicies.length > 0
   );

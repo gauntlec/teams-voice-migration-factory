@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { sql } from 'kysely';
 import { tenantDb, type DB } from '@tvmf/db';
-import { POLICY_KINDS, POLICY_KIND_TO_TENANT_TYPE, policyMatchesLive, type BuildRowValidation, type PolicyKey } from '@tvmf/shared';
+import { POLICY_KINDS, POLICY_KIND_TO_TENANT_TYPE, policyMatchesLive, userAccountProblems, type BuildRowValidation, type PolicyKey } from '@tvmf/shared';
 import type { TenantContext } from '../../common/request';
 import { InjectDb, type Db } from '../../db/db.module';
 
@@ -14,6 +14,8 @@ interface IdentityRow {
   number_type: string | null;
   policies: Record<string, string | null> | null;
   policy_ids: Record<string, string | null> | null;
+  /** false for a resource account with no number: it needs no phone licence (default true) */
+  needsPhoneLicence?: boolean;
 }
 
 /**
@@ -40,7 +42,7 @@ export class BuildValidationService {
     const tenantUsers = upns.length
       ? await s
           .selectFrom('tenant_users')
-          .select(['upn', 'enterprise_voice_enabled', 'line_uri', 'policies'])
+          .select(['upn', 'enterprise_voice_enabled', 'line_uri', 'policies', 'account_enabled', 'assigned_plans', 'feature_types'])
           .where('removed_at', 'is', null)
           .where(sql`lower(upn)`, 'in', upns)
           .execute()
@@ -145,8 +147,16 @@ export class BuildValidationService {
           policyMismatches.push({ key: kind.key, label: kind.label, target: effectiveTarget, live: liveValue });
         }
       }
+      const account = live
+        ? userAccountProblems(
+            { accountEnabled: live.account_enabled, assignedPlans: live.assigned_plans as unknown[] | undefined, featureTypes: live.feature_types ?? undefined },
+            row.needsPhoneLicence ?? true,
+          )
+        : { accountDisabled: false, noPhoneLicence: false };
       out.set(row.id, {
         existsInTenant: !!live,
+        accountDisabled: account.accountDisabled,
+        noPhoneLicence: account.noPhoneLicence,
         enterpriseVoiceEnabled: live?.enterprise_voice_enabled ?? null,
         liveLineUri: live?.line_uri ?? null,
         numberConflict: !!row.e164 && (dupeCounts.get(row.e164) ?? 0) > 1,

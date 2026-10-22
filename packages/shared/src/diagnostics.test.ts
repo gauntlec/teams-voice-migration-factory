@@ -12,6 +12,7 @@ import {
   evalQueue,
   evalRouting,
   evalUserVoice,
+  userAccountProblems,
   diagInputSchema,
   type DiagUserFacts,
 } from './diagnostics';
@@ -226,5 +227,25 @@ describe('teams phone licence and pasted text', () => {
     const t = Date.now();
     diagSuggest({ category: 'calling', items: [], description: '%'.repeat(100_000) + ' ' + 'a'.repeat(100_000) });
     expect(Date.now() - t).toBeLessThan(2000);
+  });
+});
+
+describe('userAccountProblems', () => {
+  const phone = [{ Capability: 'MCOEV', CapabilityStatus: 'Enabled' }];
+  const teamsOnly = [{ Capability: 'TEAMS1', CapabilityStatus: 'Enabled' }];
+  it('flags a disabled account', () => {
+    expect(userAccountProblems({ accountEnabled: false, assignedPlans: phone })).toEqual({ accountDisabled: true, noPhoneLicence: false });
+    expect(userAccountProblems({ accountEnabled: true, assignedPlans: phone }).accountDisabled).toBe(false);
+    expect(userAccountProblems({ accountEnabled: null }).accountDisabled).toBe(false);
+  });
+  it('flags an account with licence data but no phone plan', () => {
+    expect(userAccountProblems({ accountEnabled: true, assignedPlans: teamsOnly }).noPhoneLicence).toBe(true);
+    expect(userAccountProblems({ accountEnabled: true, assignedPlans: phone }).noPhoneLicence).toBe(false);
+  });
+  it('does not guess when no licence data was recorded', () => {
+    expect(userAccountProblems({ accountEnabled: true, assignedPlans: [], featureTypes: [] }).noPhoneLicence).toBe(false);
+  });
+  it('does not ask a number-less resource account for a phone licence', () => {
+    expect(userAccountProblems({ accountEnabled: true, assignedPlans: teamsOnly }, false).noPhoneLicence).toBe(false);
   });
 });

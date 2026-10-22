@@ -33,13 +33,18 @@ export function ValidationBadge({ v }: { v: BuildRowValidation | null }) {
   if (!v) return <>—</>;
   if (!v.existsInTenant) {
     return (
-      <Badge appearance="tint" color="danger" icon={<WarningRegular />}>
+      <Badge
+        appearance="tint"
+        color="danger"
+        icon={<WarningRegular />}
+        title="Not found in the synced tenant data. The account may not exist, or a sync may have left it out: syncs skip disabled accounts and accounts without a Teams licence unless those options are ticked. Validate checks missing users live when a session is connected."
+      >
         not in tenant
       </Badge>
     );
   }
   const issues =
-    v.unknownPolicies.length + v.policyMismatches.length + (v.numberConflict ? 1 : 0) + (v.numberTypeMissing ? 1 : 0);
+    v.unknownPolicies.length + v.policyMismatches.length + (v.numberConflict ? 1 : 0) + (v.numberTypeMissing ? 1 : 0) + (v.accountDisabled ? 1 : 0) + (v.noPhoneLicence ? 1 : 0);
   // Renames aren't a real issue - deployment always resolves the live name
   // via policy_ids regardless - but still worth surfacing so the stale
   // display text next to it isn't mistaken for what will actually deploy.
@@ -56,6 +61,8 @@ export function ValidationBadge({ v }: { v: BuildRowValidation | null }) {
     );
   }
   const title = [
+    v.accountDisabled ? 'The account is disabled in the tenant - it cannot sign in or take calls' : null,
+    v.noPhoneLicence ? 'No Teams Phone licence on the account - a number cannot be assigned until it has one' : null,
     v.numberConflict ? 'This number is also assigned to another user, CAP or resource account in this tenant' : null,
     v.numberTypeMissing ? 'Phone number set but no Number type - the number won\'t actually be assigned (and Enterprise Voice won\'t be enabled) on deployment' : null,
     ...v.unknownPolicies.map((p) => `${p.label}: "${p.value}" doesn't exist in the tenant`),

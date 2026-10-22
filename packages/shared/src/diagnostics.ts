@@ -254,6 +254,20 @@ export function diagHasTeamsPhoneLicence(plans: unknown[] | undefined, featureTy
   return list.length ? false : null;
 }
 
+/**
+ * What is wrong with a tenant account before it can take calls: switched off, or no Teams Phone licence. `null` licence data (nothing
+ * recorded) is not a problem. A resource account with no number needs no phone licence, so the caller says whether one is needed.
+ */
+export function userAccountProblems(
+  f: { accountEnabled?: boolean | null; assignedPlans?: unknown[]; featureTypes?: string[] },
+  needsPhoneLicence = true,
+): { accountDisabled: boolean; noPhoneLicence: boolean } {
+  return {
+    accountDisabled: f.accountEnabled === false,
+    noPhoneLicence: needsPhoneLicence && diagHasTeamsPhoneLicence(f.assignedPlans, f.featureTypes) === false,
+  };
+}
+
 export function evalUserVoice(subject: string, f: DiagUserFacts, dataAsOf: string | null, now?: Date): DiagResult {
   const out: DiagFinding[] = [];
   if (!f.found) {
