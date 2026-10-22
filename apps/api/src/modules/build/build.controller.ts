@@ -374,6 +374,12 @@ export class BuildController {
 
   /* validate */
 
+  @Get('issues')
+  @RequirePermission('build:read')
+  siteIssues(@TenantCtx() t: TenantContext, @Query('siteId') siteId: string) {
+    return this.svc.siteIssues(t, siteId);
+  }
+
   @Post('validate')
   @RequirePermission('build:write')
   validateSite(

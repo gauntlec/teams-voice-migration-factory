@@ -7,6 +7,9 @@ import { InjectDb, type Db } from '../../db/db.module';
 
 type Scoped = ReturnType<typeof tenantDb>;
 
+/** Last 10 digits, the loose number match used everywhere else. */
+const numKey = (v: string | null | undefined): string => String(v ?? '').replace(/\D/g, '').slice(-10);
+
 interface IdentityRow {
   id: string;
   upn: string;
@@ -16,6 +19,8 @@ interface IdentityRow {
   policy_ids: Record<string, string | null> | null;
   /** the site the row belongs to, for the usage location check */
   site_id?: string | null;
+  /** the Data Collection user this row came from, for the requested-number check (users only) */
+  discovery_user_id?: string | null;
   /** false for a resource account with no number: it needs no phone licence (default true) */
   needsPhoneLicence?: boolean;
 }
@@ -118,6 +123,23 @@ export class BuildValidationService {
       }
     }
 
+    // What the customer asked for in Data Collection vs what is assigned to them.
+    const dUserIds = [...new Set(rows.map((r) => r.discovery_user_id).filter((v): v is string => !!v))];
+    const requestedByDUser = new Map<string, { requested: string; assigned: string | null }>();
+    if (dUserIds.length) {
+      const dUsers = await s
+        .selectFrom('discovery_users as u')
+        .leftJoin('phone_numbers as n', (join) => join.onRef('n.holder_id', '=', 'u.id').on('n.holder_type', '=', 'user'))
+        .select(['u.id as id', 'u.requested_number as requested_number', 'n.e164 as e164'])
+        .where('u.id', 'in', dUserIds)
+        .where('u.requested_number', 'is not', null)
+        .execute();
+      for (const u of dUsers) {
+        const req = numKey(u.requested_number);
+        if (req !== '' && req !== numKey(u.e164)) requestedByDUser.set(u.id, { requested: u.requested_number!, assigned: u.e164 });
+      }
+    }
+
     for (const row of rows) {
       const live = byUpn.get(row.upn.toLowerCase());
       const policyMismatches: BuildRowValidation['policyMismatches'] = [];
@@ -172,6 +194,7 @@ export class BuildValidationService {
         liveLineUri: live?.line_uri ?? null,
         numberConflict: !!row.e164 && (dupeCounts.get(row.e164) ?? 0) > 1,
         numberTypeMissing: !!row.e164 && !row.number_type,
+        requestedNumberMismatch: (row.discovery_user_id && requestedByDUser.get(row.discovery_user_id)) || null,
         policyMismatches,
         unknownPolicies,
         renamedPolicies,

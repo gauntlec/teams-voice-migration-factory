@@ -38,6 +38,7 @@ export * from './tenant-deletion';
 export * from './coordinates';
 export * from './country';
 export * from './site-contacts';
+export * from './validation-issues';
 
 import type { CmdletInvocation } from './deployment';
 
@@ -388,6 +389,12 @@ export interface BuildRowValidation {
    * null when it matches, when the user is not in the tenant, or when the site's country is not set or not recognised.
    */
   usageLocationMismatch: { live: string | null; expected: string; country: string } | null;
+  /**
+   * The customer's requested number (Data Collection) differs from the number assigned to the user.
+   * null when they match, when nothing was requested, or for rows not linked to a Data Collection user.
+   * Absent on validation stored before this check existed.
+   */
+  requestedNumberMismatch?: { requested: string; assigned: string | null } | null;
   /** each target policy whose live effective assignment differs (or is unset) */
   policyMismatches: { key: import('./domain').PolicyKey; label: string; target: string; live: string | null }[];
   /** target policy names that don't exist anywhere in tenant_policies for their type - likely a typo */

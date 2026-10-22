@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { Badge, Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Spinner, Tab, TabList, Text, tokens , makeStyles } from '@fluentui/react-components';
 import { ArrowLeftRegular } from '@fluentui/react-icons';
-import { CALL_QUEUE_ROUTING_METHODS, NUMBER_TYPES, POLICY_KIND_GROUPS, POLICY_KIND_TO_TENANT_TYPE, POLICY_KINDS, RESOURCE_ACCOUNT_KINDS, type AutoAttendantCallFlow, type BuildRowValidation, type BuildSiteRollup, type CallQueueActionSettings, type FileRow, type Paginated, type TenantPolicySummary } from '@tvmf/shared';
+import { CALL_QUEUE_ROUTING_METHODS, NUMBER_TYPES, POLICY_KIND_GROUPS, POLICY_KIND_TO_TENANT_TYPE, POLICY_KINDS, RESOURCE_ACCOUNT_KINDS, type AutoAttendantCallFlow, type BuildIssueRow, type BuildRowValidation, type BuildSiteRollup, type CallQueueActionSettings, type FileRow, type Paginated, type TenantPolicySummary } from '@tvmf/shared';
 import { api, apiDownload, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { Page } from '../components/Page';
@@ -11,6 +11,7 @@ import { BulkEditDialog, LoadError, NoTenant, PagedSection, useRecordStyles, typ
 import { numKey, AA_TIME_ZONE_CHOICES, AA_LANGUAGE_CHOICES, withSrTags, BUILD_TABS, callingSettingsSummary, ValidationBadge, type BuildEmbedding, type BuildTab } from './build/buildShared';
 import { EmbeddedShell, LinkDiscoveredResourceAccountDialog } from './build/buildDialogs';
 import { bulkIdentityFields, identityFields, policyColumns } from './build/buildFields';
+import { ValidationIssuesTab } from './build/issuesTab';
 import { AutoAttendantFlowDialog, CallQueueFlowDialog } from './build/flowDialogs';
 import { CallingPolicyMapDialog, CallingSettingsDialog } from './build/callingDialogs';
 import { TemplatesDialog } from './build/templatesDialog';
@@ -20,6 +21,7 @@ import { DangerText } from '../components/ui';
 
 const useLocalStyles = makeStyles({
   mt8: { marginTop: '8px' },
+  ml6: { marginLeft: '6px' },
   mt8Danger: { marginTop: '8px', color: tokens.colorPaletteRedForeground1 },
 });
 
@@ -129,6 +131,14 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
     return out;
   }, [allPoliciesQ.data]);
 
+  // Every validation issue on the site, for the Validation issues tab and the count on its label.
+  const issuesQ = useQuery({
+    queryKey: ['build-issues', tid, siteId],
+    enabled: !!tid && !embedded,
+    queryFn: () => api<BuildIssueRow[]>(`${base}/issues?siteId=${siteId}`),
+  });
+  const blockingCount = (issuesQ.data ?? []).filter((i) => i.issue.severity === 'blocking').length;
+
   const [populateError, setPopulateError] = useState<string | null>(null);
   const populate = useMutation({
     mutationFn: (kind: 'users' | 'caps' | 'resource-accounts') =>
@@ -176,6 +186,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ['users', tid, siteId] });
       qc.invalidateQueries({ queryKey: ['caps', tid, siteId] });
+      qc.invalidateQueries({ queryKey: ['build-issues', tid, siteId] });
       qc.invalidateQueries({ queryKey: ['build-summary', tid] });
       if (r.liveCheck) {
         setLiveRunId(r.liveCheck.runId);
@@ -475,7 +486,27 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
         <Tab value="shared-calling-policies">Shared calling</Tab>
         <Tab value="call-queues">Call queues</Tab>
         <Tab value="auto-attendants">Auto attendants</Tab>
+        {!embedded && (
+          <Tab value="issues">
+            Validation issues
+            {issuesQ.data && issuesQ.data.length > 0 && (
+              <Badge className={ls.ml6} size="small" appearance="tint" color={blockingCount > 0 ? 'danger' : 'warning'}>
+                {issuesQ.data.length}
+              </Badge>
+            )}
+          </Tab>
+        )}
       </TabList>
+
+      {tab === 'issues' && !embedded && (
+        <ValidationIssuesTab
+          issues={issuesQ.data}
+          loading={issuesQ.isFetching}
+          error={issuesQ.error}
+          onRefresh={() => void issuesQ.refetch()}
+          onOpen={setTab}
+        />
+      )}
 
       {tab === 'users' && (
         <PagedSection

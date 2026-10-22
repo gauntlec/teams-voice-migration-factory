@@ -1,6 +1,6 @@
 import { Badge, Tab , makeStyles } from '@fluentui/react-components';
 import { CheckmarkCircleRegular, WarningRegular } from '@fluentui/react-icons';
-import { AA_SUPPORTED_LANGUAGES, AA_TIME_ZONES, VOICEMAIL_PROMPT_LANGUAGES, type BuildRowValidation, type CallDelegate, type CallForwardingSettings, type PickupGroupSettings } from '@tvmf/shared';
+import { AA_SUPPORTED_LANGUAGES, AA_TIME_ZONES, VOICEMAIL_PROMPT_LANGUAGES, validationIssues, type BuildRowValidation, type CallDelegate, type CallForwardingSettings, type PickupGroupSettings } from '@tvmf/shared';
 import { type Choice, type ColumnDef, type Row } from '../../components/records';
 
 const useLocalStyles = makeStyles({
@@ -43,8 +43,8 @@ export function ValidationBadge({ v }: { v: BuildRowValidation | null }) {
       </Badge>
     );
   }
-  const issues =
-    v.unknownPolicies.length + v.policyMismatches.length + (v.numberConflict ? 1 : 0) + (v.numberTypeMissing ? 1 : 0) + (v.accountDisabled ? 1 : 0) + (v.noPhoneLicence ? 1 : 0) + (v.usageLocationMismatch ? 1 : 0);
+  const list = validationIssues(v);
+  const issues = list.filter((i) => i.code !== 'policy_renamed').length;
   // Renames aren't a real issue - deployment always resolves the live name
   // via policy_ids regardless - but still worth surfacing so the stale
   // display text next to it isn't mistaken for what will actually deploy.
@@ -60,20 +60,7 @@ export function ValidationBadge({ v }: { v: BuildRowValidation | null }) {
       </Badge>
     );
   }
-  const title = [
-    v.usageLocationMismatch
-      ? `Usage location is ${v.usageLocationMismatch.live ?? 'not set'} in the tenant, but this site is in ${v.usageLocationMismatch.country} (${v.usageLocationMismatch.expected}). Usage location and site country should match.`
-      : null,
-    v.accountDisabled ? 'The account is disabled in the tenant - it cannot sign in or take calls' : null,
-    v.noPhoneLicence ? 'No Teams Phone licence on the account - a number cannot be assigned until it has one' : null,
-    v.numberConflict ? 'This number is also assigned to another user, CAP or resource account in this tenant' : null,
-    v.numberTypeMissing ? 'Phone number set but no Number type - the number won\'t actually be assigned (and Enterprise Voice won\'t be enabled) on deployment' : null,
-    ...v.unknownPolicies.map((p) => `${p.label}: "${p.value}" doesn't exist in the tenant`),
-    ...v.policyMismatches.map((p) => `${p.label}: live is ${p.live ?? '(none)'}, target is ${p.target}`),
-    ...v.renamedPolicies.map((p) => `${p.label}: policy was renamed to "${p.liveName}" - refresh to sync`),
-  ]
-    .filter(Boolean)
-    .join('\n');
+  const title = list.map((i) => i.detail).join('\n');
   return (
     <Badge appearance="tint" color="warning" icon={<WarningRegular />} title={title}>
       {issues} issue{issues === 1 ? '' : 's'}
@@ -95,7 +82,7 @@ export function callingSettingsSummary(r: Row): string {
   return bits.length ? bits.join(', ') : 'Calling settings…';
 }
 
-export const BUILD_TABS = ['users', 'caps', 'resource-accounts', 'shared-calling-policies', 'call-queues', 'auto-attendants'] as const;
+export const BUILD_TABS = ['users', 'caps', 'resource-accounts', 'shared-calling-policies', 'call-queues', 'auto-attendants', 'issues'] as const;
 
 export type BuildTab = (typeof BUILD_TABS)[number];
 

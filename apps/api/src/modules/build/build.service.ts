@@ -37,6 +37,7 @@ import {
   type BuildTemplateApplyInput,
   type BuildTemplateCreateInput,
   type BuildTemplatePatchInput,
+  type BuildIssueRow,
   type BuildValidateResult,
   type CallingPolicySiteMapSetInput,
   type CallQueueWizardAnswers,
@@ -46,10 +47,13 @@ import {
   type NumberType,
   type Paginated,
   type PolicyKey,
+  DESIGN_ONLY_ISSUE_CODES,
   SR_STATUSES,
   srDesignLockedMessage,
   srDesignLocksRows,
   srReference,
+  hasValidationIssue,
+  validationIssues,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
 import { applyBulkPatch, auditBulkPatch } from '../../common/bulk-patch';
@@ -140,7 +144,7 @@ export class BuildService {
     const siteIds = sites.map((si) => si.id);
 
     const [users, caps, ras, deployments] = await Promise.all([
-      s.selectFrom('build_users').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids']).where('site_id', 'in', siteIds).execute(),
+      s.selectFrom('build_users').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids', 'discovery_user_id']).where('site_id', 'in', siteIds).execute(),
       s.selectFrom('build_caps').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids']).where('site_id', 'in', siteIds).execute(),
       s.selectFrom('build_resource_accounts').select(['id', 'site_id']).where('site_id', 'in', siteIds).execute(),
       // One row per site (its own latest), not the tenant's latest 500 rows
@@ -449,6 +453,7 @@ export class BuildService {
         number_type: string | null;
         policies: Record<string, string | null> | null;
         policy_ids: Record<string, string | null> | null;
+        discovery_user_id?: string | null;
       }[],
     );
     // phone_number_id is a native column now (see 0017_build_phone_number_id) -
@@ -2042,6 +2047,51 @@ export class BuildService {
   /* ============================== validate ============================== */
 
   /**
+   * Every validation issue on a site's users, common area phones and resource accounts, flattened to one
+   * list for the Validation issues tab. Computed fresh from the synced tenant data (nothing is stored),
+   * so it always matches the per-row badges.
+   */
+  async siteIssues(t: TenantContext, siteId: string): Promise<BuildIssueRow[]> {
+    if (!/^[0-9a-f-]{36}$/i.test(siteId)) throw new BadRequestException('siteId must be a site id');
+    const s = this.s(t);
+    const [users, caps, ras] = await Promise.all([
+      s.selectFrom('build_users').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids', 'discovery_user_id']).where('site_id', '=', siteId).where('hidden', '=', false).execute(),
+      s.selectFrom('build_caps').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids', 'discovery_cap_id', 'display_name']).where('site_id', '=', siteId).where('hidden', '=', false).execute(),
+      s.selectFrom('build_resource_accounts').select(['id', 'upn', 'display_name', 'phone_number', 'number_type', 'voice_routing_policy', 'voice_routing_policy_id', 'application_id']).where('site_id', '=', siteId).execute(),
+    ]);
+    const raRows = ras.map((r) => ({
+      id: r.id,
+      upn: r.upn,
+      e164: r.phone_number,
+      number_type: r.number_type,
+      policies: { voice_routing_policy: r.voice_routing_policy },
+      policy_ids: { voice_routing_policy: r.voice_routing_policy_id },
+      site_id: siteId,
+      needsPhoneLicence: !!r.phone_number,
+    }));
+    const [userV, capV, raV, userNames, capNames] = await Promise.all([
+      this.validation.validateRows(t, users),
+      this.validation.validateRows(t, caps.map((c) => ({ ...c }))),
+      raRows.length ? this.validation.validateRows(t, raRows) : Promise.resolve(new Map<string, BuildRowValidation>()),
+      this.nameLookup(t, 'build_users', users),
+      this.nameLookup(t, 'build_caps', caps),
+    ]);
+    const out: BuildIssueRow[] = [];
+    for (const r of users) for (const issue of validationIssues(userV.get(r.id))) out.push({ sheet: 'users', rowId: r.id, upn: r.upn, displayName: userNames.get(r.id) ?? null, issue });
+    for (const r of caps) for (const issue of validationIssues(capV.get(r.id))) out.push({ sheet: 'caps', rowId: r.id, upn: r.upn, displayName: r.display_name || capNames.get(r.id) || null, issue });
+    for (const r of ras) {
+      const created = !!r.application_id && !!r.upn;
+      for (const issue of validationIssues(raV.get(r.id))) {
+        if (!created && !DESIGN_ONLY_ISSUE_CODES.includes(issue.code)) continue;
+        out.push({ sheet: 'resource-accounts', rowId: r.id, upn: r.upn, displayName: r.display_name, issue });
+      }
+    }
+    const rank = { blocking: 0, warning: 1, info: 2 } as const;
+    return out.sort((a, b) => rank[a.issue.severity] - rank[b.issue.severity] || a.upn.localeCompare(b.upn));
+  }
+
+
+  /**
    * Snapshot the live-vs-target diff into the `validation` column for every
    * user/cap row on a site. Rows whose UPN has no stored tenant_users match
    * (nothing has synced yet, or a real sync ran but missed that specific
@@ -2052,7 +2102,7 @@ export class BuildService {
   async validateSite(t: TenantContext, u: AuthedUser, siteId: string, live = true): Promise<BuildValidateResult> {
     const s = this.s(t);
     const [users, caps, resourceAccounts, autoAttendants, callQueues] = await Promise.all([
-      s.selectFrom('build_users').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids']).where('site_id', '=', siteId).execute(),
+      s.selectFrom('build_users').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids', 'discovery_user_id']).where('site_id', '=', siteId).execute(),
       s.selectFrom('build_caps').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids']).where('site_id', '=', siteId).execute(),
       s.selectFrom('build_resource_accounts').select(['id', 'upn', 'phone_number', 'number_type', 'voice_routing_policy', 'voice_routing_policy_id', 'application_id']).where('site_id', '=', siteId).execute(),
       s.selectFrom('build_auto_attendants').select(['id', 'name', 'default_call_flow']).where('site_id', '=', siteId).execute(),
@@ -2492,18 +2542,7 @@ function holderTypeOf(table: 'build_users' | 'build_caps'): NumberHolderType {
   return table === 'build_users' ? 'user' : 'cap';
 }
 
-function hasIssue(v: BuildRowValidation): boolean {
-  return (
-    !v.existsInTenant ||
-    v.numberConflict ||
-    v.numberTypeMissing ||
-    !!v.usageLocationMismatch ||
-    v.accountDisabled ||
-    v.noPhoneLicence ||
-    v.policyMismatches.length > 0 ||
-    v.unknownPolicies.length > 0
-  );
-}
+const hasIssue = hasValidationIssue;
 
 /** Postgres unique_violation (23505) - the (site_id, lower(upn)) index tripped. */
 function isUniqueViolation(err: unknown): boolean {
