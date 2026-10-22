@@ -25,6 +25,7 @@
 import {
   parseLiveCallFlow,
   parseLiveCallTarget,
+  parseLiveSchedule,
   type LiveCallableEntityRef,
   type LiveCallFlow,
   type LiveMenuOption,
@@ -34,6 +35,7 @@ import {
   type AutoAttendantCallableEntity,
   type AutoAttendantCallFlow,
   type AutoAttendantMenuOption,
+  type AutoAttendantSchedule,
   type CallQueueActionSettings,
 } from './deployment';
 import { CALL_QUEUE_NO_AGENT_ACTIONS, CALL_QUEUE_OVERFLOW_ACTIONS, CALL_QUEUE_TIMEOUT_ACTIONS } from './domain';
@@ -56,6 +58,8 @@ export interface CallFlowNode {
   sublabel?: string;
   /** Short chip text, e.g. "Front door" for an Auto Attendant a resource account's phone number rings into directly. */
   badge?: string;
+  /** Extra lines under the label: a front door's resource account and number, a business-hours box's opening times. */
+  details?: string[];
 }
 
 /** Which schedule branch an edge belongs to - 'operator' is the AA-level -Operator link, not schedule-tied; 'agent' isn't a routing branch at all, it's a Call Queue's membership edge (an agent -> the queue they can be offered calls from). */
@@ -109,6 +113,7 @@ class GraphBuilder {
     if (existing.label === '(unresolved)' && node.label !== '(unresolved)') existing.label = node.label;
     if (node.badge && !existing.badge) existing.badge = node.badge;
     if (node.sublabel && !existing.sublabel) existing.sublabel = node.sublabel;
+    if (node.details?.length && !existing.details?.length) existing.details = node.details;
     return node.id;
   }
 
@@ -142,6 +147,55 @@ function snippet(texts: string[], hasAudio: boolean): string | undefined {
 
 const FRONT_DOOR_BADGE = 'Front door';
 
+/** A resource account as the diagram shows it. */
+export interface CallFlowResourceAccount {
+  name?: string | null;
+  upn?: string | null;
+  number?: string | null;
+}
+
+const DAY_ORDER = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const;
+const DAY_SHORT: Record<(typeof DAY_ORDER)[number], string> = { monday: 'Mon', tuesday: 'Tue', wednesday: 'Wed', thursday: 'Thu', friday: 'Fri', saturday: 'Sat', sunday: 'Sun' };
+
+/**
+ * "Mon–Fri 09:00–17:00" lines for a weekly schedule: consecutive days with the same hours share a line, and days with no hours are
+ * left out. A schedule saved without Complement lists the hours the attendant is NOT in business hours, so those are labelled.
+ */
+export function formatWeeklyHours(weekly: {
+  monday: { start: string; end: string }[];
+  tuesday: { start: string; end: string }[];
+  wednesday: { start: string; end: string }[];
+  thursday: { start: string; end: string }[];
+  friday: { start: string; end: string }[];
+  saturday: { start: string; end: string }[];
+  sunday: { start: string; end: string }[];
+  complement?: boolean;
+}): string[] {
+  const text = (day: (typeof DAY_ORDER)[number]) => weekly[day].map((r) => `${r.start}–${r.end}`).join(', ');
+  const lines: string[] = [];
+  let i = 0;
+  while (i < DAY_ORDER.length) {
+    const t = text(DAY_ORDER[i]!);
+    let j = i;
+    while (j + 1 < DAY_ORDER.length && text(DAY_ORDER[j + 1]!) === t) j++;
+    if (t) lines.push(`${i === j ? DAY_SHORT[DAY_ORDER[i]!] : `${DAY_SHORT[DAY_ORDER[i]!]}–${DAY_SHORT[DAY_ORDER[j]!]}`} ${t}`);
+    i = j + 1;
+  }
+  if (lines.length === 0) return ['No hours set'];
+  return weekly.complement === false ? ['Closed during:', ...lines] : lines;
+}
+
+/** The lines under a front door: each resource account's name and number. */
+function resourceAccountDetails(accounts: CallFlowResourceAccount[] | undefined): string[] {
+  const out: string[] = [];
+  for (const ra of accounts ?? []) {
+    const who = ra.name || ra.upn;
+    if (who) out.push(`Resource account: ${who}`);
+    if (ra.number) out.push(`Number: ${ra.number.replace(/^tel:/i, '')}`);
+  }
+  return out;
+}
+
 /* ============================ Design & Build ============================ */
 
 export interface DesignAutoAttendantInput {
@@ -153,6 +207,11 @@ export interface DesignAutoAttendantInput {
   holidayCallFlows: { name: string; callFlow: AutoAttendantCallFlow }[];
   /** Set when this AA's resource account has a phone number attached - the real front door a caller dials, vs. an AA only reachable via another AA's menu. */
   hasPhoneNumber?: boolean;
+  /** This AA's resource accounts, with the numbers a caller dials. */
+  resourceAccounts?: CallFlowResourceAccount[];
+  /** The weekly business hours (with Complement) - drawn on the Business hours box. */
+  schedule?: AutoAttendantSchedule | null;
+  timeZone?: string | null;
 }
 
 export interface DesignCallQueueInput {
@@ -323,10 +382,23 @@ export function buildAutoAttendantFlowGraphFromDesign(
   function expandAa(a: DesignAutoAttendantInput): void {
     if (visitedAa.has(a.buildId)) return;
     visitedAa.add(a.buildId);
-    const rootId = b.ensureNode({ id: `aa:${a.buildId}`, kind: 'auto_attendant', label: a.name, badge: a.hasPhoneNumber ? FRONT_DOOR_BADGE : undefined });
+    const rootId = b.ensureNode({
+      id: `aa:${a.buildId}`,
+      kind: 'auto_attendant',
+      label: a.name,
+      badge: a.hasPhoneNumber ? FRONT_DOOR_BADGE : undefined,
+      details: resourceAccountDetails(a.resourceAccounts),
+    });
+    const hoursDetails = [...(a.schedule?.weekly ? formatWeeklyHours(a.schedule.weekly) : []), ...(a.timeZone ? [`Time zone: ${a.timeZone}`] : [])];
     const addBranch = (cf: AutoAttendantCallFlow | null, key: string, branchLabel: string, branch: CallFlowBranch) => {
       if (!cf) return;
-      const branchId = b.ensureNode({ id: `${rootId}:${key}`, kind: 'auto_attendant', label: branchLabel, sublabel: designGreeting(cf) });
+      const branchId = b.ensureNode({
+        id: `${rootId}:${key}`,
+        kind: 'auto_attendant',
+        label: branchLabel,
+        sublabel: designGreeting(cf),
+        details: key === 'business_hours' ? hoursDetails : undefined,
+      });
       b.addEdge(rootId, branchId, branchLabel, branch);
       for (const opt of cf.menu.options) walkMenuOption(branchId, opt, a, branch);
     };
@@ -525,6 +597,8 @@ export function buildAutoAttendantFlowGraphFromLive(
   allCallQueues: LiveCallQueueInput[],
   schedules: LiveScheduleInput[],
   usersByEntraId?: Map<string, string>,
+  /** tenant resource accounts by object id (what an AA's ApplicationInstances hold), so the front door can name its account and number. */
+  resourceAccountsByObjectId?: Map<string, CallFlowResourceAccount>,
 ): CallFlowGraph {
   const b = new GraphBuilder();
   const aaByIdentity = new Map<string, LiveAutoAttendantInput>();
@@ -627,10 +701,32 @@ export function buildAutoAttendantFlowGraphFromLive(
     const key = identity.toLowerCase();
     if (visitedAa.has(key)) return;
     visitedAa.add(key);
-    const rootId = b.ensureNode({ id: `aa:${identity}`, kind: 'auto_attendant', label: a.name, badge: liveHasPhoneNumber(a.data) ? FRONT_DOOR_BADGE : undefined });
+    const instances = Array.isArray(a.data.ApplicationInstances) ? (a.data.ApplicationInstances as unknown[]) : [];
+    const accounts = instances.flatMap((i) => (typeof i === 'string' ? [resourceAccountsByObjectId?.get(i.toLowerCase())] : [])).filter((x): x is CallFlowResourceAccount => !!x);
+    const rootId = b.ensureNode({
+      id: `aa:${identity}`,
+      kind: 'auto_attendant',
+      label: a.name,
+      badge: liveHasPhoneNumber(a.data) ? FRONT_DOOR_BADGE : undefined,
+      details: resourceAccountDetails(accounts),
+    });
+    // The business hours are the weekly schedule of the After hours association (its Complement is what makes the rest "after hours").
+    const associations = Array.isArray(a.data.CallHandlingAssociations) ? (a.data.CallHandlingAssociations as Record<string, unknown>[]) : [];
+    const afterHoursAssoc = associations.find((cha) => cha.Type === 0 && typeof cha.ScheduleId === 'string');
+    const hoursSchedule = afterHoursAssoc ? parseLiveSchedule(scheduleByKey.get(afterHoursAssoc.ScheduleId as string)) : undefined;
+    const hoursDetails = [
+      ...(hoursSchedule?.weekly ? formatWeeklyHours(hoursSchedule.weekly) : []),
+      ...(typeof a.data.TimeZoneId === 'string' && a.data.TimeZoneId ? [`Time zone: ${a.data.TimeZoneId}`] : []),
+    ];
     const addBranch = (cf: LiveCallFlow | undefined, branchKey: string, branchLabel: string, branch: CallFlowBranch) => {
       if (!cf) return;
-      const branchId = b.ensureNode({ id: `${rootId}:${branchKey}`, kind: 'auto_attendant', label: branchLabel, sublabel: liveGreeting(cf) });
+      const branchId = b.ensureNode({
+        id: `${rootId}:${branchKey}`,
+        kind: 'auto_attendant',
+        label: branchLabel,
+        sublabel: liveGreeting(cf),
+        details: branchKey === 'business_hours' ? hoursDetails : undefined,
+      });
       b.addEdge(rootId, branchId, branchLabel, branch);
       for (const opt of cf.menu.options) walkMenuOption(branchId, opt, a, branch);
     };

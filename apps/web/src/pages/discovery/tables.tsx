@@ -45,6 +45,12 @@ function LiveCallFlowDialog({ base, type, row, onClose }: { base: string; type: 
     queryFn: () => fetchAllPages<TenantObject>(`${base}/objects?type=schedule`),
     enabled: needsSiblings,
   });
+  // The tenant's resource accounts: an attendant's ApplicationInstances are their object ids, so the front door can name its account and number.
+  const raQ = useQuery({
+    queryKey: ['tdisc', 'callflow-ra-all', base],
+    queryFn: () => fetchAllPages<TenantObject>(`${base}/objects?type=resource_account`),
+    enabled: needsSiblings,
+  });
   const usersQ = useQuery({
     queryKey: ['tdisc', 'callflow-users-all', base],
     queryFn: () => fetchAllPages<TenantUserSummary>(`${base}/users?`),
@@ -56,6 +62,21 @@ function LiveCallFlowDialog({ base, type, row, onClose }: { base: string; type: 
   const usersByEntraId = useMemo(
     () => new Map((usersQ.data?.items ?? []).filter((u) => u.entra_id).map((u) => [u.entra_id!.toLowerCase(), u.upn])),
     [usersQ.data],
+  );
+
+  const resourceAccountsByObjectId = useMemo(
+    () =>
+      new Map(
+        (raQ.data?.items ?? []).map((o) => [
+          o.object_key.toLowerCase(),
+          {
+            name: o.display_name ?? null,
+            upn: typeof o.data.UserPrincipalName === 'string' ? o.data.UserPrincipalName : null,
+            number: typeof o.data.PhoneNumber === 'string' && o.data.PhoneNumber ? o.data.PhoneNumber : null,
+          },
+        ]),
+      ),
+    [raQ.data],
   );
 
   const graph = useMemo(() => {
@@ -77,10 +98,11 @@ function LiveCallFlowDialog({ base, type, row, onClose }: { base: string; type: 
       cqQ.data.items.map((o) => ({ name: o.display_name ?? o.object_key, data: o.data })),
       schedQ.data.items.map((o) => ({ key: o.object_key, data: o.data })),
       usersByEntraId,
+      resourceAccountsByObjectId,
     );
-  }, [type, row, aaQ.data, cqQ.data, schedQ.data, usersByEntraId]);
+  }, [type, row, aaQ.data, cqQ.data, schedQ.data, usersByEntraId, resourceAccountsByObjectId]);
 
-  const loading = (needsSiblings && (aaQ.isLoading || cqQ.isLoading || schedQ.isLoading)) || usersQ.isLoading;
+  const loading = (needsSiblings && (aaQ.isLoading || cqQ.isLoading || schedQ.isLoading || raQ.isLoading)) || usersQ.isLoading;
   const loadError = ((needsSiblings ? (aaQ.error ?? cqQ.error ?? schedQ.error) : null) ?? usersQ.error) as Error | null;
 
   return (

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Background, Controls, getNodesBounds, getViewportForBounds, MarkerType, MiniMap, type Node, Panel, ReactFlow, ReactFlowProvider, useReactFlow } from '@xyflow/react';
+import { Background, BaseEdge, Controls, getBezierPath, getNodesBounds, getViewportForBounds, MarkerType, MiniMap, type EdgeProps, type Node, Panel, Position, ReactFlow, ReactFlowProvider, useReactFlow } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
 import { toPng } from 'html-to-image';
@@ -19,13 +19,14 @@ const useLocalStyles = makeStyles({
   gridGap8: { display: "grid", ...shorthands.gap('8px') },
   w120H80: { width: '120px', height: '80px' },
   flexWrapItemsCenterGap14: { display: "flex", ...shorthands.gap('14px'), flexWrap: "wrap", alignItems: "center" },
+  detail: { fontSize: '10px', color: '#374151', marginTop: '2px', lineHeight: '14px' },
   flexItemsCenterGap4: { display: "flex", alignItems: "center", ...shorthands.gap('4px') },
 });
 
 
 type Direction = 'LR' | 'TB';
 
-const NODE_WIDTH = 210;
+const NODE_WIDTH = 240;
 const NODE_HEIGHT = 52;
 const GROUP_PAD_X = 24;
 const GROUP_PAD_TOP = 30;
@@ -56,26 +57,67 @@ const BRANCH_STYLE: Record<CallFlowBranch, { color: string; dash?: string; label
 
 /** A greeting sublabel wraps over several lines, and a badge chip adds its own row - both render taller than NODE_HEIGHT, so dagre needs that real height or it packs the next node in the same column right on top of it. */
 function estimateNodeHeight(n: CallFlowNode): number {
+  const charsPerLine = 38;
   let height = NODE_HEIGHT;
   if (n.sublabel) {
-    const charsPerLine = 32;
     const lines = Math.max(1, Math.ceil(n.sublabel.length / charsPerLine));
     height = Math.max(height, 30 + lines * 14 + 12);
+  }
+  // Detail lines (a front door's resource account and number, the business hours) each take a row, or two when long.
+  if (n.details?.length) {
+    const lines = n.details.reduce((sum, d) => sum + Math.max(1, Math.ceil(d.length / charsPerLine)), 0);
+    height = Math.max(height, 40 + (n.sublabel ? 28 : 0) + lines * 14 + 12);
   }
   if (n.badge) height += 18;
   return height;
 }
 
+/** What an edge's label says (kept in one place so layout reserves exactly the room the drawn label needs). */
+const edgeLabelText = (e: { label: string; branchLabel?: string }) => (e.branchLabel ? `${e.label} · ${e.branchLabel}` : e.label);
+
+/** Rough size of an edge label as drawn (11px bold text plus its padding), so dagre can keep a clear gap for it between two boxes. */
+const edgeLabelSize = (text: string) => ({ width: Math.ceil(text.length * 6.6) + 20, height: 24 });
+
 /** dagre only computes positions - it's not rendered itself, xyflow does the actual drawing. */
 function layout(graph: CallFlowGraph, direction: Direction) {
   const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir: direction, nodesep: 40, ranksep: 90 });
+  // With edge labels dagre puts each label in a rank of its own between the two boxes and halves ranksep, so this is the room either side of it.
+  g.setGraph({ rankdir: direction, nodesep: 50, ranksep: 120, edgesep: 20 });
   g.setDefaultEdgeLabel(() => ({}));
   for (const n of graph.nodes) g.setNode(n.id, { width: NODE_WIDTH, height: estimateNodeHeight(n) });
-  for (const e of graph.edges) g.setEdge(e.source, e.target);
+  // The label's size is passed in so the layout keeps that space free: without it a label is drawn wherever the line's middle falls, often behind a box.
+  for (const e of graph.edges) g.setEdge(e.source, e.target, { ...edgeLabelSize(edgeLabelText(e)), labelpos: 'c' });
   dagre.layout(g);
-  return new Map(graph.nodes.map((n) => [n.id, g.node(n.id)]));
+  return {
+    nodes: new Map(graph.nodes.map((n) => [n.id, g.node(n.id)])),
+    // where dagre kept room for each edge's label
+    labels: new Map(graph.edges.map((e) => [e.id, g.edge({ v: e.source, w: e.target })] as const)),
+  };
 }
+
+/** A curved edge whose label sits in the gap the layout reserved for it, not wherever the curve's middle happens to fall. */
+function FlowEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, style, data }: EdgeProps) {
+  const [path, midX, midY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
+  const d = (data ?? {}) as { text?: string; color?: string; lx?: number; ly?: number };
+  return (
+    <BaseEdge
+      id={id}
+      path={path}
+      markerEnd={markerEnd}
+      style={style}
+      label={d.text}
+      labelX={d.lx ?? midX}
+      labelY={d.ly ?? midY}
+      labelStyle={{ fontSize: 11, fontWeight: 600, fill: d.color }}
+      labelShowBg
+      labelBgStyle={{ fill: '#ffffff', fillOpacity: 1, stroke: d.color, strokeWidth: 0.75 }}
+      labelBgPadding={[6, 3]}
+      labelBgBorderRadius={4}
+    />
+  );
+}
+
+const EDGE_TYPES = { flow: FlowEdge };
 
 function downloadDataUrl(dataUrl: string, filename: string) {
   const a = document.createElement('a');
@@ -222,7 +264,7 @@ export function CallFlowDiagram({ graph, exportFilename }: { graph: CallFlowGrap
   const [direction, setDirection] = useState<Direction>('LR');
 
   const { nodes, edges } = useMemo(() => {
-    const positions = layout(graph, direction);
+    const { nodes: positions, labels } = layout(graph, direction);
 
     const nodes = graph.nodes.map((n) => {
       const style = KIND_STYLE[n.kind];
@@ -231,6 +273,9 @@ export function CallFlowDiagram({ graph, exportFilename }: { graph: CallFlowGrap
       return {
         id: n.id,
         position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - height / 2 },
+        // lines leave and enter on the sides the layout flows between, so they follow the gap kept for their labels
+        sourcePosition: direction === 'LR' ? Position.Right : Position.Bottom,
+        targetPosition: direction === 'LR' ? Position.Left : Position.Top,
         width: NODE_WIDTH,
         height,
         data: {
@@ -240,6 +285,11 @@ export function CallFlowDiagram({ graph, exportFilename }: { graph: CallFlowGrap
                 {style.icon} {n.label}
               </div>
               {n.sublabel && <div className={ls.mt2}>{n.sublabel}</div>}
+              {n.details?.map((d, i) => (
+                <div key={i} className={ls.detail}>
+                  {d}
+                </div>
+              ))}
               {n.badge && (
                 <div
                   className={ls.inlineblockMt4ColoredFilledPad1px7}
@@ -313,10 +363,9 @@ export function CallFlowDiagram({ graph, exportFilename }: { graph: CallFlowGrap
         id: e.id,
         source: e.source,
         target: e.target,
-        label: e.branchLabel ? `${e.label} · ${e.branchLabel}` : e.label,
+        type: 'flow',
+        data: { text: edgeLabelText(e), color: bs.color, lx: labels.get(e.id)?.x, ly: labels.get(e.id)?.y },
         style: { stroke: bs.color, strokeWidth: 1.5, strokeDasharray: bs.dash },
-        labelStyle: { fontSize: 10, fill: bs.color },
-        labelBgStyle: { fillOpacity: 0.85 },
         markerEnd: { type: MarkerType.ArrowClosed, color: bs.color },
       };
     });
@@ -339,6 +388,7 @@ export function CallFlowDiagram({ graph, exportFilename }: { graph: CallFlowGrap
           <ReactFlow
             nodes={nodes}
             edges={edges}
+            edgeTypes={EDGE_TYPES}
             fitView
             minZoom={0.05}
             nodesDraggable={false}

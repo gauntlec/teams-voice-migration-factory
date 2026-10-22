@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Spinner, Text , makeStyles, mergeClasses } from '@fluentui/react-components';
-import { buildAutoAttendantFlowGraphFromDesign, buildCallQueueFlowGraphFromDesign, type AutoAttendantCallableEntity, type AutoAttendantCallFlow, type AutoAttendantHolidayCallFlow, type CallQueueActionSettings, type DesignAutoAttendantInput, type DesignCallQueueInput, type Paginated } from '@tvmf/shared';
+import { buildAutoAttendantFlowGraphFromDesign, buildCallQueueFlowGraphFromDesign, type AutoAttendantCallableEntity, type AutoAttendantCallFlow, type AutoAttendantHolidayCallFlow, type AutoAttendantSchedule, type CallFlowResourceAccount, type CallQueueActionSettings, type DesignAutoAttendantInput, type DesignCallQueueInput, type Paginated } from '@tvmf/shared';
 import { api } from '../../api';
 import { CallFlowDiagram } from '../../components/CallFlowDiagram';
 import { LoadError, useRecordStyles, type Row } from '../../components/records';
@@ -35,8 +35,15 @@ function toDesignCqInput(r: Row): DesignCallQueueInput {
  * directly) vs. only reachable via another AA's menu - see
  * AutoAttendantFlowDialog, which builds that map.
  */
-function toDesignAaInput(r: Row, hasPhoneNumberById?: Map<string, boolean>): DesignAutoAttendantInput {
+function toDesignAaInput(
+  r: Row,
+  hasPhoneNumberById?: Map<string, boolean>,
+  resourceAccountById?: Map<string, CallFlowResourceAccount>,
+): DesignAutoAttendantInput {
   const discoveryResourceAccountId = r.discovery_resource_account_id as string | null;
+  const ownAccounts = (Array.isArray(r.resource_accounts) ? (r.resource_accounts as string[]) : [])
+    .map((id) => resourceAccountById?.get(id))
+    .filter((x): x is CallFlowResourceAccount => !!x);
   return {
     buildId: String(r.id),
     name: String(r.name),
@@ -45,6 +52,9 @@ function toDesignAaInput(r: Row, hasPhoneNumberById?: Map<string, boolean>): Des
     afterHoursCallFlow: (r.after_hours_call_flow as AutoAttendantCallFlow | null) ?? null,
     holidayCallFlows: Array.isArray(r.holiday_call_flows) ? (r.holiday_call_flows as AutoAttendantHolidayCallFlow[]) : [],
     hasPhoneNumber: discoveryResourceAccountId ? hasPhoneNumberById?.get(discoveryResourceAccountId) : undefined,
+    resourceAccounts: ownAccounts,
+    schedule: (r.schedule as AutoAttendantSchedule | null) ?? null,
+    timeZone: (r.time_zone_id as string | null) ?? null,
   };
 }
 
@@ -119,14 +129,27 @@ export function AutoAttendantFlowDialog({ tid, base, siteId, row, onClose }: { t
     return m;
   }, [raQ.data]);
 
+  // Each resource account by its Design & Build row id (what an attendant's resource_accounts hold), for the front door's name and number.
+  const resourceAccountById = useMemo(() => {
+    const m = new Map<string, CallFlowResourceAccount>();
+    for (const r of raQ.data?.items ?? []) {
+      m.set(String(r.id), {
+        name: (r.display_name as string | null) ?? (r.name as string | null) ?? null,
+        upn: (r.upn as string | null) ?? null,
+        number: (r.phone_number as string | null) ?? (r.e164 as string | null) ?? null,
+      });
+    }
+    return m;
+  }, [raQ.data]);
+
   const graph = useMemo(() => {
     if (!aaQ.data || !cqQ.data) return null;
     return buildAutoAttendantFlowGraphFromDesign(
-      toDesignAaInput(row, hasPhoneNumberById),
-      aaQ.data.items.map((r) => toDesignAaInput(r, hasPhoneNumberById)),
+      toDesignAaInput(row, hasPhoneNumberById, resourceAccountById),
+      aaQ.data.items.map((r) => toDesignAaInput(r, hasPhoneNumberById, resourceAccountById)),
       cqQ.data.items.map(toDesignCqInput),
     );
-  }, [aaQ.data, cqQ.data, row, hasPhoneNumberById]);
+  }, [aaQ.data, cqQ.data, row, hasPhoneNumberById, resourceAccountById]);
 
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
