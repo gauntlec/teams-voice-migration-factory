@@ -13,7 +13,6 @@ const useLocalStyles = makeStyles({
 
 
 const OVERVIEW_FIELDS: FieldDef[] = [
-  { key: 'migrationId', label: 'Migration ID' },
   { key: 'region', label: 'Region', type: 'select', options: SITE_REGIONS },
   { key: 'author', label: 'Author' },
   { key: 'licensingModel', label: 'PSTN / licensing model', type: 'select', options: LICENSING_MODELS },
