@@ -69,7 +69,6 @@ const HEADER_ALIASES: Record<string, string[]> = {
 const TEMPLATE_COLUMNS = [
   'UPN',
   'Phone number',
-  'Display name',
   'Calling policy',
   'Caller ID',
   'Voicemail enabled',
@@ -82,7 +81,6 @@ const TEMPLATE_COLUMNS = [
 const TEMPLATE_EXAMPLE = [
   'jane.doe@customer.com',
   '+441234567890',
-  'Jane Doe',
   'UK-Standard',
   'user',
   'yes',
@@ -237,7 +235,6 @@ export function ImportUsersDialog({
         ['Column', 'Required', 'Notes'],
         ['UPN', 'Yes', 'The user’s Microsoft 365 sign-in address.'],
         ['Phone number', 'Yes', 'The number the customer wants. E.164 (+441234567890) is best. If it isn’t already in this site’s number ranges it’s still imported and flagged for Design & Build.'],
-        ['Display name', 'No', ''],
         ['Calling policy', 'No', 'Name of an existing calling policy for this customer. Unknown names are ignored.'],
         ['Caller ID', 'No', 'user | anonymous | main number'],
         ['Voicemail enabled', 'No', 'yes / no (defaults to yes)'],
