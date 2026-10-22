@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { sql } from 'kysely';
 import { tenantDb, type DB } from '@tvmf/db';
-import { POLICY_KINDS, POLICY_KIND_TO_TENANT_TYPE, policyMatchesLive, userAccountProblems, type BuildRowValidation, type PolicyKey } from '@tvmf/shared';
+import { POLICY_KINDS, POLICY_KIND_TO_TENANT_TYPE, policyMatchesLive, usageLocationMismatch, userAccountProblems, type BuildRowValidation, type PolicyKey } from '@tvmf/shared';
 import type { TenantContext } from '../../common/request';
 import { InjectDb, type Db } from '../../db/db.module';
 
@@ -14,6 +14,8 @@ interface IdentityRow {
   number_type: string | null;
   policies: Record<string, string | null> | null;
   policy_ids: Record<string, string | null> | null;
+  /** the site the row belongs to, for the usage location check */
+  site_id?: string | null;
   /** false for a resource account with no number: it needs no phone licence (default true) */
   needsPhoneLicence?: boolean;
 }
@@ -42,12 +44,20 @@ export class BuildValidationService {
     const tenantUsers = upns.length
       ? await s
           .selectFrom('tenant_users')
-          .select(['upn', 'enterprise_voice_enabled', 'line_uri', 'policies', 'account_enabled', 'assigned_plans', 'feature_types'])
+          .select(['upn', 'enterprise_voice_enabled', 'line_uri', 'policies', 'account_enabled', 'assigned_plans', 'feature_types', 'usage_location'])
           .where('removed_at', 'is', null)
           .where(sql`lower(upn)`, 'in', upns)
           .execute()
       : [];
     const byUpn = new Map(tenantUsers.map((u) => [u.upn.toLowerCase(), u]));
+
+    // The country of each site, as the ISO code Teams uses for a usage location.
+    const siteIds = [...new Set(rows.map((r) => r.site_id).filter((v): v is string => !!v))];
+    const siteCountry = new Map(
+      siteIds.length
+        ? (await s.selectFrom('discovery_sites').select(['id', 'country']).where('id', 'in', siteIds).execute()).map((r) => [r.id, r.country] as const)
+        : [],
+    );
 
     // Every distinct target policy value in play, grouped by the tenant policy
     // type it would be granted against, so "does this policy exist" is one
@@ -155,6 +165,7 @@ export class BuildValidationService {
         : { accountDisabled: false, noPhoneLicence: false };
       out.set(row.id, {
         existsInTenant: !!live,
+        usageLocationMismatch: live ? usageLocationMismatch(live.usage_location, row.site_id ? siteCountry.get(row.site_id) : null) : null,
         accountDisabled: account.accountDisabled,
         noPhoneLicence: account.noPhoneLicence,
         enterpriseVoiceEnabled: live?.enterprise_voice_enabled ?? null,

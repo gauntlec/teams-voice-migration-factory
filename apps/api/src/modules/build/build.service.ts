@@ -2002,8 +2002,8 @@ export class BuildService {
   async validateSite(t: TenantContext, u: AuthedUser, siteId: string, live = true): Promise<BuildValidateResult> {
     const s = this.s(t);
     const [users, caps, resourceAccounts, autoAttendants, callQueues] = await Promise.all([
-      s.selectFrom('build_users').select(['id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids']).where('site_id', '=', siteId).execute(),
-      s.selectFrom('build_caps').select(['id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids']).where('site_id', '=', siteId).execute(),
+      s.selectFrom('build_users').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids']).where('site_id', '=', siteId).execute(),
+      s.selectFrom('build_caps').select(['id', 'site_id', 'upn', 'e164', 'number_type', 'policies', 'policy_ids']).where('site_id', '=', siteId).execute(),
       s.selectFrom('build_resource_accounts').select(['id', 'upn', 'phone_number', 'number_type', 'voice_routing_policy', 'voice_routing_policy_id', 'application_id']).where('site_id', '=', siteId).execute(),
       s.selectFrom('build_auto_attendants').select(['id', 'name', 'default_call_flow']).where('site_id', '=', siteId).execute(),
       s.selectFrom('build_call_queues').select(['id', 'name', 'routing_method']).where('site_id', '=', siteId).execute(),
@@ -2042,6 +2042,7 @@ export class BuildService {
       policies: { voice_routing_policy: r.voice_routing_policy },
       policy_ids: { voice_routing_policy: r.voice_routing_policy_id },
       created: !!r.application_id,
+      site_id: siteId,
       needsPhoneLicence: !!r.phone_number,
     }));
     const raValidated = raRows.length ? await this.validation.validateRows(t, raRows) : new Map<string, BuildRowValidation>();
@@ -2446,6 +2447,7 @@ function hasIssue(v: BuildRowValidation): boolean {
     !v.existsInTenant ||
     v.numberConflict ||
     v.numberTypeMissing ||
+    !!v.usageLocationMismatch ||
     v.accountDisabled ||
     v.noPhoneLicence ||
     v.policyMismatches.length > 0 ||

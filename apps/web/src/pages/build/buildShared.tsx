@@ -44,7 +44,7 @@ export function ValidationBadge({ v }: { v: BuildRowValidation | null }) {
     );
   }
   const issues =
-    v.unknownPolicies.length + v.policyMismatches.length + (v.numberConflict ? 1 : 0) + (v.numberTypeMissing ? 1 : 0) + (v.accountDisabled ? 1 : 0) + (v.noPhoneLicence ? 1 : 0);
+    v.unknownPolicies.length + v.policyMismatches.length + (v.numberConflict ? 1 : 0) + (v.numberTypeMissing ? 1 : 0) + (v.accountDisabled ? 1 : 0) + (v.noPhoneLicence ? 1 : 0) + (v.usageLocationMismatch ? 1 : 0);
   // Renames aren't a real issue - deployment always resolves the live name
   // via policy_ids regardless - but still worth surfacing so the stale
   // display text next to it isn't mistaken for what will actually deploy.
@@ -61,6 +61,9 @@ export function ValidationBadge({ v }: { v: BuildRowValidation | null }) {
     );
   }
   const title = [
+    v.usageLocationMismatch
+      ? `Usage location is ${v.usageLocationMismatch.live ?? 'not set'} in the tenant, but this site is in ${v.usageLocationMismatch.country} (${v.usageLocationMismatch.expected}). Usage location and site country should match.`
+      : null,
     v.accountDisabled ? 'The account is disabled in the tenant - it cannot sign in or take calls' : null,
     v.noPhoneLicence ? 'No Teams Phone licence on the account - a number cannot be assigned until it has one' : null,
     v.numberConflict ? 'This number is also assigned to another user, CAP or resource account in this tenant' : null,

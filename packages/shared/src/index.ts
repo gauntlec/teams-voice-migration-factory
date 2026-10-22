@@ -36,6 +36,7 @@ export * from './mail-settings';
 export * from './platform-features';
 export * from './tenant-deletion';
 export * from './coordinates';
+export * from './country';
 export * from './site-contacts';
 
 import type { CmdletInvocation } from './deployment';
@@ -382,6 +383,11 @@ export interface BuildRowValidation {
   accountDisabled: boolean;
   /** the account has licence data but no Teams Phone licence, so a number cannot be assigned until it gets one */
   noPhoneLicence: boolean;
+  /**
+   * The user's usage location in the tenant differs from the country of the site they are being enabled at (or is not set at all).
+   * null when it matches, when the user is not in the tenant, or when the site's country is not set or not recognised.
+   */
+  usageLocationMismatch: { live: string | null; expected: string; country: string } | null;
   /** each target policy whose live effective assignment differs (or is unset) */
   policyMismatches: { key: import('./domain').PolicyKey; label: string; target: string; live: string | null }[];
   /** target policy names that don't exist anywhere in tenant_policies for their type - likely a typo */
