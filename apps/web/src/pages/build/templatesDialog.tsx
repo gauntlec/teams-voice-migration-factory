@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Dropdown, Field, Input, Option, Spinner, Text, tokens , makeStyles, shorthands } from '@fluentui/react-components';
 import { DeleteRegular } from '@fluentui/react-icons';
-import { POLICY_KINDS, VOICEMAIL_PROMPT_LANGUAGES, type PolicyKey } from '@tvmf/shared';
+import { POLICY_KIND_GROUPS, POLICY_KINDS, VOICEMAIL_PROMPT_LANGUAGES, type PolicyKey } from '@tvmf/shared';
 import { api, ApiError } from '../../api';
 import { type Choice } from '../../components/records';
 import { DangerText } from '../../components/ui';
@@ -32,17 +32,8 @@ interface BuildTemplateRow {
   is_default: boolean;
 }
 
-/** The subset of PolicyKeys a Build Template covers - matches the "Standard
- * User Template" example (voice routing, dial plan, calling policy,
- * emergency calling + routing) - not the full 13-key set per-row edit
- * exposes, to keep a template focused on what's actually meant to default. */
-const TEMPLATE_POLICY_KEYS: PolicyKey[] = [
-  'voice_routing_policy',
-  'dial_plan',
-  'calling_policy',
-  'emergency_calling_policy',
-  'emergency_call_routing_policy',
-];
+/** Every policy kind a Build Template can set - all the per-user voice policies, so a template can stand for a whole user type. */
+const TEMPLATE_POLICY_KEYS: PolicyKey[] = POLICY_KIND_GROUPS.flatMap((g) => POLICY_KINDS.filter((k) => k.group === g).map((k) => k.key));
 
 const VM_UNSET = '__unset__';
 
@@ -214,12 +205,20 @@ export function TemplatesDialog({
                   <Input value={form.name} placeholder="Standard User Template" onChange={(_, d) => setForm((p) => ({ ...p, name: d.value }))} />
                 </Field>
                 <div className={ls.gridGap12}>
-                  {TEMPLATE_POLICY_KEYS.map((k) => {
-                    const label = POLICY_KINDS.find((p) => p.key === k)?.label ?? k;
+                  {TEMPLATE_POLICY_KEYS.map((k, ki) => {
+                    const kind = POLICY_KINDS.find((p) => p.key === k);
+                    const label = kind?.label ?? k;
                     const choices = policyChoicesByKey[k] ?? [];
                     const value = form.policy_ids[k] ?? '';
+                    const newGroup = kind && kind.group !== POLICY_KINDS.find((p) => p.key === TEMPLATE_POLICY_KEYS[ki - 1])?.group;
                     return (
-                      <Field key={k} label={label}>
+                      <Fragment key={k}>
+                      {newGroup && (
+                        <Text weight="semibold" style={{ gridColumn: '1 / -1', paddingTop: 6 }}>
+                          {kind.group}
+                        </Text>
+                      )}
+                      <Field label={label}>
                         <Dropdown
                           value={choices.find((c) => c.value === value)?.label ?? '— none —'}
                           selectedOptions={[value || '']}
@@ -233,8 +232,12 @@ export function TemplatesDialog({
                           ))}
                         </Dropdown>
                       </Field>
+                      </Fragment>
                     );
                   })}
+                  <Text weight="semibold" style={{ gridColumn: '1 / -1', paddingTop: 6 }}>
+                    Voicemail defaults
+                  </Text>
                   <Field label="Voicemail enabled">
                     <Dropdown
                       value={form.voicemail_enabled === 'true' ? 'On' : form.voicemail_enabled === 'false' ? 'Off' : '— unset —'}

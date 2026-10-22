@@ -127,21 +127,34 @@ export const NUMBER_TYPES = ['DirectRouting', 'CallingPlan', 'OperatorConnect'] 
 export type NumberType = (typeof NUMBER_TYPES)[number];
 
 /** Grant-Cs*Policy families the build sheet assigns per user / CAP. */
+/** How the policy kinds are grouped in the template and edit dialogs (the grids keep one column per kind, in POLICY_KINDS order). */
+export const POLICY_KIND_GROUPS = ['Calling', 'Routing and dialling', 'Emergency', 'Voicemail and applications', 'Devices, conferencing and recording'] as const;
+export type PolicyKindGroup = (typeof POLICY_KIND_GROUPS)[number];
+
+/**
+ * Every Teams policy a voice build assigns to a user, with the Grant cmdlet that does it. The first 13 are the ones the original
+ * build workbook and script set; the last four are the other per-user voice policies in Microsoft's reference (mobility, audio
+ * conferencing, compliance recording, survivable branch appliance).
+ */
 export const POLICY_KINDS = [
-  { key: 'voice_routing_policy', label: 'Voice Routing Policy', cmdlet: 'Grant-CsOnlineVoiceRoutingPolicy' },
-  { key: 'dial_out_policy', label: 'Dial Out Policy', cmdlet: 'Grant-CsDialoutPolicy' },
-  { key: 'shared_calling_policy', label: 'Shared Calling Policy', cmdlet: 'Grant-CsTeamsSharedCallingRoutingPolicy' },
-  { key: 'dial_plan', label: 'Tenant Dial Plan', cmdlet: 'Grant-CsTenantDialPlan' },
-  { key: 'calling_policy', label: 'Teams Calling Policy', cmdlet: 'Grant-CsTeamsCallingPolicy' },
-  { key: 'call_hold_policy', label: 'Call Hold Policy', cmdlet: 'Grant-CsTeamsCallHoldPolicy' },
-  { key: 'call_park_policy', label: 'Call Park Policy', cmdlet: 'Grant-CsTeamsCallParkPolicy' },
-  { key: 'caller_id_policy', label: 'Caller ID Policy', cmdlet: 'Grant-CsCallingLineIdentity' },
-  { key: 'voice_app_policy', label: 'Voice Application Policy', cmdlet: 'Grant-CsTeamsVoiceApplicationsPolicy' },
-  { key: 'voicemail_policy', label: 'Voicemail Policy', cmdlet: 'Grant-CsOnlineVoicemailPolicy' },
-  { key: 'emergency_calling_policy', label: 'Emergency Calling Policy', cmdlet: 'Grant-CsTeamsEmergencyCallingPolicy' },
-  { key: 'emergency_call_routing_policy', label: 'Emergency Call Routing Policy', cmdlet: 'Grant-CsTeamsEmergencyCallRoutingPolicy' },
-  { key: 'ip_phone_policy', label: 'IP Phone Policy', cmdlet: 'Grant-CsTeamsIPPhonePolicy' },
-] as const;
+  { key: 'voice_routing_policy', label: 'Voice Routing Policy', cmdlet: 'Grant-CsOnlineVoiceRoutingPolicy', group: 'Routing and dialling' },
+  { key: 'dial_out_policy', label: 'Dial Out Policy', cmdlet: 'Grant-CsDialoutPolicy', group: 'Calling' },
+  { key: 'shared_calling_policy', label: 'Shared Calling Policy', cmdlet: 'Grant-CsTeamsSharedCallingRoutingPolicy', group: 'Calling' },
+  { key: 'dial_plan', label: 'Tenant Dial Plan', cmdlet: 'Grant-CsTenantDialPlan', group: 'Routing and dialling' },
+  { key: 'calling_policy', label: 'Teams Calling Policy', cmdlet: 'Grant-CsTeamsCallingPolicy', group: 'Calling' },
+  { key: 'call_hold_policy', label: 'Call Hold Policy', cmdlet: 'Grant-CsTeamsCallHoldPolicy', group: 'Calling' },
+  { key: 'call_park_policy', label: 'Call Park Policy', cmdlet: 'Grant-CsTeamsCallParkPolicy', group: 'Calling' },
+  { key: 'caller_id_policy', label: 'Caller ID Policy', cmdlet: 'Grant-CsCallingLineIdentity', group: 'Calling' },
+  { key: 'voice_app_policy', label: 'Voice Application Policy', cmdlet: 'Grant-CsTeamsVoiceApplicationsPolicy', group: 'Voicemail and applications' },
+  { key: 'voicemail_policy', label: 'Voicemail Policy', cmdlet: 'Grant-CsOnlineVoicemailPolicy', group: 'Voicemail and applications' },
+  { key: 'emergency_calling_policy', label: 'Emergency Calling Policy', cmdlet: 'Grant-CsTeamsEmergencyCallingPolicy', group: 'Emergency' },
+  { key: 'emergency_call_routing_policy', label: 'Emergency Call Routing Policy', cmdlet: 'Grant-CsTeamsEmergencyCallRoutingPolicy', group: 'Emergency' },
+  { key: 'ip_phone_policy', label: 'IP Phone Policy', cmdlet: 'Grant-CsTeamsIPPhonePolicy', group: 'Devices, conferencing and recording' },
+  { key: 'mobility_policy', label: 'Mobility Policy', cmdlet: 'Grant-CsTeamsMobilityPolicy', group: 'Calling' },
+  { key: 'audio_conferencing_policy', label: 'Audio Conferencing Policy', cmdlet: 'Grant-CsTeamsAudioConferencingPolicy', group: 'Devices, conferencing and recording' },
+  { key: 'compliance_recording_policy', label: 'Compliance Recording Policy', cmdlet: 'Grant-CsTeamsComplianceRecordingPolicy', group: 'Devices, conferencing and recording' },
+  { key: 'survivable_branch_policy', label: 'Survivable Branch Appliance Policy', cmdlet: 'Grant-CsTeamsSurvivableBranchAppliancePolicy', group: 'Devices, conferencing and recording' },
+] as const satisfies readonly { key: string; label: string; cmdlet: string; group: PolicyKindGroup }[];
 export type PolicyKey = (typeof POLICY_KINDS)[number]['key'];
 
 /**
@@ -167,6 +180,10 @@ export const POLICY_KIND_TO_TENANT_TYPE: Partial<Record<PolicyKey, TenantPolicyT
   emergency_calling_policy: 'TeamsEmergencyCallingPolicy',
   emergency_call_routing_policy: 'TeamsEmergencyCallRoutingPolicy',
   ip_phone_policy: 'TeamsIPPhonePolicy',
+  mobility_policy: 'TeamsMobilityPolicy',
+  audio_conferencing_policy: 'TeamsAudioConferencingPolicy',
+  compliance_recording_policy: 'TeamsComplianceRecordingPolicy',
+  survivable_branch_policy: 'TeamsSurvivableBranchAppliancePolicy',
 };
 
 /**
@@ -769,6 +786,10 @@ export const TENANT_POLICY_TYPES = [
   'TeamsMeetingPolicy',
   'TeamsMessagingPolicy',
   'TeamsAppSetupPolicy',
+  'TeamsMobilityPolicy',
+  'TeamsAudioConferencingPolicy',
+  'TeamsComplianceRecordingPolicy',
+  'TeamsSurvivableBranchAppliancePolicy',
 ] as const;
 export type TenantPolicyType = (typeof TENANT_POLICY_TYPES)[number];
 
@@ -789,4 +810,8 @@ export const TENANT_POLICY_TYPE_LABELS: Record<TenantPolicyType, string> = {
   TeamsMeetingPolicy: 'Meeting policy',
   TeamsMessagingPolicy: 'Messaging policy',
   TeamsAppSetupPolicy: 'App setup policy',
+  TeamsMobilityPolicy: 'Mobility policy',
+  TeamsAudioConferencingPolicy: 'Audio conferencing policy',
+  TeamsComplianceRecordingPolicy: 'Compliance recording policy',
+  TeamsSurvivableBranchAppliancePolicy: 'Survivable branch appliance policy',
 };

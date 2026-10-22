@@ -94,6 +94,8 @@ export interface FieldDef {
   placeholder?: string;
   default?: string;
   full?: boolean;
+  /** A heading shown above this field when the previous field is in a different section (consecutive fields share one). */
+  section?: string;
   /** Grey out (and stop editing) this field when the current form values make it inapplicable. */
   disabledWhen?: (values: Record<string, string>) => boolean;
 }
@@ -493,10 +495,15 @@ export function RecordDialog({
           </DialogTitle>
           <DialogContent>
             <div className={s.dialogForm}>
-              {fields.map((f) => {
+              {fields.map((f, fi) => {
                 const disabled = f.disabledWhen?.(values) ?? false;
                 return (
                 <Fragment key={f.key}>
+                {f.section && f.section !== fields[fi - 1]?.section && (
+                  <Text weight="semibold" style={{ gridColumn: '1 / -1', paddingTop: 6 }}>
+                    {f.section}
+                  </Text>
+                )}
                 <Field
                   label={f.label}
                   required={f.required}

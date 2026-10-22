@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { Badge, Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Spinner, Tab, TabList, Text, tokens , makeStyles } from '@fluentui/react-components';
 import { ArrowLeftRegular } from '@fluentui/react-icons';
-import { CALL_QUEUE_ROUTING_METHODS, NUMBER_TYPES, POLICY_KIND_TO_TENANT_TYPE, POLICY_KINDS, RESOURCE_ACCOUNT_KINDS, type AutoAttendantCallFlow, type BuildRowValidation, type BuildSiteRollup, type CallQueueActionSettings, type FileRow, type Paginated, type TenantPolicySummary } from '@tvmf/shared';
+import { CALL_QUEUE_ROUTING_METHODS, NUMBER_TYPES, POLICY_KIND_GROUPS, POLICY_KIND_TO_TENANT_TYPE, POLICY_KINDS, RESOURCE_ACCOUNT_KINDS, type AutoAttendantCallFlow, type BuildRowValidation, type BuildSiteRollup, type CallQueueActionSettings, type FileRow, type Paginated, type TenantPolicySummary } from '@tvmf/shared';
 import { api, apiDownload, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { Page } from '../components/Page';
@@ -275,12 +275,16 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
   const site = rollup.data?.find((r) => r.id === siteId);
   if (!site) return <LoadError message="Site not found." />;
 
-  const policyFields: FieldDef[] = POLICY_KINDS.map((k) => ({
-    key: `policy_ids.${k.key}`,
-    label: k.label,
-    type: 'ref',
-    choices: policyChoicesByKey[k.key] ?? [],
-  }));
+  // Grouped (Calling, Routing and dialling, ...) so the 17 policies read as sections rather than one long list.
+  const policyFields: FieldDef[] = POLICY_KIND_GROUPS.flatMap((g) =>
+    POLICY_KINDS.filter((k) => k.group === g).map<FieldDef>((k) => ({
+      key: `policy_ids.${k.key}`,
+      label: k.label,
+      type: 'ref',
+      choices: policyChoicesByKey[k.key] ?? [],
+      section: g,
+    })),
+  );
 
   // Embedded in a service request, the request page supplies the title.
   const Shell = embedded ? EmbeddedShell : Page;
