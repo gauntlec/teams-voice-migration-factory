@@ -206,6 +206,34 @@ export class TelephonyService {
     return rows.length ? rows.map((r) => r.sitecode) : ['\x00'];
   }
 
+  /**
+   * What the user-import preview needs, read fresh when a file is loaded: the UPNs already on the customer (so rows that were
+   * imported before show as such) and every number still free on this site (the full list, not one page of it).
+   */
+  async userImportContext(t: TenantContext, siteId: string) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(siteId)) throw new BadRequestException('A site is required.');
+    assertSiteInScope(t, siteId);
+    const s = this.s(t);
+    const site = await s.selectFrom('discovery_sites').select('sitecode').where('id', '=', siteId).executeTakeFirst();
+    if (!site) throw new BadRequestException('Unknown site for this customer.');
+
+    const sites = this.siteIdFilter(t, undefined);
+    let users = s.selectFrom('discovery_users').select('upn');
+    if (sites) users = users.where('site_id', 'in', sites);
+    const upns = (await users.execute()).map((r) => r.upn.trim().toLowerCase());
+
+    const free = site.sitecode
+      ? await s
+          .selectFrom('phone_numbers as n')
+          .innerJoin('discovery_number_ranges as r', 'r.id', 'n.range_id')
+          .select('n.e164 as e164')
+          .where('r.sitecode', '=', site.sitecode)
+          .where('n.status', '=', 'available')
+          .execute()
+      : [];
+    return { upns, freeNumbers: free.map((r) => r.e164) };
+  }
+
   async listUsers(t: TenantContext, q: DiscoveryListQuery) {
     const s = this.s(t);
     const sites = this.siteIdFilter(t, q.siteId);

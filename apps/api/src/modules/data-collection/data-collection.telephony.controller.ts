@@ -46,6 +46,13 @@ export class TelephonyController {
 
   /* --------------------- paginated list reads --------------------- */
 
+  /** Existing UPNs and this site's free numbers, read fresh for the user-import preview. */
+  @Get('users/import-context')
+  @RequirePermission('discovery:write')
+  userImportContext(@TenantCtx() t: TenantContext, @Query('siteId') siteId?: string) {
+    return this.svc.userImportContext(t, siteId ?? '');
+  }
+
   @Get('users')
   @RequirePermission('discovery:read')
   listUsers(

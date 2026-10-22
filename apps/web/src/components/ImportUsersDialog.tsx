@@ -98,7 +98,8 @@ type Row = Record<string, string>;
 type Parsed = {
   n: number;
   row: Row;
-  status: 'ok' | 'warn' | 'error';
+  /** skip: already imported (or repeated in the file), so the import leaves it alone */
+  status: 'ok' | 'warn' | 'error' | 'skip';
   notes: string[];
   /** number-warning flavour, for a distinct badge - both still pass validation */
   numberFlag?: 'unknown' | 'other-site';
@@ -108,8 +109,6 @@ export function ImportUsersDialog({
   base,
   siteId,
   siteCode,
-  availableE164,
-  numberSiteMap,
   policyNames,
   onClose,
   onDone,
@@ -117,10 +116,6 @@ export function ImportUsersDialog({
   base: string;
   siteId: string;
   siteCode: string;
-  availableE164: string[];
-  /** e164 -> sitecode for every number in the tenant, so a requested number that
-   * belongs to a different site can be told apart from one nobody owns. */
-  numberSiteMap: { e164: string; sitecode: string }[];
   policyNames: string[];
   onClose: () => void;
   onDone: () => void;
@@ -136,18 +131,12 @@ export function ImportUsersDialog({
   const [templateBusy, setTemplateBusy] = useState(false);
   const [templateDone, setTemplateDone] = useState(false);
 
-  const freeNumKeys = useMemo(() => new Set(availableE164.map(numKey)), [availableE164]);
-  const otherSiteByNumKey = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const n of numberSiteMap) if (n.sitecode !== siteCode) m.set(numKey(n.e164), n.sitecode);
-    return m;
-  }, [numberSiteMap, siteCode]);
   const policySet = useMemo(() => new Set(policyNames.map((p) => p.trim().toLowerCase())), [policyNames]);
 
   const loadXlsx = () => import('xlsx');
 
   const validRows = useMemo(
-    () => (parsed ?? []).filter((p) => p.status !== 'error').map((p) => p.row),
+    () => (parsed ?? []).filter((p) => p.status !== 'error' && p.status !== 'skip').map((p) => p.row),
     [parsed],
   );
 
@@ -158,6 +147,18 @@ export function ImportUsersDialog({
     setFileName(file.name);
     try {
       const XLSX = await loadXlsx();
+      // Read fresh each time a file is loaded: the users and free numbers change with every import and delete.
+      const [context, siteNumbers] = await Promise.all([
+        api<{ upns: string[]; freeNumbers: string[] }>(`${base}/users/import-context?siteId=${siteId}`),
+        // e164 -> sitecode for every number in the tenant, so a requested number that belongs to another site
+        // can be told apart from one nobody owns. Only a nicety: without it the row is flagged as not free.
+        api<{ e164: string; sitecode: string }[]>(`${base}/numbers/site-map`).catch(() => [] as { e164: string; sitecode: string }[]),
+      ]);
+      const freeNumKeys = new Set(context.freeNumbers.map(numKey));
+      const otherSiteByNumKey = new Map<string, string>();
+      for (const n of siteNumbers) if (n.sitecode !== siteCode) otherSiteByNumKey.set(numKey(n.e164), n.sitecode);
+      const existingUpns = new Set(context.upns);
+      const firstRowOfUpn = new Map<string, number>();
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const grid = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, blankrows: false, defval: '' });
@@ -186,8 +187,20 @@ export function ImportUsersDialog({
         if (!row.upn || !isEmail(row.upn)) {
           status = 'error';
           notes.push('missing or invalid UPN');
+        } else {
+          const upn = row.upn.toLowerCase();
+          const earlier = firstRowOfUpn.get(upn);
+          if (existingUpns.has(upn)) {
+            status = 'skip';
+            notes.push('already imported — skipped');
+          } else if (earlier !== undefined) {
+            status = 'skip';
+            notes.push(`same user as row ${earlier} — skipped`);
+          } else {
+            firstRowOfUpn.set(upn, r + 1);
+          }
         }
-        if (row.requested_number && !freeNumKeys.has(numKey(row.requested_number))) {
+        if (status !== 'skip' && row.requested_number && !freeNumKeys.has(numKey(row.requested_number))) {
           if (status !== 'error') status = 'warn';
           const otherSite = otherSiteByNumKey.get(numKey(row.requested_number));
           if (otherSite) {
@@ -198,11 +211,11 @@ export function ImportUsersDialog({
             notes.push('number not free in this site’s inventory — flag for Design & Build');
           }
         }
-        if (row.calling_policy && !policySet.has(row.calling_policy.toLowerCase())) {
+        if (status !== 'skip' && row.calling_policy && !policySet.has(row.calling_policy.toLowerCase())) {
           if (status !== 'error') status = 'warn';
           notes.push(`calling policy “${row.calling_policy}” unknown — imported without one`);
         }
-        if (row.voicemail_language) {
+        if (status !== 'skip' && row.voicemail_language) {
           // Stored as the culture code Teams wants; a name like "English (United Kingdom)" is fine, "Klingon" is not.
           const code = normalizeVoicemailLanguage(row.voicemail_language);
           if (code) row.voicemail_language = code;
@@ -295,7 +308,7 @@ export function ImportUsersDialog({
   });
 
   const counts = useMemo(() => {
-    const c = { ok: 0, warn: 0, error: 0, otherSite: 0 };
+    const c = { ok: 0, warn: 0, error: 0, skip: 0, otherSite: 0 };
     for (const p of parsed ?? []) {
       c[p.status] += 1;
       if (p.numberFlag === 'other-site') c.otherSite += 1;
@@ -375,6 +388,9 @@ export function ImportUsersDialog({
                     {counts.otherSite > 0 && (
                       <Badge appearance="tint" color="important">{counts.otherSite} number from another site</Badge>
                     )}
+                    {counts.skip > 0 && (
+                      <Badge appearance="tint" color="informative">{counts.skip} already imported (skipped)</Badge>
+                    )}
                     {counts.error > 0 && (
                       <Badge appearance="tint" color="danger">{counts.error} skipped (errors)</Badge>
                     )}
@@ -404,9 +420,11 @@ export function ImportUsersDialog({
                                     ? 'success'
                                     : p.status === 'error'
                                       ? 'danger'
-                                      : p.numberFlag === 'other-site'
-                                        ? 'important'
-                                        : 'warning'
+                                      : p.status === 'skip'
+                                        ? 'informative'
+                                        : p.numberFlag === 'other-site'
+                                          ? 'important'
+                                          : 'warning'
                                 }
                               >
                                 {p.status === 'ok' ? 'Ready' : p.notes.join(' · ')}

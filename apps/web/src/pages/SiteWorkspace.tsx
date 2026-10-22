@@ -82,15 +82,6 @@ export function SiteWorkspace() {
   // onEditRow on the flows PagedSection below) - null when nothing's open.
   const [editingFlow, setEditingFlow] = useState<Row | null>(null);
 
-  // Every number's owning site, tenant-wide - so the import preview can tell
-  // "this belongs to a different site" apart from "not in inventory anywhere".
-  // Only fetched once the import dialog is actually open.
-  const numberSiteMap = useQuery({
-    queryKey: ['number-site-map', tid],
-    enabled: !!tid && importOpen,
-    queryFn: () => api<{ e164: string; sitecode: string }[]>(`${base}/numbers/site-map`),
-  });
-
   const numberChoicesFor = (row: Row | null): Choice[] => {
     const cur =
       row && row.phone_number_id
@@ -134,7 +125,11 @@ export function SiteWorkspace() {
   const policyName = (id: unknown) => callingPolicies.find((p) => p.id === id)?.name ?? '—';
   const yesNo = (v: unknown) => (v ? 'Yes' : 'No');
 
-  const refreshSummary = () => summary.refetch();
+  // Anything that changes users or numbers also changes which numbers are free, so the pickers' list is read again too.
+  const refreshSummary = () => {
+    qc.invalidateQueries({ queryKey: ['site-avail-numbers', tid, siteId] });
+    return summary.refetch();
+  };
 
   // Fields bulk edit exposes - the Users/CAPs fields above minus upn,
   // display_name, phone_number_id and requested_number, which are per-row-
@@ -455,8 +450,6 @@ export function SiteWorkspace() {
           base={base}
           siteId={siteId}
           siteCode={site.sitecode}
-          availableE164={availableChoices.map((c) => c.label)}
-          numberSiteMap={numberSiteMap.data ?? []}
           policyNames={callingPolicies.map((p) => p.name)}
           onClose={() => setImportOpen(false)}
           onDone={() => {
