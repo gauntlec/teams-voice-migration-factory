@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router';
+import { RowLink } from '../components/RowLink';
 import {
   Badge,
   Button,
@@ -19,7 +19,7 @@ import {
 
   mergeClasses,
 } from '@fluentui/react-components';
-import { ArrowRightRegular, ChevronDownRegular, ChevronLeftRegular, ChevronRightRegular, ChevronUpRegular } from '@fluentui/react-icons';
+import { ChevronDownRegular, ChevronLeftRegular, ChevronRightRegular, ChevronUpRegular } from '@fluentui/react-icons';
 import type { DeploymentSiteRollup } from '@tvmf/shared';
 import { api } from '../api';
 import { useAuth } from '../auth';
@@ -69,7 +69,6 @@ export function DeploymentSites() {
   const ls = useLocalStyles();
   const cs = useStyles();
   const s = useRecordStyles();
-  const navigate = useNavigate();
   const { activeTenantId, can } = useAuth();
   const qc = useQueryClient();
 
@@ -123,7 +122,6 @@ export function DeploymentSites() {
   const sites = term
     ? allSites.filter((r) => r.sitecode.toLowerCase().includes(term) || (r.name ?? '').toLowerCase().includes(term))
     : allSites;
-  const open = (id: string) => navigate(`/deployment/sites/${id}`);
 
   return (
     <Page
@@ -298,13 +296,14 @@ export function DeploymentSites() {
                 <TableHeaderCell>CAPs</TableHeaderCell>
                 <TableHeaderCell>Res. accts</TableHeaderCell>
                 <TableHeaderCell>Last deployment</TableHeaderCell>
-                <TableHeaderCell />
               </TableRow>
             </TableHeader>
             <TableBody>
               {sites.map((r) => (
                 <TableRow key={r.id}>
-                  <TableCell>{r.sitecode}</TableCell>
+                  <TableCell>
+                    <RowLink to={`/deployment/sites/${r.id}`}>{r.sitecode}</RowLink>
+                  </TableCell>
                   <TableCell>{r.name || '—'}</TableCell>
                   <TableCell>{r.counts.users}</TableCell>
                   <TableCell>{r.counts.caps}</TableCell>
@@ -327,11 +326,6 @@ export function DeploymentSites() {
                     ) : (
                       '—'
                     )}
-                  </TableCell>
-                  <TableCell>
-                    <Button size="small" appearance="subtle" icon={<ArrowRightRegular />} onClick={() => open(r.id)}>
-                      Open
-                    </Button>
                   </TableCell>
                 </TableRow>
               ))}

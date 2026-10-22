@@ -1,8 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router';
+import { RowLink } from '../components/RowLink';
 import {
   Badge,
-  Button,
   Card,
   Spinner,
   TableBody,
@@ -12,7 +11,6 @@ import {
   TableRow,
   Text,
 } from '@fluentui/react-components';
-import { ArrowRightRegular } from '@fluentui/react-icons';
 import type { BuildSiteRollup } from '@tvmf/shared';
 import { api } from '../api';
 import { useAuth } from '../auth';
@@ -30,7 +28,6 @@ const DEPLOY_COLOR: Record<string, 'informative' | 'warning' | 'success' | 'dang
 
 export function Build() {
   const s = useRecordStyles();
-  const navigate = useNavigate();
   const { activeTenantId } = useAuth();
 
   const q = useQuery({
@@ -44,7 +41,6 @@ export function Build() {
   if (q.isError) return <LoadError message={(q.error as Error).message} />;
 
   const sites = q.data ?? [];
-  const open = (id: string) => navigate(`/build/sites/${id}`);
 
   return (
     <Page
@@ -73,13 +69,14 @@ export function Build() {
                 <TableHeaderCell>Res. accts</TableHeaderCell>
                 <TableHeaderCell>Validation</TableHeaderCell>
                 <TableHeaderCell>Last deployment</TableHeaderCell>
-                <TableHeaderCell />
               </TableRow>
             </TableHeader>
             <TableBody>
               {sites.map((r) => (
                 <TableRow key={r.id}>
-                  <TableCell>{r.sitecode}</TableCell>
+                  <TableCell>
+                    <RowLink to={`/build/sites/${r.id}`}>{r.sitecode}</RowLink>
+                  </TableCell>
                   <TableCell>{r.name || '—'}</TableCell>
                   <TableCell>{r.counts.users}</TableCell>
                   <TableCell>{r.counts.caps}</TableCell>
@@ -113,11 +110,6 @@ export function Build() {
                     ) : (
                       '—'
                     )}
-                  </TableCell>
-                  <TableCell>
-                    <Button size="small" appearance="subtle" icon={<ArrowRightRegular />} onClick={() => open(r.id)}>
-                      Open
-                    </Button>
                   </TableCell>
                 </TableRow>
               ))}

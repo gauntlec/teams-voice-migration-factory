@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, Navigate, useNavigate } from 'react-router';
+import { RowLink } from '../components/RowLink';
 import {
   Badge,
   Button,
@@ -21,7 +22,7 @@ import {
   makeStyles,
   shorthands,
 } from '@fluentui/react-components';
-import { ArrowRightRegular, ListRegular, MapRegular } from '@fluentui/react-icons';
+import { ListRegular, MapRegular } from '@fluentui/react-icons';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
@@ -260,13 +261,14 @@ export function DataCollection() {
                   <TableHeaderCell>Numbers</TableHeaderCell>
                   <TableHeaderCell>CAPs</TableHeaderCell>
                   <TableHeaderCell>Res. accts</TableHeaderCell>
-                  <TableHeaderCell />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {sites.map((r) => (
                   <TableRow key={r.id}>
-                    <TableCell>{r.sitecode}</TableCell>
+                    <TableCell>
+                    <RowLink to={`/data-collection/sites/${r.id}`}>{r.sitecode}</RowLink>
+                  </TableCell>
                     <TableCell>{r.name || '—'}</TableCell>
                     <TableCell>{r.country || '—'}</TableCell>
                     <TableCell>{r.counts?.users ?? 0}</TableCell>
@@ -275,16 +277,6 @@ export function DataCollection() {
                     </TableCell>
                     <TableCell>{r.counts?.caps ?? 0}</TableCell>
                     <TableCell>{r.counts?.resourceAccounts ?? 0}</TableCell>
-                    <TableCell>
-                      <Button
-                        size="small"
-                        appearance="subtle"
-                        icon={<ArrowRightRegular />}
-                        onClick={() => open(r.id)}
-                      >
-                        Open
-                      </Button>
-                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
