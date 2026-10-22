@@ -14,7 +14,7 @@ const OVERVIEW_FIELDS: FieldDef[] = [
   { key: 'targetGoLive', label: 'Target go-live', placeholder: 'e.g. Q3 2026' },
   {
     key: 'portDocReminderDays',
-    label: 'Port document reminder (days)',
+    label: 'Porting documentation reminder interval (days)',
     type: 'number',
     placeholder: '7',
   },
