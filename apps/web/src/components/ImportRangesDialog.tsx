@@ -53,6 +53,9 @@ const useStyles = makeStyles({
   muted: { color: tokens.colorNeutralForeground3, fontSize: tokens.fontSizeBase200 },
 });
 
+/** What each stored range kind is called on screen in this dialog. */
+const RANGE_TYPE_LABEL: Record<NumberRangeKind, string> = { new: 'new', port: 'port', retain: 're-point' };
+
 const START_HEADERS = ['did-start', 'did start', 'did_start', 'didstart', 'start', 'range start', 'from'];
 const END_HEADERS = ['did-end', 'did end', 'did_end', 'didend', 'end', 'range end', 'to'];
 
@@ -197,7 +200,7 @@ export function ImportRangesDialog({
         ['DID-END', 'Yes', `Last number in the range, with the same number of digits as DID-START. A single number has the same value in both columns. A range can hold up to ${MAX_RANGE_SIZE} numbers.`],
         [],
         ['Replace the three example rows on the first sheet with your own, one range per row.'],
-        ['The kind of range (new, port or retain) and the carrier are chosen on screen when you import, and apply to every row.'],
+        ['The type of range (new, port or re-point) and the carrier are chosen on screen when you import, and apply to every row.'],
         ['Numbers that are already in the inventory are skipped, so it is safe to import the same file twice.'],
       ]);
       notes['!cols'] = [{ wch: 14 }, { wch: 10 }, { wch: 100 }];
@@ -262,11 +265,11 @@ export function ImportRangesDialog({
               </div>
 
               <div className={s.options}>
-                <Field label="Kind (all rows)">
+                <Field label="Type (all rows)">
                   <Select value={kind} onChange={(_, d) => setKind(d.value as NumberRangeKind)}>
                     {NUMBER_RANGE_KINDS.map((k) => (
                       <option key={k} value={k}>
-                        {k}
+                        {RANGE_TYPE_LABEL[k]}
                       </option>
                     ))}
                   </Select>
