@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router';
+import { Link, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Badge, Button, Spinner, Tab, TabList, Text , makeStyles, shorthands } from '@fluentui/react-components';
 import { ArrowLeftRegular, ArrowUploadRegular, WarningRegular } from '@fluentui/react-icons';
@@ -29,7 +29,10 @@ export function SiteWorkspace() {
   const { siteId = '' } = useParams();
   const { activeTenantId, can } = useAuth();
   const qc = useQueryClient();
-  const [tab, setTab] = useState<TabKey>('overview');
+  // ?tab=ranges opens the site on that tab (the Number porting screen's Back button uses it); otherwise Overview.
+  const [searchParams] = useSearchParams();
+  const wantedTab = searchParams.get('tab');
+  const [tab, setTab] = useState<TabKey>((TABS as readonly string[]).includes(wantedTab ?? '') ? (wantedTab as TabKey) : 'overview');
   const [importOpen, setImportOpen] = useState(false);
   const [importRangesOpen, setImportRangesOpen] = useState(false);
 

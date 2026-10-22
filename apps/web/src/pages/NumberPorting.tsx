@@ -164,9 +164,9 @@ export function NumberPorting() {
       title="Number porting"
       subtitle={[siteInfo.sitecode, siteInfo.name].filter(Boolean).join(' · ')}
       actions={
-        <Link to={`/data-collection/sites/${siteId}`}>
+        <Link to={`/data-collection/sites/${siteId}?tab=ranges`}>
           <Button appearance="subtle" icon={<ArrowLeftRegular />}>
-            Back to site
+            Back to number ranges
           </Button>
         </Link>
       }
