@@ -4,6 +4,7 @@ import { sql } from 'kysely';
 import { planIdentityRows, planResourceAccountRows, platformDb, tenantDb, type PlannedIdentityRow } from '@tvmf/db';
 import {
   can,
+  contactLabel,
   HANDOVER_NOTE_SECTIONS,
   HANDOVER_SECTIONS,
   handoverScopeLabel,
@@ -416,18 +417,33 @@ export class HandoverService {
       holderOf.set(n, `${u.display_name || u.upn} (${type})`);
     }
 
+    // Names of the users picked as Site contact(s), for the site information table.
+    const pickedIds = [
+      ...new Set(
+        sites.flatMap((s) => ((s.overview ?? {}) as DiscoverySiteOverview).contacts?.siteContacts?.map((c) => c.userId).filter((v): v is string => !!v) ?? []),
+      ),
+    ];
+    const contactNames = new Map<string, string>(
+      pickedIds.length
+        ? (await platformDb(this.db).selectFrom('users').select(['id', 'display_name']).where('id', 'in', pickedIds).execute()).map((r) => [r.id, r.display_name] as [string, string])
+        : [],
+    );
+
     const byKey: Record<string, HandoverSectionContent> = {
       site_information: {
         kind: 'table',
-        columns: ['Site code', 'Name', 'Address', 'Country / Region', 'Primary contact', 'Target go-live'],
+        columns: ['Site code', 'Name', 'Address', 'Country / Region', 'Site contact(s)', 'Target go-live'],
         rows: sites.map((s) => {
           const ov = (s.overview ?? {}) as DiscoverySiteOverview;
+          // Picked users by name; typed people as typed. Older overviews only have the one primary contact email.
+          const contacts = ov.contacts?.siteContacts ?? (ov.primaryContactEmail ? [{ email: ov.primaryContactEmail }] : []);
+          const people = contacts.map((c) => contactLabel(c, c.userId ? contactNames.get(c.userId) : null));
           return [
             s.sitecode,
             s.name ?? '—',
             s.address ?? '—',
             [s.country, s.region].filter(Boolean).join(' / ') || '—',
-            ov.primaryContactEmail ?? '—',
+            people.join(', ') || '—',
             ov.targetGoLive ?? '—',
           ];
         }),

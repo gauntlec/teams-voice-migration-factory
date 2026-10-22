@@ -125,7 +125,7 @@ export function SiteWorkspace() {
   if (summary.isLoading) return <Spinner label="Loading site…" />;
   if (summary.isError) return <LoadError message={(summary.error as Error).message} />;
 
-  const { site, status, callingPolicies, numberSummary, overview, assignedStaff } = summary.data!;
+  const { site, status, callingPolicies, numberSummary, overview, contactUsers } = summary.data!;
   const canReview = can('discovery:review');
   const locked = !can('discovery:write') || status === 'accepted' || (status === 'submitted' && !canReview);
   const canManageOverview = can('discovery:sites:manage');
@@ -233,7 +233,7 @@ export function SiteWorkspace() {
           base={base}
           siteId={siteId}
           overview={overview}
-          assignedStaff={assignedStaff}
+          contactUsers={contactUsers}
           canEdit={canManageOverview}
           locked={locked}
           onSaved={refreshSummary}

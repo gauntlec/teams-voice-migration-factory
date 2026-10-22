@@ -40,6 +40,7 @@ import {
   normalizeVoicemailLanguage,
 } from './domain';
 import { HEX_COLOR_RE } from './color';
+import { MAX_CONTACTS_PER_ROLE } from './site-contacts';
 import { isHandoverSectionKey } from './handover';
 import {
   COUNTRY_CODES,
@@ -350,16 +351,36 @@ export const discoveryGeneralSchema = z
   .strict();
 export type DiscoveryGeneralInput = z.infer<typeof discoveryGeneralSchema>;
 
+/** One person in a role on a site: a picked user, or free text. */
+const siteContactSchema = z
+  .object({
+    userId: z.string().uuid().optional(),
+    name: z.string().trim().max(160).optional(),
+    email: z.string().trim().max(320).email().or(z.literal('')).optional(),
+  })
+  .strict()
+  .refine((c) => !!(c.userId || c.name || c.email), 'Pick a user, or type a name or an email.');
+const siteContactList = z.array(siteContactSchema).max(MAX_CONTACTS_PER_ROLE).optional();
+export const siteContactsSchema = z
+  .object({
+    siteContacts: siteContactList,
+    providerPm: siteContactList,
+    providerEngineer: siteContactList,
+    providerPortingPm: siteContactList,
+    providerPortingEngineer: siteContactList,
+  })
+  .strict();
+
 /**
- * Per-site overview (discovery_sites.overview). Same fields as the old
- * customer-level overview plus the assigned staff (ENGINEER / PROJECT_MANAGER
- * platform user ids). Only SUPER_ADMIN / PROJECT_MANAGER / ENGINEER may write it.
+ * Per-site overview (discovery_sites.overview): the old customer-level overview fields, the delivery region and the people on the site by role.
+ * Only SUPER_ADMIN / PROJECT_MANAGER / ENGINEER may write it.
  */
 export const discoverySiteOverviewSchema = discoveryGeneralSchema
+  .omit({ primaryContactEmail: true })
   .extend({
     /** The site's delivery region. Stored on discovery_sites.region (the one place it lives), not in the overview JSON. */
     region: siteRegionSchema.optional(),
-    assignedUserIds: z.array(z.string().uuid()).max(50).optional(),
+    contacts: siteContactsSchema.optional(),
     /** Days between number-port document reminder emails for this site (default 7). */
     portDocReminderDays: z.coerce.number().int().min(1).max(90).optional(),
   })

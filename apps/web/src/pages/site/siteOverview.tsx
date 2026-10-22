@@ -1,23 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Badge, Button, Card, Dropdown, Field, Input, Option, Spinner, Text, Textarea , makeStyles } from '@fluentui/react-components';
-import { LICENSING_MODELS, SITE_REGIONS, type DiscoverySiteOverview, type Paginated } from '@tvmf/shared';
+import { Button, Card, Dropdown, Field, Input, Option, Spinner, Text, Textarea  } from '@fluentui/react-components';
+import { LICENSING_MODELS, SITE_REGIONS, type DiscoverySiteOverview, type Paginated, type SiteContacts } from '@tvmf/shared';
 import { api, ApiError } from '../../api';
 import { NetworkDiagram, type NetworkRow } from '../../components/NetworkDiagram';
 import { LoadError, PagedSection, useRecordStyles, type FieldDef } from '../../components/records';
-import { type StaffMember } from './siteShared';
-
-const useLocalStyles = makeStyles({
-  styled: { gridColumn: "1 / -1" },
-});
-
+import { SiteContactsEditor, type ContactUser } from './siteContacts';
 
 const OVERVIEW_FIELDS: FieldDef[] = [
   { key: 'region', label: 'Region', type: 'select', options: SITE_REGIONS },
   { key: 'author', label: 'Author' },
   { key: 'licensingModel', label: 'PSTN / licensing model', type: 'select', options: LICENSING_MODELS },
   { key: 'targetGoLive', label: 'Target go-live', placeholder: 'e.g. Q3 2026' },
-  { key: 'primaryContactEmail', label: 'Primary contact email' },
   {
     key: 'portDocReminderDays',
     label: 'Port document reminder (days)',
@@ -27,8 +21,9 @@ const OVERVIEW_FIELDS: FieldDef[] = [
   { key: 'notes', label: 'Notes', type: 'textarea', full: true },
 ];
 
-const sameIds = (a: string[], b: string[]) =>
-  a.length === b.length && [...a].sort().join() === [...b].sort().join();
+/** The people on the site in a form that compares the same however the lists were built (empty roles left out). */
+const contactsKey = (c: SiteContacts | undefined) =>
+  JSON.stringify(Object.entries(c ?? {}).filter(([, list]) => list && list.length).sort(([a], [b]) => a.localeCompare(b)));
 
 /**
  * Per-site overview. Editable only by SUPER_ADMIN / PROJECT_MANAGER / ENGINEER
@@ -38,7 +33,7 @@ export function OverviewTab({
   base,
   siteId,
   overview,
-  assignedStaff,
+  contactUsers,
   canEdit,
   locked,
   onSaved,
@@ -46,12 +41,11 @@ export function OverviewTab({
   base: string;
   siteId: string;
   overview: DiscoverySiteOverview;
-  assignedStaff: StaffMember[];
+  contactUsers: ContactUser[];
   canEdit: boolean;
   locked: boolean;
   onSaved: () => void;
 }) {
-  const ls = useLocalStyles();
   const s = useRecordStyles();
   const editable = canEdit && !locked;
   const initial = () =>
@@ -59,38 +53,33 @@ export function OverviewTab({
       OVERVIEW_FIELDS.map((f) => [f.key, (overview as Record<string, string>)?.[f.key] ?? '']),
     );
   const [draft, setDraft] = useState<Record<string, string>>(initial);
-  const [staffIds, setStaffIds] = useState<string[]>(overview.assignedUserIds ?? []);
+  const [contacts, setContacts] = useState<SiteContacts>(overview.contacts ?? {});
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setDraft(initial());
-    setStaffIds(overview.assignedUserIds ?? []);
+    setContacts(overview.contacts ?? {});
     setError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overview]);
 
-  const staff = useQuery({
-    queryKey: ['discovery-staff', base],
+  const candidates = useQuery({
+    queryKey: ['discovery-contact-candidates', base],
     enabled: editable,
-    queryFn: () => api<StaffMember[]>(`${base}/staff`),
+    queryFn: () => api<ContactUser[]>(`${base}/contact-candidates`),
   });
-
-  const nameFor = (id: string) =>
-    staff.data?.find((m) => m.id === id)?.displayName ??
-    assignedStaff.find((m) => m.id === id)?.displayName ??
-    id.slice(0, 6);
 
   const dirty = useMemo(
     () =>
       OVERVIEW_FIELDS.some(
         (f) => (draft[f.key] ?? '') !== ((overview as Record<string, string>)?.[f.key] ?? ''),
-      ) || !sameIds(staffIds, overview.assignedUserIds ?? []),
-    [draft, staffIds, overview],
+      ) || contactsKey(contacts) !== contactsKey(overview.contacts),
+    [draft, contacts, overview],
   );
 
   const save = useMutation({
     mutationFn: () => {
-      const body: Record<string, unknown> = { ...draft, assignedUserIds: staffIds };
+      const body: Record<string, unknown> = { ...draft, contacts };
       // Numeric overview fields (e.g. portDocReminderDays) are optional server-side,
       // but an empty string would coerce to 0 and fail its min() check - omit instead.
       for (const f of OVERVIEW_FIELDS) {
@@ -163,36 +152,22 @@ export function OverviewTab({
             )}
           </Field>
         ))}
+      </div>
 
-        <Field label="Assigned staff" hint="Engineers / project managers watching this site" className={ls.styled}>
-          {!editable ? (
-            <div className={s.chips}>
-              {assignedStaff.length === 0 ? (
-                <Text>—</Text>
-              ) : (
-                assignedStaff.map((m) => (
-                  <Badge key={m.id} appearance="tint" color="informative">
-                    {m.displayName} · {m.role}
-                  </Badge>
-                ))
-              )}
-            </div>
-          ) : (
-            <Dropdown
-              multiselect
-              placeholder="Select staff…"
-              selectedOptions={staffIds}
-              value={staffIds.map(nameFor).join(', ')}
-              onOptionSelect={(_, d) => setStaffIds(d.selectedOptions)}
-            >
-              {(staff.data ?? []).map((m) => (
-                <Option key={m.id} value={m.id} text={m.displayName}>
-                  {m.displayName} · {m.role}
-                </Option>
-              ))}
-            </Dropdown>
-          )}
-        </Field>
+      <div style={{ display: 'grid', gap: 8 }}>
+        <div>
+          <Text weight="semibold">People</Text>
+          <Text size={200} className={s.muted} block>
+            Who is on this site, by role. Pick from the active users or add someone by name and email. Each role can hold several people.
+          </Text>
+        </div>
+        <SiteContactsEditor
+          value={contacts}
+          onChange={setContacts}
+          editable={editable}
+          candidates={candidates.data ?? []}
+          knownUsers={contactUsers}
+        />
       </div>
 
       {error && <LoadError message={error} />}

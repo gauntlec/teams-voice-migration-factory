@@ -13,7 +13,7 @@ import {
   resolveLiveIdentityState,
   resolveLiveSharedCallingPolicyState,
   tenantDb, emailEnabled, webOrigin as resolveWebOrigin, sweepStaffAccess } from '@tvmf/db';
-import { HUB_HEARTBEAT_SECONDS, buildColorRamp, type Branding, type DiscoverySiteOverview, type PortDocumentItemSummary } from '@tvmf/shared';
+import { HUB_HEARTBEAT_SECONDS, buildColorRamp, siteContactTargets, type Branding, type DiscoverySiteOverview, type PortDocumentItemSummary } from '@tvmf/shared';
 import {
   collectAutoAttendantUserUpns,
   collectCallQueueTargetUpns,
@@ -185,13 +185,10 @@ async function expireOrphanedWork() {
 void expireOrphanedWork();
 
 /**
- * Who gets a number-port document email: every active CUSTOMER user scoped
- * to this site (or whole-customer, via an empty `site_ids`), falling back to
- * the site overview's `primaryContactEmail` if no CUSTOMER account exists
- * yet. Duplicated from the API's equivalent in
- * apps/api/src/modules/number-port/number-port.service.ts rather than
- * shared - api and worker don't share a DB-access layer beyond @tvmf/db's
- * Kysely types.
+ * Who gets a number-port document email: every active CUSTOMER user scoped to this site (or whole-customer, via an empty
+ * `site_ids`), plus the site's Site contact(s) from the overview, picked from the users or typed. Duplicated from the API's
+ * equivalent in apps/api/src/modules/number-port/number-port.service.ts rather than shared - api and worker don't share a
+ * DB-access layer beyond @tvmf/db's Kysely types.
  */
 async function resolvePortRecipients(
   tenantId: string,
@@ -207,8 +204,16 @@ async function resolvePortRecipients(
     .where('u.status', '=', 'active')
     .where(sql<boolean>`(m.site_ids = '{}' or ${siteId}::uuid = any(m.site_ids))`)
     .execute();
-  if (rows.length) return rows.map((r) => ({ email: r.email, name: r.display_name }));
-  return overview.primaryContactEmail ? [{ email: overview.primaryContactEmail }] : [];
+  const out = new Map<string, { email: string; name?: string | null }>();
+  for (const r of rows) out.set(r.email.toLowerCase(), { email: r.email, name: r.display_name });
+
+  const targets = siteContactTargets(overview);
+  if (targets.userIds.length) {
+    const picked = await platformDb(db).selectFrom('users').select(['email', 'display_name']).where('id', 'in', targets.userIds).where('status', '=', 'active').execute();
+    for (const r of picked) if (!out.has(r.email.toLowerCase())) out.set(r.email.toLowerCase(), { email: r.email, name: r.display_name });
+  }
+  for (const c of targets.typed) if (!out.has(c.email.toLowerCase())) out.set(c.email.toLowerCase(), c);
+  return [...out.values()];
 }
 
 /**

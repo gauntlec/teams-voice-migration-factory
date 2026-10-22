@@ -103,11 +103,13 @@ export interface DiscoveryGeneral {
 
 /**
  * Shape stored in discovery_sites.overview (jsonb). The overview moved from the
- * customer to each site; `assignedUserIds` are the ENGINEER / PROJECT_MANAGER
- * platform users watching this site. Editable only by SUPER_ADMIN /
+ * customer to each site. Editable only by SUPER_ADMIN /
  * PROJECT_MANAGER / ENGINEER (`discovery:sites:manage`).
  */
 export interface DiscoverySiteOverview extends DiscoveryGeneral {
+  /** The people on the site, by role (Site contact(s), Provider PM, ...). See site-contacts.ts. */
+  contacts?: import('./site-contacts').SiteContacts;
+  /** Older overviews only: engineers / project managers, now Provider PM / Provider Engineer in `contacts`. */
   assignedUserIds?: string[];
   /** Days between number-port document reminder emails for this site (default 7). See number_port_requests. */
   portDocReminderDays?: number;

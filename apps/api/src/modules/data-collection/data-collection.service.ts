@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { sql } from 'kysely';
 import { platformDb, tenantDb } from '@tvmf/db';
-import { asSiteRegion } from '@tvmf/shared';
+import { asSiteRegion, contactUserIds, type SiteContact, type SiteContacts } from '@tvmf/shared';
 import type {
   DiscoveryFlowInput,
   DiscoveryListQuery,
@@ -179,36 +179,61 @@ export class DataCollectionService {
     }
 
     // Region lives on the site row (the same value the site creation form sets); the overview shows it from there.
-    const overview = {
-      ...((site.overview ?? {}) as DiscoverySiteOverview),
-      region: asSiteRegion(site.region),
-    };
-    const assignedStaff = await this.resolveStaff(overview.assignedUserIds ?? []);
+    // The people on the site, by role. The two fields they replaced are folded in for sites not saved since, and not sent on.
+    const { assignedUserIds: _assigned, primaryContactEmail: _primary, ...stored } = (site.overview ?? {}) as DiscoverySiteOverview;
+    const contacts = await this.effectiveContacts((site.overview ?? {}) as DiscoverySiteOverview);
+    const overview = { ...stored, region: asSiteRegion(site.region), contacts };
+    const contactUsers = await this.resolveContactUsers(contactUserIds(contacts));
 
-    return { site, status: discovery.status, callingPolicies, numberSummary, overview, assignedStaff };
+    return { site, status: discovery.status, callingPolicies, numberSummary, overview, contactUsers };
   }
 
-  /** Resolve platform user ids to `{ id, displayName, role }` for display. */
-  private async resolveStaff(ids: string[]) {
+  /**
+   * The site's people by role. Overviews saved before the roles existed hold `assignedUserIds` (engineers and project managers)
+   * and `primaryContactEmail`: those become Provider PM / Provider Engineer by role, and one typed Site contact.
+   */
+  private async effectiveContacts(stored: DiscoverySiteOverview): Promise<SiteContacts> {
+    if (stored.contacts) return stored.contacts;
+    const out: SiteContacts = {};
+    if (stored.primaryContactEmail) out.siteContacts = [{ email: stored.primaryContactEmail }];
+    const ids = stored.assignedUserIds ?? [];
+    if (ids.length) {
+      const rows = await platformDb(this.db).selectFrom('users').select(['id', 'role']).where('id', 'in', ids).execute();
+      const roleOf = new Map(rows.map((r) => [r.id, r.role]));
+      for (const id of ids) {
+        const key = roleOf.get(id) === 'PROJECT_MANAGER' ? 'providerPm' : 'providerEngineer';
+        (out[key] ??= []).push({ userId: id });
+      }
+    }
+    return out;
+  }
+
+  /** Platform users as `{ id, displayName, email, role }`, for showing who was picked. */
+  private async resolveContactUsers(ids: string[]) {
     if (ids.length === 0) return [];
     const rows = await platformDb(this.db)
       .selectFrom('users')
-      .select(['id', 'display_name', 'role'])
+      .select(['id', 'display_name', 'email', 'role'])
       .where('id', 'in', ids)
       .execute();
-    return rows.map((r) => ({ id: r.id, displayName: r.display_name, role: r.role }));
+    return rows.map((r) => ({ id: r.id, displayName: r.display_name, email: r.email, role: r.role }));
   }
 
-  /** Active ENGINEER / PROJECT_MANAGER users, for the "assigned staff" picker. */
-  async listStaff() {
+  /** Active users who can be picked for a site's roles: engineers and project managers, plus this customer's own users. */
+  async listContactCandidates(t: TenantContext) {
     const rows = await platformDb(this.db)
-      .selectFrom('users')
-      .select(['id', 'display_name', 'role'])
-      .where('role', 'in', ['ENGINEER', 'PROJECT_MANAGER'])
-      .where('status', '=', 'active')
-      .orderBy('display_name')
+      .selectFrom('users as u')
+      .select(['u.id', 'u.display_name', 'u.email', 'u.role'])
+      .where('u.status', '=', 'active')
+      .where((eb) =>
+        eb.or([
+          eb('u.role', 'in', ['ENGINEER', 'PROJECT_MANAGER']),
+          eb('u.id', 'in', eb.selectFrom('tenant_memberships').select('user_id').where('tenant_id', '=', t.id)),
+        ]),
+      )
+      .orderBy('u.display_name')
       .execute();
-    return rows.map((r) => ({ id: r.id, displayName: r.display_name, role: r.role }));
+    return rows.map((r) => ({ id: r.id, displayName: r.display_name, email: r.email, role: r.role }));
   }
 
   /**
@@ -233,28 +258,41 @@ export class DataCollectionService {
 
     // Region is stored on the site row, not in the overview JSON.
     // An older free-text value shows as not set here, so only write it when the choice actually changed.
-    const { region: sentRegion, ...overviewPatch } = patch;
+    const { region: sentRegion, contacts: sentContacts, ...overviewPatch } = patch;
     const region = sentRegion !== undefined && sentRegion !== asSiteRegion(site.region) ? sentRegion : undefined;
     patch = overviewPatch;
 
-    if (patch.assignedUserIds && patch.assignedUserIds.length) {
-      const ids = [...new Set(patch.assignedUserIds)];
-      const ok = await platformDb(this.db)
-        .selectFrom('users')
-        .select('id')
-        .where('id', 'in', ids)
-        .where('role', 'in', ['ENGINEER', 'PROJECT_MANAGER'])
-        .where('status', '=', 'active')
-        .execute();
-      const found = new Set(ok.map((r) => r.id));
-      const bad = ids.filter((id) => !found.has(id));
-      if (bad.length) {
-        throw new ConflictException('Assigned staff must be active engineers or project managers.');
+    let contacts: SiteContacts | undefined;
+    if (sentContacts) {
+      contacts = {};
+      for (const [role, list] of Object.entries(sentContacts) as [keyof SiteContacts, SiteContact[] | undefined][]) {
+        const seen = new Set<string>();
+        const clean: SiteContact[] = [];
+        for (const c of list ?? []) {
+          const entry: SiteContact = c.userId ? { userId: c.userId } : { name: c.name?.trim() || undefined, email: c.email?.trim() || undefined };
+          const key = c.userId ?? `${(entry.name ?? '').toLowerCase()}|${(entry.email ?? '').toLowerCase()}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          clean.push(entry);
+        }
+        contacts[role] = clean;
       }
-      patch = { ...patch, assignedUserIds: ids };
+      const picked = contactUserIds(contacts);
+      if (picked.length) {
+        const ok = new Set((await this.listContactCandidates(t)).map((u) => u.id));
+        if (picked.some((id) => !ok.has(id))) {
+          throw new ConflictException("Picked people must be active engineers, project managers or this customer's users.");
+        }
+      }
     }
 
-    const next = { ...((site.overview ?? {}) as DiscoverySiteOverview), ...patch };
+    const next: DiscoverySiteOverview = { ...((site.overview ?? {}) as DiscoverySiteOverview), ...patch };
+    if (contacts) {
+      next.contacts = contacts;
+      // The two older fields are now roles in `contacts`.
+      delete next.assignedUserIds;
+      delete next.primaryContactEmail;
+    }
     const row = await this.scoped(t)
       .updateTable('discovery_sites')
       .set({ overview: next, ...(region !== undefined ? { region: region || null } : {}) })
@@ -265,12 +303,14 @@ export class DataCollectionService {
       actor: actorOf(user),
       targetType: 'discovery_site',
       targetId: siteId,
-      detail: { fields: [...Object.keys(patch), ...(region !== undefined ? ['region'] : [])] },
+      detail: { fields: [...Object.keys(patch), ...(region !== undefined ? ['region'] : []), ...(contacts ? ['contacts'] : [])] },
     });
+    const saved = row.overview as DiscoverySiteOverview;
+    const savedContacts = await this.effectiveContacts(saved);
     return {
       ...row,
-      overview: { ...(row.overview as DiscoverySiteOverview), region: asSiteRegion(row.region) },
-      assignedStaff: await this.resolveStaff((row.overview as DiscoverySiteOverview).assignedUserIds ?? []),
+      overview: { ...saved, region: asSiteRegion(row.region), contacts: savedContacts },
+      contactUsers: await this.resolveContactUsers(contactUserIds(savedContacts)),
     };
   }
 

@@ -55,14 +55,14 @@ export class DataCollectionController {
     return this.svc.siteSummary(t, siteId);
   }
 
-  /** Engineers / project managers assignable to a site (for the picker). */
-  @Get('staff')
+  /** Active users that can be picked for a site's roles (Site contact(s), Provider PM, ...). */
+  @Get('contact-candidates')
   @RequirePermission('discovery:sites:manage')
-  listStaff() {
-    return this.svc.listStaff();
+  listContactCandidates(@TenantCtx() t: TenantContext) {
+    return this.svc.listContactCandidates(t);
   }
 
-  /** Write a site's overview + assigned staff. Admin / PM / engineer only. */
+  /** Write a site's overview, including the people on it. Admin / PM / engineer only. */
   @Patch('sites/:siteId/overview')
   @RequirePermission('discovery:sites:manage')
   updateSiteOverview(

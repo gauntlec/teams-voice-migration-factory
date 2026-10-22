@@ -8,11 +8,7 @@ import { api, ApiError } from '../../api';
 import { type Row } from '../../components/records';
 import { MutedText } from '../../components/ui';
 
-export interface StaffMember {
-  id: string;
-  displayName: string;
-  role: string;
-}
+export type { ContactUser } from './siteContacts';
 
 export interface SiteSummary {
   site: {
@@ -27,7 +23,8 @@ export interface SiteSummary {
   callingPolicies: (Row & { name: string })[];
   numberSummary: { total: number; available: number; reserved: number; assigned: number };
   overview: DiscoverySiteOverview;
-  assignedStaff: StaffMember[];
+  /** the users picked in the site's roles, so they show by name */
+  contactUsers: import('./siteContacts').ContactUser[];
 }
 
 export const TABS = [

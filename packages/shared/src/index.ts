@@ -36,6 +36,7 @@ export * from './mail-settings';
 export * from './platform-features';
 export * from './tenant-deletion';
 export * from './coordinates';
+export * from './site-contacts';
 
 import type { CmdletInvocation } from './deployment';
 

@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { sql } from 'kysely';
 import { platformDb, tenantDb } from '@tvmf/db';
+import { siteContactTargets } from '@tvmf/shared';
 import type {
   DiscoverySiteOverview,
   NumberPortItemRejectInput,
@@ -249,7 +250,10 @@ export class NumberPortService {
     return this.itemsWithType(t, requestId);
   }
 
-  /** Every active CUSTOMER user scoped to this site (or whole-customer), falling back to the site overview's primary contact. */
+  /**
+   * Who gets a number-port document email: every active CUSTOMER user scoped to this site (or whole-customer), plus the site's
+   * Site contact(s) from the overview, whether picked from the users or typed. One email each.
+   */
   private async resolveRecipients(t: TenantContext, siteId: string, overview: DiscoverySiteOverview) {
     const rows = await platformDb(this.db)
       .selectFrom('users as u')
@@ -260,8 +264,21 @@ export class NumberPortService {
       .where('u.status', '=', 'active')
       .where(sql<boolean>`(m.site_ids = '{}' or ${siteId}::uuid = any(m.site_ids))`)
       .execute();
-    if (rows.length) return rows.map((r) => ({ email: r.email, name: r.display_name as string | null }));
-    return overview.primaryContactEmail ? [{ email: overview.primaryContactEmail, name: null }] : [];
+    const out = new Map<string, { email: string; name: string | null }>();
+    for (const r of rows) out.set(r.email.toLowerCase(), { email: r.email, name: r.display_name as string | null });
+
+    const targets = siteContactTargets(overview);
+    if (targets.userIds.length) {
+      const picked = await platformDb(this.db)
+        .selectFrom('users')
+        .select(['email', 'display_name'])
+        .where('id', 'in', targets.userIds)
+        .where('status', '=', 'active')
+        .execute();
+      for (const r of picked) if (!out.has(r.email.toLowerCase())) out.set(r.email.toLowerCase(), { email: r.email, name: r.display_name as string | null });
+    }
+    for (const c of targets.typed) if (!out.has(c.email.toLowerCase())) out.set(c.email.toLowerCase(), c);
+    return [...out.values()];
   }
 
   private portalUrl(siteId: string): string {
