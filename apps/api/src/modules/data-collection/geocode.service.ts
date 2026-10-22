@@ -27,14 +27,8 @@ export class GeocodeService {
   async lookup(rawAddress: string): Promise<GeocodeHit | null> {
     const raw = (rawAddress || '').replace(/\s+/g, ' ').trim();
     if (raw.length < 4) return null;
-    // Nominatim is fussy about abbreviations, unit numbers and apostrophes, so
-    // try (1) a cleaned form, (2) the address as typed, (3) just the locality
-    // (town + state + zip) for an approximate pin.
-    const cleaned = normalise(raw);
-    const locality = cleaned.split(',').slice(1).join(',').trim();
-    const attempts: { q: string; approximate: boolean }[] = [];
-    for (const q of [cleaned, raw]) if (q.length >= 4) attempts.push({ q, approximate: false });
-    if (locality.length >= 4) attempts.push({ q: locality, approximate: true });
+    const attempts = geocodeAttempts(raw);
+    if (!attempts.length) return null;
 
     const cacheKey = attempts.map((a) => a.q).join(' || ').toLowerCase();
     if (this.cache.has(cacheKey)) return this.cache.get(cacheKey) ?? null;
@@ -93,6 +87,29 @@ export class GeocodeService {
       clearTimeout(timer);
     }
   }
+}
+
+/**
+ * The queries to try, best first. Nominatim is fussy about abbreviations, unit numbers and apostrophes, and it does not
+ * correct a misspelled town (Google Maps does), so: (1) a cleaned form, (2) the address as typed, (3) for a US address the
+ * street with only its state and ZIP, which still finds the building when the town is spelled wrongly, then (4) just the
+ * locality (town + state + zip) and (5) just the state and ZIP, both for an approximate pin.
+ */
+export function geocodeAttempts(raw: string): { q: string; approximate: boolean }[] {
+  const cleaned = normalise(raw);
+  const parts = cleaned.split(',').map((p) => p.trim());
+  const locality = parts.slice(1).join(', ').trim();
+  const attempts: { q: string; approximate: boolean }[] = [];
+  const add = (q: string, approximate: boolean) => {
+    if (q.length >= 4 && !attempts.some((a) => a.q.toLowerCase() === q.toLowerCase())) attempts.push({ q, approximate });
+  };
+  add(cleaned, false);
+  add(raw, false);
+  const us = /\b([A-Za-z]{2})\s+(\d{5})(?:-\d{4})?$/.exec(cleaned);
+  if (us && parts.length > 2) add(`${parts[0]}, ${us[1].toUpperCase()} ${us[2]}`, false);
+  add(locality, true);
+  if (us) add(`${us[1].toUpperCase()} ${us[2]}`, true);
+  return attempts;
 }
 
 const STREET_TYPES: Record<string, string> = {

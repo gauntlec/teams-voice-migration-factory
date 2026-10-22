@@ -431,7 +431,7 @@ export function RecordDialog({
     try {
       const hit = await geocode.run(addr);
       if (!hit) {
-        setGeoMsg('No coordinates found for that address — enter them manually.');
+        setGeoMsg('No coordinates found for that address — check the spelling of the street and town, or enter them manually.');
       } else {
         setValues((v) => ({
           ...v,
