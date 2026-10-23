@@ -402,7 +402,9 @@ export interface DiscoveryFlowsTable {
   /** Structured, plain-language capture from the AA/CQ creation wizard - null means this row was created the old freeform way. */
   wizard_answers: Json<import('@tvmf/shared').AutoAttendantWizardAnswers | import('@tvmf/shared').CallQueueWizardAnswers> | null;
   wizard_version: number | null;
-  /** FK -> discovery_resource_accounts.id (ON DELETE SET NULL) - which phone identity will answer this, if already known. */
+  /** FK -> discovery_voice_apps.id (ON DELETE SET NULL): the voice app this Call flow is the structured capture of. */
+  voice_app_id: string | null;
+  /** FK -> discovery_resource_accounts.id (ON DELETE SET NULL) - the resource account that answers this, if one is chosen. */
   resource_account_id: string | null;
   /** FK -> tenant_objects.id: the discovered auto attendant / call queue this row was made from (see 0061); null for a manual or wizard row. */
   tenant_object_id: string | null;
@@ -582,13 +584,13 @@ export interface DiscoveryCapsTable {
   updated_at: Ts;
 }
 
-export interface DiscoveryResourceAccountsTable {
+export interface DiscoveryVoiceAppsTable {
   id: Generated<string>;
   /** FK -> discovery_sites.id (ON DELETE SET NULL). null = not tied to a site. */
   site_id: string | null;
   name: string;
   kind: 'auto_attendant' | 'call_queue';
-  /** FK -> tenant_objects.id: the exact discovered object this row was added from (see 0060); null for older rows, which match on name. */
+  /** FK -> tenant_objects.id: the exact discovered voice app this row was added from (see 0060); null for one designed here. */
   tenant_object_id: string | null;
   directory_entry: string | null;
   business_hours: string | null;
@@ -603,11 +605,23 @@ export interface DiscoveryResourceAccountsTable {
   updated_at: Ts;
 }
 
-/** The discovered resource accounts that belong to one discovery_resource_accounts record (see 0062): a voice app can have several. */
-export interface DiscoveryResourceAccountMembersTable {
-  resource_account_id: string;
-  tenant_object_id: string;
+/** A resource account (Teams application instance): its own UPN, name and phone number; it answers for one voice app. See 0063. */
+export interface DiscoveryResourceAccountsTable {
+  id: Generated<string>;
+  /** FK -> discovery_sites.id (ON DELETE SET NULL). null = not tied to a site. */
+  site_id: string | null;
+  /** FK -> discovery_voice_apps.id (ON DELETE SET NULL): the voice app it answers for; null = not tied to one. */
+  voice_app_id: string | null;
+  name: string;
+  /** Which kind of voice app it is for (its application id). */
+  kind: 'auto_attendant' | 'call_queue';
+  /** Blank until the account exists; matched to the live account when it does. */
+  upn: string | null;
+  /** FK -> tenant_objects.id: the exact discovered resource account this row was made from. */
+  tenant_object_id: string | null;
+  comments: string | null;
   created_at: Ts;
+  updated_at: Ts;
 }
 
 export interface DiscoveryNetworkTable {
@@ -787,8 +801,8 @@ export interface BuildAutoAttendantsTable {
   id: Generated<string>;
   /** FK -> discovery_sites.id (ON DELETE CASCADE). Build rows are always site-scoped. */
   site_id: string;
-  /** FK -> discovery_resource_accounts.id (ON DELETE SET NULL): the row this was seeded from - only ever set by Populate. */
-  discovery_resource_account_id: string | null;
+  /** FK -> discovery_voice_apps.id (ON DELETE SET NULL): the voice app this was seeded from - only ever set by Populate. */
+  discovery_voice_app_id: string | null;
   name: string;
   /** build_resource_accounts.id array - which RA(s)/phone numbers this AA answers on, same pattern as build_call_queues' own field. An AA can have several, or none yet. */
   resource_accounts: Json;
@@ -837,8 +851,8 @@ export interface BuildCallQueuesTable {
   id: Generated<string>;
   /** FK -> discovery_sites.id (ON DELETE CASCADE). Build rows are always site-scoped. */
   site_id: string;
-  /** FK -> discovery_resource_accounts.id (ON DELETE SET NULL): the row this was seeded from. */
-  discovery_resource_account_id: string | null;
+  /** FK -> discovery_voice_apps.id (ON DELETE SET NULL): the voice app this was seeded from. */
+  discovery_voice_app_id: string | null;
   name: string;
   /** build_resource_accounts.id array - which RA(s)/phone numbers present this queue. */
   resource_accounts: Json;
@@ -1631,8 +1645,8 @@ export interface DB {
   phone_numbers: PhoneNumbersTable;
   discovery_users: DiscoveryUsersTable;
   discovery_caps: DiscoveryCapsTable;
+  discovery_voice_apps: DiscoveryVoiceAppsTable;
   discovery_resource_accounts: DiscoveryResourceAccountsTable;
-  discovery_resource_account_members: DiscoveryResourceAccountMembersTable;
   attachments: AttachmentsTable;
   build_users: BuildUsersTable;
   build_caps: BuildCapsTable;

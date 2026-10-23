@@ -403,7 +403,7 @@ export function CallQueueWizard({
             Note: Call queues don't have their own after-hours/holiday handling in Teams - put an Auto Attendant in front of
             this queue if you need that.
           </Text>
-          <Field label="Which phone number/identity will answer this? (optional - can be set later)">
+          <Field label="Resource account that answers this (optional - can be set later)">
             <div className={ls.flexItemsEndGap8}>
               <Dropdown
                 value={resourceAccountChoices.find((c) => c.value === resourceAccountId)?.label ?? '— not yet known —'}

@@ -94,7 +94,7 @@ export class DataCollectionService {
           sites.map((x) => x.sitecode),
         )
       : {};
-    const empty = { users: 0, caps: 0, resourceAccounts: 0, network: 0, flows: 0, ranges: 0, numbers: 0, numbersAssigned: 0 };
+    const empty = { users: 0, caps: 0, resourceAccounts: 0, voiceApps: 0, network: 0, flows: 0, ranges: 0, numbers: 0, numbersAssigned: 0 };
     const pending = sites.length
       ? await this.scoped(t)
           .selectFrom('discovery_site_changes')
@@ -117,7 +117,7 @@ export class DataCollectionService {
   private async siteCounts(t: TenantContext, siteIds: string[], sitecodes: string[]) {
     const s = this.scoped(t);
     const codeToId = new Map(sitecodes.map((c, i) => [c, siteIds[i]]));
-    const bySite = (tbl: 'discovery_users' | 'discovery_caps' | 'discovery_resource_accounts' | 'discovery_network' | 'discovery_flows') =>
+    const bySite = (tbl: 'discovery_users' | 'discovery_caps' | 'discovery_resource_accounts' | 'discovery_voice_apps' | 'discovery_network' | 'discovery_flows') =>
       s
         .selectFrom(tbl)
         .select('site_id')
@@ -126,10 +126,11 @@ export class DataCollectionService {
         .groupBy('site_id')
         .execute();
 
-    const [u, c, ra, net, fl, rg, nums] = await Promise.all([
+    const [u, c, ra, va, net, fl, rg, nums] = await Promise.all([
       bySite('discovery_users'),
       bySite('discovery_caps'),
       bySite('discovery_resource_accounts'),
+      bySite('discovery_voice_apps'),
       bySite('discovery_network'),
       bySite('discovery_flows'),
       s
@@ -150,12 +151,13 @@ export class DataCollectionService {
         .execute(),
     ]);
 
-    const out: Record<string, { users: number; caps: number; resourceAccounts: number; network: number; flows: number; ranges: number; numbers: number; numbersAssigned: number }> = {};
+    const out: Record<string, { users: number; caps: number; resourceAccounts: number; voiceApps: number; network: number; flows: number; ranges: number; numbers: number; numbersAssigned: number }> = {};
     const slot = (id: string) =>
-      (out[id] ??= { users: 0, caps: 0, resourceAccounts: 0, network: 0, flows: 0, ranges: 0, numbers: 0, numbersAssigned: 0 });
+      (out[id] ??= { users: 0, caps: 0, resourceAccounts: 0, voiceApps: 0, network: 0, flows: 0, ranges: 0, numbers: 0, numbersAssigned: 0 });
     for (const r of u) if (r.site_id) slot(r.site_id).users = Number(r.n);
     for (const r of c) if (r.site_id) slot(r.site_id).caps = Number(r.n);
     for (const r of ra) if (r.site_id) slot(r.site_id).resourceAccounts = Number(r.n);
+    for (const r of va) if (r.site_id) slot(r.site_id).voiceApps = Number(r.n);
     for (const r of net) if (r.site_id) slot(r.site_id).network = Number(r.n);
     for (const r of fl) if (r.site_id) slot(r.site_id).flows = Number(r.n);
     for (const r of rg) {
@@ -679,8 +681,35 @@ export class DataCollectionService {
 
   /* -------------------------------- flows ------------------------------- */
 
+  /**
+   * A Call flow is the structured capture of a voice app, so saving one makes (or uses) that voice app's record: the Voice apps tab
+   * and Design & Build then know about it. A resource account named as answering it joins the voice app.
+   */
+  private async voiceAppForFlow(t: TenantContext, input: { site_id?: string | null; kind: string; name: string; voice_app_id?: string | null }): Promise<string | null> {
+    if (input.voice_app_id) return input.voice_app_id;
+    if (!input.site_id || (input.kind !== 'auto_attendant' && input.kind !== 'call_queue')) return null;
+    const app = await this.scoped(t)
+      .insertInto('discovery_voice_apps')
+      .values({ site_id: input.site_id, name: input.name, kind: input.kind })
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    return app.id;
+  }
+
+  private async joinVoiceApp(t: TenantContext, voiceAppId: string | null, resourceAccountId: string | null | undefined) {
+    if (!voiceAppId || !resourceAccountId) return;
+    const app = await this.scoped(t).selectFrom('discovery_voice_apps').select('site_id').where('id', '=', voiceAppId).executeTakeFirst();
+    await this.scoped(t)
+      .updateTable('discovery_resource_accounts')
+      .set({ voice_app_id: voiceAppId, updated_at: new Date().toISOString() })
+      .where('id', '=', resourceAccountId)
+      .where('site_id', '=', app?.site_id ?? null)
+      .execute();
+  }
+
   async addFlow(t: TenantContext, user: AuthedUser, input: DiscoveryFlowInput, canReview: boolean) {
     assertSiteInScope(t, input.site_id ?? null);
+    const voiceAppId = await this.voiceAppForFlow(t, input);
     const row = await this.scoped(t)
       .insertInto('discovery_flows')
       .values({
@@ -693,10 +722,12 @@ export class DataCollectionService {
         // null (Source: Manual in the UI).
         wizard_answers: input.wizard_answers ?? null,
         wizard_version: input.wizard_version ?? null,
+        voice_app_id: voiceAppId,
         resource_account_id: input.resource_account_id ?? null,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
+    await this.joinVoiceApp(t, voiceAppId, input.resource_account_id);
     await this.audit.tenant(t.schema, 'discovery.flow_added', {
       actor: actorOf(user),
       targetType: 'discovery_flow',
@@ -722,13 +753,20 @@ export class DataCollectionService {
       .returningAll()
       .executeTakeFirst();
     if (!row) throw new NotFoundException('flow not found');
+    // a flow saved before voice apps existed has none yet: it gets one now
+    let voiceAppId = row.voice_app_id;
+    if (!voiceAppId) {
+      voiceAppId = await this.voiceAppForFlow(t, row);
+      if (voiceAppId) await this.scoped(t).updateTable('discovery_flows').set({ voice_app_id: voiceAppId }).where('id', '=', id).execute();
+    }
+    if ('resource_account_id' in patch) await this.joinVoiceApp(t, voiceAppId, patch.resource_account_id);
     await this.audit.tenant(t.schema, 'discovery.flow_updated', {
       actor: actorOf(user),
       targetType: 'discovery_flow',
       targetId: id,
     });
     await this.trackChange(t, user, { siteId: row.site_id, entity: 'Call flow', action: 'changed', label: row.name });
-    return row;
+    return { ...row, voice_app_id: voiceAppId };
   }
 
   async deleteFlow(t: TenantContext, user: AuthedUser, id: string, canReview: boolean) {

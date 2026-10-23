@@ -438,7 +438,7 @@ export interface AddFromDiscoveryItemResult {
   label: string;
   /** the unique key it was matched on: the UPN, or the object's own id/GUID */
   key: string;
-  dataCollection: 'added' | 'already_on_site' | 'on_other_site' | 'not_found';
+  dataCollection: 'added' | 'already_on_site' | 'on_other_site' | 'not_found' | 'ambiguous';
   /** an account added as a user or as a common area phone: where it was routed */
   as?: 'user' | 'cap';
   /** Design & Build: not attempted when switched off or Data Collection did not take it */

@@ -10,6 +10,7 @@ import {
   discoveryNumberRangeSchema,
   numberRangesImportSchema,
   discoveryResourceAccountSchema,
+  discoveryVoiceAppSchema,
   discoveryUserBulkPatchSchema,
   discoveryUserSchema,
   numberReserveSchema,
@@ -23,6 +24,7 @@ import {
   type DiscoveryNumberRangeInput,
   type NumberRangesImportInput,
   type DiscoveryResourceAccountInput,
+  type DiscoveryVoiceAppInput,
   type DiscoveryUserBulkPatchInput,
   type DiscoveryUserInput,
   type RelinkUsersInput,
@@ -69,6 +71,15 @@ export class TelephonyController {
     @Query(new ZodBody(discoveryListQuerySchema)) q: DiscoveryListQuery,
   ) {
     return this.svc.listCaps(t, q);
+  }
+
+  @Get('voice-apps')
+  @RequirePermission('discovery:read')
+  listVoiceApps(
+    @TenantCtx() t: TenantContext,
+    @Query(new ZodBody(discoveryListQuerySchema)) q: DiscoveryListQuery,
+  ) {
+    return this.svc.listVoiceApps(t, q);
   }
 
   @Get('resource-accounts')
@@ -308,6 +319,37 @@ export class TelephonyController {
   @RequirePermission('discovery:write')
   deleteCap(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Param('id') id: string) {
     return this.svc.deleteCap(t, u, id, this.review(u));
+  }
+
+  /* ---------------------------- voice apps ---------------------------- */
+
+  @Post('voice-apps')
+  @RequirePermission('discovery:write')
+  addVoiceApp(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Body(new ZodBody(discoveryVoiceAppSchema)) body: DiscoveryVoiceAppInput) {
+    return this.svc.addVoiceApp(t, u, body, this.review(u));
+  }
+
+  @Patch('voice-apps/:id')
+  @RequirePermission('discovery:write')
+  updateVoiceApp(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() u: AuthedUser,
+    @Param('id') id: string,
+    @Body(new ZodBody(discoveryVoiceAppSchema.partial())) body: Partial<DiscoveryVoiceAppInput>,
+  ) {
+    return this.svc.updateVoiceApp(t, u, id, body, this.review(u));
+  }
+
+  @Post('voice-apps/bulk-delete')
+  @RequirePermission('discovery:write')
+  bulkDeleteVoiceApp(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Body(new ZodBody(discoveryBulkDeleteSchema)) body: DiscoveryBulkDeleteInput) {
+    return this.svc.bulkDelete(t, u, 'voice_app', body, this.review(u));
+  }
+
+  @Delete('voice-apps/:id')
+  @RequirePermission('discovery:write')
+  deleteVoiceApp(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Param('id') id: string) {
+    return this.svc.deleteVoiceApp(t, u, id, this.review(u));
   }
 
   /* ----------------------- resource accounts ----------------------- */

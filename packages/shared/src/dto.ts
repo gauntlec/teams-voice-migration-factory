@@ -559,7 +559,9 @@ export const discoveryFlowSchema = z
     // both are `const`s declared later in this file, and this schema is
     // built (and so evaluated) earlier, so referencing them here would hit
     // the temporal dead zone at module load.
-    /** discovery_resource_accounts.id - which phone identity will answer this, if already known. */
+    /** discovery_voice_apps.id - the voice app this Call flow is the capture of. Made for the flow when it is saved without one. */
+    voice_app_id: z.preprocess((v) => (v === '' ? null : v), z.string().uuid().nullable().optional()),
+    /** discovery_resource_accounts.id - the resource account that answers this, if already known: it joins the flow's voice app. */
     resource_account_id: z.preprocess((v) => (v === '' ? null : v), z.string().uuid().nullable().optional()),
   })
   .strict();
@@ -709,7 +711,8 @@ const { site_id: _bulkCapSiteId, upn: _bulkCapUpn, display_name: _bulkCapName, p
 export const discoveryCapBulkPatchSchema = bulkPatchSchema(discoveryCapBulkWritable);
 export type DiscoveryCapBulkPatchInput = z.infer<typeof discoveryCapBulkPatchSchema>;
 
-export const discoveryResourceAccountSchema = z
+/** A voice app (auto attendant or call queue) as Data Collection captures it: its name, kind and the plain-words detail of how it behaves. */
+export const discoveryVoiceAppSchema = z
   .object({
     site_id: siteIdRef,
     name: str(160).min(1),
@@ -722,6 +725,19 @@ export const discoveryResourceAccountSchema = z
     exception_action: optStr(1000),
     holiday: optStr(1000),
     advanced_features: optStr(4000),
+    comments: optStr(2000),
+  })
+  .strict();
+export type DiscoveryVoiceAppInput = z.infer<typeof discoveryVoiceAppSchema>;
+
+/** A resource account: its own name, UPN (once it exists) and phone number(s); it answers for one voice app, or none yet. */
+export const discoveryResourceAccountSchema = z
+  .object({
+    site_id: siteIdRef,
+    name: str(160).min(1),
+    kind: z.enum(RESOURCE_ACCOUNT_KINDS),
+    upn: optStr(320),
+    voice_app_id: z.preprocess((v) => (v === '' ? null : v), z.string().uuid().nullable().optional()),
     comments: optStr(2000),
   })
   .strict();

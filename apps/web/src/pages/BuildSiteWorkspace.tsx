@@ -179,6 +179,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
       qc.invalidateQueries({ queryKey: ['caps', tid, siteId] });
       qc.invalidateQueries({ queryKey: ['resource-accounts', tid, siteId] });
       qc.invalidateQueries({ queryKey: ['call-queues', tid, siteId] });
+      qc.invalidateQueries({ queryKey: ['auto-attendants', tid, siteId] });
       qc.invalidateQueries({ queryKey: ['build-summary', tid] });
     },
     // Most commonly assertCallingPoliciesMapped - some calling policies used

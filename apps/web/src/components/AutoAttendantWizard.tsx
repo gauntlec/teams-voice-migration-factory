@@ -546,7 +546,7 @@ export function AutoAttendantWizard({
               </Text>
             )}
           </div>
-          <Field label="Which phone number/identity will answer this? (optional - can be set later)">
+          <Field label="Resource account that answers this (optional - can be set later)">
             <div className={ls.flexItemsEndGap8}>
               <Dropdown
                 value={resourceAccountChoices.find((c) => c.value === resourceAccountId)?.label ?? '— not yet known —'}

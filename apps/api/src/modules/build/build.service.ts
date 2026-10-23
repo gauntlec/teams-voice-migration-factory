@@ -351,7 +351,7 @@ export class BuildService {
    */
   async addFromDiscovery(t: TenantContext, u: AuthedUser, input: AddFromDiscoveryInput): Promise<AddFromDiscoveryItemResult[]> {
     const s = this.s(t);
-    const { results, dcIds } = await this.discovery.captureSelected(t, u, input.kind, input.items);
+    const { results, dcIds, raIds } = await this.discovery.captureSelected(t, u, input.kind, input.items);
     if (!input.alsoBuild) return results;
     const siteOf = new Map(input.items.map((i) => [i.id, i.siteId]));
     // dcIds only holds items that really are on this site's record; a note (say, a number that could not be attached) does not stop the Design & Build row
@@ -376,29 +376,32 @@ export class BuildService {
       return results;
     }
 
-    // Resource accounts, auto attendants and call queues: one Design & Build row per Data Collection row, matched by id.
+    // Voice apps and resource accounts: a Design & Build row for each, matched by id. A voice app brings its resource accounts.
     const bySite = new Map<string, AddFromDiscoveryItemResult[]>();
     for (const r of eligible) bySite.set(siteOf.get(r.id)!, [...(bySite.get(siteOf.get(r.id)!) ?? []), r]);
     for (const [siteId, group] of bySite) {
-      const dc = group.map((g) => dcIds.get(g.id)!);
-      const linked = async () => {
-        const [ra, aa, cq] = await Promise.all([
-          s.selectFrom('build_resource_accounts').select('discovery_resource_account_id').where('discovery_resource_account_id', 'in', dc).execute(),
-          s.selectFrom('build_auto_attendants').select('discovery_resource_account_id').where('discovery_resource_account_id', 'in', dc).execute(),
-          s.selectFrom('build_call_queues').select('discovery_resource_account_id').where('discovery_resource_account_id', 'in', dc).execute(),
+      const appIds = input.kind === 'resource_account' ? [] : group.map((g) => dcIds.get(g.id)!);
+      const raOf = (g: AddFromDiscoveryItemResult) => raIds.get(g.id) ?? [];
+      const allRaIds = [...new Set(group.flatMap(raOf))];
+      // what each item has in Design & Build now, to tell added from already there
+      const snapshot = async () => {
+        const [aa, cq, ra] = await Promise.all([
+          appIds.length ? s.selectFrom('build_auto_attendants').select('discovery_voice_app_id').where('discovery_voice_app_id', 'in', appIds).execute() : [],
+          appIds.length ? s.selectFrom('build_call_queues').select('discovery_voice_app_id').where('discovery_voice_app_id', 'in', appIds).execute() : [],
+          allRaIds.length ? s.selectFrom('build_resource_accounts').select('discovery_resource_account_id').where('discovery_resource_account_id', 'in', allRaIds).execute() : [],
         ]);
-        return new Set([...ra, ...aa, ...cq].map((r) => r.discovery_resource_account_id));
+        return { apps: new Set([...aa, ...cq].map((r) => r.discovery_voice_app_id)), ras: new Set(ra.map((r) => r.discovery_resource_account_id)) };
       };
-      // a voice app can have several resource accounts: one joining a record that is already in Design & Build still counts as added
-      const raCount = async () => (await s.selectFrom('build_resource_accounts').select('id').where('discovery_resource_account_id', 'in', dc).execute()).length;
-      const before = await linked();
-      const raBefore = await raCount();
-      await this.populateResourceAccounts(t, u, siteId, dc);
-      const after = await linked();
-      const raAfter = await raCount();
+      const before = await snapshot();
+      if (appIds.length) await this.populateVoiceApps(t, u, siteId, appIds);
+      if (allRaIds.length) await this.populateResourceAccounts(t, u, siteId, allRaIds);
+      const after = await snapshot();
       for (const g of group) {
         const id = dcIds.get(g.id)!;
-        g.designAndBuild = before.has(id) ? (raAfter > raBefore ? 'added' : 'already_on_site') : after.has(id) ? 'added' : 'not_added';
+        const own = input.kind === 'resource_account' ? [id] : raOf(g);
+        const newRas = own.filter((r) => after.ras.has(r) && !before.ras.has(r)).length;
+        if (input.kind === 'resource_account') g.designAndBuild = before.ras.has(id) ? 'already_on_site' : after.ras.has(id) ? 'added' : 'not_added';
+        else g.designAndBuild = !before.apps.has(id) && after.apps.has(id) ? 'added' : before.apps.has(id) ? (newRas > 0 ? 'added' : 'already_on_site') : 'not_added';
       }
     }
     return results;
@@ -999,18 +1002,9 @@ export class BuildService {
         .selectAll()
         .where('id', '=', row.discovery_resource_account_id)
         .executeTakeFirst();
-      const narrativeFields = [
-        'directory_entry',
-        'business_hours',
-        'who_answers',
-        'ooh_action',
-        'exception_conditions',
-        'exception_action',
-        'holiday',
-        'advanced_features',
-        'comments',
-      ] as const;
-      if (discoveryRow && narrativeFields.every((f) => !discoveryRow[f])) {
+      // an empty shell: Populate or Link made it and nobody has added anything to it since
+      if (discoveryRow && (!discoveryRow.comments || discoveryRow.comments === 'Added from Discovery.')) {
+        await this.releaseHolder(t, 'resource_account', discoveryRow.id);
         await this.s(t).deleteFrom('discovery_resource_accounts').where('id', '=', discoveryRow.id).execute();
         unlinkedFromSite = true;
       }
@@ -1191,119 +1185,47 @@ export class BuildService {
   }
 
   /**
-   * Populate also seeds build_call_queues/build_auto_attendants alongside
-   * build_resource_accounts, so the narrative discovery fields
-   * (business_hours/who_answers/ooh_action/exception_conditions/
-   * exception_action/holiday/advanced_features/comments) don't silently
-   * vanish the moment this runs - they used to be discarded entirely.
-   * Only `comments` maps onto call_queues (-> notes); the rest are AA-only,
-   * matching the "no CQ narrative fields" note in buildCallQueueWritable.
+   * Populate, Data Collection -> Design & Build. Voice apps and resource accounts are two different things (a voice app has its own
+   * name and settings; a resource account its own UPN and number; a voice app lists its resource accounts), so each has its own
+   * Populate, and a final step lists the resource accounts on the voice app they answer for. `populateVoiceApps` and
+   * `populateResourceAccounts` can each be run on their own; the Resource accounts tab's button runs both.
    */
-  async populateResourceAccounts(t: TenantContext, u: AuthedUser, siteId: string, onlyIds?: string[]) {
+  async populateAll(t: TenantContext, u: AuthedUser, siteId: string) {
+    const voiceApps = await this.populateVoiceApps(t, u, siteId);
+    const resourceAccounts = await this.populateResourceAccounts(t, u, siteId);
+    return { created: voiceApps.created + resourceAccounts.created, skipped: voiceApps.skipped + resourceAccounts.skipped, total: voiceApps.total + resourceAccounts.total, voiceApps, resourceAccounts };
+  }
+
+  /**
+   * Each Data Collection voice app becomes an auto attendant or call queue row, named with the voice app's own name, and the narrative
+   * fields (business_hours/who_answers/...) are kept so they don't vanish (only `comments` maps onto call queues, as notes). A voice
+   * app linked to a discovered one is then filled in from that live voice app; a designed one with no live object is linked to a live
+   * voice app of the same kind and exact name when there is exactly one (the design and the live object are the same thing).
+   */
+  async populateVoiceApps(t: TenantContext, u: AuthedUser, siteId: string, onlyIds?: string[]) {
     const s = this.s(t);
-    let sourceQ = s.selectFrom('discovery_resource_accounts').selectAll().where('site_id', '=', siteId);
+    let sourceQ = s.selectFrom('discovery_voice_apps').selectAll().where('site_id', '=', siteId);
     if (onlyIds) sourceQ = sourceQ.where('id', 'in', onlyIds.length ? onlyIds : ['00000000-0000-0000-0000-000000000000']);
     const source = await sourceQ.execute();
-    // build_resource_accounts/build_auto_attendants/build_call_queues each
-    // carry their own independent discovery_resource_account_id FK (no FK
-    // between the three) - checking only build_resource_accounts let a
-    // deleted-and-repopulated resource account silently create a *second*
-    // build_auto_attendants/build_call_queues row alongside the surviving
-    // original, since that table's own existence was never checked.
-    const [existingRa, existingAa, existingCq] = await Promise.all([
-      s.selectFrom('build_resource_accounts').select(['discovery_resource_account_id']).where('site_id', '=', siteId).execute(),
-      s.selectFrom('build_auto_attendants').select(['discovery_resource_account_id']).where('site_id', '=', siteId).execute(),
-      s.selectFrom('build_call_queues').select(['discovery_resource_account_id']).where('site_id', '=', siteId).execute(),
+    const [existingAa, existingCq] = await Promise.all([
+      s.selectFrom('build_auto_attendants').select('discovery_voice_app_id').where('site_id', '=', siteId).execute(),
+      s.selectFrom('build_call_queues').select('discovery_voice_app_id').where('site_id', '=', siteId).execute(),
     ]);
-    const linked = new Set(
-      [...existingRa, ...existingAa, ...existingCq].map((e) => e.discovery_resource_account_id).filter(Boolean),
-    );
-    // Get-CsOnlineApplicationInstance's own live snapshot, matched by name -
-    // proof this resource account already exists and is licensed, so a row
-    // reverse-engineered from an already-live tenant (Populate's other job -
-    // see the "reverse-engineer OVP012" plan) starts with its real UPN and
-    // application_id already set, instead of looking like a brand new
-    // account New-CsOnlineApplicationInstance still needs to create.
-    const liveRas = await s.selectFrom('tenant_objects').select(['id', 'object_key', 'display_name', 'data']).where('object_type', '=', 'resource_account').where('removed_at', 'is', null).execute();
-    const liveRaByName = new Map(
-      liveRas.filter((r) => r.display_name).map((r) => [r.display_name!.toLowerCase(), r.data as Record<string, unknown>]),
-    );
-    // Rows added from Discovery name the exact object they came from (tenant_object_id): match on that, never on a name that can
-    // repeat. A resource account row IS that object; an auto attendant / call queue row reaches its resource account through the
-    // GUIDs in the voice app's ApplicationInstances. Older rows with no id keep matching on name.
-    const raById = new Map(liveRas.map((r) => [r.id, r.data as Record<string, unknown>]));
-    const raByKey = new Map(liveRas.map((r) => [r.object_key.toLowerCase(), r.data as Record<string, unknown>]));
-    const objIds = [...new Set(source.map((d) => d.tenant_object_id).filter((v): v is string => !!v))];
-    const pointedAt = objIds.length ? await s.selectFrom('tenant_objects').select(['id', 'object_type', 'data']).where('id', 'in', objIds).execute() : [];
-    const liveRaFor = (d: { name: string; tenant_object_id: string | null }): Record<string, unknown> | undefined => {
-      if (!d.tenant_object_id) return liveRaByName.get(d.name.toLowerCase());
-      const o = pointedAt.find((x) => x.id === d.tenant_object_id);
-      if (!o) return undefined;
-      if (o.object_type === 'resource_account') return raById.get(o.id);
-      const inst = (o.data as Record<string, unknown>)?.ApplicationInstances;
-      const keys = Array.isArray(inst) ? inst.filter((x): x is string => typeof x === 'string') : [];
-      for (const k of keys) {
-        const hit = raByKey.get(k.toLowerCase());
-        if (hit) return hit;
-      }
-      return undefined;
-    };
-    // Records added from Discovery list the resource accounts that belong to them (a voice app can have several): one Design &
-    // Build resource account row is made for each, matched on its UPN, and all are linked to the attendant or queue.
-    const sourceIds = source.map((d) => d.id);
-    const memberRows = sourceIds.length
-      ? await s
-          .selectFrom('discovery_resource_account_members as m')
-          .innerJoin('tenant_objects as o', 'o.id', 'm.tenant_object_id')
-          .select(['m.resource_account_id', 'o.object_key', 'o.display_name', 'o.data'])
-          .where('m.resource_account_id', 'in', sourceIds)
-          .where('o.removed_at', 'is', null)
-          .execute()
-      : [];
-    const membersOf = new Map<string, typeof memberRows>();
-    for (const m of memberRows) membersOf.set(m.resource_account_id, [...(membersOf.get(m.resource_account_id) ?? []), m]);
+    const linked = new Set([...existingAa, ...existingCq].map((e) => e.discovery_voice_app_id).filter(Boolean));
     let created = 0;
-    const createdDiscoveryIds: string[] = [];
+    const createdIds: string[] = [];
     for (const d of source) {
       if (linked.has(d.id)) continue;
-      const live = liveRaFor(d);
-      const liveUpn = live && typeof live.UserPrincipalName === 'string' ? live.UserPrincipalName : undefined;
-      // Bug: a linked resource account's Number column stayed blank forever
-      // even once live, because only UserPrincipalName/ApplicationId were
-      // ever copied from the live match here - never PhoneNumber.
-      const livePhoneRaw = live && typeof live.PhoneNumber === 'string' ? live.PhoneNumber : undefined;
-      const livePhone = livePhoneRaw ? livePhoneRaw.replace(/^tel:/i, '') : null;
-      // A voice app added from Discovery does not need a resource account: if none is associated with it in the tenant there is
-      // nothing to link, so no empty resource account row is made (the attendant or queue row is still created). A row with no
-      // discovered object behind it is a Data Collection design - its resource account still has to be requested - so it keeps one.
-      const fromVoiceApp = !!d.tenant_object_id && pointedAt.find((x) => x.id === d.tenant_object_id)?.object_type !== 'resource_account';
-      const hasMembers = (membersOf.get(d.id)?.length ?? 0) > 0;
-      const raRow =
-        hasMembers || (fromVoiceApp && !live)
-          ? null
-          : await s
-              .insertInto('build_resource_accounts')
-              .values({
-                site_id: siteId,
-                discovery_resource_account_id: d.id,
-                display_name: d.name,
-                kind: d.kind,
-                upn: liveUpn ?? '',
-                application_id: liveUpn ? RESOURCE_ACCOUNT_APPLICATION_IDS[d.kind] : null,
-                phone_number: livePhone,
-                status: {},
-              })
-              .returning('id')
-              .executeTakeFirstOrThrow();
+      await this.adoptLiveVoiceApp(s, d);
       if (d.kind === 'auto_attendant') {
         const notes = [d.exception_conditions, d.exception_action].filter(Boolean).join(' / ') || null;
         await s
           .insertInto('build_auto_attendants')
           .values({
             site_id: siteId,
-            discovery_resource_account_id: d.id,
+            discovery_voice_app_id: d.id,
             name: d.name,
-            resource_accounts: JSON.stringify(raRow ? [raRow.id] : []),
+            resource_accounts: JSON.stringify([]),
             config: {},
             holiday_call_flows: JSON.stringify([]),
             business_hours: d.business_hours,
@@ -1318,9 +1240,9 @@ export class BuildService {
           .insertInto('build_call_queues')
           .values({
             site_id: siteId,
-            discovery_resource_account_id: d.id,
+            discovery_voice_app_id: d.id,
             name: d.name,
-            resource_accounts: JSON.stringify(raRow ? [raRow.id] : []),
+            resource_accounts: JSON.stringify([]),
             agents: JSON.stringify([]),
             overflow: {},
             timeout: {},
@@ -1330,40 +1252,126 @@ export class BuildService {
       }
       await this.linkDiscoveredFlow(s, d.id);
       created += 1;
-      createdDiscoveryIds.push(d.id);
+      createdIds.push(d.id);
     }
-    for (const d of source) await this.syncResourceAccountMembers(s, siteId, d, membersOf.get(d.id) ?? []);
-    if (createdDiscoveryIds.length > 0) {
-      await this.populateStructuredFromLive(s, siteId, createdDiscoveryIds);
-    }
-    await this.audit.tenant(t.schema, 'build.resource_accounts_populated', {
-      actor: actorOf(u),
-      targetType: 'discovery_site',
-      targetId: siteId,
-      detail: { created, total: source.length },
-    });
+    if (createdIds.length > 0) await this.populateStructuredFromLive(s, siteId, createdIds);
+    await this.linkResourceAccountsToVoiceApps(s, siteId);
+    await this.audit.tenant(t.schema, 'build.voice_apps_populated', { actor: actorOf(u), targetType: 'discovery_site', targetId: siteId, detail: { created, total: source.length } });
     return { created, skipped: source.length - created, total: source.length };
   }
 
   /**
-   * "Link discovered resource account" - lets an engineer pull one specific
-   * live resource account (`tenant_objects.id`) straight into this site
-   * without visiting Data Collection first. Thin combinator: reuses
-   * `TenantDiscoveryService.importResourceAccounts` to create the Data
-   * Collection row under this site, then `populateResourceAccounts` (above)
-   * to seed the matching build_resource_accounts/build_auto_attendants/
-   * build_call_queues row from the same live snapshot - identical to what
-   * happens when both steps are run separately from their own modules.
+   * A designed voice app (no discovered object behind it) is linked to a live voice app of the same kind and exact name when exactly
+   * one exists and nothing else has claimed it. Several with that name are never guessed between.
+   */
+  private async adoptLiveVoiceApp(s: Scoped, d: { id: string; kind: 'auto_attendant' | 'call_queue'; name: string; tenant_object_id: string | null }) {
+    if (d.tenant_object_id) return;
+    const candidates = await s
+      .selectFrom('tenant_objects')
+      .select('id')
+      .where('object_type', '=', d.kind)
+      .where('removed_at', 'is', null)
+      .where(sql`lower(display_name)`, '=', d.name.toLowerCase())
+      .where('id', 'not in', s.selectFrom('discovery_voice_apps').select('tenant_object_id').where('tenant_object_id', 'is not', null))
+      .execute();
+    if (candidates.length !== 1) return;
+    await s.updateTable('discovery_voice_apps').set({ tenant_object_id: candidates[0]!.id }).where('id', '=', d.id).execute();
+    await s.updateTable('discovery_flows').set({ tenant_object_id: candidates[0]!.id }).where('voice_app_id', '=', d.id).where('tenant_object_id', 'is', null).execute();
+    d.tenant_object_id = candidates[0]!.id;
+  }
+
+  /**
+   * Each Data Collection resource account becomes a Design & Build resource account row: its own name and UPN (blank until the account
+   * exists), its kind, and its number - from what Teams has live, else the number chosen for it in Data Collection. A row for the same
+   * UPN made by hand is linked, not duplicated.
+   */
+  async populateResourceAccounts(t: TenantContext, u: AuthedUser, siteId: string, onlyIds?: string[]) {
+    const s = this.s(t);
+    let sourceQ = s.selectFrom('discovery_resource_accounts').selectAll().where('site_id', '=', siteId);
+    if (onlyIds) sourceQ = sourceQ.where('id', 'in', onlyIds.length ? onlyIds : ['00000000-0000-0000-0000-000000000000']);
+    const source = await sourceQ.execute();
+    const existing = await s.selectFrom('build_resource_accounts').select(['id', 'upn', 'discovery_resource_account_id']).where('site_id', '=', siteId).execute();
+    const linked = new Set(existing.map((e) => e.discovery_resource_account_id).filter(Boolean));
+    const objIds = source.map((d) => d.tenant_object_id).filter((v): v is string => !!v);
+    const objs = objIds.length ? await s.selectFrom('tenant_objects').select(['id', 'data']).where('id', 'in', objIds).execute() : [];
+    const liveById = new Map(objs.map((o) => [o.id, (o.data ?? {}) as Record<string, unknown>]));
+    const held = source.length ? await s.selectFrom('phone_numbers').select(['id', 'e164', 'holder_id']).where('holder_type', '=', 'resource_account').where('holder_id', 'in', source.map((d) => d.id)).orderBy('e164').execute() : [];
+    const heldBy = new Map<string, { id: string; e164: string }>();
+    for (const h of held) if (!heldBy.has(h.holder_id as string)) heldBy.set(h.holder_id as string, { id: h.id, e164: h.e164 });
+    const defaultType = await this.siteNumberTypeDefault(t, siteId);
+    const liveTypes = await resolveLiveNumberTypes(s, [...liveById.values()].map((d) => (typeof d.PhoneNumber === 'string' ? d.PhoneNumber.replace(/^tel:/i, '').split(';')[0]!.trim() : null)));
+
+    let created = 0;
+    for (const d of source) {
+      if (linked.has(d.id)) continue;
+      const live = d.tenant_object_id ? liveById.get(d.tenant_object_id) : undefined;
+      const liveUpn = live && typeof live.UserPrincipalName === 'string' ? live.UserPrincipalName : undefined;
+      const upn = d.upn ?? liveUpn ?? '';
+      const byUpn = upn ? existing.find((e) => e.upn.toLowerCase() === upn.toLowerCase() && !e.discovery_resource_account_id) : undefined;
+      if (byUpn) {
+        await s.updateTable('build_resource_accounts').set({ discovery_resource_account_id: d.id }).where('id', '=', byUpn.id).execute();
+        continue;
+      }
+      const livePhone = live && typeof live.PhoneNumber === 'string' ? live.PhoneNumber.replace(/^tel:/i, '').split(';')[0]!.trim() : null;
+      const phone = livePhone || heldBy.get(d.id)?.e164 || null;
+      const inventory = phone ? await s.selectFrom('phone_numbers').select('id').where('e164', '=', phone).executeTakeFirst() : undefined;
+      await s
+        .insertInto('build_resource_accounts')
+        .values({
+          site_id: siteId,
+          discovery_resource_account_id: d.id,
+          display_name: d.name,
+          kind: d.kind,
+          upn,
+          application_id: liveUpn ? RESOURCE_ACCOUNT_APPLICATION_IDS[d.kind] : null,
+          phone_number: phone,
+          phone_number_id: inventory?.id ?? null,
+          number_type: phone ? (liveTypes.get(phone) ?? defaultType) : null,
+          status: {},
+        } as never)
+        .execute();
+      created += 1;
+    }
+    await this.linkResourceAccountsToVoiceApps(s, siteId);
+    await this.audit.tenant(t.schema, 'build.resource_accounts_populated', { actor: actorOf(u), targetType: 'discovery_site', targetId: siteId, detail: { created, total: source.length } });
+    return { created, skipped: source.length - created, total: source.length };
+  }
+
+  /**
+   * Lists each Design & Build resource account on the auto attendant or call queue it answers for (the voice app its Data Collection
+   * row belongs to). Safe to run again: it only adds what is missing.
+   */
+  private async linkResourceAccountsToVoiceApps(s: Scoped, siteId: string) {
+    const rows = await s
+      .selectFrom('build_resource_accounts as b')
+      .innerJoin('discovery_resource_accounts as d', 'd.id', 'b.discovery_resource_account_id')
+      .select(['b.id as id', 'd.voice_app_id as voice_app_id', 'd.kind as kind'])
+      .where('b.site_id', '=', siteId)
+      .where('d.voice_app_id', 'is not', null)
+      .execute();
+    const byApp = new Map<string, string[]>();
+    for (const r of rows) byApp.set(r.voice_app_id as string, [...(byApp.get(r.voice_app_id as string) ?? []), r.id]);
+    for (const [appId, raIds] of byApp) {
+      for (const table of ['build_auto_attendants', 'build_call_queues'] as const) {
+        const app = await s.selectFrom(table).select(['id', 'resource_accounts']).where('discovery_voice_app_id', '=', appId).executeTakeFirst();
+        if (!app) continue;
+        const have = Array.isArray(app.resource_accounts) ? (app.resource_accounts as string[]) : [];
+        const all = [...new Set([...have, ...raIds])];
+        if (all.length !== have.length) await s.updateTable(table).set({ resource_accounts: JSON.stringify(all) } as never).where('id', '=', app.id).execute();
+      }
+    }
+  }
+
+  /**
+   * "Link discovered resource account" - lets an engineer pull one specific live resource account (`tenant_objects.id`) straight into
+   * this site without visiting Data Collection first: the resource account row in Data Collection, then its Design & Build row. It
+   * brings only the resource account; the voice app it answers for is added with Add to site (the result says which one).
    */
   async importAndLinkResourceAccount(t: TenantContext, u: AuthedUser, objectId: string, siteId: string, canReview: boolean) {
-    const imported = await this.discovery.importResourceAccounts(
-      t,
-      u,
-      { assignments: [{ id: objectId, siteId }] },
-      canReview,
-    );
-    const populated = await this.populateResourceAccounts(t, u, siteId);
-    return { imported, populated };
+    const { results, dcIds } = await this.discovery.captureSelected(t, u, 'resource_account', [{ id: objectId, siteId }]);
+    const raId = dcIds.get(objectId);
+    const populated = raId ? await this.populateResourceAccounts(t, u, siteId, [raId]) : { created: 0, skipped: 0, total: 0 };
+    return { imported: { created: results.filter((r) => r.dataCollection === 'added').length, skipped: results.filter((r) => r.dataCollection !== 'added').length }, populated, results };
   }
 
   /**
@@ -1379,32 +1387,15 @@ export class BuildService {
    */
   private async populateStructuredFromLive(s: Scoped, siteId: string, createdDiscoveryIds: string[]) {
     const [createdAa, createdCq] = await Promise.all([
-      s.selectFrom('build_auto_attendants').select(['id', 'name', 'discovery_resource_account_id']).where('discovery_resource_account_id', 'in', createdDiscoveryIds).execute(),
-      s.selectFrom('build_call_queues').select(['id', 'name', 'discovery_resource_account_id']).where('discovery_resource_account_id', 'in', createdDiscoveryIds).execute(),
+      s.selectFrom('build_auto_attendants').select(['id', 'name', 'discovery_voice_app_id']).where('discovery_voice_app_id', 'in', createdDiscoveryIds).execute(),
+      s.selectFrom('build_call_queues').select(['id', 'name', 'discovery_voice_app_id']).where('discovery_voice_app_id', 'in', createdDiscoveryIds).execute(),
     ]);
     if (createdAa.length === 0 && createdCq.length === 0) return;
 
-    const aaNames = createdAa.map((r) => r.name.toLowerCase());
-    const cqNames = createdCq.map((r) => r.name.toLowerCase());
-    const [liveAa, liveCq, liveSchedules, liveUsers] = await Promise.all([
-      aaNames.length === 0
-        ? []
-        : s
-            .selectFrom('tenant_objects')
-            .select(['display_name', 'data'])
-            .where('object_type', '=', 'auto_attendant')
-            .where('removed_at', 'is', null)
-            .where(sql`lower(display_name)`, 'in', aaNames)
-            .execute(),
-      cqNames.length === 0
-        ? []
-        : s
-            .selectFrom('tenant_objects')
-            .select(['display_name', 'data'])
-            .where('object_type', '=', 'call_queue')
-            .where('removed_at', 'is', null)
-            .where(sql`lower(display_name)`, 'in', cqNames)
-            .execute(),
+    // Every live auto attendant and call queue: a voice app is matched to its live object by the exact object (the Data Collection
+    // voice app's tenant_object_id), never by a name that two of them could share.
+    const [liveApps, liveSchedules, liveUsers, voiceApps] = await Promise.all([
+      s.selectFrom('tenant_objects').select(['id', 'object_type', 'data']).where('object_type', 'in', ['auto_attendant', 'call_queue']).where('removed_at', 'is', null).execute(),
       // Schedules are looked up by ScheduleId (an arbitrary tenant-wide GUID), not name, so all of them are fetched.
       s.selectFrom('tenant_objects').select(['object_key', 'data']).where('object_type', '=', 'schedule').where('removed_at', 'is', null).execute(),
       // entra_id, not object_id (our own internal tenant_objects.id row
@@ -1412,57 +1403,39 @@ export class BuildService {
       // ObjectId matches (confirmed against OVP012's real data this session,
       // same bug just fixed in resolveLiveIdentityState).
       s.selectFrom('tenant_users').select(['entra_id', 'upn']).where('entra_id', 'is not', null).execute(),
+      s.selectFrom('discovery_voice_apps').select(['id', 'tenant_object_id']).where('site_id', '=', siteId).where('tenant_object_id', 'is not', null).execute(),
     ]);
-    const aaByName = new Map(liveAa.filter((r) => r.display_name).map((r) => [r.display_name!.toLowerCase(), r.data as Record<string, unknown>]));
-    const cqByName = new Map(liveCq.filter((r) => r.display_name).map((r) => [r.display_name!.toLowerCase(), r.data as Record<string, unknown>]));
-
-    // Rows added from Discovery name the exact object they came from (discovery_resource_accounts.tenant_object_id), so a name
-    // that two voice apps share cannot pick the wrong one. That object is the voice app itself, or a resource account whose
-    // voice app is the one listing its GUID in ApplicationInstances. Rows with no id fall back to the name match above.
-    const dcRows = await s.selectFrom('discovery_resource_accounts').select(['id', 'kind', 'tenant_object_id']).where('id', 'in', createdDiscoveryIds).execute();
-    const pointIds = dcRows.map((d) => d.tenant_object_id).filter((v): v is string => !!v);
-    const idLive = new Map<string, Record<string, unknown>>(); // discovery_resource_accounts.id -> the live voice app
-    if (pointIds.length) {
-      const pointed = await s.selectFrom('tenant_objects').select(['id', 'object_type', 'object_key', 'data']).where('id', 'in', pointIds).execute();
-      const apps = await s.selectFrom('tenant_objects').select(['object_type', 'data']).where('object_type', 'in', ['auto_attendant', 'call_queue']).where('removed_at', 'is', null).execute();
-      for (const d of dcRows) {
-        const o = pointed.find((p) => p.id === d.tenant_object_id);
-        if (!o) continue;
-        if (o.object_type === d.kind) {
-          idLive.set(d.id, o.data as Record<string, unknown>);
-        } else if (o.object_type === 'resource_account') {
-          const key = o.object_key.toLowerCase();
-          const owner = apps.find((a) => a.object_type === d.kind && ((a.data as Record<string, unknown>).ApplicationInstances as unknown[] | undefined)?.some((i) => typeof i === 'string' && i.toLowerCase() === key));
-          if (owner) idLive.set(d.id, owner.data as Record<string, unknown>);
-        }
-      }
+    const liveByObject = new Map(liveApps.map((o) => [o.id, (o.data ?? {}) as Record<string, unknown>]));
+    const idLive = new Map<string, Record<string, unknown>>(); // discovery_voice_apps.id -> its live voice app
+    for (const v of voiceApps) {
+      const data = liveByObject.get(v.tenant_object_id as string);
+      if (data) idLive.set(v.id, data);
     }
-    const withId = new Set(dcRows.filter((d) => d.tenant_object_id).map((d) => d.id));
-    const liveFor = (row: { name: string; discovery_resource_account_id: string | null }, byName: Map<string, Record<string, unknown>>) =>
-      row.discovery_resource_account_id && withId.has(row.discovery_resource_account_id)
-        ? idLive.get(row.discovery_resource_account_id)
-        : byName.get(row.name.toLowerCase());
+    const liveFor = (row: { discovery_voice_app_id: string | null }) => (row.discovery_voice_app_id ? idLive.get(row.discovery_voice_app_id) : undefined);
     const scheduleByGuid = new Map(liveSchedules.map((r) => [r.object_key, r.data as Record<string, unknown>]));
     const upnByObjectId = new Map(liveUsers.map((r) => [r.entra_id!.toLowerCase(), r.upn]));
 
     // Live Identity GUID -> this site's own build row, so a menu option that
     // transfers to another AA/CQ on the same site resolves to a same-site
     // buildId (deployment.ts's app-enforced reference), not a dangling GUID.
+    // Every voice app on the site that has a live object counts, not only the ones just made.
+    const siteApps = await Promise.all([
+      s.selectFrom('build_auto_attendants').select(['id', 'discovery_voice_app_id']).where('site_id', '=', siteId).where('discovery_voice_app_id', 'is not', null).execute(),
+      s.selectFrom('build_call_queues').select(['id', 'discovery_voice_app_id']).where('site_id', '=', siteId).where('discovery_voice_app_id', 'is not', null).execute(),
+    ]);
     const liveIdToBuild = new Map<string, { kind: 'auto_attendant' | 'call_queue'; buildId: string }>();
-    for (const row of createdAa) {
-      const live = liveFor(row, aaByName);
-      if (live && typeof live.Identity === 'string') liveIdToBuild.set(live.Identity.toLowerCase(), { kind: 'auto_attendant', buildId: row.id });
-    }
-    for (const row of createdCq) {
-      const live = liveFor(row, cqByName);
-      if (live && typeof live.Identity === 'string') liveIdToBuild.set(live.Identity.toLowerCase(), { kind: 'call_queue', buildId: row.id });
-    }
+    siteApps.forEach((rows, i) => {
+      for (const row of rows) {
+        const live = liveFor(row);
+        if (live && typeof live.Identity === 'string') liveIdToBuild.set(live.Identity.toLowerCase(), { kind: i === 0 ? 'auto_attendant' : 'call_queue', buildId: row.id });
+      }
+    });
 
     // A transfer to a resource account (ApplicationEndpoint) reaches the
     // AA/CQ that account is associated with - same mapping
     // resolveAutoAttendantDeepContext uses at deploy time.
     const ownerByInstance = new Map<string, string>();
-    for (const d of [...aaByName.values(), ...cqByName.values(), ...idLive.values()]) {
+    for (const d of liveByObject.values()) {
       if (typeof d.Identity !== 'string' || !Array.isArray(d.ApplicationInstances)) continue;
       for (const i of d.ApplicationInstances as unknown[]) if (typeof i === 'string') ownerByInstance.set(i.toLowerCase(), d.Identity.toLowerCase());
     }
@@ -1489,7 +1462,7 @@ export class BuildService {
     // sees, instead of two independent implementations that could quietly
     // drift and make every freshly-populated row look "changed".
     for (const row of createdAa) {
-      const live = liveFor(row, aaByName);
+      const live = liveFor(row);
       if (!live) continue;
       const structured = liveAutoAttendantToStructured(live, scheduleByGuid, resolveTarget);
       const patch: Record<string, unknown> = {
@@ -1507,7 +1480,7 @@ export class BuildService {
     }
 
     for (const row of createdCq) {
-      const live = liveFor(row, cqByName);
+      const live = liveFor(row);
       if (!live) continue;
       const agentUpns = Array.isArray(live.Agents)
         ? (live.Agents as Record<string, unknown>[])
@@ -1749,71 +1722,23 @@ export class BuildService {
   }
 
   /**
-   * Makes the Design & Build resource account rows for the resource accounts that belong to a Data Collection record - one per
-   * UPN, never twice - and lists them all on the record's auto attendant or call queue. Safe to run again: a resource account
-   * added to the record later is picked up, and nothing already there is changed.
+   * Stamps a Call flows row that is the capture of a voice app with the Design & Build row Populate made for that voice app, so the tab
+   * shows it as already in Design & Build and "Import" never makes a second row. Only rows with a discovered object behind them are
+   * touched: a hand-made wizard capture is imported deliberately, not linked.
    */
-  private async syncResourceAccountMembers(
-    s: Scoped,
-    siteId: string,
-    d: { id: string; name: string; kind: 'auto_attendant' | 'call_queue' },
-    members: { object_key: string; display_name: string | null; data: unknown }[],
-  ) {
-    if (!members.length) return;
-    const ids: string[] = [];
-    for (const m of members) {
-      const data = (m.data ?? {}) as Record<string, unknown>;
-      const upn = typeof data.UserPrincipalName === 'string' ? data.UserPrincipalName : '';
-      if (!upn) continue;
-      const phoneRaw = typeof data.PhoneNumber === 'string' ? data.PhoneNumber : null;
-      const existing = await s.selectFrom('build_resource_accounts').select('id').where('site_id', '=', siteId).where(sql`lower(upn)`, '=', upn.toLowerCase()).executeTakeFirst();
-      if (existing) {
-        ids.push(existing.id);
-        continue;
-      }
-      const row = await s
-        .insertInto('build_resource_accounts')
-        .values({
-          site_id: siteId,
-          discovery_resource_account_id: d.id,
-          display_name: m.display_name ?? d.name,
-          kind: d.kind,
-          upn,
-          application_id: RESOURCE_ACCOUNT_APPLICATION_IDS[d.kind],
-          phone_number: phoneRaw ? phoneRaw.replace(/^tel:/i, '').split(';')[0]!.trim() : null,
-          status: {},
-        })
-        .returning('id')
-        .executeTakeFirstOrThrow();
-      ids.push(row.id);
-    }
-    if (!ids.length) return;
-    const table = d.kind === 'auto_attendant' ? 'build_auto_attendants' : 'build_call_queues';
-    const app = await s.selectFrom(table).select(['id', 'resource_accounts']).where('discovery_resource_account_id', '=', d.id).executeTakeFirst();
-    if (!app) return;
-    const have = Array.isArray(app.resource_accounts) ? (app.resource_accounts as string[]) : [];
-    const all = [...new Set([...have, ...ids])];
-    if (all.length !== have.length) await s.updateTable(table).set({ resource_accounts: JSON.stringify(all) } as never).where('id', '=', app.id).execute();
-  }
-
-  /**
-   * Stamps a Call flows row that was made from a discovered voice app with the Design & Build row Populate made for the same
-   * Data Collection resource account, so the tab shows it as already in Design & Build and "Import" never makes a second row.
-   * Only rows with a discovered object behind them are touched: a hand-made wizard capture is imported deliberately, not linked.
-   */
-  private async linkDiscoveredFlow(s: Scoped, dcResourceAccountId: string) {
+  private async linkDiscoveredFlow(s: Scoped, dcVoiceAppId: string) {
     const flow = await s
       .selectFrom('discovery_flows')
       .select(['id', 'kind', 'build_auto_attendant_id', 'build_call_queue_id'])
-      .where('resource_account_id', '=', dcResourceAccountId)
+      .where('voice_app_id', '=', dcVoiceAppId)
       .where('tenant_object_id', 'is not', null)
       .executeTakeFirst();
     if (!flow || flow.build_auto_attendant_id || flow.build_call_queue_id) return flow ?? null;
     const buildId =
       flow.kind === 'auto_attendant'
-        ? (await s.selectFrom('build_auto_attendants').select('id').where('discovery_resource_account_id', '=', dcResourceAccountId).executeTakeFirst())?.id
+        ? (await s.selectFrom('build_auto_attendants').select('id').where('discovery_voice_app_id', '=', dcVoiceAppId).executeTakeFirst())?.id
         : flow.kind === 'call_queue'
-          ? (await s.selectFrom('build_call_queues').select('id').where('discovery_resource_account_id', '=', dcResourceAccountId).executeTakeFirst())?.id
+          ? (await s.selectFrom('build_call_queues').select('id').where('discovery_voice_app_id', '=', dcVoiceAppId).executeTakeFirst())?.id
           : undefined;
     if (!buildId) return flow;
     await s

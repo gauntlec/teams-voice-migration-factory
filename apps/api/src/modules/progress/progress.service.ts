@@ -96,7 +96,7 @@ export class ProgressService {
     if (t.managedServices && can(user.role, 'sr:read')) await this.addServiceRequests(t, user, out);
     if (siteIds.length === 0) return out;
 
-    const countBy = async (table: 'discovery_users' | 'discovery_caps' | 'discovery_resource_accounts') => {
+    const countBy = async (table: 'discovery_users' | 'discovery_caps' | 'discovery_resource_accounts' | 'discovery_voice_apps') => {
       const rows = await s
         .selectFrom(table)
         .select(['site_id', (eb) => eb.fn.countAll<string>().as('n')])
@@ -106,10 +106,11 @@ export class ProgressService {
       return new Map(rows.map((r) => [r.site_id as string, Number(r.n)]));
     };
 
-    const [capUsers, capCaps, capRas, rollup, buildStats, finishedRuns, firstLive, activeRuns, packs] = await Promise.all([
+    const [capUsers, capCaps, capRas, capVoiceApps, rollup, buildStats, finishedRuns, firstLive, activeRuns, packs] = await Promise.all([
       countBy('discovery_users'),
       countBy('discovery_caps'),
       countBy('discovery_resource_accounts'),
+      countBy('discovery_voice_apps'),
       this.build.siteRollup(t),
       this.buildStats(t, siteIds),
       // The latest finished run per site and mode.
@@ -175,7 +176,8 @@ export class ProgressService {
         captured: {
           users: capUsers.get(site.id) ?? 0,
           caps: capCaps.get(site.id) ?? 0,
-          resourceAccounts: capRas.get(site.id) ?? 0,
+          // resource accounts and the voice apps they answer for are captured together (Design & Build counts both: its attendants and queues are its "other" rows)
+          resourceAccounts: (capRas.get(site.id) ?? 0) + (capVoiceApps.get(site.id) ?? 0),
         },
         build: {
           users: r?.counts.users ?? 0,

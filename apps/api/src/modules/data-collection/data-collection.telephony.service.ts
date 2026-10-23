@@ -15,6 +15,7 @@ import {
   type DiscoveryNumberRangeInput,
   type NumberRangesImportInput,
   type DiscoveryResourceAccountInput,
+  type DiscoveryVoiceAppInput,
   type DiscoveryUserBulkPatchInput,
   type DiscoveryUserInput,
   type ImportUserRow,
@@ -95,7 +96,7 @@ export class TelephonyService {
   /** Throw if the holder row (user / cap / resource account) is out of scope. */
   private async assertHolderInScope(
     t: TenantContext,
-    table: 'discovery_users' | 'discovery_caps' | 'discovery_resource_accounts',
+    table: 'discovery_users' | 'discovery_caps' | 'discovery_resource_accounts' | 'discovery_voice_apps',
     id: string,
     notFound: string,
   ) {
@@ -133,8 +134,8 @@ export class TelephonyService {
    * scope, numbers back to the free pool; Design & Build rows populated from
    * them stay, just unlinked), in one transaction and one audit row.
    */
-  async bulkDelete(t: TenantContext, u: AuthedUser, kind: 'user' | 'cap' | 'resource_account', body: DiscoveryBulkDeleteInput, canReview: boolean) {
-    const table = ({ user: 'discovery_users', cap: 'discovery_caps', resource_account: 'discovery_resource_accounts' } as const)[kind];
+  async bulkDelete(t: TenantContext, u: AuthedUser, kind: 'user' | 'cap' | 'resource_account' | 'voice_app', body: DiscoveryBulkDeleteInput, canReview: boolean) {
+    const table = ({ user: 'discovery_users', cap: 'discovery_caps', resource_account: 'discovery_resource_accounts', voice_app: 'discovery_voice_apps' } as const)[kind];
     let ids: string[];
     let siteId: string | null = null;
     if ('ids' in body) {
@@ -154,12 +155,15 @@ export class TelephonyService {
       const x = tenantDb(trx as unknown as Kysely<DB>, t.schema);
       for (let i = 0; i < ids.length; i += 1000) {
         const chunk = ids.slice(i, i + 1000);
-        await x
-          .updateTable('phone_numbers')
-          .set({ holder_type: null, holder_id: null, status: 'available' })
-          .where('holder_type', '=', kind)
-          .where('holder_id', 'in', chunk)
-          .execute();
+        // a voice app holds no numbers (its resource accounts do); the others hand theirs back
+        if (kind !== 'voice_app') {
+          await x
+            .updateTable('phone_numbers')
+            .set({ holder_type: null, holder_id: null, status: 'available' })
+            .where('holder_type', '=', kind)
+            .where('holder_id', 'in', chunk)
+            .execute();
+        }
         await x.deleteFrom(table).where('id', 'in', chunk).execute();
       }
     });
@@ -169,7 +173,7 @@ export class TelephonyService {
       targetId: siteId ?? undefined,
       detail: { count: ids.length, all: !!siteId, ids: ids.slice(0, 500) },
     });
-    await this.trackRows(t, u, tracked, ({ user: 'User', cap: 'Common area phone', resource_account: 'Resource account' } as const)[kind], 'removed');
+    await this.trackRows(t, u, tracked, ({ user: 'User', cap: 'Common area phone', resource_account: 'Resource account', voice_app: 'Voice app' } as const)[kind], 'removed');
     return { deleted: ids.length };
   }
 
@@ -307,52 +311,82 @@ export class TelephonyService {
     };
   }
 
+  /** The numbers attached to each of these resource accounts (a resource account can hold several). */
+  private async numbersOf(t: TenantContext, raIds: string[]) {
+    const byHolder = new Map<string, { id: string; e164: string }[]>();
+    if (!raIds.length) return byHolder;
+    const nums = await this.s(t)
+      .selectFrom('phone_numbers')
+      .select(['id', 'e164', 'holder_id'])
+      .where('holder_type', '=', 'resource_account')
+      .where('holder_id', 'in', raIds)
+      .orderBy('e164')
+      .execute();
+    for (const n of nums) {
+      const arr = byHolder.get(n.holder_id as string) ?? [];
+      arr.push({ id: n.id, e164: n.e164 });
+      byHolder.set(n.holder_id as string, arr);
+    }
+    return byHolder;
+  }
+
+  /** Voice apps (auto attendants and call queues), each with the resource accounts that answer for it. */
+  async listVoiceApps(t: TenantContext, q: DiscoveryListQuery) {
+    const s = this.s(t);
+    const sites = this.siteIdFilter(t, q.siteId);
+    const { page, limit, offset } = this.pageOf(q);
+    let b = s.selectFrom('discovery_voice_apps');
+    if (sites) b = b.where('site_id', 'in', sites);
+    if (q.q) b = b.where('name', 'ilike', `%${q.q}%`);
+    const [items, cnt] = await Promise.all([
+      b.selectAll().orderBy('name').orderBy('id').limit(limit).offset(offset).execute(),
+      b.select((eb) => eb.fn.countAll<string>().as('n')).executeTakeFirst(),
+    ]);
+    const ids = items.map((r) => r.id);
+    const ras = ids.length ? await s.selectFrom('discovery_resource_accounts').select(['id', 'name', 'upn', 'voice_app_id']).where('voice_app_id', 'in', ids).orderBy('name').execute() : [];
+    const numbers = await this.numbersOf(t, ras.map((r) => r.id));
+    const byApp = new Map<string, { id: string; name: string; upn: string | null; numbers: string[] }[]>();
+    for (const r of ras) byApp.set(r.voice_app_id as string, [...(byApp.get(r.voice_app_id as string) ?? []), { id: r.id, name: r.name, upn: r.upn, numbers: (numbers.get(r.id) ?? []).map((n) => n.e164) }]);
+    return {
+      items: items.map((r) => ({ ...r, resource_accounts: byApp.get(r.id) ?? [] })),
+      total: Number(cnt?.n ?? 0),
+      page,
+      limit,
+    };
+  }
+
+  /** Resource accounts, each with its numbers and the voice app it answers for. */
   async listResourceAccounts(t: TenantContext, q: DiscoveryListQuery) {
     const s = this.s(t);
     const sites = this.siteIdFilter(t, q.siteId);
     const { page, limit, offset } = this.pageOf(q);
     let b = s.selectFrom('discovery_resource_accounts');
     if (sites) b = b.where('site_id', 'in', sites);
-    if (q.q) b = b.where('name', 'ilike', `%${q.q}%`);
+    if (q.q) b = b.where((eb) => eb.or([eb('name', 'ilike', `%${q.q}%`), eb('upn', 'ilike', `%${q.q}%`)]));
     const [items, cnt] = await Promise.all([
-      b.selectAll().orderBy('name').limit(limit).offset(offset).execute(),
+      b.selectAll().orderBy('name').orderBy('id').limit(limit).offset(offset).execute(),
       b.select((eb) => eb.fn.countAll<string>().as('n')).executeTakeFirst(),
     ]);
-    const ids = items.map((r) => r.id);
-    const nums = ids.length
-      ? await s
-          .selectFrom('phone_numbers')
-          .select(['id', 'e164', 'holder_id'])
-          .where('holder_type', '=', 'resource_account')
-          .where('holder_id', 'in', ids)
-          .orderBy('e164')
-          .execute()
-      : [];
-    const byHolder = new Map<string, { id: string; e164: string }[]>();
-    for (const n of nums) {
-      const arr = byHolder.get(n.holder_id as string) ?? [];
-      arr.push({ id: n.id, e164: n.e164 });
-      byHolder.set(n.holder_id as string, arr);
-    }
-    // The discovered resource accounts that belong to each record (a voice app can have several): each with its UPN and the number
-    // Teams has for it, and whether that number is attached here. A number that is in none of this site's ranges is shown, not lost.
-    const memberRows = ids.length
-      ? await s
-          .selectFrom('discovery_resource_account_members as m')
-          .innerJoin('tenant_objects as o', 'o.id', 'm.tenant_object_id')
-          .select(['m.resource_account_id', 'o.display_name', 'o.data'])
-          .where('m.resource_account_id', 'in', ids)
-          .execute()
-      : [];
-    const membersOf = new Map<string, { name: string | null; upn: string | null; number: string | null; attached: boolean }[]>();
-    for (const m of memberRows) {
-      const d = (m.data ?? {}) as Record<string, unknown>;
-      const number = typeof d.PhoneNumber === 'string' ? d.PhoneNumber.replace(/^tel:/i, '').split(';')[0]!.trim() || null : null;
-      const attached = !!number && (byHolder.get(m.resource_account_id) ?? []).some((n) => n.e164 === number);
-      membersOf.set(m.resource_account_id, [...(membersOf.get(m.resource_account_id) ?? []), { name: m.display_name, upn: typeof d.UserPrincipalName === 'string' ? d.UserPrincipalName : null, number, attached }]);
-    }
+    const byHolder = await this.numbersOf(t, items.map((r) => r.id));
+    const appIds = [...new Set(items.map((r) => r.voice_app_id).filter((v): v is string => !!v))];
+    const apps = appIds.length ? await s.selectFrom('discovery_voice_apps').select(['id', 'name']).where('id', 'in', appIds).execute() : [];
+    const appName = new Map(apps.map((a) => [a.id, a.name]));
+    // The number Teams has for a discovered resource account, and whether it is attached here: one in none of the site's ranges is shown, not lost.
+    const objIds = items.map((r) => r.tenant_object_id).filter((v): v is string => !!v);
+    const objs = objIds.length ? await s.selectFrom('tenant_objects').select(['id', 'data']).where('id', 'in', objIds).execute() : [];
+    const discovered = new Map(objs.map((o) => [o.id, typeof (o.data as Record<string, unknown>)?.PhoneNumber === 'string' ? ((o.data as Record<string, unknown>).PhoneNumber as string).replace(/^tel:/i, '').split(';')[0]!.trim() || null : null]));
     return {
-      items: items.map((r) => ({ ...r, phone_numbers: byHolder.get(r.id) ?? [], members: membersOf.get(r.id) ?? [] })),
+      items: items.map((r) => {
+        const phone_numbers = byHolder.get(r.id) ?? [];
+        const discovered_number = r.tenant_object_id ? (discovered.get(r.tenant_object_id) ?? null) : null;
+        return {
+          ...r,
+          phone_numbers,
+          voice_app_name: r.voice_app_id ? (appName.get(r.voice_app_id) ?? null) : null,
+          discovered_number,
+          discovered_number_attached: !!discovered_number && phone_numbers.some((n) => n.e164 === discovered_number),
+        };
+      }),
       total: Number(cnt?.n ?? 0),
       page,
       limit,
@@ -426,7 +460,7 @@ export class TelephonyService {
           eb('n.e164', 'ilike', like),
           sql<boolean>`(n.holder_type = 'user' and exists (select 1 from ${sql.table(`${t.schema}.discovery_users`)} hu where hu.id = n.holder_id and (hu.upn ilike ${like} or hu.display_name ilike ${like})))`,
           sql<boolean>`(n.holder_type = 'cap' and exists (select 1 from ${sql.table(`${t.schema}.discovery_caps`)} hc where hc.id = n.holder_id and (hc.upn ilike ${like} or hc.display_name ilike ${like})))`,
-          sql<boolean>`(n.holder_type = 'resource_account' and exists (select 1 from ${sql.table(`${t.schema}.discovery_resource_accounts`)} hr where hr.id = n.holder_id and hr.name ilike ${like}))`,
+          sql<boolean>`(n.holder_type = 'resource_account' and exists (select 1 from ${sql.table(`${t.schema}.discovery_resource_accounts`)} hr where hr.id = n.holder_id and (hr.name ilike ${like} or hr.upn ilike ${like})))`,
         ]),
       );
     }
@@ -1240,17 +1274,12 @@ export class TelephonyService {
     return { ok: true };
   }
 
-  /* ====================== resource accounts ====================== */
+  /* ============================ voice apps ============================ */
 
-  async addResourceAccount(
-    t: TenantContext,
-    u: AuthedUser,
-    i: DiscoveryResourceAccountInput,
-    canReview: boolean,
-  ) {
+  async addVoiceApp(t: TenantContext, u: AuthedUser, i: DiscoveryVoiceAppInput, canReview: boolean) {
     const siteId = await this.resolveHolderSite(t, i.site_id);
     const row = await this.s(t)
-      .insertInto('discovery_resource_accounts')
+      .insertInto('discovery_voice_apps')
       .values({
         site_id: siteId,
         name: i.name,
@@ -1267,52 +1296,75 @@ export class TelephonyService {
       })
       .returningAll()
       .executeTakeFirstOrThrow();
-    await this.audit.tenant(t.schema, 'discovery.resource_account_added', {
-      actor: actorOf(u),
-      targetType: 'discovery_resource_account',
-      targetId: row.id,
-    });
+    await this.audit.tenant(t.schema, 'discovery.voice_app_added', { actor: actorOf(u), targetType: 'discovery_voice_app', targetId: row.id });
+    await this.base.trackChange(t, u, { siteId: row.site_id, entity: 'Voice app', action: 'added', label: row.name });
+    return row;
+  }
+
+  async updateVoiceApp(t: TenantContext, u: AuthedUser, id: string, patch: Partial<DiscoveryVoiceAppInput>, canReview: boolean) {
+    await this.assertHolderInScope(t, 'discovery_voice_apps', id, 'voice app not found');
+    const set: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    for (const k of ['name', 'kind', 'directory_entry', 'business_hours', 'who_answers', 'ooh_action', 'exception_conditions', 'exception_action', 'holiday', 'advanced_features', 'comments'] as const) {
+      if (k in patch) set[k] = k === 'kind' || k === 'name' ? patch[k] : nz(patch[k] as string);
+    }
+    if ('site_id' in patch) set.site_id = await this.resolveHolderSite(t, patch.site_id);
+    const row = await this.s(t).updateTable('discovery_voice_apps').set(set).where('id', '=', id).returningAll().executeTakeFirst();
+    if (!row) throw new NotFoundException('voice app not found');
+    await this.audit.tenant(t.schema, 'discovery.voice_app_updated', { actor: actorOf(u), targetType: 'discovery_voice_app', targetId: id });
+    await this.base.trackChange(t, u, { siteId: row.site_id, entity: 'Voice app', action: 'changed', label: row.name, detail: Object.keys(patch).join(', ') });
+    return row;
+  }
+
+  /** Deleting a voice app keeps its resource accounts (and their numbers): they just stop belonging to it. */
+  async deleteVoiceApp(t: TenantContext, u: AuthedUser, id: string, canReview: boolean) {
+    await this.assertHolderInScope(t, 'discovery_voice_apps', id, 'voice app not found');
+    const tracked = await this.holderRows(t, 'discovery_voice_apps', [id]);
+    const res = await this.s(t).deleteFrom('discovery_voice_apps').where('id', '=', id).executeTakeFirst();
+    if (!Number(res.numDeletedRows)) throw new NotFoundException('voice app not found');
+    await this.audit.tenant(t.schema, 'discovery.voice_app_deleted', { actor: actorOf(u), targetType: 'discovery_voice_app', targetId: id });
+    await this.trackRows(t, u, tracked, 'Voice app', 'removed');
+    return { ok: true };
+  }
+
+  /* ====================== resource accounts ====================== */
+
+  /** A resource account can only answer for a voice app on its own site. */
+  private async assertVoiceAppOnSite(t: TenantContext, voiceAppId: string | null | undefined, siteId: string | null) {
+    if (!voiceAppId) return;
+    const app = await this.s(t).selectFrom('discovery_voice_apps').select(['site_id', 'kind']).where('id', '=', voiceAppId).executeTakeFirst();
+    if (!app) throw new NotFoundException('voice app not found');
+    if (siteId && app.site_id !== siteId) throw new BadRequestException('That voice app is on a different site.');
+  }
+
+  async addResourceAccount(t: TenantContext, u: AuthedUser, i: DiscoveryResourceAccountInput, canReview: boolean) {
+    const siteId = await this.resolveHolderSite(t, i.site_id);
+    await this.assertVoiceAppOnSite(t, i.voice_app_id, siteId);
+    const row = await this.s(t)
+      .insertInto('discovery_resource_accounts')
+      .values({ site_id: siteId, name: i.name, kind: i.kind, upn: nz(i.upn)?.toLowerCase() ?? null, voice_app_id: i.voice_app_id ?? null, comments: nz(i.comments) })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    await this.audit.tenant(t.schema, 'discovery.resource_account_added', { actor: actorOf(u), targetType: 'discovery_resource_account', targetId: row.id });
     await this.base.trackChange(t, u, { siteId: row.site_id, entity: 'Resource account', action: 'added', label: row.name });
     return row;
   }
 
-  async updateResourceAccount(
-    t: TenantContext,
-    u: AuthedUser,
-    id: string,
-    patch: Partial<DiscoveryResourceAccountInput>,
-    canReview: boolean,
-  ) {
+  async updateResourceAccount(t: TenantContext, u: AuthedUser, id: string, patch: Partial<DiscoveryResourceAccountInput>, canReview: boolean) {
     await this.assertHolderInScope(t, 'discovery_resource_accounts', id, 'resource account not found');
     const set: Record<string, unknown> = { updated_at: new Date().toISOString() };
-    for (const k of [
-      'name',
-      'kind',
-      'directory_entry',
-      'business_hours',
-      'who_answers',
-      'ooh_action',
-      'exception_conditions',
-      'exception_action',
-      'holiday',
-      'advanced_features',
-      'comments',
-    ] as const) {
-      if (k in patch) set[k] = k === 'kind' || k === 'name' ? patch[k] : nz(patch[k] as string);
-    }
+    if ('name' in patch) set.name = patch.name;
+    if ('kind' in patch) set.kind = patch.kind;
+    if ('upn' in patch) set.upn = nz(patch.upn)?.toLowerCase() ?? null;
+    if ('comments' in patch) set.comments = nz(patch.comments);
     if ('site_id' in patch) set.site_id = await this.resolveHolderSite(t, patch.site_id);
-    const row = await this.s(t)
-      .updateTable('discovery_resource_accounts')
-      .set(set)
-      .where('id', '=', id)
-      .returningAll()
-      .executeTakeFirst();
+    if ('voice_app_id' in patch) {
+      const current = await this.s(t).selectFrom('discovery_resource_accounts').select('site_id').where('id', '=', id).executeTakeFirst();
+      await this.assertVoiceAppOnSite(t, patch.voice_app_id, (set.site_id as string | null | undefined) ?? current?.site_id ?? null);
+      set.voice_app_id = patch.voice_app_id ?? null;
+    }
+    const row = await this.s(t).updateTable('discovery_resource_accounts').set(set).where('id', '=', id).returningAll().executeTakeFirst();
     if (!row) throw new NotFoundException('resource account not found');
-    await this.audit.tenant(t.schema, 'discovery.resource_account_updated', {
-      actor: actorOf(u),
-      targetType: 'discovery_resource_account',
-      targetId: id,
-    });
+    await this.audit.tenant(t.schema, 'discovery.resource_account_updated', { actor: actorOf(u), targetType: 'discovery_resource_account', targetId: id });
     await this.base.trackChange(t, u, { siteId: row.site_id, entity: 'Resource account', action: 'changed', label: row.name, detail: Object.keys(patch).join(', ') });
     return row;
   }
@@ -1321,16 +1373,9 @@ export class TelephonyService {
     await this.assertHolderInScope(t, 'discovery_resource_accounts', id, 'resource account not found');
     const tracked = await this.holderRows(t, 'discovery_resource_accounts', [id]);
     await this.releaseHolder(t, 'resource_account', id);
-    const res = await this.s(t)
-      .deleteFrom('discovery_resource_accounts')
-      .where('id', '=', id)
-      .executeTakeFirst();
+    const res = await this.s(t).deleteFrom('discovery_resource_accounts').where('id', '=', id).executeTakeFirst();
     if (!Number(res.numDeletedRows)) throw new NotFoundException('resource account not found');
-    await this.audit.tenant(t.schema, 'discovery.resource_account_deleted', {
-      actor: actorOf(u),
-      targetType: 'discovery_resource_account',
-      targetId: id,
-    });
+    await this.audit.tenant(t.schema, 'discovery.resource_account_deleted', { actor: actorOf(u), targetType: 'discovery_resource_account', targetId: id });
     await this.trackRows(t, u, tracked, 'Resource account', 'removed');
     return { ok: true };
   }
@@ -1376,7 +1421,7 @@ export class TelephonyService {
   }
 
   /** Site and name of rows about to change or go, read first so a delete can still be recorded afterwards. */
-  private async holderRows(t: TenantContext, table: 'discovery_users' | 'discovery_caps' | 'discovery_resource_accounts', ids: string[]) {
+  private async holderRows(t: TenantContext, table: 'discovery_users' | 'discovery_caps' | 'discovery_resource_accounts' | 'discovery_voice_apps', ids: string[]) {
     if (ids.length === 0) return [];
     const s = this.s(t);
     if (table === 'discovery_users') {

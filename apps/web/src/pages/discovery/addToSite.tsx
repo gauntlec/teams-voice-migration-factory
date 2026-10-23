@@ -56,6 +56,7 @@ const STATUS: Record<AddFromDiscoveryItemResult['dataCollection'], string> = {
   already_on_site: 'already on this site',
   on_other_site: 'on another site',
   not_found: 'not found',
+  ambiguous: 'more than one match - not added',
 };
 
 function describe(r: AddFromDiscoveryItemResult): { dc: string; build: string } {

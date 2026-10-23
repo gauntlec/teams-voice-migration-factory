@@ -71,6 +71,14 @@ export function SiteWorkspace() {
     enabled: !!tid && !!siteId,
     queryFn: () => api<Paginated<{ id: string; name: string }>>(`${base}/resource-accounts?siteId=${siteId}&limit=200`),
   });
+  const siteVoiceApps = useQuery({
+    queryKey: ['voice-apps-choices', tid, siteId],
+    queryFn: () => api<Paginated<{ id: string; name: string; kind: string }>>(`${base}/voice-apps?siteId=${siteId}&limit=200`),
+  });
+  const voiceAppChoices: Choice[] = useMemo(
+    () => (siteVoiceApps.data?.items ?? []).map((v) => ({ value: v.id, label: `${v.name} (${v.kind === 'call_queue' ? 'call queue' : 'auto attendant'})` })),
+    [siteVoiceApps.data],
+  );
   const resourceAccountChoices: Choice[] = useMemo(
     () => (siteResourceAccounts.data?.items ?? []).map((r) => ({ value: r.id, label: r.name })),
     [siteResourceAccounts.data],
@@ -513,11 +521,65 @@ export function SiteWorkspace() {
         />
       )}
 
+      {tab === 'voice-apps' && (
+        <PagedSection
+          title="Voice apps"
+          bulkDelete={{ noun: 'voice app', plural: 'voice apps', note: 'Their resource accounts and numbers stay on the site; they just stop answering for a voice app. Anything already populated into Design & Build stays there, unlinked.' }}
+          hint="Auto attendants & call queues, named as they are in Teams. The resource accounts that answer for each one are listed here and managed under Resource accounts."
+          endpoint={`${base}/voice-apps`}
+          queryKey={['voice-apps', tid, siteId]}
+          params={{ siteId }}
+          fixed={{ site_id: siteId }}
+          readOnly={locked}
+          onChanged={() => {
+            refreshSummary();
+            siteVoiceApps.refetch();
+          }}
+          columns={[
+            { key: 'name', label: 'Name' },
+            { key: 'kind', label: 'Kind', render: (r) => (r.kind === 'call_queue' ? 'Call queue' : 'Auto attendant') },
+            {
+              key: 'resource_accounts',
+              label: 'Resource accounts',
+              render: (r) => {
+                const ras = (r.resource_accounts as { id: string; name: string; upn: string | null; numbers: string[] }[] | undefined) ?? [];
+                if (ras.length === 0) return '—';
+                return (
+                  <div>
+                    {ras.map((a) => (
+                      <div key={a.id}>
+                        {a.upn ?? a.name}
+                        {a.numbers.length ? ` · ${a.numbers.join(', ')}` : ''}
+                      </div>
+                    ))}
+                  </div>
+                );
+              },
+            },
+            { key: 'business_hours', label: 'Business hours' },
+            { key: 'who_answers', label: 'Who answers' },
+          ]}
+          fields={[
+            { key: 'name', label: 'Name of service', required: true, placeholder: 'Main Line' },
+            { key: 'kind', label: 'Kind', type: 'select', options: RESOURCE_ACCOUNT_KINDS, required: true },
+            { key: 'directory_entry', label: 'Directory entry' },
+            { key: 'business_hours', label: 'Business hours', placeholder: '24/7' },
+            { key: 'who_answers', label: 'Who should answer the call', type: 'textarea', full: true },
+            { key: 'ooh_action', label: 'Out-of-hours action', type: 'textarea', full: true },
+            { key: 'exception_conditions', label: 'Exception handling — conditions', type: 'textarea', full: true },
+            { key: 'exception_action', label: 'Exception handling — action', type: 'textarea', full: true },
+            { key: 'holiday', label: 'Holiday handling', type: 'textarea', full: true },
+            { key: 'advanced_features', label: 'Advanced features', type: 'textarea', full: true },
+            { key: 'comments', label: 'Comments', type: 'textarea', full: true },
+          ]}
+        />
+      )}
+
       {tab === 'resource-accounts' && (
         <PagedSection
           title="Resource accounts"
           bulkDelete={{ noun: 'resource account', plural: 'resource accounts', note: "Their phone numbers go back to this site's free pool. Anything already populated into Design & Build stays there, unlinked." }}
-          hint="Auto attendants & call queues. May hold several numbers — use the Numbers button."
+          hint="The accounts that hold a phone number for an auto attendant or call queue. Each answers for one voice app (leave it blank if none is set up yet). May hold several numbers — use the Numbers button."
           endpoint={`${base}/resource-accounts`}
           queryKey={['ras', tid, siteId]}
           params={{ siteId }}
@@ -539,50 +601,33 @@ export function SiteWorkspace() {
           }
           columns={[
             { key: 'name', label: 'Name' },
-            { key: 'kind', label: 'Kind' },
+            { key: 'upn', label: 'UPN' },
+            { key: 'kind', label: 'Kind', render: (r) => (r.kind === 'call_queue' ? 'Call queue' : 'Auto attendant') },
             {
               key: 'phone_numbers',
               label: 'Numbers',
-              render: (r) =>
-                (r.phone_numbers as { e164: string }[])?.map((n) => n.e164).join(', ') || '—',
-            },
-            {
-              key: 'members',
-              label: 'Resource accounts',
               render: (r) => {
-                const members = (r.members as { name: string | null; upn: string | null; number: string | null; attached: boolean }[] | undefined) ?? [];
-                if (members.length === 0) return '—';
+                const nums = (r.phone_numbers as { e164: string }[] | undefined) ?? [];
+                const found = r.discovered_number as string | null;
                 return (
                   <div>
-                    {members.map((m, i) => (
-                      <div key={`${m.upn ?? m.name ?? i}`}>
-                        {m.upn ?? m.name}
-                        {m.number ? ` · ${m.number}` : ''}
-                        {m.number && !m.attached && (
-                          <Text size={200} className={ls.mutedText} block>
-                            Not in this site's number ranges, so not attached here
-                          </Text>
-                        )}
-                      </div>
-                    ))}
+                    {nums.length ? nums.map((n) => n.e164).join(', ') : '—'}
+                    {found && !r.discovered_number_attached && (
+                      <Text size={200} className={ls.mutedText} block>
+                        {found} in Teams is not in this site's number ranges, so not attached here
+                      </Text>
+                    )}
                   </div>
                 );
               },
             },
-            { key: 'business_hours', label: 'Business hours' },
-            { key: 'who_answers', label: 'Who answers' },
+            { key: 'voice_app_name', label: 'Answers for', render: (r) => (r.voice_app_name as string | null) ?? '—' },
           ]}
           fields={[
-            { key: 'name', label: 'Name of service', required: true, placeholder: 'Main Line' },
+            { key: 'name', label: 'Name', required: true, placeholder: 'Main Line RA' },
+            { key: 'upn', label: 'UPN (if known)' },
             { key: 'kind', label: 'Kind', type: 'select', options: RESOURCE_ACCOUNT_KINDS, required: true },
-            { key: 'directory_entry', label: 'Directory entry' },
-            { key: 'business_hours', label: 'Business hours', placeholder: '24/7' },
-            { key: 'who_answers', label: 'Who should answer the call', type: 'textarea', full: true },
-            { key: 'ooh_action', label: 'Out-of-hours action', type: 'textarea', full: true },
-            { key: 'exception_conditions', label: 'Exception handling — conditions', type: 'textarea', full: true },
-            { key: 'exception_action', label: 'Exception handling — action', type: 'textarea', full: true },
-            { key: 'holiday', label: 'Holiday handling', type: 'textarea', full: true },
-            { key: 'advanced_features', label: 'Advanced features', type: 'textarea', full: true },
+            { key: 'voice_app_id', label: 'Answers for (voice app)', type: 'ref', choices: voiceAppChoices },
             { key: 'comments', label: 'Comments', type: 'textarea', full: true },
           ]}
         />
@@ -622,7 +667,7 @@ export function SiteWorkspace() {
       {tab === 'flows' && (
         <PagedSection
           title="Call flows"
-          hint="Free-text notes on existing routing, or captured via the guided wizards above. Structured AA/CQ config lives under Resource accounts and Design & Build."
+          hint="Free-text notes on existing routing, or captured via the guided wizards above. Structured AA/CQ config lives under Voice apps and Design & Build."
           endpoint={`${base}/flows`}
           queryKey={['flows', tid, siteId]}
           params={{ siteId }}

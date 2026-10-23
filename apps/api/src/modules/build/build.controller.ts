@@ -238,7 +238,7 @@ export class BuildController {
     @CurrentUser() user: AuthedUser,
     @Body(new ZodBody(buildPopulateSchema)) body: BuildPopulateInput,
   ) {
-    return this.svc.populateResourceAccounts(t, user, body.site_id);
+    return this.svc.populateAll(t, user, body.site_id);
   }
   @Post('resource-accounts/import-and-link')
   @RequirePermission('build:write')

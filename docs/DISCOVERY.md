@@ -293,3 +293,23 @@ with the deleted row counts (including `callingPolicyMappingsRemoved`).
   connection row is expired on start-up (`expireOrphanedConnections`) and the UI
   asks for a fresh sign-in. BullMQ may re-deliver an interrupted `connection.start`
   job to the new worker, which simply produces a new code.
+
+## Voice apps and resource accounts (2026.10.38)
+
+Teams keeps these apart, and so do Data Collection and Design & Build:
+
+- A **voice app** (auto attendant or call queue) has its own name and Id and lists its resource accounts (`ApplicationInstances`). A
+  voice app that is only reached from another voice app (nested) has none.
+- A **resource account** has its own UPN, name and phone number and answers for one voice app.
+
+**Add to site** (and the Populate buttons) follow that:
+
+| You add | You get |
+|---|---|
+| A voice app | the Voice apps record named as in Teams, its Call flow, a Design & Build attendant/queue with the same name, and one resource account row (Data Collection and Design & Build) for each resource account it lists. None listed, none made |
+| A resource account on its own | only the resource account (never a voice app named after it). If the voice app it answers for is already on the site it joins it; if not, the result says which voice app to add. Adding that voice app later links the resource account that is already there |
+
+Everything is matched on the Teams Id / UPN (`tenant_object_id`), never on a name, so two voice apps or two resource accounts with the same name stay
+two. A voice app designed first (same kind and exact name, exactly one on the site) is linked to the live one instead of copied; several
+with that name are reported as ambiguous and left alone. Numbers belong to the resource account; one that is in none of the site's ranges is added to
+the site's ranges first.
