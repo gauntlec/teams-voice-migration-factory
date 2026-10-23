@@ -138,6 +138,22 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
     enabled: !!tid && !embedded,
     queryFn: () => api<BuildIssueRow[]>(`${base}/issues?siteId=${siteId}`),
   });
+  // The list must follow the data: any change made on this page (a row added, edited or deleted, a template applied, a populate)
+  // recalculates the issues straight away, and opening the tab always shows a fresh result.
+  useEffect(() => {
+    if (embedded || !tid) return;
+    return qc.getMutationCache().subscribe((event) => {
+      if (event.type === 'updated' && event.action.type === 'success') {
+        qc.invalidateQueries({ queryKey: ['build-issues', tid, siteId] });
+        qc.invalidateQueries({ queryKey: ['build-summary', tid] });
+      }
+    });
+  }, [qc, tid, siteId, embedded]);
+  // Changing tab also recalculates (not only opening the issues tab), so the count on its label is right wherever you are and an
+  // edit made in a dialog that does not go through the list's own save still shows up. No page refresh is ever needed.
+  useEffect(() => {
+    if (!embedded && tid) void qc.invalidateQueries({ queryKey: ['build-issues', tid, siteId] });
+  }, [tab, qc, tid, siteId, embedded]);
   const decideNumber = useMutation({
     mutationFn: (v: { row: BuildIssueRow; decision: 'accepted' | 'rejected' | 'reset' }) =>
       api(`${base}/${v.row.sheet}/${v.row.rowId}/number-decision`, { method: 'POST', body: JSON.stringify({ decision: v.decision }) }),
