@@ -32,7 +32,7 @@ describe('a discovered auto attendant as wizard answers', () => {
     expect(answers!.afterHoursFlow).toEqual({ mode: 'voicemail' });
     expect(answers!.operator).toEqual({ kind: 'person', label: 'op@x.test' });
     // the stored end is exclusive; the wizard's dates are whole days, both included
-    expect(answers!.holidays![0].dateRange).toEqual({ start: '2026-12-25', end: '2026-12-26' });
+    expect(answers!.holidays![0]!.dateRange).toEqual({ start: '2026-12-25', end: '2026-12-26' });
     expect(notes).toContain('Holiday "Christmas": the call is ended after the greeting.');
   });
 
