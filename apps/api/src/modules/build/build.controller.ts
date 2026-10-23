@@ -370,6 +370,17 @@ export class BuildController {
     return this.svc.deleteAutoAttendant(t, user, id);
   }
 
+  @Post('auto-attendants/:id/refresh')
+  @RequirePermission('build:write')
+  refreshAutoAttendant(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string) {
+    return this.svc.refreshVoiceAppFromLive(t, user, 'auto_attendant', id);
+  }
+  @Post('call-queues/:id/refresh')
+  @RequirePermission('build:write')
+  refreshCallQueue(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string) {
+    return this.svc.refreshVoiceAppFromLive(t, user, 'call_queue', id);
+  }
+
   /* wizard import - Data Collection's Call flows tab, "Import to Design & Build" */
 
   @Post('flows/:id/import')

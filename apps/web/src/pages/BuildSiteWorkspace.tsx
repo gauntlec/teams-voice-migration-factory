@@ -19,6 +19,7 @@ import { TemplatesDialog } from './build/templatesDialog';
 import { CallQueueSettingsDialog } from './build/callQueueSettingsDialog';
 import { AutoAttendantSettingsDialog } from './build/autoAttendantDialogs';
 import { DangerText } from '../components/ui';
+import { RefreshFromTeamsButton } from './build/refreshFromTeams';
 
 const useLocalStyles = makeStyles({
   mt8: { marginTop: '8px' },
@@ -915,6 +916,24 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
                 </Button>
               ),
             },
+            {
+              key: 'refresh',
+              label: 'From Teams',
+              render: (r) =>
+                canWrite ? (
+                  <RefreshFromTeamsButton
+                    base={base}
+                    kind="call-queues"
+                    row={r as { id: string; name: string; discovery_voice_app_id?: string | null }}
+                    onDone={() => {
+                      qc.invalidateQueries({ queryKey: ['call-queues', tid, siteId] });
+                      qc.invalidateQueries({ queryKey: ['build-issues', tid, siteId] });
+                    }}
+                  />
+                ) : (
+                  '—'
+                ),
+            },
           ]}
           fields={[
             { key: 'name', label: 'Name', required: true },
@@ -982,6 +1001,24 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
                   View diagram
                 </Button>
               ),
+            },
+            {
+              key: 'refresh',
+              label: 'From Teams',
+              render: (r) =>
+                canWrite ? (
+                  <RefreshFromTeamsButton
+                    base={base}
+                    kind="auto-attendants"
+                    row={r as { id: string; name: string; discovery_voice_app_id?: string | null }}
+                    onDone={() => {
+                      qc.invalidateQueries({ queryKey: ['auto-attendants', tid, siteId] });
+                      qc.invalidateQueries({ queryKey: ['build-issues', tid, siteId] });
+                    }}
+                  />
+                ) : (
+                  '—'
+                ),
             },
           ]}
           fields={[

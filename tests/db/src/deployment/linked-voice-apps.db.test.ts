@@ -119,5 +119,23 @@ describe('linking voice apps that already exist', () => {
     const after = await deploy.previewChanges(c.t, { siteId: site, sheets: ['auto_attendants'] } as never);
     expect(after.filter((r) => r.upn === 'Far')).toEqual([]);
   });
+
+  it('refreshes a row imported before the target was kept, from what Teams has now', async () => {
+    const row = await c.s.selectFrom('build_auto_attendants').select(['id', 'default_call_flow']).where('name', '=', 'Far').executeTakeFirstOrThrow();
+    // the state an older import left: the transfer without its target
+    const flow = row.default_call_flow as { menu: { options: Record<string, unknown>[] } };
+    flow.menu.options = flow.menu.options.map(({ target: _t, ...o }) => o);
+    await c.s.updateTable('build_auto_attendants').set({ default_call_flow: flow as never }).where('id', '=', row.id).execute();
+    const before = await deploy.previewChanges(c.t, { siteId: site, sheets: ['auto_attendants'] } as never);
+    expect(before.find((r) => r.upn === 'Far')?.warnings.join(' ')).toMatch(/business hours call flow/);
+
+    await build.refreshVoiceAppFromLive(c.t, engineer, 'auto_attendant', row.id);
+    const after = await deploy.previewChanges(c.t, { siteId: site, sheets: ['auto_attendants'] } as never);
+    expect(after.filter((r) => r.upn === 'Far')).toEqual([]);
+
+    // a hand-made row has nothing to refresh from
+    const manual = await c.s.insertInto('build_auto_attendants').values({ site_id: site, name: 'Hand made' } as never).returning('id').executeTakeFirstOrThrow();
+    await expect(build.refreshVoiceAppFromLive(c.t, engineer, 'auto_attendant', manual.id)).rejects.toThrow(/not made from a discovered voice app/);
+  });
 });
 

@@ -1681,6 +1681,25 @@ export class BuildService {
     return row;
   }
 
+  /**
+   * Re-reads an auto attendant or call queue that was made from a discovered voice app from what Teams has now, replacing its
+   * settings (call flows, schedules, targets, agents...). For a row imported before an import fix, or one whose live settings have
+   * changed since. Anything edited in Design & Build on the row is overwritten, which the button says before it runs.
+   */
+  async refreshVoiceAppFromLive(t: TenantContext, u: AuthedUser, kind: 'auto_attendant' | 'call_queue', id: string) {
+    await this.assertNotSrLocked(t, [id]);
+    const s = this.s(t);
+    const table = kind === 'auto_attendant' ? 'build_auto_attendants' : 'build_call_queues';
+    const row = await s.selectFrom(table).select(['id', 'name', 'site_id', 'discovery_voice_app_id']).where('id', '=', id).executeTakeFirst();
+    if (!row) throw new NotFoundException('row not found');
+    if (!row.discovery_voice_app_id) throw new BadRequestException('This row was not made from a discovered voice app, so there is nothing to refresh it from. Add the discovered one to the site first.');
+    const app = await s.selectFrom('discovery_voice_apps').select('tenant_object_id').where('id', '=', row.discovery_voice_app_id).executeTakeFirst();
+    if (!app?.tenant_object_id) throw new BadRequestException('Its Data Collection voice app is not linked to a discovered object, so there is nothing to refresh it from.');
+    await this.populateStructuredFromLive(s, row.site_id, [row.discovery_voice_app_id]);
+    await this.audit.tenant(t.schema, 'build.voice_app_refreshed', { actor: actorOf(u), targetType: table, targetId: id, detail: { name: row.name } });
+    return { ok: true };
+  }
+
   async updateAutoAttendant(t: TenantContext, u: AuthedUser, id: string, body: BuildAutoAttendantPatchInput) {
     await this.assertNotSrLocked(t, [id]);
     const { holiday_call_flows, resource_accounts, ...rest } = body;
