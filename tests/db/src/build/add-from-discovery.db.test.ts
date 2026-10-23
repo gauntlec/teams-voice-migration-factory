@@ -80,7 +80,7 @@ describe('voice apps: two with the same name stay two', () => {
     await seedNumbers(c.s, 'NYC01', ['+12125550002']);
     const raA = await object('resource_account', 'ra-guid-a', 'Reception', { UserPrincipalName: 'reception.a@contoso.test', ApplicationId: 'ce933385-9390-45d1-9512-c8d228074e07', PhoneNumber: 'tel:+442070000001' });
     const raB = await object('resource_account', 'ra-guid-b', 'Reception', { UserPrincipalName: 'reception.b@contoso.test', ApplicationId: 'ce933385-9390-45d1-9512-c8d228074e07', PhoneNumber: 'tel:+12125550002' });
-    const aaA = await object('auto_attendant', 'aa-guid-a', 'Reception', { Identity: 'aa-guid-a', LanguageId: 'en-GB', TimeZoneId: 'GMT Standard Time', ApplicationInstances: ['ra-guid-a'] });
+    const aaA = await object('auto_attendant', 'aa-guid-a', 'Reception', { Identity: 'aa-guid-a', LanguageId: 'en-GB', TimeZoneId: 'GMT Standard Time', ApplicationInstances: ['ra-guid-a'], DefaultCallFlow: { Greetings: [{ TextToSpeechPrompt: 'Welcome to Luton' }], Menu: { MenuOptions: [{ DtmfResponse: 100, Action: 2, CallTarget: { Id: 'tel:+442079990000', Type: 4 } }] } } });
     const aaB = await object('auto_attendant', 'aa-guid-b', 'Reception', { Identity: 'aa-guid-b', LanguageId: 'en-US', TimeZoneId: 'Eastern Standard Time', ApplicationInstances: ['ra-guid-b'] });
 
     const res = await build.addFromDiscovery(c.t, engineer, { kind: 'auto_attendant', items: [{ id: aaA, siteId: luton }, { id: aaB, siteId: nyc }], alsoBuild: true });
@@ -101,6 +101,18 @@ describe('voice apps: two with the same name stay two', () => {
     const dcNyc = await c.s.selectFrom('discovery_resource_accounts').selectAll().where('site_id', '=', nyc).executeTakeFirstOrThrow();
     expect(dcNyc.advanced_features).toContain('Language en-US');
     expect(dcNyc.comments).toContain('reception.b@contoso.test');
+
+    // each also has its own Call flows row, read back from its own live settings and already linked to its Design & Build row
+    const flows = await c.s.selectFrom('discovery_flows').selectAll().orderBy('site_id').execute();
+    expect(flows).toHaveLength(2);
+    const lutonFlow = flows.find((f) => f.site_id === luton)!;
+    const nycFlow = flows.find((f) => f.site_id === nyc)!;
+    expect(lutonFlow).toMatchObject({ kind: 'auto_attendant', name: 'Reception', tenant_object_id: aaA, resource_account_id: dcLuton.id });
+    expect(nycFlow).toMatchObject({ tenant_object_id: aaB, resource_account_id: dcNyc.id });
+    expect(lutonFlow.wizard_answers).toMatchObject({ languageId: 'en-GB', businessFlow: { mode: 'direct', greeting: 'Welcome to Luton', target: { kind: 'external', label: '+442079990000' } } });
+    expect(lutonFlow.build_auto_attendant_id).toBeTruthy();
+    expect(lutonFlow.imported_at).toBeTruthy();
+    expect(nycFlow.build_auto_attendant_id).toBeTruthy();
 
     const aas = await c.s.selectFrom('build_auto_attendants').select(['site_id', 'language_id', 'time_zone_id']).execute();
     expect(aas.find((a) => a.site_id === luton)).toMatchObject({ language_id: 'en-GB', time_zone_id: 'GMT Standard Time' });
@@ -156,5 +168,33 @@ describe('what a discovered call queue brings into Data Collection', () => {
     const out = await build.addFromDiscovery(c.t, engineer, { kind: 'resource_account', items: [{ id: raOutside, siteId: luton }], alsoBuild: false });
     expect(out[0].note).toMatch(/\+33140000000 is not in any number range/);
     void ra;
+  });
+});
+
+describe('Call flows for discovered voice apps', () => {
+  it('shows a menu that sends calls to a call queue as a link to that queue\'s own Call flows row, and Import links instead of duplicating', async () => {
+    await account('agent.two@contoso.test', 'Agent Two');
+    const cq = await object('call_queue', 'cq-guid-n', 'Billing Queue', { Identity: 'cq-guid-n', LanguageId: 'en-GB', Agents: [{ ObjectId: 'eid-agent.two@contoso.test' }], RoutingMethod: 'RoundRobin' });
+    const aa = await object('auto_attendant', 'aa-guid-n', 'Main Menu', { Identity: 'aa-guid-n', LanguageId: 'en-GB', DefaultCallFlow: { Greetings: [{ TextToSpeechPrompt: 'Press 1 for billing' }], Menu: { DialByNameEnabled: true, MenuOptions: [{ DtmfResponse: 1, Action: 2, CallTarget: { Id: 'cq-guid-n', Type: 6 } }, { DtmfResponse: 0, Action: 0 }] } } });
+    await build.addFromDiscovery(c.t, engineer, { kind: 'call_queue', items: [{ id: cq, siteId: luton }], alsoBuild: false });
+    await build.addFromDiscovery(c.t, engineer, { kind: 'auto_attendant', items: [{ id: aa, siteId: luton }], alsoBuild: false });
+
+    const queueFlow = await c.s.selectFrom('discovery_flows').selectAll().where('tenant_object_id', '=', cq).executeTakeFirstOrThrow();
+    const menuFlow = await c.s.selectFrom('discovery_flows').selectAll().where('tenant_object_id', '=', aa).executeTakeFirstOrThrow();
+    expect(queueFlow.wizard_answers).toMatchObject({ routingMethod: 'RoundRobin', agents: ['agent.two@contoso.test'] });
+    const options = (menuFlow.wizard_answers as { businessFlow: { options: { key: string; target: Record<string, unknown> }[] } }).businessFlow.options;
+    expect(options[0]).toMatchObject({ key: '1', target: { kind: 'call_queue', label: 'Billing Queue', flowId: queueFlow.id } });
+    expect(options[1]).toMatchObject({ key: '0', target: { kind: 'operator' } });
+    // Data Collection only so far: not in Design & Build, so the flow is not marked imported
+    expect(menuFlow.imported_at).toBeNull();
+
+    // Import to Design & Build: builds the row from the live settings and links it, once
+    const first = await build.importFlowWizard(c.t, engineer, menuFlow.id);
+    const again = await build.importFlowWizard(c.t, engineer, menuFlow.id);
+    expect(again.row.id).toBe(first.row.id);
+    expect(await c.s.selectFrom('build_auto_attendants').select('id').where('name', '=', 'Main Menu').execute()).toHaveLength(1);
+    const linked = await c.s.selectFrom('discovery_flows').select(['imported_at', 'build_auto_attendant_id']).where('id', '=', menuFlow.id).executeTakeFirstOrThrow();
+    expect(linked.build_auto_attendant_id).toBe(first.row.id);
+    expect(linked.imported_at).toBeTruthy();
   });
 });

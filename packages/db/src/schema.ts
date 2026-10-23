@@ -404,6 +404,8 @@ export interface DiscoveryFlowsTable {
   wizard_version: number | null;
   /** FK -> discovery_resource_accounts.id (ON DELETE SET NULL) - which phone identity will answer this, if already known. */
   resource_account_id: string | null;
+  /** FK -> tenant_objects.id: the discovered auto attendant / call queue this row was made from (see 0061); null for a manual or wizard row. */
+  tenant_object_id: string | null;
   /** Set once "Import to Design & Build" has run for this row. */
   imported_at: Ts | null;
   /** FK -> build_auto_attendants.id (ON DELETE SET NULL) - the row the wizard capture was imported into. */

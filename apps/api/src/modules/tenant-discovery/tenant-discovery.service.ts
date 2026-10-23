@@ -23,7 +23,9 @@ import {
   type TenantUsersImportInput,
   type AddFromDiscoveryItemResult,
   autoAttendantFields,
+  autoAttendantToWizard,
   callQueueFields,
+  callQueueToWizard,
   isCommonAreaPhone,
   liveAutoAttendantToStructured,
   parseLiveCallTarget,
@@ -1089,16 +1091,17 @@ export class TenantDiscoveryService {
   private async discoveredRaDetails(
     t: TenantContext,
     obj: { id: string; object_type: string; object_key: string; display_name: string | null; data: unknown },
-  ): Promise<{ fields: Partial<VoiceAppFields>; comments: string | null; numbers: string[] }> {
+  ): Promise<{ fields: Partial<VoiceAppFields>; comments: string | null; numbers: string[]; flow: { objectId: string; kind: 'auto_attendant' | 'call_queue'; name: string; answers: unknown; notes: string[] } | null }> {
     const s = this.s(t);
     const data = (obj.data ?? {}) as Record<string, unknown>;
     const lower = (v: unknown) => (typeof v === 'string' ? v.toLowerCase() : '');
     const instancesOf = (d: Record<string, unknown>): string[] => (Array.isArray(d.ApplicationInstances) ? (d.ApplicationInstances as unknown[]).filter((x): x is string => typeof x === 'string').map(lower) : []);
-    const [ras, apps, schedules, users] = await Promise.all([
+    const [ras, apps, schedules, users, flows] = await Promise.all([
       s.selectFrom('tenant_objects').select(['object_key', 'display_name', 'data']).where('object_type', '=', 'resource_account').where('removed_at', 'is', null).execute(),
       s.selectFrom('tenant_objects').select(['id', 'object_type', 'object_key', 'display_name', 'data']).where('object_type', 'in', ['auto_attendant', 'call_queue']).where('removed_at', 'is', null).execute(),
       s.selectFrom('tenant_objects').select(['object_key', 'data']).where('object_type', '=', 'schedule').where('removed_at', 'is', null).execute(),
       s.selectFrom('tenant_users').select(['entra_id', 'upn']).where('entra_id', 'is not', null).execute(),
+      s.selectFrom('discovery_flows').select(['id', 'tenant_object_id']).where('tenant_object_id', 'is not', null).execute(),
     ]);
     const isRa = obj.object_type === 'resource_account';
     const myKey = obj.object_key.toLowerCase();
@@ -1117,7 +1120,7 @@ export class TenantDiscoveryService {
       lines.push(`Resource account ${upn ?? r.display_name ?? r.object_key}${num ? `, number ${num}` : ', no number'}`);
     }
     const comments = lines.length ? `Added from Discovery. ${lines.join('; ')}.` : null;
-    if (!app) return { fields: {}, comments, numbers };
+    if (!app) return { fields: {}, comments, numbers, flow: null };
 
     const upnByEntra = new Map(users.map((u) => [u.entra_id!.toLowerCase(), u.upn]));
     const appByIdentity = new Map(apps.map((a) => [lower((a.data as Record<string, unknown>)?.Identity ?? a.object_key), { kind: a.object_type as 'auto_attendant' | 'call_queue', name: a.display_name ?? a.object_key }]));
@@ -1125,7 +1128,24 @@ export class TenantDiscoveryService {
     for (const a of apps) for (const i of instancesOf((a.data ?? {}) as Record<string, unknown>)) ownerByInstance.set(i, lower((a.data as Record<string, unknown>)?.Identity ?? a.object_key));
     const nameOf = (id: string) => upnByEntra.get(id.toLowerCase()) ?? appByIdentity.get(id.toLowerCase())?.name ?? (ownerByInstance.has(id.toLowerCase()) ? appByIdentity.get(ownerByInstance.get(id.toLowerCase())!)?.name : undefined);
     const appData = (app.data ?? {}) as Record<string, unknown>;
-    if (app.object_type === 'call_queue') return { fields: callQueueFields(appData, nameOf), comments, numbers };
+    // another voice app on the site's Call flows tab, by its own id - for a menu that sends calls to it
+    const flowIdByApp = new Map(flows.map((f) => [f.tenant_object_id!, f.id]));
+    const appObjectByIdentity = new Map(apps.map((a) => [lower((a.data as Record<string, unknown>)?.Identity ?? a.object_key), a.id]));
+    const wizardCtx = {
+      personOf: (id: string) => upnByEntra.get(id.toLowerCase()),
+      appOf: (id: string) => {
+        const hit = appByIdentity.get(id.toLowerCase()) ?? (ownerByInstance.has(id.toLowerCase()) ? appByIdentity.get(ownerByInstance.get(id.toLowerCase())!) : undefined);
+        if (!hit) return undefined;
+        const identity = appByIdentity.has(id.toLowerCase()) ? id.toLowerCase() : ownerByInstance.get(id.toLowerCase())!;
+        const flowId = flowIdByApp.get(appObjectByIdentity.get(identity) ?? '');
+        return { name: hit.name, ...(flowId ? { flowId } : {}) };
+      },
+    };
+    const flowName = app.display_name ?? app.object_key;
+    if (app.object_type === 'call_queue') {
+      const w = callQueueToWizard(appData, wizardCtx);
+      return { fields: callQueueFields(appData, nameOf), comments, numbers, flow: { objectId: app.id, kind: 'call_queue', name: flowName, answers: w.answers, notes: w.notes } };
+    }
 
     const scheduleByKey = new Map(schedules.map((r) => [r.object_key, (r.data ?? {}) as Record<string, unknown>]));
     const resolveTarget = (ref: LiveCallableEntityRef | undefined): AutoAttendantCallableEntity | undefined => {
@@ -1137,7 +1157,51 @@ export class TenantDiscoveryService {
       const hit = identity ? appByIdentity.get(identity) : undefined;
       return hit && identity ? { kind: hit.kind, buildId: identity } : undefined;
     };
-    return { fields: autoAttendantFields(liveAutoAttendantToStructured(appData, scheduleByKey, resolveTarget), nameOf), comments, numbers };
+    const structured = liveAutoAttendantToStructured(appData, scheduleByKey, resolveTarget);
+    const w = autoAttendantToWizard(structured, wizardCtx);
+    return { fields: autoAttendantFields(structured, nameOf), comments, numbers, flow: { objectId: app.id, kind: 'auto_attendant', name: flowName, answers: w.answers, notes: w.notes } };
+  }
+
+  /**
+   * One new Data Collection resource account row from a discovered object: the record with what Teams holds, its number(s) when
+   * they are in the site's ranges, and - for a voice app - its Call flows row (the wizard's answers, read back from the live
+   * settings) so it shows on that tab like one captured by hand. Shared by "Add to site" and the bulk import.
+   */
+  private async createDiscoveredRa(
+    t: TenantContext,
+    user: AuthedUser,
+    siteId: string,
+    obj: { id: string; object_type: string; object_key: string; display_name: string | null; data: unknown },
+    name: string,
+    dcKind: 'auto_attendant' | 'call_queue',
+  ): Promise<{ id: string; problems: string[] }> {
+    const s = this.s(t);
+    const details = await this.discoveredRaDetails(t, obj);
+    const row = await s
+      .insertInto('discovery_resource_accounts')
+      .values({ site_id: siteId, name, kind: dcKind, tenant_object_id: obj.id, comments: details.comments, ...details.fields })
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    const problems = await this.attachDiscoveredNumbers(t, user, row.id, siteId, details.numbers);
+    if (details.flow) {
+      const f = details.flow;
+      await s
+        .insertInto('discovery_flows')
+        .values({
+          site_id: siteId,
+          kind: f.kind,
+          name: f.name,
+          description: ['Added from Discovery.', ...f.notes].join(' '),
+          wizard_answers: (f.answers ?? null) as never,
+          wizard_version: f.answers ? 1 : null,
+          resource_account_id: row.id,
+          tenant_object_id: f.objectId,
+        })
+        .onConflict((oc) => oc.column('tenant_object_id').where('tenant_object_id', 'is not', null).doNothing())
+        .execute();
+      await this.dataCollection.trackChange(t, user, { siteId, entity: 'Call flow', action: 'added', label: f.name });
+    }
+    return { id: row.id, problems };
   }
 
   /**
@@ -1300,13 +1364,8 @@ export class TenantDiscoveryService {
         }
         const d = (f.data ?? {}) as Record<string, unknown>;
         const dcKind = kind === 'resource_account' ? ((typeof d.ApplicationId === 'string' ? kindByAppId.get(d.ApplicationId) : undefined) ?? 'auto_attendant') : kind;
-        const details = await this.discoveredRaDetails(t, { id: f.id, object_type: objectType, object_key: f.object_key, display_name: f.display_name, data: f.data });
-        const created = await s
-          .insertInto('discovery_resource_accounts')
-          .values({ site_id: siteId, name: label, kind: dcKind as 'auto_attendant' | 'call_queue', tenant_object_id: f.id, comments: details.comments, ...details.fields })
-          .returning('id')
-          .executeTakeFirstOrThrow();
-        const problems = await this.attachDiscoveredNumbers(t, user, created.id, siteId, details.numbers);
+        const created = await this.createDiscoveredRa(t, user, siteId, { id: f.id, object_type: objectType, object_key: f.object_key, display_name: f.display_name, data: f.data }, label, dcKind as 'auto_attendant' | 'call_queue');
+        const problems = created.problems;
         dcIds.set(id, created.id);
         added.set(`voice:${siteId}`, (added.get(`voice:${siteId}`) ?? 0) + 1);
         results.push({ id, label, key: f.object_key, dataCollection: 'added', designAndBuild: off, ...(problems.length ? { note: problems.join(' ') } : {}) });
@@ -1357,14 +1416,8 @@ export class TenantDiscoveryService {
       }
       const d = (r.data ?? {}) as Record<string, unknown>;
       const kind = (typeof d.ApplicationId === 'string' ? kindByAppId.get(d.ApplicationId) : undefined) ?? 'auto_attendant';
-      // bring in what Teams already holds (hours, who answers, ... and the number), not just the name
-      const details = await this.discoveredRaDetails(t, { id: r.id, object_type: 'resource_account', object_key: r.object_key, display_name: r.display_name, data: r.data });
-      const row = await s
-        .insertInto('discovery_resource_accounts')
-        .values({ site_id: siteId, name: r.display_name, kind: kind as 'auto_attendant' | 'call_queue', tenant_object_id: r.id, comments: details.comments, ...details.fields })
-        .returning('id')
-        .executeTakeFirstOrThrow();
-      await this.attachDiscoveredNumbers(t, user, row.id, siteId, details.numbers);
+      // bring in what Teams already holds (hours, who answers, ... the number and its Call flow), not just the name
+      await this.createDiscoveredRa(t, user, siteId, { id: r.id, object_type: 'resource_account', object_key: r.object_key, display_name: r.display_name, data: r.data }, r.display_name, kind as 'auto_attendant' | 'call_queue');
       created += 1;
       perSite.set(siteId, (perSite.get(siteId) ?? 0) + 1);
     }

@@ -1308,6 +1308,7 @@ export class BuildService {
           })
           .execute();
       }
+      await this.linkDiscoveredFlow(s, d.id);
       created += 1;
       createdDiscoveryIds.push(d.id);
     }
@@ -1726,6 +1727,34 @@ export class BuildService {
     return { ok: true };
   }
 
+  /**
+   * Stamps a Call flows row that was made from a discovered voice app with the Design & Build row Populate made for the same
+   * Data Collection resource account, so the tab shows it as already in Design & Build and "Import" never makes a second row.
+   * Only rows with a discovered object behind them are touched: a hand-made wizard capture is imported deliberately, not linked.
+   */
+  private async linkDiscoveredFlow(s: Scoped, dcResourceAccountId: string) {
+    const flow = await s
+      .selectFrom('discovery_flows')
+      .select(['id', 'kind', 'build_auto_attendant_id', 'build_call_queue_id'])
+      .where('resource_account_id', '=', dcResourceAccountId)
+      .where('tenant_object_id', 'is not', null)
+      .executeTakeFirst();
+    if (!flow || flow.build_auto_attendant_id || flow.build_call_queue_id) return flow ?? null;
+    const buildId =
+      flow.kind === 'auto_attendant'
+        ? (await s.selectFrom('build_auto_attendants').select('id').where('discovery_resource_account_id', '=', dcResourceAccountId).executeTakeFirst())?.id
+        : flow.kind === 'call_queue'
+          ? (await s.selectFrom('build_call_queues').select('id').where('discovery_resource_account_id', '=', dcResourceAccountId).executeTakeFirst())?.id
+          : undefined;
+    if (!buildId) return flow;
+    await s
+      .updateTable('discovery_flows')
+      .set({ imported_at: new Date().toISOString(), build_auto_attendant_id: flow.kind === 'auto_attendant' ? buildId : null, build_call_queue_id: flow.kind === 'call_queue' ? buildId : null })
+      .where('id', '=', flow.id)
+      .execute();
+    return flow;
+  }
+
   /* ==================== import wizard capture into Design & Build =================== */
 
   /**
@@ -1741,6 +1770,17 @@ export class BuildService {
     const s = this.s(t);
     const flow = await s.selectFrom('discovery_flows').selectAll().where('id', '=', flowId).executeTakeFirst();
     if (!flow) throw new NotFoundException('flow not found');
+    // A Call flows row made from a discovered voice app already IS what Teams has: Populate builds its Design & Build row from
+    // the live settings (more fully than the wizard can say them), so "Import" links that row - making it first if needed -
+    // instead of converting the wizard's answers into a second, thinner one.
+    if (flow.tenant_object_id && flow.resource_account_id && flow.site_id && !flow.build_auto_attendant_id && !flow.build_call_queue_id) {
+      await this.populateResourceAccounts(t, u, flow.site_id, [flow.resource_account_id]);
+      await this.linkDiscoveredFlow(s, flow.resource_account_id);
+      const linked = await s.selectFrom('discovery_flows').selectAll().where('id', '=', flowId).executeTakeFirstOrThrow();
+      const rowId = linked.build_auto_attendant_id ?? linked.build_call_queue_id;
+      if (!rowId) throw new BadRequestException('This discovered voice app could not be added to Design & Build.');
+      return { row: { id: rowId }, flow: linked, warnings: [] as string[] };
+    }
     if (!flow.wizard_answers) throw new BadRequestException('This call flow has no wizard capture to import.');
     if (!flow.site_id) throw new BadRequestException('This call flow has no site.');
     const siteId = flow.site_id;

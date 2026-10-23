@@ -41,6 +41,7 @@ export * from './site-contacts';
 export * from './validation-issues';
 export * from './common-area-phone';
 export * from './voice-app-summary';
+export * from './voice-app-wizard';
 
 import type { CmdletInvocation } from './deployment';
 

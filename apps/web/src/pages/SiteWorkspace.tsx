@@ -631,9 +631,9 @@ export function SiteWorkspace() {
               key: 'wizard_answers',
               label: 'Source',
               render: (r) =>
-                r.wizard_answers ? (
+                r.wizard_answers || r.tenant_object_id ? (
                   <div className={ls.flexWrapGap4}>
-                    <Badge appearance="tint" color="brand">Wizard</Badge>
+                    <Badge appearance="tint" color="brand">{r.tenant_object_id ? 'Discovery' : 'Wizard'}</Badge>
                     {isFlowStale(r) && (
                       <Badge appearance="tint" color="warning" title="Edited since it was last imported into Design & Build">
                         Edited
