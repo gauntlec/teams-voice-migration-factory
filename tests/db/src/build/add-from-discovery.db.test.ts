@@ -4,8 +4,9 @@ import { AuditService } from '../../../../apps/api/src/common/audit.service';
 import { BuildService } from '../../../../apps/api/src/modules/build/build.service';
 import { BuildValidationService } from '../../../../apps/api/src/modules/build/build-validation.service';
 import { DataCollectionService } from '../../../../apps/api/src/modules/data-collection/data-collection.service';
+import { TelephonyService } from '../../../../apps/api/src/modules/data-collection/data-collection.telephony.service';
 import { TenantDiscoveryService } from '../../../../apps/api/src/modules/tenant-discovery/tenant-discovery.service';
-import { seedCustomer, seedSite, seedUser, unused, useDb, type TestCustomer } from '../helpers';
+import { seedCustomer, seedNumbers, seedSite, seedUser, unused, useDb, type TestCustomer } from '../helpers';
 
 const handle = useDb();
 let c: TestCustomer;
@@ -30,7 +31,7 @@ beforeAll(async () => {
   nyc = (await seedSite(c.s, { sitecode: 'NYC01' })).id;
   const audit = new AuditService(handle.db);
   const dc = new DataCollectionService(handle.db, audit);
-  const discovery = new TenantDiscoveryService(handle.db, unused('queue'), audit, unused('deployments'), dc, unused('telephony'));
+  const discovery = new TenantDiscoveryService(handle.db, unused('queue'), audit, unused('deployments'), dc, new TelephonyService(handle.db, audit, dc));
   build = new BuildService(handle.db, audit, new BuildValidationService(handle.db), discovery, unused('documentBuilder'), unused('files'));
 });
 
@@ -75,6 +76,8 @@ describe('accounts: routed to Users or Common area phones', () => {
 
 describe('voice apps: two with the same name stay two', () => {
   it('matches each to its own live object and its own resource account, by id, not by name', async () => {
+    await seedNumbers(c.s, 'LUT01', ['+442070000001']);
+    await seedNumbers(c.s, 'NYC01', ['+12125550002']);
     const raA = await object('resource_account', 'ra-guid-a', 'Reception', { UserPrincipalName: 'reception.a@contoso.test', ApplicationId: 'ce933385-9390-45d1-9512-c8d228074e07', PhoneNumber: 'tel:+442070000001' });
     const raB = await object('resource_account', 'ra-guid-b', 'Reception', { UserPrincipalName: 'reception.b@contoso.test', ApplicationId: 'ce933385-9390-45d1-9512-c8d228074e07', PhoneNumber: 'tel:+12125550002' });
     const aaA = await object('auto_attendant', 'aa-guid-a', 'Reception', { Identity: 'aa-guid-a', LanguageId: 'en-GB', TimeZoneId: 'GMT Standard Time', ApplicationInstances: ['ra-guid-a'] });
@@ -87,6 +90,17 @@ describe('voice apps: two with the same name stay two', () => {
     const dcRows = await c.s.selectFrom('discovery_resource_accounts').select(['name', 'site_id', 'tenant_object_id']).orderBy('site_id').execute();
     expect(dcRows).toHaveLength(2);
     expect(dcRows.map((r) => r.tenant_object_id).sort()).toEqual([aaA, aaB].sort());
+
+    // what Teams holds is carried into Data Collection too, not just the name
+    const dcLuton = await c.s.selectFrom('discovery_resource_accounts').selectAll().where('site_id', '=', luton).executeTakeFirstOrThrow();
+    expect(dcLuton.comments).toContain('reception.a@contoso.test');
+    expect(dcLuton.advanced_features).toContain('Language en-GB');
+    expect(dcLuton.advanced_features).toContain('Time zone GMT Standard Time');
+    const held = await c.s.selectFrom('phone_numbers').select(['e164', 'holder_type', 'holder_id']).where('e164', '=', '+442070000001').executeTakeFirstOrThrow();
+    expect(held).toMatchObject({ holder_type: 'resource_account', holder_id: dcLuton.id });
+    const dcNyc = await c.s.selectFrom('discovery_resource_accounts').selectAll().where('site_id', '=', nyc).executeTakeFirstOrThrow();
+    expect(dcNyc.advanced_features).toContain('Language en-US');
+    expect(dcNyc.comments).toContain('reception.b@contoso.test');
 
     const aas = await c.s.selectFrom('build_auto_attendants').select(['site_id', 'language_id', 'time_zone_id']).execute();
     expect(aas.find((a) => a.site_id === luton)).toMatchObject({ language_id: 'en-GB', time_zone_id: 'GMT Standard Time' });
@@ -116,5 +130,31 @@ describe('voice apps without a resource account', () => {
     const attendant = await c.s.selectFrom('build_auto_attendants').select(['name', 'resource_accounts']).where('name', '=', 'Helpdesk Menu').executeTakeFirstOrThrow();
     expect(queue.resource_accounts).toEqual([]);
     expect(attendant.resource_accounts).toEqual([]);
+  });
+});
+
+describe('what a discovered call queue brings into Data Collection', () => {
+  it('describes its agents, routing, exception handling and number, and says when a number is not in the site ranges', async () => {
+    await seedNumbers(c.s, 'LUT01', ['+442070000050']);
+    await account('agent.one@contoso.test', 'Agent One');
+    const ra = await object('resource_account', 'ra-guid-q', 'Support Queue', { UserPrincipalName: 'support.q@contoso.test', ApplicationId: '11cd3e2e-fccb-42ad-ad00-878b93575e07', PhoneNumber: 'tel:+442070000050;ext=1' });
+    const raOutside = await object('resource_account', 'ra-guid-out', 'Outside Queue', { UserPrincipalName: 'outside.q@contoso.test', ApplicationId: '11cd3e2e-fccb-42ad-ad00-878b93575e07', PhoneNumber: 'tel:+33140000000' });
+    const cq = await object('call_queue', 'cq-guid-q', 'Support Queue', { Identity: 'cq-guid-q', LanguageId: 'en-GB', RoutingMethod: 'Attendant', Agents: [{ ObjectId: 'eid-agent.one@contoso.test' }], OverflowAction: 'Forward', OverflowThreshold: 20, OverflowActionTarget: { Id: 'tel:+442079999999', Type: 'Phone' }, TimeoutAction: 'Disconnect', TimeoutThreshold: 90, ApplicationInstances: ['ra-guid-q'] });
+    const res = await build.addFromDiscovery(c.t, engineer, { kind: 'call_queue', items: [{ id: cq, siteId: luton }], alsoBuild: false });
+    expect(res[0].dataCollection).toBe('added');
+    const row = await c.s.selectFrom('discovery_resource_accounts').selectAll().where('tenant_object_id', '=', cq).executeTakeFirstOrThrow();
+    expect(row.who_answers).toContain('agent.one@contoso.test');
+    expect(row.who_answers).toContain('Routing: Attendant');
+    expect(row.exception_conditions).toContain('More than 20 calls waiting');
+    expect(row.exception_action).toContain('Overflow: forward the call (442079999999)'.replace('442', '+442'));
+    expect(row.exception_action).toContain('Timeout: disconnect the call');
+    expect(row.comments).toContain('support.q@contoso.test');
+    const held = await c.s.selectFrom('phone_numbers').select(['holder_type', 'holder_id']).where('e164', '=', '+442070000050').executeTakeFirstOrThrow();
+    expect(held).toMatchObject({ holder_type: 'resource_account', holder_id: row.id });
+
+    // a resource account whose number is in no range is added, and the result says why the number was not attached
+    const out = await build.addFromDiscovery(c.t, engineer, { kind: 'resource_account', items: [{ id: raOutside, siteId: luton }], alsoBuild: false });
+    expect(out[0].note).toMatch(/\+33140000000 is not in any number range/);
+    void ra;
   });
 });

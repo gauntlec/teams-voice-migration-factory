@@ -22,7 +22,14 @@ import {
   type TenantResourceAccountsImportInput,
   type TenantUsersImportInput,
   type AddFromDiscoveryItemResult,
+  autoAttendantFields,
+  callQueueFields,
   isCommonAreaPhone,
+  liveAutoAttendantToStructured,
+  parseLiveCallTarget,
+  type AutoAttendantCallableEntity,
+  type LiveCallableEntityRef,
+  type VoiceAppFields,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
 import { assertNoMaintenanceFreeze, currentMaintenance } from '../../platform-ops/maintenance';
@@ -1050,8 +1057,10 @@ export class TenantDiscoveryService {
       .where('o.object_type', '=', 'resource_account')
       .where('o.removed_at', 'is', null)
       .where(
+        // already captured: by the exact object, or - for rows made before that link existed - by name
         sql<boolean>`NOT EXISTS (SELECT 1 FROM ${sql.table(`${t.schema}.discovery_resource_accounts`)} d
-                         WHERE lower(d.name) = lower(o.display_name))`,
+                         WHERE d.tenant_object_id = o.id
+                            OR (d.tenant_object_id IS NULL AND lower(d.name) = lower(o.display_name)))`,
       )
       .orderBy('o.display_name')
       .execute();
@@ -1069,6 +1078,89 @@ export class TenantDiscoveryService {
       };
     });
     return { candidates };
+  }
+
+  /**
+   * What Teams already holds about a discovered resource account or voice app, in the shape of a Data Collection resource account
+   * record: the free-text fields (hours, who answers, out-of-hours, exception handling, holidays, advanced features), the
+   * resource account's UPN and number(s) for the comments, and the numbers to attach. A voice app brings its resource accounts
+   * (the GUIDs in ApplicationInstances); a resource account brings the voice app that lists it. Matched on ids, never names.
+   */
+  private async discoveredRaDetails(
+    t: TenantContext,
+    obj: { id: string; object_type: string; object_key: string; display_name: string | null; data: unknown },
+  ): Promise<{ fields: Partial<VoiceAppFields>; comments: string | null; numbers: string[] }> {
+    const s = this.s(t);
+    const data = (obj.data ?? {}) as Record<string, unknown>;
+    const lower = (v: unknown) => (typeof v === 'string' ? v.toLowerCase() : '');
+    const instancesOf = (d: Record<string, unknown>): string[] => (Array.isArray(d.ApplicationInstances) ? (d.ApplicationInstances as unknown[]).filter((x): x is string => typeof x === 'string').map(lower) : []);
+    const [ras, apps, schedules, users] = await Promise.all([
+      s.selectFrom('tenant_objects').select(['object_key', 'display_name', 'data']).where('object_type', '=', 'resource_account').where('removed_at', 'is', null).execute(),
+      s.selectFrom('tenant_objects').select(['id', 'object_type', 'object_key', 'display_name', 'data']).where('object_type', 'in', ['auto_attendant', 'call_queue']).where('removed_at', 'is', null).execute(),
+      s.selectFrom('tenant_objects').select(['object_key', 'data']).where('object_type', '=', 'schedule').where('removed_at', 'is', null).execute(),
+      s.selectFrom('tenant_users').select(['entra_id', 'upn']).where('entra_id', 'is not', null).execute(),
+    ]);
+    const isRa = obj.object_type === 'resource_account';
+    const myKey = obj.object_key.toLowerCase();
+    // the voice app, and the resource accounts, this one stands for
+    const app = isRa ? apps.find((a) => instancesOf((a.data ?? {}) as Record<string, unknown>).includes(myKey)) : obj;
+    const raKeys = isRa ? [myKey] : instancesOf(data);
+    const myRas = ras.filter((r) => raKeys.includes(r.object_key.toLowerCase()));
+
+    const numbers: string[] = [];
+    const lines: string[] = [];
+    for (const r of myRas) {
+      const d = (r.data ?? {}) as Record<string, unknown>;
+      const upn = typeof d.UserPrincipalName === 'string' ? d.UserPrincipalName : null;
+      const num = typeof d.PhoneNumber === 'string' ? d.PhoneNumber.replace(/^tel:/i, '').split(';')[0]!.trim() : null;
+      if (num) numbers.push(num);
+      lines.push(`Resource account ${upn ?? r.display_name ?? r.object_key}${num ? `, number ${num}` : ', no number'}`);
+    }
+    const comments = lines.length ? `Added from Discovery. ${lines.join('; ')}.` : null;
+    if (!app) return { fields: {}, comments, numbers };
+
+    const upnByEntra = new Map(users.map((u) => [u.entra_id!.toLowerCase(), u.upn]));
+    const appByIdentity = new Map(apps.map((a) => [lower((a.data as Record<string, unknown>)?.Identity ?? a.object_key), { kind: a.object_type as 'auto_attendant' | 'call_queue', name: a.display_name ?? a.object_key }]));
+    const ownerByInstance = new Map<string, string>();
+    for (const a of apps) for (const i of instancesOf((a.data ?? {}) as Record<string, unknown>)) ownerByInstance.set(i, lower((a.data as Record<string, unknown>)?.Identity ?? a.object_key));
+    const nameOf = (id: string) => upnByEntra.get(id.toLowerCase()) ?? appByIdentity.get(id.toLowerCase())?.name ?? (ownerByInstance.has(id.toLowerCase()) ? appByIdentity.get(ownerByInstance.get(id.toLowerCase())!)?.name : undefined);
+    const appData = (app.data ?? {}) as Record<string, unknown>;
+    if (app.object_type === 'call_queue') return { fields: callQueueFields(appData, nameOf), comments, numbers };
+
+    const scheduleByKey = new Map(schedules.map((r) => [r.object_key, (r.data ?? {}) as Record<string, unknown>]));
+    const resolveTarget = (ref: LiveCallableEntityRef | undefined): AutoAttendantCallableEntity | undefined => {
+      if (!ref) return undefined;
+      if (ref.kind === 'external' && ref.number) return { kind: 'external', number: ref.number };
+      if (ref.kind === 'user' && ref.liveId) return { kind: 'user', upn: upnByEntra.get(ref.liveId.toLowerCase()) ?? ref.liveId };
+      if (ref.kind === 'shared_voicemail' && ref.liveId) return { kind: 'shared_voicemail', groupId: ref.liveId };
+      const identity = ref.kind === 'voice_app' ? ref.liveId?.toLowerCase() : ref.kind === 'resource_account' && ref.liveId ? ownerByInstance.get(ref.liveId.toLowerCase()) : undefined;
+      const hit = identity ? appByIdentity.get(identity) : undefined;
+      return hit && identity ? { kind: hit.kind, buildId: identity } : undefined;
+    };
+    return { fields: autoAttendantFields(liveAutoAttendantToStructured(appData, scheduleByKey, resolveTarget), nameOf), comments, numbers };
+  }
+
+  /**
+   * Attaches the discovered numbers to a new Data Collection resource account, when each is in this site's own number ranges and
+   * free. Returns what could not be attached, in words, for the result screen.
+   */
+  private async attachDiscoveredNumbers(t: TenantContext, user: AuthedUser, raId: string, siteId: string, numbers: string[]): Promise<string[]> {
+    const s = this.s(t);
+    const problems: string[] = [];
+    const sitecode = (await this.siteLookup(t)).byId.get(siteId) ?? null;
+    for (const e164 of [...new Set(numbers)]) {
+      const row = await s
+        .selectFrom('phone_numbers as n')
+        .innerJoin('discovery_number_ranges as r', 'r.id', 'n.range_id')
+        .select(['n.id', 'n.status', 'n.holder_id', 'r.sitecode'])
+        .where('n.e164', '=', e164)
+        .executeTakeFirst();
+      if (!row) problems.push(`${e164} is not in any number range, so it was not attached.`);
+      else if (row.sitecode !== sitecode) problems.push(`${e164} is in another site's number range, so it was not attached.`);
+      else if (row.holder_id) problems.push(`${e164} is already assigned in Data Collection, so it was not attached.`);
+      else await this.telephony.attachRaNumber(t, user, raId, row.id, false);
+    }
+    return problems;
   }
 
   /**
@@ -1208,14 +1300,16 @@ export class TenantDiscoveryService {
         }
         const d = (f.data ?? {}) as Record<string, unknown>;
         const dcKind = kind === 'resource_account' ? ((typeof d.ApplicationId === 'string' ? kindByAppId.get(d.ApplicationId) : undefined) ?? 'auto_attendant') : kind;
+        const details = await this.discoveredRaDetails(t, { id: f.id, object_type: objectType, object_key: f.object_key, display_name: f.display_name, data: f.data });
         const created = await s
           .insertInto('discovery_resource_accounts')
-          .values({ site_id: siteId, name: label, kind: dcKind as 'auto_attendant' | 'call_queue', tenant_object_id: f.id })
+          .values({ site_id: siteId, name: label, kind: dcKind as 'auto_attendant' | 'call_queue', tenant_object_id: f.id, comments: details.comments, ...details.fields })
           .returning('id')
           .executeTakeFirstOrThrow();
+        const problems = await this.attachDiscoveredNumbers(t, user, created.id, siteId, details.numbers);
         dcIds.set(id, created.id);
         added.set(`voice:${siteId}`, (added.get(`voice:${siteId}`) ?? 0) + 1);
-        results.push({ id, label, key: f.object_key, dataCollection: 'added', designAndBuild: off });
+        results.push({ id, label, key: f.object_key, dataCollection: 'added', designAndBuild: off, ...(problems.length ? { note: problems.join(' ') } : {}) });
       }
     }
 
@@ -1241,12 +1335,14 @@ export class TenantDiscoveryService {
 
     const rows = await s
       .selectFrom('tenant_objects as o')
-      .select(['o.id', 'o.display_name', 'o.data'])
+      .select(['o.id', 'o.object_key', 'o.display_name', 'o.data'])
       .where('o.object_type', '=', 'resource_account')
       .where('o.removed_at', 'is', null)
       .where(
+        // already captured: by the exact object, or - for rows made before that link existed - by name
         sql<boolean>`NOT EXISTS (SELECT 1 FROM ${sql.table(`${t.schema}.discovery_resource_accounts`)} d
-                         WHERE lower(d.name) = lower(o.display_name))`,
+                         WHERE d.tenant_object_id = o.id
+                            OR (d.tenant_object_id IS NULL AND lower(d.name) = lower(o.display_name)))`,
       )
       .execute();
 
@@ -1261,10 +1357,14 @@ export class TenantDiscoveryService {
       }
       const d = (r.data ?? {}) as Record<string, unknown>;
       const kind = (typeof d.ApplicationId === 'string' ? kindByAppId.get(d.ApplicationId) : undefined) ?? 'auto_attendant';
-      await s
+      // bring in what Teams already holds (hours, who answers, ... and the number), not just the name
+      const details = await this.discoveredRaDetails(t, { id: r.id, object_type: 'resource_account', object_key: r.object_key, display_name: r.display_name, data: r.data });
+      const row = await s
         .insertInto('discovery_resource_accounts')
-        .values({ site_id: siteId, name: r.display_name, kind: kind as 'auto_attendant' | 'call_queue' })
-        .execute();
+        .values({ site_id: siteId, name: r.display_name, kind: kind as 'auto_attendant' | 'call_queue', tenant_object_id: r.id, comments: details.comments, ...details.fields })
+        .returning('id')
+        .executeTakeFirstOrThrow();
+      await this.attachDiscoveredNumbers(t, user, row.id, siteId, details.numbers);
       created += 1;
       perSite.set(siteId, (perSite.get(siteId) ?? 0) + 1);
     }

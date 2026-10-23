@@ -40,6 +40,7 @@ export * from './country';
 export * from './site-contacts';
 export * from './validation-issues';
 export * from './common-area-phone';
+export * from './voice-app-summary';
 
 import type { CmdletInvocation } from './deployment';
 
