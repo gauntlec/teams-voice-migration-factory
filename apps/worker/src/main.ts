@@ -818,7 +818,7 @@ async function handleDeploymentRun(job: Job) {
     const allUpns = [...rows.flatMap((r) => (r.agents as string[] | null) ?? []), ...ras.map((r) => r.upn), ...cqTargetUpns];
     const [liveIdentity, liveQueues] = await Promise.all([
       resolveLiveIdentityState(scoped, allUpns),
-      resolveLiveCallQueueState(scoped, rows.map((r) => r.name)),
+      resolveLiveCallQueueState(scoped, rows),
     ]);
     const agentObjectIds = new Map<string, string>();
     for (const [upn, v] of liveIdentity) if (v.objectId) agentObjectIds.set(upn, v.objectId);
@@ -845,7 +845,7 @@ async function handleDeploymentRun(job: Job) {
         },
         agentObjectIds,
         raObjectIds,
-        liveQueues.get(row.name.toLowerCase()),
+        liveQueues.get(row.id),
       );
       let created = false;
       for (const call of calls) {
@@ -880,7 +880,7 @@ async function handleDeploymentRun(job: Job) {
     // the call_queues block above - reused rather than rebuilt so this batch
     // sees every same-run creation so far, not just Discovery's last sync.
     const aaDeep = await resolveAutoAttendantDeepContext(scoped, crossRef!);
-    const liveAutoAttendants = await resolveLiveAutoAttendantState(scoped, rows.map((r) => r.name), aaDeep);
+    const liveAutoAttendants = await resolveLiveAutoAttendantState(scoped, rows, aaDeep);
     const rawPlanRows: BuildAutoAttendantRow[] = rows.map((row) => ({
       id: row.id,
       name: row.name,
@@ -906,7 +906,7 @@ async function handleDeploymentRun(job: Job) {
     const userObjectIds = new Map<string, string>();
     for (const [upn, v] of userLiveIdentity) if (v.objectId) userObjectIds.set(upn, v.objectId);
     for (const planRow of planRows) {
-      const calls = planAutoAttendantRow(planRow, crossRef!, raObjectIds, userObjectIds, liveAutoAttendants.get(planRow.name.toLowerCase()));
+      const calls = planAutoAttendantRow(planRow, crossRef!, raObjectIds, userObjectIds, liveAutoAttendants.get(planRow.id));
       let created = false;
       for (const call of calls) {
         const result = await runCall(call);

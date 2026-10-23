@@ -1216,6 +1216,14 @@ export class BuildService {
     const createdIds: string[] = [];
     for (const d of source) {
       if (linked.has(d.id)) continue;
+      // a Design & Build row the Call flow's Import already made for this voice app is linked, not copied
+      const flowRow = await s.selectFrom('discovery_flows').select(['build_auto_attendant_id', 'build_call_queue_id']).where('voice_app_id', '=', d.id).executeTakeFirst();
+      const madeBy = d.kind === 'auto_attendant' ? flowRow?.build_auto_attendant_id : flowRow?.build_call_queue_id;
+      if (madeBy) {
+        await s.updateTable(d.kind === 'auto_attendant' ? 'build_auto_attendants' : 'build_call_queues').set({ discovery_voice_app_id: d.id }).where('id', '=', madeBy).where('discovery_voice_app_id', 'is', null).execute();
+        await this.adoptLiveVoiceApp(s, d);
+        continue;
+      }
       await this.adoptLiveVoiceApp(s, d);
       if (d.kind === 'auto_attendant') {
         const notes = [d.exception_conditions, d.exception_action].filter(Boolean).join(' / ') || null;
@@ -1767,9 +1775,9 @@ export class BuildService {
     // A Call flows row made from a discovered voice app already IS what Teams has: Populate builds its Design & Build row from
     // the live settings (more fully than the wizard can say them), so "Import" links that row - making it first if needed -
     // instead of converting the wizard's answers into a second, thinner one.
-    if (flow.tenant_object_id && flow.resource_account_id && flow.site_id && !flow.build_auto_attendant_id && !flow.build_call_queue_id) {
-      await this.populateResourceAccounts(t, u, flow.site_id, [flow.resource_account_id]);
-      await this.linkDiscoveredFlow(s, flow.resource_account_id);
+    if (flow.tenant_object_id && flow.voice_app_id && flow.site_id && !flow.build_auto_attendant_id && !flow.build_call_queue_id) {
+      await this.populateVoiceApps(t, u, flow.site_id, [flow.voice_app_id]);
+      await this.linkDiscoveredFlow(s, flow.voice_app_id);
       const linked = await s.selectFrom('discovery_flows').selectAll().where('id', '=', flowId).executeTakeFirstOrThrow();
       const rowId = linked.build_auto_attendant_id ?? linked.build_call_queue_id;
       if (!rowId) throw new BadRequestException('This discovered voice app could not be added to Design & Build.');
@@ -1876,6 +1884,13 @@ export class BuildService {
       }
     } else {
       throw new BadRequestException(`Call flows of kind "${flow.kind}" can't be imported.`);
+    }
+
+    // The row now belongs to the flow's voice app, so Populate and the deployment find the one row (and the live object behind it)
+    // instead of making a second one.
+    if (flow.voice_app_id) {
+      const table = flow.kind === 'auto_attendant' ? 'build_auto_attendants' : 'build_call_queues';
+      await s.updateTable(table).set({ discovery_voice_app_id: flow.voice_app_id }).where('id', '=', result.id).where('discovery_voice_app_id', 'is', null).execute();
     }
 
     // If the wizard also named a phone identity (discovery_resource_accounts),

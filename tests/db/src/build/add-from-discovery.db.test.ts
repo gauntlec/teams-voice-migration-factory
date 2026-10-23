@@ -411,3 +411,26 @@ describe('design first, then discovery', () => {
     expect(await c.s.selectFrom('discovery_voice_apps').select('id').where('name', '=', 'Twin').execute()).toHaveLength(2);
   });
 });
+
+describe('a designed call flow imported to Design & Build, then the voice app populated', () => {
+  it('makes one Design & Build row, not two', async () => {
+    const dc = new DataCollectionService(handle.db, new AuditService(handle.db));
+    const flow = await dc.addFlow(c.t, engineer, {
+      site_id: luton, kind: 'auto_attendant', name: 'Designed Menu',
+      wizard_answers: { languageId: 'en-GB', timeZoneId: 'GMT Standard Time', hoursType: 'always', businessFlow: { mode: 'direct', greeting: 'Hello', target: { kind: 'operator' } }, holidaysEnabled: false },
+      wizard_version: 1,
+    } as never, true);
+    expect(flow.voice_app_id).toBeTruthy();
+    const imported = await build.importFlowWizard(c.t, engineer, flow.id);
+    const row = await c.s.selectFrom('build_auto_attendants').select(['id', 'discovery_voice_app_id']).where('id', '=', imported.row.id).executeTakeFirstOrThrow();
+    expect(row.discovery_voice_app_id).toBe(flow.voice_app_id);
+    await build.populateVoiceApps(c.t, engineer, luton);
+    expect(await c.s.selectFrom('build_auto_attendants').select('id').where('name', '=', 'Designed Menu').execute()).toHaveLength(1);
+
+    // an older row, made before the link was stamped, is adopted instead of copied
+    await c.s.updateTable('build_auto_attendants').set({ discovery_voice_app_id: null }).where('id', '=', row.id).execute();
+    await build.populateVoiceApps(c.t, engineer, luton);
+    expect(await c.s.selectFrom('build_auto_attendants').select('id').where('name', '=', 'Designed Menu').execute()).toHaveLength(1);
+    expect((await c.s.selectFrom('build_auto_attendants').select('discovery_voice_app_id').where('id', '=', row.id).executeTakeFirstOrThrow()).discovery_voice_app_id).toBe(flow.voice_app_id);
+  });
+});

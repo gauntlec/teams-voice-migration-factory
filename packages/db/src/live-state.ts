@@ -146,6 +146,57 @@ export async function resolveLiveIdentityState(scoped: Scoped, upns: string[]) {
   return out;
 }
 
+/** A Design & Build auto attendant / call queue row, as far as finding its live object goes. */
+export interface LiveRowRef {
+  id: string;
+  name: string;
+  discovery_voice_app_id?: string | null;
+}
+
+/**
+ * Finds the live object (Discovery's tenant_objects) behind each Design & Build row, keyed by the row's id. A row made from, or linked
+ * to, a Data Collection voice app is matched on that voice app's exact discovered object (its Teams GUID) - never on its name, which
+ * two voice apps can share. Only a row with no link falls back to its name, and then only when exactly one live object has that name
+ * and no other row has already claimed it: a name that fits several is not guessed at.
+ */
+async function liveObjectsForRows(scoped: Scoped, type: 'auto_attendant' | 'call_queue', rows: LiveRowRef[]) {
+  const out = new Map<string, { display_name: string | null; data: Record<string, unknown> }>();
+  if (rows.length === 0) return out;
+  const appIds = [...new Set(rows.map((r) => r.discovery_voice_app_id).filter((v): v is string => !!v))];
+  const apps = appIds.length ? await scoped.selectFrom('discovery_voice_apps').select(['id', 'tenant_object_id']).where('id', 'in', appIds).execute() : [];
+  const objectOfApp = new Map(apps.map((a) => [a.id, a.tenant_object_id]));
+  const linkedObjectIds = [...new Set(apps.map((a) => a.tenant_object_id).filter((v): v is string => !!v))];
+  const unlinkedNames = [...new Set(rows.filter((r) => !r.discovery_voice_app_id || !objectOfApp.get(r.discovery_voice_app_id)).map((r) => r.name.toLowerCase()).filter(Boolean))];
+  const objects = await scoped
+    .selectFrom('tenant_objects')
+    .select(['id', 'display_name', 'data'])
+    .where('object_type', '=', type)
+    .where('removed_at', 'is', null)
+    .where((eb) => {
+      const parts = [];
+      if (linkedObjectIds.length) parts.push(eb('id', 'in', linkedObjectIds));
+      if (unlinkedNames.length) parts.push(eb(sql`lower(display_name)`, 'in', unlinkedNames));
+      return parts.length ? eb.or(parts) : eb.val(false);
+    })
+    .execute();
+  const byId = new Map(objects.map((o) => [o.id, o]));
+  const claimed = new Set<string>();
+  for (const r of rows) {
+    const objectId = r.discovery_voice_app_id ? objectOfApp.get(r.discovery_voice_app_id) : null;
+    const hit = objectId ? byId.get(objectId) : undefined;
+    if (hit) {
+      out.set(r.id, { display_name: hit.display_name, data: (hit.data ?? {}) as Record<string, unknown> });
+      claimed.add(hit.id);
+    }
+  }
+  for (const r of rows) {
+    if (out.has(r.id) || (r.discovery_voice_app_id && objectOfApp.get(r.discovery_voice_app_id))) continue;
+    const named = objects.filter((o) => !claimed.has(o.id) && (o.display_name ?? '').toLowerCase() === r.name.toLowerCase());
+    if (named.length === 1) out.set(r.id, { display_name: named[0]!.display_name, data: (named[0]!.data ?? {}) as Record<string, unknown> });
+  }
+  return out;
+}
+
 /**
  * What Discovery's live-tenant snapshot (tenant_objects, object_type
  * 'call_queue') knows about a queue, matched by lowercased Name - the same
@@ -153,26 +204,17 @@ export async function resolveLiveIdentityState(scoped: Scoped, upns: string[]) {
  * Identity column), so Name is the best available key, same as a fresh
  * tenant would show in Teams admin center.
  */
-export async function resolveLiveCallQueueState(scoped: Scoped, names: string[]) {
-  const wanted = [...new Set(names.map((n) => n.toLowerCase()).filter(Boolean))];
+export async function resolveLiveCallQueueState(scoped: Scoped, refs: LiveRowRef[]) {
   const out = new Map<string, CallQueueLiveState>();
-  if (wanted.length === 0) return out;
-  const rows = await scoped
-    .selectFrom('tenant_objects')
-    .select(['display_name', 'data'])
-    .where('object_type', '=', 'call_queue')
-    .where('removed_at', 'is', null)
-    .where(sql`lower(display_name)`, 'in', wanted)
-    .execute();
-  for (const r of rows) {
-    if (!r.display_name) continue;
-    const d = r.data as Record<string, unknown>;
+  const found = await liveObjectsForRows(scoped, 'call_queue', refs);
+  for (const [rowId, r] of found) {
+    const d = r.data;
     const agents = Array.isArray(d.Agents)
       ? (d.Agents as Record<string, unknown>[])
           .map((a) => (typeof a?.ObjectId === 'string' ? a.ObjectId : null))
           .filter((v): v is string => !!v)
       : [];
-    out.set(r.display_name.toLowerCase(), {
+    out.set(rowId, {
       identity: String(d.Identity ?? ''),
       routingMethod: decodeCallQueueEnum(d.RoutingMethod, CALL_QUEUE_ROUTING_METHODS),
       agentAlertTime: typeof d.AgentAlertTime === 'number' ? d.AgentAlertTime : undefined,
@@ -209,23 +251,14 @@ export async function resolveLiveCallQueueState(scoped: Scoped, names: string[])
  */
 export async function resolveLiveAutoAttendantState(
   scoped: Scoped,
-  names: string[],
+  refs: LiveRowRef[],
   deep?: { scheduleByKey: Map<string, Record<string, unknown>>; resolveTarget: (ref: LiveCallableEntityRef | undefined) => AutoAttendantCallableEntity | undefined },
 ): Promise<Map<string, AutoAttendantLiveState>> {
-  const wanted = [...new Set(names.map((n) => n.toLowerCase()).filter(Boolean))];
   const out = new Map<string, AutoAttendantLiveState>();
-  if (wanted.length === 0) return out;
-  const rows = await scoped
-    .selectFrom('tenant_objects')
-    .select(['display_name', 'data'])
-    .where('object_type', '=', 'auto_attendant')
-    .where('removed_at', 'is', null)
-    .where(sql`lower(display_name)`, 'in', wanted)
-    .execute();
-  for (const r of rows) {
-    if (!r.display_name) continue;
-    const d = r.data as Record<string, unknown>;
-    out.set(r.display_name.toLowerCase(), {
+  const found = await liveObjectsForRows(scoped, 'auto_attendant', refs);
+  for (const [rowId, r] of found) {
+    const d = r.data;
+    out.set(rowId, {
       identity: String(d.Identity ?? ''),
       languageId: typeof d.LanguageId === 'string' ? d.LanguageId : undefined,
       timeZoneId: typeof d.TimeZoneId === 'string' ? d.TimeZoneId : undefined,
@@ -309,20 +342,20 @@ export async function resolveAutoAttendantDeepContext(s: Scoped, crossRef: AutoA
  */
 export async function buildAutoAttendantCrossRef(s: Scoped, siteId: string): Promise<AutoAttendantCrossRef> {
   const [aaRows, cqRows] = await Promise.all([
-    s.selectFrom('build_auto_attendants').select(['id', 'name']).where('site_id', '=', siteId).execute(),
-    s.selectFrom('build_call_queues').select(['id', 'name']).where('site_id', '=', siteId).execute(),
+    s.selectFrom('build_auto_attendants').select(['id', 'name', 'discovery_voice_app_id']).where('site_id', '=', siteId).execute(),
+    s.selectFrom('build_call_queues').select(['id', 'name', 'discovery_voice_app_id']).where('site_id', '=', siteId).execute(),
   ]);
   const [liveAa, liveCq] = await Promise.all([
-    resolveLiveAutoAttendantState(s, aaRows.map((r) => r.name)),
-    resolveLiveCallQueueState(s, cqRows.map((r) => r.name)),
+    resolveLiveAutoAttendantState(s, aaRows),
+    resolveLiveCallQueueState(s, cqRows),
   ]);
   const crossRef: AutoAttendantCrossRef = new Map();
   for (const row of aaRows) {
-    const live = liveAa.get(row.name.toLowerCase());
+    const live = liveAa.get(row.id);
     if (live?.identity) crossRef.set(`auto_attendant:${row.id}`, live.identity);
   }
   for (const row of cqRows) {
-    const live = liveCq.get(row.name.toLowerCase());
+    const live = liveCq.get(row.id);
     if (live?.identity) crossRef.set(`call_queue:${row.id}`, live.identity);
   }
   return crossRef;

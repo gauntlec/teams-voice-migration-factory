@@ -1824,32 +1824,42 @@ function sortedHolidays(list: AutoAttendantHolidayCallFlow[]): AutoAttendantHoli
  * "change" just because the column itself is non-null.
  */
 function autoAttendantMatchesLive(row: BuildAutoAttendantRow, live: AutoAttendantLiveState): boolean {
+  return autoAttendantDifferences(row, live).length === 0;
+}
+
+/**
+ * What differs between a saved row and the live auto attendant, in words, so the preview can say why a change is planned. Empty when
+ * they match (or when nothing was read from the live one, in which case it says so: there is nothing to compare against).
+ */
+export function autoAttendantDifferences(row: BuildAutoAttendantRow, live: AutoAttendantLiveState): string[] {
   const s = live.structured;
-  if (!s) return false;
-  if ((row.language_id ?? undefined) !== (s.languageId ?? undefined)) return false;
-  if ((row.time_zone_id ?? undefined) !== (s.timeZoneId ?? undefined)) return false;
-  if ((row.voice_id ?? undefined) !== (s.voiceId ?? undefined)) return false;
-  if (!!row.voice_response_enabled !== !!s.enableVoiceResponse) return false;
-  if (!structurallyEqual(row.operator ?? null, s.operator ?? null)) return false;
-  if (!callFlowEqual(row.default_call_flow, s.defaultCallFlow)) return false;
+  if (!s) return ['the live settings could not be read'];
+  const diffs: string[] = [];
+  if ((row.language_id ?? undefined) !== (s.languageId ?? undefined)) diffs.push(`language (design ${row.language_id ?? 'none'}, live ${s.languageId ?? 'none'})`);
+  if ((row.time_zone_id ?? undefined) !== (s.timeZoneId ?? undefined)) diffs.push(`time zone (design ${row.time_zone_id ?? 'none'}, live ${s.timeZoneId ?? 'none'})`);
+  if ((row.voice_id ?? undefined) !== (s.voiceId ?? undefined)) diffs.push(`voice (design ${row.voice_id ?? 'none'}, live ${s.voiceId ?? 'none'})`);
+  if (!!row.voice_response_enabled !== !!s.enableVoiceResponse) diffs.push('voice response');
+  if (!structurallyEqual(row.operator ?? null, s.operator ?? null)) diffs.push('operator');
+  if (!callFlowEqual(row.default_call_flow, s.defaultCallFlow)) diffs.push('business hours call flow');
 
   const effectiveAfterHours = row.after_hours_call_flow && row.schedule ? row.after_hours_call_flow : null;
   const effectiveAfterHoursSchedule = row.after_hours_call_flow && row.schedule ? row.schedule : null;
-  if (!callFlowEqual(effectiveAfterHours, s.afterHoursCallFlow)) return false;
-  if (!scheduleEqual(effectiveAfterHoursSchedule, s.schedule)) return false;
+  if (!callFlowEqual(effectiveAfterHours, s.afterHoursCallFlow)) diffs.push('after hours call flow');
+  if (!scheduleEqual(effectiveAfterHoursSchedule, s.schedule)) diffs.push('after hours schedule');
 
   const rowHolidays = sortedHolidays(row.holiday_call_flows);
   const liveHolidays = sortedHolidays(s.holidayCallFlows);
-  if (rowHolidays.length !== liveHolidays.length) return false;
-  for (let i = 0; i < rowHolidays.length; i++) {
-    const a = rowHolidays[i];
-    const b = liveHolidays[i];
-    if (!a || !b) return false;
-    if (a.name !== b.name) return false;
-    if (!callFlowEqual(a.callFlow, b.callFlow)) return false;
-    if (!scheduleEqual(a.schedule, b.schedule)) return false;
+  if (rowHolidays.length !== liveHolidays.length) diffs.push(`holidays (design ${rowHolidays.length}, live ${liveHolidays.length})`);
+  else {
+    for (let i = 0; i < rowHolidays.length; i++) {
+      const a = rowHolidays[i]!;
+      const b = liveHolidays[i]!;
+      if (a.name !== b.name) diffs.push(`holiday name (design "${a.name}", live "${b.name}")`);
+      else if (!callFlowEqual(a.callFlow, b.callFlow)) diffs.push(`holiday "${a.name}" call flow`);
+      else if (!scheduleEqual(a.schedule, b.schedule)) diffs.push(`holiday "${a.name}" dates`);
+    }
   }
-  return true;
+  return diffs;
 }
 
 /**

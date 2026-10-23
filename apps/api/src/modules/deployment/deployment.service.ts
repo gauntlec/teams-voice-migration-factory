@@ -21,6 +21,7 @@ import {
   collectDependencyUserRowIds,
   identityRowWarnings,
   planAutoAttendantRow,
+  autoAttendantDifferences,
   planCallQueueRow,
   planIdentityRow,
   planResourceAccountRow,
@@ -360,7 +361,7 @@ export class DeploymentService {
       const allUpns = [...rows.flatMap((r) => (r.agents as string[] | null) ?? []), ...ras.map((r) => r.upn), ...cqTargetUpns];
       const [liveIdentity, liveQueues] = await Promise.all([
         resolveLiveIdentityState(s, allUpns),
-        resolveLiveCallQueueState(s, rows.map((r) => r.name)),
+        resolveLiveCallQueueState(s, rows),
       ]);
       const agentObjectIds = new Map<string, string>();
       for (const [upn, v] of liveIdentity) if (v.objectId) agentObjectIds.set(upn, v.objectId);
@@ -387,7 +388,7 @@ export class DeploymentService {
           language_id: row.language_id,
           resource_accounts: resourceAccounts,
         };
-        const live: CallQueueLiveState | undefined = liveQueues.get(row.name.toLowerCase());
+        const live: CallQueueLiveState | undefined = liveQueues.get(row.id);
         const calls = planCallQueueRow(planRow, agentObjectIds, raObjectIds, live);
         const warnings = callQueueRowWarnings(planRow, agentObjectIds, raObjectIds);
         if (calls.length === 0 && warnings.length === 0) continue;
@@ -425,7 +426,7 @@ export class DeploymentService {
         if (oid) raObjectIds.set(ra.id, oid);
       }
       const deep = await resolveAutoAttendantDeepContext(s, crossRef);
-      const liveAutoAttendants = await resolveLiveAutoAttendantState(s, rows.map((r) => r.name), deep);
+      const liveAutoAttendants = await resolveLiveAutoAttendantState(s, rows, deep);
 
       const planRows: BuildAutoAttendantRow[] = rows.map((row) => ({
         id: row.id,
@@ -449,9 +450,14 @@ export class DeploymentService {
       for (const [upn, v] of userLiveIdentity) if (v.objectId) userObjectIds.set(upn, v.objectId);
 
       for (const planRow of planRows) {
-        const live: AutoAttendantLiveState | undefined = liveAutoAttendants.get(planRow.name.toLowerCase());
+        const live: AutoAttendantLiveState | undefined = liveAutoAttendants.get(planRow.id);
         const calls = planAutoAttendantRow(planRow, crossRef, raObjectIds, userObjectIds, live);
         const warnings = autoAttendantRowWarnings(planRow, crossRef, raObjectIds, userObjectIds);
+        // say why a live auto attendant is being changed, so a row that looks unchanged to the engineer is not a mystery
+        if (live && calls.length > 0) {
+          const diffs = autoAttendantDifferences(planRow, live);
+          if (diffs.length > 0) warnings.push(`Differs from the live auto attendant: ${diffs.join('; ')}.`);
+        }
         if (calls.length === 0 && warnings.length === 0) continue;
         out.push({
           rowId: planRow.id,
