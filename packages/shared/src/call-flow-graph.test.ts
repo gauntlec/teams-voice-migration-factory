@@ -75,3 +75,24 @@ describe('Auto Attendant graph from the live tenant', () => {
     expect(g.nodes.find((n) => n.id === 'aa:aa-1:business_hours')!.details).toEqual(['Mon–Tue 09:00–17:00', 'Time zone: GMT Standard Time']);
   });
 });
+
+describe('Design & Build diagram with a transfer to a voice app outside the site', () => {
+  it('draws the call queue and its agents from the discovered data', () => {
+    const live = {
+      autoAttendants: [],
+      schedules: [],
+      callQueues: [{ name: 'Support Queue', data: { Identity: '23fa0565-93af-4c1f-802b-d21c8aa19291', RoutingMethod: 'Attendant', Agents: [{ ObjectId: 'agent-1' }], OverflowAction: 0 } }],
+      usersByEntraId: new Map([['agent-1', 'agent.one@contoso.test']]),
+    };
+    const aa = {
+      buildId: 'aa-1', name: 'Main', operator: null, afterHoursCallFlow: null, holidayCallFlows: [],
+      defaultCallFlow: { greetings: [], menu: { options: [{ dtmf: 'Automatic' as const, action: 'TransferCallToTarget' as const, target: { kind: 'call_queue' as const, liveId: '23fa0565-93af-4c1f-802b-d21c8aa19291' } }] } },
+    };
+    const without = buildAutoAttendantFlowGraphFromDesign(aa, [aa], []);
+    expect(without.nodes.some((n) => n.label === 'Support Queue')).toBe(false);
+    const g = buildAutoAttendantFlowGraphFromDesign(aa, [aa], [], live);
+    expect(g.nodes.map((n) => n.label)).toEqual(expect.arrayContaining(['Support Queue', 'agent.one@contoso.test']));
+    expect(g.edges.some((e) => e.label === 'No input' && e.target === 'cq:23fa0565-93af-4c1f-802b-d21c8aa19291')).toBe(true);
+  });
+});
+

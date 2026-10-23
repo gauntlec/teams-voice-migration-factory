@@ -129,6 +129,12 @@ class GraphBuilder {
     this.edges.push({ id: `e${this.edges.length}:${source}->${target}`, source, target, label, branch, branchLabel });
   }
 
+  /** Adds a whole graph built elsewhere (nodes deduped by id, edges merged like any other). */
+  merge(g: CallFlowGraph): void {
+    for (const n of g.nodes) this.ensureNode(n);
+    for (const e of g.edges) this.addEdge(e.source, e.target, e.label, e.branch, e.branchLabel);
+  }
+
   build(): CallFlowGraph {
     return { nodes: [...this.nodes.values()], edges: this.edges };
   }
@@ -310,6 +316,8 @@ export function buildAutoAttendantFlowGraphFromDesign(
   aa: DesignAutoAttendantInput,
   allAutoAttendants: DesignAutoAttendantInput[],
   allCallQueues: DesignCallQueueInput[],
+  /** What Teams has, for a menu option that transfers to a voice app outside this site (kept by its Teams id): drawn, with its agents and routing, from the discovered data. */
+  live?: LiveVoiceApps,
 ): CallFlowGraph {
   const b = new GraphBuilder();
   const aaById = new Map(allAutoAttendants.map((a) => [a.buildId, a]));
@@ -317,11 +325,29 @@ export function buildAutoAttendantFlowGraphFromDesign(
   const visitedAa = new Set<string>();
   const visitedCq = new Set<string>();
 
+  /** A voice app that is in Teams but not on this site: drawn from the discovered data, with its own agents and routing. */
+  const resolveLiveTarget = (entity: AutoAttendantCallableEntity): string | undefined => {
+    const key = entity.liveId?.toLowerCase();
+    if (!key) return undefined;
+    const identityOf = (o: { data: Record<string, unknown> }) => (typeof o.data.Identity === 'string' ? o.data.Identity.toLowerCase() : undefined);
+    const cq = live?.callQueues.find((o) => identityOf(o) === key);
+    if (cq) {
+      b.merge(buildCallQueueFlowGraphFromLive(cq, live!.usersByEntraId, { autoAttendants: live!.autoAttendants, callQueues: live!.callQueues }));
+      return `cq:${String(cq.data.Identity)}`;
+    }
+    const aaLive = live?.autoAttendants.find((o) => identityOf(o) === key);
+    if (aaLive) {
+      b.merge(buildAutoAttendantFlowGraphFromLive(aaLive, live!.autoAttendants, live!.callQueues, live!.schedules, live!.usersByEntraId, live!.resourceAccountsByObjectId));
+      return `aa:${String(aaLive.data.Identity)}`;
+    }
+    return b.ensureNode({ id: `${entity.kind === 'call_queue' ? 'cq' : 'aa'}:${key}`, kind: entity.kind === 'call_queue' ? 'call_queue' : 'auto_attendant', label: `Voice app in Teams (${key.slice(0, 8)}…)` });
+  };
+
   const resolveTarget = (entity: AutoAttendantCallableEntity | undefined): string | undefined => {
     if (!entity) return undefined;
     switch (entity.kind) {
       case 'auto_attendant': {
-        if (!entity.buildId) return undefined;
+        if (!entity.buildId) return entity.liveId ? resolveLiveTarget(entity) : undefined;
         const target = aaById.get(entity.buildId);
         return b.ensureNode({
           id: `aa:${entity.buildId}`,
@@ -331,7 +357,7 @@ export function buildAutoAttendantFlowGraphFromDesign(
         });
       }
       case 'call_queue':
-        return entity.buildId ? b.ensureNode({ id: `cq:${entity.buildId}`, kind: 'call_queue', label: cqById.get(entity.buildId)?.name ?? '(unresolved)' }) : undefined;
+        return entity.buildId ? b.ensureNode({ id: `cq:${entity.buildId}`, kind: 'call_queue', label: cqById.get(entity.buildId)?.name ?? '(unresolved)' }) : entity.liveId ? resolveLiveTarget(entity) : undefined;
       case 'user':
         return entity.upn ? b.ensureNode({ id: `user:${entity.upn.toLowerCase()}`, kind: 'person', label: entity.upn }) : undefined;
       case 'external':
@@ -426,6 +452,14 @@ export interface LiveAutoAttendantInput {
 export interface LiveCallQueueInput {
   name: string;
   data: Record<string, unknown>;
+}
+/** The discovered voice apps a design diagram may need, for a transfer to one that is not part of the site. */
+export interface LiveVoiceApps {
+  autoAttendants: LiveAutoAttendantInput[];
+  callQueues: LiveCallQueueInput[];
+  schedules: LiveScheduleInput[];
+  usersByEntraId?: Map<string, string>;
+  resourceAccountsByObjectId?: Map<string, CallFlowResourceAccount>;
 }
 export interface LiveScheduleInput {
   /** tenant_objects.object_key - matches a CallHandlingAssociation's ScheduleId. */

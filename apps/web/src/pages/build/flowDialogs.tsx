@@ -1,10 +1,11 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Spinner, Text , makeStyles, mergeClasses } from '@fluentui/react-components';
-import { buildAutoAttendantFlowGraphFromDesign, buildCallQueueFlowGraphFromDesign, type AutoAttendantCallableEntity, type AutoAttendantCallFlow, type AutoAttendantHolidayCallFlow, type AutoAttendantSchedule, type CallFlowResourceAccount, type CallQueueActionSettings, type DesignAutoAttendantInput, type DesignCallQueueInput, type Paginated } from '@tvmf/shared';
+import { buildAutoAttendantFlowGraphFromDesign, buildCallQueueFlowGraphFromDesign, type LiveVoiceApps, type TenantObject, type TenantUserSummary, type AutoAttendantCallableEntity, type AutoAttendantCallFlow, type AutoAttendantHolidayCallFlow, type AutoAttendantSchedule, type CallFlowResourceAccount, type CallQueueActionSettings, type DesignAutoAttendantInput, type DesignCallQueueInput, type Paginated } from '@tvmf/shared';
 import { api } from '../../api';
 import { CallFlowDiagram } from '../../components/CallFlowDiagram';
 import { LoadError, useRecordStyles, type Row } from '../../components/records';
+import { fetchAllPages } from '../discovery/discoveryShared';
 
 const useLocalStyles = makeStyles({
   w95vwMaxW95vw: { maxWidth: "95vw", width: "95vw" },
@@ -142,14 +143,34 @@ export function AutoAttendantFlowDialog({ tid, base, siteId, row, onClose }: { t
     return m;
   }, [raQ.data]);
 
+  // A menu option can transfer to a voice app that is in Teams but not on this site (kept by its Teams id). Drawing it, with its agents and
+  // routing, needs the discovered data, so that is only fetched when some option does.
+  const needsLive = useMemo(() => JSON.stringify(aaQ.data?.items ?? []).includes('"liveId"') || JSON.stringify(row).includes('"liveId"'), [aaQ.data, row]);
+  const discoveryBase = `/t/${tid}/tenant-discovery`;
+  const liveAaQ = useQuery({ queryKey: ['tdisc', 'callflow-aa-all', discoveryBase], queryFn: () => fetchAllPages<TenantObject>(`${discoveryBase}/objects?type=auto_attendant`), enabled: needsLive });
+  const liveCqQ = useQuery({ queryKey: ['tdisc', 'callflow-cq-all', discoveryBase], queryFn: () => fetchAllPages<TenantObject>(`${discoveryBase}/objects?type=call_queue`), enabled: needsLive });
+  const liveSchedQ = useQuery({ queryKey: ['tdisc', 'callflow-sched-all', discoveryBase], queryFn: () => fetchAllPages<TenantObject>(`${discoveryBase}/objects?type=schedule`), enabled: needsLive });
+  const liveUsersQ = useQuery({ queryKey: ['tdisc', 'callflow-users-all', discoveryBase], queryFn: () => fetchAllPages<TenantUserSummary>(`${discoveryBase}/users?`), enabled: needsLive });
+  const liveLoading = needsLive && (liveAaQ.isLoading || liveCqQ.isLoading || liveSchedQ.isLoading || liveUsersQ.isLoading);
+  const live = useMemo<LiveVoiceApps | undefined>(() => {
+    if (!needsLive || !liveAaQ.data || !liveCqQ.data || !liveSchedQ.data) return undefined;
+    return {
+      autoAttendants: liveAaQ.data.items.map((o) => ({ name: o.display_name ?? o.object_key, data: o.data })),
+      callQueues: liveCqQ.data.items.map((o) => ({ name: o.display_name ?? o.object_key, data: o.data })),
+      schedules: liveSchedQ.data.items.map((o) => ({ key: o.object_key, data: o.data })),
+      usersByEntraId: new Map((liveUsersQ.data?.items ?? []).filter((u) => u.entra_id).map((u) => [u.entra_id!.toLowerCase(), u.upn])),
+    };
+  }, [needsLive, liveAaQ.data, liveCqQ.data, liveSchedQ.data, liveUsersQ.data]);
+
   const graph = useMemo(() => {
     if (!aaQ.data || !cqQ.data) return null;
     return buildAutoAttendantFlowGraphFromDesign(
       toDesignAaInput(row, hasPhoneNumberById, resourceAccountById),
       aaQ.data.items.map((r) => toDesignAaInput(r, hasPhoneNumberById, resourceAccountById)),
       cqQ.data.items.map(toDesignCqInput),
+      live,
     );
-  }, [aaQ.data, cqQ.data, row, hasPhoneNumberById, resourceAccountById]);
+  }, [aaQ.data, cqQ.data, row, hasPhoneNumberById, resourceAccountById, live]);
 
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
@@ -161,7 +182,7 @@ export function AutoAttendantFlowDialog({ tid, base, siteId, row, onClose }: { t
               Business hours, after hours and holiday routing, as currently configured here - not yet deployed - including every Auto Attendant a menu
               option hands off to, followed all the way through. "Front door" marks an Auto Attendant with a phone number attached.
             </Text>
-            {aaQ.isLoading || cqQ.isLoading || raQ.isLoading ? (
+            {aaQ.isLoading || cqQ.isLoading || raQ.isLoading || liveLoading ? (
               <Spinner size="tiny" label="Loading…" />
             ) : aaQ.isError || cqQ.isError || raQ.isError ? (
               <LoadError message={((aaQ.error ?? cqQ.error ?? raQ.error) as Error).message} />
