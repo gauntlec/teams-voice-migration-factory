@@ -334,8 +334,25 @@ export class TelephonyService {
       arr.push({ id: n.id, e164: n.e164 });
       byHolder.set(n.holder_id as string, arr);
     }
+    // The discovered resource accounts that belong to each record (a voice app can have several): each with its UPN and the number
+    // Teams has for it, and whether that number is attached here. A number that is in none of this site's ranges is shown, not lost.
+    const memberRows = ids.length
+      ? await s
+          .selectFrom('discovery_resource_account_members as m')
+          .innerJoin('tenant_objects as o', 'o.id', 'm.tenant_object_id')
+          .select(['m.resource_account_id', 'o.display_name', 'o.data'])
+          .where('m.resource_account_id', 'in', ids)
+          .execute()
+      : [];
+    const membersOf = new Map<string, { name: string | null; upn: string | null; number: string | null; attached: boolean }[]>();
+    for (const m of memberRows) {
+      const d = (m.data ?? {}) as Record<string, unknown>;
+      const number = typeof d.PhoneNumber === 'string' ? d.PhoneNumber.replace(/^tel:/i, '').split(';')[0]!.trim() || null : null;
+      const attached = !!number && (byHolder.get(m.resource_account_id) ?? []).some((n) => n.e164 === number);
+      membersOf.set(m.resource_account_id, [...(membersOf.get(m.resource_account_id) ?? []), { name: m.display_name, upn: typeof d.UserPrincipalName === 'string' ? d.UserPrincipalName : null, number, attached }]);
+    }
     return {
-      items: items.map((r) => ({ ...r, phone_numbers: byHolder.get(r.id) ?? [] })),
+      items: items.map((r) => ({ ...r, phone_numbers: byHolder.get(r.id) ?? [], members: membersOf.get(r.id) ?? [] })),
       total: Number(cnt?.n ?? 0),
       page,
       limit,

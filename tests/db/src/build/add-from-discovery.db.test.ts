@@ -12,6 +12,7 @@ const handle = useDb();
 let c: TestCustomer;
 let build: BuildService;
 let discovery: TenantDiscoveryService;
+let tel: TelephonyService;
 let engineer: Awaited<ReturnType<typeof seedUser>>;
 let luton: string;
 let nyc: string;
@@ -32,7 +33,7 @@ beforeAll(async () => {
   nyc = (await seedSite(c.s, { sitecode: 'NYC01' })).id;
   const audit = new AuditService(handle.db);
   const dc = new DataCollectionService(handle.db, audit);
-  discovery = new TenantDiscoveryService(handle.db, unused('queue'), audit, unused('deployments'), dc, new TelephonyService(handle.db, audit, dc));
+  discovery = new TenantDiscoveryService(handle.db, unused('queue'), audit, unused('deployments'), dc, (tel = new TelephonyService(handle.db, audit, dc)));
   build = new BuildService(handle.db, audit, new BuildValidationService(handle.db), discovery, unused('documentBuilder'), unused('files'));
 });
 
@@ -253,5 +254,68 @@ describe('one auto attendant with several resource accounts', () => {
     expect(await c.s.selectFrom('discovery_resource_account_members').select('tenant_object_id').where('resource_account_id', '=', dc[0]!.id).execute()).toHaveLength(2);
     const held = await c.s.selectFrom('phone_numbers').select('holder_id').where('e164', 'in', ['+442070004001', '+442070004002']).execute();
     expect(held.map((h) => h.holder_id)).toEqual([dc[0]!.id, dc[0]!.id]);
+  });
+});
+
+describe('two discovered objects with the same name on the same site', () => {
+  it('keeps two auto attendants and their resource accounts apart, whichever way they are brought in', async () => {
+    await seedNumbers(c.s, 'LUT01', ['+442070005001', '+442070005002']);
+    const raA = await object('resource_account', 'ra-dup-a', 'Switchboard', { UserPrincipalName: 'switchboard.a@contoso.test', ApplicationId: 'ce933385-9390-45d1-9512-c8d228074e07', PhoneNumber: 'tel:+442070005001' });
+    const raB = await object('resource_account', 'ra-dup-b', 'Switchboard', { UserPrincipalName: 'switchboard.b@contoso.test', ApplicationId: 'ce933385-9390-45d1-9512-c8d228074e07', PhoneNumber: 'tel:+442070005002' });
+    const aaA = await object('auto_attendant', 'aa-dup-a', 'Switchboard', { Identity: 'aa-dup-a', LanguageId: 'en-GB', ApplicationInstances: ['ra-dup-a'] });
+    const aaB = await object('auto_attendant', 'aa-dup-b', 'Switchboard', { Identity: 'aa-dup-b', LanguageId: 'fr-FR', ApplicationInstances: ['ra-dup-b'] });
+
+    // both attendants at once
+    const res = await build.addFromDiscovery(c.t, engineer, { kind: 'auto_attendant', items: [{ id: aaA, siteId: luton }, { id: aaB, siteId: luton }], alsoBuild: true });
+    expect(res.map((r) => [r.dataCollection, r.designAndBuild])).toEqual([['added', 'added'], ['added', 'added']]);
+    expect(await c.s.selectFrom('discovery_resource_accounts').select('id').where('site_id', '=', luton).where('name', '=', 'Switchboard').execute()).toHaveLength(2);
+    const aas = await c.s.selectFrom('build_auto_attendants').select(['language_id', 'resource_accounts']).where('site_id', '=', luton).where('name', '=', 'Switchboard').orderBy('language_id').execute();
+    expect(aas.map((a) => a.language_id)).toEqual(['en-GB', 'fr-FR']);
+    const ras = await c.s.selectFrom('build_resource_accounts').select(['id', 'upn']).where('site_id', '=', luton).where('upn', 'like', 'switchboard.%').orderBy('upn').execute();
+    expect(ras.map((r) => r.upn)).toEqual(['switchboard.a@contoso.test', 'switchboard.b@contoso.test']);
+    // each attendant lists its own resource account, not the other one's
+    expect(aas[0]!.resource_accounts).toEqual([ras[0]!.id]);
+    expect(aas[1]!.resource_accounts).toEqual([ras[1]!.id]);
+    expect(await c.s.selectFrom('discovery_flows').select('id').where('site_id', '=', luton).where('name', '=', 'Switchboard').execute()).toHaveLength(2);
+
+    // adding either resource account again is recognised, by its own id, as already there
+    const again = await build.addFromDiscovery(c.t, engineer, { kind: 'resource_account', items: [{ id: raA, siteId: luton }, { id: raB, siteId: luton }], alsoBuild: true });
+    expect(again.map((r) => r.dataCollection)).toEqual(['already_on_site', 'already_on_site']);
+  });
+
+  it('keeps two same-named resource accounts apart through the bulk import', async () => {
+    await seedNumbers(c.s, 'NYC01', ['+12125556001', '+12125556002']);
+    const a = await object('resource_account', 'ra-bulkdup-a', 'Front Desk', { UserPrincipalName: 'front.a@contoso.test', ApplicationId: 'ce933385-9390-45d1-9512-c8d228074e07', PhoneNumber: 'tel:+12125556001' });
+    const b = await object('resource_account', 'ra-bulkdup-b', 'Front Desk', { UserPrincipalName: 'front.b@contoso.test', ApplicationId: '11cd3e2e-fccb-42ad-ad00-878b93575e07', PhoneNumber: 'tel:+12125556002' });
+    const preview = await discovery.importResourceAccountsPreview(c.t);
+    expect(preview.candidates.filter((x) => x.name === 'Front Desk')).toHaveLength(2);
+    await discovery.importResourceAccounts(c.t, engineer, { assignments: [{ id: a, siteId: nyc }, { id: b, siteId: nyc }] } as never, true);
+    const dc = await c.s.selectFrom('discovery_resource_accounts').select(['id', 'kind', 'tenant_object_id']).where('site_id', '=', nyc).where('name', '=', 'Front Desk').execute();
+    expect(dc).toHaveLength(2);
+    expect(dc.map((d) => d.tenant_object_id).sort()).toEqual([a, b].sort());
+    // and nothing is offered to import twice afterwards
+    const after = await discovery.importResourceAccountsPreview(c.t);
+    expect(after.candidates.filter((x) => x.name === 'Front Desk')).toHaveLength(0);
+  });
+});
+
+describe('the Data Collection record shows every resource account it holds', () => {
+  it('lists both resource accounts of one attendant, and flags a number that is in none of the site\'s ranges', async () => {
+    await seedNumbers(c.s, 'NYC01', ['+12125557001']);
+    // the second resource account has a toll-free number that is in no range
+    const ra1 = await object('resource_account', 'ra-show-1', 'Hauppauge Main Number', { UserPrincipalName: 'main@contoso.test', ApplicationId: 'ce933385-9390-45d1-9512-c8d228074e07', PhoneNumber: 'tel:+12125557001' });
+    const ra2 = await object('resource_account', 'ra-show-2', 'Hauppauge Main Number', { UserPrincipalName: 'main.tollfree@contoso.test', ApplicationId: 'ce933385-9390-45d1-9512-c8d228074e07', PhoneNumber: 'tel:+18008726279' });
+    await object('auto_attendant', 'aa-show', 'Hauppauge Main Number', { Identity: 'aa-show', LanguageId: 'en-US', ApplicationInstances: ['ra-show-1', 'ra-show-2'] });
+    await build.addFromDiscovery(c.t, engineer, { kind: 'resource_account', items: [{ id: ra1, siteId: nyc }, { id: ra2, siteId: nyc }], alsoBuild: true });
+
+    const list = await tel.listResourceAccounts(c.t, { siteId: nyc, page: 1, limit: 50 } as never);
+    const rec = list.items.find((r) => r.name === 'Hauppauge Main Number')!;
+    expect(list.items.filter((r) => r.name === 'Hauppauge Main Number')).toHaveLength(1);
+    const members = [...rec.members].sort((a, b) => (a.upn ?? '').localeCompare(b.upn ?? ''));
+    expect(members).toEqual([
+      { name: 'Hauppauge Main Number', upn: 'main.tollfree@contoso.test', number: '+18008726279', attached: false },
+      { name: 'Hauppauge Main Number', upn: 'main@contoso.test', number: '+12125557001', attached: true },
+    ]);
+    expect(rec.phone_numbers.map((n) => n.e164)).toEqual(['+12125557001']);
   });
 });

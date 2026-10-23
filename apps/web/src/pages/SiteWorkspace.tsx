@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Spinner, Tab, TabList, Text , makeStyles, shorthands } from '@fluentui/react-components';
+import { Badge, Button, Spinner, Tab, TabList, Text , makeStyles, shorthands, tokens } from '@fluentui/react-components';
 import { ArrowLeftRegular, ArrowUploadRegular, WarningRegular } from '@fluentui/react-icons';
 import { CALLER_ID_OPTIONS, FLOW_KINDS, NETWORK_LOCATIONS, NETWORK_SCOPES, NETWORK_TYPES, NUMBER_RANGE_KINDS, RESOURCE_ACCOUNT_KINDS, VOICEMAIL_PROMPT_LANGUAGES, type AutoAttendantWizardAnswers, type CallQueueWizardAnswers, type Paginated, type TenantUserSummary } from '@tvmf/shared';
 import { api, ApiError } from '../api';
@@ -21,6 +21,7 @@ import { NumberInventory, FlowImportButton, RaNumbersButton } from './site/siteN
 const useLocalStyles = makeStyles({
   inlineFlexItemsCenterGap6: { display: "inline-flex", ...shorthands.gap('6px'), alignItems: "center" },
   flexWrapGap4: { display: "flex", ...shorthands.gap('4px'), flexWrap: "wrap" },
+  mutedText: { color: tokens.colorNeutralForeground3 },
 });
 
 
@@ -544,6 +545,29 @@ export function SiteWorkspace() {
               label: 'Numbers',
               render: (r) =>
                 (r.phone_numbers as { e164: string }[])?.map((n) => n.e164).join(', ') || '—',
+            },
+            {
+              key: 'members',
+              label: 'Resource accounts',
+              render: (r) => {
+                const members = (r.members as { name: string | null; upn: string | null; number: string | null; attached: boolean }[] | undefined) ?? [];
+                if (members.length === 0) return '—';
+                return (
+                  <div>
+                    {members.map((m, i) => (
+                      <div key={`${m.upn ?? m.name ?? i}`}>
+                        {m.upn ?? m.name}
+                        {m.number ? ` · ${m.number}` : ''}
+                        {m.number && !m.attached && (
+                          <Text size={200} className={ls.mutedText} block>
+                            Not in this site's number ranges, so not attached here
+                          </Text>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                );
+              },
             },
             { key: 'business_hours', label: 'Business hours' },
             { key: 'who_answers', label: 'Who answers' },
