@@ -102,3 +102,19 @@ describe('voice apps: two with the same name stay two', () => {
     expect(await c.s.selectFrom('discovery_resource_accounts').select('id').execute()).toHaveLength(2);
   });
 });
+
+describe('voice apps without a resource account', () => {
+  it('adds the call queue and the auto attendant but makes no empty resource account row', async () => {
+    const before = (await c.s.selectFrom('build_resource_accounts').select('id').execute()).length;
+    const cq = await object('call_queue', 'cq-guid-solo', 'Helpdesk Queue', { Identity: 'cq-guid-solo', LanguageId: 'en-GB', ApplicationInstances: [] });
+    const aa = await object('auto_attendant', 'aa-guid-solo', 'Helpdesk Menu', { Identity: 'aa-guid-solo', LanguageId: 'en-GB' });
+    const res = await build.addFromDiscovery(c.t, engineer, { kind: 'call_queue', items: [{ id: cq, siteId: luton }], alsoBuild: true });
+    const res2 = await build.addFromDiscovery(c.t, engineer, { kind: 'auto_attendant', items: [{ id: aa, siteId: luton }], alsoBuild: true });
+    expect([...res, ...res2].map((r) => r.designAndBuild)).toEqual(['added', 'added']);
+    expect((await c.s.selectFrom('build_resource_accounts').select('id').execute()).length).toBe(before);
+    const queue = await c.s.selectFrom('build_call_queues').select(['name', 'resource_accounts']).where('name', '=', 'Helpdesk Queue').executeTakeFirstOrThrow();
+    const attendant = await c.s.selectFrom('build_auto_attendants').select(['name', 'resource_accounts']).where('name', '=', 'Helpdesk Menu').executeTakeFirstOrThrow();
+    expect(queue.resource_accounts).toEqual([]);
+    expect(attendant.resource_accounts).toEqual([]);
+  });
+});

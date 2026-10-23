@@ -1254,20 +1254,27 @@ export class BuildService {
       // ever copied from the live match here - never PhoneNumber.
       const livePhoneRaw = live && typeof live.PhoneNumber === 'string' ? live.PhoneNumber : undefined;
       const livePhone = livePhoneRaw ? livePhoneRaw.replace(/^tel:/i, '') : null;
-      const raRow = await s
-        .insertInto('build_resource_accounts')
-        .values({
-          site_id: siteId,
-          discovery_resource_account_id: d.id,
-          display_name: d.name,
-          kind: d.kind,
-          upn: liveUpn ?? '',
-          application_id: liveUpn ? RESOURCE_ACCOUNT_APPLICATION_IDS[d.kind] : null,
-          phone_number: livePhone,
-          status: {},
-        })
-        .returning('id')
-        .executeTakeFirstOrThrow();
+      // A voice app added from Discovery does not need a resource account: if none is associated with it in the tenant there is
+      // nothing to link, so no empty resource account row is made (the attendant or queue row is still created). A row with no
+      // discovered object behind it is a Data Collection design - its resource account still has to be requested - so it keeps one.
+      const fromVoiceApp = !!d.tenant_object_id && pointedAt.find((x) => x.id === d.tenant_object_id)?.object_type !== 'resource_account';
+      const raRow =
+        fromVoiceApp && !live
+          ? null
+          : await s
+              .insertInto('build_resource_accounts')
+              .values({
+                site_id: siteId,
+                discovery_resource_account_id: d.id,
+                display_name: d.name,
+                kind: d.kind,
+                upn: liveUpn ?? '',
+                application_id: liveUpn ? RESOURCE_ACCOUNT_APPLICATION_IDS[d.kind] : null,
+                phone_number: livePhone,
+                status: {},
+              })
+              .returning('id')
+              .executeTakeFirstOrThrow();
       if (d.kind === 'auto_attendant') {
         const notes = [d.exception_conditions, d.exception_action].filter(Boolean).join(' / ') || null;
         await s
@@ -1276,7 +1283,7 @@ export class BuildService {
             site_id: siteId,
             discovery_resource_account_id: d.id,
             name: d.name,
-            resource_accounts: JSON.stringify([raRow.id]),
+            resource_accounts: JSON.stringify(raRow ? [raRow.id] : []),
             config: {},
             holiday_call_flows: JSON.stringify([]),
             business_hours: d.business_hours,
@@ -1293,7 +1300,7 @@ export class BuildService {
             site_id: siteId,
             discovery_resource_account_id: d.id,
             name: d.name,
-            resource_accounts: JSON.stringify([raRow.id]),
+            resource_accounts: JSON.stringify(raRow ? [raRow.id] : []),
             agents: JSON.stringify([]),
             overflow: {},
             timeout: {},
