@@ -48,6 +48,12 @@ export interface TeamsExecutor {
   awaitSignIn(): Promise<{ upn: string; tenantId: string }>;
   /** Run a read-only Get-Cs* cmdlet and return its records (used by Discovery). */
   query(command: string, params?: Record<string, unknown>, opts?: QueryOpts): Promise<unknown[]>;
+  /**
+   * Run the same kind of read cmdlet for many identities in ONE round trip (a loop inside the session), so reading per-user settings for
+   * thousands of users does not pay a round trip each. Each item comes back with its records or its own error; one failure never
+   * stops the others.
+   */
+  queryMany(items: { key: string; command: string; params?: Record<string, unknown> }[], opts?: QueryOpts): Promise<{ key: string; records?: unknown[]; error?: string }[]>;
   /** Run one cmdlet. `whatIf` => generate the command text, do not change anything. */
   invoke(call: CmdletInvocation, opts: { whatIf: boolean }): Promise<CmdletResult>;
   /** Tear down the pwsh session and wipe the token from memory. */
@@ -280,6 +286,12 @@ export class SimulatedTeamsExecutor implements TeamsExecutor {
       return [{ Identity: 'Global', Simulated: true }];
     }
     return SIM_DATA[command] ?? [];
+  }
+
+  async queryMany(items: { key: string; command: string; params?: Record<string, unknown> }[], _opts: QueryOpts = {}) {
+    if (!this.signedIn) throw new Error('not connected');
+    this.lastUsedAt = Date.now();
+    return items.map((i) => ({ key: i.key, records: [] as unknown[] }));
   }
 
   async invoke(call: CmdletInvocation, opts: { whatIf: boolean }): Promise<CmdletResult> {

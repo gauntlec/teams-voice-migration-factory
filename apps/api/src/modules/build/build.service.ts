@@ -59,6 +59,7 @@ import {
   lineUriToNumber,
   upnSchema,
   validationIssues,
+  type LiveCallingSettings,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
 import { applyBulkPatch, auditBulkPatch } from '../../common/bulk-patch';
@@ -334,6 +335,7 @@ export class BuildService {
     // The live policy assignments become the starting targets (the same backfill Validate uses).
     const backfills = await this.backfillPolicyTargets(t, created);
     for (const [id, patch] of backfills) await s.updateTable(table).set(patch as never).where('id', '=', id).execute();
+    await this.applyLiveVoiceSettings(t, table, siteId, created.map((c) => c.upn));
 
     await this.audit.tenant(t.schema, `build.${objectType}s_quick_added`, {
       actor: actorOf(u),
@@ -342,6 +344,53 @@ export class BuildService {
       detail: { added: result.added.length, alreadyThere: result.alreadyThere.length, notFound: result.notFound.length },
     });
     return result;
+  }
+
+  /**
+   * Starts a Design & Build row's call forwarding, delegates, call group and voicemail from what the tenant has for that user (the
+   * sync reads Get-CsUserCallingSettings and the voicemail settings for voice-enabled users). Only what is still empty is filled: a
+   * setting the engineer has designed is never replaced. Returns how many rows changed and how many have nothing read yet.
+   */
+  async applyLiveVoiceSettings(t: TenantContext, table: 'build_users' | 'build_caps', siteId: string, onlyUpns?: string[]) {
+    const s = this.s(t);
+    let q = s.selectFrom(table).select(['id', 'upn', 'call_forwarding', 'delegates', 'pickup_group', 'voicemail']).where('site_id', '=', siteId);
+    if (onlyUpns?.length) q = q.where(sql`lower(upn)`, 'in', onlyUpns.map((x) => x.toLowerCase()));
+    const rows = await q.execute();
+    if (!rows.length) return { updated: 0, rows: 0, notRead: 0 };
+    const live = await s
+      .selectFrom('tenant_users')
+      .select(['upn', 'calling_settings', 'voicemail_enabled', 'voicemail_prompt_language'])
+      .where('removed_at', 'is', null)
+      .where(sql`lower(upn)`, 'in', rows.map((r) => r.upn.toLowerCase()))
+      .execute();
+    const byUpn = new Map(live.map((l) => [l.upn.toLowerCase(), l]));
+    const empty = (v: unknown) => v == null || (Array.isArray(v) ? v.length === 0 : typeof v === 'object' && Object.keys(v as object).length === 0);
+    let updated = 0;
+    let notRead = 0;
+    for (const r of rows) {
+      const l = byUpn.get(r.upn.toLowerCase());
+      const calling = l?.calling_settings as LiveCallingSettings | null | undefined;
+      if (!l || !calling) {
+        notRead += 1;
+        continue;
+      }
+      const patch: Record<string, unknown> = {};
+      if (empty(r.call_forwarding) && !empty(calling.callForwarding)) patch.call_forwarding = calling.callForwarding;
+      if (empty(r.delegates) && calling.delegates.length) patch.delegates = JSON.stringify(calling.delegates);
+      if (empty(r.pickup_group) && calling.pickupGroup) patch.pickup_group = calling.pickupGroup;
+      if (empty(r.voicemail) && l.voicemail_enabled !== null) patch.voicemail = { enabled: l.voicemail_enabled, language: l.voicemail_prompt_language };
+      if (Object.keys(patch).length) {
+        await s.updateTable(table).set({ ...patch, updated_at: new Date().toISOString() } as never).where('id', '=', r.id).execute();
+        updated += 1;
+      }
+    }
+    return { updated, rows: rows.length, notRead };
+  }
+
+  async importVoiceSettings(t: TenantContext, u: AuthedUser, kind: 'users' | 'caps', siteId: string) {
+    const res = await this.applyLiveVoiceSettings(t, kind === 'users' ? 'build_users' : 'build_caps', siteId);
+    await this.audit.tenant(t.schema, `build.${kind}_voice_settings_imported`, { actor: actorOf(u), targetType: 'discovery_site', targetId: siteId, detail: res });
+    return res;
   }
 
   /**
@@ -931,6 +980,7 @@ export class BuildService {
       targetId: opts.siteId,
       detail: { created, skipped, total: source.length },
     });
+    await this.applyLiveVoiceSettings(t, opts.table, opts.siteId);
     return { created, skipped, total: source.length };
   }
 

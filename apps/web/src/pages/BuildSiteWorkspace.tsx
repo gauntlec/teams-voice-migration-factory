@@ -171,6 +171,23 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
 
   const [quickAdd, setQuickAdd] = useState<'users' | 'caps' | null>(null);
   const [populateError, setPopulateError] = useState<string | null>(null);
+  const [voiceMessage, setVoiceMessage] = useState<string | null>(null);
+  // Starts empty rows from what the sync read from Teams: call forwarding, delegates, call group and voicemail.
+  const importVoice = useMutation({
+    mutationFn: (kind: 'users' | 'caps') => api<{ updated: number; rows: number; notRead: number }>(`${base}/${kind}/import-voice-settings`, { method: 'POST', body: JSON.stringify({ site_id: siteId }) }),
+    onSuccess: (r, kind) => {
+      setPopulateError(null);
+      setVoiceMessage(
+        `${r.updated} of ${r.rows} row${r.rows === 1 ? '' : 's'} started from Teams voice settings.` +
+          (r.notRead ? ` ${r.notRead} not read from Teams yet (not voice-enabled, or no sync since they were added) - run a Discovery sync.` : ''),
+      );
+      qc.invalidateQueries({ queryKey: [kind, tid, siteId] });
+    },
+    onError: (e) => {
+      setVoiceMessage(null);
+      setPopulateError(e instanceof ApiError ? e.message : 'Import failed');
+    },
+  });
   const populate = useMutation({
     mutationFn: (kind: 'users' | 'caps' | 'resource-accounts') =>
       api(`${base}/${kind}/populate`, { method: 'POST', body: JSON.stringify({ site_id: siteId }) }),
@@ -391,6 +408,11 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           {populateError}
         </DangerText>
       )}
+      {voiceMessage && (
+        <Text size={200} block>
+          {voiceMessage}
+        </Text>
+      )}
 
       <Dialog open={resetOpen} onOpenChange={(_, d) => setResetOpen(d.open)}>
         <DialogSurface>
@@ -581,6 +603,9 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
                 <Button size="small" disabled={populate.isPending} onClick={() => populate.mutate('users')}>
                   Populate from Discovery
                 </Button>
+                <Button size="small" disabled={importVoice.isPending} onClick={() => importVoice.mutate('users')}>
+                  Import voice settings
+                </Button>
                 <Button size="small" disabled={usersSelected.size === 0} onClick={() => setBulkOpen('users')}>
                   Bulk edit ({usersSelected.size} selected)
                 </Button>
@@ -653,6 +678,9 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
                 </Button>
                 <Button size="small" disabled={populate.isPending} onClick={() => populate.mutate('caps')}>
                   Populate from Discovery
+                </Button>
+                <Button size="small" disabled={importVoice.isPending} onClick={() => importVoice.mutate('caps')}>
+                  Import voice settings
                 </Button>
                 <Button size="small" disabled={capsSelected.size === 0} onClick={() => setBulkOpen('caps')}>
                   Bulk edit ({capsSelected.size} selected)

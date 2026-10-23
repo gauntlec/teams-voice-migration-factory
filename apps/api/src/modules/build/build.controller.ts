@@ -130,6 +130,16 @@ export class BuildController {
   deleteUser(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string) {
     return this.svc.deleteUser(t, user, id);
   }
+  @Post('users/import-voice-settings')
+  @RequirePermission('build:write')
+  importUserVoiceSettings(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Body(new ZodBody(buildPopulateSchema)) body: BuildPopulateInput) {
+    return this.svc.importVoiceSettings(t, user, 'users', body.site_id);
+  }
+  @Post('caps/import-voice-settings')
+  @RequirePermission('build:write')
+  importCapVoiceSettings(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Body(new ZodBody(buildPopulateSchema)) body: BuildPopulateInput) {
+    return this.svc.importVoiceSettings(t, user, 'caps', body.site_id);
+  }
   @Post('users/populate')
   @RequirePermission('build:write')
   populateUsers(

@@ -313,3 +313,22 @@ Everything is matched on the Teams Id / UPN (`tenant_object_id`), never on a nam
 two. A voice app designed first (same kind and exact name, exactly one on the site) is linked to the live one instead of copied; several
 with that name are reported as ambiguous and left alone. Numbers belong to the resource account; one that is in none of the site's ranges is added to
 the site's ranges first.
+
+## Teams voice settings per user (2026.10.44)
+
+The sync reads Teams voice settings for **voice-enabled users only** (Enterprise Voice on, or a phone number), as part of the Users step,
+after `Get-CsOnlineUser`:
+
+- `Get-CsUserCallingSettings` - call forwarding and simultaneous ring, unanswered-call routing (for example "after 20 seconds go to voicemail"),
+  busy on busy, call group, delegates. Stored on `tenant_users.calling_settings` in the shape Design & Build designs it
+  (`call_forwarding`, `pickup_group`, `delegates`), read by `parseLiveCallingSettings` (`packages/shared/src/calling-settings.ts`).
+- `Get-CsOnlineVoicemailUserSettings` - stored as `tenant_users.voicemail_settings` (the enabled flag and language also in their own columns).
+
+Neither cmdlet has a bulk form, so users are read 20 at a time in one session round trip (`TeamsExecutor.queryMany`). Users read in the last 12
+hours are skipped; the oldest are read first, and a pass stops after 90 minutes on a huge tenant and carries on at the next sync. A targeted
+check ("Validate against tenant") reads the same for the UPNs it checks.
+
+**Design & Build** starts from this: Quick add, Populate and the **Import voice settings** button (Users and Common area phones tabs) fill a row's
+call forwarding, delegates, call group and voicemail from what the tenant has, but only where the row is still empty - a designed setting is never
+replaced. **Deployment** compares a designed setting with what Teams has and plans a command only when it differs; a user whose settings have
+never been read still always plans the designed setting.

@@ -13,6 +13,7 @@ import {
   type AutoAttendantLiveState,
   type CallQueueLiveState,
   type LiveCallableEntityRef,
+  type LiveCallingSettings,
   type LiveIdentityState,
   type SharedCallingPolicyLiveState,
 } from '@tvmf/shared';
@@ -120,6 +121,7 @@ export async function resolveLiveIdentityState(scoped: Scoped, upns: string[]) {
       'entra_id',
       'voicemail_enabled',
       'voicemail_prompt_language',
+      'calling_settings',
     ])
     .where('removed_at', 'is', null)
     .where(sql`lower(upn)`, 'in', wanted)
@@ -141,6 +143,8 @@ export async function resolveLiveIdentityState(scoped: Scoped, upns: string[]) {
       // fallback-to-always-emit applies, same as an unmatched UPN.
       voicemailEnabled: r.voicemail_enabled ?? undefined,
       voicemailPromptLanguage: r.voicemail_prompt_language,
+      // null (never read) becomes undefined so planIdentityRow keeps always emitting until the sync has read this user.
+      callingSettings: (r.calling_settings as LiveCallingSettings | null) ?? undefined,
     });
   }
   return out;

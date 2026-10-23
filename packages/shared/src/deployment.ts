@@ -1,3 +1,4 @@
+import { delegateMatchesLive, forwardingMatchesLive, pickupGroupMatchesLive, unansweredMatchesLive } from './calling-settings';
 import {
   AA_CALLABLE_ENTITY_KINDS,
   AA_DIRECTORY_SEARCH_METHODS,
@@ -43,6 +44,11 @@ export interface LiveIdentityState {
    */
   voicemailEnabled?: boolean;
   voicemailPromptLanguage?: string | null;
+  /**
+   * Get-CsUserCallingSettings, read by the sync for voice-enabled users. `undefined` = never read for this user, so planIdentityRow
+   * falls back to always emitting a designed call forwarding / call group / delegate setting.
+   */
+  callingSettings?: import('./calling-settings').LiveCallingSettings;
 }
 
 /** Last 10 significant digits, for loose number matching (same rule Data Collection and Design & Build use). */
@@ -485,7 +491,8 @@ export function planIdentityRow(
   // diffable against live state yet (Discovery doesn't capture
   // Get-CsUserCallingSettings - see build-validation.service.ts), so - like
   // voicemail above - they always re-issue whenever a target is designed.
-  if (row.call_forwarding?.forwarding) {
+  const liveCalling = live?.callingSettings;
+  if (row.call_forwarding?.forwarding && !(liveCalling && forwardingMatchesLive(row.call_forwarding.forwarding, liveCalling.callForwarding.forwarding))) {
     const f = row.call_forwarding.forwarding;
     calls.push({
       cmdlet: 'Set-CsUserCallingSettings',
@@ -498,7 +505,7 @@ export function planIdentityRow(
       objectId: row.id,
     });
   }
-  if (row.call_forwarding?.unanswered) {
+  if (row.call_forwarding?.unanswered && !(liveCalling && unansweredMatchesLive(row.call_forwarding.unanswered, liveCalling.callForwarding.unanswered))) {
     const u = row.call_forwarding.unanswered;
     calls.push({
       cmdlet: 'Set-CsUserCallingSettings',
@@ -517,7 +524,7 @@ export function planIdentityRow(
       objectId: row.id,
     });
   }
-  if (row.call_forwarding?.busyOnBusy) {
+  if (row.call_forwarding?.busyOnBusy && !(liveCalling && liveCalling.callForwarding.busyOnBusy === row.call_forwarding.busyOnBusy)) {
     calls.push({
       cmdlet: 'Set-CsUserCallingSettings',
       parameters: { Identity: identity, BusyOnBusyOption: row.call_forwarding.busyOnBusy },
@@ -533,7 +540,7 @@ export function planIdentityRow(
   // absent means "still the untouched default" - so it's the real signal,
   // not `.targets.length` (which the dialog can legitimately save as empty
   // to clear a previously-saved group).
-  if (row.pickup_group?.order) {
+  if (row.pickup_group?.order && !(liveCalling && pickupGroupMatchesLive(row.pickup_group, liveCalling.pickupGroup))) {
     calls.push({
       cmdlet: 'Set-CsUserCallingSettings',
       parameters: {
@@ -550,6 +557,7 @@ export function planIdentityRow(
     // New-CsUserCallingDelegate -Delegate is mandatory; a blank one would render
     // without it and make PowerShell prompt (hanging the run), so skip it.
     if (!d.delegateUpn?.trim()) continue;
+    if (liveCalling && delegateMatchesLive(d, liveCalling.delegates)) continue;
     calls.push({
       cmdlet: 'New-CsUserCallingDelegate',
       parameters: {

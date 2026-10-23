@@ -1,8 +1,9 @@
 import type { Job } from 'bullmq';
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import { platformDb, tenantDb, type DB, webOrigin as resolveWebOrigin } from '@tvmf/db';
 import {
   RESOURCE_ACCOUNT_APPLICATION_IDS,
+  parseLiveCallingSettings,
   TENANT_DISCOVERY_STEPS,
   TENANT_POLICY_TYPES,
   type DiscoveryCompletedContext,
@@ -267,6 +268,19 @@ async function runDiscovery(
       }
     }
     if (signInLost) break;
+    if (step === 'users' && wantType('user') && stepComplete) {
+      // Everything Teams voice keeps per voice-enabled user, so Design & Build can start from what the tenant has.
+      try {
+        const due = await usersNeedingVoiceSettings(s, 12 * 3600_000);
+        await syncUserVoiceSettings(s, exec, runId, due.map((u) => ({ objectId: u.object_id, upn: u.upn })), progress, { budgetMs: 90 * 60_000 });
+        progress.note = null;
+      } catch (e) {
+        const message = (e as Error).message ?? String(e);
+        progress.errors.push({ step, message: `voice settings: ${message}` });
+        if (!exec.alive || SESSION_GONE.test(message)) signInLost = true;
+      }
+      if (signInLost) break;
+    }
     progress.completed.push(step);
     progress.note = null;
     if (stepComplete) for (const t of STEP_TYPES[step]) if (wantType(t)) succeededTypes.add(t);
@@ -1023,37 +1037,105 @@ export async function runTargetedUserSync(
         .execute();
     }
     await projectUser(s, runId, objectId, r);
-    await syncVoicemailSettings(s, exec, objectId, upn);
     progress.counts.user += 1;
   }
+  // Voice settings for the same users, read in batches (a user with no voice features is skipped).
+  const found = await s
+    .selectFrom('tenant_users')
+    .select(['object_id', 'upn', 'enterprise_voice_enabled', 'line_uri'])
+    .where('removed_at', 'is', null)
+    .where(sql`lower(upn)`, 'in', upns.map((u) => u.toLowerCase()))
+    .execute();
+  await syncUserVoiceSettings(s, exec, runId, found.filter(isVoiceEnabled).map((u) => ({ objectId: u.object_id, upn: u.upn })), progress);
   progress.note = null;
 }
 
+/** A user with voice features: Enterprise Voice on, or a phone number. Everything else has no Teams voice settings worth reading. */
+const isVoiceEnabled = (u: { enterprise_voice_enabled: boolean | null; line_uri: string | null }) => u.enterprise_voice_enabled === true || !!u.line_uri;
+
+/** How many users go in one round trip to the session. */
+const VOICE_SETTINGS_BATCH = 20;
+
 /**
- * Get-CsOnlineVoicemailUserSettings has no bulk/wildcard form (-Identity is
- * mandatory, single value - confirmed against Microsoft Learn), so it can't
- * join the full-tenant sweep the way Get-CsOnlineUser does. Piggybacked onto
- * the targeted per-UPN loop above instead, which already pays the per-user
- * round-trip cost for Get-CsOnlineUser. Best-effort: a failure here (e.g. the
- * user has no mailbox) is swallowed rather than failing the whole targeted
- * check - voicemail is diffing data, not core sync data.
+ * Everything Teams voice keeps per user beyond Get-CsOnlineUser, read for voice-enabled users only:
+ * Get-CsUserCallingSettings (call forwarding, simultaneous ring, unanswered routing, call group, delegates, busy on busy) and
+ * Get-CsOnlineVoicemailUserSettings (voicemail on/off, language, greeting and transcription settings). Neither has a bulk form, so each
+ * batch of users is read in one round trip. A user that fails (no mailbox, say) is skipped and recorded as one error line, never failing
+ * the others. `budgetMs` ends the pass early on a huge tenant; users are taken oldest-read first, so the next run carries on.
  */
-async function syncVoicemailSettings(s: Scoped, exec: TeamsExecutor, objectId: string, upn: string) {
-  try {
-    const recs = await exec.query('Get-CsOnlineVoicemailUserSettings', { Identity: upn }, { depth: 4 });
-    const vm = recs.find((x) => x && typeof x === 'object') as Rec | undefined;
-    if (!vm) return;
-    await s
-      .updateTable('tenant_users')
-      .set({
-        voicemail_enabled: bool(vm.VoicemailEnabled),
-        voicemail_prompt_language: str(vm.PromptLanguage),
-      })
-      .where('object_id', '=', objectId)
-      .execute();
-  } catch {
-    // best-effort - see docstring
+export async function syncUserVoiceSettings(
+  s: Scoped,
+  exec: TeamsExecutor,
+  runId: string,
+  users: { objectId: string; upn: string }[],
+  progress: TenantDiscoveryProgress,
+  opts: { budgetMs?: number } = {},
+): Promise<{ read: number; failed: number; stoppedEarly: boolean }> {
+  const started = Date.now();
+  let read = 0;
+  let failed = 0;
+  for (let i = 0; i < users.length; i += VOICE_SETTINGS_BATCH) {
+    if (opts.budgetMs && Date.now() - started > opts.budgetMs) {
+      progress.note = `Read voice settings for ${read.toLocaleString()} of ${users.length.toLocaleString()} voice users; the rest follow on the next sync.`;
+      await saveProgress(s, runId, progress);
+      return { read, failed, stoppedEarly: true };
+    }
+    const batch = users.slice(i, i + VOICE_SETTINGS_BATCH);
+    progress.note = `Reading voice settings: ${Math.min(i + batch.length, users.length).toLocaleString()} / ${users.length.toLocaleString()} voice-enabled users…`;
+    await saveProgress(s, runId, progress);
+    let results: Awaited<ReturnType<TeamsExecutor['queryMany']>>;
+    try {
+      results = await exec.queryMany(
+        batch.flatMap((u) => [
+          { key: `c:${u.objectId}`, command: 'Get-CsUserCallingSettings', params: { Identity: u.upn } },
+          { key: `v:${u.objectId}`, command: 'Get-CsOnlineVoicemailUserSettings', params: { Identity: u.upn } },
+        ]),
+        { depth: 4, timeoutMs: 10 * 60_000 },
+      );
+    } catch (e) {
+      const message = (e as Error).message ?? String(e);
+      if (!exec.alive || /pwsh exited|could not start pwsh|executor disposed|not connected|session is disconnected/i.test(message)) throw e;
+      progress.errors.push({ step: 'users', message: `voice settings (${batch.length} users): ${message}` });
+      failed += batch.length;
+      continue;
+    }
+    const byKey = new Map(results.map((r) => [r.key, r]));
+    for (const u of batch) {
+      const calling = byKey.get(`c:${u.objectId}`);
+      const voicemail = byKey.get(`v:${u.objectId}`);
+      const callingRec = calling?.records?.find((x) => x && typeof x === 'object');
+      const vmRec = voicemail?.records?.find((x) => x && typeof x === 'object') as Rec | undefined;
+      if (!callingRec && !vmRec) {
+        failed += 1;
+        const why = calling?.error ?? voicemail?.error;
+        if (why && progress.errors.length < 50) progress.errors.push({ step: 'users', message: `${u.upn}: ${why}` });
+        continue;
+      }
+      const set: Record<string, unknown> = { voice_settings_at: new Date().toISOString() };
+      if (callingRec) set.calling_settings = parseLiveCallingSettings(callingRec);
+      if (vmRec) {
+        set.voicemail_settings = vmRec;
+        set.voicemail_enabled = bool(vmRec.VoicemailEnabled);
+        set.voicemail_prompt_language = str(vmRec.PromptLanguage);
+      }
+      await s.updateTable('tenant_users').set(set as never).where('object_id', '=', u.objectId).execute();
+      read += 1;
+    }
   }
+  return { read, failed, stoppedEarly: false };
+}
+
+/** The voice-enabled users whose settings are oldest (never read first), up to `limit`, skipping any read within `freshMs`. */
+async function usersNeedingVoiceSettings(s: Scoped, freshMs: number) {
+  const cutoff = new Date(Date.now() - freshMs).toISOString();
+  return s
+    .selectFrom('tenant_users')
+    .select(['object_id', 'upn'])
+    .where('removed_at', 'is', null)
+    .where((eb) => eb.or([eb('enterprise_voice_enabled', '=', true), eb('line_uri', 'is not', null)]))
+    .where((eb) => eb.or([eb('voice_settings_at', 'is', null), eb('voice_settings_at', '<', cutoff)]))
+    .orderBy('voice_settings_at', (o) => o.asc().nullsFirst())
+    .execute();
 }
 
 /**

@@ -434,6 +434,39 @@ try {
     return [];
   }
 
+  /** See TeamsExecutor.queryMany: one pwsh script loops the items, each in its own try/catch. */
+  async queryMany(
+    items: { key: string; command: string; params?: Record<string, unknown> }[],
+    opts: QueryOpts = {},
+  ): Promise<{ key: string; records?: unknown[]; error?: string }[]> {
+    if (!this.signedIn) throw new Error('not connected');
+    if (items.length === 0) return [];
+    const depth = opts.depth ?? 6;
+    const quote = (v: string) => `'${v.replace(/'/g, "''")}'`;
+    const body = items
+      .map((i) => {
+        const rendered = renderCommand({ cmdlet: i.command, parameters: i.params ?? {}, objectType: '' });
+        return `try { $r = @(${rendered} -ErrorAction Stop); $out += [pscustomobject]@{ k = ${quote(i.key)}; r = $r; e = $null } } catch { $out += [pscustomobject]@{ k = ${quote(i.key)}; r = $null; e = $_.Exception.Message } }`;
+      })
+      .join('\n');
+    const out = await this.exec(
+      `$out = @()
+${body}
+Write-Output ('__JSON__' + (ConvertTo-Json -InputObject @($out) -Depth ${depth} -Compress))`,
+      opts.timeoutMs,
+    );
+    for (const line of out.split('\n')) {
+      if (!line.startsWith('__JSON__')) continue;
+      const parsed = JSON.parse(line.slice('__JSON__'.length)) as unknown;
+      const list = parsed == null ? [] : Array.isArray(parsed) ? parsed : [parsed];
+      return (list as { k: string; r: unknown; e: string | null }[]).map((x) => ({
+        key: x.k,
+        ...(x.e ? { error: x.e } : { records: x.r == null ? [] : Array.isArray(x.r) ? x.r : [x.r] }),
+      }));
+    }
+    return items.map((i) => ({ key: i.key, error: 'no output from the session' }));
+  }
+
   /** Runs one already-fully-rendered statement and returns its error message, or null on success. */
   private async execStatement(statement: string): Promise<string | null> {
     const out = await this.exec(`try { ${statement}; Write-Output '__OK__' } catch { Write-Output ('__ERR__' + $_.Exception.Message) }`);

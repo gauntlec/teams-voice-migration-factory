@@ -197,9 +197,10 @@ remember to re-run Discovery.
    described in plain English (`describeRemainingCall`,
    `packages/shared/src/deployment-verify.ts`), e.g. "Phone number: designed
    +1555..., live +1555...". An account the check couldn't find counts as
-   still different. Call forwarding / call group / delegate settings can't be
-   read back (Discovery doesn't capture `Get-CsUserCallingSettings`) so they
-   are left out of the verdict and counted separately.
+   still different. Call forwarding / call group / delegate settings are
+   still left out of this verdict and counted separately (the post-deployment
+   check does not read them back yet), although Discovery now reads them and the
+   Deployment preview compares them.
 6. The verdict is stored on `deployments.verification` (jsonb, migration
    0046; type `DeploymentVerification`): `pending` while it runs, then
    `verified` (`checked`, `matched`, `differing[]` with each row's
