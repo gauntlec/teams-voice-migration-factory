@@ -354,7 +354,8 @@ export class BuildService {
     const { results, dcIds } = await this.discovery.captureSelected(t, u, input.kind, input.items);
     if (!input.alsoBuild) return results;
     const siteOf = new Map(input.items.map((i) => [i.id, i.siteId]));
-    const eligible = results.filter((r) => dcIds.has(r.id) && !r.note && (r.dataCollection === 'added' || r.dataCollection === 'already_on_site'));
+    // dcIds only holds items that really are on this site's record; a note (say, a number that could not be attached) does not stop the Design & Build row
+    const eligible = results.filter((r) => dcIds.has(r.id) && (r.dataCollection === 'added' || r.dataCollection === 'already_on_site'));
     for (const r of results) if (!eligible.includes(r)) r.designAndBuild = 'not_added';
 
     if (input.kind === 'account') {
@@ -388,12 +389,16 @@ export class BuildService {
         ]);
         return new Set([...ra, ...aa, ...cq].map((r) => r.discovery_resource_account_id));
       };
+      // a voice app can have several resource accounts: one joining a record that is already in Design & Build still counts as added
+      const raCount = async () => (await s.selectFrom('build_resource_accounts').select('id').where('discovery_resource_account_id', 'in', dc).execute()).length;
       const before = await linked();
+      const raBefore = await raCount();
       await this.populateResourceAccounts(t, u, siteId, dc);
       const after = await linked();
+      const raAfter = await raCount();
       for (const g of group) {
         const id = dcIds.get(g.id)!;
-        g.designAndBuild = before.has(id) ? 'already_on_site' : after.has(id) ? 'added' : 'not_added';
+        g.designAndBuild = before.has(id) ? (raAfter > raBefore ? 'added' : 'already_on_site') : after.has(id) ? 'added' : 'not_added';
       }
     }
     return results;
@@ -1243,6 +1248,20 @@ export class BuildService {
       }
       return undefined;
     };
+    // Records added from Discovery list the resource accounts that belong to them (a voice app can have several): one Design &
+    // Build resource account row is made for each, matched on its UPN, and all are linked to the attendant or queue.
+    const sourceIds = source.map((d) => d.id);
+    const memberRows = sourceIds.length
+      ? await s
+          .selectFrom('discovery_resource_account_members as m')
+          .innerJoin('tenant_objects as o', 'o.id', 'm.tenant_object_id')
+          .select(['m.resource_account_id', 'o.object_key', 'o.display_name', 'o.data'])
+          .where('m.resource_account_id', 'in', sourceIds)
+          .where('o.removed_at', 'is', null)
+          .execute()
+      : [];
+    const membersOf = new Map<string, typeof memberRows>();
+    for (const m of memberRows) membersOf.set(m.resource_account_id, [...(membersOf.get(m.resource_account_id) ?? []), m]);
     let created = 0;
     const createdDiscoveryIds: string[] = [];
     for (const d of source) {
@@ -1258,8 +1277,9 @@ export class BuildService {
       // nothing to link, so no empty resource account row is made (the attendant or queue row is still created). A row with no
       // discovered object behind it is a Data Collection design - its resource account still has to be requested - so it keeps one.
       const fromVoiceApp = !!d.tenant_object_id && pointedAt.find((x) => x.id === d.tenant_object_id)?.object_type !== 'resource_account';
+      const hasMembers = (membersOf.get(d.id)?.length ?? 0) > 0;
       const raRow =
-        fromVoiceApp && !live
+        hasMembers || (fromVoiceApp && !live)
           ? null
           : await s
               .insertInto('build_resource_accounts')
@@ -1312,6 +1332,7 @@ export class BuildService {
       created += 1;
       createdDiscoveryIds.push(d.id);
     }
+    for (const d of source) await this.syncResourceAccountMembers(s, siteId, d, membersOf.get(d.id) ?? []);
     if (createdDiscoveryIds.length > 0) {
       await this.populateStructuredFromLive(s, siteId, createdDiscoveryIds);
     }
@@ -1725,6 +1746,54 @@ export class BuildService {
       targetId: id,
     });
     return { ok: true };
+  }
+
+  /**
+   * Makes the Design & Build resource account rows for the resource accounts that belong to a Data Collection record - one per
+   * UPN, never twice - and lists them all on the record's auto attendant or call queue. Safe to run again: a resource account
+   * added to the record later is picked up, and nothing already there is changed.
+   */
+  private async syncResourceAccountMembers(
+    s: Scoped,
+    siteId: string,
+    d: { id: string; name: string; kind: 'auto_attendant' | 'call_queue' },
+    members: { object_key: string; display_name: string | null; data: unknown }[],
+  ) {
+    if (!members.length) return;
+    const ids: string[] = [];
+    for (const m of members) {
+      const data = (m.data ?? {}) as Record<string, unknown>;
+      const upn = typeof data.UserPrincipalName === 'string' ? data.UserPrincipalName : '';
+      if (!upn) continue;
+      const phoneRaw = typeof data.PhoneNumber === 'string' ? data.PhoneNumber : null;
+      const existing = await s.selectFrom('build_resource_accounts').select('id').where('site_id', '=', siteId).where(sql`lower(upn)`, '=', upn.toLowerCase()).executeTakeFirst();
+      if (existing) {
+        ids.push(existing.id);
+        continue;
+      }
+      const row = await s
+        .insertInto('build_resource_accounts')
+        .values({
+          site_id: siteId,
+          discovery_resource_account_id: d.id,
+          display_name: m.display_name ?? d.name,
+          kind: d.kind,
+          upn,
+          application_id: RESOURCE_ACCOUNT_APPLICATION_IDS[d.kind],
+          phone_number: phoneRaw ? phoneRaw.replace(/^tel:/i, '').split(';')[0]!.trim() : null,
+          status: {},
+        })
+        .returning('id')
+        .executeTakeFirstOrThrow();
+      ids.push(row.id);
+    }
+    if (!ids.length) return;
+    const table = d.kind === 'auto_attendant' ? 'build_auto_attendants' : 'build_call_queues';
+    const app = await s.selectFrom(table).select(['id', 'resource_accounts']).where('discovery_resource_account_id', '=', d.id).executeTakeFirst();
+    if (!app) return;
+    const have = Array.isArray(app.resource_accounts) ? (app.resource_accounts as string[]) : [];
+    const all = [...new Set([...have, ...ids])];
+    if (all.length !== have.length) await s.updateTable(table).set({ resource_accounts: JSON.stringify(all) } as never).where('id', '=', app.id).execute();
   }
 
   /**

@@ -11,6 +11,7 @@ import { seedCustomer, seedNumbers, seedSite, seedUser, unused, useDb, type Test
 const handle = useDb();
 let c: TestCustomer;
 let build: BuildService;
+let discovery: TenantDiscoveryService;
 let engineer: Awaited<ReturnType<typeof seedUser>>;
 let luton: string;
 let nyc: string;
@@ -31,7 +32,7 @@ beforeAll(async () => {
   nyc = (await seedSite(c.s, { sitecode: 'NYC01' })).id;
   const audit = new AuditService(handle.db);
   const dc = new DataCollectionService(handle.db, audit);
-  const discovery = new TenantDiscoveryService(handle.db, unused('queue'), audit, unused('deployments'), dc, new TelephonyService(handle.db, audit, dc));
+  discovery = new TenantDiscoveryService(handle.db, unused('queue'), audit, unused('deployments'), dc, new TelephonyService(handle.db, audit, dc));
   build = new BuildService(handle.db, audit, new BuildValidationService(handle.db), discovery, unused('documentBuilder'), unused('files'));
 });
 
@@ -196,5 +197,61 @@ describe('Call flows for discovered voice apps', () => {
     const linked = await c.s.selectFrom('discovery_flows').select(['imported_at', 'build_auto_attendant_id']).where('id', '=', menuFlow.id).executeTakeFirstOrThrow();
     expect(linked.build_auto_attendant_id).toBe(first.row.id);
     expect(linked.imported_at).toBeTruthy();
+  });
+});
+
+describe('one auto attendant with several resource accounts', () => {
+  async function setup(tag: string, siteCode: string, nums: [string, string]) {
+    await seedNumbers(c.s, siteCode, nums);
+    const ra1 = await object('resource_account', `ra-${tag}-1`, `Main ${tag} 1`, { UserPrincipalName: `main1.${tag}@contoso.test`, ApplicationId: 'ce933385-9390-45d1-9512-c8d228074e07', PhoneNumber: `tel:${nums[0]}` });
+    const ra2 = await object('resource_account', `ra-${tag}-2`, `Main ${tag} 2`, { UserPrincipalName: `main2.${tag}@contoso.test`, ApplicationId: 'ce933385-9390-45d1-9512-c8d228074e07', PhoneNumber: `tel:${nums[1]}` });
+    const aa = await object('auto_attendant', `aa-${tag}`, `Main ${tag}`, { Identity: `aa-${tag}`, LanguageId: 'en-GB', ApplicationInstances: [`ra-${tag}-1`, `ra-${tag}-2`] });
+    return { ra1, ra2, aa };
+  }
+  async function expectWhole(tag: string, siteId: string, nums: [string, string]) {
+    const dc = await c.s.selectFrom('discovery_resource_accounts').selectAll().where('site_id', '=', siteId).where('name', 'like', `Main ${tag}%`).execute();
+    expect(dc).toHaveLength(1);
+    const held = await c.s.selectFrom('phone_numbers').select(['e164', 'holder_id']).where('e164', 'in', nums).execute();
+    expect(held.map((h) => h.holder_id)).toEqual([dc[0]!.id, dc[0]!.id]);
+    expect(dc[0]!.comments).toContain(`main1.${tag}@contoso.test`);
+    expect(dc[0]!.comments).toContain(`main2.${tag}@contoso.test`);
+    const aas = await c.s.selectFrom('build_auto_attendants').select(['id', 'resource_accounts']).where('site_id', '=', siteId).where('name', 'like', `Main ${tag}%`).execute();
+    expect(aas).toHaveLength(1);
+    const ras = await c.s.selectFrom('build_resource_accounts').select(['id', 'upn', 'phone_number']).where('site_id', '=', siteId).where('upn', 'like', `%.${tag}@contoso.test`).orderBy('upn').execute();
+    expect(ras.map((r) => r.upn)).toEqual([`main1.${tag}@contoso.test`, `main2.${tag}@contoso.test`]);
+    expect(ras.map((r) => r.phone_number)).toEqual(nums);
+    expect([...(aas[0]!.resource_accounts as string[])].sort()).toEqual(ras.map((r) => r.id).sort());
+    expect(await c.s.selectFrom('discovery_flows').select('id').where('site_id', '=', siteId).where('name', 'like', `Main ${tag}%`).execute()).toHaveLength(1);
+  }
+
+  it('keeps both resource accounts when both are added together', async () => {
+    const { ra1, ra2 } = await setup('both', 'LUT01', ['+442070001001', '+442070001002']);
+    const res = await build.addFromDiscovery(c.t, engineer, { kind: 'resource_account', items: [{ id: ra1, siteId: luton }, { id: ra2, siteId: luton }], alsoBuild: true });
+    expect(res.map((r) => r.designAndBuild)).toEqual(['added', 'added']);
+    await expectWhole('both', luton, ['+442070001001', '+442070001002']);
+  });
+
+  it('keeps both when the auto attendant itself is added', async () => {
+    const { aa } = await setup('aa', 'NYC01', ['+12125552001', '+12125552002']);
+    await build.addFromDiscovery(c.t, engineer, { kind: 'auto_attendant', items: [{ id: aa, siteId: nyc }], alsoBuild: true });
+    await expectWhole('aa', nyc, ['+12125552001', '+12125552002']);
+  });
+
+  it('adds the second resource account to the existing record when it comes later', async () => {
+    const { ra1, ra2 } = await setup('late', 'LUT01', ['+442070003001', '+442070003002']);
+    await build.addFromDiscovery(c.t, engineer, { kind: 'resource_account', items: [{ id: ra1, siteId: luton }], alsoBuild: true });
+    const later = await build.addFromDiscovery(c.t, engineer, { kind: 'resource_account', items: [{ id: ra2, siteId: luton }], alsoBuild: true });
+    expect(later[0]).toMatchObject({ dataCollection: 'added', designAndBuild: 'added' });
+    await expectWhole('late', luton, ['+442070003001', '+442070003002']);
+  });
+
+  it('also makes one record when the bulk Import brings both resource accounts in', async () => {
+    const { ra1, ra2 } = await setup('bulk', 'LUT01', ['+442070004001', '+442070004002']);
+    await discovery.importResourceAccounts(c.t, engineer, { assignments: [{ id: ra1, siteId: luton }, { id: ra2, siteId: luton }] } as never, true);
+    const dc = await c.s.selectFrom('discovery_resource_accounts').select('id').where('site_id', '=', luton).where('name', 'like', 'Main bulk%').execute();
+    expect(dc).toHaveLength(1);
+    expect(await c.s.selectFrom('discovery_resource_account_members').select('tenant_object_id').where('resource_account_id', '=', dc[0]!.id).execute()).toHaveLength(2);
+    const held = await c.s.selectFrom('phone_numbers').select('holder_id').where('e164', 'in', ['+442070004001', '+442070004002']).execute();
+    expect(held.map((h) => h.holder_id)).toEqual([dc[0]!.id, dc[0]!.id]);
   });
 });

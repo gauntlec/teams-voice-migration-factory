@@ -603,6 +603,13 @@ export interface DiscoveryResourceAccountsTable {
   updated_at: Ts;
 }
 
+/** The discovered resource accounts that belong to one discovery_resource_accounts record (see 0062): a voice app can have several. */
+export interface DiscoveryResourceAccountMembersTable {
+  resource_account_id: string;
+  tenant_object_id: string;
+  created_at: Ts;
+}
+
 export interface DiscoveryNetworkTable {
   id: Generated<string>;
   /** FK -> discovery_sites.id (ON DELETE SET NULL). null = not tied to a site. */
@@ -1625,6 +1632,7 @@ export interface DB {
   discovery_users: DiscoveryUsersTable;
   discovery_caps: DiscoveryCapsTable;
   discovery_resource_accounts: DiscoveryResourceAccountsTable;
+  discovery_resource_account_members: DiscoveryResourceAccountMembersTable;
   attachments: AttachmentsTable;
   build_users: BuildUsersTable;
   build_caps: BuildCapsTable;

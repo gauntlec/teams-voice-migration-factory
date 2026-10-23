@@ -1062,7 +1062,8 @@ export class TenantDiscoveryService {
         // already captured: by the exact object, or - for rows made before that link existed - by name
         sql<boolean>`NOT EXISTS (SELECT 1 FROM ${sql.table(`${t.schema}.discovery_resource_accounts`)} d
                          WHERE d.tenant_object_id = o.id
-                            OR (d.tenant_object_id IS NULL AND lower(d.name) = lower(o.display_name)))`,
+                            OR (d.tenant_object_id IS NULL AND lower(d.name) = lower(o.display_name)))
+                     AND NOT EXISTS (SELECT 1 FROM ${sql.table(`${t.schema}.discovery_resource_account_members`)} m WHERE m.tenant_object_id = o.id)`,
       )
       .orderBy('o.display_name')
       .execute();
@@ -1091,13 +1092,13 @@ export class TenantDiscoveryService {
   private async discoveredRaDetails(
     t: TenantContext,
     obj: { id: string; object_type: string; object_key: string; display_name: string | null; data: unknown },
-  ): Promise<{ fields: Partial<VoiceAppFields>; comments: string | null; numbers: string[]; flow: { objectId: string; kind: 'auto_attendant' | 'call_queue'; name: string; answers: unknown; notes: string[] } | null }> {
+  ): Promise<{ fields: Partial<VoiceAppFields>; comments: string | null; numbers: string[]; memberIds: string[]; members: { id: string; line: string; number: string | null }[]; flow: { objectId: string; kind: 'auto_attendant' | 'call_queue'; name: string; answers: unknown; notes: string[] } | null }> {
     const s = this.s(t);
     const data = (obj.data ?? {}) as Record<string, unknown>;
     const lower = (v: unknown) => (typeof v === 'string' ? v.toLowerCase() : '');
     const instancesOf = (d: Record<string, unknown>): string[] => (Array.isArray(d.ApplicationInstances) ? (d.ApplicationInstances as unknown[]).filter((x): x is string => typeof x === 'string').map(lower) : []);
     const [ras, apps, schedules, users, flows] = await Promise.all([
-      s.selectFrom('tenant_objects').select(['object_key', 'display_name', 'data']).where('object_type', '=', 'resource_account').where('removed_at', 'is', null).execute(),
+      s.selectFrom('tenant_objects').select(['id', 'object_key', 'display_name', 'data']).where('object_type', '=', 'resource_account').where('removed_at', 'is', null).execute(),
       s.selectFrom('tenant_objects').select(['id', 'object_type', 'object_key', 'display_name', 'data']).where('object_type', 'in', ['auto_attendant', 'call_queue']).where('removed_at', 'is', null).execute(),
       s.selectFrom('tenant_objects').select(['object_key', 'data']).where('object_type', '=', 'schedule').where('removed_at', 'is', null).execute(),
       s.selectFrom('tenant_users').select(['entra_id', 'upn']).where('entra_id', 'is not', null).execute(),
@@ -1112,15 +1113,18 @@ export class TenantDiscoveryService {
 
     const numbers: string[] = [];
     const lines: string[] = [];
+    const members: { id: string; line: string; number: string | null }[] = [];
     for (const r of myRas) {
       const d = (r.data ?? {}) as Record<string, unknown>;
       const upn = typeof d.UserPrincipalName === 'string' ? d.UserPrincipalName : null;
       const num = typeof d.PhoneNumber === 'string' ? d.PhoneNumber.replace(/^tel:/i, '').split(';')[0]!.trim() : null;
       if (num) numbers.push(num);
-      lines.push(`Resource account ${upn ?? r.display_name ?? r.object_key}${num ? `, number ${num}` : ', no number'}`);
+      const line = `Resource account ${upn ?? r.display_name ?? r.object_key}${num ? `, number ${num}` : ', no number'}`;
+      lines.push(line);
+      members.push({ id: r.id, line, number: num });
     }
     const comments = lines.length ? `Added from Discovery. ${lines.join('; ')}.` : null;
-    if (!app) return { fields: {}, comments, numbers, flow: null };
+    if (!app) return { fields: {}, comments, numbers, memberIds: myRas.map((r) => r.id), members, flow: null };
 
     const upnByEntra = new Map(users.map((u) => [u.entra_id!.toLowerCase(), u.upn]));
     const appByIdentity = new Map(apps.map((a) => [lower((a.data as Record<string, unknown>)?.Identity ?? a.object_key), { kind: a.object_type as 'auto_attendant' | 'call_queue', name: a.display_name ?? a.object_key }]));
@@ -1144,7 +1148,7 @@ export class TenantDiscoveryService {
     const flowName = app.display_name ?? app.object_key;
     if (app.object_type === 'call_queue') {
       const w = callQueueToWizard(appData, wizardCtx);
-      return { fields: callQueueFields(appData, nameOf), comments, numbers, flow: { objectId: app.id, kind: 'call_queue', name: flowName, answers: w.answers, notes: w.notes } };
+      return { fields: callQueueFields(appData, nameOf), comments, numbers, memberIds: myRas.map((r) => r.id), members, flow: { objectId: app.id, kind: 'call_queue', name: flowName, answers: w.answers, notes: w.notes } };
     }
 
     const scheduleByKey = new Map(schedules.map((r) => [r.object_key, (r.data ?? {}) as Record<string, unknown>]));
@@ -1159,7 +1163,7 @@ export class TenantDiscoveryService {
     };
     const structured = liveAutoAttendantToStructured(appData, scheduleByKey, resolveTarget);
     const w = autoAttendantToWizard(structured, wizardCtx);
-    return { fields: autoAttendantFields(structured, nameOf), comments, numbers, flow: { objectId: app.id, kind: 'auto_attendant', name: flowName, answers: w.answers, notes: w.notes } };
+    return { fields: autoAttendantFields(structured, nameOf), comments, numbers, memberIds: myRas.map((r) => r.id), members, flow: { objectId: app.id, kind: 'auto_attendant', name: flowName, answers: w.answers, notes: w.notes } };
   }
 
   /**
@@ -1182,6 +1186,9 @@ export class TenantDiscoveryService {
       .values({ site_id: siteId, name, kind: dcKind, tenant_object_id: obj.id, comments: details.comments, ...details.fields })
       .returning('id')
       .executeTakeFirstOrThrow();
+    if (details.memberIds.length) {
+      await s.insertInto('discovery_resource_account_members').values(details.memberIds.map((id) => ({ resource_account_id: row.id, tenant_object_id: id }))).onConflict((oc) => oc.column('tenant_object_id').doNothing()).execute();
+    }
     const problems = await this.attachDiscoveredNumbers(t, user, row.id, siteId, details.numbers);
     if (details.flow) {
       const f = details.flow;
@@ -1221,10 +1228,70 @@ export class TenantDiscoveryService {
         .executeTakeFirst();
       if (!row) problems.push(`${e164} is not in any number range, so it was not attached.`);
       else if (row.sitecode !== sitecode) problems.push(`${e164} is in another site's number range, so it was not attached.`);
+      else if (row.holder_id === raId) continue;
       else if (row.holder_id) problems.push(`${e164} is already assigned in Data Collection, so it was not attached.`);
       else await this.telephony.attachRaNumber(t, user, raId, row.id, false);
     }
     return problems;
+  }
+
+  /** The Data Collection record that already stands for this discovered object (made from it, from its voice app or sibling resource accounts, or holding it as a member), if any. */
+  private async recordFor(t: TenantContext, obj: { id: string; object_type: string; object_key: string; data: unknown }): Promise<{ id: string; site_id: string | null } | undefined> {
+    const s = this.s(t);
+    const lower = (v: unknown) => (typeof v === 'string' ? v.toLowerCase() : '');
+    const instancesOf = (d: unknown): string[] => {
+      const v = (d as Record<string, unknown> | null)?.ApplicationInstances;
+      return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').map(lower) : [];
+    };
+    const [ras, apps] = await Promise.all([
+      s.selectFrom('tenant_objects').select(['id', 'object_key']).where('object_type', '=', 'resource_account').where('removed_at', 'is', null).execute(),
+      s.selectFrom('tenant_objects').select(['id', 'data']).where('object_type', 'in', ['auto_attendant', 'call_queue']).where('removed_at', 'is', null).execute(),
+    ]);
+    const raIdByKey = new Map(ras.map((r) => [r.object_key.toLowerCase(), r.id]));
+    const rel = new Set<string>([obj.id]);
+    if (obj.object_type === 'resource_account') {
+      const key = obj.object_key.toLowerCase();
+      for (const v of apps) {
+        if (!instancesOf(v.data).includes(key)) continue;
+        rel.add(v.id);
+        for (const k of instancesOf(v.data)) if (raIdByKey.get(k)) rel.add(raIdByKey.get(k)!);
+      }
+    } else {
+      for (const k of instancesOf(obj.data)) if (raIdByKey.get(k)) rel.add(raIdByKey.get(k)!);
+    }
+    const ids = [...rel];
+    return s
+      .selectFrom('discovery_resource_accounts')
+      .select(['id', 'site_id'])
+      .where((eb) => eb.or([eb('tenant_object_id', 'in', ids), eb('id', 'in', s.selectFrom('discovery_resource_account_members').select('resource_account_id').where('tenant_object_id', 'in', ids))]))
+      .executeTakeFirst();
+  }
+
+  /**
+   * A voice app can have several resource accounts. When one is added to a site whose record for that voice app already exists, it
+   * joins that record - its number is attached and its UPN noted - instead of making a second record. Returns how many resource
+   * accounts were new to the record, and anything that could not be attached.
+   */
+  private async joinExistingRa(
+    t: TenantContext,
+    user: AuthedUser,
+    dcId: string,
+    siteId: string,
+    obj: { id: string; object_type: string; object_key: string; display_name: string | null; data: unknown },
+  ): Promise<{ joined: number; problems: string[] }> {
+    const s = this.s(t);
+    const details = await this.discoveredRaDetails(t, obj);
+    if (!details.members.length) return { joined: 0, problems: [] };
+    const taken = await s.selectFrom('discovery_resource_account_members').select('tenant_object_id').where('tenant_object_id', 'in', details.members.map((m) => m.id)).execute();
+    const takenIds = new Set(taken.map((x) => x.tenant_object_id));
+    const fresh = details.members.filter((m) => !takenIds.has(m.id));
+    if (!fresh.length) return { joined: 0, problems: [] };
+    await s.insertInto('discovery_resource_account_members').values(fresh.map((m) => ({ resource_account_id: dcId, tenant_object_id: m.id }))).onConflict((oc) => oc.column('tenant_object_id').doNothing()).execute();
+    const current = await s.selectFrom('discovery_resource_accounts').select('comments').where('id', '=', dcId).executeTakeFirstOrThrow();
+    const added = fresh.map((m) => m.line).join('; ');
+    await s.updateTable('discovery_resource_accounts').set({ comments: [current.comments, `${added}.`].filter(Boolean).join(' ') }).where('id', '=', dcId).execute();
+    const problems = await this.attachDiscoveredNumbers(t, user, dcId, siteId, fresh.map((m) => m.number).filter((n): n is string => !!n));
+    return { joined: fresh.length, problems };
   }
 
   /**
@@ -1334,7 +1401,15 @@ export class TenantDiscoveryService {
         const rel = new Set<string>([f.id]);
         if (kind === 'resource_account') {
           const key = f.object_key.toLowerCase();
-          for (const v of voiceApps) if (instancesOf(v.data).includes(key)) rel.add(v.id);
+          // the voice app(s) it belongs to, and that voice app's other resource accounts: they are all one record
+          for (const v of voiceApps) {
+            if (!instancesOf(v.data).includes(key)) continue;
+            rel.add(v.id);
+            for (const k of instancesOf(v.data)) {
+              const sibling = raIdByKey.get(k);
+              if (sibling) rel.add(sibling);
+            }
+          }
         } else {
           for (const k of instancesOf(f.data)) {
             const raId = raIdByKey.get(k);
@@ -1343,8 +1418,6 @@ export class TenantDiscoveryService {
         }
         related.set(f.id, [...rel]);
       }
-      const allRel = [...new Set([...related.values()].flat())];
-      const dcRows = allRel.length ? await s.selectFrom('discovery_resource_accounts').select(['id', 'site_id', 'tenant_object_id']).where('tenant_object_id', 'in', allRel).execute() : [];
       const kindByAppId = new Map(Object.entries(RESOURCE_ACCOUNT_APPLICATION_IDS).map(([k, v]) => [v, k]));
       void raKeyById;
       for (const id of ids) {
@@ -1355,11 +1428,25 @@ export class TenantDiscoveryService {
         }
         const label = f.display_name ?? f.object_key;
         const siteId = siteOf.get(id)!;
-        const have = dcRows.find((r) => (related.get(id) ?? []).includes(r.tenant_object_id ?? ''));
+        // The record for this thing, if there is one: made from this object, from a voice app it belongs to, or one that already holds
+        // it as a resource account - looked up now, so a resource account added a moment ago in this same batch is found.
+        const rel = related.get(id) ?? [id];
+        const have = await s
+          .selectFrom('discovery_resource_accounts')
+          .select(['id', 'site_id'])
+          .where((eb) => eb.or([eb('tenant_object_id', 'in', rel), eb('id', 'in', s.selectFrom('discovery_resource_account_members').select('resource_account_id').where('tenant_object_id', 'in', rel))]))
+          .executeTakeFirst();
         if (have) {
           dcIds.set(id, have.id);
-          const same = have.site_id === siteId;
-          results.push({ id, label, key: f.object_key, dataCollection: same ? 'already_on_site' : 'on_other_site', designAndBuild: off, otherSite: same ? null : siteCode(have.site_id) });
+          if (have.site_id !== siteId) {
+            results.push({ id, label, key: f.object_key, dataCollection: 'on_other_site', designAndBuild: off, otherSite: siteCode(have.site_id) });
+            continue;
+          }
+          // on this site already: any resource account it does not have yet joins it (a voice app can have several)
+          const joined = await this.joinExistingRa(t, user, have.id, siteId, { id: f.id, object_type: objectType, object_key: f.object_key, display_name: f.display_name, data: f.data });
+          const note = [joined.joined ? 'Joined the existing record for this voice app.' : null, ...joined.problems].filter(Boolean).join(' ');
+          results.push({ id, label, key: f.object_key, dataCollection: joined.joined ? 'added' : 'already_on_site', designAndBuild: off, ...(note ? { note } : {}) });
+          if (joined.joined) added.set(`voice:${siteId}`, (added.get(`voice:${siteId}`) ?? 0) + 1);
           continue;
         }
         const d = (f.data ?? {}) as Record<string, unknown>;
@@ -1401,7 +1488,8 @@ export class TenantDiscoveryService {
         // already captured: by the exact object, or - for rows made before that link existed - by name
         sql<boolean>`NOT EXISTS (SELECT 1 FROM ${sql.table(`${t.schema}.discovery_resource_accounts`)} d
                          WHERE d.tenant_object_id = o.id
-                            OR (d.tenant_object_id IS NULL AND lower(d.name) = lower(o.display_name)))`,
+                            OR (d.tenant_object_id IS NULL AND lower(d.name) = lower(o.display_name)))
+                     AND NOT EXISTS (SELECT 1 FROM ${sql.table(`${t.schema}.discovery_resource_account_members`)} m WHERE m.tenant_object_id = o.id)`,
       )
       .execute();
 
@@ -1416,8 +1504,16 @@ export class TenantDiscoveryService {
       }
       const d = (r.data ?? {}) as Record<string, unknown>;
       const kind = (typeof d.ApplicationId === 'string' ? kindByAppId.get(d.ApplicationId) : undefined) ?? 'auto_attendant';
+      const obj = { id: r.id, object_type: 'resource_account', object_key: r.object_key, display_name: r.display_name, data: r.data };
+      // another resource account of the same voice app may already have a record: this one joins it
+      const have = await this.recordFor(t, obj);
+      if (have) {
+        if (have.site_id === siteId) await this.joinExistingRa(t, user, have.id, siteId, obj);
+        else skipped += 1;
+        continue;
+      }
       // bring in what Teams already holds (hours, who answers, ... the number and its Call flow), not just the name
-      await this.createDiscoveredRa(t, user, siteId, { id: r.id, object_type: 'resource_account', object_key: r.object_key, display_name: r.display_name, data: r.data }, r.display_name, kind as 'auto_attendant' | 'call_queue');
+      await this.createDiscoveredRa(t, user, siteId, obj, r.display_name, kind as 'auto_attendant' | 'call_queue');
       created += 1;
       perSite.set(siteId, (perSite.get(siteId) ?? 0) + 1);
     }
