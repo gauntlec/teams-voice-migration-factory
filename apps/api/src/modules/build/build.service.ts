@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { sql, type Kysely } from 'kysely';
-import { resolveLiveNumberTypes, tenantDb, type DB } from '@tvmf/db';
+import { makeAutoAttendantTargetResolver, resolveLiveNumberTypes, tenantDb, type DB } from '@tvmf/db';
 import {
   CALL_QUEUE_NO_AGENT_ACTIONS,
   CALL_QUEUE_NO_AGENT_APPLY_TO,
@@ -1443,25 +1443,15 @@ export class BuildService {
     // AA/CQ that account is associated with - same mapping
     // resolveAutoAttendantDeepContext uses at deploy time.
     const ownerByInstance = new Map<string, string>();
-    for (const d of liveByObject.values()) {
-      if (typeof d.Identity !== 'string' || !Array.isArray(d.ApplicationInstances)) continue;
+    const liveKindByIdentity = new Map<string, 'auto_attendant' | 'call_queue'>();
+    for (const o of liveApps) {
+      const d = (o.data ?? {}) as Record<string, unknown>;
+      if (typeof d.Identity !== 'string') continue;
+      liveKindByIdentity.set(d.Identity.toLowerCase(), o.object_type as 'auto_attendant' | 'call_queue');
+      if (!Array.isArray(d.ApplicationInstances)) continue;
       for (const i of d.ApplicationInstances as unknown[]) if (typeof i === 'string') ownerByInstance.set(i.toLowerCase(), d.Identity.toLowerCase());
     }
-    const resolveTarget = (ref: LiveCallableEntityRef | undefined): AutoAttendantCallableEntity | undefined => {
-      if (!ref) return undefined;
-      if (ref.kind === 'external' && ref.number) return { kind: 'external', number: ref.number };
-      if (ref.kind === 'user' && ref.liveId) {
-        const upn = upnByObjectId.get(ref.liveId.toLowerCase());
-        return upn ? { kind: 'user', upn } : undefined;
-      }
-      if (ref.kind === 'shared_voicemail' && ref.liveId) return { kind: 'shared_voicemail', groupId: ref.liveId };
-      const appIdentity = ref.kind === 'voice_app' ? ref.liveId?.toLowerCase() : ref.kind === 'resource_account' && ref.liveId ? ownerByInstance.get(ref.liveId.toLowerCase()) : undefined;
-      if (appIdentity) {
-        const hit = liveIdToBuild.get(appIdentity);
-        return hit ? { kind: hit.kind, buildId: hit.buildId } : undefined;
-      }
-      return undefined;
-    };
+    const resolveTarget = makeAutoAttendantTargetResolver({ upnByEntraId: upnByObjectId, ownerByInstance, liveIdToBuild, liveKindByIdentity });
 
     // Same conversion the deployment planner runs fresh at preview/execute
     // time (see resolveAutoAttendantDeepContext in

@@ -80,7 +80,7 @@ function CallableEntityEditor({
       {kind === 'auto_attendant' && (
         <Field label="Auto Attendant">
           <Dropdown
-            value={aaChoices.find((a) => a.id === value?.buildId)?.name ?? '— select —'}
+            value={aaChoices.find((a) => a.id === value?.buildId)?.name ?? (value?.liveId ? `Already in Teams (${value.liveId.slice(0, 8)}…)` : '— select —')}
             selectedOptions={value?.buildId ? [value.buildId] : []}
             onOptionSelect={(_, d) => onChange({ kind: 'auto_attendant', buildId: d.optionValue })}
             className={ls.minW220}
@@ -96,7 +96,7 @@ function CallableEntityEditor({
       {kind === 'call_queue' && (
         <Field label="Call Queue">
           <Dropdown
-            value={cqChoices.find((c) => c.id === value?.buildId)?.name ?? '— select —'}
+            value={cqChoices.find((c) => c.id === value?.buildId)?.name ?? (value?.liveId ? `Already in Teams (${value.liveId.slice(0, 8)}…)` : '— select —')}
             selectedOptions={value?.buildId ? [value.buildId] : []}
             onOptionSelect={(_, d) => onChange({ kind: 'call_queue', buildId: d.optionValue })}
             className={ls.minW220}

@@ -88,4 +88,36 @@ describe('linking voice apps that already exist', () => {
     expect(JSON.stringify(twin[0]!.calls)).toContain('twin2');
     expect(twin[0]!.warnings.join(' ')).toMatch(/Differs from the live auto attendant: language \(design de-DE, live fr-FR\)/);
   });
+
+  it('plans no change for an auto attendant whose menu transfers to a voice app that is not on the site', async () => {
+    const transfer = { DtmfResponse: 100, Action: 2, Prompt: null, CallTarget: { Id: '23fa0565-93af-4c1f-802b-d21c8aa19291', Type: 6, CallPriority: 3 }, VoiceResponses: [] };
+    const base = liveAa('far', 'Far');
+    const data = { ...base, Identity: 'far', DefaultCallFlow: flow('far-def', 'Welcome', transfer) };
+    await object('schedule', 'far-sch-ah', 'far after hours', { WeeklyRecurrentSchedule: { ComplementEnabled: true, MondayHours: [{ Start: time(7), End: time(16) }] }, FixedSchedule: null });
+    await object('schedule', 'far-sch-hol', 'US Holidays', { FixedSchedule: { DateTimeRanges: [{ Start: '25/12/2025 0:00', End: '26/12/2025 0:00' }] }, WeeklyRecurrentSchedule: null });
+    const far = await object('auto_attendant', 'aa-far', 'Far', data);
+    await build.addFromDiscovery(c.t, engineer, { kind: 'auto_attendant', items: [{ id: far, siteId: site }], alsoBuild: true });
+    const rows = await deploy.previewChanges(c.t, { siteId: site, sheets: ['auto_attendants'] } as never);
+    expect(rows.filter((r) => r.upn === 'Far').map((r) => r.warnings)).toEqual([]);
+
+    // the transfer is kept, as the Teams id, instead of being dropped (which would turn it into a disconnect on deploy)
+    const row = await c.s.selectFrom('build_auto_attendants').select(['id', 'default_call_flow']).where('name', '=', 'Far').executeTakeFirstOrThrow();
+    const option = (row.default_call_flow as { menu: { options: { action: string; target?: Record<string, unknown> }[] } }).menu.options[0]!;
+    expect(option).toMatchObject({ action: 'TransferCallToTarget', target: { liveId: '23fa0565-93af-4c1f-802b-d21c8aa19291' } });
+
+    // a later change to the row deploys with that same target, not a disconnect
+    await c.s.updateTable('build_auto_attendants').set({ language_id: 'en-GB' }).where('id', '=', row.id).execute();
+    const changed = await deploy.previewChanges(c.t, { siteId: site, sheets: ['auto_attendants'] } as never);
+    const farRow = changed.find((r) => r.upn === 'Far')!;
+    expect(farRow.warnings.join(' ')).toMatch(/Differs from the live auto attendant: language/);
+    expect(JSON.stringify(farRow.calls)).toContain('23fa0565-93af-4c1f-802b-d21c8aa19291');
+    await c.s.updateTable('build_auto_attendants').set({ language_id: 'en-US' }).where('id', '=', row.id).execute();
+
+    // when that voice app later becomes part of the site, the same target is still no change
+    const queue = await object('call_queue', 'cq-far', 'Far Queue', { Identity: '23fa0565-93af-4c1f-802b-d21c8aa19291', LanguageId: 'en-US', RoutingMethod: 'Attendant', Agents: [], ApplicationInstances: [] });
+    await build.addFromDiscovery(c.t, engineer, { kind: 'call_queue', items: [{ id: queue, siteId: site }], alsoBuild: true });
+    const after = await deploy.previewChanges(c.t, { siteId: site, sheets: ['auto_attendants'] } as never);
+    expect(after.filter((r) => r.upn === 'Far')).toEqual([]);
+  });
 });
+

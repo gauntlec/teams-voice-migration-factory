@@ -1107,6 +1107,12 @@ export interface AutoAttendantCallableEntity {
   kind: (typeof AA_CALLABLE_ENTITY_KINDS)[number];
   /** build_auto_attendants.id or build_call_queues.id - same-site, app-enforced like policy_ids. Only for kind 'auto_attendant'|'call_queue'. */
   buildId?: string;
+  /**
+   * The Teams id of an auto attendant / call queue that exists in the tenant but is not part of this site's design (so there is no
+   * build row to point at). Kept as read from Teams so importing it loses nothing and deploying sends the same target. Only for
+   * kind 'auto_attendant'|'call_queue'; ignored when `buildId` is set.
+   */
+  liveId?: string;
   /** UPN - only for kind 'user'. */
   upn?: string;
   /** tel: number or raw digits - only for kind 'external'. */
@@ -1391,7 +1397,7 @@ export function autoAttendantRowWarnings(
   const unresolved: string[] = [];
   const check = (entity: AutoAttendantCallableEntity | undefined, where: string) => {
     if (!entity) return;
-    if ((entity.kind === 'auto_attendant' || entity.kind === 'call_queue') && (!entity.buildId || !crossRef.has(crossRefKey(entity.kind, entity.buildId)))) {
+    if ((entity.kind === 'auto_attendant' || entity.kind === 'call_queue') && !entity.liveId && (!entity.buildId || !crossRef.has(crossRefKey(entity.kind, entity.buildId)))) {
       unresolved.push(`${where} targets an Auto Attendant/Call Queue that doesn't resolve live yet`);
     }
     if (entity.kind === 'user') {
@@ -1465,7 +1471,7 @@ function buildCallableEntity(ctx: AaBuildCtx, entity: AutoAttendantCallableEntit
       // this is the nested-AA/CQ case, not the resource-account one (that's the
       // separate New-CsOnlineApplicationInstanceAssociation step below).
       type = 'ConfigurationEndpoint';
-      identity = entity.buildId ? crossRef.get(crossRefKey(entity.kind, entity.buildId)) : undefined;
+      identity = entity.buildId ? crossRef.get(crossRefKey(entity.kind, entity.buildId)) : entity.liveId || undefined;
       if (!identity) return undefined;
       break;
     case 'user':
@@ -1843,15 +1849,31 @@ function sortedHolidays(list: AutoAttendantHolidayCallFlow[]): AutoAttendantHoli
  * after-hours config that wouldn't be sent live yet must not register as a
  * "change" just because the column itself is non-null.
  */
-function autoAttendantMatchesLive(row: BuildAutoAttendantRow, live: AutoAttendantLiveState): boolean {
-  return autoAttendantDifferences(row, live).length === 0;
+function autoAttendantMatchesLive(row: BuildAutoAttendantRow, live: AutoAttendantLiveState, crossRef: AutoAttendantCrossRef): boolean {
+  return autoAttendantDifferences(row, live, crossRef).length === 0;
+}
+
+/**
+ * A transfer to another auto attendant / call queue is compared by the Teams id it reaches, however the design names it: a row of this
+ * site (resolved through `crossRef`) and the id of one outside it are the same target when they are the same voice app. Without this a
+ * target that became part of the site after the row was made would read as a change.
+ */
+function normalizeTarget(t: AutoAttendantCallableEntity | undefined, crossRef: AutoAttendantCrossRef): unknown {
+  if (!t) return undefined;
+  if (t.kind !== 'auto_attendant' && t.kind !== 'call_queue') return t;
+  const id = t.buildId ? crossRef.get(crossRefKey(t.kind, t.buildId)) : t.liveId;
+  return id ? { kind: 'voice_app', identity: id.toLowerCase() } : { kind: 'voice_app', unresolved: t.buildId ?? null };
+}
+function normalizeFlow(cf: AutoAttendantCallFlow | null, crossRef: AutoAttendantCrossRef): AutoAttendantCallFlow | null {
+  if (!cf) return cf;
+  return { ...cf, menu: { ...cf.menu, options: cf.menu.options.map((o) => (o.target ? { ...o, target: normalizeTarget(o.target, crossRef) as AutoAttendantCallableEntity } : o)) } };
 }
 
 /**
  * What differs between a saved row and the live auto attendant, in words, so the preview can say why a change is planned. Empty when
  * they match (or when nothing was read from the live one, in which case it says so: there is nothing to compare against).
  */
-export function autoAttendantDifferences(row: BuildAutoAttendantRow, live: AutoAttendantLiveState): string[] {
+export function autoAttendantDifferences(row: BuildAutoAttendantRow, live: AutoAttendantLiveState, crossRef: AutoAttendantCrossRef = new Map()): string[] {
   const s = live.structured;
   if (!s) return ['the live settings could not be read'];
   const diffs: string[] = [];
@@ -1859,13 +1881,13 @@ export function autoAttendantDifferences(row: BuildAutoAttendantRow, live: AutoA
   if ((row.time_zone_id ?? undefined) !== (s.timeZoneId ?? undefined)) diffs.push(`time zone (design ${row.time_zone_id ?? 'none'}, live ${s.timeZoneId ?? 'none'})`);
   if ((row.voice_id ?? undefined) !== (s.voiceId ?? undefined)) diffs.push(`voice (design ${row.voice_id ?? 'none'}, live ${s.voiceId ?? 'none'})`);
   if (!!row.voice_response_enabled !== !!s.enableVoiceResponse) diffs.push('voice response');
-  if (!structurallyEqual(row.operator ?? null, s.operator ?? null)) diffs.push('operator');
-  const bh = callFlowDifference(row.default_call_flow, s.defaultCallFlow);
+  if (!structurallyEqual(normalizeTarget(row.operator ?? undefined, crossRef) ?? null, normalizeTarget(s.operator ?? undefined, crossRef) ?? null)) diffs.push('operator');
+  const bh = callFlowDifference(normalizeFlow(row.default_call_flow, crossRef), normalizeFlow(s.defaultCallFlow, crossRef));
   if (bh) diffs.push(`business hours call flow (${bh})`);
 
   const effectiveAfterHours = row.after_hours_call_flow && row.schedule ? row.after_hours_call_flow : null;
   const effectiveAfterHoursSchedule = row.after_hours_call_flow && row.schedule ? row.schedule : null;
-  const ah = callFlowDifference(effectiveAfterHours, s.afterHoursCallFlow);
+  const ah = callFlowDifference(normalizeFlow(effectiveAfterHours, crossRef), normalizeFlow(s.afterHoursCallFlow, crossRef));
   if (ah) diffs.push(`after hours call flow (${ah})`);
   if (!scheduleEqual(effectiveAfterHoursSchedule, s.schedule)) diffs.push('after hours schedule');
 
@@ -1877,7 +1899,7 @@ export function autoAttendantDifferences(row: BuildAutoAttendantRow, live: AutoA
       const a = rowHolidays[i]!;
       const b = liveHolidays[i]!;
       if (a.name !== b.name) diffs.push(`holiday name (design "${a.name}", live "${b.name}")`);
-      else if (!callFlowEqual(a.callFlow, b.callFlow)) diffs.push(`holiday "${a.name}" call flow (${callFlowDifference(a.callFlow, b.callFlow)})`);
+      else if (!callFlowEqual(normalizeFlow(a.callFlow, crossRef), normalizeFlow(b.callFlow, crossRef))) diffs.push(`holiday "${a.name}" call flow (${callFlowDifference(normalizeFlow(a.callFlow, crossRef), normalizeFlow(b.callFlow, crossRef))})`);
       else if (!scheduleEqual(a.schedule, b.schedule)) diffs.push(`holiday "${a.name}" dates`);
     }
   }
@@ -1923,7 +1945,7 @@ export function planAutoAttendantRow(
   // user ahead of time via autoAttendantRowWarnings.
   if (!live && (!row.language_id || !row.time_zone_id)) return calls;
 
-  if (!live || !autoAttendantMatchesLive(row, live)) {
+  if (!live || !autoAttendantMatchesLive(row, live, crossRef)) {
     const ctx: AaBuildCtx = { steps: [], counters: {} };
 
     const defaultFlowRef = buildCallFlow(ctx, row.default_call_flow, `${row.name} - Business hours`, crossRef, userObjectIds);

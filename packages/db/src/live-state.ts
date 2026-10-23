@@ -277,6 +277,37 @@ export async function resolveLiveAutoAttendantState(
 }
 
 /**
+ * Turns a live menu-option / operator target into the design's own form. ONE implementation, used by Populate and by the deployment
+ * preview, so what is read from Teams and what is compared with it can never disagree. A voice app that is part of the site becomes
+ * a reference to its row (`buildId`); one that exists in Teams but not on this site keeps the Teams id it has (`liveId`) instead of
+ * being dropped, which would silently turn the transfer into a disconnect.
+ */
+export function makeAutoAttendantTargetResolver(ctx: {
+  upnByEntraId: Map<string, string>;
+  /** resource account object id (lower case) -> Identity (lower case) of the voice app that lists it */
+  ownerByInstance: Map<string, string>;
+  /** live Identity (lower case) -> this site's own row */
+  liveIdToBuild: Map<string, { kind: 'auto_attendant' | 'call_queue'; buildId: string }>;
+  /** live Identity (lower case) -> what kind of voice app it is, for every one in the tenant */
+  liveKindByIdentity: Map<string, 'auto_attendant' | 'call_queue'>;
+}) {
+  return (ref: LiveCallableEntityRef | undefined): AutoAttendantCallableEntity | undefined => {
+    if (!ref) return undefined;
+    if (ref.kind === 'external' && ref.number) return { kind: 'external', number: ref.number };
+    if (ref.kind === 'user' && ref.liveId) {
+      const upn = ctx.upnByEntraId.get(ref.liveId.toLowerCase());
+      return upn ? { kind: 'user', upn } : undefined;
+    }
+    if (ref.kind === 'shared_voicemail' && ref.liveId) return { kind: 'shared_voicemail', groupId: ref.liveId };
+    const appIdentity = ref.kind === 'voice_app' ? ref.liveId?.toLowerCase() : ref.kind === 'resource_account' && ref.liveId ? ctx.ownerByInstance.get(ref.liveId.toLowerCase()) : undefined;
+    if (!appIdentity) return undefined;
+    const hit = ctx.liveIdToBuild.get(appIdentity);
+    if (hit) return { kind: hit.kind, buildId: hit.buildId };
+    return { kind: ctx.liveKindByIdentity.get(appIdentity) ?? 'auto_attendant', liveId: appIdentity };
+  };
+}
+
+/**
  * Every piece resolveLiveAutoAttendantState's `deep` option needs to convert
  * a live AA into build_auto_attendants' own shape: every live Schedule
  * (keyed by the GUID a CallHandlingAssociation's ScheduleId references),
@@ -292,7 +323,7 @@ export async function resolveAutoAttendantDeepContext(s: Scoped, crossRef: AutoA
     s.selectFrom('tenant_users').select(['entra_id', 'upn']).where('entra_id', 'is not', null).execute(),
     s
       .selectFrom('tenant_objects')
-      .select(['data'])
+      .select(['object_type', 'data'])
       .where('object_type', 'in', ['auto_attendant', 'call_queue'])
       .where('removed_at', 'is', null)
       .execute(),
@@ -306,30 +337,19 @@ export async function resolveAutoAttendantDeepContext(s: Scoped, crossRef: AutoA
   }
   // A transfer to a resource account (ApplicationEndpoint) reaches the AA/CQ
   // that account is associated with - map it through that AA/CQ's own
-  // ApplicationInstances to the same buildId a direct (ConfigurationEndpoint)
+  // ApplicationInstances to the same target a direct (ConfigurationEndpoint)
   // transfer resolves to.
   const ownerByInstance = new Map<string, string>();
+  const liveKindByIdentity = new Map<string, 'auto_attendant' | 'call_queue'>();
   for (const r of voiceAppRows) {
     const d = r.data as Record<string, unknown>;
     const identity = typeof d.Identity === 'string' ? d.Identity : undefined;
-    if (!identity || !Array.isArray(d.ApplicationInstances)) continue;
+    if (!identity) continue;
+    liveKindByIdentity.set(identity.toLowerCase(), r.object_type as 'auto_attendant' | 'call_queue');
+    if (!Array.isArray(d.ApplicationInstances)) continue;
     for (const i of d.ApplicationInstances as unknown[]) if (typeof i === 'string') ownerByInstance.set(i.toLowerCase(), identity.toLowerCase());
   }
-  const resolveTarget = (ref: LiveCallableEntityRef | undefined): AutoAttendantCallableEntity | undefined => {
-    if (!ref) return undefined;
-    if (ref.kind === 'external' && ref.number) return { kind: 'external', number: ref.number };
-    if (ref.kind === 'user' && ref.liveId) {
-      const upn = upnByEntraId.get(ref.liveId.toLowerCase());
-      return upn ? { kind: 'user', upn } : undefined;
-    }
-    if (ref.kind === 'shared_voicemail' && ref.liveId) return { kind: 'shared_voicemail', groupId: ref.liveId };
-    const appIdentity = ref.kind === 'voice_app' ? ref.liveId?.toLowerCase() : ref.kind === 'resource_account' && ref.liveId ? ownerByInstance.get(ref.liveId.toLowerCase()) : undefined;
-    if (appIdentity) {
-      const hit = liveIdToBuild.get(appIdentity);
-      return hit ? { kind: hit.kind, buildId: hit.buildId } : undefined;
-    }
-    return undefined;
-  };
+  const resolveTarget = makeAutoAttendantTargetResolver({ upnByEntraId, ownerByInstance, liveIdToBuild, liveKindByIdentity });
   return { scheduleByKey, resolveTarget };
 }
 

@@ -455,7 +455,7 @@ export class DeploymentService {
         const warnings = autoAttendantRowWarnings(planRow, crossRef, raObjectIds, userObjectIds);
         // say why a live auto attendant is being changed, so a row that looks unchanged to the engineer is not a mystery
         if (live && calls.length > 0) {
-          const diffs = autoAttendantDifferences(planRow, live);
+          const diffs = autoAttendantDifferences(planRow, live, crossRef);
           if (diffs.length > 0) warnings.push(`Differs from the live auto attendant: ${diffs.join('; ')}.`);
         }
         if (calls.length === 0 && warnings.length === 0) continue;

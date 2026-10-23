@@ -1295,6 +1295,8 @@ const autoAttendantCallableEntitySchema = z
     kind: z.enum(AA_CALLABLE_ENTITY_KINDS),
     /** build_auto_attendants.id or build_call_queues.id - same-site, app-enforced like policy_ids. */
     buildId: refId,
+    /** Teams id of an auto attendant / call queue outside this site's design, kept as read from Teams. */
+    liveId: refId,
     upn: optStr(200),
     number: optStr(64),
     /** M365 group Object ID - only for kind 'shared_voicemail' (New-CsAutoAttendantCallableEntity -Type SharedVoicemail -Identity). A raw GUID, no Find-CsGroup search yet. */
