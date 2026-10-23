@@ -166,9 +166,13 @@ describe('what a discovered call queue brings into Data Collection', () => {
     const held = await c.s.selectFrom('phone_numbers').select(['holder_type', 'holder_id']).where('e164', '=', '+442070000050').executeTakeFirstOrThrow();
     expect(held).toMatchObject({ holder_type: 'resource_account', holder_id: row.id });
 
-    // a resource account whose number is in no range is added, and the result says why the number was not attached
+    // a resource account whose number is in no range: the number is added to the site's ranges (as a single-number re-point range) and attached
     const out = await build.addFromDiscovery(c.t, engineer, { kind: 'resource_account', items: [{ id: raOutside, siteId: luton }], alsoBuild: false });
-    expect(out[0].note).toMatch(/\+33140000000 is not in any number range/);
+    expect(out[0].note).toBeUndefined();
+    const range = await c.s.selectFrom('discovery_number_ranges').select(['sitecode', 'kind', 'range_start', 'range_end']).where('range_start', '=', '+33140000000').executeTakeFirstOrThrow();
+    expect(range).toMatchObject({ sitecode: 'LUT01', kind: 'retain', range_end: '+33140000000' });
+    const heldOut = await c.s.selectFrom('phone_numbers').select(['holder_type']).where('e164', '=', '+33140000000').executeTakeFirstOrThrow();
+    expect(heldOut.holder_type).toBe('resource_account');
     void ra;
   });
 });
@@ -300,9 +304,9 @@ describe('two discovered objects with the same name on the same site', () => {
 });
 
 describe('the Data Collection record shows every resource account it holds', () => {
-  it('lists both resource accounts of one attendant, and flags a number that is in none of the site\'s ranges', async () => {
+  it('lists both resource accounts of one attendant, with a number that was in none of the site\'s ranges added to them', async () => {
     await seedNumbers(c.s, 'NYC01', ['+12125557001']);
-    // the second resource account has a toll-free number that is in no range
+    // the second resource account has a toll-free number that is in no range: it is added to the site's ranges
     const ra1 = await object('resource_account', 'ra-show-1', 'Hauppauge Main Number', { UserPrincipalName: 'main@contoso.test', ApplicationId: 'ce933385-9390-45d1-9512-c8d228074e07', PhoneNumber: 'tel:+12125557001' });
     const ra2 = await object('resource_account', 'ra-show-2', 'Hauppauge Main Number', { UserPrincipalName: 'main.tollfree@contoso.test', ApplicationId: 'ce933385-9390-45d1-9512-c8d228074e07', PhoneNumber: 'tel:+18008726279' });
     await object('auto_attendant', 'aa-show', 'Hauppauge Main Number', { Identity: 'aa-show', LanguageId: 'en-US', ApplicationInstances: ['ra-show-1', 'ra-show-2'] });
@@ -313,9 +317,18 @@ describe('the Data Collection record shows every resource account it holds', () 
     expect(list.items.filter((r) => r.name === 'Hauppauge Main Number')).toHaveLength(1);
     const members = [...rec.members].sort((a, b) => (a.upn ?? '').localeCompare(b.upn ?? ''));
     expect(members).toEqual([
-      { name: 'Hauppauge Main Number', upn: 'main.tollfree@contoso.test', number: '+18008726279', attached: false },
+      { name: 'Hauppauge Main Number', upn: 'main.tollfree@contoso.test', number: '+18008726279', attached: true },
       { name: 'Hauppauge Main Number', upn: 'main@contoso.test', number: '+12125557001', attached: true },
     ]);
-    expect(rec.phone_numbers.map((n) => n.e164)).toEqual(['+12125557001']);
+    expect(rec.phone_numbers.map((n) => n.e164)).toEqual(['+12125557001', '+18008726279']);
+  });
+
+  it('does not take a number from another site\'s range', async () => {
+    await seedNumbers(c.s, 'LUT01', ['+442070009001']);
+    const ra = await object('resource_account', 'ra-other-site', 'Elsewhere Line', { UserPrincipalName: 'elsewhere@contoso.test', ApplicationId: 'ce933385-9390-45d1-9512-c8d228074e07', PhoneNumber: 'tel:+442070009001' });
+    const res = await build.addFromDiscovery(c.t, engineer, { kind: 'resource_account', items: [{ id: ra, siteId: nyc }], alsoBuild: false });
+    expect(res[0].note).toMatch(/\+442070009001 is in the number range of site LUT01/);
+    const still = await c.s.selectFrom('phone_numbers').select('holder_id').where('e164', '=', '+442070009001').executeTakeFirstOrThrow();
+    expect(still.holder_id).toBeNull();
   });
 });

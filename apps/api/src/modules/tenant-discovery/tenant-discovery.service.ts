@@ -1212,22 +1212,32 @@ export class TenantDiscoveryService {
   }
 
   /**
-   * Attaches the discovered numbers to a new Data Collection resource account, when each is in this site's own number ranges and
-   * free. Returns what could not be attached, in words, for the result screen.
+   * Attaches the discovered numbers to a Data Collection resource account. A number in none of the ranges is first added to this
+   * site's ranges; one in another site's range, or already assigned, is left alone. Returns what could not be attached, in words,
+   * for the result screen.
    */
   private async attachDiscoveredNumbers(t: TenantContext, user: AuthedUser, raId: string, siteId: string, numbers: string[]): Promise<string[]> {
     const s = this.s(t);
     const problems: string[] = [];
     const sitecode = (await this.siteLookup(t)).byId.get(siteId) ?? null;
-    for (const e164 of [...new Set(numbers)]) {
-      const row = await s
+    const find = (e164: string) =>
+      s
         .selectFrom('phone_numbers as n')
         .innerJoin('discovery_number_ranges as r', 'r.id', 'n.range_id')
         .select(['n.id', 'n.status', 'n.holder_id', 'r.sitecode'])
         .where('n.e164', '=', e164)
         .executeTakeFirst();
-      if (!row) problems.push(`${e164} is not in any number range, so it was not attached.`);
-      else if (row.sitecode !== sitecode) problems.push(`${e164} is in another site's number range, so it was not attached.`);
+    for (const raw of [...new Set(numbers)]) {
+      const e164 = `+${raw.replace(/\D/g, '')}`;
+      let row = await find(e164);
+      // A number that is live in the tenant but in none of the ranges is added to this site's ranges (as a single-number "re-point"
+      // range, since it already exists), then attached. One that sits in another site's range is not taken from it.
+      if (!row && sitecode) {
+        await this.telephony.addRange(t, user, { sitecode, range_start: e164, range_end: e164, kind: 'retain', comments: 'Added from Discovery: the number is already live in the tenant.' } as never, false);
+        row = await find(e164);
+      }
+      if (!row) problems.push(`${e164} could not be added to a number range, so it was not attached.`);
+      else if (row.sitecode !== sitecode) problems.push(row.sitecode ? `${e164} is in the number range of site ${row.sitecode}, so it was not attached.` : `${e164} is in a number range that has no site, so it was not attached.`);
       else if (row.holder_id === raId) continue;
       else if (row.holder_id) problems.push(`${e164} is already assigned in Data Collection, so it was not attached.`);
       else await this.telephony.attachRaNumber(t, user, raId, row.id, false);
