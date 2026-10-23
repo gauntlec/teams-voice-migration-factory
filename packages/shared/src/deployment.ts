@@ -1807,6 +1807,26 @@ function callFlowEqual(a: AutoAttendantCallFlow | null, b: AutoAttendantCallFlow
   if ((a.menu.directorySearchMethod ?? undefined) !== (b.menu.directorySearchMethod ?? undefined)) return false;
   return structurallyEqual(sortedMenuOptions(a), sortedMenuOptions(b));
 }
+/** A call flow's pieces in a few words each, for saying what differs between the design and the live one. */
+function describeCallFlow(cf: AutoAttendantCallFlow | null): string {
+  if (!cf) return 'none';
+  const text = (v: unknown) => JSON.stringify(v).slice(0, 90);
+  const option = (o: AutoAttendantMenuOption) => `${o.dtmf} ${o.action}${o.target ? ` to ${text(o.target)}` : ''}${o.prompt ? ` ${text(o.prompt)}` : ''}`;
+  return [
+    `greeting ${text(cf.greetings)}`,
+    cf.menu.prompts?.length ? `menu prompt ${text(cf.menu.prompts)}` : null,
+    cf.menu.enableDialByName ? 'dial by name' : null,
+    cf.menu.directorySearchMethod ? `search ${cf.menu.directorySearchMethod}` : null,
+    `options [${sortedMenuOptions(cf).map(option).join('; ')}]`,
+  ].filter(Boolean).join(', ');
+}
+
+/** What differs between two call flows: the first piece that does, with both sides. Null when they are the same. */
+function callFlowDifference(design: AutoAttendantCallFlow | null, live: AutoAttendantCallFlow | null): string | null {
+  if (callFlowEqual(design, live)) return null;
+  return `design: ${describeCallFlow(design)}; live: ${describeCallFlow(live)}`;
+}
+
 /** Holidays compared by name rather than array position, for the same reason. */
 function sortedHolidays(list: AutoAttendantHolidayCallFlow[]): AutoAttendantHolidayCallFlow[] {
   return [...list].sort((a, b) => a.name.localeCompare(b.name));
@@ -1840,11 +1860,13 @@ export function autoAttendantDifferences(row: BuildAutoAttendantRow, live: AutoA
   if ((row.voice_id ?? undefined) !== (s.voiceId ?? undefined)) diffs.push(`voice (design ${row.voice_id ?? 'none'}, live ${s.voiceId ?? 'none'})`);
   if (!!row.voice_response_enabled !== !!s.enableVoiceResponse) diffs.push('voice response');
   if (!structurallyEqual(row.operator ?? null, s.operator ?? null)) diffs.push('operator');
-  if (!callFlowEqual(row.default_call_flow, s.defaultCallFlow)) diffs.push('business hours call flow');
+  const bh = callFlowDifference(row.default_call_flow, s.defaultCallFlow);
+  if (bh) diffs.push(`business hours call flow (${bh})`);
 
   const effectiveAfterHours = row.after_hours_call_flow && row.schedule ? row.after_hours_call_flow : null;
   const effectiveAfterHoursSchedule = row.after_hours_call_flow && row.schedule ? row.schedule : null;
-  if (!callFlowEqual(effectiveAfterHours, s.afterHoursCallFlow)) diffs.push('after hours call flow');
+  const ah = callFlowDifference(effectiveAfterHours, s.afterHoursCallFlow);
+  if (ah) diffs.push(`after hours call flow (${ah})`);
   if (!scheduleEqual(effectiveAfterHoursSchedule, s.schedule)) diffs.push('after hours schedule');
 
   const rowHolidays = sortedHolidays(row.holiday_call_flows);
@@ -1855,7 +1877,7 @@ export function autoAttendantDifferences(row: BuildAutoAttendantRow, live: AutoA
       const a = rowHolidays[i]!;
       const b = liveHolidays[i]!;
       if (a.name !== b.name) diffs.push(`holiday name (design "${a.name}", live "${b.name}")`);
-      else if (!callFlowEqual(a.callFlow, b.callFlow)) diffs.push(`holiday "${a.name}" call flow`);
+      else if (!callFlowEqual(a.callFlow, b.callFlow)) diffs.push(`holiday "${a.name}" call flow (${callFlowDifference(a.callFlow, b.callFlow)})`);
       else if (!scheduleEqual(a.schedule, b.schedule)) diffs.push(`holiday "${a.name}" dates`);
     }
   }
