@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link as RouterLink, useParams } from 'react-router';
+import { Link as RouterLink, useParams, useSearchParams } from 'react-router';
 import {
   Badge,
   Button,
@@ -32,13 +32,16 @@ import {
 import { ArrowLeftRegular, CheckmarkCircleRegular, WarningRegular } from '@fluentui/react-icons';
 import {
   DEPLOYMENT_SHEETS,
+  DRIFT_ACCEPTABLE,
   groupDeploymentRows,
   verificationHeadline,
   type DeploymentGroupBy,
   type DeploymentPreviewRow,
   type DeploymentSiteRollup,
   type DeploymentVerification,
+  type DriftRow,
   type FileRow,
+  type SiteDriftSummary,
 } from '@tvmf/shared';
 import { api, apiDownload, ApiError } from '../api';
 import { useAuth } from '../auth';
@@ -269,7 +272,9 @@ export function DeploymentSiteWorkspace() {
   const canDryRun = can('deployment:dryrun');
   const canExecute = can('deployment:execute');
 
-  const [tab, setTab] = useState<'changes' | 'history'>('changes');
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState<'changes' | 'drift' | 'history'>(() => (searchParams.get('tab') === 'drift' ? 'drift' : 'changes'));
+  const [driftMessage, setDriftMessage] = useState<string | null>(null);
   const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(new Set());
   // How the planned changes are grouped: by what they are, or by migration wave. Remembered per browser; the page works without it.
   const [groupBy, setGroupByState] = useState<DeploymentGroupBy>(() => {
@@ -328,6 +333,37 @@ export function DeploymentSiteWorkspace() {
     queryFn: () => api<Deployment[]>(`${base}?siteId=${siteId}`),
   });
   const siteDeployments = deployments.data ?? [];
+
+  // Worked out fresh when the tab opens (and saved, so the site list's count follows).
+  const drift = useQuery({
+    queryKey: ['deployment-drift', tid, siteId],
+    enabled: !!tid && !!siteId && tab === 'drift',
+    queryFn: () => api<SiteDriftSummary>(`${base}/drift?siteId=${siteId}`),
+  });
+
+  const acceptDrift = useMutation({
+    mutationFn: (r: DriftRow) =>
+      api<{ remaining: string[] }>(`/t/${tid}/build/drift/accept`, {
+        method: 'POST',
+        body: JSON.stringify({ object_type: r.objectType, row_id: r.rowId }),
+      }),
+    onSuccess: (res, r) => {
+      setDriftMessage(
+        res.remaining.length
+          ? `${r.name}: the design now has what Teams has for calling settings and voicemail. Still different: ${res.remaining.join(', ')} - change it in Design & Build, or put it back.`
+          : `${r.name}: the design now matches Teams.`,
+      );
+      qc.invalidateQueries({ queryKey: ['deployment-drift', tid, siteId] });
+      qc.invalidateQueries({ queryKey: ['deployment-preview', tid, siteId] });
+      qc.invalidateQueries({ queryKey: ['deployment-summary', tid] });
+    },
+    onError: (e) => setDriftMessage(e instanceof ApiError ? e.message : 'Could not take the change into the design.'),
+  });
+  /** Put back: tick the rows on Planned changes, where they deploy through the normal What-If and Deploy. */
+  const putBack = (ids: string[]) => {
+    setSelectedRowIds(new Set(ids));
+    setTab('changes');
+  };
 
   const changes = useQuery({
     queryKey: ['changes', tid, selectedDeployment],
@@ -466,6 +502,7 @@ export function DeploymentSiteWorkspace() {
 
       <TabList selectedValue={tab} onTabSelect={(_, d) => setTab(d.value as typeof tab)}>
         <Tab value="changes">Planned changes</Tab>
+        <Tab value="drift">Drift{site.drift?.drifted ? ` (${site.drift.drifted})` : ''}</Tab>
         <Tab value="history">Run history</Tab>
       </TabList>
 
@@ -618,6 +655,16 @@ export function DeploymentSiteWorkspace() {
                         </TableCell>
                         <TableCell>
                           {r.upn}
+                          {r.drift === 'drift' && (
+                            <Badge
+                              className={cs.autoIncludedTag}
+                              appearance="tint"
+                              color="warning"
+                              title="Deployed, then changed in Teams: deploying it again puts the design back. To keep the change instead, use the Drift tab."
+                            >
+                              changed in Teams
+                            </Badge>
+                          )}
                           {autoIncludedRowIds.has(r.rowId) && (
                             <Badge
                               className={cs.autoIncludedTag}
@@ -660,6 +707,86 @@ export function DeploymentSiteWorkspace() {
                 })}
               </TableBody>
             </DataTable>
+          )}
+        </Card>
+      )}
+
+      {tab === 'drift' && (
+        <Card className={s.card}>
+          <Text weight="semibold" size={400}>
+            Drift
+          </Text>
+          <Text size={200} className={s.muted}>
+            Rows that were deployed and have not been edited since, but no longer match Teams - someone changed them in Teams Admin
+            Center or PowerShell. This is worked out from the last Discovery sync, so run one first for an up-to-date answer.
+            Accept into design keeps the change: the design takes what Teams has now. Put back selects the row on Planned changes,
+            where What-If and Deploy apply the design again.
+          </Text>
+          {driftMessage && <Text size={200}>{driftMessage}</Text>}
+          {drift.isLoading ? (
+            <Spinner size="tiny" />
+          ) : drift.isError ? (
+            <LoadError message={(drift.error as Error).message} />
+          ) : !drift.data || drift.data.rows.length === 0 ? (
+            <Text size={200} className={s.muted}>
+              Nothing has drifted: every deployed row still matches Teams as of the last sync.
+            </Text>
+          ) : (
+            <>
+              <div className={cs.row}>
+                <Button
+                  disabled={!canDryRun}
+                  onClick={() => putBack(drift.data!.rows.filter((r) => r.state === 'drift').map((r) => r.rowId))}
+                >
+                  Put back all ({drift.data.drifted})
+                </Button>
+              </div>
+              <DataTable size="small" minWidth={820}>
+                <TableHeader>
+                  <TableRow>
+                    <TableHeaderCell>Name</TableHeaderCell>
+                    <TableHeaderCell>Type</TableHeaderCell>
+                    <TableHeaderCell>What differs</TableHeaderCell>
+                    <TableHeaderCell>Last deployed</TableHeaderCell>
+                    <TableHeaderCell>Actions</TableHeaderCell>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {drift.data.rows.map((r) => (
+                    <TableRow key={r.rowId}>
+                      <TableCell>
+                        {r.name}
+                        {r.state === 'awaiting_sync' && (
+                          <Badge className={cs.autoIncludedTag} appearance="tint" color="informative" title="Deployed since the last Discovery sync - run a sync to see whether it still differs.">
+                            awaiting sync
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>{OBJECT_TYPE_LABEL[r.objectType]}</TableCell>
+                      <TableCell>{r.cmdlets.join(', ')}</TableCell>
+                      <TableCell>{r.lastDeployedAt ? new Date(r.lastDeployedAt).toLocaleString() : '—'}</TableCell>
+                      <TableCell>
+                        {r.state === 'drift' && (
+                          <div className={cs.row}>
+                            {DRIFT_ACCEPTABLE[r.objectType] && can('build:write') && (
+                              <Button size="small" disabled={acceptDrift.isPending} onClick={() => acceptDrift.mutate(r)}>
+                                Accept into design
+                              </Button>
+                            )}
+                            <Button size="small" disabled={!canDryRun} onClick={() => putBack([r.rowId])}>
+                              Put back
+                            </Button>
+                          </div>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </DataTable>
+              <Text size={200} className={s.muted}>
+                Checked {new Date(drift.data.computedAt).toLocaleString()}.
+              </Text>
+            </>
           )}
         </Card>
       )}

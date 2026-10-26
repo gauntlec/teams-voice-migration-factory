@@ -12,6 +12,8 @@ export * from './platform-audit';
 export * from './sso-staff-access';
 export * from './plan-rows';
 export * from './validate-rows';
+export * from './preview';
+export * from './drift';
 export { migratePlatform, provisionTenant, migrateAllTenants, dropTenantSchema } from './migrate';
 
 export interface DbHandle {

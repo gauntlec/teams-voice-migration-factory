@@ -222,6 +222,30 @@ Also still available:
 - Design & Build's per-row validation badge (`docs/DATA-MODEL.md`
   `build_users.validation`) reflects Discovery's live state.
 
+## Drift
+
+A **drifted** row is a Design & Build row that was deployed, has not been edited since, and no longer matches Teams: someone
+changed it in Teams Admin Center or PowerShell after the deployment. Rules: `packages/shared/src/drift.ts` (`classifyDrift`,
+unit-tested); data: `packages/db/src/drift.ts`.
+
+- The plan is `previewSiteChanges` (`packages/db/src/preview.ts`), the same preview Planned changes shows, now shared by the API
+  and the worker. A row is drift when it plans commands, its latest live run that touched it applied something and failed
+  nothing (`deployment_changes.object_id` is the build row id), `updated_at` is not after that run, and a completed Discovery
+  sync finished after it. Deployed but not synced since = `awaiting_sync`. Edited since = a pending design change, not drift.
+  Never deployed = a design, not drift (a row imported from Discovery and changed in Teams before it was ever deployed is not
+  reported).
+- **When it is worked out:** after every completed Discovery sync, for every site with a live run (the worker,
+  `discovery/run.ts`), saved in `deployment_drift`; after every live deployment run for its site; and when the Drift tab opens
+  (`GET /t/:id/deployments/drift?siteId=`). The Deployment sites list shows the saved count.
+- **Email:** the Discovery-complete email lists the sites with drift and how many rows (same opt-out as the email itself).
+- **Planned changes** marks a drifted row "changed in Teams".
+- **Accept into design** (`POST /t/:id/build/drift/accept`, `build:write`): an auto attendant or call queue is refreshed from its
+  discovered object (Refresh from Teams); a user or common area phone takes its live calling settings and voicemail
+  (`applyLiveVoiceSettings` with `overwrite`). A number, Enterprise Voice or policy difference is not taken (numbers go through
+  the number inventory): the answer lists what still differs. Resource accounts and shared calling policies: put back, or edit in
+  Design & Build. Audited as `build.drift_accepted`.
+- **Put back** ticks the rows on Planned changes, where the normal What-If and Deploy apply the design again.
+
 ## Rolling back
 
 Voxshift never undoes a run by itself. For any finished live run that applied

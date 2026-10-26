@@ -5,6 +5,7 @@ import IORedis from 'ioredis';
 import { sql } from 'kysely';
 import {
   buildAutoAttendantCrossRef,
+  computeSiteDrift,
   createDb,
   platformDb,
   resolveAutoAttendantDeepContext,
@@ -943,6 +944,9 @@ async function handleDeploymentRun(job: Job) {
 
   // eslint-disable-next-line no-console
   console.log(`[deployment ${deploymentId}] ${mode} done`, counts);
+
+  // A live run moves the rows it applied from "drifted" to "awaiting sync" until Discovery reads the tenant again. Best-effort.
+  if (mode === 'execute') await computeSiteDrift(scoped, scope.siteId).catch(() => undefined);
 
   await notifyDeploymentRunComplete(scoped, {
     tenantId,

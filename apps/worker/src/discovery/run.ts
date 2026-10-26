@@ -1,6 +1,6 @@
 import type { Job } from 'bullmq';
 import { sql, type Kysely } from 'kysely';
-import { platformDb, tenantDb, type DB, webOrigin as resolveWebOrigin } from '@tvmf/db';
+import { computeSiteDrift, platformDb, sitesWithLiveRuns, tenantDb, type DB, webOrigin as resolveWebOrigin } from '@tvmf/db';
 import {
   RESOURCE_ACCOUNT_APPLICATION_IDS,
   parseLiveCallingSettings,
@@ -390,9 +390,27 @@ async function runDiscovery(
     progress.changed,
   );
 
+  // Deployed rows that no longer match live now the tenant has been read again. A partial sync re-checks too: rows of
+  // types it did not read compare against what was already stored, so their result does not change. Best-effort.
+  const drift: NonNullable<DiscoveryCompletedContext['drift']> = [];
+  if (!signInLost) {
+    try {
+      for (const siteId of await sitesWithLiveRuns(s)) {
+        const d = await computeSiteDrift(s, siteId, runId);
+        if (d.drifted === 0) continue;
+        const site = await s.selectFrom('discovery_sites').select(['sitecode', 'name']).where('id', '=', siteId).executeTakeFirst();
+        drift.push({ sitecode: site?.sitecode ?? '?', name: site?.name ?? null, drifted: d.drifted });
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn(`[discovery ${runId}] drift check failed: ${(e as Error).message}`);
+    }
+  }
+
   await notifyRunComplete(db, s, enqueueMail, {
     tenantId,
     runId,
+    drift,
     operatorUserId,
     outcome: signInLost
       ? 'failed'
@@ -424,6 +442,7 @@ async function notifyRunComplete(
     startedAt: number;
     progress: TenantDiscoveryProgress;
     scopeTypes?: TenantObjectType[];
+    drift?: DiscoveryCompletedContext['drift'];
   },
 ): Promise<void> {
   if (!enqueueMail || !args.operatorUserId) return;
@@ -485,6 +504,8 @@ async function notifyRunComplete(
       errorMessage: args.errorMessage ?? null,
       breakdown,
       runUrl: webOrigin ? `${webOrigin}/discovery` : '/discovery',
+      drift: args.drift ?? [],
+      deploymentUrl: webOrigin ? `${webOrigin}/deployment` : '/deployment',
     };
 
     await enqueueMail({

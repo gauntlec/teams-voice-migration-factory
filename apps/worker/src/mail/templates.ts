@@ -208,6 +208,15 @@ function discoveryCompleted(c: DiscoveryCompletedContext, branding?: EmailBrandi
     );
   }
   if (c.filterNote) stats.push(c.filterNote);
+  const drifted = (c.drift ?? []).filter((d) => d.drifted > 0);
+  if (!failed && drifted.length) {
+    const rows = drifted.reduce((a, d) => a + d.drifted, 0);
+    stats.unshift(
+      `${rows} deployed ${rows === 1 ? 'row no longer matches' : 'rows no longer match'} the design — changed in Teams after the deployment: ` +
+        drifted.map((d) => `${d.sitecode}${d.name ? ` (${d.name})` : ''} ${d.drifted}`).join(', ') +
+        `. Open Deployment > the site > Drift to accept the change into the design or put it back${c.deploymentUrl ? `: ${c.deploymentUrl}` : ''}.`,
+    );
+  }
   if (c.errorCount) {
     stats.push(
       `${c.errorCount} step ${c.errorCount === 1 ? 'error was' : 'errors were'} recorded — open Discovery to review them.`,

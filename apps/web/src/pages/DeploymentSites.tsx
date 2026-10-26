@@ -296,6 +296,7 @@ export function DeploymentSites() {
                 <TableHeaderCell>CAPs</TableHeaderCell>
                 <TableHeaderCell>Res. accts</TableHeaderCell>
                 <TableHeaderCell>Last deployment</TableHeaderCell>
+                <TableHeaderCell>Drift</TableHeaderCell>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -323,6 +324,19 @@ export function DeploymentSites() {
                           ? `completed - ${r.lastDeployment.failed} failed`
                           : r.lastDeployment.status}
                       </Badge>
+                    ) : (
+                      '—'
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {r.drift && r.drift.drifted > 0 ? (
+                      <RowLink to={`/deployment/sites/${r.id}?tab=drift`}>
+                        <Badge appearance="tint" color="warning" title="Deployed rows that were changed in Teams afterwards, found by the last Discovery sync">
+                          {r.drift.drifted} changed in Teams
+                        </Badge>
+                      </RowLink>
+                    ) : r.drift ? (
+                      <Text size={200} className={s.muted}>None</Text>
                     ) : (
                       '—'
                     )}

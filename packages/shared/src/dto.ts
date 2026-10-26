@@ -263,6 +263,19 @@ const queryArray = <T extends z.ZodTypeAny>(arraySchema: T) =>
  * are planned (planCallQueueRow/planAutoAttendantRow) but not in the default
  * list, matching resource_accounts' own opt-in-by-caller shape.
  */
+/** GET deployments/drift - one site's drift, worked out fresh from the stored live state. */
+export const deploymentDriftQuerySchema = z.object({ siteId: z.guid() });
+export type DeploymentDriftQuery = z.infer<typeof deploymentDriftQuerySchema>;
+
+/** POST build/drift/accept - take what Teams has now into the design for one drifted row. */
+export const buildDriftAcceptSchema = z
+  .object({
+    object_type: z.enum(['user', 'cap', 'auto_attendant', 'call_queue']),
+    row_id: z.guid(),
+  })
+  .strict();
+export type BuildDriftAcceptInput = z.infer<typeof buildDriftAcceptSchema>;
+
 export const deploymentPreviewQuerySchema = z.object({
   siteId: z.guid(),
   sheets: queryArray(z.array(z.enum(DEPLOYMENT_SHEETS)).min(1)).default([

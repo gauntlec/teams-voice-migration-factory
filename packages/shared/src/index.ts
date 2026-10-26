@@ -492,6 +492,8 @@ export interface DeploymentSiteRollup {
   counts: { users: number; caps: number; resourceAccounts: number };
   /** `failed` mirrors deployments.summary.failed - a `completed` run with failed > 0 finished cleanly but changed nothing for those rows, so callers must check this alongside `status` rather than treating `completed` alone as success (see DeploymentSiteWorkspace's own runStatusBadge). */
   lastDeployment: { id: string; mode: 'dry_run' | 'execute'; status: string; createdAt: string; failed: number } | null;
+  /** Rows that no longer match live, as worked out after the latest Discovery sync (see drift.ts); null until a check has run. */
+  drift: { drifted: number; awaitingSync: number; computedAt: string } | null;
 }
 
 /**
@@ -522,6 +524,8 @@ export interface DeploymentPreviewRow {
   skipReasons?: string[];
   /** The migration wave a user or common area phone is in (Design & Build's Wave column); null/absent for anything with no wave. */
   wave?: string | null;
+  /** Set when the row was deployed and Teams has changed since (see drift.ts); absent for a design not yet deployed. */
+  drift?: import('./drift').DriftState;
   /**
    * True when this row wasn't in the caller's own `rowIds` selection but was
    * pulled in by DeploymentService.expandScopeWithDependencies - a Call
@@ -549,3 +553,4 @@ export interface FileRow {
 export * from './sort';
 export * from './calling-settings';
 export * from './deployment-groups';
+export * from './drift';

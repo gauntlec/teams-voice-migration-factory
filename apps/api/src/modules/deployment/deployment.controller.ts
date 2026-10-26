@@ -4,6 +4,8 @@ import {
   can,
   createDeploymentSchema,
   deploymentPreviewQuerySchema,
+  deploymentDriftQuerySchema,
+  type DeploymentDriftQuery,
   generateDeploymentDocumentSchema,
   listDeploymentsQuerySchema,
   startConnectionSchema,
@@ -33,6 +35,12 @@ export class DeploymentController {
   @RequirePermission('deployment:read')
   summary(@TenantCtx() t: TenantContext) {
     return this.svc.siteRollup(t);
+  }
+
+  @Get('drift')
+  @RequirePermission('deployment:read')
+  drift(@TenantCtx() t: TenantContext, @Query(new ZodBody(deploymentDriftQuerySchema)) query: DeploymentDriftQuery) {
+    return this.svc.siteDrift(t, query.siteId);
   }
 
   @Get('preview')

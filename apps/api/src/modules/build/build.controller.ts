@@ -4,6 +4,8 @@ import {
   buildAutoAttendantCreateSchema,
   buildAutoAttendantPatchSchema,
   buildBulkPatchSchema,
+  buildDriftAcceptSchema,
+  type BuildDriftAcceptInput,
   buildCallQueueCreateSchema,
   buildCallQueuePatchSchema,
   buildCapCreateSchema,
@@ -378,6 +380,12 @@ export class BuildController {
   @RequirePermission('build:write')
   deleteAutoAttendant(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string) {
     return this.svc.deleteAutoAttendant(t, user, id);
+  }
+
+  @Post('drift/accept')
+  @RequirePermission('build:write')
+  acceptDrift(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Body(new ZodBody(buildDriftAcceptSchema)) body: BuildDriftAcceptInput) {
+    return this.svc.acceptDrift(t, user, body);
   }
 
   @Post('auto-attendants/:id/refresh')

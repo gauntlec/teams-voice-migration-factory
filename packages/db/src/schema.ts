@@ -1080,6 +1080,16 @@ export interface DeploymentChangesTable {
   message: string | null;
 }
 
+/** Latest drift check for a site (migration 0065, packages/db/src/drift.ts). */
+export interface DeploymentDriftTable {
+  site_id: string;
+  drifted: ColumnType<number, number | undefined, number>;
+  awaiting_sync: ColumnType<number, number | undefined, number>;
+  rows: ColumnType<import('@tvmf/shared').DriftRow[], string | undefined, string>;
+  run_id: string | null;
+  computed_at: ColumnType<string, string | undefined, string>;
+}
+
 export interface DeploymentScriptsTable {
   id: Generated<string>;
   deployment_id: string;
@@ -1672,6 +1682,7 @@ export interface DB {
   tenant_discovery_config: TenantDiscoveryConfigTable;
   deployments: DeploymentsTable;
   deployment_changes: DeploymentChangesTable;
+  deployment_drift: DeploymentDriftTable;
   deployment_scripts: DeploymentScriptsTable;
   handover_packs: HandoverPacksTable;
   handover_sections: HandoverSectionsTable;

@@ -1,8 +1,10 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { sql, type Kysely } from 'kysely';
-import { makeAutoAttendantTargetResolver, resolveLiveNumberTypes, tenantDb, type DB } from '@tvmf/db';
+import { computeSiteDrift, makeAutoAttendantTargetResolver, resolveLiveNumberTypes, tenantDb, type DB } from '@tvmf/db';
 import {
+  identityDriftNotAccepted,
+  type BuildDriftAcceptInput,
   CALL_QUEUE_NO_AGENT_ACTIONS,
   CALL_QUEUE_NO_AGENT_APPLY_TO,
   CALL_QUEUE_OVERFLOW_ACTIONS,
@@ -349,9 +351,10 @@ export class BuildService {
   /**
    * Starts a Design & Build row's call forwarding, delegates, call group and voicemail from what the tenant has for that user (the
    * sync reads Get-CsUserCallingSettings and the voicemail settings for voice-enabled users). Only what is still empty is filled: a
-   * setting the engineer has designed is never replaced. Returns how many rows changed and how many have nothing read yet.
+   * setting the engineer has designed is never replaced - unless `overwrite`, which takes every one of them from live (Accept
+   * into design, for a drifted row). Returns how many rows changed and how many have nothing read yet.
    */
-  async applyLiveVoiceSettings(t: TenantContext, table: 'build_users' | 'build_caps', siteId: string, onlyUpns?: string[]) {
+  async applyLiveVoiceSettings(t: TenantContext, table: 'build_users' | 'build_caps', siteId: string, onlyUpns?: string[], overwrite = false) {
     const s = this.s(t);
     let q = s.selectFrom(table).select(['id', 'upn', 'call_forwarding', 'delegates', 'pickup_group', 'voicemail']).where('site_id', '=', siteId);
     if (onlyUpns?.length) q = q.where(sql`lower(upn)`, 'in', onlyUpns.map((x) => x.toLowerCase()));
@@ -375,6 +378,13 @@ export class BuildService {
         continue;
       }
       const patch: Record<string, unknown> = {};
+      if (overwrite) {
+        // empty is '{}' / '[]' in these columns (NOT NULL), the same as a row that never designed the setting
+        patch.call_forwarding = calling.callForwarding ?? {};
+        patch.delegates = JSON.stringify(calling.delegates ?? []);
+        patch.pickup_group = calling.pickupGroup ?? {};
+        if (l.voicemail_enabled !== null) patch.voicemail = { enabled: l.voicemail_enabled, language: l.voicemail_prompt_language };
+      }
       if (empty(r.call_forwarding) && !empty(calling.callForwarding)) patch.call_forwarding = calling.callForwarding;
       if (empty(r.delegates) && calling.delegates.length) patch.delegates = JSON.stringify(calling.delegates);
       if (empty(r.pickup_group) && calling.pickupGroup) patch.pickup_group = calling.pickupGroup;
@@ -385,6 +395,45 @@ export class BuildService {
       }
     }
     return { updated, rows: rows.length, notRead };
+  }
+
+  /**
+   * Accept into design, for a drifted row (drift.ts): take what Teams has now. An auto attendant or call queue is refreshed from
+   * its discovered object (as Refresh from Teams does); a user or common area phone takes its live calling settings and voicemail.
+   * A number, Enterprise Voice or policy difference is left to the engineer, since numbers go through the number inventory: the
+   * answer lists what still differs. Rechecks the site's drift afterwards.
+   */
+  async acceptDrift(t: TenantContext, u: AuthedUser, body: BuildDriftAcceptInput) {
+    const s = this.s(t);
+    let siteId: string;
+    let name: string;
+    if (body.object_type === 'auto_attendant' || body.object_type === 'call_queue') {
+      const table = body.object_type === 'auto_attendant' ? 'build_auto_attendants' : 'build_call_queues';
+      const row = await s.selectFrom(table).select(['site_id', 'name']).where('id', '=', body.row_id).executeTakeFirst();
+      if (!row) throw new NotFoundException('row not found');
+      await this.refreshVoiceAppFromLive(t, u, body.object_type, body.row_id);
+      siteId = row.site_id;
+      name = row.name;
+    } else {
+      await this.assertNotSrLocked(t, [body.row_id]);
+      const table = body.object_type === 'user' ? 'build_users' : 'build_caps';
+      const row = await s.selectFrom(table).select(['site_id', 'upn']).where('id', '=', body.row_id).executeTakeFirst();
+      if (!row) throw new NotFoundException('row not found');
+      const res = await this.applyLiveVoiceSettings(t, table, row.site_id, [row.upn], true);
+      if (res.notRead) throw new BadRequestException('Discovery has not read this account\'s calling settings yet. Run a Discovery sync, then try again.');
+      siteId = row.site_id;
+      name = row.upn;
+    }
+    const drift = await computeSiteDrift(s, siteId);
+    const still = drift.rows.find((r) => r.rowId === body.row_id);
+    const remaining = still ? (body.object_type === 'user' || body.object_type === 'cap' ? identityDriftNotAccepted(still.cmdlets) : still.cmdlets) : [];
+    await this.audit.tenant(t.schema, 'build.drift_accepted', {
+      actor: actorOf(u),
+      targetType: body.object_type,
+      targetId: body.row_id,
+      detail: { name, remaining },
+    });
+    return { remaining };
   }
 
   async importVoiceSettings(t: TenantContext, u: AuthedUser, kind: 'users' | 'caps', siteId: string) {

@@ -81,6 +81,10 @@ export interface DiscoveryCompletedContext {
   breakdown: { label: string; count: number }[];
   /** absolute URL of the Discovery page */
   runUrl: string;
+  /** Sites where deployed rows no longer match live after this sync (drift.ts); empty or absent when none. */
+  drift?: { sitecode: string; name: string | null; drifted: number }[];
+  /** absolute URL of the Deployment page, for the drift line */
+  deploymentUrl?: string;
 }
 
 /**
