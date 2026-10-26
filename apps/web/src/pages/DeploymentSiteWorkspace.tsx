@@ -32,7 +32,9 @@ import {
 import { ArrowLeftRegular, CheckmarkCircleRegular, WarningRegular } from '@fluentui/react-icons';
 import {
   DEPLOYMENT_SHEETS,
+  groupDeploymentRows,
   verificationHeadline,
+  type DeploymentGroupBy,
   type DeploymentPreviewRow,
   type DeploymentSiteRollup,
   type DeploymentVerification,
@@ -254,6 +256,8 @@ const OBJECT_TYPE_LABEL: Record<DeploymentPreviewRow['objectType'], string> = {
 /** Display/group order for the Planned changes table - matches the worker's own deployment order (users/caps first, auto attendants last), so the grouping doubles as a hint at what runs before what. */
 const GROUP_ORDER: DeploymentPreviewRow['objectType'][] = ['user', 'cap', 'resource_account', 'shared_calling_policy', 'call_queue', 'auto_attendant'];
 
+const GROUP_BY_KEY = 'tvmf.deployment.groupBy';
+
 export function DeploymentSiteWorkspace() {
   const ls = useLocalStyles();
   const cs = useStyles();
@@ -267,6 +271,22 @@ export function DeploymentSiteWorkspace() {
 
   const [tab, setTab] = useState<'changes' | 'history'>('changes');
   const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(new Set());
+  // How the planned changes are grouped: by what they are, or by migration wave. Remembered per browser; the page works without it.
+  const [groupBy, setGroupByState] = useState<DeploymentGroupBy>(() => {
+    try {
+      return localStorage.getItem(GROUP_BY_KEY) === 'wave' ? 'wave' : 'type';
+    } catch {
+      return 'type';
+    }
+  });
+  const setGroupBy = (g: DeploymentGroupBy) => {
+    setGroupByState(g);
+    try {
+      localStorage.setItem(GROUP_BY_KEY, g);
+    } catch {
+      /* private window or blocked storage: the choice just is not remembered */
+    }
+  };
   const [selectedDeployment, setSelectedDeployment] = useState<string | null>(null);
   const [generatedFile, setGeneratedFile] = useState<FileRow | null>(null);
   const [rollbackError, setRollbackError] = useState<string | null>(null);
@@ -395,6 +415,19 @@ export function DeploymentSiteWorkspace() {
     });
   const toggleAll = () =>
     setSelectedRowIds((prev) => (prev.size === rows.length ? new Set() : new Set(rows.map((r) => r.rowId))));
+  /** Ticks a whole group (a wave, or an object type); unticks it when every row in it is already ticked. */
+  const toggleGroup = (ids: string[]) =>
+    setSelectedRowIds((prev) => {
+      const next = new Set(prev);
+      const all = ids.every((id) => next.has(id));
+      for (const id of ids) {
+        if (all) next.delete(id);
+        else next.add(id);
+      }
+      return next;
+    });
+  // The groups the table shows, in order: object types in deployment order, or waves in name order (rows keep their type order inside a wave).
+  const groups = groupDeploymentRows(rows, groupBy, GROUP_ORDER, OBJECT_TYPE_LABEL);
 
   return (
     <Page
@@ -439,9 +472,20 @@ export function DeploymentSiteWorkspace() {
       {tab === 'changes' && (
         <Card className={s.card}>
           <div className={mergeClasses(cs.row, ls.justifySpacebetween)}>
-            <Text weight="semibold" size={400}>
-              Planned changes <span className={s.muted}>({rows.length})</span>
-            </Text>
+            <div className={cs.row}>
+              <Text weight="semibold" size={400}>
+                Planned changes <span className={s.muted}>({rows.length})</span>
+              </Text>
+              <Text size={200} className={s.muted}>
+                Group by
+              </Text>
+              <Button size="small" appearance={groupBy === 'type' ? 'primary' : 'secondary'} aria-pressed={groupBy === 'type'} onClick={() => setGroupBy('type')}>
+                Object type
+              </Button>
+              <Button size="small" appearance={groupBy === 'wave' ? 'primary' : 'secondary'} aria-pressed={groupBy === 'wave'} onClick={() => setGroupBy('wave')}>
+                Wave
+              </Button>
+            </div>
             <div className={cs.row}>
               <Button
                 disabled={!activeConn || !canDryRun || run.isPending}
@@ -550,13 +594,21 @@ export function DeploymentSiteWorkspace() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {GROUP_ORDER.flatMap((type) => {
-                  const group = rows.filter((r) => r.objectType === type);
-                  if (group.length === 0) return [];
+                {groups.flatMap((g) => {
+                  const group = g.rows;
+                  const ids = group.map((r) => r.rowId);
+                  const ticked = ids.filter((id) => selectedRowIds.has(id)).length;
                   return [
-                    <TableRow key={`group-${type}`}>
-                      <TableCell colSpan={4} className={cs.groupHeaderCell}>
-                        {OBJECT_TYPE_LABEL[type]} · {group.length}
+                    <TableRow key={`group-${g.key}`}>
+                      <TableCell className={cs.groupHeaderCell}>
+                        <Checkbox
+                          checked={ticked === ids.length ? true : ticked > 0 ? 'mixed' : false}
+                          onChange={() => toggleGroup(ids)}
+                          aria-label={`Select all ${g.label}`}
+                        />
+                      </TableCell>
+                      <TableCell colSpan={3} className={cs.groupHeaderCell}>
+                        {g.label} · {group.length}
                       </TableCell>
                     </TableRow>,
                     ...group.map((r) => (

@@ -520,6 +520,8 @@ export interface DeploymentPreviewRow {
    * Design & Build. Absent or empty means it deploys.
    */
   skipReasons?: string[];
+  /** The migration wave a user or common area phone is in (Design & Build's Wave column); null/absent for anything with no wave. */
+  wave?: string | null;
   /**
    * True when this row wasn't in the caller's own `rowIds` selection but was
    * pulled in by DeploymentService.expandScopeWithDependencies - a Call
@@ -546,3 +548,4 @@ export interface FileRow {
 }
 export * from './sort';
 export * from './calling-settings';
+export * from './deployment-groups';

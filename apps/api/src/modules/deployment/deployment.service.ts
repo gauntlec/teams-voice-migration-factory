@@ -255,6 +255,7 @@ export class DeploymentService {
             renderedCommands: calls.map(renderCommand),
             warnings,
             skipReasons: skipped,
+            wave: row.migration_wave?.trim() || null,
             autoIncluded: autoIncluded.has(row.id),
           });
         }
