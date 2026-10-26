@@ -39,6 +39,7 @@ import {
   type Scoped,
 } from './live-state';
 import { identitySkipReasons } from './validate-rows';
+import { audioImportMap } from './voice-audio';
 
 export type DeploymentSheetName = 'users' | 'caps' | 'resource_accounts' | 'shared_calling_policies' | 'call_queues' | 'auto_attendants';
 type SheetName = DeploymentSheetName;
@@ -273,12 +274,15 @@ export async function previewSiteChanges(s: Scoped, query: DeploymentPreviewQuer
         overflow: (r.overflow as CallQueueActionSettings | null) ?? null,
         timeout: (r.timeout as CallQueueActionSettings | null) ?? null,
         no_agent_action: (r.no_agent_action as CallQueueActionSettings | null) ?? null,
+        authorized_users: (r.authorized_users as string[] | null) ?? null,
+        hide_authorized_users: (r.hide_authorized_users as string[] | null) ?? null,
       })),
     );
     const allUpns = [...rows.flatMap((r) => (r.agents as string[] | null) ?? []), ...ras.map((r) => r.upn), ...cqTargetUpns];
-    const [liveIdentity, liveQueues] = await Promise.all([
+    const [liveIdentity, liveQueues, audio] = await Promise.all([
       resolveLiveIdentityState(s, allUpns),
       resolveLiveCallQueueState(s, rows),
+      audioImportMap(s, rows),
     ]);
     const agentObjectIds = new Map<string, string>();
     for (const [upn, v] of liveIdentity) if (v.objectId) agentObjectIds.set(upn, v.objectId);
@@ -304,9 +308,12 @@ export async function previewSiteChanges(s: Scoped, query: DeploymentPreviewQuer
         no_agent_apply_to: row.no_agent_apply_to,
         language_id: row.language_id,
         resource_accounts: resourceAccounts,
+        authorized_users: (row.authorized_users as string[] | null) ?? null,
+        hide_authorized_users: (row.hide_authorized_users as string[] | null) ?? null,
+        voicemail_triage_template_id: row.voicemail_triage_template_id,
       };
       const live: CallQueueLiveState | undefined = liveQueues.get(row.id);
-      const calls = planCallQueueRow(planRow, agentObjectIds, raObjectIds, live);
+      const calls = planCallQueueRow(planRow, agentObjectIds, raObjectIds, live, audio);
       const warnings = callQueueRowWarnings(planRow, agentObjectIds, raObjectIds);
       if (calls.length === 0 && warnings.length === 0) continue;
       out.push({
@@ -358,6 +365,9 @@ export async function previewSiteChanges(s: Scoped, query: DeploymentPreviewQuer
       holiday_call_flows: (row.holiday_call_flows as AutoAttendantHolidayCallFlow[]) ?? [],
       schedule: (row.schedule as AutoAttendantSchedule) ?? null,
       resource_accounts: (row.resource_accounts as string[] | null) ?? [],
+      authorized_users: (row.authorized_users as string[] | null) ?? null,
+      hide_authorized_users: (row.hide_authorized_users as string[] | null) ?? null,
+      user_name_extension: row.user_name_extension,
     }));
     // 'user'-kind callable entities (operator / menu-option transfer
     // targets) need their own UPN -> live Entra Object ID resolution -
@@ -372,7 +382,7 @@ export async function previewSiteChanges(s: Scoped, query: DeploymentPreviewQuer
       const warnings = autoAttendantRowWarnings(planRow, crossRef, raObjectIds, userObjectIds);
       // say why a live auto attendant is being changed, so a row that looks unchanged to the engineer is not a mystery
       if (live && calls.length > 0) {
-        const diffs = autoAttendantDifferences(planRow, live, crossRef);
+        const diffs = autoAttendantDifferences(planRow, live, crossRef, userObjectIds);
         if (diffs.length > 0) warnings.push(`Differs from the live auto attendant: ${diffs.join('; ')}.`);
       }
       if (calls.length === 0 && warnings.length === 0) continue;

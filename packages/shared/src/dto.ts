@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { USER_NAME_EXTENSIONS } from './voice-app-access';
 import { ROLES } from './rbac';
 import { autoAttendantWizardAnswersSchema, callQueueWizardAnswersSchema } from './wizard';
 import {
@@ -1258,6 +1259,7 @@ const callQueueActionSchema = (actions: readonly [string, ...string[]]) =>
       /** PowerShell-only extras - see CallQueueActionSettings */
       priority: z.number().int().min(1).max(5).optional(),
       redirectPrompt: z.string().trim().max(1000).optional(),
+      redirectAudio: z.object({ fileId: z.guid(), filename: z.string().trim().min(1).max(200) }).strict().optional(),
     })
     .strict()
     .optional();
@@ -1284,6 +1286,11 @@ const buildCallQueueWritable = {
   /** build_resource_accounts.id array - which RA(s)/phone numbers present this queue. */
   resource_accounts: z.array(z.guid()).max(10).optional(),
   notes: optStr(2000),
+  /** PowerShell-only access settings (voice-app-access.ts): UPNs; null = not managed by Voxshift (Teams keeps its own). */
+  authorized_users: z.array(str(200)).max(100).nullable().optional(),
+  hide_authorized_users: z.array(str(200)).max(100).nullable().optional(),
+  /** -SharedVoicemailTriageSettingsTemplateId (AI triage of shared voicemail; Microsoft private preview). */
+  voicemail_triage_template_id: blankToNull(z.guid()),
 };
 
 export const buildCallQueueCreateSchema = z
@@ -1441,6 +1448,11 @@ const buildAutoAttendantWritable = {
   holiday_call_flows: z.array(autoAttendantHolidayCallFlowSchema).max(10).optional(),
   /** The after-hours schedule - each holiday_call_flows entry carries its own schedule instead. */
   schedule: autoAttendantScheduleSchema.nullable().optional(),
+  /** PowerShell-only access settings (voice-app-access.ts): UPNs; null = not managed by Voxshift (Teams keeps its own). */
+  authorized_users: z.array(str(200)).max(100).nullable().optional(),
+  hide_authorized_users: z.array(str(200)).max(100).nullable().optional(),
+  /** -UserNameExtension: what dial-by-name adds after a name two people share. null = not managed. */
+  user_name_extension: z.enum(USER_NAME_EXTENSIONS).nullable().optional(),
 };
 
 export const buildAutoAttendantCreateSchema = z

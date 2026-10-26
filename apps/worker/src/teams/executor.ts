@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 /**
  * Abstraction over "talk to the connected customer tenant with the
  * MicrosoftTeams PowerShell module". Two implementations:
@@ -56,6 +57,11 @@ export interface TeamsExecutor {
   queryMany(items: { key: string; command: string; params?: Record<string, unknown> }[], opts?: QueryOpts): Promise<{ key: string; records?: unknown[]; error?: string }[]>;
   /** Run one cmdlet. `whatIf` => generate the command text, do not change anything. */
   invoke(call: CmdletInvocation, opts: { whatIf: boolean }): Promise<CmdletResult>;
+  /**
+   * Import-CsOnlineAudioFile: upload an audio prompt to Teams and return its id. `applicationId` HuntGroup (call queues) or
+   * OrgAutoAttendant. Optional so test fakes need not provide it; the deployment leaves the prompt unset without it.
+   */
+  importAudioFile?(applicationId: 'HuntGroup' | 'OrgAutoAttendant', fileName: string, content: Buffer): Promise<string>;
   /** Tear down the pwsh session and wipe the token from memory. */
   dispose(): Promise<void>;
   /**
@@ -292,6 +298,11 @@ export class SimulatedTeamsExecutor implements TeamsExecutor {
     if (!this.signedIn) throw new Error('not connected');
     this.lastUsedAt = Date.now();
     return items.map((i) => ({ key: i.key, records: [] as unknown[] }));
+  }
+
+  async importAudioFile(_applicationId: 'HuntGroup' | 'OrgAutoAttendant', _fileName: string, _content: Buffer): Promise<string> {
+    if (!this.signedIn) throw new Error('not connected');
+    return randomUUID();
   }
 
   async invoke(call: CmdletInvocation, opts: { whatIf: boolean }): Promise<CmdletResult> {

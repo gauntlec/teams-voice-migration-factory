@@ -5,6 +5,7 @@ import IORedis from 'ioredis';
 import { sql } from 'kysely';
 import {
   buildAutoAttendantCrossRef,
+  audioImportMap,
   computeSiteDrift,
   createDb,
   platformDb,
@@ -41,6 +42,7 @@ import { SimulatedTeamsExecutor, type TeamsExecutor } from './teams/executor';
 import { PwshTeamsExecutor } from './teams/pwsh-executor';
 import { CustomerBeingDeletedError, refuseJobForDeletedCustomer, releaseTenantSessions } from './tenant-release';
 import { handleTenantDiscoveryRun, syncTenantGroups } from './discovery/run';
+import { resolveAudioPlaceholders as resolveAudioPlaceholdersFor } from './deployment-audio';
 import { beforeStateResolver, planIdentityRows, planResourceAccountRows, verifyDeployment } from './deployment-verify';
 import { renderEmail } from './mail/templates';
 import type { EmailBranding } from './mail/layout';
@@ -705,6 +707,9 @@ async function handleDeploymentRun(job: Job) {
    * New-CsCallQueue/New-CsAutoAttendant genuinely just created something
    * live, worth a crossRef refresh - see refreshCrossRefEntry.
    */
+  // Redirect audio prompts not yet in Teams are imported in this run (deployment-audio.ts).
+  const resolveAudioPlaceholders = (call: CmdletInvocation) => resolveAudioPlaceholdersFor(scoped, exec, whatIf || teamsReadOnly, call, record);
+
   const runCall = async (call: CmdletInvocation, before?: Record<string, unknown>) => {
     if (call.deferred) {
       const res = { result: 'whatif' as const, before: {}, after: {}, message: 'Deferred - needs manual licensing before rerunning.' };
@@ -832,12 +837,15 @@ async function handleDeploymentRun(job: Job) {
         overflow: (r.overflow as CallQueueActionSettings | null) ?? null,
         timeout: (r.timeout as CallQueueActionSettings | null) ?? null,
         no_agent_action: (r.no_agent_action as CallQueueActionSettings | null) ?? null,
+        authorized_users: (r.authorized_users as string[] | null) ?? null,
+        hide_authorized_users: (r.hide_authorized_users as string[] | null) ?? null,
       })),
     );
     const allUpns = [...rows.flatMap((r) => (r.agents as string[] | null) ?? []), ...ras.map((r) => r.upn), ...cqTargetUpns];
-    const [liveIdentity, liveQueues] = await Promise.all([
+    const [liveIdentity, liveQueues, audio] = await Promise.all([
       resolveLiveIdentityState(scoped, allUpns),
       resolveLiveCallQueueState(scoped, rows),
+      audioImportMap(scoped, rows),
     ]);
     const agentObjectIds = new Map<string, string>();
     for (const [upn, v] of liveIdentity) if (v.objectId) agentObjectIds.set(upn, v.objectId);
@@ -861,14 +869,22 @@ async function handleDeploymentRun(job: Job) {
           no_agent_apply_to: row.no_agent_apply_to,
           language_id: row.language_id,
           resource_accounts: (row.resource_accounts as string[] | null) ?? [],
+          authorized_users: (row.authorized_users as string[] | null) ?? null,
+          hide_authorized_users: (row.hide_authorized_users as string[] | null) ?? null,
+          voicemail_triage_template_id: row.voicemail_triage_template_id,
         },
         agentObjectIds,
         raObjectIds,
         liveQueues.get(row.id),
+        audio,
       );
       let created = false;
-      for (const call of calls) {
+      for (const planned of calls) {
+        // Redirect audio prompts not yet in Teams are imported first, in this run (they must be used within 48 hours).
+        const { call, imported } = await resolveAudioPlaceholders(planned);
         const result = await runCall(call);
+        // An import the queue never took would be deleted by Teams: forget it so the next run imports again.
+        if (result !== 'applied' && imported.length) await scoped.updateTable('voice_audio_files').set({ teams_audio_file_id: null, imported_at: null }).where('id', 'in', imported).execute();
         if (call.cmdlet === 'New-CsCallQueue' && result === 'applied') created = true;
       }
       // See refreshCrossRefEntry - lets an Auto Attendant deployed later in
@@ -913,6 +929,9 @@ async function handleDeploymentRun(job: Job) {
       holiday_call_flows: (row.holiday_call_flows as AutoAttendantHolidayCallFlow[]) ?? [],
       schedule: (row.schedule as AutoAttendantSchedule) ?? null,
       resource_accounts: (row.resource_accounts as string[] | null) ?? [],
+      authorized_users: (row.authorized_users as string[] | null) ?? null,
+      hide_authorized_users: (row.hide_authorized_users as string[] | null) ?? null,
+      user_name_extension: row.user_name_extension,
     }));
     // A row that transfers to another Auto Attendant IN THIS SAME BATCH
     // deploys after its target, so the target's live Identity exists by the

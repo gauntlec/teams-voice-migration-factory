@@ -20,6 +20,7 @@ import { CallQueueSettingsDialog } from './build/callQueueSettingsDialog';
 import { AutoAttendantSettingsDialog } from './build/autoAttendantDialogs';
 import { DangerText } from '../components/ui';
 import { RefreshFromTeamsButton } from './build/refreshFromTeams';
+import { AccessDialog } from './build/accessDialog';
 
 const useLocalStyles = makeStyles({
   mt8: { marginTop: '8px' },
@@ -321,6 +322,8 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
   // Operator/call-flow/schedule/holidays - see AutoAttendantSettingsDialog
   // below, same "compound JSON needs its own dialog" reasoning as above.
   const [aaSettingsFor, setAaSettingsFor] = useState<Row | null>(null);
+  // Authorised users and the PowerShell-only settings - see AccessDialog.
+  const [accessFor, setAccessFor] = useState<{ kind: 'auto_attendant' | 'call_queue'; row: Row } | null>(null);
 
   // Read-only call-flow diagrams - one Auto Attendant or Call Queue at a
   // time (see AutoAttendantFlowDialog/CallQueueFlowDialog below), not a
@@ -524,6 +527,20 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           onSaved={() => {
             qc.invalidateQueries({ queryKey: ['auto-attendants', tid, siteId] });
             setAaSettingsFor(null);
+            embedded?.onChanged?.();
+          }}
+        />
+      )}
+      {accessFor && tid && (
+        <AccessDialog
+          tenantId={tid}
+          endpoint={`${base}/${accessFor.kind === 'auto_attendant' ? 'auto-attendants' : 'call-queues'}`}
+          kind={accessFor.kind}
+          row={accessFor.row}
+          onClose={() => setAccessFor(null)}
+          onSaved={() => {
+            qc.invalidateQueries({ queryKey: [accessFor.kind === 'auto_attendant' ? 'auto-attendants' : 'call-queues', tid, siteId] });
+            setAccessFor(null);
             embedded?.onChanged?.();
           }}
         />
@@ -936,6 +953,18 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
                 ),
             },
             {
+              key: 'access',
+              label: 'Access',
+              render: (r) =>
+                canWrite ? (
+                  <Button size="small" appearance="subtle" onClick={() => setAccessFor({ kind: 'call_queue', row: r })}>
+                    {Array.isArray(r.authorized_users) ? `${(r.authorized_users as unknown[]).length} authorised` : 'Access…'}
+                  </Button>
+                ) : (
+                  '—'
+                ),
+            },
+            {
               key: 'call_flow',
               label: 'Call flow',
               render: (r) => (
@@ -1016,6 +1045,18 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
                 canWrite ? (
                   <Button size="small" appearance="subtle" onClick={() => setAaSettingsFor(r)}>
                     Configure…
+                  </Button>
+                ) : (
+                  '—'
+                ),
+            },
+            {
+              key: 'access',
+              label: 'Access',
+              render: (r) =>
+                canWrite ? (
+                  <Button size="small" appearance="subtle" onClick={() => setAccessFor({ kind: 'auto_attendant', row: r })}>
+                    {Array.isArray(r.authorized_users) ? `${(r.authorized_users as unknown[]).length} authorised` : 'Access…'}
                   </Button>
                 ) : (
                   '—'

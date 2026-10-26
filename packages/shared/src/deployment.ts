@@ -15,6 +15,7 @@ import {
   RESOURCE_ACCOUNT_APPLICATION_IDS,
 } from './domain';
 import type { LiveAutoAttendantStructured } from './aa-live-parse';
+import { accessWarnings, resolveUpnIds, sameIds, type UserNameExtension } from './voice-app-access';
 
 /**
  * What Discovery's live-tenant snapshot (tenant_users) knows about a UPN -
@@ -763,25 +764,41 @@ export interface CallQueueActionSettings {
    * -<Overflow|Timeout|NoAgent>Redirect<Person|Voicemail>TextToSpeechPrompt.
    */
   redirectPrompt?: string;
+  /** PowerShell only: an uploaded audio prompt (voice_audio_files) played instead - -<X>Redirect<Person|Voicemail>AudioFilePrompt. */
+  redirectAudio?: { fileId: string; filename: string };
 }
 
-/** The Set-CsCallQueue parameters for one exception's PowerShell-only extras (priority, redirect prompt), for its action. */
-export function callQueueActionExtras(prefix: 'Overflow' | 'Timeout' | 'NoAgent', settings: CallQueueActionSettings | null | undefined): Record<string, unknown> {
+/**
+ * A redirect audio prompt not yet imported to Teams: the worker swaps this for the id Import-CsOnlineAudioFile returns, in the
+ * same live run (see resolveAudioPlaceholders in the worker). Shown as-is in a What-If.
+ */
+export const AUDIO_PLACEHOLDER = /^<audio:([0-9a-f-]{36})>$/i;
+export const audioPlaceholder = (fileId: string) => `<audio:${fileId}>`;
+
+/**
+ * The Set-CsCallQueue parameters for one exception's PowerShell-only extras (priority, redirect prompt or audio), for its action.
+ * `audio` = voice_audio_files.id -> the Teams audio file id it was imported as (absent: not imported yet, so a placeholder).
+ */
+export function callQueueActionExtras(prefix: 'Overflow' | 'Timeout' | 'NoAgent', settings: CallQueueActionSettings | null | undefined, audio: Map<string, string> = new Map()): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (settings?.action === 'Forward' && settings.priority != null) out[`${prefix}ActionCallPriority`] = settings.priority;
+  const who = settings?.action === 'Forward' ? 'Person' : settings?.action === 'Voicemail' ? 'Voicemail' : null;
   const prompt = settings?.redirectPrompt?.trim();
-  if (prompt && settings?.action === 'Forward') out[`${prefix}RedirectPersonTextToSpeechPrompt`] = prompt;
-  if (prompt && settings?.action === 'Voicemail') out[`${prefix}RedirectVoicemailTextToSpeechPrompt`] = prompt;
+  if (who && prompt) out[`${prefix}Redirect${who}TextToSpeechPrompt`] = prompt;
+  if (who && settings?.redirectAudio) out[`${prefix}Redirect${who}AudioFilePrompt`] = audio.get(settings.redirectAudio.fileId) ?? audioPlaceholder(settings.redirectAudio.fileId);
   return out;
 }
 
 /** The live counterparts of callQueueActionExtras, from Get-CsCallQueue's output, for the action the queue has live. */
-export function liveCallQueueActionExtras(prefix: 'Overflow' | 'Timeout' | 'NoAgent', data: Record<string, unknown>, action: string | undefined): { priority?: number; redirectPrompt?: string } {
+export function liveCallQueueActionExtras(prefix: 'Overflow' | 'Timeout' | 'NoAgent', data: Record<string, unknown>, action: string | undefined): { priority?: number; redirectPrompt?: string; redirectAudioId?: string } {
   const priority = data[`${prefix}ActionCallPriority`];
-  const prompt = action === 'Voicemail' ? data[`${prefix}RedirectVoicemailTextToSpeechPrompt`] : action === 'Forward' ? data[`${prefix}RedirectPersonTextToSpeechPrompt`] : undefined;
+  const who = action === 'Voicemail' ? 'Voicemail' : action === 'Forward' ? 'Person' : null;
+  const prompt = who ? data[`${prefix}Redirect${who}TextToSpeechPrompt`] : undefined;
+  const audio = who ? data[`${prefix}Redirect${who}AudioFilePrompt`] : undefined;
   return {
     ...(action === 'Forward' && typeof priority === 'number' ? { priority } : {}),
     ...(typeof prompt === 'string' && prompt.trim() ? { redirectPrompt: prompt.trim() } : {}),
+    ...(typeof audio === 'string' && audio ? { redirectAudioId: audio } : {}),
   };
 }
 
@@ -802,6 +819,10 @@ export interface BuildCallQueueRow {
   language_id: string | null;
   /** build_resource_accounts.id array - resolved to Application Instance GUIDs via raObjectIds. */
   resource_accounts: string[];
+  /** -AuthorizedUsers / -HideAuthorizedUsers as UPNs, and -SharedVoicemailTriageSettingsTemplateId (voice-app-access.ts). null = not managed. */
+  authorized_users?: string[] | null;
+  hide_authorized_users?: string[] | null;
+  voicemail_triage_template_id?: string | null;
 }
 
 /**
@@ -828,10 +849,13 @@ export interface CallQueueLiveState {
   noAgentAction?: string;
   noAgentActionTarget?: string;
   noAgentApplyTo?: string;
+  authorizedUsers?: string[];
+  hideAuthorizedUsers?: string[];
+  voicemailTriageTemplateId?: string;
   /** PowerShell-only extras per exception (liveCallQueueActionExtras). */
-  overflowExtras?: { priority?: number; redirectPrompt?: string };
-  timeoutExtras?: { priority?: number; redirectPrompt?: string };
-  noAgentExtras?: { priority?: number; redirectPrompt?: string };
+  overflowExtras?: { priority?: number; redirectPrompt?: string; redirectAudioId?: string };
+  timeoutExtras?: { priority?: number; redirectPrompt?: string; redirectAudioId?: string };
+  noAgentExtras?: { priority?: number; redirectPrompt?: string; redirectAudioId?: string };
   languageId?: string;
   /**
    * From the live tenant_objects call_queue record's ApplicationInstances -
@@ -889,7 +913,7 @@ export function decodeCallQueueEnum(v: unknown, values: readonly string[]): stri
  * space entirely, and the other actions don't use target at all.
  */
 export function collectCallQueueTargetUpns(
-  rows: Pick<BuildCallQueueRow, 'overflow' | 'timeout' | 'no_agent_action'>[],
+  rows: Pick<BuildCallQueueRow, 'overflow' | 'timeout' | 'no_agent_action' | 'authorized_users' | 'hide_authorized_users'>[],
 ): string[] {
   const out: string[] = [];
   const add = (s: CallQueueActionSettings | null | undefined) => {
@@ -899,6 +923,8 @@ export function collectCallQueueTargetUpns(
     add(row.overflow);
     add(row.timeout);
     add(row.no_agent_action);
+    // authorised users resolve the same way (UPN -> Entra object id)
+    out.push(...(row.authorized_users ?? []), ...(row.hide_authorized_users ?? []));
   }
   return out;
 }
@@ -947,7 +973,7 @@ function sameTarget(a: string | undefined, b: string | undefined): boolean {
  * as a failed cmdlet.
  */
 export function callQueueRowWarnings(
-  row: Pick<BuildCallQueueRow, 'agents' | 'resource_accounts' | 'overflow' | 'timeout' | 'no_agent_action' | 'language_id'>,
+  row: Pick<BuildCallQueueRow, 'agents' | 'resource_accounts' | 'overflow' | 'timeout' | 'no_agent_action' | 'language_id' | 'authorized_users' | 'hide_authorized_users'>,
   agentObjectIds: Map<string, string>,
   raObjectIds: Map<string, string>,
 ): string[] {
@@ -995,6 +1021,7 @@ export function callQueueRowWarnings(
   checkTarget(row.overflow, 'Overflow');
   checkTarget(row.timeout, 'Timeout');
   checkTarget(row.no_agent_action, 'No-agent');
+  warnings.push(...accessWarnings(row.authorized_users, row.hide_authorized_users, agentObjectIds));
   return warnings;
 }
 
@@ -1012,6 +1039,8 @@ export function planCallQueueRow(
   agentObjectIds: Map<string, string>,
   raObjectIds: Map<string, string>,
   live?: CallQueueLiveState,
+  /** voice_audio_files.id -> Teams audio file id, for redirect audio prompts already imported (callQueueActionExtras). */
+  audio: Map<string, string> = new Map(),
 ): CmdletInvocation[] {
   const calls: CmdletInvocation[] = [];
   const users = row.agents
@@ -1047,17 +1076,23 @@ export function planCallQueueRow(
     ...(row.no_agent_action?.action ? { NoAgentAction: row.no_agent_action.action } : {}),
     ...(noAgentTarget ? { NoAgentActionTarget: noAgentTarget } : {}),
     ...(row.no_agent_apply_to ? { NoAgentApplyTo: row.no_agent_apply_to } : {}),
-    ...callQueueActionExtras('Overflow', row.overflow),
-    ...callQueueActionExtras('Timeout', row.timeout),
-    ...callQueueActionExtras('NoAgent', row.no_agent_action),
+    ...callQueueActionExtras('Overflow', row.overflow, audio),
+    ...callQueueActionExtras('Timeout', row.timeout, audio),
+    ...callQueueActionExtras('NoAgent', row.no_agent_action, audio),
+    ...(row.authorized_users != null ? { AuthorizedUsers: resolveUpnIds(row.authorized_users, agentObjectIds).length ? resolveUpnIds(row.authorized_users, agentObjectIds) : PS_EMPTY_ARRAY } : {}),
+    ...(row.hide_authorized_users != null ? { HideAuthorizedUsers: resolveUpnIds(row.hide_authorized_users, agentObjectIds).length ? resolveUpnIds(row.hide_authorized_users, agentObjectIds) : PS_EMPTY_ARRAY } : {}),
+    ...(row.voicemail_triage_template_id ? { SharedVoicemailTriageSettingsTemplateId: row.voicemail_triage_template_id } : {}),
   };
   // A design that leaves an extra unset keeps whatever Teams has: only a set one is compared.
-  const extrasDiffer = (want: CallQueueActionSettings | null | undefined, have: { priority?: number; redirectPrompt?: string } | undefined) => {
-    const w = callQueueActionExtras('Overflow', want);
+  const extrasDiffer = (want: CallQueueActionSettings | null | undefined, have: { priority?: number; redirectPrompt?: string; redirectAudioId?: string } | undefined) => {
+    const w = callQueueActionExtras('Overflow', want, audio);
+    const tts = w.OverflowRedirectPersonTextToSpeechPrompt ?? w.OverflowRedirectVoicemailTextToSpeechPrompt;
+    const file = (w.OverflowRedirectPersonAudioFilePrompt ?? w.OverflowRedirectVoicemailAudioFilePrompt) as string | undefined;
     return (
       (w.OverflowActionCallPriority !== undefined && w.OverflowActionCallPriority !== have?.priority) ||
-      ((w.OverflowRedirectPersonTextToSpeechPrompt ?? w.OverflowRedirectVoicemailTextToSpeechPrompt) !== undefined &&
-        (w.OverflowRedirectPersonTextToSpeechPrompt ?? w.OverflowRedirectVoicemailTextToSpeechPrompt) !== have?.redirectPrompt)
+      (tts !== undefined && tts !== have?.redirectPrompt) ||
+      // a placeholder (not imported yet) never matches, so the import and Set happen
+      (file !== undefined && file.toLowerCase() !== (have?.redirectAudioId ?? '').toLowerCase())
     );
   };
 
@@ -1085,6 +1120,9 @@ export function planCallQueueRow(
       extrasDiffer(row.overflow, live.overflowExtras) ||
       extrasDiffer(row.timeout, live.timeoutExtras) ||
       extrasDiffer(row.no_agent_action, live.noAgentExtras) ||
+      (row.authorized_users != null && !sameIds(resolveUpnIds(row.authorized_users, agentObjectIds), live.authorizedUsers)) ||
+      (row.hide_authorized_users != null && !sameIds(resolveUpnIds(row.hide_authorized_users, agentObjectIds), live.hideAuthorizedUsers)) ||
+      (!!row.voicemail_triage_template_id && row.voicemail_triage_template_id.toLowerCase() !== (live.voicemailTriageTemplateId ?? '').toLowerCase()) ||
       (needsLanguage && (live.languageId ?? undefined) !== (row.language_id ?? undefined)) ||
       JSON.stringify(sortedUsers) !== JSON.stringify(sortedLive);
     if (changed) {
@@ -1258,6 +1296,10 @@ export interface BuildAutoAttendantRow {
   schedule: AutoAttendantSchedule | null;
   /** build_resource_accounts.id array - resolved to Application Instance GUIDs via raObjectIds, same as BuildCallQueueRow's own field. */
   resource_accounts: string[];
+  /** -AuthorizedUsers / -HideAuthorizedUsers as UPNs, and -UserNameExtension (voice-app-access.ts). null = not managed, Teams keeps its own. */
+  authorized_users?: string[] | null;
+  hide_authorized_users?: string[] | null;
+  user_name_extension?: UserNameExtension | null;
 }
 
 /**
@@ -1321,11 +1363,12 @@ function collectUserUpnsFromCallFlow(cf: AutoAttendantCallFlow | null | undefine
  * Call Queue agent UPNs before calling resolveLiveIdentityState.
  */
 export function collectAutoAttendantUserUpns(
-  rows: Pick<BuildAutoAttendantRow, 'operator' | 'default_call_flow' | 'after_hours_call_flow' | 'holiday_call_flows'>[],
+  rows: Pick<BuildAutoAttendantRow, 'operator' | 'default_call_flow' | 'after_hours_call_flow' | 'holiday_call_flows' | 'authorized_users' | 'hide_authorized_users'>[],
 ): string[] {
   const out: string[] = [];
   for (const row of rows) {
     if (row.operator?.kind === 'user' && row.operator.upn) out.push(row.operator.upn);
+    out.push(...(row.authorized_users ?? []), ...(row.hide_authorized_users ?? []));
     collectUserUpnsFromCallFlow(row.default_call_flow, out);
     collectUserUpnsFromCallFlow(row.after_hours_call_flow, out);
     for (const h of row.holiday_call_flows) collectUserUpnsFromCallFlow(h.callFlow, out);
@@ -1495,6 +1538,7 @@ export function autoAttendantRowWarnings(
   // Same "after hours only deploys with both a flow and a schedule" rule as planAutoAttendantRow.
   if (row.after_hours_call_flow && row.schedule) warnings.push(...scheduleProblems(row.schedule, 'After-hours schedule'));
   for (const h of row.holiday_call_flows) warnings.push(...scheduleProblems(h.schedule, `Holiday "${h.name}"`));
+  warnings.push(...accessWarnings(row.authorized_users, row.hide_authorized_users, userObjectIds));
   return warnings;
 }
 
@@ -1906,8 +1950,8 @@ function sortedHolidays(list: AutoAttendantHolidayCallFlow[]): AutoAttendantHoli
  * after-hours config that wouldn't be sent live yet must not register as a
  * "change" just because the column itself is non-null.
  */
-function autoAttendantMatchesLive(row: BuildAutoAttendantRow, live: AutoAttendantLiveState, crossRef: AutoAttendantCrossRef): boolean {
-  return autoAttendantDifferences(row, live, crossRef).length === 0;
+function autoAttendantMatchesLive(row: BuildAutoAttendantRow, live: AutoAttendantLiveState, crossRef: AutoAttendantCrossRef, userObjectIds: Map<string, string>): boolean {
+  return autoAttendantDifferences(row, live, crossRef, userObjectIds).length === 0;
 }
 
 /**
@@ -1930,10 +1974,18 @@ function normalizeFlow(cf: AutoAttendantCallFlow | null, crossRef: AutoAttendant
  * What differs between a saved row and the live auto attendant, in words, so the preview can say why a change is planned. Empty when
  * they match (or when nothing was read from the live one, in which case it says so: there is nothing to compare against).
  */
-export function autoAttendantDifferences(row: BuildAutoAttendantRow, live: AutoAttendantLiveState, crossRef: AutoAttendantCrossRef = new Map()): string[] {
+export function autoAttendantDifferences(
+  row: BuildAutoAttendantRow,
+  live: AutoAttendantLiveState,
+  crossRef: AutoAttendantCrossRef = new Map(),
+  userObjectIds: Map<string, string> = new Map(),
+): string[] {
   const s = live.structured;
   if (!s) return ['the live settings could not be read'];
   const diffs: string[] = [];
+  if (row.authorized_users != null && !sameIds(resolveUpnIds(row.authorized_users, userObjectIds), s.authorizedUsers)) diffs.push('authorised users');
+  if (row.hide_authorized_users != null && !sameIds(resolveUpnIds(row.hide_authorized_users, userObjectIds), s.hideAuthorizedUsers)) diffs.push('hidden authorised users');
+  if (row.user_name_extension && row.user_name_extension !== (s.userNameExtension ?? 'None')) diffs.push(`dial-by-name extension (design ${row.user_name_extension}, live ${s.userNameExtension ?? 'None'})`);
   if ((row.language_id ?? undefined) !== (s.languageId ?? undefined)) diffs.push(`language (design ${row.language_id ?? 'none'}, live ${s.languageId ?? 'none'})`);
   if ((row.time_zone_id ?? undefined) !== (s.timeZoneId ?? undefined)) diffs.push(`time zone (design ${row.time_zone_id ?? 'none'}, live ${s.timeZoneId ?? 'none'})`);
   if ((row.voice_id ?? undefined) !== (s.voiceId ?? undefined)) diffs.push(`voice (design ${row.voice_id ?? 'none'}, live ${s.voiceId ?? 'none'})`);
@@ -2002,7 +2054,7 @@ export function planAutoAttendantRow(
   // user ahead of time via autoAttendantRowWarnings.
   if (!live && (!row.language_id || !row.time_zone_id)) return calls;
 
-  if (!live || !autoAttendantMatchesLive(row, live, crossRef)) {
+  if (!live || !autoAttendantMatchesLive(row, live, crossRef, userObjectIds)) {
     const ctx: AaBuildCtx = { steps: [], counters: {} };
 
     const defaultFlowRef = buildCallFlow(ctx, row.default_call_flow, `${row.name} - Business hours`, crossRef, userObjectIds);
@@ -2037,6 +2089,9 @@ export function planAutoAttendantRow(
         ...(otherFlowRefs.length ? { CallFlows: otherFlowRefs } : {}),
         ...(chaRefs.length ? { CallHandlingAssociations: chaRefs } : {}),
         ...(operatorRef ? { Operator: operatorRef } : {}),
+        ...(row.authorized_users?.length ? { AuthorizedUsers: resolveUpnIds(row.authorized_users, userObjectIds) } : {}),
+        ...(row.hide_authorized_users?.length ? { HideAuthorizedUsers: resolveUpnIds(row.hide_authorized_users, userObjectIds) } : {}),
+        ...(row.user_name_extension ? { UserNameExtension: row.user_name_extension } : {}),
       };
       calls.push({ cmdlet: 'New-CsAutoAttendant', parameters, objectType: 'auto_attendant', objectId: row.id, preamble: ctx.steps });
     } else {
@@ -2066,6 +2121,10 @@ export function planAutoAttendantRow(
       // didn't resolve leaves the live one untouched (don't guess).
       if (operatorRef) assign('Operator', operatorRef);
       else if (!row.operator) assign('Operator', null);
+      // PowerShell-only access settings (voice-app-access.ts): only a managed (non-null) list is set; an empty one clears it.
+      if (row.authorized_users != null) assign('AuthorizedUsers', resolveUpnIds(row.authorized_users, userObjectIds).length ? resolveUpnIds(row.authorized_users, userObjectIds) : PS_EMPTY_ARRAY);
+      if (row.hide_authorized_users != null) assign('HideAuthorizedUsers', resolveUpnIds(row.hide_authorized_users, userObjectIds).length ? resolveUpnIds(row.hide_authorized_users, userObjectIds) : PS_EMPTY_ARRAY);
+      if (row.user_name_extension) assign('UserNameExtension', row.user_name_extension);
       calls.push({
         cmdlet: 'Set-CsAutoAttendant',
         parameters: { Instance: { $var: 'aa' } },

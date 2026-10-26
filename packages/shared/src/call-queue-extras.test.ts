@@ -61,3 +61,23 @@ describe('call queue PowerShell-only extras', () => {
     expect(planCallQueueRow(plain, ann, new Map(), live)).toEqual([]);
   });
 });
+
+describe('redirect audio prompts', () => {
+  const FILE = '44444444-4444-4444-8444-444444444444';
+  const withAudio: BuildCallQueueRow = { ...row, overflow: { action: 'Forward', threshold: 10, target: SUPPORT, redirectAudio: { fileId: FILE, filename: 'hold.wav' } }, timeout: null };
+  const base: CallQueueLiveState = { ...live, timeoutAction: undefined, timeoutThreshold: undefined, timeoutActionTarget: undefined, timeoutExtras: undefined };
+
+  it('plans a placeholder the worker imports, until the file is in Teams', () => {
+    const [call] = planCallQueueRow(withAudio, ann, new Map(), { ...base, overflowExtras: {} });
+    expect(call!.parameters.OverflowRedirectPersonAudioFilePrompt).toBe(`<audio:${FILE}>`);
+  });
+  it('matches once imported and Teams has that file, and re-sends when Teams has another', () => {
+    const audio = new Map([[FILE, 'teams-file-1']]);
+    expect(planCallQueueRow(withAudio, ann, new Map(), { ...base, overflowExtras: { redirectAudioId: 'TEAMS-FILE-1' } }, audio)).toEqual([]);
+    const [call] = planCallQueueRow(withAudio, ann, new Map(), { ...base, overflowExtras: { redirectAudioId: 'other' } }, audio);
+    expect(call!.parameters.OverflowRedirectPersonAudioFilePrompt).toBe('teams-file-1');
+  });
+  it('reads the live audio prompt for the action Teams has', () => {
+    expect(liveCallQueueActionExtras('Timeout', { TimeoutRedirectVoicemailAudioFilePrompt: 'x' }, 'Voicemail')).toEqual({ redirectAudioId: 'x' });
+  });
+});

@@ -1,6 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { psQuote, renderCommand, renderPreambleStep, renderStatement } from '@tvmf/shared';
 import type { CmdletInvocation, CmdletResult, DeviceCodePrompt, QueryOpts, TeamsExecutor } from './executor';
 
@@ -485,6 +487,29 @@ Write-Output ('__JSON__' + (ConvertTo-Json -InputObject @($out) -Depth ${depth} 
    * its several local constructions vs. the final New-CsAutoAttendant call
    * was the one actually stuck.
    */
+  /**
+   * Import-CsOnlineAudioFile. The bytes go through a private temp file read with ReadAllBytes (as Microsoft's own examples do),
+   * not as a literal on stdin; the file is removed straight after.
+   */
+  async importAudioFile(applicationId: 'HuntGroup' | 'OrgAutoAttendant', fileName: string, content: Buffer): Promise<string> {
+    if (!this.signedIn) throw new Error('not connected');
+    const path = join(tmpdir(), `vx-audio-${randomUUID()}`);
+    writeFileSync(path, content, { mode: 0o600 });
+    try {
+      const out = await this.exec(
+        `try { $vxAudio = Import-CsOnlineAudioFile -ApplicationId ${psQuote(applicationId)} -FileName ${psQuote(fileName)} -Content ([System.IO.File]::ReadAllBytes(${psQuote(path)})) -ErrorAction Stop; Write-Output ('__ID__' + $vxAudio.Id) } catch { Write-Output ('__ERR__' + $_.Exception.Message) }`,
+      );
+      const err = out.split('\n').find((l) => l.startsWith('__ERR__'));
+      if (err) throw new Error(err.slice('__ERR__'.length));
+      const id = out.split('\n').find((l) => l.startsWith('__ID__'))?.slice('__ID__'.length).trim();
+      if (!id) throw new Error('Import-CsOnlineAudioFile returned no id');
+      this.lastUsedAt = Date.now();
+      return id;
+    } finally {
+      rmSync(path, { force: true });
+    }
+  }
+
   async invoke(call: CmdletInvocation, opts: { whatIf: boolean }): Promise<CmdletResult> {
     if (!this.signedIn) return { result: 'failed', before: {}, after: {}, message: 'not connected' };
     const rendered = renderCommand(call);

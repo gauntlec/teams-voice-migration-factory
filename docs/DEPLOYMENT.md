@@ -236,23 +236,41 @@ failed run. **Cancel scheduled run** on Run history (`POST /t/:id/deployments/:i
 Super Admin) marks it cancelled and removes the job; a job that still fires sees the status and does nothing. Audited as
 `deployment.queued` (with `runAt`) and `deployment.cancelled`. While a scheduled run waits, the connection takes no other live run.
 
-## Call queue settings that are PowerShell only
+## Settings that are PowerShell only
 
-Microsoft documents some Set-CsCallQueue parameters as available only in PowerShell (not shown in Teams Admin Center).
-Design & Build's call queue settings designs these for overflow, time-out and no-agent, stored in the same
-`overflow` / `timeout` / `no_agent_action` jsonb (`CallQueueActionSettings.priority`, `.redirectPrompt`; no migration):
+Microsoft documents these auto attendant and call queue parameters as available only in PowerShell (not shown in Teams Admin
+Center). Voxshift designs, imports (Populate / Refresh from Teams) and deploys all of them.
 
-- **Call priority** 1-5 when the action is Forward (to another queue or auto attendant): `-<X>ActionCallPriority`.
-- **Prompt before the redirect** (text to speech) when the action is Forward (`-<X>RedirectPersonTextToSpeechPrompt`) or personal
-  Voicemail (`-<X>RedirectVoicemailTextToSpeechPrompt`).
+**Call queue exceptions** (overflow, time-out, no agents), stored in the `overflow` / `timeout` / `no_agent_action` jsonb
+(`CallQueueActionSettings`; Design & Build > call queue > Configure…):
 
-`callQueueActionExtras` builds the parameters, `liveCallQueueActionExtras` reads them back from Get-CsCallQueue (Discovery
-stores the whole record), Populate / Refresh from Teams imports them, and the planner compares them only when the design sets
-one (an unset extra keeps whatever Teams has). Tests: `packages/shared/src/call-queue-extras.test.ts`. Microsoft notes that
-authorized users cannot edit a queue that uses call priorities.
+- **Call priority** 1-5 when forwarding to another queue or auto attendant: `-<X>ActionCallPriority`.
+- **Prompt before the redirect** when forwarding to a person (`-<X>RedirectPerson…`) or a personal voicemail
+  (`-<X>RedirectVoicemail…`): text to speech (`…TextToSpeechPrompt`, `.redirectPrompt`) or an **uploaded audio file**
+  (`…AudioFilePrompt`, `.redirectAudio {fileId, filename}`).
 
-Not built yet: the audio-file versions of the redirect prompts, `-HideAuthorizedUsers` (Voxshift does not model authorized
-users), the auto attendant's dial-by-name `-UserNameExtension`, and showing these in the call flow diagram.
+**Audio files** (tenant migration `0069`, `voice_audio_files`): uploaded with `POST /t/:id/build/audio-files` (WAV, MP3 or WMA,
+up to 5 MB) and kept in the database so the worker can read them. Until a file has been imported to Teams the planner sends a
+placeholder `<audio:id>`. In a live run the worker (`apps/worker/src/deployment-audio.ts`) imports the file with
+`Import-CsOnlineAudioFile -ApplicationId HuntGroup` just before the queue command (Teams deletes an unused import after 48-72
+hours), records the import as its own change, stores the Teams id in `teams_audio_file_id` and puts it in the command; if the queue
+command then fails, the stored id is cleared so the next run imports again. A What-If keeps the placeholder. Once Teams has that
+id on the queue, the plan matches. An audio prompt set in Teams but not designed is left alone (Voxshift cannot copy the sound).
+
+**Access** (tenant migration `0068`, `voice-app-access.ts`; Design & Build > Access…):
+
+- **Authorised users** (`authorized_users`, UPNs) and **hidden authorised users** (`hide_authorized_users`, a subset) on call
+  queues and auto attendants: `-AuthorizedUsers`, `-HideAuthorizedUsers` (the hidden list is the PowerShell-only part).
+- **Dial-by-name extension** on auto attendants (`user_name_extension`: None, Office, Department): `-UserNameExtension`.
+- **Shared voicemail AI triage template** on call queues (`voicemail_triage_template_id`): `-SharedVoicemailTriageSettingsTemplateId`
+  (Microsoft private preview).
+
+A null column means not managed: the deployment leaves whatever Teams has, so rows made before these existed never remove anyone.
+Only a set value is compared; an empty list clears it. Populate imports the live lists as UPNs, or leaves them null if anyone in
+them cannot be named. Auto attendants set them on the `Get-CsAutoAttendant` instance before `Set-CsAutoAttendant`.
+
+Tests: `packages/shared/src/call-queue-extras.test.ts`, `voice-app-access.test.ts`; `tests/db/src/deployment/redirect-audio.db.test.ts`,
+`voice-app-access.db.test.ts`. Microsoft notes that authorised users cannot edit a queue that uses call priorities.
 
 ## Drift
 

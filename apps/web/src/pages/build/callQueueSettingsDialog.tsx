@@ -3,7 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Dropdown, Field, Input, Option, Spinner, Text, tokens , makeStyles, shorthands } from '@fluentui/react-components';
 import { DeleteRegular } from '@fluentui/react-icons';
 import { CALL_QUEUE_NO_AGENT_ACTIONS, CALL_QUEUE_NO_AGENT_APPLY_TO, CALL_QUEUE_OVERFLOW_ACTIONS, CALL_QUEUE_TIMEOUT_ACTIONS, type CallQueueActionSettings, type Paginated } from '@tvmf/shared';
-import { api, ApiError } from '../../api';
+import { api, ApiError, apiUpload } from '../../api';
 import { GroupAutocomplete } from '../../components/GroupAutocomplete';
 import { UpnAutocomplete } from '../../components/UpnAutocomplete';
 import { PagedSection, type FieldDef, type Row } from '../../components/records';
@@ -67,14 +67,28 @@ export function CallQueueSettingsDialog({
   const [noAgentApplyTo, setNoAgentApplyTo] = useState((row.no_agent_apply_to as string) ?? '');
   // PowerShell-only extras (not shown in Teams Admin Center): call priority and the prompt before a redirect.
   const [extras, setExtras] = useState({
-    overflow: { priority: overflowInit?.priority, redirectPrompt: overflowInit?.redirectPrompt ?? '' },
-    timeout: { priority: timeoutInit?.priority, redirectPrompt: timeoutInit?.redirectPrompt ?? '' },
-    noAgent: { priority: noAgentInit?.priority, redirectPrompt: noAgentInit?.redirectPrompt ?? '' },
+    overflow: { priority: overflowInit?.priority, redirectPrompt: overflowInit?.redirectPrompt ?? '', redirectAudio: overflowInit?.redirectAudio },
+    timeout: { priority: timeoutInit?.priority, redirectPrompt: timeoutInit?.redirectPrompt ?? '', redirectAudio: timeoutInit?.redirectAudio },
+    noAgent: { priority: noAgentInit?.priority, redirectPrompt: noAgentInit?.redirectPrompt ?? '', redirectAudio: noAgentInit?.redirectAudio },
   });
+  const [uploading, setUploading] = useState<string | null>(null);
+  const uploadAudio = async (k: 'overflow' | 'timeout' | 'noAgent', file: File) => {
+    setUploading(k);
+    setErr(null);
+    try {
+      const res = await apiUpload<{ id: string; filename: string }>(`${base}/audio-files`, file);
+      setExtras((e) => ({ ...e, [k]: { ...e[k], redirectAudio: { fileId: res.id, filename: res.filename } } }));
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : 'Upload failed');
+    } finally {
+      setUploading(null);
+    }
+  };
   type ExtrasKey = keyof typeof extras;
-  const extrasOf = (k: ExtrasKey, action: string): Pick<CallQueueActionSettings, 'priority' | 'redirectPrompt'> => ({
+  const extrasOf = (k: ExtrasKey, action: string): Pick<CallQueueActionSettings, 'priority' | 'redirectPrompt' | 'redirectAudio'> => ({
     ...(action === 'Forward' && extras[k].priority != null ? { priority: extras[k].priority } : {}),
     ...((action === 'Forward' || action === 'Voicemail') && extras[k].redirectPrompt.trim() ? { redirectPrompt: extras[k].redirectPrompt.trim() } : {}),
+    ...((action === 'Forward' || action === 'Voicemail') && extras[k].redirectAudio ? { redirectAudio: extras[k].redirectAudio } : {}),
   });
   const [resourceAccounts, setResourceAccounts] = useState<string[]>(
     Array.isArray(row.resource_accounts) ? (row.resource_accounts as string[]).slice() : [],
@@ -183,6 +197,24 @@ export function CallQueueSettingsDialog({
             maxLength={1000}
             className={ls.minW320}
           />
+        </Field>
+        <Field label="Or play an audio file instead" hint="WAV, MP3 or WMA, up to 5 MB. Imported to Teams when it is deployed. PowerShell only.">
+          {extras[k].redirectAudio ? (
+            <div className={ls.flexItemsCenterGap8Mt6}>
+              <Text size={200}>{extras[k].redirectAudio!.filename}</Text>
+              <Button size="small" appearance="subtle" icon={<DeleteRegular />} aria-label="Remove audio" onClick={() => setExtras((e) => ({ ...e, [k]: { ...e[k], redirectAudio: undefined } }))} />
+            </div>
+          ) : (
+            <input
+              type="file"
+              accept=".wav,.mp3,.wma,audio/*"
+              disabled={uploading === k}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void uploadAudio(k, f);
+              }}
+            />
+          )}
         </Field>
       </>
     ) : null;

@@ -4,6 +4,8 @@ import { sql, type Kysely } from 'kysely';
 import { computeSiteDrift, coolingUntil, makeAutoAttendantTargetResolver, resolveLiveNumberTypes, tenantDb, type DB } from '@tvmf/db';
 import {
   identityDriftNotAccepted,
+  VOICE_AUDIO_MAX_BYTES,
+  VOICE_AUDIO_TYPES,
   coolingMessage,
   type BuildDriftAcceptInput,
   CALL_QUEUE_NO_AGENT_ACTIONS,
@@ -16,6 +18,7 @@ import {
   decodeCallQueueEnum,
   liveAutoAttendantToStructured,
   liveCallQueueActionExtras,
+  liveIdList,
   POLICY_KIND_TO_TENANT_TYPE,
   POLICY_KINDS,
   renderCommand,
@@ -397,6 +400,22 @@ export class BuildService {
       }
     }
     return { updated, rows: rows.length, notRead };
+  }
+
+  /** Stores an uploaded audio prompt (voice_audio_files); the worker imports it to Teams in the live run that uses it. */
+  async uploadAudioFile(t: TenantContext, u: AuthedUser, file: { originalname: string; mimetype: string; buffer: Buffer; size: number } | undefined) {
+    if (!file?.size) throw new BadRequestException('Choose an audio file to upload.');
+    if (file.size > VOICE_AUDIO_MAX_BYTES) throw new BadRequestException('Teams takes audio prompts up to 5 MB.');
+    const okType = (VOICE_AUDIO_TYPES as readonly string[]).includes(file.mimetype.toLowerCase()) || /\.(wav|mp3|wma)$/i.test(file.originalname);
+    if (!okType) throw new BadRequestException('Teams plays WAV, MP3 or WMA audio prompts.');
+    const filename = file.originalname.replace(/[^\w.\- ]+/g, '_').slice(0, 200) || 'prompt.wav';
+    const row = await this.s(t)
+      .insertInto('voice_audio_files')
+      .values({ filename, content_type: file.mimetype || 'application/octet-stream', byte_size: file.size, content: file.buffer, uploaded_by: u.id })
+      .returning(['id', 'filename', 'byte_size'])
+      .executeTakeFirstOrThrow();
+    await this.audit.tenant(t.schema, 'build.audio_file_uploaded', { actor: actorOf(u), targetType: 'voice_audio_file', targetId: row.id, detail: { filename, bytes: file.size } });
+    return row;
   }
 
   /**
@@ -1553,6 +1572,13 @@ export class BuildService {
       for (const i of d.ApplicationInstances as unknown[]) if (typeof i === 'string') ownerByInstance.set(i.toLowerCase(), d.Identity.toLowerCase());
     }
     const resolveTarget = makeAutoAttendantTargetResolver({ upnByEntraId: upnByObjectId, ownerByInstance, liveIdToBuild, liveKindByIdentity });
+    // Live access lists (Entra ids) as the design's UPNs. If anyone cannot be named, the list is left unmanaged (null) rather than
+    // imported short - a short list would remove that person at the next deployment.
+    const accessUpns = (ids: string[] | undefined): string | null => {
+      if (!ids) return null;
+      const upns = ids.map((id) => upnByObjectId.get(id.toLowerCase()));
+      return upns.every((u): u is string => !!u) ? JSON.stringify(upns) : null;
+    };
 
     // Same conversion the deployment planner runs fresh at preview/execute
     // time (see resolveAutoAttendantDeepContext in
@@ -1573,6 +1599,9 @@ export class BuildService {
         default_call_flow: structured.defaultCallFlow ?? null,
         after_hours_call_flow: structured.afterHoursCallFlow ?? null,
         schedule: structured.schedule ?? null,
+        authorized_users: accessUpns(structured.authorizedUsers),
+        hide_authorized_users: accessUpns(structured.hideAuthorizedUsers),
+        user_name_extension: structured.userNameExtension ?? null,
       };
       if (structured.holidayCallFlows.length > 0) patch.holiday_call_flows = JSON.stringify(structured.holidayCallFlows);
       await s.updateTable('build_auto_attendants').set(patch as never).where('id', '=', row.id).execute();
@@ -1630,6 +1659,9 @@ export class BuildService {
         // Without this a populated queue never matches live (live 'AllCalls'
         // vs a null row) and gets re-Set on every deployment.
         no_agent_apply_to: decodeCallQueueEnum(live.NoAgentApplyTo, CALL_QUEUE_NO_AGENT_APPLY_TO) ?? null,
+        authorized_users: accessUpns(liveIdList(live.AuthorizedUsers)),
+        hide_authorized_users: accessUpns(liveIdList(live.HideAuthorizedUsers)),
+        voicemail_triage_template_id: typeof live.SharedVoicemailTriageSettingsTemplateId === 'string' && live.SharedVoicemailTriageSettingsTemplateId ? live.SharedVoicemailTriageSettingsTemplateId : null,
       };
       await s.updateTable('build_call_queues').set(patch as never).where('id', '=', row.id).execute();
     }
@@ -1672,6 +1704,9 @@ export class BuildService {
         language_id: body.language_id || null,
         resource_accounts: JSON.stringify(body.resource_accounts ?? []),
         notes: body.notes || null,
+        authorized_users: body.authorized_users ? JSON.stringify(body.authorized_users) : null,
+        hide_authorized_users: body.hide_authorized_users ? JSON.stringify(body.hide_authorized_users) : null,
+        voicemail_triage_template_id: body.voicemail_triage_template_id ?? null,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -1698,6 +1733,7 @@ export class BuildService {
     // array-shaped fields here (overflow/timeout are plain objects).
     if (agents !== undefined) patch.agents = JSON.stringify(agents);
     if (resource_accounts !== undefined) patch.resource_accounts = JSON.stringify(resource_accounts);
+    for (const k of ['authorized_users', 'hide_authorized_users'] as const) if (body[k] !== undefined) patch[k] = body[k] === null ? null : JSON.stringify(body[k]);
     const row = await this.s(t)
       .updateTable('build_call_queues')
       .set(patch as never)
@@ -1774,6 +1810,9 @@ export class BuildService {
         after_hours_call_flow: body.after_hours_call_flow ?? null,
         holiday_call_flows: JSON.stringify(body.holiday_call_flows ?? []),
         schedule: body.schedule ?? null,
+        authorized_users: body.authorized_users ? JSON.stringify(body.authorized_users) : null,
+        hide_authorized_users: body.hide_authorized_users ? JSON.stringify(body.hide_authorized_users) : null,
+        user_name_extension: body.user_name_extension ?? null,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -1814,6 +1853,7 @@ export class BuildService {
     // default_call_flow/after_hours_call_flow/schedule are plain objects).
     if (holiday_call_flows !== undefined) patch.holiday_call_flows = JSON.stringify(holiday_call_flows);
     if (resource_accounts !== undefined) patch.resource_accounts = JSON.stringify(resource_accounts);
+    for (const k of ['authorized_users', 'hide_authorized_users'] as const) if (body[k] !== undefined) patch[k] = body[k] === null ? null : JSON.stringify(body[k]);
     const row = await this.s(t)
       .updateTable('build_auto_attendants')
       .set(patch as never)

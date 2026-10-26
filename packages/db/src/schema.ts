@@ -549,6 +549,19 @@ export interface PhoneNumbersTable {
   created_at: Ts;
 }
 
+/** An uploaded audio prompt (migration 0069), imported to Teams by the worker in the live run that uses it. */
+export interface VoiceAudioFilesTable {
+  id: Generated<string>;
+  filename: string;
+  content_type: string;
+  byte_size: number;
+  content: Buffer;
+  teams_audio_file_id: string | null;
+  imported_at: string | null;
+  uploaded_by: string | null;
+  created_at: Ts;
+}
+
 /** The customer's number cool-off period, one row (migration 0066). */
 export interface NumberPolicyTable {
   id: ColumnType<boolean, boolean | undefined, boolean>;
@@ -815,6 +828,10 @@ export interface BuildAutoAttendantsTable {
   name: string;
   /** build_resource_accounts.id array - which RA(s)/phone numbers this AA answers on, same pattern as build_call_queues' own field. An AA can have several, or none yet. */
   resource_accounts: Json;
+  /** PowerShell-only access settings (migration 0068, voice-app-access.ts): UPN arrays and the dial-by-name extension; null = not managed. */
+  authorized_users: Json | null;
+  hide_authorized_users: Json | null;
+  user_name_extension: 'None' | 'Office' | 'Department' | null;
   language: string | null;
   timezone: string | null;
   config: Json;
@@ -865,6 +882,10 @@ export interface BuildCallQueuesTable {
   name: string;
   /** build_resource_accounts.id array - which RA(s)/phone numbers present this queue. */
   resource_accounts: Json;
+  /** PowerShell-only access settings (migration 0068, voice-app-access.ts): UPN arrays; null = not managed. */
+  authorized_users: Json | null;
+  hide_authorized_users: Json | null;
+  voicemail_triage_template_id: string | null;
   /** Set-CsCallQueue -RoutingMethod. */
   routing_method: ColumnType<
     'Attendant' | 'Serial' | 'RoundRobin' | 'LongestIdle',
@@ -1695,6 +1716,7 @@ export interface DB {
   deployment_changes: DeploymentChangesTable;
   deployment_drift: DeploymentDriftTable;
   number_policy: NumberPolicyTable;
+  voice_audio_files: VoiceAudioFilesTable;
   deployment_scripts: DeploymentScriptsTable;
   handover_packs: HandoverPacksTable;
   handover_sections: HandoverSectionsTable;

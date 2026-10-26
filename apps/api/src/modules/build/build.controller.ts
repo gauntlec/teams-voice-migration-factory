@@ -1,10 +1,12 @@
-import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   can,
   buildAutoAttendantCreateSchema,
   buildAutoAttendantPatchSchema,
   buildBulkPatchSchema,
   buildDriftAcceptSchema,
+  VOICE_AUDIO_MAX_BYTES,
   type BuildDriftAcceptInput,
   buildCallQueueCreateSchema,
   buildCallQueuePatchSchema,
@@ -380,6 +382,14 @@ export class BuildController {
   @RequirePermission('build:write')
   deleteAutoAttendant(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string) {
     return this.svc.deleteAutoAttendant(t, user, id);
+  }
+
+  /** An audio prompt for a call queue redirect (stored in the database, imported to Teams by the worker when deployed). */
+  @Post('audio-files')
+  @RequirePermission('build:write')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: VOICE_AUDIO_MAX_BYTES } }))
+  uploadAudio(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @UploadedFile() file: Express.Multer.File) {
+    return this.svc.uploadAudioFile(t, user, file);
   }
 
   @Post('drift/accept')

@@ -14,6 +14,7 @@
  * build_auto_attendants/build_call_queues id needs a DB-backed lookup only
  * the caller has.
  */
+import { decodeUserNameExtension, liveIdList, type UserNameExtension } from './voice-app-access';
 import { AA_DTMF_RESPONSES, AA_DIRECTORY_SEARCH_METHODS } from './domain';
 import { normalizeFixedRange } from './deployment';
 import type {
@@ -279,6 +280,10 @@ export interface LiveAutoAttendantStructured {
   afterHoursCallFlow: AutoAttendantCallFlow | null;
   holidayCallFlows: AutoAttendantHolidayCallFlow[];
   schedule: AutoAttendantSchedule | null;
+  /** PowerShell-only access settings (voice-app-access.ts), as Entra object ids, and the dial-by-name extension. */
+  authorizedUsers?: string[];
+  hideAuthorizedUsers?: string[];
+  userNameExtension?: UserNameExtension;
 }
 
 /**
@@ -335,6 +340,9 @@ export function liveAutoAttendantToStructured(
     // after this exact field silently failed to round-trip.
     enableVoiceResponse: typeof data.VoiceResponseEnabled === 'boolean' ? data.VoiceResponseEnabled : undefined,
     operator: resolveTarget(parseLiveCallTarget(data.Operator)) ?? null,
+    authorizedUsers: liveIdList(data.AuthorizedUsers),
+    hideAuthorizedUsers: liveIdList(data.HideAuthorizedUsers),
+    userNameExtension: decodeUserNameExtension(data.UserNameExtension),
     defaultCallFlow: null,
     afterHoursCallFlow: null,
     holidayCallFlows: [],
