@@ -260,7 +260,8 @@ export type TabKey =
   | 'emergency'
   | 'voice_apps'
   | 'devices'
-  | 'groups';
+  | 'groups'
+  | 'licences';
 
 export const TABS: { key: TabKey; label: string }[] = [
   { key: 'overview', label: 'Overview' },
@@ -274,6 +275,7 @@ export const TABS: { key: TabKey; label: string }[] = [
   { key: 'voice_apps', label: 'Voice apps' },
   { key: 'devices', label: 'Devices' },
   { key: 'groups', label: 'M365 groups' },
+  { key: 'licences', label: 'Licences & costs' },
 ];
 
 /** The tab that lists what each Overview tile counts. */

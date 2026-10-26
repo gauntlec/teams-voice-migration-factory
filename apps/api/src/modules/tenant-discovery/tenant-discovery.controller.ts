@@ -200,6 +200,12 @@ export class TenantDiscoveryController {
     return this.svc.listUsers(t, q);
   }
 
+  @Get('licence-report')
+  @RequirePermission('tenantdiscovery:read')
+  licenceReport(@TenantCtx() t: TenantContext) {
+    return this.svc.licenceReport(t);
+  }
+
   @Get('users/compare')
   @RequirePermission('tenantdiscovery:read')
   compareUsers(@TenantCtx() t: TenantContext, @Query(new ZodBody(tenantUserCompareSchema)) q: TenantUserCompareQuery) {

@@ -345,3 +345,20 @@ fields ignored) - the usual answer to "why can one person call international num
 age of the data (last completed sync) and can hide identical rows.
 
 Not built yet: comparing a user with a Design & Build row, and opening the comparison from an incident.
+
+## Licences & costs
+
+Discovery > **Licences & costs** (`GET /t/:id/tenant-discovery/licence-report`, `tenantdiscovery:read`,
+`TenantDiscoveryService.licenceReport`). Rules in `packages/shared/src/licence-report.ts` (unit-tested), from the last sync:
+
+| Finding | Rule |
+|---|---|
+| Switched-off accounts with a Teams Phone licence | not a resource account, `account_enabled` false, a live MCOEV / TEAMSPHONE / MCOPSTN plan (not MCOEV_VIRTUALUSER) |
+| Teams Phone licence, but not set up for calling | enabled, that licence, Enterprise Voice off and no line URI |
+| Numbers assigned to nobody | `phone_number` objects with `PstnAssignmentStatus` Unassigned (type shown) |
+| Resource accounts no voice app uses | `ResourceAccount` whose Entra id is in no auto attendant's or call queue's `ApplicationInstances` |
+| Resource accounts with a number but no resource account licence | a line URI and no live MCOEV_VIRTUALUSER plan |
+
+Each item carries the Data Collection site its UPN is captured on (users, common area phones, resource accounts), and each
+finding counts per site. The page shows the data's age and downloads an Excel workbook (a summary sheet and one per finding).
+Counts only: Voxshift holds no prices.

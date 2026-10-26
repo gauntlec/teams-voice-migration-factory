@@ -32,7 +32,9 @@ import {
   type AutoAttendantCallableEntity,
   type LiveCallableEntityRef,
   type VoiceAppFields,
+  buildLicenceReport,
   compareVoiceProfiles,
+  type LicenceFinding,
   TENANT_POLICY_TYPES,
   type LiveCallingSettings,
   type VoiceCompareRow,
@@ -919,6 +921,63 @@ export class TenantDiscoveryService {
       .where('status', '=', 'completed')
       .executeTakeFirst();
     return { a, b, rows: compareVoiceProfiles(a, b), dataAsOf: run?.at ? new Date(run.at).toISOString() : null };
+  }
+
+  /**
+   * Licence and cost hygiene from the last Discovery (shared/licence-report.ts): Teams Phone licences, resource accounts and numbers
+   * paid for but not used, and resource accounts that cannot work. Items are counted per Data Collection site where captured.
+   */
+  async licenceReport(t: TenantContext): Promise<{ findings: LicenceFinding[]; dataAsOf: string | null }> {
+    const s = this.s(t);
+    const [accounts, numbers, voiceApps, siteUsers, siteCaps, siteRas, run] = await Promise.all([
+      s
+        .selectFrom('tenant_users')
+        .select(['id', 'entra_id', 'upn', 'display_name', 'account_type', 'account_enabled', 'enterprise_voice_enabled', 'line_uri', 'assigned_plans'])
+        .where('removed_at', 'is', null)
+        .execute(),
+      s.selectFrom('tenant_objects').select(['object_key', 'data']).where('object_type', '=', 'phone_number').where('removed_at', 'is', null).execute(),
+      s.selectFrom('tenant_objects').select('data').where('object_type', 'in', ['auto_attendant', 'call_queue']).where('removed_at', 'is', null).execute(),
+      s.selectFrom('discovery_users as u').innerJoin('discovery_sites as st', 'st.id', 'u.site_id').select(['u.upn', 'st.sitecode']).execute(),
+      s.selectFrom('discovery_caps as u').innerJoin('discovery_sites as st', 'st.id', 'u.site_id').select(['u.upn', 'st.sitecode']).execute(),
+      s.selectFrom('discovery_resource_accounts as u').innerJoin('discovery_sites as st', 'st.id', 'u.site_id').select(['u.upn', 'st.sitecode']).execute(),
+      s
+        .selectFrom('tenant_discovery_runs')
+        .select(sql<string | null>`max(finished_at)`.as('at'))
+        .where('kind', '=', 'sync')
+        .where('status', '=', 'completed')
+        .executeTakeFirst(),
+    ]);
+    const attached = new Set<string>();
+    for (const v of voiceApps) {
+      const ids = (v.data as Record<string, unknown>).ApplicationInstances;
+      if (Array.isArray(ids)) for (const id of ids) if (typeof id === 'string') attached.add(id);
+    }
+    const siteOf = new Map<string, string>();
+    for (const r of [...siteUsers, ...siteCaps, ...siteRas]) if (r.upn) siteOf.set(r.upn.toLowerCase(), r.sitecode);
+    const findings = buildLicenceReport({
+      accounts: accounts.map((a) => ({
+        id: a.id,
+        entraId: a.entra_id,
+        upn: a.upn,
+        displayName: a.display_name,
+        accountType: a.account_type,
+        accountEnabled: a.account_enabled,
+        enterpriseVoice: a.enterprise_voice_enabled,
+        lineUri: a.line_uri,
+        assignedPlans: (a.assigned_plans as unknown[] | null) ?? [],
+      })),
+      numbers: numbers.map((n) => {
+        const d = n.data as Record<string, unknown>;
+        return {
+          number: n.object_key,
+          numberType: typeof d.NumberType === 'string' ? d.NumberType : null,
+          assignmentStatus: typeof d.PstnAssignmentStatus === 'string' ? d.PstnAssignmentStatus : null,
+        };
+      }),
+      attachedResourceAccountIds: attached,
+      siteOf,
+    });
+    return { findings, dataAsOf: run?.at ? new Date(run.at).toISOString() : null };
   }
 
   /** Exact (case-insensitive) UPN match against the latest snapshot - drives autofill. */

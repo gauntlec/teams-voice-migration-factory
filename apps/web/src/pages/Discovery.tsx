@@ -9,6 +9,7 @@ import { LoadError, NoTenant } from '../components/records';
 import { useStyles, str, TABS, TILE_TAB, type TabKey } from './discovery/discoveryShared';
 import { ChangesTab } from './discovery/history';
 import { PurgeCard, ConnectCard, RunCard } from './discovery/connect';
+import { LicenceReport } from './discovery/licenceReport';
 import { PoliciesTable, ResourceAccountsTab, ObjectsTable, EndpointsTable, GroupsTable, UsersTable } from './discovery/tables';
 
 export function Discovery() {
@@ -156,6 +157,8 @@ export function Discovery() {
       {tab === 'devices' && <EndpointsTable base={base} canAdd={canAdd} onAdded={invalidateAll} />}
 
       {tab === 'groups' && <GroupsTable base={base} />}
+
+      {tab === 'licences' && <LicenceReport base={base} />}
     </Page>
   );
 }
