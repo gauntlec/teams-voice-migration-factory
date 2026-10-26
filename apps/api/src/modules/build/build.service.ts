@@ -14,6 +14,7 @@ import {
   convertCallQueueWizard,
   decodeCallQueueEnum,
   liveAutoAttendantToStructured,
+  liveCallQueueActionExtras,
   POLICY_KIND_TO_TENANT_TYPE,
   POLICY_KINDS,
   renderCommand,
@@ -1612,15 +1613,18 @@ export class BuildService {
           action: decodeCallQueueEnum(live.OverflowAction, CALL_QUEUE_OVERFLOW_ACTIONS),
           threshold: typeof live.OverflowThreshold === 'number' ? live.OverflowThreshold : undefined,
           target: targetOf(live.OverflowActionTarget),
+          ...liveCallQueueActionExtras('Overflow', live, decodeCallQueueEnum(live.OverflowAction, CALL_QUEUE_OVERFLOW_ACTIONS)),
         },
         timeout: {
           action: decodeCallQueueEnum(live.TimeoutAction, CALL_QUEUE_TIMEOUT_ACTIONS),
           threshold: typeof live.TimeoutThreshold === 'number' ? live.TimeoutThreshold : undefined,
           target: targetOf(live.TimeoutActionTarget),
+          ...liveCallQueueActionExtras('Timeout', live, decodeCallQueueEnum(live.TimeoutAction, CALL_QUEUE_TIMEOUT_ACTIONS)),
         },
         no_agent_action: {
           action: decodeCallQueueEnum(live.NoAgentAction, CALL_QUEUE_NO_AGENT_ACTIONS),
           target: targetOf(live.NoAgentActionTarget),
+          ...liveCallQueueActionExtras('NoAgent', live, decodeCallQueueEnum(live.NoAgentAction, CALL_QUEUE_NO_AGENT_ACTIONS)),
         },
         // Without this a populated queue never matches live (live 'AllCalls'
         // vs a null row) and gets re-Set on every deployment.

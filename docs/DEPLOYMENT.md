@@ -222,6 +222,24 @@ Also still available:
 - Design & Build's per-row validation badge (`docs/DATA-MODEL.md`
   `build_users.validation`) reflects Discovery's live state.
 
+## Call queue settings that are PowerShell only
+
+Microsoft documents some Set-CsCallQueue parameters as available only in PowerShell (not shown in Teams Admin Center).
+Design & Build's call queue settings designs these for overflow, time-out and no-agent, stored in the same
+`overflow` / `timeout` / `no_agent_action` jsonb (`CallQueueActionSettings.priority`, `.redirectPrompt`; no migration):
+
+- **Call priority** 1-5 when the action is Forward (to another queue or auto attendant): `-<X>ActionCallPriority`.
+- **Prompt before the redirect** (text to speech) when the action is Forward (`-<X>RedirectPersonTextToSpeechPrompt`) or personal
+  Voicemail (`-<X>RedirectVoicemailTextToSpeechPrompt`).
+
+`callQueueActionExtras` builds the parameters, `liveCallQueueActionExtras` reads them back from Get-CsCallQueue (Discovery
+stores the whole record), Populate / Refresh from Teams imports them, and the planner compares them only when the design sets
+one (an unset extra keeps whatever Teams has). Tests: `packages/shared/src/call-queue-extras.test.ts`. Microsoft notes that
+authorized users cannot edit a queue that uses call priorities.
+
+Not built yet: the audio-file versions of the redirect prompts, `-HideAuthorizedUsers` (Voxshift does not model authorized
+users), the auto attendant's dial-by-name `-UserNameExtension`, and showing these in the call flow diagram.
+
 ## Drift
 
 A **drifted** row is a Design & Build row that was deployed, has not been edited since, and no longer matches Teams: someone

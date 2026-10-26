@@ -753,6 +753,36 @@ export interface CallQueueActionSettings {
   action?: string;
   threshold?: number;
   target?: string | null;
+  /**
+   * PowerShell only (not in Teams Admin Center): the call's priority, 1 (highest) to 5, when it is forwarded to another call
+   * queue or auto attendant - Set-CsCallQueue -OverflowActionCallPriority / -TimeoutActionCallPriority / -NoAgentActionCallPriority.
+   */
+  priority?: number;
+  /**
+   * PowerShell only: what the caller hears (text to speech) before being forwarded to a person or sent to a person's voicemail -
+   * -<Overflow|Timeout|NoAgent>Redirect<Person|Voicemail>TextToSpeechPrompt.
+   */
+  redirectPrompt?: string;
+}
+
+/** The Set-CsCallQueue parameters for one exception's PowerShell-only extras (priority, redirect prompt), for its action. */
+export function callQueueActionExtras(prefix: 'Overflow' | 'Timeout' | 'NoAgent', settings: CallQueueActionSettings | null | undefined): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (settings?.action === 'Forward' && settings.priority != null) out[`${prefix}ActionCallPriority`] = settings.priority;
+  const prompt = settings?.redirectPrompt?.trim();
+  if (prompt && settings?.action === 'Forward') out[`${prefix}RedirectPersonTextToSpeechPrompt`] = prompt;
+  if (prompt && settings?.action === 'Voicemail') out[`${prefix}RedirectVoicemailTextToSpeechPrompt`] = prompt;
+  return out;
+}
+
+/** The live counterparts of callQueueActionExtras, from Get-CsCallQueue's output, for the action the queue has live. */
+export function liveCallQueueActionExtras(prefix: 'Overflow' | 'Timeout' | 'NoAgent', data: Record<string, unknown>, action: string | undefined): { priority?: number; redirectPrompt?: string } {
+  const priority = data[`${prefix}ActionCallPriority`];
+  const prompt = action === 'Voicemail' ? data[`${prefix}RedirectVoicemailTextToSpeechPrompt`] : action === 'Forward' ? data[`${prefix}RedirectPersonTextToSpeechPrompt`] : undefined;
+  return {
+    ...(action === 'Forward' && typeof priority === 'number' ? { priority } : {}),
+    ...(typeof prompt === 'string' && prompt.trim() ? { redirectPrompt: prompt.trim() } : {}),
+  };
 }
 
 export interface BuildCallQueueRow {
@@ -798,6 +828,10 @@ export interface CallQueueLiveState {
   noAgentAction?: string;
   noAgentActionTarget?: string;
   noAgentApplyTo?: string;
+  /** PowerShell-only extras per exception (liveCallQueueActionExtras). */
+  overflowExtras?: { priority?: number; redirectPrompt?: string };
+  timeoutExtras?: { priority?: number; redirectPrompt?: string };
+  noAgentExtras?: { priority?: number; redirectPrompt?: string };
   languageId?: string;
   /**
    * From the live tenant_objects call_queue record's ApplicationInstances -
@@ -1013,6 +1047,18 @@ export function planCallQueueRow(
     ...(row.no_agent_action?.action ? { NoAgentAction: row.no_agent_action.action } : {}),
     ...(noAgentTarget ? { NoAgentActionTarget: noAgentTarget } : {}),
     ...(row.no_agent_apply_to ? { NoAgentApplyTo: row.no_agent_apply_to } : {}),
+    ...callQueueActionExtras('Overflow', row.overflow),
+    ...callQueueActionExtras('Timeout', row.timeout),
+    ...callQueueActionExtras('NoAgent', row.no_agent_action),
+  };
+  // A design that leaves an extra unset keeps whatever Teams has: only a set one is compared.
+  const extrasDiffer = (want: CallQueueActionSettings | null | undefined, have: { priority?: number; redirectPrompt?: string } | undefined) => {
+    const w = callQueueActionExtras('Overflow', want);
+    return (
+      (w.OverflowActionCallPriority !== undefined && w.OverflowActionCallPriority !== have?.priority) ||
+      ((w.OverflowRedirectPersonTextToSpeechPrompt ?? w.OverflowRedirectVoicemailTextToSpeechPrompt) !== undefined &&
+        (w.OverflowRedirectPersonTextToSpeechPrompt ?? w.OverflowRedirectVoicemailTextToSpeechPrompt) !== have?.redirectPrompt)
+    );
   };
 
   if (!live) {
@@ -1036,6 +1082,9 @@ export function planCallQueueRow(
       (live.noAgentAction ?? undefined) !== (row.no_agent_action?.action ?? undefined) ||
       !sameTarget(live.noAgentActionTarget, noAgentTarget) ||
       (live.noAgentApplyTo ?? undefined) !== (row.no_agent_apply_to ?? undefined) ||
+      extrasDiffer(row.overflow, live.overflowExtras) ||
+      extrasDiffer(row.timeout, live.timeoutExtras) ||
+      extrasDiffer(row.no_agent_action, live.noAgentExtras) ||
       (needsLanguage && (live.languageId ?? undefined) !== (row.language_id ?? undefined)) ||
       JSON.stringify(sortedUsers) !== JSON.stringify(sortedLive);
     if (changed) {

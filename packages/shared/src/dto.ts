@@ -1247,6 +1247,9 @@ const callQueueActionSchema = (actions: readonly [string, ...string[]]) =>
       action: z.enum(actions).optional(),
       threshold: z.number().int().min(0).max(2700).optional(),
       target: optStr(200),
+      /** PowerShell-only extras - see CallQueueActionSettings */
+      priority: z.number().int().min(1).max(5).optional(),
+      redirectPrompt: z.string().trim().max(1000).optional(),
     })
     .strict()
     .optional();

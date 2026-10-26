@@ -19,6 +19,7 @@ const useLocalStyles = makeStyles({
   blockMt6Muted: { color: tokens.colorNeutralForeground3, display: "block", marginTop: '6px' },
   flexWrapItemsEndGap8Mt6: { display: "flex", ...shorthands.gap('8px'), flexWrap: "wrap", alignItems: "end", marginTop: '6px' },
   w120: { width: '120px' },
+  minW320: { minWidth: '320px' },
   paletteMarigoldForeground2: { color: tokens.colorPaletteMarigoldForeground2 },
   gridGap4Mt6: { display: "grid", ...shorthands.gap('4px'), marginTop: '6px' },
 });
@@ -64,6 +65,17 @@ export function CallQueueSettingsDialog({
   const [noAgentAction, setNoAgentAction] = useState(noAgentInit?.action ?? '');
   const [noAgentTarget, setNoAgentTarget] = useState(noAgentInit?.target ?? '');
   const [noAgentApplyTo, setNoAgentApplyTo] = useState((row.no_agent_apply_to as string) ?? '');
+  // PowerShell-only extras (not shown in Teams Admin Center): call priority and the prompt before a redirect.
+  const [extras, setExtras] = useState({
+    overflow: { priority: overflowInit?.priority, redirectPrompt: overflowInit?.redirectPrompt ?? '' },
+    timeout: { priority: timeoutInit?.priority, redirectPrompt: timeoutInit?.redirectPrompt ?? '' },
+    noAgent: { priority: noAgentInit?.priority, redirectPrompt: noAgentInit?.redirectPrompt ?? '' },
+  });
+  type ExtrasKey = keyof typeof extras;
+  const extrasOf = (k: ExtrasKey, action: string): Pick<CallQueueActionSettings, 'priority' | 'redirectPrompt'> => ({
+    ...(action === 'Forward' && extras[k].priority != null ? { priority: extras[k].priority } : {}),
+    ...((action === 'Forward' || action === 'Voicemail') && extras[k].redirectPrompt.trim() ? { redirectPrompt: extras[k].redirectPrompt.trim() } : {}),
+  });
   const [resourceAccounts, setResourceAccounts] = useState<string[]>(
     Array.isArray(row.resource_accounts) ? (row.resource_accounts as string[]).slice() : [],
   );
@@ -84,6 +96,7 @@ export function CallQueueSettingsDialog({
             action: overflowAction as (typeof CALL_QUEUE_OVERFLOW_ACTIONS)[number],
             threshold: overflowThreshold ? Number(overflowThreshold) : undefined,
             target: overflowTarget || undefined,
+            ...extrasOf('overflow', overflowAction),
           }
         : {};
       const timeout: CallQueueActionSettings = timeoutAction
@@ -91,10 +104,11 @@ export function CallQueueSettingsDialog({
             action: timeoutAction as (typeof CALL_QUEUE_TIMEOUT_ACTIONS)[number],
             threshold: timeoutThreshold ? Number(timeoutThreshold) : undefined,
             target: timeoutTarget || undefined,
+            ...extrasOf('timeout', timeoutAction),
           }
         : {};
       const no_agent_action: CallQueueActionSettings = noAgentAction
-        ? { action: noAgentAction as (typeof CALL_QUEUE_NO_AGENT_ACTIONS)[number], target: noAgentTarget || undefined }
+        ? { action: noAgentAction as (typeof CALL_QUEUE_NO_AGENT_ACTIONS)[number], target: noAgentTarget || undefined, ...extrasOf('noAgent', noAgentAction) }
         : {};
       return api(`${base}/call-queues/${row.id}`, {
         method: 'PATCH',
@@ -140,6 +154,38 @@ export function CallQueueSettingsDialog({
       </Dropdown>
     </Field>
   );
+
+  /** Call priority (forward only) and the prompt the caller hears first (forward or personal voicemail). */
+  const extrasFields = (k: ExtrasKey, action: string) =>
+    action === 'Forward' || action === 'Voicemail' ? (
+      <>
+        {action === 'Forward' && (
+          <Field label="Call priority" hint="When forwarding to another queue or auto attendant. PowerShell only - not shown in Teams Admin Center.">
+            <Dropdown
+              value={extras[k].priority != null ? String(extras[k].priority) : '— Teams default —'}
+              selectedOptions={[extras[k].priority != null ? String(extras[k].priority) : 'unset']}
+              onOptionSelect={(_, d) => setExtras((e) => ({ ...e, [k]: { ...e[k], priority: d.optionValue === 'unset' ? undefined : Number(d.optionValue) } }))}
+              className={ls.minW180}
+            >
+              <Option value="unset">— Teams default —</Option>
+              {['1', '2', '3', '4', '5'].map((p) => (
+                <Option key={p} value={p}>
+                  {p === '1' ? '1 (highest)' : p === '5' ? '5 (lowest)' : p}
+                </Option>
+              ))}
+            </Dropdown>
+          </Field>
+        )}
+        <Field label="Prompt before the redirect" hint="Text to speech the caller hears first. PowerShell only - not shown in Teams Admin Center.">
+          <Input
+            value={extras[k].redirectPrompt}
+            onChange={(_, d) => setExtras((e) => ({ ...e, [k]: { ...e[k], redirectPrompt: d.value } }))}
+            maxLength={1000}
+            className={ls.minW320}
+          />
+        </Field>
+      </>
+    ) : null;
 
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
@@ -197,6 +243,7 @@ export function CallQueueSettingsDialog({
                           <UpnAutocomplete tenantId={tenantId} value={overflowTarget} onChange={setOverflowTarget} className={ls.minW220} />
                         </Field>
                       )}
+                      {extrasFields('overflow', overflowAction)}
                     </>
                   )}
                 </div>
@@ -231,6 +278,7 @@ export function CallQueueSettingsDialog({
                           <UpnAutocomplete tenantId={tenantId} value={timeoutTarget} onChange={setTimeoutTarget} className={ls.minW220} />
                         </Field>
                       )}
+                      {extrasFields('timeout', timeoutAction)}
                     </>
                   )}
                 </div>
@@ -256,6 +304,7 @@ export function CallQueueSettingsDialog({
                     </Field>
                   )}
                   {noAgentAction && actionDropdown('Applies to', noAgentApplyTo, setNoAgentApplyTo, CALL_QUEUE_NO_AGENT_APPLY_TO)}
+                  {extrasFields('noAgent', noAgentAction)}
                 </div>
               </div>
 

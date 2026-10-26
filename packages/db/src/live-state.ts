@@ -7,6 +7,7 @@ import {
   CALL_QUEUE_TIMEOUT_ACTIONS,
   decodeCallQueueEnum,
   extractLiveCallTargetId,
+  liveCallQueueActionExtras,
   liveAutoAttendantToStructured,
   type AutoAttendantCallableEntity,
   type AutoAttendantCrossRef,
@@ -233,6 +234,9 @@ export async function resolveLiveCallQueueState(scoped: Scoped, refs: LiveRowRef
       noAgentAction: decodeCallQueueEnum(d.NoAgentAction, CALL_QUEUE_NO_AGENT_ACTIONS),
       noAgentActionTarget: extractLiveCallTargetId(d.NoAgentActionTarget),
       noAgentApplyTo: decodeCallQueueEnum(d.NoAgentApplyTo, CALL_QUEUE_NO_AGENT_APPLY_TO),
+      overflowExtras: liveCallQueueActionExtras('Overflow', d, decodeCallQueueEnum(d.OverflowAction, CALL_QUEUE_OVERFLOW_ACTIONS)),
+      timeoutExtras: liveCallQueueActionExtras('Timeout', d, decodeCallQueueEnum(d.TimeoutAction, CALL_QUEUE_TIMEOUT_ACTIONS)),
+      noAgentExtras: liveCallQueueActionExtras('NoAgent', d, decodeCallQueueEnum(d.NoAgentAction, CALL_QUEUE_NO_AGENT_ACTIONS)),
       languageId: typeof d.LanguageId === 'string' ? d.LanguageId : undefined,
       applicationInstanceIds: Array.isArray(d.ApplicationInstances)
         ? (d.ApplicationInstances as unknown[]).filter((v): v is string => typeof v === 'string')
