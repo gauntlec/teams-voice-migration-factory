@@ -543,7 +543,16 @@ export interface PhoneNumbersTable {
   holder_type: 'user' | 'cap' | 'resource_account' | 'analogue' | null;
   holder_id: string | null;
   note: string | null;
+  /** Released in Teams: not to be reassigned before this (migration 0066, number-cooloff.ts); null = free to use. */
+  cooling_until: string | null;
+  cooling_reason: string | null;
   created_at: Ts;
+}
+
+/** The customer's number cool-off period, one row (migration 0066). */
+export interface NumberPolicyTable {
+  id: ColumnType<boolean, boolean | undefined, boolean>;
+  cooloff_days: ColumnType<number, number | undefined, number>;
 }
 
 export interface DiscoveryUsersTable {
@@ -1683,6 +1692,7 @@ export interface DB {
   deployments: DeploymentsTable;
   deployment_changes: DeploymentChangesTable;
   deployment_drift: DeploymentDriftTable;
+  number_policy: NumberPolicyTable;
   deployment_scripts: DeploymentScriptsTable;
   handover_packs: HandoverPacksTable;
   handover_sections: HandoverSectionsTable;

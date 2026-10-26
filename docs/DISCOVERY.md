@@ -362,3 +362,14 @@ Discovery > **Licences & costs** (`GET /t/:id/tenant-discovery/licence-report`, 
 Each item carries the Data Collection site its UPN is captured on (users, common area phones, resource accounts), and each
 finding counts per site. The page shows the data's age and downloads an Excel workbook (a summary sheet and one per finding).
 Counts only: Voxshift holds no prices.
+
+## Number cool-off
+
+A number released in Teams is held back from reassignment so its new holder does not get calls meant for the previous one
+(`packages/db/src/number-cooloff.ts`, tenant migration `0066`). A Discovery sync that sees a `phone_number` go from assigned to
+`Unassigned` (`numberReleasedInTeams`) sets that inventory number's `cooling_until` to now + the customer's period
+(`number_policy.cooloff_days`, default 90, 0 = off; the site's Numbers tab shows and changes it) - this covers numbers released
+by a Voxshift deployment as well as outside it, from the next sync. Assigning a cooling number (Data Collection and Design &
+Build `claimNumber`) is refused with the date. **End cool-off** on the Numbers tab clears it, with a reason, audited as
+`discovery.number_cooloff_ended`. Design-time moves (taking a number from one design row to another) do not start a cool-off:
+nothing was released in Teams.

@@ -14,6 +14,7 @@ export * from './plan-rows';
 export * from './validate-rows';
 export * from './preview';
 export * from './drift';
+export * from './number-cooloff';
 export { migratePlatform, provisionTenant, migrateAllTenants, dropTenantSchema } from './migrate';
 
 export interface DbHandle {

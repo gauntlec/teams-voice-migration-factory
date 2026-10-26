@@ -124,6 +124,7 @@ single shared claim. |
 | `deployments` | id, connection_id, mode (`dry_run`/`execute`), scope jsonb (`{siteId, sheets, waves?, rowIds?}` - every run acts on one site's Build rows at a time), status, created_by, started_at, finished_at, summary jsonb (counts: applied/skipped/failed/whatif) |
 | `deployment_changes` | id, deployment_id, seq, at, operator_user_id, correlation_id, object_type (`user`/`cap`/`resource_account`/`aa`/`cq`/`group`), object_id, cmdlet, parameters jsonb (redacted), before jsonb, after jsonb, result (`applied`/`skipped`/`failed`/`whatif`), message — **append-only**, enforced by a database trigger (tenant `0054_audit_tables_append_only.sql`: UPDATE, DELETE and TRUNCATE are refused; a deployment that has changes therefore cannot be deleted either, though nothing deletes deployments) |
 | `deployment_scripts` | id, deployment_id, filename, kind (`ps1`/`txt`), content — the "What-If" output |
+| `number_policy` | one row: cooloff_days (default 90, 0 = off) - the number cool-off period (tenant `0066`); `phone_numbers` gains cooling_until, cooling_reason |
 | `deployment_drift` | site_id (PK, FK → `discovery_sites`), drifted, awaiting_sync, rows jsonb (`DriftRow[]`: rowId, objectType, name, state, cmdlets, lastDeployedAt), run_id, computed_at — the latest drift check for a site (tenant `0065`), replaced on every check; see DEPLOYMENT.md "Drift" |
 
 ### Service Handover

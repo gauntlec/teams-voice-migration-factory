@@ -1,9 +1,10 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { sql, type Kysely } from 'kysely';
-import { computeSiteDrift, makeAutoAttendantTargetResolver, resolveLiveNumberTypes, tenantDb, type DB } from '@tvmf/db';
+import { computeSiteDrift, coolingUntil, makeAutoAttendantTargetResolver, resolveLiveNumberTypes, tenantDb, type DB } from '@tvmf/db';
 import {
   identityDriftNotAccepted,
+  coolingMessage,
   type BuildDriftAcceptInput,
   CALL_QUEUE_NO_AGENT_ACTIONS,
   CALL_QUEUE_NO_AGENT_APPLY_TO,
@@ -2065,6 +2066,8 @@ export class BuildService {
    * DID. */
 
   private async claimNumber(t: TenantContext, numberId: string, holderType: NumberHolderType, holderId: string) {
+    const cooling = await coolingUntil(this.s(t), numberId);
+    if (cooling) throw new ConflictException(coolingMessage(cooling));
     const res = await this.s(t)
       .updateTable('phone_numbers')
       .set({ holder_type: holderType, holder_id: holderId, status: 'assigned' })

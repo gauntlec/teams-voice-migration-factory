@@ -1,8 +1,9 @@
 import type { Job } from 'bullmq';
 import { sql, type Kysely } from 'kysely';
-import { computeSiteDrift, platformDb, sitesWithLiveRuns, tenantDb, type DB, webOrigin as resolveWebOrigin } from '@tvmf/db';
+import { computeSiteDrift, markNumbersReleased, platformDb, sitesWithLiveRuns, tenantDb, type DB, webOrigin as resolveWebOrigin } from '@tvmf/db';
 import {
   RESOURCE_ACCOUNT_APPLICATION_IDS,
+  numberReleasedInTeams,
   parseLiveCallingSettings,
   TENANT_DISCOVERY_STEPS,
   TENANT_POLICY_TYPES,
@@ -641,7 +642,10 @@ async function runSpec(
   }
 
   const versions: NewVersion[] = [];
+  // Numbers Teams has released since the last sync (assigned -> unassigned): they start the number cool-off.
+  const released: string[] = [];
   const flushVersions = async () => {
+    if (released.length) await markNumbersReleased(s, released.splice(0, released.length), 'Released in Teams (seen by Discovery)');
     if (!versions.length) return;
     const batch = versions.splice(0, versions.length);
     for (let i = 0; i < batch.length; i += 500) {
@@ -680,6 +684,7 @@ async function runSpec(
         }
         const name = spec.name(r);
         const p = prev.get(key);
+        if (spec.objectType === 'phone_number' && numberReleasedInTeams(p?.data, r)) released.push(key);
         const { id: objectId, change } = await upsertObject(s, runId, spec.objectType, key, name, r, p);
         if (change) {
           progress.changed[change] += 1;

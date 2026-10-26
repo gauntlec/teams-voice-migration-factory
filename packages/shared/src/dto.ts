@@ -763,6 +763,12 @@ export const resourceAccountNumberSchema = z
 
 /** Manually flip a free number to/from 'reserved' (e.g. held for porting). */
 export const numberReserveSchema = z.object({ reserved: z.boolean() }).strict();
+/** POST numbers/:id/end-cooloff - reuse a released number before its cool-off ends; the reason is audited. */
+export const numberEndCooloffSchema = z.object({ reason: z.string().trim().min(3, 'Say why the number must be reused now').max(500) }).strict();
+export type NumberEndCooloffInput = z.infer<typeof numberEndCooloffSchema>;
+/** PATCH number-policy - the customer's cool-off period in days; 0 turns it off. */
+export const numberPolicyPatchSchema = z.object({ cooloff_days: z.number().int().min(0).max(3650) }).strict();
+export type NumberPolicyPatchInput = z.infer<typeof numberPolicyPatchSchema>;
 
 /**
  * Link every not-yet-linked Data Collection user for a site to the tenant user

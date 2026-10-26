@@ -14,6 +14,10 @@ import {
   discoveryUserBulkPatchSchema,
   discoveryUserSchema,
   numberReserveSchema,
+  numberEndCooloffSchema,
+  numberPolicyPatchSchema,
+  type NumberEndCooloffInput,
+  type NumberPolicyPatchInput,
   relinkUsersSchema,
   resourceAccountNumberSchema,
   usersImportSchema,
@@ -184,6 +188,29 @@ export class TelephonyController {
   @RequirePermission('discovery:write')
   deleteRange(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Param('id') id: string) {
     return this.svc.deleteRange(t, u, id, this.review(u));
+  }
+
+  @Post('numbers/:id/end-cooloff')
+  @RequirePermission('discovery:write')
+  endNumberCooloff(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() u: AuthedUser,
+    @Param('id') id: string,
+    @Body(new ZodBody(numberEndCooloffSchema)) body: NumberEndCooloffInput,
+  ) {
+    return this.svc.endNumberCooloff(t, u, id, body.reason);
+  }
+
+  @Get('number-policy')
+  @RequirePermission('discovery:read')
+  numberPolicy(@TenantCtx() t: TenantContext) {
+    return this.svc.numberPolicy(t);
+  }
+
+  @Patch('number-policy')
+  @RequirePermission('discovery:write')
+  updateNumberPolicy(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Body(new ZodBody(numberPolicyPatchSchema)) body: NumberPolicyPatchInput) {
+    return this.svc.updateNumberPolicy(t, u, body.cooloff_days);
   }
 
   @Patch('numbers/:id/reserve')

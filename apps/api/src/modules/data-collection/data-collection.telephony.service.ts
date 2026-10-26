@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { sql, type Kysely } from 'kysely';
-import { tenantDb, type DB } from '@tvmf/db';
+import { cooloffDays, coolingUntil, tenantDb, type DB } from '@tvmf/db';
 import {
   MAX_RANGE_SIZE,
   type CallingPolicyInput,
@@ -21,6 +21,7 @@ import {
   type ImportUserRow,
   type NumberHolderType,
   type DiscoveryBulkDeleteInput,
+  coolingMessage,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
 import { applyBulkPatch, auditBulkPatch } from '../../common/bulk-patch';
@@ -472,6 +473,8 @@ export class TelephonyService {
           'n.status as status',
           'n.holder_type as holder_type',
           'n.holder_id as holder_id',
+          'n.cooling_until as cooling_until',
+          'n.cooling_reason as cooling_reason',
           'n.range_id as range_id',
           'r.range_start as range_start',
           'r.range_end as range_end',
@@ -756,6 +759,32 @@ export class TelephonyService {
     return { ok: true };
   }
 
+  /** Number cool-off (number-cooloff.ts): end it early so a released number can be reused now. */
+  async endNumberCooloff(t: TenantContext, u: AuthedUser, id: string, reason: string) {
+    await this.assertNumberInScope(t, id);
+    const n = await this.s(t).selectFrom('phone_numbers').select(['e164', 'cooling_until']).where('id', '=', id).executeTakeFirst();
+    if (!n) throw new NotFoundException('phone number not found');
+    await this.s(t).updateTable('phone_numbers').set({ cooling_until: null, cooling_reason: null }).where('id', '=', id).execute();
+    await this.audit.tenant(t.schema, 'discovery.number_cooloff_ended', {
+      actor: actorOf(u),
+      targetType: 'phone_number',
+      targetId: id,
+      detail: { e164: n.e164, was: n.cooling_until, reason },
+    });
+    return { ok: true };
+  }
+
+  async numberPolicy(t: TenantContext) {
+    return { cooloff_days: await cooloffDays(this.s(t)) };
+  }
+
+  async updateNumberPolicy(t: TenantContext, u: AuthedUser, days: number) {
+    const s = this.s(t);
+    await s.insertInto('number_policy').values({ id: true, cooloff_days: days }).onConflict((oc) => oc.column('id').doUpdateSet({ cooloff_days: days })).execute();
+    await this.audit.tenant(t.schema, 'discovery.number_policy_updated', { actor: actorOf(u), targetType: 'number_policy', targetId: 'cooloff', detail: { cooloff_days: days } });
+    return { cooloff_days: days };
+  }
+
   async reserveNumber(t: TenantContext, u: AuthedUser, id: string, reserved: boolean, canReview: boolean) {
     await this.assertNumberInScope(t, id);
     const n = await this.s(t).selectFrom('phone_numbers').selectAll().where('id', '=', id).executeTakeFirst();
@@ -780,6 +809,8 @@ export class TelephonyService {
   /* ==================== atomic assignment core ==================== */
 
   private async claimNumber(t: TenantContext, numberId: string, holderType: NumberHolderType, holderId: string) {
+    const cooling = await coolingUntil(this.s(t), numberId);
+    if (cooling) throw new ConflictException(coolingMessage(cooling));
     const res = await this.s(t)
       .updateTable('phone_numbers')
       .set({ holder_type: holderType, holder_id: holderId, status: 'assigned' })

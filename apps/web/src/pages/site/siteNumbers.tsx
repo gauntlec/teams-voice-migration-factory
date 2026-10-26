@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Badge, Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Dropdown, Field, Option, SearchBox, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text , makeStyles, shorthands } from '@fluentui/react-components';
+import { Badge, Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Dropdown, Field, Input, Option, SearchBox, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text , makeStyles, shorthands } from '@fluentui/react-components';
 import { DeleteRegular } from '@fluentui/react-icons';
 import { type Paginated } from '@tvmf/shared';
 import { api, ApiError } from '../../api';
@@ -26,6 +26,9 @@ interface PhoneNumber {
   status: 'available' | 'reserved' | 'assigned';
   holder_type: string | null;
   holder_name: string | null;
+  /** released in Teams: not to be reassigned before this (number cool-off) */
+  cooling_until: string | null;
+  cooling_reason: string | null;
   range_start: string | null;
   range_end: string | null;
 }
@@ -75,6 +78,28 @@ export function NumberInventory({
     },
   });
 
+  // Number cool-off: released numbers wait this long before they can be given to someone else (0 = off).
+  const policy = useQuery({ queryKey: ['number-policy', base], queryFn: () => api<{ cooloff_days: number }>(`${base}/number-policy`) });
+  const [daysInput, setDaysInput] = useState<string | null>(null);
+  const savePolicy = useMutation({
+    mutationFn: (days: number) => api(`${base}/number-policy`, { method: 'PATCH', body: JSON.stringify({ cooloff_days: days }) }),
+    onSuccess: () => {
+      setDaysInput(null);
+      policy.refetch();
+    },
+  });
+  const [ending, setEnding] = useState<PhoneNumber | null>(null);
+  const [reason, setReason] = useState('');
+  const endCooloff = useMutation({
+    mutationFn: () => api(`${base}/numbers/${ending!.id}/end-cooloff`, { method: 'POST', body: JSON.stringify({ reason }) }),
+    onSuccess: () => {
+      setEnding(null);
+      setReason('');
+      list.refetch();
+    },
+  });
+  const cooling = (n: PhoneNumber) => !!n.cooling_until && Date.parse(n.cooling_until) > Date.now();
+
   const total = list.data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / limit));
   const items = list.data?.items ?? [];
@@ -89,6 +114,31 @@ export function NumberInventory({
           <Text size={200} className={s.muted} block>
             Generated from this site's ranges. Assign numbers to users, CAPs or resource accounts.
           </Text>
+          {policy.data && (
+            <Text size={200} className={s.muted} block>
+              A number released in Teams cools off for{' '}
+              {daysInput === null ? (
+                <>
+                  <b>{policy.data.cooloff_days === 0 ? 'no days (off)' : `${policy.data.cooloff_days} days`}</b> before it can be reused
+                  {!locked && (
+                    <Button size="small" appearance="transparent" onClick={() => setDaysInput(String(policy.data!.cooloff_days))}>
+                      Change
+                    </Button>
+                  )}
+                </>
+              ) : (
+                <>
+                  <Input size="small" type="number" value={daysInput} onChange={(_, d) => setDaysInput(d.value)} className={ls.minW130} /> days (0 turns it off){' '}
+                  <Button size="small" appearance="primary" disabled={savePolicy.isPending || daysInput === '' || Number(daysInput) < 0} onClick={() => savePolicy.mutate(Number(daysInput))}>
+                    Save
+                  </Button>{' '}
+                  <Button size="small" onClick={() => setDaysInput(null)}>
+                    Cancel
+                  </Button>
+                </>
+              )}
+            </Text>
+          )}
         </div>
         <div className={s.toolbar}>
           <SearchBox
@@ -160,12 +210,22 @@ export function NumberInventory({
                       >
                         {n.status}
                       </Badge>
+                      {cooling(n) && (
+                        <Badge appearance="tint" color="warning" title={n.cooling_reason ?? 'Released in Teams'}>
+                          cooling off until {new Date(n.cooling_until!).toLocaleDateString()}
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell>
                       {n.holder_name ? `${n.holder_name} (${n.holder_type})` : '—'}
                     </TableCell>
                     {!locked && (
                       <TableCell>
+                        {cooling(n) && (
+                          <Button size="small" appearance="subtle" onClick={() => setEnding(n)}>
+                            End cool-off
+                          </Button>
+                        )}
                         {n.status !== 'assigned' && (
                           <Button
                             size="small"
@@ -208,6 +268,33 @@ export function NumberInventory({
             </div>
           )}
         </>
+      )}
+      {ending && (
+        <Dialog open onOpenChange={(_, d) => !d.open && setEnding(null)}>
+          <DialogSurface>
+            <DialogBody>
+              <DialogTitle>End the cool-off for {ending.e164}?</DialogTitle>
+              <DialogContent>
+                <Text block>
+                  It was released in Teams and is held until {new Date(ending.cooling_until!).toLocaleDateString()} so its new holder does not get calls meant
+                  for the previous one. Say why it must be reused now - this is recorded.
+                </Text>
+                <Field label="Reason" required>
+                  <Input value={reason} onChange={(_, d) => setReason(d.value)} maxLength={500} />
+                </Field>
+                {endCooloff.isError && <LoadError message={endCooloff.error instanceof ApiError ? endCooloff.error.message : 'Could not end the cool-off.'} />}
+              </DialogContent>
+              <DialogActions>
+                <DialogTrigger disableButtonEnhancement>
+                  <Button appearance="secondary">Cancel</Button>
+                </DialogTrigger>
+                <Button appearance="primary" disabled={reason.trim().length < 3 || endCooloff.isPending} onClick={() => endCooloff.mutate()}>
+                  End cool-off
+                </Button>
+              </DialogActions>
+            </DialogBody>
+          </DialogSurface>
+        </Dialog>
       )}
     </Card>
   );
