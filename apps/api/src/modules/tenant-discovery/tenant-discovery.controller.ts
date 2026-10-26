@@ -8,6 +8,8 @@ import {
   tenantObjectsQuerySchema,
   tenantResourceAccountsImportSchema,
   tenantUserLookupSchema,
+  tenantUserCompareSchema,
+  type TenantUserCompareQuery,
   tenantUsersImportSchema,
   type TenantDiscoverySettingsInput,
   type TenantDiscoveryStartInput,
@@ -196,6 +198,12 @@ export class TenantDiscoveryController {
     @Query(new ZodBody(tenantObjectsQuerySchema)) q: TenantObjectsQuery,
   ) {
     return this.svc.listUsers(t, q);
+  }
+
+  @Get('users/compare')
+  @RequirePermission('tenantdiscovery:read')
+  compareUsers(@TenantCtx() t: TenantContext, @Query(new ZodBody(tenantUserCompareSchema)) q: TenantUserCompareQuery) {
+    return this.svc.compareUsers(t, q.a, q.b);
   }
 
   /**

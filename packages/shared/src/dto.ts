@@ -934,6 +934,10 @@ export const tenantGroupsQuerySchema = z.object({
 export type TenantGroupsQuery = z.infer<typeof tenantGroupsQuerySchema>;
 
 /** Exact-UPN lookup used by the Data Collection add-user autofill. */
+/** GET discovery/users/compare - two discovered users (tenant_users.id) side by side. */
+export const tenantUserCompareSchema = z.object({ a: z.guid(), b: z.guid() });
+export type TenantUserCompareQuery = z.infer<typeof tenantUserCompareSchema>;
+
 export const tenantUserLookupSchema = z.object({
   upn: z.string().trim().min(3).max(320),
 });

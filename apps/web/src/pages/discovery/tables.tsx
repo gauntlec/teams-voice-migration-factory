@@ -12,6 +12,7 @@ import { useDebounced } from '../../hooks/useDebounced';
 import { useStyles, fmt, Pager, JsonDialog, str, fetchAllPages } from './discoveryShared';
 import { HistoryButton } from './history';
 import { AddToSiteDialog, useRowSelection, type AddItem } from './addToSite';
+import { CompareUsersDialog } from './compareUsers';
 import { TableSkeleton } from '../../components/states';
 
 const useLocalStyles = makeStyles({
@@ -418,6 +419,7 @@ export function UsersTable({ base, canImport, canAdd, onImported }: { base: stri
   const [importOpen, setImportOpen] = useState(false);
   const sel = useRowSelection();
   const [addItems, setAddItems] = useState<AddItem[] | null>(null);
+  const [compare, setCompare] = useState<[string, string] | null>(null);
   // A common area phone is an account like any other here; its licence plan says which it is, and the dialog lets you change it.
   const toItem = (u: TenantUserSummary): AddItem => ({
     id: u.id,
@@ -472,6 +474,14 @@ export function UsersTable({ base, canImport, canAdd, onImported }: { base: stri
               Import into Data Collection…
             </Button>
           )}
+          <Button
+            size="small"
+            disabled={sel.count !== 2}
+            title="Tick two users to see their voice setup side by side"
+            onClick={() => setCompare([sel.items[0].id, sel.items[1].id])}
+          >
+            Compare{sel.count === 2 ? ' (2)' : ''}
+          </Button>
           {canAdd && (
             <Button size="small" appearance="primary" disabled={sel.count === 0} onClick={() => setAddItems(sel.items)}>
               Add to site… ({sel.count})
@@ -492,15 +502,13 @@ export function UsersTable({ base, canImport, canAdd, onImported }: { base: stri
           <DataTable size="small" minWidth={1100}>
             <TableHeader>
               <TableRow>
-                {canAdd && (
-                  <TableHeaderCell>
-                    <Checkbox
-                      aria-label="Select all on this page"
-                      checked={items.length > 0 && items.every((u) => sel.has(u.id))}
-                      onChange={(_, d) => sel.setMany(items.map(toItem), !!d.checked)}
-                    />
-                  </TableHeaderCell>
-                )}
+                <TableHeaderCell>
+                  <Checkbox
+                    aria-label="Select all on this page"
+                    checked={items.length > 0 && items.every((u) => sel.has(u.id))}
+                    onChange={(_, d) => sel.setMany(items.map(toItem), !!d.checked)}
+                  />
+                </TableHeaderCell>
                 <TableHeaderCell>UPN</TableHeaderCell>
                 <TableHeaderCell>Name</TableHeaderCell>
                 <TableHeaderCell>Type</TableHeaderCell>
@@ -516,11 +524,9 @@ export function UsersTable({ base, canImport, canAdd, onImported }: { base: stri
             <TableBody>
               {items.map((u) => (
                 <TableRow key={u.id}>
-                  {canAdd && (
-                    <TableCell>
-                      <Checkbox aria-label={`Select ${u.upn}`} checked={sel.has(u.id)} onChange={() => sel.toggle(toItem(u))} />
-                    </TableCell>
-                  )}
+                  <TableCell>
+                    <Checkbox aria-label={`Select ${u.upn}`} checked={sel.has(u.id)} onChange={() => sel.toggle(toItem(u))} />
+                  </TableCell>
                   <TableCell title={u.upn}>{u.upn}</TableCell>
                   <TableCell title={u.display_name ?? ''}>{u.display_name ?? '—'}</TableCell>
                   <TableCell>
@@ -585,6 +591,7 @@ export function UsersTable({ base, canImport, canAdd, onImported }: { base: stri
         </>
       )}
       {view && <JsonDialog title={view.display_name ?? view.upn} data={view} onClose={() => setView(null)} />}
+      {compare && <CompareUsersDialog base={base} a={compare[0]} b={compare[1]} onClose={() => setCompare(null)} />}
       {addItems && (
         <AddToSiteDialog
           items={addItems}

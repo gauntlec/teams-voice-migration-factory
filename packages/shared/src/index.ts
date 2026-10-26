@@ -554,3 +554,4 @@ export * from './sort';
 export * from './calling-settings';
 export * from './deployment-groups';
 export * from './drift';
+export * from './voice-compare';

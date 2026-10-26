@@ -332,3 +332,16 @@ check ("Validate against tenant") reads the same for the UPNs it checks.
 call forwarding, delegates, call group and voicemail from what the tenant has, but only where the row is still empty - a designed setting is never
 replaced. **Deployment** compares a designed setting with what Teams has and plans a command only when it differs; a user whose settings have
 never been read still always plans the designed setting.
+
+## Compare two users
+
+Discovery > Users: tick two users and choose **Compare**. `GET /t/:id/discovery/users/compare?a=&b=` (`tenantdiscovery:read`,
+`TenantDiscoveryService.compareUsers`) builds a `VoiceProfile` for each from `tenant_users` (account, Enterprise Voice, number,
+usage location, licensed features, calling settings, voicemail) and attaches, for every policy type in `TENANT_POLICY_TYPES`, the
+policy the user has (no direct assignment = `Global`) with the settings `tenant_policies.data` holds for it.
+`compareVoiceProfiles` (`packages/shared/src/voice-compare.ts`, unit-tested) lines them up by section; where the two have
+different policies of one type it lists the settings inside those policies that differ (`policySettingDifferences`, identity
+fields ignored) - the usual answer to "why can one person call international numbers and the other not". The dialog shows the
+age of the data (last completed sync) and can hide identical rows.
+
+Not built yet: comparing a user with a Design & Build row, and opening the comparison from an incident.

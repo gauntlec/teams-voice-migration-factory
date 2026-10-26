@@ -32,6 +32,11 @@ import {
   type AutoAttendantCallableEntity,
   type LiveCallableEntityRef,
   type VoiceAppFields,
+  compareVoiceProfiles,
+  TENANT_POLICY_TYPES,
+  type LiveCallingSettings,
+  type VoiceCompareRow,
+  type VoiceProfile,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
 import { assertNoMaintenanceFreeze, currentMaintenance } from '../../platform-ops/maintenance';
@@ -868,6 +873,52 @@ export class TenantDiscoveryService {
       .offset((q.page - 1) * q.limit)
       .execute();
     return { items, total: Number(n), page: q.page, limit: q.limit };
+  }
+
+  /**
+   * Two discovered users' Teams voice setup side by side (shared/voice-compare.ts), each policy with the settings Discovery stored
+   * for it, so a different policy shows which of its settings explain the difference. Discovery data only - shows its age.
+   */
+  async compareUsers(t: TenantContext, aId: string, bId: string): Promise<{ a: VoiceProfile; b: VoiceProfile; rows: VoiceCompareRow[]; dataAsOf: string | null }> {
+    const s = this.s(t);
+    const users = await s.selectFrom('tenant_users').selectAll().where('id', 'in', [aId, bId]).execute();
+    const ua = users.find((u) => u.id === aId);
+    const ub = users.find((u) => u.id === bId);
+    if (!ua || !ub) throw new NotFoundException('User not found in Discovery');
+    const policies = await s.selectFrom('tenant_policies').select(['policy_type', 'name', 'data']).where('removed_at', 'is', null).execute();
+    const byKey = new Map(policies.map((p) => [`${p.policy_type}:${p.name.toLowerCase()}`, p.data as Record<string, unknown>]));
+    const profile = (u: (typeof users)[number]): VoiceProfile => {
+      const assigned = (u.policies as Record<string, string | null> | null) ?? {};
+      const out: VoiceProfile['policies'] = {};
+      for (const type of TENANT_POLICY_TYPES) {
+        const name = assigned[type] ?? 'Global';
+        out[type] = { name, settings: byKey.get(`${type}:${name.toLowerCase()}`) ?? null };
+      }
+      return {
+        id: u.id,
+        upn: u.upn,
+        displayName: u.display_name,
+        accountEnabled: u.account_enabled,
+        accountType: u.account_type,
+        enterpriseVoice: u.enterprise_voice_enabled,
+        number: u.line_uri ? u.line_uri.replace(/^tel:/i, '') : null,
+        usageLocation: u.usage_location,
+        featureTypes: u.feature_types ?? [],
+        policies: out,
+        callingSettings: (u.calling_settings as LiveCallingSettings | null) ?? null,
+        voicemail: { enabled: u.voicemail_enabled, language: u.voicemail_prompt_language },
+        voiceSettingsAt: u.voice_settings_at ? new Date(u.voice_settings_at).toISOString() : null,
+      };
+    };
+    const a = profile(ua);
+    const b = profile(ub);
+    const run = await s
+      .selectFrom('tenant_discovery_runs')
+      .select(sql<string | null>`max(finished_at)`.as('at'))
+      .where('kind', '=', 'sync')
+      .where('status', '=', 'completed')
+      .executeTakeFirst();
+    return { a, b, rows: compareVoiceProfiles(a, b), dataAsOf: run?.at ? new Date(run.at).toISOString() : null };
   }
 
   /** Exact (case-insensitive) UPN match against the latest snapshot - drives autofill. */
