@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { sql } from 'kysely';
 import { platformDb, tenantDb } from '@tvmf/db';
-import type { ZodType, ZodTypeDef } from 'zod';
+import type { ZodType } from 'zod';
 import {
   AGENT_CUSTOMER_LABEL,
   agentLabel,
@@ -1370,7 +1370,7 @@ export class ServiceRequestsService {
 
   /** Validates the draft with the same schema as adding it by hand, then creates it through the owning service. */
   private async createBuildRow(t: TenantContext, user: AuthedUser, draft: SrBuildDraft): Promise<{ id: string; siteId: string }> {
-    const valid = <T>(schema: ZodType<T, ZodTypeDef, unknown>, v: unknown): T => {
+    const valid = <T>(schema: ZodType<T>, v: unknown): T => {
       const r = schema.safeParse(v);
       if (r.success) return r.data;
       const why = r.error.issues.map((i) => (i.path.length ? `${i.path.join('.')}: ${i.message}` : i.message)).join('; ');
@@ -1822,7 +1822,7 @@ export class ServiceRequestsService {
     const siteId = row.site_id;
     const reference = srReference(row.number);
     const s = tenantDb(this.db, t.schema);
-    const valid = <T>(schema: ZodType<T, ZodTypeDef, unknown>, v: unknown): T => {
+    const valid = <T>(schema: ZodType<T>, v: unknown): T => {
       const r = schema.safeParse(v);
       if (r.success) return r.data;
       throw new BadRequestException(`The change can't be applied as it is (${r.error.issues.map((i) => i.message).join('; ')}). Make it by hand on the Design tab.`);

@@ -170,7 +170,7 @@ export function srBuiltBlockers(
 /** POST /service-requests/:id/deploy - What-If or Deploy just the request's rows. */
 export const serviceRequestDeploySchema = z
   .object({
-    connectionId: z.string().uuid(),
+    connectionId: z.guid(),
     mode: z.enum(['dry_run', 'execute']),
     /** Needed for a live deploy outside the customer's change window; recorded on the request. */
     outsideWindowReason: z.string().trim().min(3).max(1000).optional(),

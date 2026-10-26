@@ -217,18 +217,18 @@ export const AGENT_PROPOSAL_KINDS = {
         to: z.enum(INC_STATUSES),
         note: z.string().trim().max(4000).optional(),
         holdReason: z.enum(INC_HOLD_REASONS).optional(),
-        duplicateOf: z.string().uuid().optional(),
+        duplicateOf: z.guid().optional(),
       })
       .strict(),
   },
   set_priority: { label: 'Change the priority', server: true, params: z.object({ priority: z.enum(INC_PRIORITIES), reason: z.string().trim().min(3).max(1000) }).strict() },
-  assign_user: { label: 'Assign to a person', server: true, params: z.object({ userId: z.string().uuid() }).strict() },
+  assign_user: { label: 'Assign to a person', server: true, params: z.object({ userId: z.guid() }).strict() },
   declare_major: {
     label: 'Declare a major incident',
     server: true,
-    params: z.object({ leadId: z.string().uuid(), commsId: z.string().uuid().optional(), intervalMinutes: z.number().int().min(10).max(480).optional(), summary: z.string().trim().min(5).max(4000) }).strict(),
+    params: z.object({ leadId: z.guid(), commsId: z.guid().optional(), intervalMinutes: z.number().int().min(10).max(480).optional(), summary: z.string().trim().min(5).max(4000) }).strict(),
   },
-  link_problem: { label: 'Link to a problem', server: true, params: z.object({ problemId: z.string().uuid() }).strict() },
+  link_problem: { label: 'Link to a problem', server: true, params: z.object({ problemId: z.guid() }).strict() },
   link_item: { label: 'Link an affected item', server: true, params: z.object({ kind: z.enum(INC_ITEM_KINDS), ref: z.string().trim().min(1).max(200), label: z.string().trim().max(200).optional() }).strict() },
   external: {
     label: 'A step the assistant will carry out',
@@ -240,7 +240,7 @@ export const AGENT_PROPOSAL_KINDS = {
         title: z.string().trim().min(3).max(200),
         detail: z.string().trim().max(4000).optional(),
         /** Free-form arguments for the agent's own use (a runbook name and its inputs). */
-        args: z.record(z.unknown()).optional(),
+        args: z.record(z.string(), z.unknown()).optional(),
       })
       .strict(),
   },
@@ -330,7 +330,7 @@ export const agentHandoffSchema = z
   .object({
     to: z.enum(['human', 'queue']).default('queue'),
     /** A specific person; otherwise it goes back to the unassigned queue. */
-    toUserId: z.string().uuid().optional(),
+    toUserId: z.guid().optional(),
     summary: z
       .object({
         tried: z.array(z.string().trim().min(1).max(500)).max(20).default([]),
@@ -351,7 +351,7 @@ const expectedVersion = z.number().int().positive().optional();
 
 export const agentIncidentsQuerySchema = z
   .object({
-    tenantId: z.string().uuid().optional(),
+    tenantId: z.guid().optional(),
     status: z.enum([...INC_STATUSES, 'open', 'all'] as [string, ...string[]]).default('open'),
     /** 'me' = assigned to this agent; 'unassigned' = nobody (person or agent) has it. */
     assigned: z.enum(['me', 'unassigned']).optional(),
@@ -368,7 +368,7 @@ export const agentStatusSchema = z
     to: z.enum(INC_STATUSES),
     note: z.string().trim().max(4000).optional(),
     holdReason: z.enum(INC_HOLD_REASONS).optional(),
-    duplicateOf: z.string().uuid().optional(),
+    duplicateOf: z.guid().optional(),
     expectedVersion,
   })
   .strict();
@@ -394,7 +394,7 @@ export type AgentHeartbeatInput = z.infer<typeof agentHeartbeatSchema>;
 export const agentProposalSchema = z
   .object({
     kind: z.enum(AGENT_PROPOSAL_KIND_KEYS),
-    params: z.record(z.unknown()).default({}),
+    params: z.record(z.string(), z.unknown()).default({}),
     rationale: z.string().trim().min(3, 'Say why').max(4000),
     risk: z.enum(AGENT_RISKS).default('low'),
     expiresInMinutes: z.number().int().min(5).max(AGENT_PROPOSAL_MAX_MINUTES).default(AGENT_PROPOSAL_DEFAULT_MINUTES),
@@ -410,7 +410,7 @@ export type AgentProposalInput = z.infer<typeof agentProposalSchema>;
 export const agentProposalResultSchema = z
   .object({
     state: z.enum(['running', 'done', 'failed']),
-    result: z.record(z.unknown()).optional(),
+    result: z.record(z.string(), z.unknown()).optional(),
     error: z.string().trim().max(2000).optional(),
   })
   .strict();
@@ -418,7 +418,7 @@ export type AgentProposalResultInput = z.infer<typeof agentProposalResultSchema>
 
 /** POST .../diagnostics - run a read-only check. `proposalId` is the approved proposal this carries out (needed below "act alone"). */
 export const agentDiagnosticSchema = z
-  .object({ runbook: z.enum(DIAG_RUNBOOK_KEYS), input: z.string().trim().max(200).optional(), proposalId: z.string().uuid().optional() })
+  .object({ runbook: z.enum(DIAG_RUNBOOK_KEYS), input: z.string().trim().max(200).optional(), proposalId: z.guid().optional() })
   .strict();
 export type AgentDiagnosticInput = z.infer<typeof agentDiagnosticSchema>;
 
@@ -430,7 +430,7 @@ export const proposalDecisionSchema = z.object({ decision: z.enum(['approve', 'r
 export type ProposalDecisionInput = z.infer<typeof proposalDecisionSchema>;
 
 /** POST /incidents/:id/hand-back - give an incident back to an assistant after taking it over. */
-export const handBackSchema = z.object({ agentId: z.string().uuid() }).strict();
+export const handBackSchema = z.object({ agentId: z.guid() }).strict();
 export type HandBackInput = z.infer<typeof handBackSchema>;
 
 /* ------------------------------ admin DTOs ------------------------------ */
@@ -447,7 +447,7 @@ export const createAgentSchema = z
     kind: z.enum(AGENT_KINDS).default('general'),
     description: z.string().trim().max(500).default(''),
     modelLabel: z.string().trim().max(120).default(''),
-    mspId: z.string().uuid().nullable().optional(),
+    mspId: z.guid().nullable().optional(),
     /** Where it works. The admin page makes you choose; callers that leave it out get both (how assistants worked before this existed). */
     worksOn: agentWorksOnSchema.default([...AGENT_DOMAINS]),
   })
@@ -461,7 +461,7 @@ export const updateAgentSchema = z
     description: z.string().trim().max(500).optional(),
     modelLabel: z.string().trim().max(120).optional(),
     status: z.enum(AGENT_STATUSES).optional(),
-    mspId: z.string().uuid().nullable().optional(),
+    mspId: z.guid().nullable().optional(),
     worksOn: agentWorksOnSchema.optional(),
   })
   .strict();
@@ -502,7 +502,7 @@ export const createAgentWebhookSchema = z
 export type CreateAgentWebhookInput = z.infer<typeof createAgentWebhookSchema>;
 
 /** POST .../incidents/:id/ask - a person asks an assistant to look at an incident now. */
-export const askAssistantSchema = z.object({ agentId: z.string().uuid(), question: z.string().trim().min(3, 'Say what you want it to look at').max(1000) }).strict();
+export const askAssistantSchema = z.object({ agentId: z.guid(), question: z.string().trim().min(3, 'Say what you want it to look at').max(1000) }).strict();
 export type AskAssistantInput = z.infer<typeof askAssistantSchema>;
 
 /** POST /agents/builtin - add one of the assistants Voxshift ships. */

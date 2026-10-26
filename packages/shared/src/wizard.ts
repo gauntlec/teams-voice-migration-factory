@@ -28,7 +28,7 @@ export const wizardTargetSchema = z
     /** Free text: a person's name/email, a department/queue name, a message to play, or an outside phone number - whichever `kind` calls for. Unused for 'voicemail'/'operator'. When `flowId` is set (kind 'call_queue', or 'team' picked from a planned suggestion) this is just that capture's name for display - `flowId` is what actually resolves it. */
     label: str(200).optional(),
     /** The discovery_flows row this points at, when the target was picked by id rather than typed/matched by name - always set for kind 'call_queue' (the "Set up a new call queue" nested wizard flow), optionally set for kind 'team' when picked from the picker's "planned" suggestions (see TargetPicker.tsx). */
-    flowId: z.string().uuid().optional(),
+    flowId: z.guid().optional(),
   })
   .strict();
 export type WizardTarget = z.infer<typeof wizardTargetSchema>;

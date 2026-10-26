@@ -49,9 +49,9 @@ const intervalSchema = z.number().int().min(INC_MAJOR_MIN_INTERVAL).max(INC_MAJO
 export const declareMajorSchema = z
   .object({
     /** Runs the response. Must be an engineer on the customer or a Super Admin. */
-    leadId: z.string().uuid(),
+    leadId: z.guid(),
     /** Writes the customer updates; defaults to the lead. */
-    commsId: z.string().uuid().optional(),
+    commsId: z.guid().optional(),
     intervalMinutes: intervalSchema.optional(),
     /** The first customer update: what we know, and what we're doing. */
     summary: z.string().trim().min(5, 'Say what we know so far').max(4000),
@@ -70,11 +70,11 @@ export const majorUpdateSchema = z
 export type MajorUpdateInput = z.infer<typeof majorUpdateSchema>;
 
 /** PATCH /incidents/:id/major - change the lead or comms owner. */
-export const majorRolesSchema = z.object({ leadId: z.string().uuid().optional(), commsId: z.string().uuid().optional() }).strict();
+export const majorRolesSchema = z.object({ leadId: z.guid().optional(), commsId: z.guid().optional() }).strict();
 export type MajorRolesInput = z.infer<typeof majorRolesSchema>;
 
 /** POST /incidents/:id/children - link live incidents under a major incident. */
-export const linkChildrenSchema = z.object({ childIds: z.array(z.string().uuid()).min(1).max(50) }).strict();
+export const linkChildrenSchema = z.object({ childIds: z.array(z.guid()).min(1).max(50) }).strict();
 export type LinkChildrenInput = z.infer<typeof linkChildrenSchema>;
 
 /* ------------------------------ problems ------------------------------ */
@@ -113,7 +113,7 @@ const problemFields = {
   rootCause: z.string().trim().max(4000),
   workaround: z.string().trim().max(4000),
   customerNote: z.string().trim().max(1000),
-  ownerId: z.string().uuid().nullable(),
+  ownerId: z.guid().nullable(),
 };
 
 /** POST /incidents/problems */
@@ -129,7 +129,7 @@ export const createProblemSchema = z
     customerNote: problemFields.customerNote.default(''),
     ownerId: problemFields.ownerId.default(null),
     /** Link this incident to the new problem straight away. */
-    incidentId: z.string().uuid().optional(),
+    incidentId: z.guid().optional(),
   })
   .strict();
 export type CreateProblemInput = z.infer<typeof createProblemSchema>;
@@ -139,7 +139,7 @@ export const updateProblemSchema = z.object(Object.fromEntries(Object.entries(pr
 export type UpdateProblemInput = z.infer<typeof updateProblemSchema>;
 
 /** POST /incidents/:id/problem - link (or with null, unlink) the problem behind an incident. */
-export const linkProblemSchema = z.object({ problemId: z.string().uuid().nullable() }).strict();
+export const linkProblemSchema = z.object({ problemId: z.guid().nullable() }).strict();
 export type LinkProblemInput = z.infer<typeof linkProblemSchema>;
 
 /** GET /incidents/known-errors?category=&subcategory= - what a customer or engineer can be told before raising one. */
@@ -179,7 +179,7 @@ export const incidentReviewSchema = z
             text: z.string().trim().min(1).max(300),
             owner: z.string().trim().max(120).optional(),
             due: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-            serviceRequestId: z.string().uuid().optional(),
+            serviceRequestId: z.guid().optional(),
           })
           .strict(),
       )
@@ -195,7 +195,7 @@ export const mspIncidentsQuerySchema = z
   .object({
     status: z.enum([...INC_STATUSES, 'open', 'all'] as [string, ...string[]]).default('open'),
     /** Super Admins only: limit to one MSP ('none' = customers with no MSP). */
-    mspId: z.union([z.string().uuid(), z.literal('none')]).optional(),
+    mspId: z.union([z.guid(), z.literal('none')]).optional(),
     /** Only incidents assigned to me. */
     mine: z.enum(['true']).optional(),
     priority: z.enum(INC_PRIORITIES).optional(),

@@ -16,8 +16,8 @@ import {
 } from '@tvmf/shared';
 import { AgentApiClient, VoxshiftError } from './client';
 
-const tenantId = z.string().uuid().describe('The customer id (tenant_id on every incident).');
-const incidentId = z.string().uuid().describe('The incident id.');
+const tenantId = z.guid().describe('The customer id (tenant_id on every incident).');
+const incidentId = z.guid().describe('The incident id.');
 const idempotencyKey = z.string().max(200).optional().describe('Make a retry safe: the same key does the thing once. Left out, a fresh key is used.');
 const expectedVersion = z.number().int().positive().optional().describe('The incident version you last read. The call is refused if it has moved since.');
 const both = { tenantId, incidentId };
@@ -156,7 +156,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     {
       title: 'Change status',
       description: 'Acknowledge (in_progress), hold, restore, resolve, close, mark duplicate. Needs the "act" scope, a held lease and "act alone" autonomy for that kind of change (resolving needs the resolve class). If refused with propose_instead, use propose_action with kind "status_change". on_hold needs holdReason; duplicate needs duplicateOf.',
-      inputSchema: { ...both, to: z.enum(INC_STATUSES), note: z.string().max(4000).optional(), holdReason: z.enum(INC_HOLD_REASONS).optional(), duplicateOf: z.string().uuid().optional(), expectedVersion, idempotencyKey },
+      inputSchema: { ...both, to: z.enum(INC_STATUSES), note: z.string().max(4000).optional(), holdReason: z.enum(INC_HOLD_REASONS).optional(), duplicateOf: z.guid().optional(), expectedVersion, idempotencyKey },
       annotations: WRITE,
     },
     (a: Args) => run(() => api.status(a.tenantId, a.incidentId, { to: a.to, note: a.note, holdReason: a.holdReason, duplicateOf: a.duplicateOf, expectedVersion: a.expectedVersion }, a.idempotencyKey)),
@@ -190,7 +190,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     {
       title: 'Run a diagnostic check',
       description: 'A read-only check (see list_runbooks) with a result you can rely on and cite: findings with ok/warn/fail, and how old the data is. Needs a held lease. At "act alone" diagnostics autonomy it runs directly; at "act with approval" it must be an approved propose_action of kind "external" (actionClass "diagnostic_read"), named in proposalId.',
-      inputSchema: { ...both, runbook: z.enum(DIAG_RUNBOOK_KEYS), input: z.string().max(200).optional().describe('What to check: an email address, a phone number or a queue name, depending on the check.'), proposalId: z.string().uuid().optional(), idempotencyKey },
+      inputSchema: { ...both, runbook: z.enum(DIAG_RUNBOOK_KEYS), input: z.string().max(200).optional().describe('What to check: an email address, a phone number or a queue name, depending on the check.'), proposalId: z.guid().optional(), idempotencyKey },
       annotations: WRITE,
     },
     (a: Args) => run(() => api.diagnostic(a.tenantId, a.incidentId, { runbook: a.runbook, input: a.input, proposalId: a.proposalId }, a.idempotencyKey)),
@@ -211,7 +211,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
       inputSchema: {
         ...both,
         kind: z.enum(AGENT_PROPOSAL_KIND_KEYS),
-        params: z.record(z.unknown()).default({}).describe('Depends on kind: customer_update {body}; status_change {to, note?, holdReason?, duplicateOf?}; set_priority {priority, reason}; assign_user {userId}; declare_major {leadId, commsId?, intervalMinutes?, summary}; link_problem {problemId}; link_item {kind, ref, label?}; external {actionClass, title, detail?, args?}.'),
+        params: z.record(z.string(), z.unknown()).default({}).describe('Depends on kind: customer_update {body}; status_change {to, note?, holdReason?, duplicateOf?}; set_priority {priority, reason}; assign_user {userId}; declare_major {leadId, commsId?, intervalMinutes?, summary}; link_problem {problemId}; link_item {kind, ref, label?}; external {actionClass, title, detail?, args?}.'),
         rationale: z.string().min(3).max(4000).describe('Why. The person deciding reads this.'),
         risk: z.enum(AGENT_RISKS).default('low'),
         expiresInMinutes: z.number().int().min(5).optional(),
@@ -233,7 +233,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     {
       title: 'Report on an approved step',
       description: 'After you carry out an approved "external" proposal: running, done or failed, with a result or error.',
-      inputSchema: { ...both, proposalId: z.string().uuid(), state: z.enum(['running', 'done', 'failed']), result: z.record(z.unknown()).optional(), error: z.string().max(2000).optional() },
+      inputSchema: { ...both, proposalId: z.guid(), state: z.enum(['running', 'done', 'failed']), result: z.record(z.string(), z.unknown()).optional(), error: z.string().max(2000).optional() },
       annotations: WRITE,
     },
     (a: Args) => run(() => api.proposalResult(a.tenantId, a.incidentId, a.proposalId, { state: a.state, result: a.result, error: a.error })),
@@ -247,7 +247,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
       inputSchema: {
         ...both,
         to: z.enum(['human', 'queue']).default('queue'),
-        toUserId: z.string().uuid().optional(),
+        toUserId: z.guid().optional(),
         summary: z.object({
           tried: z.array(z.string().max(500)).max(20).default([]),
           found: z.array(z.string().max(500)).max(20).default([]),
@@ -270,7 +270,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
 
   /* ------------------------------ service requests ------------------------------ */
 
-  const requestId = z.string().uuid().describe('The service request id.');
+  const requestId = z.guid().describe('The service request id.');
   const reqBoth = { tenantId, requestId };
 
   reqTool(
@@ -325,7 +325,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     {
       title: 'Apply the request to the design',
       description: 'Maps what the customer asked for onto the Design & Build rows linked to the request (the same as an engineer\'s "Apply the request"). Reversible and not live. The request must be Planned and held by you. At "act alone" it runs directly; at "act with approval" it must be an approved propose_request_action of kind "external" (actionClass "change_design"), named in proposalId.',
-      inputSchema: { ...reqBoth, proposalId: z.string().uuid().optional(), idempotencyKey },
+      inputSchema: { ...reqBoth, proposalId: z.guid().optional(), idempotencyKey },
       annotations: WRITE,
     },
     (a: Args) => run(() => api.applyRequest(a.tenantId, a.requestId, { proposalId: a.proposalId }, a.idempotencyKey)),
@@ -336,7 +336,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     {
       title: 'Run a What-If on a request',
       description: 'The exact commands a deployment of this request would run, whether that is clean (something to do, zero warnings), and a fingerprint of the commands. Recorded on the request. Nothing touches the tenant. Same permission shape as apply_request (actionClass "change_whatif").',
-      inputSchema: { ...reqBoth, proposalId: z.string().uuid().optional(), idempotencyKey },
+      inputSchema: { ...reqBoth, proposalId: z.guid().optional(), idempotencyKey },
       annotations: WRITE,
     },
     (a: Args) => run(() => api.requestWhatIf(a.tenantId, a.requestId, { proposalId: a.proposalId }, a.idempotencyKey)),
@@ -347,7 +347,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     {
       title: 'Deploy an approved change',
       description: 'Deploys a change to the customer\'s live Teams tenant, ONLY as a person approved it: propose it first (propose_request_action kind "external", actionClass "change_deploy"; the server records the exact commands), a person approves it onto their own tenant session, then call this with proposalId. The platform re-checks the approval, that the plan is unchanged, a clean What-If, the change window and the approval of the customer, and refuses otherwise. Afterwards the live tenant is re-read and must match the design before the request is marked Deployed: read the request to see how it went. Needs "act with approval" or better for change_deploy.',
-      inputSchema: { ...reqBoth, proposalId: z.string().uuid(), idempotencyKey },
+      inputSchema: { ...reqBoth, proposalId: z.guid(), idempotencyKey },
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     },
     (a: Args) => run(() => api.deployRequest(a.tenantId, a.requestId, { proposalId: a.proposalId }, a.idempotencyKey)),
@@ -358,7 +358,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     {
       title: 'Propose a next step on a request',
       description: 'Put a step in front of a person. kind "comment" {body} replies to the customer (a person always approves it); "status" {to: planned|built}; "external" {actionClass: change_design|change_whatif|change_deploy, title, detail?} is a step you carry out after approval (apply_request, what_if_request, deploy_request). For a deploy the server fills in the plan from the live What-If and ignores anything you put in args. At most 5 open proposals per request.',
-      inputSchema: { ...reqBoth, kind: z.enum(['comment', 'status', 'external']), params: z.record(z.unknown()).default({}), rationale: z.string().min(3).max(4000), risk: z.enum(['low', 'medium', 'high']).default('low'), expiresInMinutes: z.number().int().min(5).optional(), idempotencyKey },
+      inputSchema: { ...reqBoth, kind: z.enum(['comment', 'status', 'external']), params: z.record(z.string(), z.unknown()).default({}), rationale: z.string().min(3).max(4000), risk: z.enum(['low', 'medium', 'high']).default('low'), expiresInMinutes: z.number().int().min(5).optional(), idempotencyKey },
       annotations: WRITE,
     },
     (a: Args) => run(() => api.proposeOnRequest(a.tenantId, a.requestId, { kind: a.kind, params: a.params, rationale: a.rationale, risk: a.risk, expiresInMinutes: a.expiresInMinutes }, a.idempotencyKey)),
@@ -366,7 +366,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
   reqTool('list_request_proposals', { title: 'My proposals on a request', description: 'Your proposals on this request and what became of them.', inputSchema: reqBoth, annotations: READ }, (a: Args) => run(() => api.requestProposals(a.tenantId, a.requestId)));
   reqTool(
     'report_request_proposal_result',
-    { title: 'Report on an approved step', description: 'After carrying out an approved design or What-If step yourself: running, done or failed. (A deployment reports its own outcome.)', inputSchema: { ...reqBoth, proposalId: z.string().uuid(), state: z.enum(['running', 'done', 'failed']), result: z.record(z.unknown()).optional(), error: z.string().max(2000).optional() }, annotations: WRITE },
+    { title: 'Report on an approved step', description: 'After carrying out an approved design or What-If step yourself: running, done or failed. (A deployment reports its own outcome.)', inputSchema: { ...reqBoth, proposalId: z.guid(), state: z.enum(['running', 'done', 'failed']), result: z.record(z.string(), z.unknown()).optional(), error: z.string().max(2000).optional() }, annotations: WRITE },
     (a: Args) => run(() => api.requestProposalResult(a.tenantId, a.requestId, a.proposalId, { state: a.state, result: a.result, error: a.error })),
   );
   reqTool(
@@ -377,7 +377,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
       inputSchema: {
         ...reqBoth,
         to: z.enum(['human', 'queue']).default('queue'),
-        toUserId: z.string().uuid().optional(),
+        toUserId: z.guid().optional(),
         summary: z.object({ tried: z.array(z.string().max(500)).max(20).default([]), found: z.array(z.string().max(500)).max(20).default([]), recommendation: z.string().min(3).max(2000), confidence: z.enum(AGENT_CONFIDENCE), evidence: z.array(z.object({ label: z.string().max(200), url: z.string().max(500).optional() })).max(20).default([]) }),
         idempotencyKey,
       },
@@ -391,7 +391,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     {
       title: 'Work an incident',
       description: 'A safe way to triage and diagnose one incident as an assistant.',
-      argsSchema: { tenantId: z.string().uuid(), incidentId: z.string().uuid() },
+      argsSchema: { tenantId: z.guid(), incidentId: z.guid() },
     },
     (a: Args) => ({
       messages: [
@@ -420,7 +420,7 @@ export function createMcpServer(api: AgentApiClient, info: { name?: string; vers
     {
       title: 'Carry a change request through',
       description: 'A safe order of work for one change or removal request: prepare it, and propose the deployment for one person to approve.',
-      argsSchema: { tenantId: z.string().uuid(), requestId: z.string().uuid() },
+      argsSchema: { tenantId: z.guid(), requestId: z.guid() },
     },
     (a: Args) => ({
       messages: [

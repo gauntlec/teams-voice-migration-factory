@@ -171,7 +171,7 @@ export const serviceRequestSettingsSchema = z
     approval: z
       .object({
         types: z.array(z.enum(SR_TYPES)).max(SR_TYPES.length),
-        approverIds: z.array(z.string().uuid()).max(20),
+        approverIds: z.array(z.guid()).max(20),
       })
       .strict()
       .refine((a) => a.types.length === 0 || a.approverIds.length > 0, 'Choose at least one approver')

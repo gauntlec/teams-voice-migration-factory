@@ -128,7 +128,7 @@ export const SR_PROPOSAL_KINDS = {
         title: z.string().trim().min(3).max(200),
         detail: z.string().trim().max(4000).optional(),
         /** The plan the proposal is about, filled in by the API for a deploy: `{ fingerprint, commands }`. Not taken from the assistant. */
-        args: z.record(z.unknown()).optional(),
+        args: z.record(z.string(), z.unknown()).optional(),
       })
       .strict(),
   },
@@ -139,7 +139,7 @@ export const SR_PROPOSAL_KIND_KEYS = Object.keys(SR_PROPOSAL_KINDS) as [SrPropos
 export const srProposalSchema = z
   .object({
     kind: z.enum(SR_PROPOSAL_KIND_KEYS),
-    params: z.record(z.unknown()).default({}),
+    params: z.record(z.string(), z.unknown()).default({}),
     rationale: z.string().trim().min(3, 'Say why').max(4000),
     risk: z.enum(['low', 'medium', 'high']).default('low'),
     expiresInMinutes: z.number().int().min(5).max(7 * 24 * 60).default(24 * 60),
@@ -170,7 +170,7 @@ export function srProposalSummary(kind: SrProposalKind, p: Record<string, unknow
 }
 
 /** The request body for the agent endpoints that take a step. */
-export const srAgentStepSchema = z.object({ proposalId: z.string().uuid().optional() }).strict();
+export const srAgentStepSchema = z.object({ proposalId: z.guid().optional() }).strict();
 export type SrAgentStepInput = z.infer<typeof srAgentStepSchema>;
 
 export const srAgentStatusSchema = z.object({ to: z.enum(['planned', 'built']), note: z.string().trim().max(2000).optional() }).strict();
@@ -181,7 +181,7 @@ export type SrAgentNoteInput = z.infer<typeof srAgentNoteSchema>;
 
 export const srAgentListSchema = z
   .object({
-    tenantId: z.string().uuid().optional(),
+    tenantId: z.guid().optional(),
     status: z.enum(['open', 'all', 'new', 'planned', 'built', 'deployed', 'cancelled', 'declined']).default('open'),
     type: z.string().max(40).optional(),
     assigned: z.enum(['me', 'unassigned']).optional(),
@@ -194,7 +194,7 @@ export type SrAgentListInput = z.infer<typeof srAgentListSchema>;
 
 /** A person approves or rejects an assistant's proposal on a request. A deploy needs the session it will run on. */
 export const srProposalDecisionSchema = z
-  .object({ decision: z.enum(['approve', 'reject']), note: z.string().trim().max(1000).optional(), connectionId: z.string().uuid().optional() })
+  .object({ decision: z.enum(['approve', 'reject']), note: z.string().trim().max(1000).optional(), connectionId: z.guid().optional() })
   .strict();
 export type SrProposalDecisionInput = z.infer<typeof srProposalDecisionSchema>;
 

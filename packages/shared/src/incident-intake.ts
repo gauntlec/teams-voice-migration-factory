@@ -53,8 +53,9 @@ export const intakeConfigSchema = z
   .object({
     category: z.enum(INC_CATEGORY_KEYS).optional(),
     siteCode: z.string().trim().max(60).optional(),
+    // partial: a customer maps only the severities it wants to change (zod 4's record over an enum would require all four)
     severityMap: z
-      .record(z.enum(INTAKE_SEVERITIES), z.object({ impact: z.enum(INC_IMPACTS), urgency: z.enum(INC_URGENCIES) }).strict())
+      .partialRecord(z.enum(INTAKE_SEVERITIES), z.object({ impact: z.enum(INC_IMPACTS), urgency: z.enum(INC_URGENCIES) }).strict())
       .optional(),
     autoRestore: z.boolean().optional(),
     minSeverity: z.enum(INTAKE_SEVERITIES).optional(),
@@ -76,7 +77,7 @@ export const intakeAlertSchema = z
     category: z.enum(INC_CATEGORY_KEYS).optional(),
     /** Where to look: a dashboard or the alert in the monitoring tool. */
     link: z.string().trim().max(500).optional(),
-    details: z.record(z.union([z.string().max(500), z.number(), z.boolean()])).optional(),
+    details: z.record(z.string(), z.union([z.string().max(500), z.number(), z.boolean()])).optional(),
   })
   .strict();
 export type IntakeAlert = z.infer<typeof intakeAlertSchema>;

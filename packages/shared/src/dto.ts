@@ -97,7 +97,7 @@ export const handoverGenerateSchema = z.preprocess(
   (v) => v ?? {},
   z.object({
     notes: z.string().trim().max(2000).optional(),
-    siteIds: z.array(z.string().uuid()).max(200).optional(),
+    siteIds: z.array(z.guid()).max(200).optional(),
     sectionKeys: z.array(z.string().refine(isHandoverSectionKey, 'Unknown handover section')).max(20).optional(),
   }),
 );
@@ -105,7 +105,7 @@ export const handoverGenerateSchema = z.preprocess(
 /** Writes (or, with an empty body, clears) the note for one section - for one site, or for every site (siteId null). */
 export const handoverNoteSchema = z.object({
   sectionKey: z.enum(HANDOVER_NOTE_SECTIONS),
-  siteId: z.string().uuid().nullable().optional(),
+  siteId: z.guid().nullable().optional(),
   body: z.string().max(20000),
 });
 
@@ -126,30 +126,30 @@ export const createUserSchema = z.object({
   role: z.enum(ROLES),
   // No password: the system generates a temporary one, emails it, and forces a
   // reset on first sign-in.
-  tenantIds: z.array(z.string().uuid()).optional(),
+  tenantIds: z.array(z.guid()).optional(),
   /**
    * For a CUSTOMER user with exactly one tenant: limit them to these sites
    * (a "site contact"). Omit / empty = access to the whole customer.
    */
-  siteIds: z.array(z.string().uuid()).max(500).optional(),
+  siteIds: z.array(z.guid()).max(500).optional(),
   /**
    * ENGINEER/PROJECT_MANAGER only - explicit MSP-branding override, used
    * only as a fallback when the user's own email domain doesn't match any
    * MSP's domain list. See Me.mspBranding / auth.service.ts's resolveMspBranding.
    */
-  mspId: z.string().uuid().nullable().optional(),
+  mspId: z.guid().nullable().optional(),
 });
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 
 /** The only field an existing user's MSP override can be changed through - see PATCH /users/:id/msp. */
-export const updateUserMspSchema = z.object({ mspId: z.string().uuid().nullable() }).strict();
+export const updateUserMspSchema = z.object({ mspId: z.guid().nullable() }).strict();
 export type UpdateUserMspInput = z.infer<typeof updateUserMspSchema>;
 
 export const inviteUserSchema = z.object({
   email: emailSchema,
   displayName: z.string().min(1).max(120),
   role: z.enum(ROLES),
-  tenantId: z.string().uuid().optional(),
+  tenantId: z.guid().optional(),
 });
 
 export const createTenantSchema = z.object({
@@ -207,14 +207,14 @@ export const updateMspBrandingSchema = z
 export type UpdateMspBrandingInput = z.infer<typeof updateMspBrandingSchema>;
 
 export const addMembershipSchema = z.object({
-  userId: z.string().uuid(),
+  userId: z.guid(),
   /** Limit a CUSTOMER member to these site ids; omit / empty = whole customer. */
-  siteIds: z.array(z.string().uuid()).max(500).optional(),
+  siteIds: z.array(z.guid()).max(500).optional(),
 });
 
 /** Change an existing member's site scope. Empty array = whole customer. */
 export const updateMembershipSchema = z.object({
-  siteIds: z.array(z.string().uuid()).max(500),
+  siteIds: z.array(z.guid()).max(500),
 });
 
 export const startConnectionSchema = z.object({
@@ -226,12 +226,12 @@ export const startConnectionSchema = z.object({
 });
 
 export const createDeploymentSchema = z.object({
-  connectionId: z.string().uuid(),
+  connectionId: z.guid(),
   mode: z.enum(['dry_run', 'execute']),
   scope: z
     .object({
       /** Every deployment run acts on one site's Build rows at a time. */
-      siteId: z.string().uuid(),
+      siteId: z.guid(),
       // 'm365_groups' deliberately excluded - apps/worker/src/main.ts's
       // handleDeploymentRun has no `scope.sheets.includes('m365_groups')`
       // branch at all (build_m365_groups has no worker wiring yet), so a
@@ -240,7 +240,7 @@ export const createDeploymentSchema = z.object({
       // deploymentPreviewQuerySchema's own already-correct exclusion below.
       sheets: z.array(z.enum(DEPLOYMENT_SHEETS)).min(1),
       waves: z.array(z.string()).optional(),
-      rowIds: z.array(z.string().uuid()).optional(),
+      rowIds: z.array(z.guid()).optional(),
     })
     .strict(),
 });
@@ -264,13 +264,13 @@ const queryArray = <T extends z.ZodTypeAny>(arraySchema: T) =>
  * list, matching resource_accounts' own opt-in-by-caller shape.
  */
 export const deploymentPreviewQuerySchema = z.object({
-  siteId: z.string().uuid(),
+  siteId: z.guid(),
   sheets: queryArray(z.array(z.enum(DEPLOYMENT_SHEETS)).min(1)).default([
     'users',
     'caps',
     'resource_accounts',
   ]),
-  rowIds: queryArray(z.array(z.string().uuid())).optional(),
+  rowIds: queryArray(z.array(z.guid())).optional(),
 });
 export type DeploymentPreviewQuery = z.infer<typeof deploymentPreviewQuerySchema>;
 
@@ -283,13 +283,13 @@ export type DeploymentPreviewQuery = z.infer<typeof deploymentPreviewQuerySchema
  * entirely - confirmed this session.
  */
 export const listDeploymentsQuerySchema = z.object({
-  siteId: z.string().uuid().optional(),
+  siteId: z.guid().optional(),
 });
 export type ListDeploymentsQuery = z.infer<typeof listDeploymentsQuerySchema>;
 
 /** rowIds omitted = generate for the whole site. */
 export const generateDeploymentDocumentSchema = z.object({
-  rowIds: z.array(z.string().uuid()).optional(),
+  rowIds: z.array(z.guid()).optional(),
 });
 export type GenerateDeploymentDocumentInput = z.infer<typeof generateDeploymentDocumentSchema>;
 
@@ -312,15 +312,15 @@ const optStr = (max = 400) => str(max).optional().or(z.literal(''));
  * again"). Each row is deleted exactly as a single delete would be.
  */
 export const discoveryBulkDeleteSchema = z.union([
-  z.object({ ids: z.array(z.string().uuid()).min(1).max(5000) }).strict(),
-  z.object({ site_id: z.string().uuid(), all: z.literal(true) }).strict(),
+  z.object({ ids: z.array(z.guid()).min(1).max(5000) }).strict(),
+  z.object({ site_id: z.guid(), all: z.literal(true) }).strict(),
 ]);
 export type DiscoveryBulkDeleteInput = z.infer<typeof discoveryBulkDeleteSchema>;
 
 const bulkPatchSchema = <T extends z.ZodRawShape>(fields: T) =>
   z
     .object({
-      ids: z.array(z.string().uuid()).min(1).max(500),
+      ids: z.array(z.guid()).min(1).max(500),
       patch: z.object(fields).strict(),
     })
     .strict();
@@ -332,7 +332,7 @@ const bulkPatchSchema = <T extends z.ZodRawShape>(fields: T) =>
  */
 const siteIdRef = z.preprocess(
   (v) => (v === '' || v == null ? null : v),
-  z.string().uuid().nullable().optional(),
+  z.guid().nullable().optional(),
 );
 
 /** A site's delivery region: AMER, EMEA or APAC ('' clears it). */
@@ -354,7 +354,7 @@ export type DiscoveryGeneralInput = z.infer<typeof discoveryGeneralSchema>;
 /** One person in a role on a site: a picked user, or free text. */
 const siteContactSchema = z
   .object({
-    userId: z.string().uuid().optional(),
+    userId: z.guid().optional(),
     name: z.string().trim().max(160).optional(),
     email: z.string().trim().max(320).email().or(z.literal('')).optional(),
   })
@@ -413,7 +413,7 @@ export const discoverySiteSchema = z
     region: siteRegionSchema.optional(),
     latitude,
     longitude,
-    paging: z.record(z.unknown()).optional(),
+    paging: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
 export type DiscoverySiteInput = z.infer<typeof discoverySiteSchema>;
@@ -442,7 +442,7 @@ export type DiscoveryNumberRangeInput = z.infer<typeof discoveryNumberRangeSchem
 /** Bulk-create number ranges for one site from a spreadsheet (columns DID-START, DID-END). */
 export const numberRangesImportSchema = z
   .object({
-    site_id: z.string().uuid(),
+    site_id: z.guid(),
     kind: z.enum(NUMBER_RANGE_KINDS),
     carrier: optStr(160),
     rows: z
@@ -474,7 +474,7 @@ export type PortDocumentTypeInput = z.infer<typeof portDocumentTypeSchema>;
 /** Toggle one catalog entry on/off for a site. */
 export const sitePortDocumentTypeSchema = z
   .object({
-    document_type_id: z.string().uuid(),
+    document_type_id: z.guid(),
     enabled: z.boolean(),
   })
   .strict();
@@ -490,7 +490,7 @@ export const numberPortRequestItemsSchema = z
     items: z
       .array(
         z.object({
-          document_type_id: z.string().uuid(),
+          document_type_id: z.guid(),
           note: optStr(500),
         }),
       )
@@ -560,9 +560,9 @@ export const discoveryFlowSchema = z
     // built (and so evaluated) earlier, so referencing them here would hit
     // the temporal dead zone at module load.
     /** discovery_voice_apps.id - the voice app this Call flow is the capture of. Made for the flow when it is saved without one. */
-    voice_app_id: z.preprocess((v) => (v === '' ? null : v), z.string().uuid().nullable().optional()),
+    voice_app_id: z.preprocess((v) => (v === '' ? null : v), z.guid().nullable().optional()),
     /** discovery_resource_accounts.id - the resource account that answers this, if already known: it joins the flow's voice app. */
-    resource_account_id: z.preprocess((v) => (v === '' ? null : v), z.string().uuid().nullable().optional()),
+    resource_account_id: z.preprocess((v) => (v === '' ? null : v), z.guid().nullable().optional()),
   })
   .strict();
 export type DiscoveryFlowInput = z.infer<typeof discoveryFlowSchema>;
@@ -589,7 +589,7 @@ const blankToNull = <T extends z.ZodTypeAny>(inner: T) =>
 
 const callerId = blankToNull(z.enum(CALLER_ID_OPTIONS));
 /** '' from a cleared dropdown is treated as null. */
-const refId = blankToNull(z.string().uuid());
+const refId = blankToNull(z.guid());
 /**
  * Voicemail language, stored as the culture code Teams' PromptLanguage wants.
  * Accepts a code in any case or a common English name (see
@@ -600,7 +600,7 @@ const voicemailLanguage = z.preprocess(
   (v) => (v == null || v === '' ? null : (normalizeVoicemailLanguage(v) ?? v)),
   z
     .enum(VOICEMAIL_PROMPT_LANGUAGE_CODES, {
-      errorMap: () => ({ message: 'Voicemail language must be one Teams supports, e.g. en-US or "English (United Kingdom)"' }),
+      error: () => 'Voicemail language must be one Teams supports, e.g. en-US or "English (United Kingdom)"',
     })
     .nullable()
     .optional(),
@@ -670,7 +670,7 @@ export type ImportUserRow = z.infer<typeof importUserRowSchema>;
 
 export const usersImportSchema = z
   .object({
-    site_id: z.string().uuid(),
+    site_id: z.guid(),
     rows: z.array(importUserRowSchema).min(1).max(2000),
   })
   .strict();
@@ -737,7 +737,7 @@ export const discoveryResourceAccountSchema = z
     name: str(160).min(1),
     kind: z.enum(RESOURCE_ACCOUNT_KINDS),
     upn: optStr(320),
-    voice_app_id: z.preprocess((v) => (v === '' ? null : v), z.string().uuid().nullable().optional()),
+    voice_app_id: z.preprocess((v) => (v === '' ? null : v), z.guid().nullable().optional()),
     comments: optStr(2000),
   })
   .strict();
@@ -745,7 +745,7 @@ export type DiscoveryResourceAccountInput = z.infer<typeof discoveryResourceAcco
 
 /** Attach / detach a number from a resource account (which can hold several). */
 export const resourceAccountNumberSchema = z
-  .object({ phone_number_id: z.string().uuid() })
+  .object({ phone_number_id: z.guid() })
   .strict();
 
 /** Manually flip a free number to/from 'reserved' (e.g. held for porting). */
@@ -755,7 +755,7 @@ export const numberReserveSchema = z.object({ reserved: z.boolean() }).strict();
  * Link every not-yet-linked Data Collection user for a site to the tenant user
  * with the same UPN (from the last Discovery run). Idempotent.
  */
-export const relinkUsersSchema = z.object({ site_id: z.string().uuid() }).strict();
+export const relinkUsersSchema = z.object({ site_id: z.guid() }).strict();
 export type RelinkUsersInput = z.infer<typeof relinkUsersSchema>;
 
 /* ------------------- Data Collection list queries ------------------- */
@@ -766,7 +766,7 @@ export type RelinkUsersInput = z.infer<typeof relinkUsersSchema>;
  * default. `siteId` narrows to one site (ignored/clamped for site contacts).
  */
 export const discoveryListQuerySchema = z.object({
-  siteId: z.string().uuid().optional(),
+  siteId: z.guid().optional(),
   q: z.string().trim().max(160).optional(),
   status: z.enum(NUMBER_STATUSES).optional(),
   page: z.coerce.number().int().min(1).max(100000).default(1),
@@ -867,7 +867,7 @@ export type BugReportUpdateInput = z.infer<typeof bugReportUpdateSchema>;
  */
 export const tenantDiscoveryStartSchema = z
   .object({
-    connectionId: z.string().uuid(),
+    connectionId: z.guid(),
     scopeTypes: z.array(z.enum(TENANT_OBJECT_TYPES)).min(1).max(TENANT_OBJECT_TYPES.length).optional(),
     /** also sync AccountEnabled = false accounts (default: skip them) */
     includeDisabled: z.boolean().optional(),
@@ -927,7 +927,7 @@ export const tenantUserLookupSchema = z.object({
 export type TenantUserLookupQuery = z.infer<typeof tenantUserLookupSchema>;
 
 /** One candidate's chosen (or overridden) destination site for an import. */
-const importAssignmentSchema = z.object({ id: z.string().uuid(), siteId: z.string().uuid() }).strict();
+const importAssignmentSchema = z.object({ id: z.guid(), siteId: z.guid() }).strict();
 
 /**
  * Bulk-create Data Collection users from the discovered tenant users that are
@@ -940,10 +940,10 @@ const importAssignmentSchema = z.object({ id: z.string().uuid(), siteId: z.strin
  */
 export const tenantUsersImportSchema = z
   .object({
-    siteId: z.string().uuid().optional(),
+    siteId: z.guid().optional(),
     assignments: z.array(importAssignmentSchema).max(2000).default([]),
     onlyEnterpriseVoice: z.boolean().default(true),
-    calling_policy_id: z.string().uuid().nullable().optional(),
+    calling_policy_id: z.guid().nullable().optional(),
   })
   .strict();
 export type TenantUsersImportInput = z.infer<typeof tenantUsersImportSchema>;
@@ -951,7 +951,7 @@ export type TenantUsersImportInput = z.infer<typeof tenantUsersImportSchema>;
 /** Same shape as `tenantUsersImportSchema`, for discovered resource accounts. */
 export const tenantResourceAccountsImportSchema = z
   .object({
-    siteId: z.string().uuid().optional(),
+    siteId: z.guid().optional(),
     assignments: z.array(importAssignmentSchema).max(2000).default([]),
   })
   .strict();
@@ -967,7 +967,7 @@ export const addFromDiscoverySchema = z
   .object({
     kind: z.enum(ADD_FROM_DISCOVERY_KINDS),
     // `as` only applies to an account: routed to Users or Common area phones. Left out, it is detected from the account's licence plan.
-    items: z.array(z.object({ id: z.string().uuid(), siteId: z.string().uuid(), as: z.enum(['user', 'cap']).optional() }).strict()).min(1).max(500),
+    items: z.array(z.object({ id: z.guid(), siteId: z.guid(), as: z.enum(['user', 'cap']).optional() }).strict()).min(1).max(500),
     alsoBuild: z.boolean().default(true),
   })
   .strict();
@@ -978,7 +978,7 @@ export type AddFromDiscoveryInput = z.infer<typeof addFromDiscoverySchema>;
 
 const policyMap = z.record(z.string(), z.string().nullable()).optional();
 /** Picker submits a tenant_policies.id per PolicyKey - see BuildService.resolvePolicyIds. */
-const policyIdMap = z.record(z.string(), z.string().uuid().nullable()).optional();
+const policyIdMap = z.record(z.string(), z.guid().nullable()).optional();
 /** RecordDialog's `type: 'select'` sends '' for an untouched/cleared dropdown - treat as null, not a validation error. */
 const numberType = blankToNull(z.enum(NUMBER_TYPES));
 
@@ -1082,7 +1082,7 @@ const buildIdentityWritable = {
 };
 
 export const buildIdentityCreateSchema = z
-  .object({ site_id: z.string().uuid(), upn: upnSchema, ...buildIdentityWritable })
+  .object({ site_id: z.guid(), upn: upnSchema, ...buildIdentityWritable })
   .strict();
 export type BuildIdentityCreateInput = z.infer<typeof buildIdentityCreateSchema>;
 
@@ -1120,12 +1120,12 @@ export type BuildCapPatchInput = z.infer<typeof buildCapPatchSchema>;
 
 /** Quick add: just the UPNs; each is imported from the discovered tenant data. One per line or separated by commas, up to 200. */
 export const buildQuickAddSchema = z
-  .object({ site_id: z.string().uuid(), upns: z.array(z.string().trim().min(1).max(320)).min(1).max(200) })
+  .object({ site_id: z.guid(), upns: z.array(z.string().trim().min(1).max(320)).min(1).max(200) })
   .strict();
 export type BuildQuickAddInput = z.infer<typeof buildQuickAddSchema>;
 
 /** Bulk-seed build_users/build_caps from that site's discovery_users/discovery_caps. Idempotent. */
-export const buildPopulateSchema = z.object({ site_id: z.string().uuid() }).strict();
+export const buildPopulateSchema = z.object({ site_id: z.guid() }).strict();
 export type BuildPopulateInput = z.infer<typeof buildPopulateSchema>;
 
 /**
@@ -1134,7 +1134,7 @@ export type BuildPopulateInput = z.infer<typeof buildPopulateSchema>;
  * Collection at all) straight into this site, without the engineer having
  * to visit Data Collection first.
  */
-export const buildImportAndLinkResourceAccountSchema = z.object({ site_id: z.string().uuid(), object_id: z.string().uuid() }).strict();
+export const buildImportAndLinkResourceAccountSchema = z.object({ site_id: z.guid(), object_id: z.guid() }).strict();
 export type BuildImportAndLinkResourceAccountInput = z.infer<typeof buildImportAndLinkResourceAccountSchema>;
 
 /**
@@ -1151,7 +1151,7 @@ export type BuildValidateInput = z.infer<typeof buildValidateSchema>;
 
 /** rowIds omitted = every not-yet-created resource account on the site. */
 export const buildResourceAccountRequestSchema = buildPopulateSchema.extend({
-  rowIds: z.array(z.string().uuid()).optional(),
+  rowIds: z.array(z.guid()).optional(),
 }).strict();
 export type BuildResourceAccountRequestInput = z.infer<typeof buildResourceAccountRequestSchema>;
 
@@ -1174,7 +1174,7 @@ const buildResourceAccountWritable = {
 
 export const buildResourceAccountCreateSchema = z
   .object({
-    site_id: z.string().uuid(),
+    site_id: z.guid(),
     display_name: str(160).min(1),
     kind: z.enum(RESOURCE_ACCOUNT_KINDS),
     upn: upnSchema.optional(),
@@ -1202,7 +1202,7 @@ const buildSharedCallingPolicyWritable = {
 
 export const buildSharedCallingPolicyCreateSchema = z
   .object({
-    site_id: z.string().uuid(),
+    site_id: z.guid(),
     name: str(160).min(1),
     ...buildSharedCallingPolicyWritable,
   })
@@ -1254,12 +1254,12 @@ const buildCallQueueWritable = {
   /** Required by Set-CsCallQueue when overflow/timeout/no-agent action is SharedVoicemail - checked in BuildService. */
   language_id: optStr(20),
   /** build_resource_accounts.id array - which RA(s)/phone numbers present this queue. */
-  resource_accounts: z.array(z.string().uuid()).max(10).optional(),
+  resource_accounts: z.array(z.guid()).max(10).optional(),
   notes: optStr(2000),
 };
 
 export const buildCallQueueCreateSchema = z
-  .object({ site_id: z.string().uuid(), name: str(160).min(1), ...buildCallQueueWritable })
+  .object({ site_id: z.guid(), name: str(160).min(1), ...buildCallQueueWritable })
   .strict();
 export type BuildCallQueueCreateInput = z.infer<typeof buildCallQueueCreateSchema>;
 
@@ -1397,7 +1397,7 @@ const autoAttendantHolidayCallFlowSchema = z
 const buildAutoAttendantWritable = {
   ...buildAutoAttendantNarrative,
   /** build_resource_accounts.id array - which RA(s)/phone numbers this AA answers on. Mirrors buildCallQueueWritable's own field - an AA can have several resource accounts, or none yet. */
-  resource_accounts: z.array(z.string().uuid()).max(10).optional(),
+  resource_accounts: z.array(z.guid()).max(10).optional(),
   /** Set-CsAutoAttendant -LanguageId. */
   language_id: optStr(20),
   /** Set-CsAutoAttendant -TimeZoneId. */
@@ -1416,7 +1416,7 @@ const buildAutoAttendantWritable = {
 };
 
 export const buildAutoAttendantCreateSchema = z
-  .object({ site_id: z.string().uuid(), name: str(160).min(1), ...buildAutoAttendantWritable })
+  .object({ site_id: z.guid(), name: str(160).min(1), ...buildAutoAttendantWritable })
   .strict();
 export type BuildAutoAttendantCreateInput = z.infer<typeof buildAutoAttendantCreateSchema>;
 
@@ -1431,9 +1431,9 @@ export type BuildAutoAttendantPatchInput = z.infer<typeof buildAutoAttendantPatc
  */
 export const callingPolicySiteMapSetSchema = z
   .object({
-    site_id: z.string().uuid(),
-    discovery_calling_policy_id: z.string().uuid(),
-    tenant_policy_id: z.string().uuid(),
+    site_id: z.guid(),
+    discovery_calling_policy_id: z.guid(),
+    tenant_policy_id: z.guid(),
   })
   .strict();
 export type CallingPolicySiteMapSetInput = z.infer<typeof callingPolicySiteMapSetSchema>;
@@ -1446,7 +1446,7 @@ export type CallingPolicySiteMapSetInput = z.infer<typeof callingPolicySiteMapSe
  */
 export const buildTemplateCreateSchema = z
   .object({
-    site_id: z.string().uuid(),
+    site_id: z.guid(),
     kind: z.enum(['user', 'cap']),
     name: str(160).min(1),
     policy_ids: policyIdMap,
@@ -1463,24 +1463,24 @@ export type BuildTemplatePatchInput = z.infer<typeof buildTemplatePatchSchema>;
 /** Apply one template's policy_ids/voicemail to a set of already-populated rows. */
 export const buildTemplateApplySchema = z
   .object({
-    ids: z.array(z.string().uuid()).min(1).max(500),
+    ids: z.array(z.guid()).min(1).max(500),
   })
   .strict();
 export type BuildTemplateApplyInput = z.infer<typeof buildTemplateApplySchema>;
 
-export const buildTemplateListQuerySchema = z.object({ siteId: z.string().uuid(), kind: z.enum(['user', 'cap']).optional() }).strict();
+export const buildTemplateListQuerySchema = z.object({ siteId: z.guid(), kind: z.enum(['user', 'cap']).optional() }).strict();
 export type BuildTemplateListQuery = z.infer<typeof buildTemplateListQuerySchema>;
 
-export const callingPolicyMapListQuerySchema = z.object({ siteId: z.string().uuid() }).strict();
+export const callingPolicyMapListQuerySchema = z.object({ siteId: z.guid() }).strict();
 export type CallingPolicyMapListQuery = z.infer<typeof callingPolicyMapListQuerySchema>;
 
 export const buildListQuerySchema = z.object({
-  siteId: z.string().uuid(),
+  siteId: z.guid(),
   q: z.string().trim().max(160).optional(),
   // Not z.coerce.boolean(): that turns the query-string text "false" into true.
   hidden: z.preprocess((v) => (v === 'true' ? true : v === 'false' ? false : v), z.boolean()).optional(),
   /** Only rows designed for this service request (its Design tab). */
-  serviceRequestId: z.string().uuid().optional(),
+  serviceRequestId: z.guid().optional(),
   page: z.coerce.number().int().min(1).max(100000).default(1),
   limit: z.coerce.number().int().min(1).max(500).default(200),
 });
@@ -1489,10 +1489,10 @@ export type BuildListQuery = z.infer<typeof buildListQuerySchema>;
 /* ------------------------------ Files DTOs ------------------------------ */
 
 export const filesQuerySchema = z.object({
-  siteId: z.string().uuid().optional(),
+  siteId: z.guid().optional(),
   category: z.enum(['deployment_change_document', 'number_port_document']).optional(),
   sourceType: z.string().max(60).optional(),
-  sourceId: z.string().uuid().optional(),
+  sourceId: z.guid().optional(),
   q: z.string().trim().max(200).optional(),
 });
 export type FilesQuery = z.infer<typeof filesQuerySchema>;
@@ -1518,7 +1518,7 @@ const srPersonSchema = z.object({
 const srTargetSchema = z
   .object({
     kind: z.enum(SR_TARGET_KINDS),
-    id: z.string().uuid().optional(),
+    id: z.guid().optional(),
     upn: z.string().trim().regex(UPN_RE).max(200).optional(),
     label: z.string().trim().min(1).max(200),
   })
@@ -1535,9 +1535,9 @@ function srFieldSchema(f: SrFieldSpec): z.ZodTypeAny {
     case 'textarea':
       return z.string().trim().max(f.max ?? (f.kind === 'text' ? 200 : 4000));
     case 'number':
-      return z.number({ invalid_type_error: `${f.label} must be a number` }).int().min(f.min ?? 0).max(f.max ?? 100000);
+      return z.number({ error: `${f.label} must be a number` }).int().min(f.min ?? 0).max(f.max ?? 100000);
     case 'select':
-      return z.enum((f.options ?? []) as [string, ...string[]], { errorMap: () => ({ message: `Choose ${f.label.toLowerCase()}` }) });
+      return z.enum((f.options ?? []) as [string, ...string[]], { error: () => `Choose ${f.label.toLowerCase()}` });
     case 'boolean':
       return z.boolean();
     case 'date':
@@ -1556,18 +1556,18 @@ function srFieldSchema(f: SrFieldSpec): z.ZodTypeAny {
         .max(f.max ?? 10)
         .refine((opts) => new Set(opts.map((o) => o.key)).size === opts.length, 'Each key can only be used once');
     case 'number_range':
-      return z.object({ id: z.string().uuid(), label: z.string().trim().min(1).max(200) }).strict();
+      return z.object({ id: z.guid(), label: z.string().trim().min(1).max(200) }).strict();
     case 'device_model':
       return z.string().trim().min(1).max(120);
     case 'country':
-      return z.enum(COUNTRY_CODES, { errorMap: () => ({ message: 'Choose a country' }) });
+      return z.enum(COUNTRY_CODES, { error: () => 'Choose a country' });
     case 'choices':
       return z
         .array(z.enum((f.options ?? []) as [string, ...string[]]))
         .max((f.options ?? []).length)
         .refine((v) => new Set(v).size === v.length, 'Tick each option once');
     case 'site_object':
-      return z.object({ id: z.string().uuid(), label: z.string().trim().min(1).max(200) }).strict();
+      return z.object({ id: z.guid(), label: z.string().trim().min(1).max(200) }).strict();
   }
 }
 
@@ -1614,13 +1614,13 @@ export const createServiceRequestSchema = z
     type: z.enum(SR_TYPES),
     title: z.string().trim().min(3, 'Give the request a short title').max(160),
     priority: z.enum(SR_PRIORITIES).default('normal'),
-    siteId: z.string().uuid().nullable().optional(),
+    siteId: z.guid().nullable().optional(),
     targetDate: z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/)
       .nullable()
       .optional(),
-    details: z.record(z.unknown()).default({}),
+    details: z.record(z.string(), z.unknown()).default({}),
   })
   .superRefine((v, ctx) => {
     const parsed = srDetailsSchema(v.type).safeParse(v.details);
@@ -1638,8 +1638,8 @@ export type CreateServiceRequestInput = z.infer<typeof createServiceRequestSchem
 export const createServiceRequestCheckSchema = z
   .object({
     type: z.enum(SR_TYPES),
-    siteId: z.string().uuid().nullable().optional(),
-    details: z.record(z.unknown()).default({}),
+    siteId: z.guid().nullable().optional(),
+    details: z.record(z.string(), z.unknown()).default({}),
   })
   .strict();
 export type CreateServiceRequestCheckInput = z.infer<typeof createServiceRequestCheckSchema>;
@@ -1651,12 +1651,12 @@ export const serviceRequestStatusSchema = z.object({
 export type ServiceRequestStatusInput = z.infer<typeof serviceRequestStatusSchema>;
 
 export const serviceRequestAssignSchema = z
-  .object({ userId: z.string().uuid().nullable().optional(), agentId: z.string().uuid().optional() })
+  .object({ userId: z.guid().nullable().optional(), agentId: z.guid().optional() })
   .refine((v) => v.userId !== undefined || !!v.agentId, { message: 'Pick a person, an assistant, or nobody.' });
 export type ServiceRequestAssignInput = z.infer<typeof serviceRequestAssignSchema>;
 
 /** POST /service-requests/:id/incident - link a request to an incident, or remove the link. */
-export const serviceRequestIncidentLinkSchema = z.object({ incidentId: z.string().uuid().nullable() }).strict();
+export const serviceRequestIncidentLinkSchema = z.object({ incidentId: z.guid().nullable() }).strict();
 
 export const serviceRequestCommentSchema = z.object({
   body: z.string().trim().min(1, 'Write a comment').max(4000),
@@ -1678,13 +1678,13 @@ export const setSiteModeSchema = z.object({ mode: z.enum(SITE_MODES) }).strict()
 export type SetSiteModeInput = z.infer<typeof setSiteModeSchema>;
 
 /** Super Admin: which MSP looks after a customer (null = none). */
-export const setTenantMspSchema = z.object({ mspId: z.string().uuid().nullable() }).strict();
+export const setTenantMspSchema = z.object({ mspId: z.guid().nullable() }).strict();
 export type SetTenantMspInput = z.infer<typeof setTenantMspSchema>;
 
 export const mspServiceRequestsQuerySchema = z.object({
   status: z.enum([...SR_STATUSES, 'open', 'all'] as [string, ...string[]]).default('open'),
   /** Super Admins only: limit to one MSP ('none' = customers with no MSP). */
-  mspId: z.union([z.string().uuid(), z.literal('none')]).optional(),
+  mspId: z.union([z.guid(), z.literal('none')]).optional(),
   /** Only requests assigned to me. */
   mine: z.enum(['true', 'false']).optional(),
 });

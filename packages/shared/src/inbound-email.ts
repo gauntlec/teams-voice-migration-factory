@@ -102,7 +102,7 @@ export const inboundEmailSchema = z
     cc: z.array(z.string().trim().min(3).max(400)).max(30).optional(),
     subject: z.string().max(1000).default(''),
     text: z.string().max(60_000).default(''),
-    headers: z.record(z.string().max(1000)).optional(),
+    headers: z.record(z.string(), z.string().max(1000)).optional(),
     /** The forwarder's verdict that the sender is who they say (SPF/DKIM/DMARC passed). Without it, nothing is acted on. */
     authenticated: z.boolean().default(false),
     attachments: z.number().int().min(0).max(100).optional(),

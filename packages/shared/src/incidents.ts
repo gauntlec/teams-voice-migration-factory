@@ -915,11 +915,11 @@ export const createIncidentSchema = z
     title: z.string().trim().min(3, 'Give the incident a short title').max(160),
     category: z.enum(INC_CATEGORY_KEYS),
     subcategory: z.string().trim().max(60).nullable().optional(),
-    siteId: z.string().uuid().nullable().optional(),
+    siteId: z.guid().nullable().optional(),
     impact: z.enum(INC_IMPACTS),
     urgency: z.enum(INC_URGENCIES),
     description: z.string().trim().min(10, 'Describe what is happening').max(8000),
-    answers: z.record(z.unknown()).default({}),
+    answers: z.record(z.string(), z.unknown()).default({}),
     exampleCalls: z.array(exampleCallSchema).max(10).default([]),
     contactPhone: z.string().trim().max(40).optional(),
     items: z.array(itemInputSchema).max(30).default([]),
@@ -949,7 +949,7 @@ export const listIncidentsQuerySchema = z
     status: z.enum([...INC_STATUSES, 'open', 'all'] as [string, ...string[]]).default('open'),
     category: z.enum(INC_CATEGORY_KEYS).optional(),
     priority: priorityEnum.optional(),
-    siteId: z.string().uuid().optional(),
+    siteId: z.guid().optional(),
     /** 'me' = assigned to me; 'none' = unassigned; 'agent' = with an AI assistant. */
     assigned: z.enum(['me', 'none', 'agent']).optional(),
     q: z.string().trim().max(120).optional(),
@@ -962,7 +962,7 @@ export type ListIncidentsQuery = z.infer<typeof listIncidentsQuerySchema>;
 export const similarIncidentsQuerySchema = z
   .object({
     category: z.enum(INC_CATEGORY_KEYS),
-    siteId: z.string().uuid().optional(),
+    siteId: z.guid().optional(),
   })
   .strict();
 export type SimilarIncidentsQuery = z.infer<typeof similarIncidentsQuerySchema>;
@@ -973,7 +973,7 @@ export const incidentStatusSchema = z
     to: z.enum(INC_STATUSES),
     note: z.string().trim().max(4000).optional(),
     holdReason: z.enum(INC_HOLD_REASONS).optional(),
-    duplicateOf: z.string().uuid().optional(),
+    duplicateOf: z.guid().optional(),
     /** Resolving a major incident: resolve its live child incidents too, with the same note. */
     resolveChildren: z.boolean().optional(),
   })
@@ -982,7 +982,7 @@ export type IncidentStatusInput = z.infer<typeof incidentStatusSchema>;
 
 /** POST /incidents/:id/assign - a person (or null to unassign), or an AI assistant. */
 export const incidentAssignSchema = z
-  .object({ userId: z.string().uuid().nullable().optional(), agentId: z.string().uuid().optional() })
+  .object({ userId: z.guid().nullable().optional(), agentId: z.guid().optional() })
   .strict()
   .refine((v) => (v.userId !== undefined) !== (v.agentId !== undefined), 'Choose a person (or nobody), or an assistant');
 export type IncidentAssignInput = z.infer<typeof incidentAssignSchema>;
@@ -1015,7 +1015,7 @@ export const incidentPrioritySchema = z.object({ priority: priorityEnum, reason:
 export type IncidentPriorityInput = z.infer<typeof incidentPrioritySchema>;
 
 /** POST /incidents/:id/watchers - add yourself, or (staff) a customer user. */
-export const incidentWatcherSchema = z.object({ userId: z.string().uuid().optional() }).strict();
+export const incidentWatcherSchema = z.object({ userId: z.guid().optional() }).strict();
 export type IncidentWatcherInput = z.infer<typeof incidentWatcherSchema>;
 
 /** POST /incidents/:id/items - staff only. */
@@ -1055,26 +1055,19 @@ const calendarSchema = z
   .refine((c) => c.start < c.end, 'The working day must end after it starts');
 
 /** PUT /incidents/settings - Super Admins only. */
+/** An object schema with one entry per key, typed by key (Object.fromEntries only gives an index signature). */
+const byKey = <K extends string, V extends z.ZodType>(keys: readonly K[], make: (k: K) => V) => Object.fromEntries(keys.map((k) => [k, make(k)])) as Record<K, V>;
+
 export const incidentSettingsSchema = z
   .object({
-    targets: z
-      .object(Object.fromEntries(INC_PRIORITIES.map((p) => [p, targetSchema.optional()])) as Record<IncPriority, z.ZodOptional<typeof targetSchema>>)
-      .strict()
-      .optional(),
+    targets: z.object(byKey(INC_PRIORITIES, () => targetSchema.optional())).strict().optional(),
     matrix: z
-      .object(
-        Object.fromEntries(
-          INC_IMPACTS.map((i) => [i, z.object(Object.fromEntries(INC_URGENCIES.map((u) => [u, priorityEnum.optional()])) as Record<IncUrgency, z.ZodOptional<typeof priorityEnum>>).strict().optional()]),
-        ) as Record<IncImpact, z.ZodOptional<z.ZodObject<Record<IncUrgency, z.ZodOptional<typeof priorityEnum>>, 'strict'>>>,
-      )
+      .object(byKey(INC_IMPACTS, () => z.object(byKey(INC_URGENCIES, () => priorityEnum.optional())).strict().optional()))
       .strict()
       .optional(),
     calendar: calendarSchema.nullable().optional(),
-    cover: z
-      .object(Object.fromEntries(INC_PRIORITIES.map((p) => [p, z.enum(['24x7', 'business']).optional()])) as Record<IncPriority, z.ZodOptional<z.ZodEnum<['24x7', 'business']>>>)
-      .strict()
-      .optional(),
-    stakeholders: z.array(z.string().uuid()).max(30).optional(),
+    cover: z.object(byKey(INC_PRIORITIES, () => z.enum(['24x7', 'business']).optional())).strict().optional(),
+    stakeholders: z.array(z.guid()).max(30).optional(),
     emailIntake: z.boolean().optional(),
   })
   .strict();

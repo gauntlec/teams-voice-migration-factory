@@ -28,7 +28,7 @@ export const knowledgeCreateSchema = z
     fix: z.string().trim().min(3, 'Say what fixed it').max(6000),
     /** A tip a customer can try. Written for them: no internal names, nothing about causes inside the platform. */
     customerText: z.string().trim().max(1500).default(''),
-    sourceIncidentId: z.string().uuid().nullable().optional(),
+    sourceIncidentId: z.guid().nullable().optional(),
   })
   .strict();
 export type KnowledgeCreateInput = z.infer<typeof knowledgeCreateSchema>;

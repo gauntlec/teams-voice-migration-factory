@@ -374,8 +374,8 @@ export type SsoGeneralSettingsInput = z.infer<typeof ssoGeneralSettingsSchema>;
 
 /** Link a local user to a person at a provider: pick a waiting sign-in, or give the provider's subject id. */
 export const linkIdentitySchema = z.union([
-  z.object({ requestId: z.string().uuid() }).strict(),
-  z.object({ providerId: z.string().uuid(), subject: z.string().trim().min(1).max(300) }).strict(),
+  z.object({ requestId: z.guid() }).strict(),
+  z.object({ providerId: z.guid(), subject: z.string().trim().min(1).max(300) }).strict(),
 ]);
 export type LinkIdentityInput = z.infer<typeof linkIdentitySchema>;
 
