@@ -557,3 +557,4 @@ export * from './drift';
 export * from './voice-compare';
 export * from './licence-report';
 export * from './number-cooloff';
+export * from './opening-hours';

@@ -33,3 +33,21 @@ describe('srChangePlan', () => {
     expect(srChangePlan('new_user', {}).ok).toBe(false);
   });
 });
+
+describe('opening hours on an auto attendant change', () => {
+  const aa = { auto_attendant: { id, label: 'Main' }, changes: ['Opening hours'] };
+  it('applies readable hours, and the Changes assistant can carry it (a check is only a follow-up)', async () => {
+    const r = srChangePlan('change_auto_attendant', { ...aa, business_hours: 'Mon-Fri 8:30-17:30, closed weekends' });
+    expect(r.ok && r.plan.apply.businessHours?.monday).toEqual([{ start: '08:30', end: '17:30' }]);
+    expect(r.ok && r.plan.apply.businessHours?.saturday).toEqual([]);
+    const { srAutomation } = await import('./service-request-agents');
+    expect(srAutomation('change_auto_attendant', { ...aa, business_hours: 'Mon-Fri 8:30-17:30, closed weekends' }, 'planned')).toMatchObject({ eligible: true });
+  });
+  it('leaves wording it cannot read for a person', async () => {
+    const r = srChangePlan('change_auto_attendant', { ...aa, business_hours: 'as usual but shut early on Fridays' });
+    expect(r.ok && r.plan.apply.businessHours).toBeUndefined();
+    expect(r.ok && r.plan.todo[0]).toMatch(/^Change the opening hours to: as usual/);
+    const { srAutomation } = await import('./service-request-agents');
+    expect(srAutomation('change_auto_attendant', { ...aa, business_hours: 'as usual but shut early on Fridays' }, 'planned').eligible).toBe(false);
+  });
+});

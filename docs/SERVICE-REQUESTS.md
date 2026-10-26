@@ -150,9 +150,17 @@ and applies what maps cleanly through the normal update path:
 | Change a user | new number (if still free), voicemail on/off | forwarding, calling permissions, "something else" |
 | Remove a user / common area phone | Revoke Enterprise Voice (deploys `Remove-CsPhoneNumberAssignment -RemoveAll`) | clearing the number afterwards if it's to be reused |
 | Change a call queue | agents added / removed, routing method | timeout / overflow |
-| Change an auto attendant | new greeting, a holiday closure (play the message, then end the call) | opening hours, menu |
+| Change an auto attendant | new greeting, a holiday closure (play the message, then end the call), opening hours when the wording can be read (below) | opening hours that cannot be read, or an auto attendant with no out-of-hours call flow; menu |
 
 The to-do list is shown on the Design tab and recorded on the timeline.
+
+**Opening hours** are read from the customer's own wording by `parseOpeningHours` (`packages/shared/src/opening-hours.ts`,
+unit-tested): days ("Mon-Fri", "Monday to Friday", "weekdays", "weekends", "daily", lists such as "Mon, Wed & Fri"), times
+("8:30-17:30", "9am - 5.30pm", "9-5" = 09:00-17:00, several per day) and "closed". Days not mentioned are closed. Anything it
+cannot read for certain (other words, a day given twice, overlapping or backwards times) leaves it as a to-do. A readable change
+sets the auto attendant's business hours (`schedule`, weekly, `complement: true` so the out-of-hours flow plays outside them) and
+adds a follow-up "Check the new opening hours: …", which does not stop the Changes assistant carrying the request through. An
+auto attendant with no out-of-hours call flow yet keeps its hours and gets a to-do instead.
 
 ### Several new users
 

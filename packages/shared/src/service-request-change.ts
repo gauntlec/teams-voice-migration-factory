@@ -18,6 +18,7 @@
  * Pure: the API looks up rows and numbers, then applies `apply` through the
  * normal Design & Build update path.
  */
+import { describeWeeklyHours, parseOpeningHours, type WeeklyHours } from './opening-hours';
 import { CALL_QUEUE_ROUTING_METHODS } from './domain';
 import { normalizeFixedRange, type AutoAttendantHolidayCallFlow } from './deployment';
 import { SR_ROUTING_TO_BUILD } from './service-request-build';
@@ -46,6 +47,8 @@ export interface SrChangePlan {
     routing?: (typeof CALL_QUEUE_ROUTING_METHODS)[number];
     greeting?: string;
     holiday?: AutoAttendantHolidayCallFlow;
+    /** New business hours, read from the request's wording (opening-hours.ts); unreadable wording stays a to-do. */
+    businessHours?: WeeklyHours;
   };
   /** For the engineer to finish by hand on the Design tab. */
   todo: string[];
@@ -153,7 +156,13 @@ export function srChangePlan(type: SrType, details: Record<string, unknown>): { 
           plan.todo.push('Add the holiday closure by hand - the dates could not be read.');
         }
       }
-      if (ticked(details, 'Opening hours')) plan.todo.push(`Change the opening hours to: ${str(details.business_hours)} (Configure… on the auto attendant).`);
+      if (ticked(details, 'Opening hours')) {
+        const hours = parseOpeningHours(str(details.business_hours));
+        if (hours) {
+          plan.apply.businessHours = hours;
+          plan.todo.push(`Check the new opening hours: ${describeWeeklyHours(hours)} (read from "${str(details.business_hours)}").`);
+        } else plan.todo.push(`Change the opening hours to: ${str(details.business_hours)} (Configure… on the auto attendant).`);
+      }
       if (ticked(details, 'Menu options')) {
         const menu = Array.isArray(details.menu) ? (details.menu as SrMenuOption[]).map((o) => `${o.key}: ${o.target.label}`).join('; ') : '';
         plan.todo.push(`Change the menu${menu ? ` to: ${menu}` : ''} (Configure… on the auto attendant).`);

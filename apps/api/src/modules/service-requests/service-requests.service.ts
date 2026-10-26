@@ -1896,7 +1896,7 @@ export class ServiceRequestsService {
       }
       if (Object.keys(patch).length) await this.build.updateCallQueue(t, user, rowId, valid(buildCallQueuePatchSchema, patch));
     } else {
-      const aa = await s.selectFrom('build_auto_attendants').select(['default_call_flow', 'holiday_call_flows']).where('id', '=', rowId).executeTakeFirstOrThrow();
+      const aa = await s.selectFrom('build_auto_attendants').select(['default_call_flow', 'holiday_call_flows', 'after_hours_call_flow']).where('id', '=', rowId).executeTakeFirstOrThrow();
       const patch: Record<string, unknown> = {};
       if (a.greeting) {
         const flow = (aa.default_call_flow as AutoAttendantCallFlow | null) ?? { greetings: [], menu: { options: [] } };
@@ -1907,6 +1907,13 @@ export class ServiceRequestsService {
         const holidays = ((aa.holiday_call_flows as AutoAttendantHolidayCallFlow[] | null) ?? []).filter((h) => h.name !== a.holiday!.name);
         patch.holiday_call_flows = [...holidays, a.holiday];
         applied.push(`holiday "${a.holiday.name}"`);
+      }
+      if (a.businessHours) {
+        // Hours only mean something with an out-of-hours call flow to switch to; without one, a person sets that up first.
+        if (aa.after_hours_call_flow) {
+          patch.schedule = { type: 'weekly', weekly: { ...a.businessHours, complement: true } };
+          applied.push('opening hours');
+        } else plan.todo.push('This auto attendant has no out-of-hours call flow yet: set what callers hear when closed, then the opening hours (Configure… on the auto attendant).');
       }
       if (Object.keys(patch).length) await this.build.updateAutoAttendant(t, user, rowId, valid(buildAutoAttendantPatchSchema, patch));
     }

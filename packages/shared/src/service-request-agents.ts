@@ -7,6 +7,7 @@
  * the exact commands a person approved are the commands that run. This file is the pure part: which requests qualify,
  * what an assistant may propose, and the What-If rules. The API enforces them (`sr-agent-api.service.ts`).
  */
+import { describeWeeklyHours } from './opening-hours';
 import { z } from 'zod';
 import type { DeploymentPreviewRow } from './index';
 import { srChangePlan, type SrChangePlan } from './service-request-change';
@@ -25,7 +26,7 @@ export const SR_AUTOMATION_TYPES: readonly SrType[] = ['change_user', 'change_ca
  * To-do lines `srChangePlan` leaves for an engineer that are only follow-ups AFTER the change, not decisions before
  * it. Any other line means a person has something to decide, so the request is not automatable.
  */
-const FOLLOW_UPS: readonly RegExp[] = [/^Once it is deployed, clear the phone number/, /^Keep the number on the row for now/, /^Check the holiday closure/];
+const FOLLOW_UPS: readonly RegExp[] = [/^Once it is deployed, clear the phone number/, /^Keep the number on the row for now/, /^Check the holiday closure/, /^Check the new opening hours/];
 
 /** True for a to-do line that is only a follow-up after the change, not a decision before it. */
 export const srIsFollowUp = (line: string) => FOLLOW_UPS.some((re) => re.test(line));
@@ -52,6 +53,7 @@ function appliesText(a: SrChangePlan): string[] {
   if (x.routing) out.push(`set the routing to ${x.routing}`);
   if (x.greeting) out.push('change the greeting');
   if (x.holiday) out.push(`add the holiday closure "${x.holiday.name}"`);
+  if (x.businessHours) out.push(`set the opening hours to ${describeWeeklyHours(x.businessHours)}`);
   return out;
 }
 
