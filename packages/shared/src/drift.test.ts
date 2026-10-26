@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyDrift, identityDriftNotAccepted } from './drift';
+import { classifyDrift, driftEvidence, identityDriftNotAccepted } from './drift';
 
 const deployed = '2026-10-20T10:00:00Z';
 const base = {
@@ -43,5 +43,13 @@ describe('identityDriftNotAccepted', () => {
       identityDriftNotAccepted(['Set-CsUserCallingSettings', 'Set-CsPhoneNumberAssignment', 'Grant-CsOnlineVoiceRoutingPolicy', 'Set-CsPhoneNumberAssignment']),
     ).toEqual(['Set-CsPhoneNumberAssignment', 'Grant-CsOnlineVoiceRoutingPolicy']);
     expect(identityDriftNotAccepted(['Set-CsOnlineVoicemailUserSettings', 'New-CsUserCallingDelegate'])).toEqual([]);
+  });
+});
+
+describe('driftEvidence', () => {
+  it('drops voicemail and calling-settings commands while Discovery has not read those settings', () => {
+    const cmds = ['Set-CsOnlineVoicemailUserSettings', 'Set-CsUserCallingSettings', 'Grant-CsOnlineVoiceRoutingPolicy'];
+    expect(driftEvidence(cmds, { voicemail: false, callingSettings: false })).toEqual(['Grant-CsOnlineVoiceRoutingPolicy']);
+    expect(driftEvidence(cmds, { voicemail: true, callingSettings: true })).toEqual(cmds);
   });
 });

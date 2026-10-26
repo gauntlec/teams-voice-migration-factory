@@ -53,6 +53,19 @@ export interface SiteDriftSummary {
   rows: DriftRow[];
 }
 
+/**
+ * The commands that show a real difference from live. A user's voicemail and calling-settings commands are planned whenever
+ * Discovery has not read those settings yet (the planner cannot tell, so it always re-sends them) - no evidence that anyone
+ * changed anything in Teams, so they do not count towards drift.
+ */
+export function driftEvidence(cmdlets: string[], known: { voicemail: boolean; callingSettings: boolean }): string[] {
+  return [...new Set(cmdlets)].filter((c) => {
+    if (c === 'Set-CsOnlineVoicemailUserSettings') return known.voicemail;
+    if (c === 'Set-CsUserCallingSettings' || c === 'New-CsUserCallingDelegate') return known.callingSettings;
+    return true;
+  });
+}
+
 /** What "Accept into design" can take from live for each kind of row; the rest is put back, or edited in Design & Build. */
 export const DRIFT_ACCEPTABLE: Record<DriftRow['objectType'], boolean> = {
   user: true,

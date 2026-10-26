@@ -234,6 +234,9 @@ unit-tested); data: `packages/db/src/drift.ts`.
   sync finished after it. Deployed but not synced since = `awaiting_sync`. Edited since = a pending design change, not drift.
   Never deployed = a design, not drift (a row imported from Discovery and changed in Teams before it was ever deployed is not
   reported).
+- A user's or common area phone's voicemail and calling-settings commands are planned whenever Discovery has not read those
+  settings yet (`voicemail_enabled` / `calling_settings` null), so they are not evidence of drift (`driftEvidence`); only
+  commands for settings Discovery has read count. `DriftRow.cmdlets` lists the evidence.
 - **When it is worked out:** after every completed Discovery sync, for every site with a live run (the worker,
   `discovery/run.ts`), saved in `deployment_drift`; after every live deployment run for its site; and when the Drift tab opens
   (`GET /t/:id/deployments/drift?siteId=`). The Deployment sites list shows the saved count.

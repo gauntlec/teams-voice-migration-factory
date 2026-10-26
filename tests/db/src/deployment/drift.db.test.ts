@@ -104,6 +104,14 @@ describe('drift', () => {
     expect((await computeSiteDrift(c.s, siteId)).drifted).toBe(1);
   });
 
+  it('is not drift when the only command is voicemail Discovery has not read yet', async () => {
+    await c.s.updateTable('tenant_users').set({ voicemail_enabled: null } as never).where('upn', '=', UPN).execute();
+    const d = await computeSiteDrift(c.s, siteId);
+    expect(d.rows).toEqual([]);
+    await c.s.updateTable('tenant_users').set({ voicemail_enabled: false } as never).where('upn', '=', UPN).execute();
+    expect((await computeSiteDrift(c.s, siteId)).drifted).toBe(1);
+  });
+
   it('Accept into design takes the live voicemail setting, and the row no longer drifts', async () => {
     const res = await build.acceptDrift(c.t, { id: engineer.id, email: engineer.email, role: 'ENGINEER' } as never, { object_type: 'user', row_id: rowId });
     expect(res.remaining).toEqual([]);

@@ -2,12 +2,13 @@ import { sql } from 'kysely';
 import {
   DEPLOYMENT_SHEETS,
   classifyDrift,
+  driftEvidence,
   type DeploymentPreviewRow,
   type DriftRow,
   type RowDeploymentHistory,
   type SiteDriftSummary,
 } from '@tvmf/shared';
-import type { Scoped } from './live-state';
+import { resolveLiveIdentityState, type Scoped } from './live-state';
 import { previewSiteChanges } from './preview';
 
 /*
@@ -66,10 +67,24 @@ export async function lastCompletedSyncAt(s: Scoped): Promise<string | null> {
   return r?.at ? iso(r.at) : null;
 }
 
-/** Marks each preview row that drifted (`drift` set), in place. */
-export async function annotateDrift(s: Scoped, rows: DeploymentPreviewRow[]): Promise<void> {
-  const planned = rows.filter((r) => r.calls.length > 0);
-  if (planned.length === 0) return;
+/**
+ * Marks each preview row that drifted (`drift` set), in place, and returns the commands that show it per drifted row. A user's or
+ * common area phone's commands planned only because Discovery has not read that setting yet are left out (driftEvidence).
+ */
+export async function annotateDrift(s: Scoped, rows: DeploymentPreviewRow[]): Promise<Map<string, string[]>> {
+  const evidence = new Map<string, string[]>();
+  const identity = rows.filter((r) => r.calls.length > 0 && (r.objectType === 'user' || r.objectType === 'cap'));
+  const live = await resolveLiveIdentityState(s, identity.map((r) => r.upn));
+  for (const r of rows) {
+    if (!r.calls.length) continue;
+    const cmdlets = r.calls.map((c) => c.cmdlet);
+    if (r.objectType === 'user' || r.objectType === 'cap') {
+      const l = live.get(r.upn.toLowerCase());
+      evidence.set(r.rowId, driftEvidence(cmdlets, { voicemail: l?.voicemailEnabled !== undefined, callingSettings: l?.callingSettings !== undefined }));
+    } else evidence.set(r.rowId, [...new Set(cmdlets)]);
+  }
+  const planned = rows.filter((r) => (evidence.get(r.rowId)?.length ?? 0) > 0);
+  if (planned.length === 0) return evidence;
   const ids = planned.map((r) => r.rowId);
   const [history, lastSyncAt, updated] = await Promise.all([
     rowDeploymentHistory(s, ids),
@@ -80,6 +95,7 @@ export async function annotateDrift(s: Scoped, rows: DeploymentPreviewRow[]): Pr
     const state = classifyDrift({ planned: true, history: history.get(r.rowId), rowUpdatedAt: updated.get(r.rowId) ?? new Date().toISOString(), lastSyncAt });
     if (state) r.drift = state;
   }
+  return evidence;
 }
 
 async function rowUpdatedAt(s: Scoped, rows: DeploymentPreviewRow[]): Promise<Map<string, string>> {
@@ -96,7 +112,7 @@ async function rowUpdatedAt(s: Scoped, rows: DeploymentPreviewRow[]): Promise<Ma
 /** Works out a site's drift from the stored live state and saves it (deployment_drift), replacing the last check. */
 export async function computeSiteDrift(s: Scoped, siteId: string, runId: string | null = null): Promise<SiteDriftSummary> {
   const preview = await previewSiteChanges(s, { siteId, sheets: [...DEPLOYMENT_SHEETS] });
-  await annotateDrift(s, preview);
+  const evidence = await annotateDrift(s, preview);
   const history = await rowDeploymentHistory(s, preview.filter((r) => r.drift).map((r) => r.rowId));
   const rows: DriftRow[] = preview
     .filter((r) => r.drift)
@@ -105,7 +121,7 @@ export async function computeSiteDrift(s: Scoped, siteId: string, runId: string 
       objectType: r.objectType,
       name: r.upn,
       state: r.drift!,
-      cmdlets: [...new Set(r.calls.map((c) => c.cmdlet))],
+      cmdlets: evidence.get(r.rowId) ?? [],
       lastDeployedAt: history.get(r.rowId)?.lastCleanAt ?? '',
     }));
   const summary: SiteDriftSummary = {
