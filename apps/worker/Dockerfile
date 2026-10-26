@@ -52,8 +52,12 @@ ENV NODE_ENV=production \
     POWERSHELL_TELEMETRY_OPTOUT=1 \
     DOTNET_CLI_TELEMETRY_OPTOUT=1
 # upgrade: pick up fixes Debian has published since this (older) base image was built.
+# Debian's security index: BuildKit re-fetches a remote ADD and only reuses the layer when the file is unchanged, so this line makes the
+# upgrade below run again whenever Debian publishes a security update. Without it a cached upgrade layer keeps old OpenSSL and the like
+# for as long as nobody edits this file, and the release scan blocks the build on advisories that have a fix.
+ADD https://security.debian.org/debian-security/dists/bookworm-security/InRelease /tmp/debian-security-InRelease
 RUN apt-get update && apt-get upgrade -y --no-install-recommends && apt-get install -y --no-install-recommends ca-certificates libatomic1 \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/* /tmp/debian-security-InRelease
 # (libatomic1: the Node binary links it and the PowerShell base does not include it.)
 # Node comes from the official node image (the same one the other images are built on), not from a downloaded install script. The
 # build fails here, not at run time, if the binary cannot start on this base.

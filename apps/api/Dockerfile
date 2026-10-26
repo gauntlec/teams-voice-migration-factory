@@ -30,7 +30,10 @@ ENV NODE_ENV=production
 WORKDIR /app
 # Pick up fixes Debian has published since the base image was built, and drop npm/corepack: nothing runs them here, and they bring
 # their own bundled packages (and advisories) along.
-RUN apt-get update && apt-get upgrade -y --no-install-recommends && rm -rf /var/lib/apt/lists/* \
+# Debian's security index: BuildKit re-fetches a remote ADD and only reuses the layer when the file is unchanged, so this line makes the
+# upgrade below run again whenever Debian publishes a security update (a cached upgrade layer would otherwise keep old packages).
+ADD https://security.debian.org/debian-security/dists/bookworm-security/InRelease /tmp/debian-security-InRelease
+RUN apt-get update && apt-get upgrade -y --no-install-recommends && rm -rf /var/lib/apt/lists/* /tmp/debian-security-InRelease \
   && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./package.json
