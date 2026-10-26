@@ -243,6 +243,8 @@ export const createDeploymentSchema = z.object({
       rowIds: z.array(z.guid()).optional(),
     })
     .strict(),
+  /** Scheduled cutover: start a live run at this time instead of now (scheduledRunProblem says what is allowed). */
+  runAt: z.iso.datetime({ offset: true }).optional(),
 });
 export type CreateDeploymentInput = z.infer<typeof createDeploymentSchema>;
 

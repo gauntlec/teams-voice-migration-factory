@@ -10,6 +10,7 @@ import {
 import {
   DEPLOYMENT_SHEETS,
   renderRollbackScript,
+  scheduledRunProblem,
   type CreateDeploymentInput,
   type DeploymentPreviewQuery,
   type DeploymentPreviewRow,
@@ -18,7 +19,7 @@ import {
   type FileRow,
   type GenerateDeploymentDocumentInput,
 } from '@tvmf/shared';
-import { assertNoMaintenanceFreeze } from '../../platform-ops/maintenance';
+import { assertNoMaintenanceFreeze, loadMaintenanceNotice } from '../../platform-ops/maintenance';
 import { AuditService } from '../../common/audit.service';
 import type { AuthedUser, TenantContext } from '../../common/request';
 import { InjectDb, type Db } from '../../db/db.module';
@@ -254,6 +255,13 @@ export class DeploymentService {
     if (input.mode === 'execute' && !can('deployment:execute')) {
       throw new ForbiddenException('Missing permission: deployment:execute');
     }
+    // Scheduled cutover: only a live run waits for its window (a What-If is safe to run now), within the sign-in's reach.
+    if (input.runAt) {
+      if (input.mode !== 'execute') throw new BadRequestException('Only a live deployment can be scheduled - run the What-If now.');
+      const notice = await loadMaintenanceNotice(this.db);
+      const problem = scheduledRunProblem(input.runAt, new Date(), notice?.startsAt ?? null);
+      if (problem) throw new BadRequestException(problem);
+    }
     // A run started now would be failed by the worker restart of a scheduled update.
     await assertNoMaintenanceFreeze(this.db, input.mode === 'execute' ? 'live deployment' : 'What-If run');
     // A tenant property, not a role property - even a Super Admin with
@@ -317,10 +325,13 @@ export class DeploymentService {
         status: 'queued',
         created_by: user.id,
         summary: {},
+        run_at: input.runAt ? new Date(input.runAt).toISOString() : null,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
 
+    // jobId = the deployment, so a scheduled run can be taken off the queue again (cancelScheduled).
+    const delay = input.runAt ? Math.max(0, Date.parse(input.runAt) - Date.now()) : 0;
     await this.queue.add('deployment.run', {
       kind: 'deployment.run',
       tenantId: t.id,
@@ -330,13 +341,13 @@ export class DeploymentService {
       mode: input.mode,
       scope,
       operatorUserId: user.id,
-    });
+    }, { jobId: dep.id, ...(delay ? { delay } : {}) });
 
     await this.audit.tenant(t.schema, 'deployment.queued', {
       actor: { id: user.id, email: user.email },
       targetType: 'deployment',
       targetId: dep.id,
-      detail: { mode: input.mode, scope },
+      detail: { mode: input.mode, scope, ...(input.runAt ? { runAt: dep.run_at } : {}) },
     });
     await this.audit.platform('deployment.queued', {
       actor: { id: user.id, email: user.email },
@@ -346,6 +357,21 @@ export class DeploymentService {
       detail: { mode: input.mode },
     });
     return dep;
+  }
+
+  /** Cancels a scheduled live run that has not started: off the queue, and recorded as cancelled. */
+  async cancelScheduled(t: TenantContext, user: AuthedUser, id: string) {
+    const s = tenantDb(this.db, t.schema);
+    const dep = await s.selectFrom('deployments').select(['id', 'status', 'run_at', 'created_by', 'scope']).where('id', '=', id).executeTakeFirst();
+    if (!dep) throw new NotFoundException('deployment not found');
+    assertSiteInScope(t, (dep.scope as { siteId: string }).siteId);
+    if (dep.created_by !== user.id && user.role !== 'SUPER_ADMIN') throw new ForbiddenException('Only the engineer who scheduled this run, or a Super Admin, can cancel it.');
+    if (dep.status !== 'queued' || !dep.run_at) throw new ConflictException('Only a scheduled run that has not started can be cancelled.');
+    const res = await s.updateTable('deployments').set({ status: 'cancelled', finished_at: new Date().toISOString() }).where('id', '=', id).where('status', '=', 'queued').executeTakeFirst();
+    if (!Number(res.numUpdatedRows)) throw new ConflictException('The run has just started - it can no longer be cancelled.');
+    await (await this.queue.getJob(id))?.remove().catch(() => undefined);
+    await this.audit.tenant(t.schema, 'deployment.cancelled', { actor: { id: user.id, email: user.email }, targetType: 'deployment', targetId: id, detail: { runAt: dep.run_at } });
+    return { ok: true };
   }
 
   listDeployments(t: TenantContext, siteId?: string) {

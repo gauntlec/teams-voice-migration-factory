@@ -110,6 +110,12 @@ export class DeploymentController {
     return this.svc.getDeployment(t, id);
   }
 
+  @Post(':id/cancel')
+  @RequirePermission('deployment:execute')
+  cancel(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string) {
+    return this.svc.cancelScheduled(t, user, id);
+  }
+
   @Get(':id/changes')
   @RequirePermission('deployment:read')
   changes(@TenantCtx() t: TenantContext, @Param('id') id: string) {

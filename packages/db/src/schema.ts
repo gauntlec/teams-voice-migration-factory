@@ -1069,6 +1069,8 @@ export interface DeploymentsTable {
   summary: Json;
   /** Post-deploy live re-check (migration 0046) - a DeploymentVerification, null until one has run. */
   verification: ColumnType<import('@tvmf/shared').DeploymentVerification | null, import('@tvmf/shared').DeploymentVerification | null | undefined, import('@tvmf/shared').DeploymentVerification | null>;
+  /** Scheduled cutover (migration 0067): when a queued live run starts; null = at once. */
+  run_at: string | null;
   created_at: Ts;
 }
 

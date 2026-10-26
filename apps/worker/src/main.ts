@@ -101,11 +101,21 @@ async function expireConnection(schema: string, connectionId: string, reason: st
   console.log(`[connection ${connectionId}] expired (${reason})`);
 }
 
-setInterval(() => {
+setInterval(async () => {
   const now = Date.now();
   for (const [id, exec] of executors) {
     const schema = executorSchema.get(id);
     if (!schema) continue;
+    // A scheduled live run waiting on this sign-in keeps it alive until it starts (scheduled cutover, migration 0067).
+    const waiting = await tenantDb(db, schema)
+      .selectFrom('deployments')
+      .select('id')
+      .where('connection_id', '=', id)
+      .where('status', '=', 'queued')
+      .where('run_at', 'is not', null)
+      .executeTakeFirst()
+      .catch(() => undefined);
+    if (waiting) exec.lastUsedAt = now;
     if (now - exec.lastUsedAt > SESSION_TTL_MS) {
       void expireConnection(schema, id, 'idle timeout');
     } else {
@@ -493,6 +503,14 @@ async function handleDeploymentRun(job: Job) {
   const scoped = tenantDb(db, schema);
   const exec = executors.get(connectionId);
   const startedAt = Date.now();
+
+  // A scheduled run that was cancelled while it waited (its job may still fire if removing it raced) does nothing.
+  const current = await scoped.selectFrom('deployments').select('status').where('id', '=', deploymentId).executeTakeFirst();
+  if (current && current.status !== 'queued') {
+    // eslint-disable-next-line no-console
+    console.log(`[deployment ${deploymentId}] not started: it is ${current.status}`);
+    return;
+  }
 
   const counts = { applied: 0, skipped: 0, failed: 0, whatif: 0 };
   // One entry per failed cmdlet, with its own error text - see

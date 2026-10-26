@@ -13,6 +13,7 @@ import {
   DialogSurface,
   DialogTitle,
   DialogTrigger,
+  Field,
   Link,
   Spinner,
   Tab,
@@ -136,6 +137,9 @@ interface Deployment {
   summary: Record<string, number>;
   /** post-deploy live re-check (live runs only) - see apps/worker/src/deployment-verify.ts */
   verification: DeploymentVerification | null;
+  /** scheduled cutover: when a queued live run starts; null = at once */
+  run_at: string | null;
+  created_by: string;
   created_at: string;
 }
 interface Change {
@@ -160,6 +164,7 @@ function runStatusBadge(d: Deployment): { label: string; color: 'success' | 'dan
   if (d.status === 'failed') return { label: 'failed', color: 'danger', icon: true };
   if (d.status === 'completed' && failed > 0) return { label: `completed - ${failed} failed`, color: 'danger', icon: true };
   if (d.status === 'completed') return { label: 'completed', color: 'success' };
+  if (d.status === 'queued' && d.run_at) return { label: 'scheduled', color: 'informative' };
   return { label: d.status, color: 'informative' };
 }
 
@@ -404,7 +409,7 @@ export function DeploymentSiteWorkspace() {
   const autoIncludedRowIds = new Set((dependencyPreview.data ?? []).filter((r) => r.autoIncluded).map((r) => r.rowId));
 
   const run = useMutation({
-    mutationFn: ({ mode, everyone }: { mode: 'dry_run' | 'execute'; everyone: boolean }) =>
+    mutationFn: ({ mode, everyone, runAt }: { mode: 'dry_run' | 'execute'; everyone: boolean; runAt?: string }) =>
       api(base, {
         method: 'POST',
         body: JSON.stringify({
@@ -415,6 +420,7 @@ export function DeploymentSiteWorkspace() {
             sheets: everyone ? [...DEPLOYMENT_SHEETS] : sheetsFor(selectedRowIds),
             rowIds: everyone ? undefined : [...selectedRowIds],
           },
+          ...(runAt ? { runAt } : {}),
         }),
       }),
     onSuccess: () => {
@@ -423,6 +429,14 @@ export function DeploymentSiteWorkspace() {
       qc.invalidateQueries({ queryKey: ['deployment-preview', tid, siteId] });
       qc.invalidateQueries({ queryKey: ['deployment-summary', tid] });
     },
+  });
+
+  // Scheduled cutover: pick a start time inside the change window; the run waits on this sign-in, which the worker keeps alive.
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [scheduleAt, setScheduleAt] = useState('');
+  const cancelRun = useMutation({
+    mutationFn: (id: string) => api(`${base}/${id}/cancel`, { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['deployments', tid] }),
   });
 
   const generateDoc = useMutation({
@@ -541,6 +555,13 @@ export function DeploymentSiteWorkspace() {
               >
                 {selectedRowIds.size > 0 ? `Deploy selected (${selectedRowIds.size})` : 'Deploy everything'}
               </Button>
+              <Button
+                disabled={!activeConn || !canExecute || teamsReadOnly || run.isPending}
+                title="Start the live run at a set time, inside the change window"
+                onClick={() => setScheduleOpen(true)}
+              >
+                Schedule…
+              </Button>
               <Button disabled={!canDryRun || generateDoc.isPending} onClick={() => generateDoc.mutate()}>
                 {generateDoc.isPending ? 'Generating…' : 'Generate change document'}
               </Button>
@@ -588,6 +609,41 @@ export function DeploymentSiteWorkspace() {
                     }}
                   >
                     Deploy all {rows.length} rows
+                  </Button>
+                </DialogActions>
+              </DialogBody>
+            </DialogSurface>
+          </Dialog>
+          <Dialog open={scheduleOpen} onOpenChange={(_, d) => setScheduleOpen(d.open)}>
+            <DialogSurface>
+              <DialogBody>
+                <DialogTitle>Schedule the live run</DialogTitle>
+                <DialogContent>
+                  <Text block>
+                    {selectedRowIds.size > 0 ? `The ${selectedRowIds.size} selected rows` : `All ${rows.length} rows`} deploy live at the time you choose, up to 24 hours
+                    ahead, on your current sign-in to the customer tenant. Voxshift keeps that sign-in open until then; if it is lost (the
+                    worker restarts), the run fails and you are emailed. You can cancel it on Run history until it starts.
+                  </Text>
+                  <Field label="Start at (your local time)" className={ls.mt8}>
+                    <input type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} />
+                  </Field>
+                  {run.isError && <Text size={200} className={ls.colored} block>{run.error instanceof ApiError ? run.error.message : 'Could not schedule the run.'}</Text>}
+                </DialogContent>
+                <DialogActions>
+                  <DialogTrigger disableButtonEnhancement>
+                    <Button appearance="secondary">Cancel</Button>
+                  </DialogTrigger>
+                  <Button
+                    appearance="primary"
+                    disabled={!scheduleAt || run.isPending}
+                    onClick={() =>
+                      run.mutate(
+                        { mode: 'execute', everyone: selectedRowIds.size === 0, runAt: new Date(scheduleAt).toISOString() },
+                        { onSuccess: () => { setScheduleOpen(false); setScheduleAt(''); setTab('history'); } },
+                      )
+                    }
+                  >
+                    Schedule
                   </Button>
                 </DialogActions>
               </DialogBody>
@@ -820,6 +876,16 @@ export function DeploymentSiteWorkspace() {
                       <Badge appearance="tint" color={badge.color} icon={badge.icon ? <WarningRegular /> : undefined}>
                         {badge.label}
                       </Badge>
+                      {d.status === 'queued' && d.run_at && (
+                        <>
+                          <Text size={200} block>
+                            Starts {new Date(d.run_at).toLocaleString()}
+                          </Text>
+                          <Button size="small" appearance="subtle" disabled={cancelRun.isPending} onClick={() => cancelRun.mutate(d.id)}>
+                            Cancel scheduled run
+                          </Button>
+                        </>
+                      )}
                     </TableCell>
                     <TableCell>
                       {Object.keys(d.summary ?? {}).length ? (

@@ -222,6 +222,20 @@ Also still available:
 - Design & Build's per-row validation badge (`docs/DATA-MODEL.md`
   `build_users.validation`) reflects Discovery's live state.
 
+## Scheduled runs (cutover in a change window)
+
+A live run can start at a set time instead of now: **Schedule…** on Planned changes (`POST /t/:id/deployments` with `runAt`,
+tenant migration `0067` adds `deployments.run_at`). Rules (`packages/shared/src/scheduled-run.ts`, unit-tested): live runs only,
+at least a minute and at most 24 hours ahead, and not after a planned Voxshift update (`maintenance_notice`), whose worker restart
+would end the sign-in. The job is queued with BullMQ `delay` and `jobId` = the deployment id.
+
+No customer credentials are stored, so the run uses the engineer's live sign-in: while a queued run with a `run_at` waits on a
+connection, the worker's session sweeper counts the connection as in use, so the idle timeout does not end it. If the sign-in is
+lost anyway (the worker restarted), the run fails closed when it starts and the engineer gets the deployment email, as for any
+failed run. **Cancel scheduled run** on Run history (`POST /t/:id/deployments/:id/cancel`, the engineer who scheduled it or a
+Super Admin) marks it cancelled and removes the job; a job that still fires sees the status and does nothing. Audited as
+`deployment.queued` (with `runAt`) and `deployment.cancelled`. While a scheduled run waits, the connection takes no other live run.
+
 ## Call queue settings that are PowerShell only
 
 Microsoft documents some Set-CsCallQueue parameters as available only in PowerShell (not shown in Teams Admin Center).
