@@ -71,7 +71,7 @@ git push origin main         # ~5 min: GitHub Action builds + pushes images
 
 ## Device status (optional Uptime Kuma)
 
-**Monitoring** shows whether each site's phones, paging units and gateways are answering, by reading an Uptime Kuma status page
+**Monitoring > Devices** shows whether each site's phones, paging units and gateways are answering, by reading an Uptime Kuma status page
 (docs/DISCOVERY.md "Device status", docs/DEVICE-MONITORING.md). Kuma is a service in [`compose.yaml`](./compose.yaml) behind the compose profile `kuma`:
 
 1. Make sure the stack's compose has the `kuma` service and the `kumadata` volume (copy them from `compose.yaml` if the stack was made before they existed).
@@ -79,7 +79,7 @@ git push origin main         # ~5 min: GitHub Action builds + pushes images
    Kuma's screen to the LAN (default `127.0.0.1`: this host only). With `KUMA_BIND=0.0.0.0`, anyone who can reach the port sees Kuma's sign-in page:
    limit it to staff networks, or put nginx-proxy-manager (HTTPS) in front and keep the default.
 3. **Deploy**. Voxshift reaches Kuma at `http://kuma:3001` inside the stack.
-4. In Voxshift: Monitoring > **Set up automatically**, then **Add a device** for each phone, paging unit or gateway. Voxshift creates Kuma's
+4. In Voxshift: Monitoring > Devices > **Set up automatically**, then **Add a device** for each phone, paging unit or gateway. Voxshift creates Kuma's
    administrator and the status page itself and keeps them in step with the device list, so you never need to open Kuma. (Kuma's own screen is at
    `http://<host>:<port>` if you want to look; or enter the address and status page name yourself with **I run Kuma myself**.)
 

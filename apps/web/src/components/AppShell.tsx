@@ -181,9 +181,11 @@ const MIGRATION: NavDef[] = [
   { to: '/build', label: 'Design & Build', icon: <Board24Regular />, permission: 'build:read' },
   { to: '/deployment', label: 'Deployment', icon: <CloudArrowUp24Regular />, permission: 'deployment:read' },
   { to: '/handover', label: 'Service Handover', icon: <DocumentBulletListMultiple24Regular />, permission: 'handover:read' },
-  { to: '/monitoring', label: 'Monitoring', icon: <HeartPulse24Regular />, permission: 'discovery:read' },
   { to: '/files', label: 'Files', icon: <DocumentFolder24Regular />, permission: 'files:read' },
 ];
+
+/** Monitoring: whether the customer's equipment is answering. */
+const MONITORING: NavDef[] = [{ to: '/monitoring/devices', label: 'Devices', icon: <HeartPulse24Regular />, permission: 'discovery:read' }];
 
 /** The managed service for the active customer. The whole section is hidden unless that customer has Managed Services switched on. */
 const OPERATIONS: NavDef[] = [
@@ -456,6 +458,12 @@ export function AppShell({ children }: { children: ReactNode }) {
         <nav id="app-nav" aria-label="Main" className={navOpen ? `${s.nav} ${s.navOpen}` : s.nav}>
           <div className={s.navSectionLabel}>Migration</div>
           {renderNav(MIGRATION)}
+          {MONITORING.some(navVisible) && (
+            <>
+              <div className={s.navSectionLabel}>Monitoring</div>
+              {renderNav(MONITORING)}
+            </>
+          )}
           {operationsVisible && (
             <>
               <div className={s.navSectionLabel}>Operations</div>

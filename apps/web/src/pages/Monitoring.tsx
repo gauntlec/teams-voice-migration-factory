@@ -3,12 +3,12 @@ import { Page } from '../components/Page';
 import { NoTenant } from '../components/records';
 import { DeviceStatus } from './monitoring/deviceStatus';
 
-/** Monitoring: whether each site's phones, paging units and gateways are answering. */
+/** Monitoring > Devices: whether each site's phones, paging units, DECT and gateways are answering. */
 export function Monitoring() {
   const { activeTenantId: tid, can } = useAuth();
   if (!tid) return <NoTenant />;
   return (
-    <Page title="Monitoring" subtitle="Live status of the customer's phones, paging units and gateways, site by site. Add each device and Voxshift sets up the checking.">
+    <Page title="Devices" subtitle="Live status of the Teams Phone System devices, paging units, DECT, Analogue Gateways site by site.">
       <DeviceStatus base={`/t/${tid}/device-status`} canManage={can('discovery:sites:manage')} />
     </Page>
   );

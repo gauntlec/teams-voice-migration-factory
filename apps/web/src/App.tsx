@@ -91,13 +91,14 @@ export function App() {
           }
         />
         <Route
-          path="/monitoring"
+          path="/monitoring/devices"
           element={
             <RequirePermission permission="discovery:read">
               <Monitoring />
             </RequirePermission>
           }
         />
+        <Route path="/monitoring" element={<Navigate to="/monitoring/devices" replace />} />
         <Route
           path="/build"
           element={

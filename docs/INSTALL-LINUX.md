@@ -283,7 +283,7 @@ If the browser shows a warning, see "If something goes wrong" below.
 
 ## Optional: device status (Uptime Kuma)
 
-Voxshift can show whether each site's phones, paging units and gateways are answering (**Monitoring**). The checking is done
+Voxshift can show whether each site's phones, paging units and gateways are answering (**Monitoring > Devices**). The checking is done
 by **Uptime Kuma**, a small free monitoring program that runs next to Voxshift on this server. Add it when you want this; Voxshift works
 without it.
 
@@ -299,7 +299,7 @@ It starts Kuma and prints what to do next. In short:
    Open that port in the server's firewall **for the networks your staff use only**: anyone who can reach it sees Kuma's sign-in page. (`--open-firewall` at install time opens it too.)
    Prefer not to open a port? Leave out `--web`: Kuma is then only on the server itself, reached from your own computer through an SSH tunnel
    (`ssh -L 3001:127.0.0.1:3001 you@the-server`, then `http://localhost:3001`). Port 3001 in use? `sudo voxshift kuma on --port 3005`.
-2. In Voxshift open **Monitoring** and press **Set up automatically**. Voxshift creates Kuma's administrator account itself (you do not need to), sets up the checking and the status page, and keeps them up to date.
+2. In Voxshift open **Monitoring > Devices** and press **Set up automatically**. Voxshift creates Kuma's administrator account itself (you do not need to), sets up the checking and the status page, and keeps them up to date.
 3. Press **Add a device** for each phone, paging unit or gateway: its site, a name, the kind of device, how to check it (ping, or a TCP port) and its IP address. Within seconds it shows on the tab as up or down.
 
 You only need to open Kuma's own screen (step 1) if you want to see its detail. Kuma already running with an administrator of your own? Enter that sign-in when Voxshift asks for it, or use **I run Kuma myself** and add the monitors in Kuma, tagged **site** and **device** on a status page with **Show Tags** on.
