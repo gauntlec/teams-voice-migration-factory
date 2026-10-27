@@ -66,7 +66,7 @@ const SYNC: Record<DeviceInventoryRow['syncState'], { label: string; color: 'suc
 interface DeviceForm { siteCode: string; name: string; kind: DeviceKind; checkType: DeviceCheckType; address: string; port: string }
 const emptyForm = (siteCode: string): DeviceForm => ({ siteCode, name: '', kind: 'other', checkType: 'ping', address: '', port: '' });
 
-/** Add or change a device. Voxshift makes the Kuma monitor from this; nobody opens Kuma. */
+/** Add or change a device. Voxshift sets the checking up from this; nobody has to configure the monitoring module by hand. */
 function DeviceDialog({ base, sites, device, onClose }: { base: string; sites: Array<{ sitecode: string; name: string | null }>; device: DeviceInventoryRow | null; onClose: () => void }) {
   const s = useStyles();
   const qc = useQueryClient();
@@ -82,7 +82,7 @@ function DeviceDialog({ base, sites, device, onClose }: { base: string; sites: A
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['device-status', base] });
-      notify(device ? 'Device changed' : 'Device added', { body: 'Voxshift sets it up in Kuma within about 15 seconds.' });
+      notify(device ? 'Device changed' : 'Device added', { body: 'Voxshift sets up the checking within about 15 seconds.' });
       onClose();
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : (e as Error).message),
@@ -151,7 +151,7 @@ function DeviceDialog({ base, sites, device, onClose }: { base: string; sites: A
   );
 }
 
-/** The devices Voxshift watches (it makes the Kuma monitors from this list). */
+/** The devices Voxshift watches (it sets up the checking from this list). */
 function DeviceList({ base, data, canManage }: { base: string; data: DeviceStatusOverview; canManage: boolean }) {
   const s = useStyles();
   const qc = useQueryClient();
@@ -174,7 +174,7 @@ function DeviceList({ base, data, canManage }: { base: string; data: DeviceStatu
         )}
         {sites.length === 0 && <MutedText size={200}>Add a site in Data Collection first.</MutedText>}
       </div>
-      {!data.managed.managed && data.inventory.length > 0 && <MutedText size={200}>Voxshift is not looking after Kuma, so these are only a list until it is switched on.</MutedText>}
+      {!data.managed.managed && data.inventory.length > 0 && <MutedText size={200}>Voxshift is not looking after the monitoring module, so these are only a list until it is switched on.</MutedText>}
       {data.inventory.length === 0 ? (
         <MutedText size={200}>No devices yet. Add each phone, paging unit or gateway and Voxshift sets up the checking.</MutedText>
       ) : (
@@ -185,7 +185,7 @@ function DeviceList({ base, data, canManage }: { base: string; data: DeviceStatu
               <TableHeaderCell>Site</TableHeaderCell>
               <TableHeaderCell>Type</TableHeaderCell>
               <TableHeaderCell>Check</TableHeaderCell>
-              <TableHeaderCell>In Kuma</TableHeaderCell>
+              <TableHeaderCell>Checking</TableHeaderCell>
               {canManage && <TableHeaderCell />}
             </TableRow>
           </TableHeader>
@@ -227,7 +227,7 @@ function DeviceList({ base, data, canManage }: { base: string; data: DeviceStatu
   );
 }
 
-/** Voxshift looks after Kuma: a plain status line, a way to give it Kuma's sign-in when Kuma already has an administrator, and a way to hand Kuma back. */
+/** Voxshift looks after the monitoring module: a plain status line, a way to give it the module's sign-in when it already has an administrator, and a way to hand it back. */
 function ManagedPanel({ base, data, canManage }: { base: string; data: DeviceStatusOverview; canManage: boolean }) {
   const s = useStyles();
   const qc = useQueryClient();
@@ -243,31 +243,31 @@ function ManagedPanel({ base, data, canManage }: { base: string; data: DeviceSta
   });
   const stop = useMutation({
     mutationFn: () => api<DeviceStatusOverview>(`${base}/auto-setup`, { method: 'DELETE' }),
-    onSuccess: (d) => { qc.setQueryData(['device-status', base], d); notify('Voxshift no longer looks after Kuma', { body: 'What is in Kuma stays as it is.' }); },
+    onSuccess: (d) => { qc.setQueryData(['device-status', base], d); notify('Voxshift no longer looks after the monitoring module', { body: 'What is set up in it stays as it is.' }); },
   });
   return (
     <>
       <div className={s.head}>
         <Badge appearance="tint" color={m.lastSyncError ? 'danger' : m.syncNeeded ? 'warning' : 'success'}>
-          {m.lastSyncError ? 'Kuma needs attention' : m.syncNeeded ? 'Updating Kuma' : 'Kuma is up to date'}
+          {m.lastSyncError ? 'Needs attention' : m.syncNeeded ? 'Updating' : 'Up to date'}
         </Badge>
-        <MutedText size={200}>Voxshift looks after Kuma{m.lastSyncAt ? ` (last checked ${ago(m.lastSyncAt)} ago)` : ''}. Add devices below; you never need to open Kuma.</MutedText>
+        <MutedText size={200}>Voxshift looks after the monitoring module{m.lastSyncAt ? ` (last checked ${ago(m.lastSyncAt)} ago)` : ''}. Add devices below: there is nothing to set up by hand.</MutedText>
         {canManage && (
           <Button size="small" appearance="subtle" onClick={() => stop.mutate()} disabled={stop.isPending}>
-            Stop managing Kuma
+            Stop managing the monitoring module
           </Button>
         )}
       </div>
       {m.lastSyncError && (
         <Card className={s.banner}>
-          <DangerText weight="semibold">{needsLogin ? 'Kuma has its own administrator.' : 'Voxshift could not update Kuma.'}</DangerText>
+          <DangerText weight="semibold">{needsLogin ? 'The monitoring module has its own administrator.' : 'Voxshift could not update the monitoring module.'}</DangerText>
           <Text size={200}>{m.lastSyncError}</Text>
         </Card>
       )}
       {needsLogin && canManage && (
         <Card className={s.form}>
-          <Text size={200}>This Kuma was set up by hand, so Voxshift needs the administrator's sign-in. It is kept encrypted and never shown again.</Text>
-          <Field label="Kuma administrator">
+          <Text size={200}>The monitoring module was set up by hand, so Voxshift needs its administrator's sign-in. It is kept encrypted and never shown again.</Text>
+          <Field label="Administrator">
             <Input value={user} onChange={(_, d) => setUser(d.value)} autoComplete="off" />
           </Field>
           <Field label="Password">
@@ -284,7 +284,7 @@ function ManagedPanel({ base, data, canManage }: { base: string; data: DeviceSta
   );
 }
 
-/** Discovery > Device status: what Voxshift last read from the customer's Uptime Kuma (docs/DEVICE-MONITORING.md). Read-only; the monitors live in Kuma. */
+/** Monitoring: the customer's devices and whether they are answering (docs/DEVICE-MONITORING.md). Voxshift sets the checking up from the device list. */
 export function DeviceStatus({ base, canManage }: { base: string; canManage: boolean }) {
   const s = useStyles();
   const qc = useQueryClient();
@@ -308,7 +308,7 @@ export function DeviceStatus({ base, canManage }: { base: string; canManage: boo
     onSuccess: (data) => {
       qc.setQueryData(['device-status', base], data);
       setEditing(false);
-      notify(form.enabled ? 'Device status switched on' : 'Device status switched off', { body: form.enabled ? 'It can take up to 15 seconds to show the first results.' : undefined });
+      notify(form.enabled ? 'Monitoring switched on' : 'Monitoring switched off', { body: form.enabled ? 'It can take up to 15 seconds to show the first results.' : undefined });
     },
     onError: (e) => notify('Could not save', { intent: 'error', body: (e as Error).message }),
   });
@@ -317,7 +317,7 @@ export function DeviceStatus({ base, canManage }: { base: string; canManage: boo
     mutationFn: () => api<DeviceStatusOverview>(`${base}/auto-setup`, { method: 'POST', body: JSON.stringify({}) }),
     onSuccess: (data) => {
       qc.setQueryData(['device-status', base], data);
-      notify('Voxshift is setting Kuma up', { body: 'Add your devices below. The first results appear within about 15 seconds.' });
+      notify('Voxshift is setting up monitoring', { body: 'Add your devices below. The first results appear within about 15 seconds.' });
     },
     onError: (e) => notify('Could not set up', { intent: 'error', body: (e as Error).message }),
   });
@@ -331,15 +331,15 @@ export function DeviceStatus({ base, canManage }: { base: string; canManage: boo
 
   const settingsForm = (
     <Card className={s.form}>
-      <Switch checked={form.enabled} onChange={(_, d) => setForm({ ...form, enabled: d.checked })} label="Read device status from Kuma" />
-      <Field label="Kuma address" hint="Where Voxshift reaches Kuma on the network, like http://kuma:3001. Address only, no path.">
-        <Input value={form.kumaUrl} onChange={(_, d) => setForm({ ...form, kumaUrl: d.value })} placeholder="http://kuma:3001" />
+      <Switch checked={form.enabled} onChange={(_, d) => setForm({ ...form, enabled: d.checked })} label="Read device status from the monitoring service" />
+      <Field label="Monitoring service address" hint="Where Voxshift reaches the monitoring service on the network. Address only, no path.">
+        <Input value={form.kumaUrl} onChange={(_, d) => setForm({ ...form, kumaUrl: d.value })} placeholder="http://monitoring-host:3001" />
       </Field>
-      <Field label="Status page name" hint="The last part of the status page's address in Kuma (…/status/this-bit).">
+      <Field label="Status page name" hint="The last part of the status page's address (…/status/this-bit).">
         <Input value={form.statusSlug} onChange={(_, d) => setForm({ ...form, statusSlug: d.value })} placeholder="voxshift" />
       </Field>
       <MutedText size={200}>
-        Voxshift only reads Kuma. In Kuma, put the devices on that status page and tag each monitor <b>site</b> (the site code) and <b>device</b> (algo, poly, dect, audiocodes, teams-room or other).
+        Voxshift only reads it. On that status page, put the devices and tag each monitor <b>site</b> (the site code) and <b>device</b> (algo, poly, dect, audiocodes, teams-room or other).
       </MutedText>
       <div className={s.actions}>
         <Button appearance="primary" onClick={() => save.mutate()} disabled={save.isPending}>
@@ -353,15 +353,15 @@ export function DeviceStatus({ base, canManage }: { base: string; canManage: boo
   if (!configured && !editing) {
     return (
       <EmptyState
-        title="Device status is not set up"
-        hint="Voxshift can show whether each site's phones, paging units and gateways are answering. It runs the checks with Uptime Kuma, which is installed alongside Voxshift: Voxshift sets Kuma up for you, so you only list the devices."
+        title="Monitoring is not set up"
+        hint="Voxshift can show whether each site's phones, paging units and gateways are answering. It runs the checks with its monitoring module, installed alongside Voxshift: Voxshift sets it up for you, so you only list the devices."
         action={
           canManage ? (
             <div className={s.actions}>
               <Button appearance="primary" onClick={() => autoSetup.mutate()} disabled={autoSetup.isPending}>
                 Set up automatically
               </Button>
-              <Button onClick={() => setEditing(true)}>I run Kuma myself</Button>
+              <Button onClick={() => setEditing(true)}>I run my own monitoring service</Button>
             </div>
           ) : undefined
         }
@@ -376,8 +376,8 @@ export function DeviceStatus({ base, canManage }: { base: string; canManage: boo
           {!data.settings.enabled
             ? 'Switched off.'
             : data.settings.lastOkAt
-              ? `Last read from Kuma ${ago(data.settings.lastOkAt, now)} ago.`
-              : 'Waiting for the first read from Kuma.'}
+              ? `Last read ${ago(data.settings.lastOkAt, now)} ago.`
+              : 'Waiting for the first read.'}
         </MutedText>
         {canManage && !editing && (
           <Button size="small" onClick={() => setEditing(true)}>
@@ -386,7 +386,7 @@ export function DeviceStatus({ base, canManage }: { base: string; canManage: boo
         )}
         {canManage && !editing && !data.managed.managed && (
           <Button size="small" appearance="primary" onClick={() => autoSetup.mutate()} disabled={autoSetup.isPending}>
-            Let Voxshift look after Kuma
+            Let Voxshift look after monitoring
           </Button>
         )}
       </div>
@@ -397,7 +397,7 @@ export function DeviceStatus({ base, canManage }: { base: string; canManage: boo
 
       {data.settings.enabled && data.settings.lastError && (
         <Card className={s.banner}>
-          <DangerText weight="semibold">Voxshift cannot read Kuma.</DangerText>
+          <DangerText weight="semibold">Voxshift cannot read the monitoring status.</DangerText>
           <Text size={200}>{data.settings.lastError}</Text>
         </Card>
       )}
@@ -411,7 +411,7 @@ export function DeviceStatus({ base, canManage }: { base: string; canManage: boo
 
       {data.devices.length === 0 ? (
         data.settings.enabled && !data.settings.lastError && data.settings.lastOkAt ? (
-          <EmptyState title="No devices on that status page" hint="In Kuma, add the monitors to the status page (Edit status page > add a group) and tag them site and device." />
+          <EmptyState title="No devices on that status page" hint="Add the monitors to the status page and tag them site and device." />
         ) : null
       ) : (
         <>
@@ -442,7 +442,7 @@ export function DeviceStatus({ base, canManage }: { base: string; canManage: boo
                     <TableHeaderCell>Device</TableHeaderCell>
                     <TableHeaderCell>Site</TableHeaderCell>
                     <TableHeaderCell>Down for</TableHeaderCell>
-                    <TableHeaderCell>What Kuma says</TableHeaderCell>
+                    <TableHeaderCell>What the check says</TableHeaderCell>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

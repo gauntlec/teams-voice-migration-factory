@@ -61,8 +61,8 @@ describe('parseKumaStatus', () => {
   });
 
   it('refuses something that is not a status page', () => {
-    expect(() => parseKumaStatus({ hello: 'world' }, heartbeats)).toThrow(/Uptime Kuma status page/);
-    expect(() => parseKumaStatus('<html>', heartbeats)).toThrow(/Uptime Kuma status page/);
+    expect(() => parseKumaStatus({ hello: 'world' }, heartbeats)).toThrow(/monitoring status page/);
+    expect(() => parseKumaStatus('<html>', heartbeats)).toThrow(/monitoring status page/);
   });
 });
 

@@ -29,7 +29,7 @@ export class KumaClient implements KumaApi {
     try {
       const r = (await fetch(`${url}/api/entry-page`, { signal: AbortSignal.timeout(4000) }).then((x) => x.json())) as { type?: string };
       if (r?.type === 'setup-database') {
-        return new Error('Kuma is waiting for you to choose its database, so it cannot be set up yet. Start Kuma with UPTIME_KUMA_DB_TYPE=sqlite (Voxshift\'s compose files and installer do) or finish that screen in Kuma.');
+        return new Error('The monitoring module is waiting for its database to be chosen, so it cannot be set up yet. Start it with its database set to SQLite (Voxshift\'s compose files and installer do), or finish that screen in the module.');
       }
     } catch {
       // not Kuma, or not reachable at all: the original reason stands
@@ -41,9 +41,9 @@ export class KumaClient implements KumaApi {
     const socket = io(url, { transports: ['websocket'], reconnection: false, timeout: 10_000 });
     try {
       await new Promise<void>((resolve, reject) => {
-        const t = setTimeout(() => reject(new Error('Kuma did not answer. Is it running, and is the address right?')), 12_000);
+        const t = setTimeout(() => reject(new Error('The monitoring module did not answer. Is it running, and is the address right?')), 12_000);
         socket.once('connect', () => { clearTimeout(t); resolve(); });
-        socket.once('connect_error', (e) => { clearTimeout(t); reject(new Error(`Cannot reach Kuma at ${url}: ${e.message}`)); });
+        socket.once('connect_error', (e) => { clearTimeout(t); reject(new Error(`Cannot reach the monitoring module at ${url}: ${e.message}`)); });
       });
     } catch (e) {
       socket.close();
@@ -60,20 +60,20 @@ export class KumaClient implements KumaApi {
       const answered = await Promise.race([new Promise<boolean>((r) => this.socket.emit('needSetup', () => r(true))), new Promise<boolean>((r) => setTimeout(() => r(false), 500))]);
       if (answered) return;
     }
-    throw new Error('Kuma accepted the connection but did not answer. Is it still starting?');
+    throw new Error('The monitoring module accepted the connection but did not answer. Is it still starting?');
   }
 
   close() { this.socket.close(); }
 
   private call<T extends Reply = Reply>(event: string, ...args: unknown[]): Promise<T> {
     return new Promise((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error(`Kuma did not answer "${event}" in time.`)), CALL_TIMEOUT_MS);
+      const t = setTimeout(() => reject(new Error(`The monitoring module did not answer "${event}" in time.`)), CALL_TIMEOUT_MS);
       this.socket.emit(event, ...args, (r: T) => { clearTimeout(t); resolve(r); });
     });
   }
   private async need(event: string, ...args: unknown[]): Promise<Reply> {
     const r = await this.call(event, ...args);
-    if (!r?.ok) throw new Error(String(r?.msg ?? `Kuma refused "${event}"`));
+    if (!r?.ok) throw new Error(String(r?.msg ?? `The monitoring module refused "${event}"`));
     return r;
   }
 
@@ -85,12 +85,12 @@ export class KumaClient implements KumaApi {
   /** Signs in. Throws a plain message when Kuma does not accept the sign-in (including when it wants a 2FA code, which Voxshift cannot give). */
   async login(username: string, password: string): Promise<void> {
     const r = await this.call('login', { username, password, token: '' });
-    if (r?.tokenRequired) throw new Error('Kuma asks for a two-factor code for this administrator. Voxshift cannot give one: use a Kuma administrator without 2FA for it.');
-    if (!r?.ok) throw new Error('Kuma did not accept the administrator sign-in. Enter the right one under Device status > Settings.');
+    if (r?.tokenRequired) throw new Error('The monitoring module asks for a two-factor code for this administrator. Voxshift cannot give one: use an administrator without 2FA.');
+    if (!r?.ok) throw new Error('The monitoring module did not accept the administrator sign-in. Enter the right one below.');
   }
 
   async listMonitors(): Promise<Map<number, KumaMonitorInfo>> {
-    await Promise.race([this.gotList, new Promise<never>((_, rej) => setTimeout(() => rej(new Error('Kuma did not send its monitor list.')), CALL_TIMEOUT_MS))]);
+    await Promise.race([this.gotList, new Promise<never>((_, rej) => setTimeout(() => rej(new Error('The monitoring module did not send its device list.')), CALL_TIMEOUT_MS))]);
     // Changes arrive as events just after the reply to the call that made them: give the last one a moment.
     await new Promise((r) => setTimeout(r, 150));
     return new Map(this.list);

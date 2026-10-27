@@ -97,7 +97,7 @@ Backups:
 
 Device status (optional):
   --with-kuma            Also install Uptime Kuma, which checks the customer's phones, paging units and gateways from inside the network
-                         (Discovery > Device status reads it). Written to compose.override.yaml, published on this host only (127.0.0.1).
+                         (Monitoring reads it). Written to compose.override.yaml, published on this host only (127.0.0.1).
                          Add it to an existing installation later with: voxshift kuma on
   --kuma-port N          The host-only port for Kuma's screen (default 3001; 1024-65535), when 3001 is already used
   --kuma-web             Also open Kuma's screen to staff through the web front door, on its own port (8443), with the same certificate as the
@@ -138,7 +138,7 @@ kuma_override() {
   cat <<EOF
 # Written by Voxshift (install.sh --with-kuma, or: voxshift kuma on). Remove it with: voxshift kuma off
 # Uptime Kuma checks the customer's phones, paging units and gateways from inside this network, and Voxshift reads its status page
-# (Discovery > Device status > Set up automatically; Voxshift makes Kuma's administrator and keeps its monitors in step with the device list). Docker Compose merges this file into compose.yaml by itself, so 'voxshift update' and
+# (Monitoring > Set up automatically; Voxshift makes Kuma's administrator and keeps its monitors in step with the device list). Docker Compose merges this file into compose.yaml by itself, so 'voxshift update' and
 # 'voxshift restart' keep it. Kuma's own port is published to this host only (127.0.0.1). Its screen is reached either through the web front door
 # (voxshift kuma on --web: https://<address>:<port>, Kuma's own sign-in) or, without that, through an SSH tunnel.
 # To use another Kuma version, put KUMA_IMAGE=<image:tag> in .env.
@@ -215,7 +215,7 @@ kuma_override() {
   cat <<EOF
 # Written by Voxshift (install.sh --with-kuma, or: voxshift kuma on). Remove it with: voxshift kuma off
 # Uptime Kuma checks the customer's phones, paging units and gateways from inside this network, and Voxshift reads its status page
-# (Discovery > Device status > Set up automatically; Voxshift makes Kuma's administrator and keeps its monitors in step with the device list). Docker Compose merges this file into compose.yaml by itself, so 'voxshift update' and
+# (Monitoring > Set up automatically; Voxshift makes Kuma's administrator and keeps its monitors in step with the device list). Docker Compose merges this file into compose.yaml by itself, so 'voxshift update' and
 # 'voxshift restart' keep it. Kuma's own port is published to this host only (127.0.0.1). Its screen is reached either through the web front door
 # (voxshift kuma on --web: https://<address>:<port>, Kuma's own sign-in) or, without that, through an SSH tunnel.
 # To use another Kuma version, put KUMA_IMAGE=<image:tag> in .env.
@@ -327,7 +327,7 @@ kuma_cmd() {
       echo "Kuma is $(kuma_state)."
       echo
       echo "Next:"
-      echo "  1. In Voxshift open Discovery > Device status and press 'Set up automatically'. Voxshift creates Kuma's administrator and the status page itself."
+      echo "  1. In Voxshift open Monitoring and press 'Set up automatically'. Voxshift creates Kuma's administrator and the status page itself."
       echo "  2. Press 'Add a device' for each phone, paging unit or gateway (site, name, kind, ping or TCP port, address). Nothing to set up in Kuma by hand."
       if [ -n "$web" ]; then
         mode="$(cert_mode)"; host="$(cert_host)"; url="https://${host}:$web"; [ "$mode" != none ] || url="http://<this server>:$web"
@@ -368,7 +368,7 @@ kuma_cmd() {
         else
           echo "Screen:   http://127.0.0.1:$(kuma_port) on this server only (SSH tunnel, or: voxshift kuma on --web)"
         fi
-        echo "Voxshift: Discovery > Device status, address http://kuma:3001"
+        echo "Voxshift: Monitoring, address http://kuma:3001"
       else
         echo "Kuma:     not switched on. To add it: voxshift kuma on"
       fi
@@ -1224,7 +1224,7 @@ voxshift <command>
                     see which HTTPS certificate is in use and when it runs out; make a self-signed one; install your own (checked first,
                     the old settings come back if the front door does not start); save the public certificate to trust it on computers
   kuma on [--port N] [--web [PORT] | --no-web] | off [--delete-data] | status
-                    device status: add Uptime Kuma (checks phones, paging units and gateways; shown in Discovery > Device status), with its screen
+                    device status: add Uptime Kuma (checks phones, paging units and gateways; shown in Monitoring), with its screen
                     served through the web front door (--web) or only on this server; remove it, or see it
   logs [service]    follow logs (api, worker, web, caddy, postgres, redis, kuma)
   reset-admin       set a new password for the first Super Admin and unlock the account
@@ -1974,8 +1974,8 @@ $( [ -n "$SMTP_HOST" ] || printf '      To send email, set SMTP_HOST (and the ot
 $( if [ ${#BACKUP_RECIPIENTS[@]} -gt 0 ]; then printf '      Backups are ENCRYPTED. Keep the matching private key OFF this host; without it they cannot be read.\n'; else printf '      Backups are not encrypted yet: voxshift backup-encryption on <public-key>   (docs/INSTALL-LINUX-REFERENCE.md, Backups)\n'; fi )
 $( if [ "$AUTO_UPDATE" != "no" ]; then printf '   3. Updates:            automatic (%s); see or change with: voxshift auto-update status\n' "$AUTO_UPDATE"; else printf '   3. Upgrade later:      voxshift update   (or let it do it for you: voxshift auto-update on)\n'; fi )
 $( if [ "$WITH_KUMA" = 1 ]; then
-  if [ -n "$KUMA_WEB_PORT" ]; then printf '   4. Device status:      Kuma is installed. Then open Discovery > Device status in Voxshift, press Set up automatically and add the devices (Kuma needs nothing by hand).\n                          Kuma'"'"'s own screen, to look at it: %s://%s:%s (open that port in the firewall for staff networks only)\n' "$([ "$TLS" = none ] && echo http || echo https)" "${HOST:-<this server>}" "$KUMA_WEB_PORT"
-  else printf '   4. Device status:      Kuma is installed (this host only, 127.0.0.1:%s). Open Discovery > Device status in Voxshift, press Set up automatically and add the devices (Kuma needs nothing by hand).\n                          To look at Kuma'"'"'s own screen: voxshift kuma on --web, or an SSH tunnel. More: voxshift kuma status\n' "$KUMA_PORT"; fi
+  if [ -n "$KUMA_WEB_PORT" ]; then printf '   4. Device status:      Kuma is installed. Then open Monitoring in Voxshift, press Set up automatically and add the devices (Kuma needs nothing by hand).\n                          Kuma'"'"'s own screen, to look at it: %s://%s:%s (open that port in the firewall for staff networks only)\n' "$([ "$TLS" = none ] && echo http || echo https)" "${HOST:-<this server>}" "$KUMA_WEB_PORT"
+  else printf '   4. Device status:      Kuma is installed (this host only, 127.0.0.1:%s). Open Monitoring in Voxshift, press Set up automatically and add the devices (Kuma needs nothing by hand).\n                          To look at Kuma'"'"'s own screen: voxshift kuma on --web, or an SSH tunnel. More: voxshift kuma status\n' "$KUMA_PORT"; fi
 fi )
 EOF
 if [ "$TLS" = "internal" ]; then

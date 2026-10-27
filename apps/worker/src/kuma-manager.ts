@@ -22,7 +22,7 @@ async function signedIn(client: KumaClient, s: ReturnType<typeof tenantDb>, save
     return;
   }
   if (!saved.adminUser || !saved.adminPassEnc) {
-    throw new Error('Kuma already has an administrator that Voxshift does not know. Enter that administrator\'s sign-in under Device status > Settings.');
+    throw new Error('The monitoring module already has an administrator that Voxshift does not know. Enter that administrator\'s sign-in below.');
   }
   await client.login(saved.adminUser, decryptSecret(saved.adminPassEnc));
 }

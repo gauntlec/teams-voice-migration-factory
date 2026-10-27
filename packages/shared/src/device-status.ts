@@ -87,7 +87,7 @@ export function parseKumaStatus(page: unknown, heartbeats: unknown): DeviceMonit
   const p = statusPageSchema.safeParse(page);
   const h = heartbeatSchema.safeParse(heartbeats);
   if (!p.success || !h.success || !(page as { publicGroupList?: unknown })?.publicGroupList) {
-    throw new Error('That does not look like an Uptime Kuma status page (no monitor list). Check the address and the status page name.');
+    throw new Error('That does not look like a monitoring status page (no device list). Check the address and the status page name.');
   }
   const out: DeviceMonitor[] = [];
   for (const group of p.data.publicGroupList) {
@@ -151,7 +151,7 @@ export function summariseBySite(monitors: Array<Pick<DeviceMonitor, 'sitecode' |
 export const DEVICE_STATUS_STALE_SECONDS = 120;
 
 /** The address part of a Kuma status page: letters, digits, dashes and underscores (what Kuma allows). */
-export const kumaSlugSchema = z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/, 'Use the status page name from Kuma: letters, digits, - and _ only.');
+export const kumaSlugSchema = z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/, 'Use the status page name: letters, digits, - and _ only.');
 
 export const deviceMonitorSettingsSchema = z.object({
   enabled: z.boolean(),
@@ -160,7 +160,7 @@ export const deviceMonitorSettingsSchema = z.object({
     .trim()
     .max(200)
     .transform((v) => v.replace(/\/+$/, ''))
-    .pipe(z.string().refine((v) => v === '' || /^https?:\/\/[^\s/?#]+$/i.test(v), 'Use the address of Kuma only, like http://kuma:3001 (no path).')),
+    .pipe(z.string().refine((v) => v === '' || /^https?:\/\/[^\s/?#]+$/i.test(v), 'Use the address of the monitoring service only, like http://host:3001 (no path).')),
   statusSlug: z.union([kumaSlugSchema, z.literal('')]),
 });
 export type DeviceMonitorSettingsInput = z.infer<typeof deviceMonitorSettingsSchema>;

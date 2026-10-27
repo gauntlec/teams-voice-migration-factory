@@ -51,14 +51,14 @@ export async function saveDeviceMonitorSettings(s: Scoped, input: DeviceMonitorS
 
 async function getJson(fetchFn: typeof fetch, url: string): Promise<unknown> {
   const res = await fetchFn(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), redirect: 'manual', headers: { Accept: 'application/json' } });
-  if (res.status === 404) throw new Error('Kuma answered 404: check the status page name (it is the last part of the status page address in Kuma).');
-  if (!res.ok) throw new Error(`Kuma answered ${res.status}${res.status >= 300 && res.status < 400 ? ' (a redirect: use the address Kuma itself listens on)' : ''}.`);
+  if (res.status === 404) throw new Error('The monitoring service answered 404: check the status page name (it is the last part of the status page address).');
+  if (!res.ok) throw new Error(`The monitoring service answered ${res.status}${res.status >= 300 && res.status < 400 ? ' (a redirect: use the address it listens on itself)' : ''}.`);
   const text = await res.text();
-  if (text.length > MAX_BODY_BYTES) throw new Error('Kuma sent more data than a status page should.');
+  if (text.length > MAX_BODY_BYTES) throw new Error('The monitoring service sent more data than a status page should.');
   try {
     return JSON.parse(text);
   } catch {
-    throw new Error('Kuma did not answer with JSON: check the address points at Kuma itself.');
+    throw new Error('The monitoring service did not answer with JSON: check the address points at it directly.');
   }
 }
 
@@ -76,7 +76,7 @@ export async function pollDeviceStatus(s: Scoped, opts: { fetchFn?: typeof fetch
     const [page, beats] = await Promise.all([getJson(fetchFn, `${base}/${slug}`), getJson(fetchFn, `${base}/heartbeat/${slug}`)]);
     monitors = parseKumaStatus(page, beats);
   } catch (e) {
-    const msg = e instanceof Error ? (e.name === 'TimeoutError' ? 'Kuma did not answer in time.' : e.message) : String(e);
+    const msg = e instanceof Error ? (e.name === 'TimeoutError' ? 'The monitoring service did not answer in time.' : e.message) : String(e);
     await s.updateTable('device_monitor_settings').set({ last_polled_at: nowIso, last_error: msg.slice(0, 300) }).execute();
     return 'failed';
   }

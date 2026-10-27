@@ -43,6 +43,7 @@ import {
   History24Regular,
   Lightbulb24Regular,
   Bug24Regular,
+  HeartPulse24Regular,
   Search24Regular,
   TicketDiagonal24Regular,
   AlertUrgent24Regular,
@@ -180,6 +181,7 @@ const MIGRATION: NavDef[] = [
   { to: '/build', label: 'Design & Build', icon: <Board24Regular />, permission: 'build:read' },
   { to: '/deployment', label: 'Deployment', icon: <CloudArrowUp24Regular />, permission: 'deployment:read' },
   { to: '/handover', label: 'Service Handover', icon: <DocumentBulletListMultiple24Regular />, permission: 'handover:read' },
+  { to: '/monitoring', label: 'Monitoring', icon: <HeartPulse24Regular />, permission: 'discovery:read' },
   { to: '/files', label: 'Files', icon: <DocumentFolder24Regular />, permission: 'files:read' },
 ];
 

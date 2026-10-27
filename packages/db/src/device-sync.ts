@@ -97,7 +97,7 @@ export async function recordDeviceSync(s: Scoped, outcome: { error?: string; dev
     .updateTable('device_monitor_settings')
     .set({
       last_sync_at: now.toISOString(),
-      last_sync_error: outcome.error ?? (outcome.deviceErrors ? `${outcome.deviceErrors} device${outcome.deviceErrors === 1 ? '' : 's'} could not be set up in Kuma: see the list.` : null),
+      last_sync_error: outcome.error ?? (outcome.deviceErrors ? `${outcome.deviceErrors} device${outcome.deviceErrors === 1 ? '' : 's'} could not be set up for monitoring: see the list.` : null),
       sync_needed: failed,
     })
     .execute();

@@ -41,6 +41,7 @@ import { ServiceRequestPage } from './pages/ServiceRequestPage';
 import { ServiceRequests } from './pages/ServiceRequests';
 import { BugReports } from './pages/BugReports';
 import { Discovery } from './pages/Discovery';
+import { Monitoring } from './pages/Monitoring';
 
 export function App() {
   const { status } = useAuth();
@@ -86,6 +87,14 @@ export function App() {
           element={
             <RequirePermission permission="tenantdiscovery:read">
               <Discovery />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="/monitoring"
+          element={
+            <RequirePermission permission="discovery:read">
+              <Monitoring />
             </RequirePermission>
           }
         />

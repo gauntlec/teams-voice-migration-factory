@@ -23,14 +23,14 @@ export class DeviceStatusService {
       actor: this.actor(u),
       targetType: 'device_monitor_settings',
       targetId: 'kuma',
-      detail: { enabled: saved.enabled, kumaUrl: saved.kumaUrl, statusSlug: saved.statusSlug },
+      detail: { enabled: saved.enabled, address: saved.kumaUrl, statusPage: saved.statusSlug },
     });
     return this.overview(t);
   }
 
   /** Voxshift looks after Kuma: switches device status on, and the worker makes Kuma match the device list. The administrator's password is stored encrypted and never shown again. */
   async autoSetup(t: TenantContext, u: AuthedUser, input: DeviceAutoSetupInput) {
-    if (!!input.adminUser !== !!input.adminPassword) throw new BadRequestException('Give both the Kuma administrator name and password, or neither.');
+    if (!!input.adminUser !== !!input.adminPassword) throw new BadRequestException('Give both the administrator name and password, or neither.');
     await enableManagedKuma(this.s(t), {
       kumaUrl: input.kumaUrl || undefined,
       adminUser: input.adminUser || undefined,
@@ -40,7 +40,7 @@ export class DeviceStatusService {
       actor: this.actor(u),
       targetType: 'device_monitor_settings',
       targetId: 'kuma',
-      detail: { managed: true, kumaUrl: input.kumaUrl || null, adminSupplied: !!input.adminUser },
+      detail: { managed: true, address: input.kumaUrl || null, adminSupplied: !!input.adminUser },
     });
     return this.overview(t);
   }

@@ -63,7 +63,7 @@ export const deviceAutoSetupSchema = z.object({
     .trim()
     .max(200)
     .transform((v) => v.replace(/\/+$/, ''))
-    .pipe(z.string().refine((v) => v === '' || /^https?:\/\/[^\s/?#]+$/i.test(v), 'Use the address of Kuma only, like http://kuma:3001 (no path).'))
+    .pipe(z.string().refine((v) => v === '' || /^https?:\/\/[^\s/?#]+$/i.test(v), 'Use the address of the monitoring service only, like http://host:3001 (no path).'))
     .optional(),
   /** Only when Kuma already has an administrator that Voxshift did not create. */
   adminUser: z.string().trim().max(120).optional(),

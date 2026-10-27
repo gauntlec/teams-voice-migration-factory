@@ -9,7 +9,6 @@ import { LoadError, NoTenant } from '../components/records';
 import { useStyles, str, TABS, TILE_TAB, type TabKey } from './discovery/discoveryShared';
 import { ChangesTab } from './discovery/history';
 import { PurgeCard, ConnectCard, RunCard } from './discovery/connect';
-import { DeviceStatus } from './discovery/deviceStatus';
 import { LicenceReport } from './discovery/licenceReport';
 import { PoliciesTable, ResourceAccountsTab, ObjectsTable, EndpointsTable, GroupsTable, UsersTable } from './discovery/tables';
 
@@ -161,7 +160,6 @@ export function Discovery() {
 
       {tab === 'licences' && <LicenceReport base={base} />}
 
-      {tab === 'device_status' && <DeviceStatus base={`/t/${tid}/device-status`} canManage={can('discovery:sites:manage')} />}
     </Page>
   );
 }

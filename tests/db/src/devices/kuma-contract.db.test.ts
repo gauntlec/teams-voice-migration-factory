@@ -161,6 +161,6 @@ describe.skipIf(!url)('Uptime Kuma contract', () => {
 // KUMA_WIZARD_URL at one (start Kuma from source without that variable) to check the client says so plainly instead of "websocket error".
 describe.skipIf(!process.env.KUMA_WIZARD_URL)('Uptime Kuma at its database wizard', () => {
   it('is explained in plain words', async () => {
-    await expect(KumaClient.connect(process.env.KUMA_WIZARD_URL!)).rejects.toThrow(/waiting for you to choose its database.*UPTIME_KUMA_DB_TYPE=sqlite/);
+    await expect(KumaClient.connect(process.env.KUMA_WIZARD_URL!)).rejects.toThrow(/waiting for its database to be chosen.*SQLite/);
   });
 });

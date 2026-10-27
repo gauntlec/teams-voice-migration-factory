@@ -199,7 +199,7 @@ services:
 
   # Device status (docs/DEVICE-MONITORING.md): Uptime Kuma checks the customer's phones, paging units and gateways from inside the network,
   # and Voxshift reads its status page. Off unless COMPOSE_PROFILES=kuma is in .env. Voxshift reaches it at http://kuma:3001 (set that under
-  # Discovery > Device status); the port is published to this host's loopback only by default (KUMA_HOST_PORT in .env, default 3001, if that is taken). To open Kuma's screen to
+  # Monitoring); the port is published to this host's loopback only by default (KUMA_HOST_PORT in .env, default 3001, if that is taken). To open Kuma's screen to
   # staff on the LAN without an SSH tunnel, set KUMA_BIND=0.0.0.0 in .env (and limit who can reach the port: anyone who can sees Kuma's sign-in page),
   # or point a reverse proxy such as nginx-proxy-manager at it.
   # Ping needs BOTH cap_add NET_RAW and the ping_group_range sysctl while every capability is dropped and no-new-privileges is on
