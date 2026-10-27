@@ -16,7 +16,7 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install the tools the checks use
         run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
       - run: bash deploy/install/check-render.sh
