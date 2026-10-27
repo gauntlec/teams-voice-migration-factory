@@ -21,6 +21,7 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
       - run: bash deploy/install/check-render.sh
       - run: bash deploy/install/check-certificate.sh
+      - run: bash deploy/install/check-kuma.sh
       - run: bash deploy/install/check-selfupdate.sh
       # check-backup.sh needs the real `age` program in a place that is NOT on the plain system path (it simulates age being missing), so it is run
       # by hand on a Mac or workstation: bash deploy/install/check-backup.sh

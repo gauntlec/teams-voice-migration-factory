@@ -395,5 +395,5 @@ Kuma status page on the customer's network (tenant migration `0070`; design and 
   the colours are old. It is never shown as all-green.
 - **Read**: `GET /t/:id/device-status` (`discovery:read`): settings, every device, a tile per site (colour = worst device) and the last 50 changes.
 - **Not yet**: raising an incident from a down device, emailing, SIP and Teams Rooms sign-in checks, an inventory that flags devices that
-  should be monitored but are not (phases 2 and 3 in DEVICE-MONITORING.md); the installer does not offer Kuma yet (add it by hand with
-  `COMPOSE_PROFILES=kuma`).
+  should be monitored but are not (phases 2 and 3 in DEVICE-MONITORING.md); Kuma is added to a Linux install with `--with-kuma` or `voxshift kuma on` (INSTALL-LINUX.md), and to a
+  Dockge stack with `COMPOSE_PROFILES=kuma`.

@@ -1,6 +1,6 @@
 # Device status monitoring (spike)
 
-Status: **spike done, phase 1 built** (2026-10-27): points 1 and 2 answered by test, point 3 deliberately not run, recommendation below. Phase 1 (read-only Device status tab) is built; see [DISCOVERY.md](DISCOVERY.md) "Device status". Not yet deployed or tried against real devices. Feature request: "Explore a real-time status dashboard for Teams-related equipment (Algo,
+Status: **spike done, phase 1 built** (2026-10-27): points 1 and 2 answered by test, point 3 deliberately not run, recommendation below. Phase 1 (read-only Device status tab) is built; see [DISCOVERY.md](DISCOVERY.md) "Device status". Deployed to the test host only (2026.10.52); the Linux installer offers Kuma (`--with-kuma`, `voxshift kuma on`). Not yet tried against real devices. Feature request: "Explore a real-time status dashboard for Teams-related equipment (Algo,
 Poly, DECT, AudioCodes, Teams Rooms), starting with Uptime Kuma on on-premise installs". This is a findings and design document;
 nothing here ships to www. On-premise installs only: one Voxshift per customer, so the LAN is reachable and customers never mix.
 

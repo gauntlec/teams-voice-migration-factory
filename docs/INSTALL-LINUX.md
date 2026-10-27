@@ -281,6 +281,28 @@ If the browser shows a warning, see "If something goes wrong" below.
   To encrypt backups, see [INSTALL-LINUX-REFERENCE.md](INSTALL-LINUX-REFERENCE.md#encrypting-backups-optional).
 - **Updates.** Run `sudo voxshift update` when a new version is out, or switch on automatic updates with `sudo voxshift auto-update on`.
 
+## Optional: device status (Uptime Kuma)
+
+Voxshift can show whether each site's phones, paging units and gateways are answering (Discovery > **Device status**). The checking is done
+by **Uptime Kuma**, a small free monitoring program that runs next to Voxshift on this server. Add it when you want this; Voxshift works
+without it.
+
+Add it during the install by putting `--with-kuma` on the install command (Step 3), or to a running installation any time:
+
+```bash
+sudo voxshift kuma on
+```
+
+It starts Kuma and prints what to do next. In short:
+
+1. Kuma is **not** on the network, only on this server. From your own computer open a tunnel: `ssh -L 3001:127.0.0.1:3001 you@the-server`, then browse to `http://localhost:3001` and create Kuma's administrator account. (Port 3001 in use? `sudo voxshift kuma on --port 3005`, and use that number.)
+2. In Kuma add a monitor for each device and give it two tags: **site** (the site code, as in Voxshift) and **device** (`algo`, `poly`, `dect`, `audiocodes`, `teams-room` or `other`).
+3. Make a **status page** in Kuma, add the monitors to it, and turn **Show Tags** on.
+4. In Voxshift open **Discovery > Device status**, enter the address `http://kuma:3001` and the status page's name, and switch it on.
+
+`sudo voxshift kuma status` shows whether it is running; `sudo voxshift kuma off` removes it (its data stays unless you add `--delete-data`).
+Backups include Kuma's data and settings once it is on.
+
 ## Trusting a self-signed certificate (Install D or E)
 
 A browser only accepts a certificate that its computer trusts. Your own authority's certificates are already trusted on computers joined to your domain.
@@ -387,6 +409,7 @@ sudo voxshift status          # is everything running?
 sudo voxshift update          # back up, then install the newest version
 sudo voxshift backup          # make a backup
 sudo voxshift certificate status   # which certificate is in use and when it runs out
+sudo voxshift kuma status     # device status (Uptime Kuma): on or off, and its state
 sudo voxshift logs            # watch the logs (Ctrl+C to stop)
 sudo voxshift restart         # restart everything (a short outage)
 sudo voxshift reset-admin     # set a new password for the first administrator

@@ -36,6 +36,9 @@ SMTP_HOST="" SMTP_PORT="587" SMTP_SECURE="false" SMTP_USER="" SMTP_PASS="" MAIL_
 GENERATED_ADMIN_PASSWORD=0
 ARM64=0               # 1 on a 64-bit ARM host (experimental)
 REFRESH=0
+WITH_KUMA=0           # 1 = also write compose.override.yaml with Uptime Kuma (device status)
+KUMA_PORT="3001"      # the host-only (127.0.0.1) port Kuma's screen is published on
+KUMA_IMAGE_DEFAULT="louislam/uptime-kuma:2.5.7-rootless"   # the version device status was checked against; kept in step with the generated command
 AUTO_UPDATE=""        # "" = ask (interactive) or no | daily | weekly | no
 BACKUP_RECIPIENTS=()  # public keys (or files of them) that backups are encrypted to; empty = backups are not encrypted
 
@@ -91,6 +94,12 @@ Backups:
                          your own computer with age-keygen and keep the private key OFF this host. Can be given more than once.
                          Installs the 'age' program if it is missing. Change it later: voxshift backup-encryption
 
+Device status (optional):
+  --with-kuma            Also install Uptime Kuma, which checks the customer's phones, paging units and gateways from inside the network
+                         (Discovery > Device status reads it). Written to compose.override.yaml, published on this host only (127.0.0.1).
+                         Add it to an existing installation later with: voxshift kuma on
+  --kuma-port N          The host-only port for Kuma's screen (default 3001; 1024-65535), when 3001 is already used
+
 Existing installation:
   --refresh-command      Only rewrite the 'voxshift' command (and, with --auto-update, switch the update job on). Touches no
                          secrets, settings or containers. Normally run for you by: voxshift self-update
@@ -117,6 +126,48 @@ make_selfsigned() {
   rm -f "$cnf"
 }
 
+# kuma_override PORT: the text of compose.override.yaml (Uptime Kuma for device status).
+# (The generated 'voxshift' command has the same function: keep the two in step; check-kuma.sh compares them.)
+kuma_override() {
+  local port="$1"
+  cat <<EOF
+# Written by Voxshift (install.sh --with-kuma, or: voxshift kuma on). Remove it with: voxshift kuma off
+# Uptime Kuma checks the customer's phones, paging units and gateways from inside this network, and Voxshift reads its status page
+# (Discovery > Device status, address http://kuma:3001). Docker Compose merges this file into compose.yaml by itself, so 'voxshift update' and
+# 'voxshift restart' keep it. Kuma is published to this host only (127.0.0.1): reach its screen through an SSH tunnel, never the network.
+# To use another Kuma version, put KUMA_IMAGE=<image:tag> in .env.
+# Ping needs BOTH NET_RAW and the ping_group_range setting while every capability is dropped (checked on Kuma $KUMA_IMAGE_DEFAULT); some hosts refuse
+# other ranges.
+services:
+  kuma:
+    image: \${KUMA_IMAGE:-$KUMA_IMAGE_DEFAULT}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_RAW
+    sysctls:
+      net.ipv4.ping_group_range: "1000 1000"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "127.0.0.1:$port:3001"
+    volumes:
+      - kumadata:/app/data
+
+volumes:
+  kumadata:
+EOF
+}
+
 write_command() {
 # --- the control command
 cat > "$DIR/voxshift" <<'CTL'
@@ -133,6 +184,125 @@ ORIG_PWD="$PWD"
 cd "$DIR"
 dc() { docker compose "$@"; }
 need_root() { [ "$(id -u)" -eq 0 ] || { echo "Run as root: sudo voxshift $*" >&2; exit 1; }; }
+
+# ----- device status: Uptime Kuma, as a compose.override.yaml that Docker Compose merges by itself
+KUMA_IMAGE_DEFAULT="louislam/uptime-kuma:2.5.7-rootless"
+# kuma_override PORT: the text of compose.override.yaml (Uptime Kuma for device status). Same text as the installer's: check-kuma.sh compares them.
+kuma_override() {
+  local port="$1"
+  cat <<EOF
+# Written by Voxshift (install.sh --with-kuma, or: voxshift kuma on). Remove it with: voxshift kuma off
+# Uptime Kuma checks the customer's phones, paging units and gateways from inside this network, and Voxshift reads its status page
+# (Discovery > Device status, address http://kuma:3001). Docker Compose merges this file into compose.yaml by itself, so 'voxshift update' and
+# 'voxshift restart' keep it. Kuma is published to this host only (127.0.0.1): reach its screen through an SSH tunnel, never the network.
+# To use another Kuma version, put KUMA_IMAGE=<image:tag> in .env.
+# Ping needs BOTH NET_RAW and the ping_group_range setting while every capability is dropped (checked on Kuma $KUMA_IMAGE_DEFAULT); some hosts refuse
+# other ranges.
+services:
+  kuma:
+    image: \${KUMA_IMAGE:-$KUMA_IMAGE_DEFAULT}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_RAW
+    sysctls:
+      net.ipv4.ping_group_range: "1000 1000"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "127.0.0.1:$port:3001"
+    volumes:
+      - kumadata:/app/data
+
+volumes:
+  kumadata:
+EOF
+}
+
+kuma_enabled() { [ -f "$DIR/compose.override.yaml" ] && grep -q '^  kuma:' "$DIR/compose.override.yaml"; }
+kuma_port() { sed -n 's/^ *- "127\.0\.0\.1:\([0-9]*\):3001"$/\1/p' "$DIR/compose.override.yaml" 2>/dev/null | head -n 1; }
+kuma_state() { dc ps kuma 2>/dev/null | grep -q 'healthy' && echo healthy || { dc ps kuma 2>/dev/null | grep -q ' kuma\| kuma-' && echo "running, not healthy yet" || echo "not running"; }; }
+kuma_cmd() {
+  local sub="${1:-help}" port="3001" old="" delete=0 n
+  shift || true
+  case "$sub" in
+    on)
+      need_root kuma on
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --port) port="${2:-}"; shift 2 ;;
+          *) echo "Use: voxshift kuma on [--port N]" >&2; exit 1 ;;
+        esac
+      done
+      case "$port" in ''|*[!0-9]*) echo "--port must be a whole number from 1024 to 65535." >&2; exit 1 ;; esac
+      { [ "$port" -ge 1024 ] && [ "$port" -le 65535 ]; } || { echo "--port must be from 1024 to 65535." >&2; exit 1; }
+      if [ -f compose.override.yaml ] && ! grep -q '^# Written by Voxshift' compose.override.yaml; then
+        echo "compose.override.yaml already exists here and was not written by Voxshift, so it was left alone. Nothing changed." >&2; exit 1
+      fi
+      if [ -f compose.override.yaml ]; then old="$(mktemp "$DIR/.override.XXXXXX")"; cp compose.override.yaml "$old"; fi
+      kuma_override "$port" > compose.override.yaml.new && mv compose.override.yaml.new compose.override.yaml
+      chmod 644 compose.override.yaml
+      if ! dc config -q >/dev/null 2>&1 || ! dc up -d kuma; then
+        if [ -n "$old" ]; then cp "$old" compose.override.yaml; rm -f "$old"; else rm -f compose.override.yaml; fi
+        echo "Kuma could not be started, so nothing was changed. If port $port is in use, try: voxshift kuma on --port <another port>" >&2; exit 1
+      fi
+      [ -z "$old" ] || rm -f "$old"
+      for n in $(seq 1 24); do [ "$(kuma_state)" = healthy ] && break; sleep 5; done
+      echo "Kuma is $(kuma_state)."
+      echo
+      echo "Next:"
+      echo "  1. Open Kuma's screen from your own computer through an SSH tunnel (it is not on the network):"
+      echo "       ssh -L $port:127.0.0.1:$port <you>@<this server>      then browse to http://localhost:$port"
+      echo "     and create the Kuma admin account."
+      echo "  2. Add a monitor for each device and tag it: site = the site code, device = algo, poly, dect, audiocodes, teams-room or other."
+      echo "  3. Make a status page, add the monitors to it and turn Show Tags on."
+      echo "  4. In Voxshift open Discovery > Device status, enter http://kuma:3001 and the status page name, and switch it on."
+      echo "Backups made by 'voxshift backup' now include Kuma's data and this file."
+      ;;
+    off)
+      need_root kuma off
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --delete-data) delete=1; shift ;;
+          *) echo "Use: voxshift kuma off [--delete-data]" >&2; exit 1 ;;
+        esac
+      done
+      kuma_enabled || { echo "Kuma is not switched on here (no compose.override.yaml)."; exit 0; }
+      dc rm -sf kuma >/dev/null 2>&1 || true
+      rm -f compose.override.yaml
+      echo "Kuma is stopped and removed from this installation."
+      if [ "$delete" = 1 ]; then docker volume rm voxshift_kumadata >/dev/null 2>&1 && echo "Its data (monitors, history) is deleted." || echo "Its data volume could not be removed (it may not exist)."
+      else echo "Its data (monitors, history) is kept in the Docker volume voxshift_kumadata: 'voxshift kuma on' brings it all back. To delete it too: voxshift kuma off --delete-data"; fi
+      ;;
+    status)
+      if kuma_enabled; then
+        echo "Kuma:     switched on, $(kuma_state)"
+        echo "Screen:   http://127.0.0.1:$(kuma_port) on this server only (use an SSH tunnel)"
+        echo "Voxshift: Discovery > Device status, address http://kuma:3001"
+      else
+        echo "Kuma:     not switched on. To add it: voxshift kuma on"
+      fi
+      ;;
+    *)
+      cat <<EOF
+voxshift kuma <command>
+  on [--port N]          install Uptime Kuma (device status): writes compose.override.yaml, starts it, tells you what to do next.
+                         Published on this host only (127.0.0.1), port 3001 unless you choose another
+  off [--delete-data]    stop and remove it (its data stays in a Docker volume unless you add --delete-data)
+  status                 whether it is on, and its state
+EOF
+      ;;
+  esac
+}
 
 wait_ready() {
   printf 'Waiting for Voxshift to answer'
@@ -415,6 +585,15 @@ do_backup() {
   if [ -f Caddyfile ]; then cp Caddyfile "$part/Caddyfile"; fi
   if [ -d certs ]; then cp -a certs "$part/certs"; fi
   docker run --rm -v voxshift_caddydata:/data:ro -v "$part":/out alpine tar czf /out/caddy-data.tar.gz -C /data .
+  if kuma_enabled; then
+    # Device status: Kuma's settings file and its database. Kuma is stopped for the few seconds the copy takes, so the database is not caught mid-write.
+    cp compose.override.yaml "$part/compose.override.yaml"
+    f=0
+    dc stop kuma >/dev/null 2>&1 || true
+    docker run --rm -v voxshift_kumadata:/data:ro -v "$part":/out alpine tar czf /out/kuma-data.tar.gz -C /data . || f=$?
+    dc start kuma >/dev/null 2>&1 || true
+    [ "$f" = 0 ] || { echo "Kuma's data could not be saved; stopping." >&2; return 1; }
+  fi
   # folders 700, files 600: the backup holds the secrets, the private keys and the data
   find "$part" -type d -exec chmod 700 {} +
   find "$part" -type f -exec chmod 600 {} +
@@ -614,6 +793,7 @@ restore_cmd() {
   echo "  replaced:      the database (all of it), the stored files, and the settings in .env"
   echo "                 (.env keeps this host's database password and IMAGE_TAG; a copy of today's .env is kept)"
   if [ "$withcfg" = 1 ]; then echo "  also replaced: compose.yaml, Caddyfile, certificates and Caddy's data volume (--with-config)"; else echo "  not replaced:  compose.yaml, Caddyfile, certificates, Caddy's data (add --with-config to restore these too)"; fi
+  if [ -f "$src/kuma-data.tar.gz" ]; then echo "  also replaced: Kuma's data (device status monitors and history) and its settings file compose.override.yaml"; fi
   echo "  first:         a safety backup of the current state, in $DIR/backups/pre-restore-<time>"
   echo "  Voxshift is stopped while this runs (a few minutes). Anything entered since the backup was made is lost."
   if [ "$yes" != 1 ]; then
@@ -670,6 +850,21 @@ restore_cmd() {
       cp -a "$src/certs" certs
     fi
     docker run --rm -v voxshift_caddydata:/data -v "$src":/in:ro alpine sh -ec 'find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} +; tar xzf /in/caddy-data.tar.gz -C /data'
+  fi
+
+  if [ -f "$src/kuma-data.tar.gz" ]; then
+    echo "Restoring Kuma's data..."
+    if [ -f "$src/compose.override.yaml" ]; then
+      [ ! -f compose.override.yaml ] || cp compose.override.yaml "compose.override.yaml.before-restore-$ts"
+      cp "$src/compose.override.yaml" compose.override.yaml
+    fi
+    if kuma_enabled; then
+      dc stop kuma >/dev/null 2>&1 || true
+      dc create kuma >/dev/null 2>&1 || true
+      docker run --rm -v voxshift_kumadata:/data -v "$src":/in:ro alpine sh -ec 'find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} +; tar xzf /in/kuma-data.tar.gz -C /data'
+    else
+      echo "Kuma's data is in the backup, but this host has no compose.override.yaml and the backup has none to restore, so Kuma was not restored." >&2
+    fi
   fi
 
   echo "Starting everything..."
@@ -889,6 +1084,7 @@ case "${1:-help}" in
   stop)    need_root "$@"; dc stop ;;
   restart) need_root "$@"; dc up -d --force-recreate; wait_ready ;;
   logs)    shift; dc logs --tail 200 -f "$@" ;;
+  kuma)    shift; kuma_cmd "$@" ;;
   reset-admin)
     # Recovery: new password for the first Super Admin (from BOOTSTRAP_ADMIN_EMAIL), role/status/lockout put right.
     read -r -s -p "New password for the first admin (12 or more characters): " pw; echo
@@ -930,7 +1126,8 @@ voxshift <command>
                     a cron job that does 'update' by itself (quiet unless a new version is out)
   self-update       fetch the installer from the latest release, check its checksum (and signature, if cosign is installed) and refresh
                     this command (secrets, settings and data untouched)
-  backup [DIR]      database, stored files, .env, compose.yaml, Caddyfile, certificates and Caddy's data into DIR/<timestamp> (default $DIR/backups);
+  backup [DIR]      database, stored files, .env, compose.yaml, Caddyfile, certificates and Caddy's data (and, with device status on, Kuma's data
+                    and compose.override.yaml) into DIR/<timestamp> (default $DIR/backups);
                     one encrypted DIR/<timestamp>.tar.age file instead when backup encryption is on
   backup-encryption on <public-key | file> | off | status | remove-unencrypted
                     encrypt every backup so that only the owner of a private key (kept OFF this host) can read it
@@ -941,9 +1138,11 @@ voxshift <command>
   certificate status | selfsigned | install | export
                     see which HTTPS certificate is in use and when it runs out; make a self-signed one; install your own (checked first,
                     the old settings come back if the front door does not start); save the public certificate to trust it on computers
-  logs [service]    follow logs (api, worker, web, caddy, postgres, redis)
+  kuma on [--port N] | off [--delete-data] | status
+                    device status: add Uptime Kuma (checks phones, paging units and gateways; shown in Discovery > Device status), remove it, or see it
+  logs [service]    follow logs (api, worker, web, caddy, postgres, redis, kuma)
   reset-admin       set a new password for the first Super Admin and unlock the account
-Files: $DIR/.env (settings, secrets), $DIR/compose.yaml, $DIR/Caddyfile
+Files: $DIR/.env (settings, secrets), $DIR/compose.yaml (and compose.override.yaml when Kuma is on), $DIR/Caddyfile
 EOF
     ;;
 esac
@@ -980,6 +1179,8 @@ while [ $# -gt 0 ]; do
     --no-auto-update) AUTO_UPDATE="no"; shift ;;
     --backup-recipient) [ -n "${2:-}" ] || die "--backup-recipient needs a public key (age1...) or a file of them."; BACKUP_RECIPIENTS+=("$2"); shift 2 ;;
     --refresh-command) REFRESH=1; shift ;;
+    --with-kuma) WITH_KUMA=1; shift ;;
+    --kuma-port) KUMA_PORT="${2:-}"; shift 2 ;;
     --no-docker-install) INSTALL_DOCKER=0; shift ;;
     --open-firewall) OPEN_FIREWALL=1; shift ;;
     --generate-only) START=0; INSTALL_DOCKER=0; shift ;;
@@ -1169,6 +1370,12 @@ if [ -n "$ADMIN_PASSWORD" ]; then
 fi
 [ -z "$ACME_EMAIL" ] || plain "$ACME_EMAIL" "--acme-email"
 case "$HSTS_MAX_AGE" in ''|*[!0-9]*) die "--hsts-max-age must be a whole number of seconds (0 switches HSTS off)." ;; esac
+if [ "$WITH_KUMA" = 1 ]; then
+  case "$KUMA_PORT" in ''|*[!0-9]*) die "--kuma-port must be a whole number from 1024 to 65535." ;; esac
+  { [ "$KUMA_PORT" -ge 1024 ] && [ "$KUMA_PORT" -le 65535 ]; } || die "--kuma-port must be from 1024 to 65535."
+elif [ "$KUMA_PORT" != "3001" ]; then
+  die "--kuma-port only makes sense together with --with-kuma."
+fi
 [ "${#HSTS_MAX_AGE}" -le 9 ] && [ "$HSTS_MAX_AGE" -le 63072000 ] || die "--hsts-max-age may be at most 63072000 (two years)."
 HSTS_MAX_AGE=$((10#$HSTS_MAX_AGE))
 
@@ -1589,6 +1796,10 @@ EOF
     ;;
 esac
 ok "compose.yaml and Caddyfile"
+if [ "$WITH_KUMA" = 1 ]; then
+  kuma_override "$KUMA_PORT" > "$DIR/compose.override.yaml"; chmod 644 "$DIR/compose.override.yaml"
+  ok "compose.override.yaml (Uptime Kuma for device status, on this host only: 127.0.0.1:$KUMA_PORT)"
+fi
 
 write_command
 
@@ -1664,6 +1875,7 @@ $( [ -n "$SMTP_HOST" ] || printf '      To send email, set SMTP_HOST (and the ot
    2. Back up regularly:  voxshift backup   (copy the result off this host)
 $( if [ ${#BACKUP_RECIPIENTS[@]} -gt 0 ]; then printf '      Backups are ENCRYPTED. Keep the matching private key OFF this host; without it they cannot be read.\n'; else printf '      Backups are not encrypted yet: voxshift backup-encryption on <public-key>   (docs/INSTALL-LINUX-REFERENCE.md, Backups)\n'; fi )
 $( if [ "$AUTO_UPDATE" != "no" ]; then printf '   3. Updates:            automatic (%s); see or change with: voxshift auto-update status\n' "$AUTO_UPDATE"; else printf '   3. Upgrade later:      voxshift update   (or let it do it for you: voxshift auto-update on)\n'; fi )
+$( if [ "$WITH_KUMA" = 1 ]; then printf '   4. Device status:      Kuma is installed (this host only, 127.0.0.1:%s). Open it through an SSH tunnel, create its admin account, tag the monitors\n                          and make a status page; then Discovery > Device status in Voxshift, address http://kuma:3001. More: voxshift kuma status\n' "$KUMA_PORT"; fi )
 EOF
 if [ "$TLS" = "internal" ]; then
   cat <<EOF

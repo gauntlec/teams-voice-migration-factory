@@ -103,7 +103,7 @@ cannot be taken back quickly), so they are not offered.
 
 `--admin-password`, `--acme-email`, `--hsts-max-age`, `--dir`, `--version latest|<yyyy.mm.N>|sha-<commit>` (for example `--version 2026.10.3`), the SMTP set (`--smtp-host --smtp-port --smtp-secure
 --smtp-user --smtp-pass --mail-from`), `--no-docker-install`, `--open-firewall` (opens 80/443 in ufw or firewalld if active),
-`--generate-only` (write the files and stop, to review), `--auto-update [daily|weekly]` / `--no-auto-update` (see below), `--backup-recipient KEY` (encrypt backups, see [Encrypting backups](#encrypting-backups-optional)), `--refresh-command` (on an existing install: rewrite only the `voxshift` command) and `-y`. `bash install.sh --help` lists them.
+`--generate-only` (write the files and stop, to review), `--auto-update [daily|weekly]` / `--no-auto-update` (see below), `--backup-recipient KEY` (encrypt backups, see [Encrypting backups](#encrypting-backups-optional)), `--with-kuma` and `--kuma-port N` (also install Uptime Kuma for device status, see below), `--refresh-command` (on an existing install: rewrite only the `voxshift` command) and `-y`. `bash install.sh --help` lists them.
 
 ## Removing an installation
 
@@ -132,6 +132,7 @@ other system directories.
 
 - `.env`: every setting and secret, freshly generated for this host (mode 600). **Back it up**: `DATA_ENCRYPTION_KEY` protects stored secrets and cannot be recovered.
 - `compose.yaml`: postgres, redis, api, worker, web and caddy. Only Caddy is published (80, and 443 with HTTPS).
+- `compose.override.yaml`: only with `--with-kuma` or `voxshift kuma on`: Uptime Kuma for device status (see Device status below). Docker Compose merges it into `compose.yaml` by itself, so `voxshift update` and `restart` keep it
 - `Caddyfile`: the front door and certificate handling
 - `voxshift`: the control command. A copy is installed as `/usr/local/bin/voxshift`, so it works from any directory and any user; it asks for `sudo` itself (the install directory is root-only)
 
@@ -147,6 +148,7 @@ Everything restarts on its own after a reboot (`restart: unless-stopped`, Docker
 - **`voxshift backup-encryption on KEY | off | status | remove-unencrypted`**: optional: makes every backup an encrypted `.tar.age` file that only the owner of a private key (kept off this host) can open. See [Encrypting backups](#encrypting-backups-optional).
 - **`voxshift restore FOLDER|FILE.tar.age [--identity KEYFILE] [--with-config] [--yes] [--force]`**: puts a backup back: checks it, takes a safety backup of today's state, asks you to type `RESTORE`, then restores the database, the stored files and `.env`, and starts everything. An encrypted backup also needs `--identity`. See Restoring.
 - **`voxshift certificate status | selfsigned [--name N] [--days D] | install --cert FILE --key FILE [--force] | export [FILE]`**: `status` shows which certificate is in use and when it runs out (and says if it expires within 30 days). `selfsigned` makes a self-signed certificate on this server and uses it (also the way to renew one). `install` puts in your own certificate (full chain, PEM) and key after checking them: readable, key matches, not expired, valid for the address (wildcards understood), with a note when the chain is missing; it refuses otherwise and changes nothing. Both rewrite the `Caddyfile` site block and the certificate mount in `compose.yaml` for you, restart the front door, and put the previous `Caddyfile`, `compose.yaml` and `certs/` back (kept as `*.before-cert`) if the front door does not stay up. They work from any HTTPS mode, not from `--tls none`. `export` saves the public certificate (Voxshift's root certificate in `internal` mode) so computers can be told to trust it; a public (`acme`) certificate needs nothing. An installation made earlier needs `voxshift self-update` first.
+- **`voxshift kuma on [--port N] | off [--delete-data] | status`**: device status: installs, removes or shows Uptime Kuma (see Device status below). An installation made earlier needs `voxshift self-update` first.
 - **`voxshift restart`**: re-applies `.env` and the compose file (use after editing either); recreates the containers, so the site is unavailable for a short time
 - **`voxshift reset-admin`**: sets a new password for the first Super Admin and unlocks the account (recovery)
 - **`voxshift logs [api|worker|web|caddy]`**: follow logs
@@ -204,6 +206,17 @@ installation made long ago keeps its old container settings; a fresh install is 
   account back (Super Admin, active, unlocked). Nothing else is needed. You may delete `BOOTSTRAP_ADMIN_PASSWORD` from `.env`
   once you have signed in, but the API then cannot create the admin on a brand-new empty database.
 
+## Device status (Uptime Kuma)
+
+`--with-kuma` (or `voxshift kuma on` later) writes `/opt/voxshift/compose.override.yaml`, which adds one service, `kuma`, to the installation:
+
+- **Image**: `louislam/uptime-kuma:2.5.7-rootless`, an exact version (the one device status was checked against). To use another, set `KUMA_IMAGE=<image:tag>` in `.env` and run `voxshift restart`. `voxshift update` pulls the pinned tag; it never moves to a newer Kuma by itself.
+- **Hardening**: read-only root, all capabilities dropped except `NET_RAW`, `no-new-privileges`, and the sysctl `net.ipv4.ping_group_range "1000 1000"`. Ping needs both `NET_RAW` and that sysctl. A host that refuses the sysctl (`invalid argument` when the container starts) needs a different range: tell the Voxshift team which host it was.
+- **Network**: Kuma's screen is published on `127.0.0.1` only (default port 3001, `--kuma-port N` or `voxshift kuma on --port N` to change it), so it can only be reached from the server itself, through an SSH tunnel. Voxshift's worker reaches it inside the installation at `http://kuma:3001`. It checks devices by IP from this host, so the server must be able to reach the devices' network.
+- **Data**: the named volume `voxshift_kumadata`. `voxshift backup` includes it (and the override file) and `voxshift restore` puts it back.
+- `voxshift kuma off` removes the container and the override file but keeps the data volume, so `voxshift kuma on` brings the monitors back; add `--delete-data` to delete it. `voxshift kuma on` never overwrites a `compose.override.yaml` that Voxshift did not write.
+- The checks for all of this are in `deploy/install/check-kuma.sh`, and the design is in [DEVICE-MONITORING.md](DEVICE-MONITORING.md).
+
 ## Backups
 
 `voxshift backup` (and the automatic update, and `uninstall.sh --backup-to`) writes one folder, for example
@@ -214,6 +227,7 @@ installation made long ago keeps its old container settings; a fresh install is 
 - `env`: a copy of `.env`: the secrets. Without `DATA_ENCRYPTION_KEY` the stored secrets cannot be read
 - `compose.yaml`, `Caddyfile`, `certs/`: how the containers and the web front door are set up (`certs/` only if you installed your own certificate)
 - `caddy-data.tar.gz`: Caddy's data volume: the issued certificates and, for `--tls internal`, Voxshift's own certificate authority, so browsers that already trust it keep trusting it
+- `kuma-data.tar.gz` and `compose.override.yaml`: only when device status (Kuma) is on: Kuma's monitors, status pages and history, and its settings file. Kuma is stopped for the few seconds the copy takes, so its database is not caught mid-write
 - `manifest.txt`: the date, the Voxshift release (for example `2026.10.19`), and a `sha256` checksum of every other file
 
 The folder and everything in it can only be read by root (700 / 600). **It contains the database, the passwords and keys and the private key
