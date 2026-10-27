@@ -77,6 +77,24 @@ cannot reach). It has no SNMP and no editing UI, which fits Voxshift being the c
 site is the heavyweight option and fits only if SNMP depth is needed. A native collector in the worker would give full control but
 means building history, flapping rules and maintenance windows ourselves.
 
+## Branding Kuma
+
+Tried on the throwaway (2026-10-27). Kuma has no theme or branding setting for its own dashboard or login page: Settings >
+Appearance offers only language, light/dark and heartbeat-bar style. The **status page** is brandable, and it is the page worth
+showing to site staff:
+
+- Files: `deploy/kuma/voxshift-status-page.css` (paste into status page > Edit > **Custom CSS**) and `deploy/kuma/voxshift-logo.png`
+  (the brand tile, 512 px; upload by clicking the logo in the editor, which also becomes the page's favicon).
+- Other settings used: title "Voxshift device status", a description, footer text "Voxshift · Microsoft Teams voice, migrated and
+  managed", theme **Light**, **Show Tags** on, **Show Powered By** off (a setting Kuma provides).
+- The CSS uses the Voxshift palette and Segoe UI, thin `#E3E3EC` dividers, a 7 px radius and white surfaces. Up and down colours are
+  Kuma's own green and red on purpose.
+- Not brandable without more work: the dashboard and login ("Uptime Kuma" name and logo). Injecting CSS through a reverse proxy
+  would do it, but the card keeps other stacks out of scope, so it was not tried. The engineer-only dashboard stays plain
+  Kuma; customers see Voxshift's own dashboard tiles (phase 1) or this status page.
+- The two-tone `vox`+`shift` wordmark cannot be drawn by Kuma's title (plain text), so the page shows the tile and the text
+  "Voxshift device status". A lockup image could replace the tile if one is made.
+
 ## Risks and open points
 
 - **ICMP needs `NET_RAW`** under `cap_drop: ALL`; that is a small, well understood capability but a change from "all dropped".
