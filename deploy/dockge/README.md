@@ -68,3 +68,20 @@ git push origin main         # ~5 min: GitHub Action builds + pushes images
 - `COOKIE_SECURE=false` — LAN HTTP only. Put TLS in front and set it `true`
   before any non-LAN exposure.
 - No customer tenant credentials are ever stored (see `docs/SECURITY.md`).
+
+## Device status (optional Uptime Kuma)
+
+Discovery > **Device status** shows whether each site's phones, paging units and gateways are answering, by reading an Uptime Kuma status page
+(docs/DISCOVERY.md "Device status", docs/DEVICE-MONITORING.md). Kuma is a service in [`compose.yaml`](./compose.yaml) behind the compose profile `kuma`:
+
+1. Make sure the stack's compose has the `kuma` service and the `kumadata` volume (copy them from `compose.yaml` if the stack was made before they existed).
+2. In the stack's `.env` add `COMPOSE_PROFILES=kuma`. Optional: `KUMA_HOST_PORT=3003` if 3001 is taken on the host, and `KUMA_BIND=0.0.0.0` to open
+   Kuma's screen to the LAN (default `127.0.0.1`: this host only). With `KUMA_BIND=0.0.0.0`, anyone who can reach the port sees Kuma's sign-in page:
+   limit it to staff networks, or put nginx-proxy-manager (HTTPS) in front and keep the default.
+3. **Deploy**. Voxshift reaches Kuma at `http://kuma:3001` inside the stack.
+4. Open Kuma's screen (`http://<host>:<port>`), create its admin account, add the devices as monitors tagged `site` (the site code) and `device`
+   (`algo`, `poly`, `dect`, `audiocodes`, `teams-room`, `other`), make a status page and turn **Show Tags** on.
+5. In Voxshift: Discovery > Device status > Set up: address `http://kuma:3001`, the status page name, switch on.
+
+Ping needs both `NET_RAW` and the `ping_group_range` sysctl in the compose file; a host that rejects the sysctl range needs a different one.
+On a Linux server installed with `install.sh` this is `voxshift kuma on` instead (docs/INSTALL-LINUX.md).
