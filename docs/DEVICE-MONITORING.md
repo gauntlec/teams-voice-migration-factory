@@ -128,7 +128,7 @@ Not isolated, by design: the module itself has one administrator and one set of 
 | Screen | Who | What |
 |---|---|---|
 | Devices | `monitoring:read`: administrators, engineers, **project managers**, customers | Read-only status: site tiles grouped by region (AMER, EMEA, APAC) and then country, each heading rolling up its worst state and devices down; down now, all devices, latest changes. A customer limited to some sites sees only those sites. Region and country come from the site (Administration > Sites); with neither set on any site the tiles stay a plain grid, sites without a region or country are grouped last, and monitors with no site tag are shown apart (`groupSiteTiles` in `packages/shared/src/device-status.ts`). |
-| Watch list | `monitoring:manage`: administrators and engineers only | One screen. The set-up (automatic, or "I run my own monitoring service"), the administrator sign-in prompt and Stop managing at the top; below that a form to add a device (site, name, kind, ping or TCP port, address) that stays open and keeps the site, kind and check so a whole site is quick to enter; and below that the devices being watched with Change, Remove and their set-up state. Offers "Set up automatically" first if monitoring is not set up. |
+| Watch list | `monitoring:manage`: administrators and engineers only | One screen. The set-up (automatic, or "I run my own monitoring service"), the administrator sign-in prompt and Stop managing at the top; below that a form to add a device (site, name, kind, ping, TCP port or SNMP, address) that stays open and keeps the site, kind and check so a whole site is quick to enter; and below that the devices being watched with Change, Remove and their set-up state. Offers "Set up automatically" first if monitoring is not set up. |
 | Alerts | `monitoring:manage` | Email alerts (below). |
 
 Project managers therefore see the status screen only: the API (`GET /t/:id/device-status`) leaves out the watch list, addresses and set-up state for anyone without `monitoring:manage`, and every other route needs it (`tests/db/src/devices/device-status-permissions.db.test.ts` pins this per route).
@@ -143,6 +143,34 @@ Project managers therefore see the status screen only: the API (`GET /t/:id/devi
 - Template `device_alert`, branded like the other emails, with the customer's name; times are UTC.
 
 Not done: per-device alert settings or muting a device, maintenance windows that silence alerts, Teams or SMS delivery, an alert history screen (the email log under Administration shows what was sent).
+
+## SNMP checks (built 2026-10-27)
+
+A device can be checked by **SNMP** as well as by ping or TCP port. Kuma's SNMP monitor reads **one OID** with a GET and compares the value with an expected one; the device is up while the comparison passes. Voxshift captures every field Kuma 2.5.7 uses for it:
+
+| Voxshift (Watch list form) | Stored in `device_inventory` (migration 0073) | Kuma monitor field |
+|---|---|---|
+| IP address / host name | `address` | `hostname` |
+| SNMP port (161) | `port` | `port` |
+| SNMP version (v1, v2c, v3) | `snmp_version` | `snmpVersion` |
+| Community string (v1, v2c) | `snmp_community_enc` (**encrypted**, AES-256-GCM, never sent to a browser; a blank field on a change keeps it) | `radiusPassword` (Kuma's name for it) |
+| v3 user name | `snmp_username` | `snmpV3Username` |
+| OID | `snmp_oid` (dotted numbers, Kuma's own pattern) | `snmpOid` |
+| "Healthy when the value" (equals, is not, more than, at least, less than, at most, contains) | `snmp_operator` | `jsonPathOperator` |
+| Expected value | `snmp_expected` | `expectedValue` |
+| (fixed) | - | `jsonPath` = `$`, `timeout` = 5 s, interval 20 s, one retry |
+
+The form offers ready-made readings (Presets in `packages/shared/src/device-inventory.ts`, `SNMP_PRESETS`): answers SNMP (sysUpTime), network port up (ifOperStatus), and for Algo paging adapters the SIP registration (`sipReg`, which reads `Page, Successful, ...` on an 8301) and `sipCall` (`Idle`), plus the 8028 door relay. Any can be edited, or "My own OID" used. The Algo OIDs come from `ALGOSOLUTIONS-DEVICES-MIB` (enterprise 41738): sipReg `.1.1.2.1.1.0`, sipCall `.1.1.2.1.2.0`, sipProxy `.1.1.2.1.3.0`, vol `.1.2.2.1.0`, mcast `.1.2.2.2.0`, receiver `.1.2.2.3.0`, 8028 ioDoorRelayState `.1.1.2.3.1.0`, mac `.1.1.1.1.0`, poe `.1.1.1.2.0`, synapps config `2.1.0`. Not every model has every object (an 8301 has no door relay or mac).
+
+Limits that come from Kuma 2.5.7, not Voxshift:
+
+- **SNMPv3 is "no authentication, no privacy" only**: a user name and nothing else. Devices that need authentication or encryption cannot be checked by SNMP through Kuma yet.
+- **Kuma cannot change the v3 user name of a monitor that exists** (its edit ignores it, and it never reports it back). Voxshift remembers the user name it last wrote (`kuma_snmp_user`) and, when it changes, deletes the monitor and makes a new one. The device keeps its place on the status page.
+- One OID per monitor: a device that needs several readings is added once per reading.
+
+The worker decrypts the community string only while it builds the Kuma request (`syncDeviceInventory(s, kuma, { decrypt })`); the API encrypts on the way in. The audit entry for a new device names the version and OID, never the community string.
+
+Tests: `tests/db/src/devices/device-snmp.db.test.ts` (fake Kuma), `packages/shared/src/device-inventory.test.ts`, and in `kuma-contract.db.test.ts` the "SNMP checks" group, which runs a fake Algo (a net-snmp agent) against a real Kuma, and with `SNMP_DEVICE_HOST` / `SNMP_DEVICE_COMMUNITY` set, a real device.
 
 ## Risks and open points
 

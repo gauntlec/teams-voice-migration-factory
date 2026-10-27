@@ -1,4 +1,4 @@
-import { KUMA_DEFAULT_URL, kumaSlugForTenant, type DeviceCheckType, type DeviceInventoryInput, type DeviceInventoryRow, type DeviceKind, type DeviceManagedView, type DeviceSyncState } from '@tvmf/shared';
+import { KUMA_DEFAULT_URL, kumaSlugForTenant, type DeviceCheckType, type DeviceInventoryInput, type DeviceInventoryRow, type DeviceKind, type DeviceManagedView, type DeviceSyncState, type SnmpOperator, type SnmpVersion } from '@tvmf/shared';
 import type { Scoped } from './live-state';
 
 /*
@@ -11,6 +11,7 @@ const flagSync = (s: Scoped) => s.updateTable('device_monitor_settings').set({ s
 
 type Row = {
   id: string; site_code: string; name: string; kind: string; check_type: string; address: string; port: number | null; sync_state: string; sync_error: string | null;
+  snmp_version: string | null; snmp_community_enc: string | null; snmp_username: string | null; snmp_oid: string | null; snmp_operator: string | null; snmp_expected: string | null;
 };
 const toRow = (r: Row): DeviceInventoryRow => ({
   id: r.id,
@@ -20,6 +21,10 @@ const toRow = (r: Row): DeviceInventoryRow => ({
   checkType: r.check_type as DeviceCheckType,
   address: r.address,
   port: r.port,
+  snmp:
+    r.check_type === 'snmp' && r.snmp_version && r.snmp_oid && r.snmp_operator
+      ? { version: r.snmp_version as SnmpVersion, username: r.snmp_username, oid: r.snmp_oid, operator: r.snmp_operator as SnmpOperator, expected: r.snmp_expected ?? '', hasCommunity: !!r.snmp_community_enc }
+      : null,
   syncState: r.sync_state as DeviceSyncState,
   syncError: r.sync_error,
 });
@@ -35,20 +40,32 @@ export async function canonicalSiteCode(s: Scoped, code: string): Promise<string
   return sites.find((x) => x.sitecode.toLowerCase() === code.toLowerCase())?.sitecode ?? null;
 }
 
-export async function addDevice(s: Scoped, input: DeviceInventoryInput): Promise<DeviceInventoryRow> {
+/** Where the SNMP fields of an input go. The community string arrives readable and is stored encrypted (`encrypt` is the API's encryptSecret). */
+const snmpColumns = (input: DeviceInventoryInput, encrypt: (plain: string) => string) => ({
+  snmp_version: input.snmpVersion ?? null,
+  snmp_username: input.snmpUsername ?? null,
+  snmp_oid: input.snmpOid ?? null,
+  snmp_operator: input.snmpOperator ?? null,
+  snmp_expected: input.snmpExpected ?? null,
+  ...(input.snmpCommunity ? { snmp_community_enc: encrypt(input.snmpCommunity) } : {}),
+});
+
+export async function addDevice(s: Scoped, input: DeviceInventoryInput, encrypt: (plain: string) => string = (p) => p): Promise<DeviceInventoryRow> {
   const r = await s
     .insertInto('device_inventory')
-    .values({ site_code: input.siteCode, name: input.name, kind: input.kind, check_type: input.checkType, address: input.address, port: input.port ?? null })
+    .values({ site_code: input.siteCode, name: input.name, kind: input.kind, check_type: input.checkType, address: input.address, port: input.port ?? null, ...snmpColumns(input, encrypt) })
     .returningAll()
     .executeTakeFirstOrThrow();
   await flagSync(s);
   return toRow(r);
 }
 
-export async function updateDevice(s: Scoped, id: string, input: DeviceInventoryInput): Promise<DeviceInventoryRow | null> {
+/** A change that leaves the community string blank keeps the one stored; a device that no longer uses one (not SNMP, or v3) drops it. */
+export async function updateDevice(s: Scoped, id: string, input: DeviceInventoryInput, encrypt: (plain: string) => string = (p) => p): Promise<DeviceInventoryRow | null> {
+  const usesCommunity = input.checkType === 'snmp' && input.snmpVersion !== '3';
   const r = await s
     .updateTable('device_inventory')
-    .set({ site_code: input.siteCode, name: input.name, kind: input.kind, check_type: input.checkType, address: input.address, port: input.port ?? null, sync_state: 'pending', sync_error: null, updated_at: new Date().toISOString() })
+    .set({ site_code: input.siteCode, name: input.name, kind: input.kind, check_type: input.checkType, address: input.address, port: input.port ?? null, ...snmpColumns(input, encrypt), ...(usesCommunity ? {} : { snmp_community_enc: null }), sync_state: 'pending', sync_error: null, updated_at: new Date().toISOString() })
     .where('id', '=', id)
     .where('removed', '=', false)
     .returningAll()
@@ -56,6 +73,12 @@ export async function updateDevice(s: Scoped, id: string, input: DeviceInventory
   if (!r) return null;
   await flagSync(s);
   return toRow(r);
+}
+
+/** Whether a stored SNMP v1/v2c device already has a community string (a change may then leave the field blank). */
+export async function deviceHasCommunity(s: Scoped, id: string): Promise<boolean> {
+  const r = await s.selectFrom('device_inventory').select('snmp_community_enc').where('id', '=', id).where('removed', '=', false).executeTakeFirst();
+  return !!r?.snmp_community_enc;
 }
 
 /** Takes a device off the list. One that has a Kuma monitor is only marked: the worker deletes the monitor, then the row. */

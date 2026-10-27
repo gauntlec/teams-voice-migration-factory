@@ -7,9 +7,36 @@ import { DEVICE_KINDS, type DeviceKind } from './device-status';
  * device=, on the status page Voxshift reads. Only what Voxshift writes to Kuma is described here; reading is device-status.ts.
  */
 
-export const DEVICE_CHECK_TYPES = ['ping', 'port'] as const;
+export const DEVICE_CHECK_TYPES = ['ping', 'port', 'snmp'] as const;
 export type DeviceCheckType = (typeof DEVICE_CHECK_TYPES)[number];
-export const DEVICE_CHECK_LABEL: Record<DeviceCheckType, string> = { ping: 'Ping', port: 'TCP port' };
+export const DEVICE_CHECK_LABEL: Record<DeviceCheckType, string> = { ping: 'Ping', port: 'TCP port', snmp: 'SNMP' };
+
+// ------------------------------------------------------------------------------------------------------------------ SNMP checks
+// What Uptime Kuma 2.5.7's SNMP monitor asks for (server/monitor-types/snmp.js): one OID is read from the device with a GET, and the value is compared with an
+// expected one. Kuma supports SNMP v1, v2c and v3 with no authentication (noAuthNoPriv: a user name only).
+
+export const SNMP_VERSIONS = ['1', '2c', '3'] as const;
+export type SnmpVersion = (typeof SNMP_VERSIONS)[number];
+export const SNMP_VERSION_LABEL: Record<SnmpVersion, string> = { '1': 'SNMPv1', '2c': 'SNMPv2c', '3': 'SNMPv3 (user name only)' };
+export const SNMP_DEFAULT_PORT = 161;
+
+/** The comparisons Kuma offers. */
+export const SNMP_OPERATORS = ['==', '!=', '>', '>=', '<', '<=', 'contains'] as const;
+export type SnmpOperator = (typeof SNMP_OPERATORS)[number];
+export const SNMP_OPERATOR_LABEL: Record<SnmpOperator, string> = { '==': 'equals', '!=': 'is not', '>': 'is more than', '>=': 'is at least', '<': 'is less than', '<=': 'is at most', contains: 'contains' };
+
+/** The pattern Kuma's own form insists on: dotted numbers, first 0-2, no leading zeros after it (a trailing .0 is fine). */
+export const SNMP_OID = /^([0-2])((\.0)|(\.[1-9][0-9]*))*$/;
+
+export interface SnmpPreset { id: string; label: string; hint: string; oid: string; operator: SnmpOperator; expected: string }
+/** Ready-made readings so nobody has to look an OID up. A person can change any of the three after choosing one. */
+export const SNMP_PRESETS: SnmpPreset[] = [
+  { id: 'answers', label: 'Answers SNMP (system uptime)', hint: 'Reads sysUpTime, which every SNMP device has: the check passes while the device answers.', oid: '1.3.6.1.2.1.1.3.0', operator: '>=', expected: '0' },
+  { id: 'interface', label: 'Network port is up (ifOperStatus)', hint: 'Passes while the port is up. The last number is the port\'s interface number: change it for another port.', oid: '1.3.6.1.2.1.2.2.1.8.1', operator: '==', expected: '1' },
+  { id: 'algo-sip-reg', label: 'Algo: SIP registration', hint: 'The Algo sipReg value, which reads like "Page, Successful, ..." while the device is registered with the phone system.', oid: '1.3.6.1.4.1.41738.1.1.2.1.1.0', operator: 'contains', expected: 'Successful' },
+  { id: 'algo-idle', label: 'Algo: not stuck in a call', hint: 'The Algo sipCall value, which reads "Idle" when no call is in progress.', oid: '1.3.6.1.4.1.41738.1.1.2.1.2.0', operator: '==', expected: 'Idle' },
+  { id: 'algo-door-relay', label: 'Algo 8028: door relay closed', hint: 'The ioDoorRelayState of the Algo 8028 only (other models do not have it): 0 is closed, 1 is open.', oid: '1.3.6.1.4.1.41738.1.1.2.3.1.0', operator: '==', expected: '0' },
+];
 
 /** Kuma's shortest interval is 20 seconds; this is what a device is checked at. */
 export const DEVICE_CHECK_INTERVAL_SECONDS = 20;
@@ -25,12 +52,42 @@ export const deviceInventoryInputSchema = z
     checkType: z.enum(DEVICE_CHECK_TYPES),
     address: z.string().trim().max(253).regex(HOST, 'Use the device\'s IP address or host name, with no http:// and no path.'),
     port: z.number().int().min(1).max(65535).nullish(),
+    /** SNMP checks only. */
+    snmpVersion: z.enum(SNMP_VERSIONS).nullish(),
+    /** v1 and v2c. Blank on a change means "keep the one stored"; it is never sent back to a browser. */
+    snmpCommunity: z.string().max(200).nullish(),
+    /** v3. */
+    snmpUsername: z.string().trim().max(120).nullish(),
+    snmpOid: z.string().trim().max(200).nullish(),
+    snmpOperator: z.enum(SNMP_OPERATORS).nullish(),
+    snmpExpected: z.string().trim().max(200).nullish(),
   })
   .superRefine((v, ctx) => {
     if (v.checkType === 'port' && !v.port) ctx.addIssue({ code: 'custom', path: ['port'], message: 'Enter the port to check.' });
+    if (v.checkType !== 'snmp') return;
+    if (!v.snmpVersion) ctx.addIssue({ code: 'custom', path: ['snmpVersion'], message: 'Choose the SNMP version.' });
+    if (v.snmpVersion === '3' && !v.snmpUsername) ctx.addIssue({ code: 'custom', path: ['snmpUsername'], message: 'Enter the SNMPv3 user name.' });
+    if (!v.snmpOid || !SNMP_OID.test(v.snmpOid)) ctx.addIssue({ code: 'custom', path: ['snmpOid'], message: 'Enter the OID as dotted numbers, like 1.3.6.1.2.1.1.3.0.' });
+    if (!v.snmpOperator) ctx.addIssue({ code: 'custom', path: ['snmpOperator'], message: 'Choose how the value is compared.' });
+    if (!v.snmpExpected) ctx.addIssue({ code: 'custom', path: ['snmpExpected'], message: 'Enter the value that means the device is healthy.' });
   })
-  .transform((v) => ({ ...v, port: v.checkType === 'port' ? (v.port ?? null) : null }));
-export type DeviceInventoryInput = z.infer<typeof deviceInventoryInputSchema>;
+  .transform((v) => {
+    const snmp = v.checkType === 'snmp';
+    return {
+      ...v,
+      port: v.checkType === 'port' ? (v.port ?? null) : snmp ? (v.port ?? SNMP_DEFAULT_PORT) : null,
+      snmpVersion: snmp ? (v.snmpVersion ?? null) : null,
+      snmpCommunity: snmp && v.snmpVersion !== '3' && v.snmpCommunity ? v.snmpCommunity : null,
+      snmpUsername: snmp && v.snmpVersion === '3' ? (v.snmpUsername ?? null) : null,
+      snmpOid: snmp ? (v.snmpOid ?? null) : null,
+      snmpOperator: snmp ? (v.snmpOperator ?? null) : null,
+      snmpExpected: snmp ? (v.snmpExpected ?? null) : null,
+    };
+  });
+type ParsedDevice = z.infer<typeof deviceInventoryInputSchema>;
+/** What the API stores. The SNMP fields only matter for an SNMP check, so anything else can leave them out. */
+export type DeviceInventoryInput = Omit<ParsedDevice, 'snmpVersion' | 'snmpCommunity' | 'snmpUsername' | 'snmpOid' | 'snmpOperator' | 'snmpExpected'> &
+  Partial<Pick<ParsedDevice, 'snmpVersion' | 'snmpCommunity' | 'snmpUsername' | 'snmpOid' | 'snmpOperator' | 'snmpExpected'>>;
 
 export type DeviceSyncState = 'pending' | 'synced' | 'error';
 
@@ -42,6 +99,8 @@ export interface DeviceInventoryRow {
   checkType: DeviceCheckType;
   address: string;
   port: number | null;
+  /** SNMP checks only. The community string is secret: only whether one is stored is shown. */
+  snmp: { version: SnmpVersion; username: string | null; oid: string; operator: SnmpOperator; expected: string; hasCommunity: boolean } | null;
   syncState: DeviceSyncState;
   syncError: string | null;
 }
@@ -150,7 +209,10 @@ const KUMA_MONITOR_DEFAULTS = {
   ntpRootDispersionThreshold: 500,
 } as const;
 
-type Device = Pick<DeviceInventoryRow, 'name' | 'checkType' | 'address' | 'port'>;
+/** What Kuma needs to know to check a device. `snmp.community` is the readable string (the worker decrypts it just before use). */
+type Device = Pick<DeviceInventoryRow, 'name' | 'checkType' | 'address' | 'port'> & {
+  snmp?: { version: SnmpVersion; community: string | null; username: string | null; oid: string; operator: SnmpOperator; expected: string } | null;
+};
 
 /** The fields of a Kuma monitor that Voxshift decides. Everything else is left as Kuma has it. */
 export function kumaMonitorFields(d: Device): Record<string, unknown> {
@@ -158,13 +220,23 @@ export function kumaMonitorFields(d: Device): Record<string, unknown> {
   if (d.checkType === 'ping') {
     return { ...common, type: 'ping', hostname: d.address, port: null, packetSize: 56, ping_count: 1, ping_numeric: true, ping_per_request_timeout: 2 };
   }
+  if (d.checkType === 'snmp' && d.snmp) {
+    const q = d.snmp;
+    // Kuma keeps the v1/v2c community string in its field "radiusPassword" and the value comparison in the JSON-query fields (the value read is a plain
+    // number or text, so the query is just "$"). SNMP is local-network traffic, so Kuma's own default timeout for it is 5 seconds.
+    return {
+      ...common, timeout: 5, type: 'snmp', hostname: d.address, port: d.port ?? SNMP_DEFAULT_PORT,
+      snmpVersion: q.version, radiusPassword: q.version === '3' ? '' : (q.community ?? ''), snmpV3Username: q.version === '3' ? (q.username ?? '') : '',
+      snmpOid: q.oid, jsonPath: '$', jsonPathOperator: q.operator, expectedValue: q.expected,
+    };
+  }
   return { ...common, type: 'port', hostname: d.address, port: d.port };
 }
 
 /** The payload for Kuma's `add` event. */
 export function kumaNewMonitor(d: Device): Record<string, unknown> {
   const m: Record<string, unknown> = { ...KUMA_MONITOR_DEFAULTS, ...kumaMonitorFields(d) };
-  delete m.url; // a ping or port monitor has no URL
+  delete m.url; // a ping, port or SNMP monitor has no URL
   return m;
 }
 

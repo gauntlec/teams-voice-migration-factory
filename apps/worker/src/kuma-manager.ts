@@ -56,7 +56,7 @@ export async function syncKumaFor(db: Kysely<DB>, s: ReturnType<typeof tenantDb>
   try {
     client = await KumaClient.connect(due.url);
     await signedIn(client, db, due);
-    const r = await syncDeviceInventory(s, client);
+    const r = await syncDeviceInventory(s, client, { decrypt: decryptSecret });
     await recordDeviceSync(s, { deviceErrors: r.errors });
     return r.errors ? 'failed' : 'ok';
   } catch (e) {

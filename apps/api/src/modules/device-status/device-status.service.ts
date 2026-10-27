@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { addDevice, canonicalSiteCode, deviceAlertView, deviceStatusOverview, disableManagedKuma, enableManagedKuma, removeDevice, saveDeviceAlertSettings, saveDeviceMonitorSettings, tenantDb, updateDevice, webOrigin } from '@tvmf/db';
+import { addDevice, canonicalSiteCode, deviceHasCommunity, deviceAlertView, deviceStatusOverview, disableManagedKuma, enableManagedKuma, removeDevice, saveDeviceAlertSettings, saveDeviceMonitorSettings, tenantDb, updateDevice, webOrigin } from '@tvmf/db';
 import { buildDeviceAlertContext, can, DEVICE_ALERT_FREQUENCY_LABEL, isTenantStatusSlug, kumaSlugForTenant, type DeviceAlertPlan, type DeviceAlertSettingsInput, type DeviceAutoSetupInput, type DeviceInventoryInput, type DeviceMonitorSettingsInput, type DeviceStatusOverview } from '@tvmf/shared';
 import { MailService } from '../../mail/mail.service';
 import { InjectDb, type Db } from '../../db/db.module';
@@ -121,13 +121,16 @@ export class DeviceStatusService {
   }
 
   async addDevice(t: TenantContext, u: AuthedUser, input: DeviceInventoryInput) {
-    const row = await addDevice(this.s(t), await this.checked(t, input));
-    await this.audit.tenant(t.schema, 'discovery.device_added', { actor: this.actor(u), targetType: 'device_inventory', targetId: row.id, detail: { name: row.name, site: row.siteCode, kind: row.kind, checkType: row.checkType } });
+    if (input.checkType === 'snmp' && input.snmpVersion !== '3' && !input.snmpCommunity) throw new BadRequestException('Enter the SNMP community string.');
+    const row = await addDevice(this.s(t), await this.checked(t, input), encryptSecret);
+    await this.audit.tenant(t.schema, 'discovery.device_added', { actor: this.actor(u), targetType: 'device_inventory', targetId: row.id, detail: { name: row.name, site: row.siteCode, kind: row.kind, checkType: row.checkType, ...(row.snmp ? { snmpVersion: row.snmp.version, snmpOid: row.snmp.oid } : {}) } });
     return row;
   }
 
   async updateDevice(t: TenantContext, u: AuthedUser, id: string, input: DeviceInventoryInput) {
-    const row = await updateDevice(this.s(t), id, await this.checked(t, input));
+    // A blank community string on a change keeps the stored one, so only a device that has none yet needs it.
+    if (input.checkType === 'snmp' && input.snmpVersion !== '3' && !input.snmpCommunity && !(await deviceHasCommunity(this.s(t), id))) throw new BadRequestException('Enter the SNMP community string.');
+    const row = await updateDevice(this.s(t), id, await this.checked(t, input), encryptSecret);
     if (!row) throw new NotFoundException('That device is not on the list.');
     await this.audit.tenant(t.schema, 'discovery.device_updated', { actor: this.actor(u), targetType: 'device_inventory', targetId: id, detail: { name: row.name, site: row.siteCode } });
     return row;

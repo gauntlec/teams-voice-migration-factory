@@ -109,6 +109,7 @@ export function WatchList({ base }: { base: string }) {
                   <TableCell>
                     {DEVICE_CHECK_LABEL[d.checkType]} {d.address}
                     {d.port ? `:${d.port}` : ''}
+                    {d.snmp && <MutedText size={200}> · v{d.snmp.version} · {d.snmp.oid}</MutedText>}
                   </TableCell>
                   <TableCell title={d.syncError ?? undefined}>
                     <Badge appearance="tint" color={SYNC[d.syncState].color}>

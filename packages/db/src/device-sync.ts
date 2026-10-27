@@ -1,4 +1,4 @@
-import { KUMA_MANAGED_TITLE, kumaSlugForTenant, kumaMonitorFields, kumaNewMonitor, kumaTagsFor, planTagChanges, type DeviceKind } from '@tvmf/shared';
+import { KUMA_MANAGED_TITLE, kumaSlugForTenant, kumaMonitorFields, kumaNewMonitor, kumaTagsFor, planTagChanges, type DeviceKind, type SnmpOperator, type SnmpVersion } from '@tvmf/shared';
 import type { Scoped } from './live-state';
 
 /*
@@ -40,7 +40,8 @@ export interface DeviceSyncResult { created: number; updated: number; deleted: n
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 300);
 
-export async function syncDeviceInventory(s: Scoped, kuma: KumaApi): Promise<DeviceSyncResult> {
+/** `secrets.decrypt` reads the stored SNMP community strings (the worker passes its decryptSecret); a deployment without one can still sync devices that need no secret. */
+export async function syncDeviceInventory(s: Scoped, kuma: KumaApi, secrets: { decrypt?: (enc: string) => string } = {}): Promise<DeviceSyncResult> {
   const result: DeviceSyncResult = { created: 0, updated: 0, deleted: 0, errors: 0 };
   const rows = await s.selectFrom('device_inventory').selectAll().orderBy('site_code').orderBy('name').execute();
   const monitors = await kuma.listMonitors();
@@ -55,9 +56,27 @@ export async function syncDeviceInventory(s: Scoped, kuma: KumaApi): Promise<Dev
         await s.deleteFrom('device_inventory').where('id', '=', r.id).execute();
         continue;
       }
-      const device = { name: r.name, checkType: r.check_type as 'ping' | 'port', address: r.address, port: r.port };
+      const device: Parameters<typeof kumaNewMonitor>[0] = { name: r.name, checkType: r.check_type as 'ping' | 'port' | 'snmp', address: r.address, port: r.port };
+      if (device.checkType === 'snmp') {
+        if (!r.snmp_version || !r.snmp_oid || !r.snmp_operator) throw new Error('This SNMP check is missing its version, OID or comparison.');
+        let community: string | null = null;
+        if (r.snmp_version !== '3') {
+          if (!r.snmp_community_enc) throw new Error('This SNMP check has no community string: change the device and enter one.');
+          if (!secrets.decrypt) throw new Error('The community string cannot be read here.');
+          community = secrets.decrypt(r.snmp_community_enc);
+        }
+        device.snmp = { version: r.snmp_version as SnmpVersion, community, username: r.snmp_username, oid: r.snmp_oid, operator: r.snmp_operator as SnmpOperator, expected: r.snmp_expected ?? '' };
+      }
       let id = r.kuma_monitor_id;
       let current = id !== null ? monitors.get(id) : undefined;
+      // Kuma cannot change the user name of an SNMPv3 monitor that exists (its edit ignores it), so a new one replaces the old.
+      const v3User = device.snmp?.version === '3' ? (device.snmp.username ?? '') : null;
+      if (current && id !== null && v3User !== null && r.kuma_snmp_user !== v3User) {
+        await kuma.deleteMonitor(id);
+        monitors.delete(id);
+        current = undefined;
+        result.deleted++;
+      }
       if (!current) {
         // New, or deleted by hand in Kuma: make it again.
         id = await kuma.addMonitor(kumaNewMonitor(device));
@@ -65,13 +84,14 @@ export async function syncDeviceInventory(s: Scoped, kuma: KumaApi): Promise<Dev
         result.created++;
       } else {
         const want = kumaMonitorFields(device);
-        const differs = (['name', 'type', 'hostname', 'port'] as const).some((k) => (current![k] ?? null) !== (want[k] ?? null));
+        const keys = device.checkType === 'snmp' ? (['name', 'type', 'hostname', 'port', 'snmpVersion', 'snmpOid', 'jsonPathOperator', 'expectedValue', 'radiusPassword'] as const) : (['name', 'type', 'hostname', 'port'] as const);
+        const differs = keys.some((k) => (current![k] ?? null) !== (want[k] ?? null));
         if (differs) { await kuma.editMonitor(current, want); result.updated++; }
       }
       const { remove, add } = planTagChanges(kumaTagsFor({ siteCode: r.site_code, kind: r.kind as DeviceKind }), current.tags ?? []);
       for (const t of remove) await kuma.deleteMonitorTag(t.tagId, id!, t.value);
       for (const t of add) await kuma.addMonitorTag(tagIds[t.name as 'site' | 'device'], id!, t.value);
-      await s.updateTable('device_inventory').set({ kuma_monitor_id: id, sync_state: 'synced', sync_error: null, updated_at: now() }).where('id', '=', r.id).execute();
+      await s.updateTable('device_inventory').set({ kuma_monitor_id: id, kuma_snmp_user: v3User, sync_state: 'synced', sync_error: null, updated_at: now() }).where('id', '=', r.id).execute();
       grouped.set(r.site_code, [...(grouped.get(r.site_code) ?? []), id!]);
     } catch (e) {
       result.errors++;

@@ -6,11 +6,13 @@ process.env.DATA_ENCRYPTION_KEY ||= 'kuma-contract-test-key';
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 import { addDevice, deviceStatusOverview, enableManagedKuma, getMonitoringAdmin, listDeviceInventory, recordDeviceSync, removeDevice, saveMonitoringAdmin, syncDeviceInventory, updateDevice } from '@tvmf/db';
 import { kumaSlugForTenant, parseKumaStatus } from '@tvmf/shared';
-import { decryptSecret } from '../../../../apps/worker/src/crypto';
+import { decryptSecret, encryptSecret } from '../../../../apps/worker/src/crypto';
 import { KumaClient } from '../../../../apps/worker/src/kuma-client';
 import { syncKumaFor } from '../../../../apps/worker/src/kuma-manager';
 import { seedCustomer, seedSite, useDb, type TestCustomer } from '../helpers';
 
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- net-snmp ships no types; it only plays the device here
+const snmp = require('net-snmp');
 const url = process.env.KUMA_CONTRACT_URL;
 const handle = useDb();
 let c: TestCustomer;
@@ -162,6 +164,95 @@ describe.skipIf(!url)('Uptime Kuma contract', () => {
     expect(await syncDeviceInventory(c.s, fresh)).toMatchObject({ created: 1, errors: 0 });
     fresh.close();
     expect((await status()).map((m) => m.name)).toEqual(['Loopback ping (renamed)']);
+  });
+
+  // A fake Algo device: a real SNMP agent (net-snmp) answering the Algo sipReg OID, for Kuma to read over UDP.
+  describe('SNMP checks', () => {
+    const ALGO_SIP_REG = '1.3.6.1.4.1.41738.1.1.2.1.1';
+    const snmpPort = 20000 + Math.floor(Math.random() * 20000);
+    let agent: { close(): void; getMib(): { registerProvider(p: unknown): void; setScalarValue(name: string, v: unknown): void }; getAuthorizer(): { addCommunity(c: string): void; addUser(u: unknown): void } };
+    const sipReg = { value: 'Page, Successful, 0022EE198F01vkY1FaUf;' };  // what a real Algo 8301 answers
+
+    beforeAll(async () => {
+      // net-snmp calls this back for requests and errors, not when it is ready: it is listening as soon as it is made
+      agent = snmp.createAgent({ port: snmpPort, disableAuthorization: false, accessControlModelType: snmp.AccessControlModelType.None }, () => {});
+      agent.getAuthorizer().addCommunity('public');
+      agent.getAuthorizer().addUser({ name: 'monitor', level: snmp.SecurityLevel.noAuthNoPriv });
+      agent.getMib().registerProvider({ name: 'sipReg', type: snmp.MibProviderType.Scalar, oid: ALGO_SIP_REG, scalarType: snmp.ObjectType.OctetString, maxAccess: snmp.MaxAccess['read-only'] });
+      agent.getMib().setScalarValue('sipReg', sipReg.value);
+    });
+    afterAll(() => agent?.close());
+
+    const waitFor = async (name: string, want: string, tries = 30) => {
+      let state = '';
+      for (let i = 0; i < tries; i++) {
+        state = (await status()).find((m) => m.name === name)?.state ?? 'missing';
+        if (state === want) break;
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+      return state;
+    };
+    const base = { siteCode: 'LTN01', kind: 'algo', checkType: 'snmp', address: '127.0.0.1', port: snmpPort, snmpOid: `${ALGO_SIP_REG}.0`, snmpOperator: 'contains', snmpExpected: 'Successful' } as const;
+
+    it('makes an SNMP v2c monitor from the stored (encrypted) community string, and Kuma reads the device', async () => {
+      await addDevice(c.s, { ...base, name: 'Fake Algo v2c', snmpVersion: '2c', snmpCommunity: 'public', snmpUsername: null }, encryptSecret);
+      const stored = await c.s.selectFrom('device_inventory').select('snmp_community_enc').where('name', '=', 'Fake Algo v2c').executeTakeFirstOrThrow();
+      expect(stored.snmp_community_enc).not.toBe('public');
+      expect(await syncKumaFor(handle.db, c.s, c.t.id)).toBe('ok');
+      const m = [...(await client.listMonitors()).values()].find((x) => x.name === 'Fake Algo v2c')!;
+      expect(m).toMatchObject({ type: 'snmp', hostname: '127.0.0.1', port: snmpPort, snmpVersion: '2c', snmpOid: `${ALGO_SIP_REG}.0`, jsonPathOperator: 'contains', expectedValue: 'Successful', jsonPath: '$' });
+      expect(await waitFor('Fake Algo v2c', 'up')).toBe('up');
+    }, 120_000);
+
+    it('goes down when the value stops matching, and a wrong community string is down too', async () => {
+      sipReg.value = 'Page, Failed, 0022EE198F01vkY1FaUf;';
+      agent.getMib().setScalarValue('sipReg', sipReg.value);
+      expect(await waitFor('Fake Algo v2c', 'down')).toBe('down');
+      sipReg.value = 'Page, Successful, 0022EE198F01vkY1FaUf;';
+      agent.getMib().setScalarValue('sipReg', sipReg.value);
+      expect(await waitFor('Fake Algo v2c', 'up')).toBe('up');
+      const dev = (await listDeviceInventory(c.s)).find((d) => d.name === 'Fake Algo v2c')!;
+      await updateDevice(c.s, dev.id, { ...base, name: 'Fake Algo v2c', snmpVersion: '2c', snmpCommunity: 'wrong', snmpUsername: null }, encryptSecret);
+      expect(await syncDeviceInventory(c.s, client, { decrypt: decryptSecret })).toMatchObject({ updated: 1, errors: 0 });
+      expect(await waitFor('Fake Algo v2c', 'down')).toBe('down');
+      // a change that leaves the community blank keeps the stored one: back to what was there
+      await updateDevice(c.s, dev.id, { ...base, name: 'Fake Algo v2c', snmpVersion: '2c', snmpCommunity: 'public', snmpUsername: null }, encryptSecret);
+      await updateDevice(c.s, dev.id, { ...base, name: 'Fake Algo v2c', snmpVersion: '2c', snmpCommunity: null, snmpUsername: null }, encryptSecret);
+      expect(await syncDeviceInventory(c.s, client, { decrypt: decryptSecret })).toMatchObject({ updated: 1, errors: 0 });
+      expect(await waitFor('Fake Algo v2c', 'up')).toBe('up');
+    }, 240_000);
+
+    it('makes an SNMPv3 monitor, and recreates it when the user name changes (Kuma cannot edit it)', async () => {
+      await addDevice(c.s, { ...base, name: 'Fake Algo v3', snmpVersion: '3', snmpCommunity: null, snmpUsername: 'monitor' }, encryptSecret);
+      expect(await syncDeviceInventory(c.s, client, { decrypt: decryptSecret })).toMatchObject({ created: 1, errors: 0 });
+      expect(await waitFor('Fake Algo v3', 'up')).toBe('up');
+      const dev = (await listDeviceInventory(c.s)).find((d) => d.name === 'Fake Algo v3')!;
+      const before = (await c.s.selectFrom('device_inventory').select('kuma_monitor_id').where('id', '=', dev.id).executeTakeFirstOrThrow()).kuma_monitor_id;
+      await updateDevice(c.s, dev.id, { ...base, name: 'Fake Algo v3', snmpVersion: '3', snmpCommunity: null, snmpUsername: 'stranger' }, encryptSecret);
+      expect(await syncDeviceInventory(c.s, client, { decrypt: decryptSecret })).toMatchObject({ created: 1, deleted: 1, errors: 0 });
+      const after = (await c.s.selectFrom('device_inventory').select('kuma_monitor_id').where('id', '=', dev.id).executeTakeFirstOrThrow()).kuma_monitor_id;
+      expect(after).not.toBe(before);
+      // (the fake agent answers any v3 user name, so the new monitor reads up; that the name reached Kuma is checked by the fake-Kuma tests)
+      expect(await waitFor('Fake Algo v3', 'up')).toBe('up');
+    }, 240_000);
+
+    // Optional: a real device. SNMP_DEVICE_HOST=192.168.200.121 SNMP_DEVICE_COMMUNITY=voxshift (an Algo paging adapter; its sipReg reads "Page, Successful, ...")
+    it.skipIf(!process.env.SNMP_DEVICE_HOST)('reads a real Algo device: registration passes, and a value it never has reads down', async () => {
+      const real = { ...base, address: process.env.SNMP_DEVICE_HOST!, port: 161, snmpVersion: '2c', snmpCommunity: process.env.SNMP_DEVICE_COMMUNITY ?? 'public', snmpUsername: null } as const;
+      await addDevice(c.s, { ...real, name: 'Real Algo registered' }, encryptSecret);
+      await addDevice(c.s, { ...real, name: 'Real Algo wrong text', snmpExpected: 'Definitely not this' }, encryptSecret);
+      await addDevice(c.s, { ...real, name: 'Real Algo uptime', snmpOid: '1.3.6.1.2.1.1.3.0', snmpOperator: '>=', snmpExpected: '0' }, encryptSecret);
+      expect(await syncDeviceInventory(c.s, client, { decrypt: decryptSecret })).toMatchObject({ created: 3, errors: 0 });
+      expect(await waitFor('Real Algo registered', 'up')).toBe('up');
+      expect(await waitFor('Real Algo uptime', 'up')).toBe('up');
+      expect(await waitFor('Real Algo wrong text', 'down')).toBe('down');
+    }, 240_000);
+
+    it('removes the SNMP devices again (the later test counts what is left)', async () => {
+      for (const d of (await listDeviceInventory(c.s)).filter((x) => x.checkType === 'snmp')) await removeDevice(c.s, d.id);
+      expect(await syncDeviceInventory(c.s, client, { decrypt: decryptSecret })).toMatchObject({ errors: 0 });
+      expect((await listDeviceInventory(c.s)).filter((x) => x.checkType === 'snmp')).toEqual([]);
+    });
   });
 
   it('two customers on the one service keep to their own pages, and the second needs no sign-in of its own', async () => {

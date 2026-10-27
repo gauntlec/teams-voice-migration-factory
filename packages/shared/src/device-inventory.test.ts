@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { deviceAutoSetupSchema, deviceInventoryInputSchema, isTenantStatusSlug, kumaMonitorFields, kumaNewMonitor, kumaSlugForTenant, kumaTagsFor, planTagChanges } from './device-inventory';
+import { SNMP_OID, SNMP_PRESETS, deviceAutoSetupSchema, deviceInventoryInputSchema, isTenantStatusSlug, kumaMonitorFields, kumaNewMonitor, kumaSlugForTenant, kumaTagsFor, planTagChanges } from './device-inventory';
 
 const ok = { siteCode: 'LTN01', name: 'Door paging', kind: 'algo', checkType: 'ping', address: '10.1.2.3' } as const;
 
 describe('deviceInventoryInputSchema', () => {
   it('accepts a ping device and clears the port', () => {
-    expect(deviceInventoryInputSchema.parse({ ...ok, port: 80 })).toEqual({ ...ok, port: null });
+    expect(deviceInventoryInputSchema.parse({ ...ok, port: 80 })).toMatchObject({ ...ok, port: null });
   });
   it('needs a port for a TCP check', () => {
     expect(deviceInventoryInputSchema.safeParse({ ...ok, checkType: 'port' }).success).toBe(false);
@@ -76,5 +76,39 @@ describe('kumaSlugForTenant', () => {
   it('recognises an address made for a customer, and not other names', () => {
     expect(isTenantStatusSlug(kumaSlugForTenant(a))).toBe(true);
     for (const x of ['voxshift', 'voxshift-xyz', 'voxshift-3f2b9c1e7d4', 'my-page', 'VOXSHIFT-3F2B9C1E7D4A']) expect(isTenantStatusSlug(x), x).toBe(false);
+  });
+});
+
+describe('SNMP checks', () => {
+  const snmp = { ...ok, checkType: 'snmp', address: '10.1.2.3', snmpVersion: '2c', snmpCommunity: 'public', snmpOid: '1.3.6.1.2.1.1.3.0', snmpOperator: '>=', snmpExpected: '0' } as const;
+  it('accepts a v2c check, defaults the port to 161 and keeps only what the version uses', () => {
+    const v = deviceInventoryInputSchema.parse({ ...snmp, snmpUsername: 'ignored' });
+    expect(v).toMatchObject({ port: 161, snmpVersion: '2c', snmpCommunity: 'public', snmpUsername: null, snmpOid: '1.3.6.1.2.1.1.3.0', snmpOperator: '>=', snmpExpected: '0' });
+  });
+  it('takes a v3 user name instead of a community string', () => {
+    expect(deviceInventoryInputSchema.safeParse({ ...snmp, snmpVersion: '3' }).success).toBe(false);
+    expect(deviceInventoryInputSchema.parse({ ...snmp, snmpVersion: '3', snmpUsername: 'monitor' })).toMatchObject({ snmpCommunity: null, snmpUsername: 'monitor' });
+  });
+  it('lets a change leave the community string blank (the stored one is kept)', () => {
+    expect(deviceInventoryInputSchema.parse({ ...snmp, snmpCommunity: '' }).snmpCommunity).toBeNull();
+  });
+  it('needs a valid OID, a comparison and an expected value', () => {
+    for (const bad of [{ snmpOid: '' }, { snmpOid: 'sysUpTime' }, { snmpOid: '1.3.06.1' }, { snmpOid: '3.1.2' }, { snmpOperator: null }, { snmpExpected: '' }, { snmpVersion: null }]) {
+      expect(deviceInventoryInputSchema.safeParse({ ...snmp, ...bad }).success, JSON.stringify(bad)).toBe(false);
+    }
+  });
+  it('drops the SNMP fields from a ping check', () => {
+    expect(deviceInventoryInputSchema.parse({ ...ok, ...snmp, checkType: 'ping' })).toMatchObject({ port: null, snmpVersion: null, snmpCommunity: null, snmpOid: null, snmpOperator: null, snmpExpected: null });
+  });
+  it('has presets that Kuma\'s own OID pattern accepts', () => {
+    for (const p of SNMP_PRESETS) expect(SNMP_OID.test(p.oid), p.id).toBe(true);
+    expect(SNMP_PRESETS.find((p) => p.id === 'algo-sip-reg')!.oid).toBe('1.3.6.1.4.1.41738.1.1.2.1.1.0');
+  });
+  it('builds the monitor Kuma 2.5.7 expects: community in radiusPassword, comparison in the JSON-query fields', () => {
+    const d = { name: 'Algo', checkType: 'snmp', address: '10.1.2.3', port: 161, snmp: { version: '2c', community: 'secret', username: null, oid: '1.3.6.1.2.1.1.3.0', operator: '>=', expected: '0' } } as const;
+    const m = kumaNewMonitor(d);
+    expect(m).toMatchObject({ type: 'snmp', hostname: '10.1.2.3', port: 161, snmpVersion: '2c', radiusPassword: 'secret', snmpOid: '1.3.6.1.2.1.1.3.0', jsonPath: '$', jsonPathOperator: '>=', expectedValue: '0', timeout: 5, interval: 20 });
+    expect('url' in m).toBe(false);
+    expect(kumaMonitorFields({ ...d, snmp: { ...d.snmp, version: '3', community: null, username: 'monitor' } })).toMatchObject({ snmpVersion: '3', snmpV3Username: 'monitor', radiusPassword: '' });
   });
 });

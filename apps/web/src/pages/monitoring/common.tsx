@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Badge, Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Select, Switch, Text, makeStyles, tokens } from '@fluentui/react-components';
-import { DEVICE_CHECK_LABEL, DEVICE_KINDS, DEVICE_KIND_LABEL, type DeviceCheckType, type DeviceInventoryRow, type DeviceKind, type DeviceState, type DeviceStatusOverview } from '@tvmf/shared';
+import { DEVICE_CHECK_LABEL, DEVICE_KINDS, DEVICE_KIND_LABEL, SNMP_DEFAULT_PORT, SNMP_OID, SNMP_OPERATORS, SNMP_OPERATOR_LABEL, SNMP_PRESETS, SNMP_VERSIONS, SNMP_VERSION_LABEL, type SnmpOperator, type SnmpVersion, type DeviceCheckType, type DeviceInventoryRow, type DeviceKind, type DeviceState, type DeviceStatusOverview } from '@tvmf/shared';
 import { api, ApiError } from '../../api';
 import { DangerText, MutedText } from '../../components/ui';
 import { useNotify } from '../../hooks/useNotify';
@@ -194,11 +194,34 @@ export function SettingsForm({ base, data, onClose }: { base: string; data: Devi
 
 // ------------------------------------------------------------------------------------------------------------ the device form
 
-export interface DeviceFormValues { siteCode: string; name: string; kind: DeviceKind; checkType: DeviceCheckType; address: string; port: string }
-export const emptyDeviceForm = (siteCode: string): DeviceFormValues => ({ siteCode, name: '', kind: 'other', checkType: 'ping', address: '', port: '' });
-export const formFromDevice = (d: DeviceInventoryRow): DeviceFormValues => ({ siteCode: d.siteCode, name: d.name, kind: d.kind, checkType: d.checkType, address: d.address, port: d.port ? String(d.port) : '' });
-export const formToBody = (f: DeviceFormValues) => JSON.stringify({ siteCode: f.siteCode, name: f.name, kind: f.kind, checkType: f.checkType, address: f.address, port: f.checkType === 'port' && f.port ? Number(f.port) : null });
-export const deviceFormComplete = (f: DeviceFormValues) => !!f.siteCode && !!f.name.trim() && !!f.address.trim() && (f.checkType !== 'port' || !!f.port);
+export interface DeviceFormValues {
+  siteCode: string; name: string; kind: DeviceKind; checkType: DeviceCheckType; address: string; port: string;
+  snmpVersion: SnmpVersion; snmpCommunity: string; snmpUsername: string; snmpOid: string; snmpOperator: SnmpOperator; snmpExpected: string;
+  /** A stored community string is never shown: this says one exists, so leaving the field blank keeps it. */
+  hasCommunity: boolean;
+}
+export const emptyDeviceForm = (siteCode: string): DeviceFormValues => ({
+  siteCode, name: '', kind: 'other', checkType: 'ping', address: '', port: '',
+  snmpVersion: '2c', snmpCommunity: '', snmpUsername: '', snmpOid: SNMP_PRESETS[0].oid, snmpOperator: SNMP_PRESETS[0].operator, snmpExpected: SNMP_PRESETS[0].expected, hasCommunity: false,
+});
+export const formFromDevice = (d: DeviceInventoryRow): DeviceFormValues => ({
+  ...emptyDeviceForm(d.siteCode),
+  name: d.name, kind: d.kind, checkType: d.checkType, address: d.address, port: d.port ? String(d.port) : '',
+  ...(d.snmp ? { snmpVersion: d.snmp.version, snmpUsername: d.snmp.username ?? '', snmpOid: d.snmp.oid, snmpOperator: d.snmp.operator, snmpExpected: d.snmp.expected, hasCommunity: d.snmp.hasCommunity } : {}),
+});
+export const formToBody = (f: DeviceFormValues) =>
+  JSON.stringify({
+    siteCode: f.siteCode, name: f.name, kind: f.kind, checkType: f.checkType, address: f.address,
+    port: f.checkType === 'port' && f.port ? Number(f.port) : f.checkType === 'snmp' ? Number(f.port || SNMP_DEFAULT_PORT) : null,
+    ...(f.checkType === 'snmp' ? { snmpVersion: f.snmpVersion, snmpCommunity: f.snmpCommunity || null, snmpUsername: f.snmpUsername, snmpOid: f.snmpOid, snmpOperator: f.snmpOperator, snmpExpected: f.snmpExpected } : {}),
+  });
+export const deviceFormComplete = (f: DeviceFormValues) => {
+  if (!f.siteCode || !f.name.trim() || !f.address.trim()) return false;
+  if (f.checkType === 'port') return !!f.port;
+  if (f.checkType !== 'snmp') return true;
+  const identified = f.snmpVersion === '3' ? !!f.snmpUsername.trim() : !!f.snmpCommunity || f.hasCommunity;
+  return identified && SNMP_OID.test(f.snmpOid.trim()) && !!f.snmpExpected.trim();
+};
 export const errorText = (e: unknown) => (e instanceof ApiError ? e.message : (e as Error).message);
 
 /** The fields of the form, shared by the add form and the Change dialog. */
@@ -229,8 +252,8 @@ export function DeviceFields({ value, onChange, sites }: { value: DeviceFormValu
             ))}
           </Select>
         </Field>
-        <Field label="How to check it" hint={value.checkType === 'ping' ? 'Does it answer a ping?' : 'Is this TCP port open?'}>
-          <Select value={value.checkType} onChange={(_, d) => onChange({ checkType: d.value as DeviceCheckType })}>
+        <Field label="How to check it" hint={value.checkType === 'ping' ? 'Does it answer a ping?' : value.checkType === 'port' ? 'Is this TCP port open?' : 'Read a value from the device over SNMP and compare it.'}>
+          <Select value={value.checkType} onChange={(_, d) => onChange({ checkType: d.value as DeviceCheckType, ...(d.value === 'snmp' && !value.port ? { port: String(SNMP_DEFAULT_PORT) } : {}) })}>
             {(Object.keys(DEVICE_CHECK_LABEL) as DeviceCheckType[]).map((k) => (
               <option key={k} value={k}>
                 {DEVICE_CHECK_LABEL[k]}
@@ -243,13 +266,78 @@ export function DeviceFields({ value, onChange, sites }: { value: DeviceFormValu
         <Field label="IP address or host name" required>
           <Input value={value.address} onChange={(_, d) => onChange({ address: d.value })} placeholder="10.20.30.40" />
         </Field>
-        {value.checkType === 'port' && (
-          <Field label="Port" required>
-            <Input value={value.port} inputMode="numeric" onChange={(_, d) => onChange({ port: d.value.replace(/\D/g, '') })} placeholder="5060" />
+        {(value.checkType === 'port' || value.checkType === 'snmp') && (
+          <Field label={value.checkType === 'snmp' ? 'SNMP port' : 'Port'} required>
+            <Input value={value.port} inputMode="numeric" onChange={(_, d) => onChange({ port: d.value.replace(/\D/g, '') })} placeholder={value.checkType === 'snmp' ? '161' : '5060'} />
           </Field>
         )}
       </div>
+      {value.checkType === 'snmp' && <SnmpFields value={value} onChange={onChange} />}
     </div>
+  );
+}
+
+/** The SNMP part of the form: which device version and sign-in, and the one value to read and what it should be. */
+function SnmpFields({ value, onChange }: { value: DeviceFormValues; onChange: (patch: Partial<DeviceFormValues>) => void }) {
+  const s = useStyles();
+  const preset = SNMP_PRESETS.find((p) => p.oid === value.snmpOid && p.operator === value.snmpOperator && p.expected === value.snmpExpected);
+  const oidBad = !!value.snmpOid.trim() && !SNMP_OID.test(value.snmpOid.trim());
+  return (
+    <>
+      <div className={s.twoCol}>
+        <Field label="SNMP version">
+          <Select value={value.snmpVersion} onChange={(_, d) => onChange({ snmpVersion: d.value as SnmpVersion })}>
+            {SNMP_VERSIONS.map((v) => (
+              <option key={v} value={v}>
+                {SNMP_VERSION_LABEL[v]}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        {value.snmpVersion === '3' ? (
+          <Field label="SNMPv3 user name" required>
+            <Input value={value.snmpUsername} onChange={(_, d) => onChange({ snmpUsername: d.value })} />
+          </Field>
+        ) : (
+          <Field label="Community string" required={!value.hasCommunity} hint={value.hasCommunity ? 'One is saved. Leave this blank to keep it.' : 'The read-only community set on the device, often "public".'}>
+            <Input type="password" autoComplete="new-password" value={value.snmpCommunity} onChange={(_, d) => onChange({ snmpCommunity: d.value })} />
+          </Field>
+        )}
+      </div>
+      <Field label="What to read" hint={preset?.hint ?? 'Choose a ready-made reading, or enter your own OID and the value that means healthy.'}>
+        <Select
+          value={preset?.id ?? 'custom'}
+          onChange={(_, d) => {
+            const p = SNMP_PRESETS.find((x) => x.id === d.value);
+            if (p) onChange({ snmpOid: p.oid, snmpOperator: p.operator, snmpExpected: p.expected });
+          }}
+        >
+          {SNMP_PRESETS.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.label}
+            </option>
+          ))}
+          <option value="custom">My own OID</option>
+        </Select>
+      </Field>
+      <Field label="OID" required validationState={oidBad ? 'error' : 'none'} validationMessage={oidBad ? 'Use dotted numbers, like 1.3.6.1.2.1.1.3.0.' : undefined}>
+        <Input value={value.snmpOid} onChange={(_, d) => onChange({ snmpOid: d.value })} placeholder="1.3.6.1.2.1.1.3.0" />
+      </Field>
+      <div className={s.twoCol}>
+        <Field label="Healthy when the value">
+          <Select value={value.snmpOperator} onChange={(_, d) => onChange({ snmpOperator: d.value as SnmpOperator })}>
+            {SNMP_OPERATORS.map((o) => (
+              <option key={o} value={o}>
+                {SNMP_OPERATOR_LABEL[o]}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Expected value" required>
+          <Input value={value.snmpExpected} onChange={(_, d) => onChange({ snmpExpected: d.value })} />
+        </Field>
+      </div>
+    </>
   );
 }
 

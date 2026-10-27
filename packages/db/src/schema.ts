@@ -603,6 +603,13 @@ export interface DeviceInventoryTable {
   check_type: string;
   address: string;
   port: number | null;
+  snmp_version: string | null;
+  snmp_community_enc: string | null;
+  snmp_username: string | null;
+  snmp_oid: string | null;
+  snmp_operator: string | null;
+  snmp_expected: string | null;
+  kuma_snmp_user: string | null;
   kuma_monitor_id: number | null;
   sync_state: ColumnType<string, string | undefined, string>;
   sync_error: string | null;
