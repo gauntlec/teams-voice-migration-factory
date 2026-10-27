@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Badge, Button, Card, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text } from '@fluentui/react-components';
-import { Link } from 'react-router';
 import { DEVICE_CHECK_LABEL, DEVICE_KIND_LABEL, type DeviceInventoryRow } from '@tvmf/shared';
 import { api } from '../../api';
 import { DataTable } from '../../components/DataTable';
@@ -9,11 +8,12 @@ import { LoadError } from '../../components/records';
 import { EmptyState } from '../../components/states';
 import { DangerText, MutedText } from '../../components/ui';
 import { useNotify } from '../../hooks/useNotify';
+import { AddDeviceForm } from './AddDeviceForm';
 import { ChangeDeviceDialog, ManagedPanel, SettingsForm, SYNC, ago, isConfigured, useAutoSetup, useOverview, useStyles, useTick } from './common';
 
 /**
- * Monitoring > Watch list: the devices Voxshift watches and the set-up behind them. Engineers and administrators only (monitoring:manage).
- * Adding devices is its own screen (Add devices).
+ * Monitoring > Watch list: add devices and see the ones Voxshift watches, plus the set-up behind them. One screen: the add form is at the top and the list
+ * below it updates as devices are added. Engineers and administrators only (monitoring:manage).
  */
 export function WatchList({ base }: { base: string }) {
   const s = useStyles();
@@ -81,19 +81,13 @@ export function WatchList({ base }: { base: string }) {
         </Card>
       )}
 
+      <AddDeviceForm base={base} data={data} />
+
       <div className={s.section}>
-        <div className={s.head}>
-          <Text weight="semibold">Devices being watched</Text>
-          <Link to="/monitoring/add">
-            <Button size="small" appearance="primary" disabled={data.siteOptions.length === 0}>
-              Add devices
-            </Button>
-          </Link>
-          {data.siteOptions.length === 0 && <MutedText size={200}>Add a site in Data Collection first.</MutedText>}
-        </div>
+        <Text weight="semibold">Devices being watched</Text>
         {!data.managed.managed && data.inventory.length > 0 && <MutedText size={200}>Voxshift is not looking after the monitoring module, so these are only a list until it is switched on.</MutedText>}
         {data.inventory.length === 0 ? (
-          <MutedText size={200}>Nothing on the watch list yet. Use Add devices to add each phone, paging unit or gateway.</MutedText>
+          <MutedText size={200}>Nothing on the watch list yet. Add each phone, paging unit or gateway above.</MutedText>
         ) : (
           <DataTable size="small" minWidth={760}>
             <TableHeader>

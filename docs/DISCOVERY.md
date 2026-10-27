@@ -374,7 +374,7 @@ Build `claimNumber`) is refused with the date. **End cool-off** on the Numbers t
 `discovery.number_cooloff_ended`. Design-time moves (taking a number from one design row to another) do not start a cool-off:
 nothing was released in Teams.
 
-## Monitoring (Devices, Add devices, Watch list, Alerts)
+## Monitoring (Devices, Watch list, Alerts)
 
 **Monitoring** shows whether each site's phones, paging units and gateways are answering, by **reading** an Uptime
 Kuma status page on the customer's network (tenant migration `0070`; design and test results in

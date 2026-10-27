@@ -123,13 +123,12 @@ Not isolated, by design: the module itself has one administrator and one set of 
 
 ## Menu, roles and email alerts (built 2026-10-27)
 
-**Menu** (left side, its own section **Monitoring**): **Devices** (the status screen), **Add devices**, **Watch list**, **Alerts**.
+**Menu** (left side, its own section **Monitoring**): **Devices** (the status screen), **Watch list** (add devices, and the list of what is watched) and **Alerts**.
 
 | Screen | Who | What |
 |---|---|---|
 | Devices | `monitoring:read`: administrators, engineers, **project managers**, customers | Read-only status: site tiles grouped by region (AMER, EMEA, APAC) and then country, each heading rolling up its worst state and devices down; down now, all devices, latest changes. A customer limited to some sites sees only those sites. Region and country come from the site (Administration > Sites); with neither set on any site the tiles stay a plain grid, sites without a region or country are grouped last, and monitors with no site tag are shown apart (`groupSiteTiles` in `packages/shared/src/device-status.ts`). |
-| Add devices | `monitoring:manage`: administrators and engineers only | One form (site, name, kind, ping or TCP port, address); stays open and keeps the site, kind and check so a whole site is quick to enter. Offers "Set up automatically" first if monitoring is not set up. |
-| Watch list | `monitoring:manage` | The devices being watched, with Change and Remove and their set-up state; the monitoring set-up (automatic or "I run my own"), the administrator sign-in prompt, Stop managing. |
+| Watch list | `monitoring:manage`: administrators and engineers only | One screen. The set-up (automatic, or "I run my own monitoring service"), the administrator sign-in prompt and Stop managing at the top; below that a form to add a device (site, name, kind, ping or TCP port, address) that stays open and keeps the site, kind and check so a whole site is quick to enter; and below that the devices being watched with Change, Remove and their set-up state. Offers "Set up automatically" first if monitoring is not set up. |
 | Alerts | `monitoring:manage` | Email alerts (below). |
 
 Project managers therefore see the status screen only: the API (`GET /t/:id/device-status`) leaves out the watch list, addresses and set-up state for anyone without `monitoring:manage`, and every other route needs it (`tests/db/src/devices/device-status-permissions.db.test.ts` pins this per route).

@@ -3,10 +3,9 @@ import { Page } from '../components/Page';
 import { NoTenant } from '../components/records';
 import { DevicesStatus } from './monitoring/DevicesStatus';
 import { WatchList } from './monitoring/WatchList';
-import { AddDevices } from './monitoring/AddDevices';
 import { Alerts } from './monitoring/Alerts';
 
-/** The Monitoring screens (left menu: Monitoring > Devices, Add devices, Watch list, Alerts). Each is a thin page around a component in ./monitoring. */
+/** The Monitoring screens (left menu: Monitoring > Devices, Watch list, Alerts). Each is a thin page around a component in ./monitoring. */
 const useBase = () => {
   const { activeTenantId: tid } = useAuth();
   return tid ? `/t/${tid}/device-status` : null;
@@ -23,21 +22,11 @@ export function MonitoringDevices() {
   );
 }
 
-export function MonitoringAdd() {
-  const base = useBase();
-  if (!base) return <NoTenant />;
-  return (
-    <Page title="Add devices" subtitle="Add the phones, paging units, DECT bases and gateways Voxshift should watch. Voxshift sets up the checking.">
-      <AddDevices base={base} />
-    </Page>
-  );
-}
-
 export function MonitoringWatchList() {
   const base = useBase();
   if (!base) return <NoTenant />;
   return (
-    <Page title="Watch list" subtitle="The devices Voxshift is watching, and the set-up behind them.">
+    <Page title="Watch list" subtitle="Add the phones, paging units, DECT bases and gateways Voxshift should watch, and see what is on the list.">
       <WatchList base={base} />
     </Page>
   );

@@ -43,7 +43,6 @@ import {
   History24Regular,
   Lightbulb24Regular,
   Bug24Regular,
-  AddSquare24Regular,
   Alert24Regular,
   Eye24Regular,
   HeartPulse24Regular,
@@ -190,7 +189,6 @@ const MIGRATION: NavDef[] = [
 /** Monitoring: whether the customer's equipment is answering. */
 const MONITORING: NavDef[] = [
   { to: '/monitoring/devices', label: 'Devices', icon: <HeartPulse24Regular />, permission: 'monitoring:read' },
-  { to: '/monitoring/add', label: 'Add devices', icon: <AddSquare24Regular />, permission: 'monitoring:manage' },
   { to: '/monitoring/watch-list', label: 'Watch list', icon: <Eye24Regular />, permission: 'monitoring:manage' },
   { to: '/monitoring/alerts', label: 'Alerts', icon: <Alert24Regular />, permission: 'monitoring:manage' },
 ];

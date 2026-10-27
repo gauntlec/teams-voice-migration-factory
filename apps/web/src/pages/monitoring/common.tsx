@@ -121,7 +121,7 @@ export function ManagedPanel({ base, data, canManage }: { base: string; data: De
         <Badge appearance="tint" color={m.lastSyncError ? 'danger' : m.syncNeeded ? 'warning' : 'success'}>
           {m.lastSyncError ? 'Needs attention' : m.syncNeeded ? 'Updating' : 'Up to date'}
         </Badge>
-        <MutedText size={200}>Voxshift looks after the monitoring module{m.lastSyncAt ? ` (last checked ${ago(m.lastSyncAt)} ago)` : ''}. Add devices from Add devices in the menu: there is nothing to set up by hand.</MutedText>
+        <MutedText size={200}>Voxshift looks after the monitoring module{m.lastSyncAt ? ` (last checked ${ago(m.lastSyncAt)} ago)` : ''}. Add devices below: there is nothing to set up by hand.</MutedText>
         {canManage && (
           <Button size="small" appearance="subtle" onClick={() => stop.mutate()} disabled={stop.isPending}>
             Stop managing the monitoring module
@@ -201,7 +201,7 @@ export const formToBody = (f: DeviceFormValues) => JSON.stringify({ siteCode: f.
 export const deviceFormComplete = (f: DeviceFormValues) => !!f.siteCode && !!f.name.trim() && !!f.address.trim() && (f.checkType !== 'port' || !!f.port);
 export const errorText = (e: unknown) => (e instanceof ApiError ? e.message : (e as Error).message);
 
-/** The fields of the form, shared by the Add devices page and the Change dialog. */
+/** The fields of the form, shared by the add form and the Change dialog. */
 export function DeviceFields({ value, onChange, sites }: { value: DeviceFormValues; onChange: (patch: Partial<DeviceFormValues>) => void; sites: Array<{ sitecode: string; name: string | null }> }) {
   const s = useStyles();
   return (

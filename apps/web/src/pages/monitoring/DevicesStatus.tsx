@@ -125,7 +125,7 @@ export function DevicesStatus({ base, canManage }: { base: string; canManage: bo
         title="Monitoring is not set up yet"
         hint={
           canManage
-            ? 'Set it up and add the devices to watch under Watch list and Add devices in the Monitoring menu.'
+            ? 'Set it up and add the devices to watch under Watch list in the Monitoring menu.'
             : 'Monitoring has not been set up for this customer yet. An engineer will add the devices.'
         }
         action={canManage ? <Link to="/monitoring/watch-list">Go to the watch list</Link> : undefined}
@@ -155,7 +155,7 @@ export function DevicesStatus({ base, canManage }: { base: string; canManage: bo
 
       {data.devices.length === 0 ? (
         data.settings.enabled && !data.settings.lastError && data.settings.lastOkAt ? (
-          <EmptyState title="No devices are being watched yet" hint={canManage ? 'Add them under Add devices in the Monitoring menu.' : 'An engineer will add the devices.'} />
+          <EmptyState title="No devices are being watched yet" hint={canManage ? 'Add them under Watch list in the Monitoring menu.' : 'An engineer will add the devices.'} />
         ) : null
       ) : (
         <>
