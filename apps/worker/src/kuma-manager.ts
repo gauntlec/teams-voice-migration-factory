@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { Kysely } from 'kysely';
-import { deviceSyncDue, platformDb, recordDeviceSync, saveKumaAdmin, syncDeviceInventory, tenantDb, type DB } from '@tvmf/db';
+import { deviceSyncDue, getMonitoringAdmin, platformDb, recordDeviceSync, saveMonitoringAdmin, syncDeviceInventory, tenantDb, type DB } from '@tvmf/db';
 import { decryptSecret, encryptSecret } from './crypto';
 import { KumaClient } from './kuma-client';
 
@@ -12,28 +12,50 @@ import { KumaClient } from './kuma-client';
 
 const KUMA_ADMIN_USER = 'voxshift';
 
-/** Signs in to Kuma, making the administrator first when Kuma has none. The new password is stored (encrypted) BEFORE it is used, so it can never be lost. */
-async function signedIn(client: KumaClient, s: ReturnType<typeof tenantDb>, saved: { adminUser: string | null; adminPassEnc: string | null }): Promise<void> {
+/**
+ * Signs in to the monitoring module. There is one module (and one administrator) for the whole installation, however many customers use it, so:
+ * - a module with no administrator gets one, made by whichever customer comes first; its generated password is stored (encrypted) at installation level BEFORE it
+ *   is used, so it can never be lost;
+ * - otherwise the installation's administrator is used; and if that is missing or refused but this customer has a working one of its own (made by hand, or by an
+ *   earlier release that kept it per customer), that one is used and kept at installation level for every customer.
+ */
+async function signedIn(client: KumaClient, db: Kysely<DB>, saved: { adminUser: string | null; adminPassEnc: string | null }): Promise<void> {
   if (await client.needSetup()) {
     const password = randomBytes(24).toString('base64url');
-    await saveKumaAdmin(s, KUMA_ADMIN_USER, encryptSecret(password));
+    await saveMonitoringAdmin(db, KUMA_ADMIN_USER, encryptSecret(password));
     await client.setup(KUMA_ADMIN_USER, password);
     await client.login(KUMA_ADMIN_USER, password);
     return;
   }
-  if (!saved.adminUser || !saved.adminPassEnc) {
+  const shared = await getMonitoringAdmin(db);
+  const own = saved.adminUser && saved.adminPassEnc ? { user: saved.adminUser, passEnc: saved.adminPassEnc } : null;
+  if (!shared && !own) {
     throw new Error('The monitoring module already has an administrator that Voxshift does not know. Enter that administrator\'s sign-in below.');
   }
-  await client.login(saved.adminUser, decryptSecret(saved.adminPassEnc));
+  let failure: unknown = null;
+  if (shared) {
+    try {
+      await client.login(shared.user, decryptSecret(shared.passEnc));
+      return;
+    } catch (e) {
+      failure = e;
+    }
+  }
+  if (own) {
+    await client.login(own.user, decryptSecret(own.passEnc));
+    await saveMonitoringAdmin(db, own.user, own.passEnc);
+    return;
+  }
+  throw failure;
 }
 
-export async function syncKumaFor(s: ReturnType<typeof tenantDb>): Promise<'skipped' | 'ok' | 'failed'> {
-  const due = await deviceSyncDue(s);
+export async function syncKumaFor(db: Kysely<DB>, s: ReturnType<typeof tenantDb>, tenantId: string): Promise<'skipped' | 'ok' | 'failed'> {
+  const due = await deviceSyncDue(s, new Date(), tenantId);
   if (!due) return 'skipped';
   let client: KumaClient | null = null;
   try {
     client = await KumaClient.connect(due.url);
-    await signedIn(client, s, due);
+    await signedIn(client, db, due);
     const r = await syncDeviceInventory(s, client);
     await recordDeviceSync(s, { deviceErrors: r.errors });
     return r.errors ? 'failed' : 'ok';
@@ -50,11 +72,11 @@ export async function sweepKumaSync(db: Kysely<DB>): Promise<void> {
   if (running) return;
   running = true;
   try {
-    const tenants = await platformDb(db).selectFrom('tenants').select(['schema_name']).where('status', '=', 'active').execute();
+    const tenants = await platformDb(db).selectFrom('tenants').select(['id', 'schema_name']).where('status', '=', 'active').execute();
     await Promise.all(
       tenants.map(async (t) => {
         try {
-          await syncKumaFor(tenantDb(db, t.schema_name));
+          await syncKumaFor(db, tenantDb(db, t.schema_name), t.id);
         } catch (e) {
           // eslint-disable-next-line no-console
           console.warn(`[kuma-sync] ${t.schema_name}: ${(e as Error).message}`);

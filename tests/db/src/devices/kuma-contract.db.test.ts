@@ -4,8 +4,8 @@
 //   Run:               KUMA_CONTRACT_URL=http://127.0.0.1:3011 npx vitest run src/devices/kuma-contract
 process.env.DATA_ENCRYPTION_KEY ||= 'kuma-contract-test-key';
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
-import { addDevice, deviceStatusOverview, enableManagedKuma, listDeviceInventory, recordDeviceSync, removeDevice, syncDeviceInventory, updateDevice } from '@tvmf/db';
-import { parseKumaStatus } from '@tvmf/shared';
+import { addDevice, deviceStatusOverview, enableManagedKuma, getMonitoringAdmin, listDeviceInventory, recordDeviceSync, removeDevice, saveMonitoringAdmin, syncDeviceInventory, updateDevice } from '@tvmf/db';
+import { kumaSlugForTenant, parseKumaStatus } from '@tvmf/shared';
 import { decryptSecret } from '../../../../apps/worker/src/crypto';
 import { KumaClient } from '../../../../apps/worker/src/kuma-client';
 import { syncKumaFor } from '../../../../apps/worker/src/kuma-manager';
@@ -17,11 +17,13 @@ let c: TestCustomer;
 let client: KumaClient;
 let password = '';
 
-const status = async () => {
-  const page = await fetch(`${url}/api/status-page/voxshift`).then((r) => r.json());
-  const beats = await fetch(`${url}/api/status-page/heartbeat/voxshift`).then((r) => r.json());
-  return parseKumaStatus(page, beats);
+const slug = () => kumaSlugForTenant(c.t.id);
+const statusOf = async (page: string) => {
+  const p = await fetch(`${url}/api/status-page/${page}`).then((r) => r.json());
+  const beats = await fetch(`${url}/api/status-page/heartbeat/${page}`).then((r) => r.json());
+  return parseKumaStatus(p, beats);
 };
+const status = () => statusOf(slug());
 
 describe.skipIf(!url)('Uptime Kuma contract', () => {
   beforeAll(async () => {
@@ -37,17 +39,18 @@ describe.skipIf(!url)('Uptime Kuma contract', () => {
   });
 
   it('the manager makes the administrator itself, keeps its password encrypted, and syncs devices into monitors, tags and the status page', async () => {
-    await enableManagedKuma(c.s, { kumaUrl: url! });
+    await enableManagedKuma(c.s, { tenantId: c.t.id, kumaUrl: url! });
     await addDevice(c.s, { siteCode: 'LTN01', name: 'Loopback ping', kind: 'algo', checkType: 'ping', address: '127.0.0.1', port: null });
     const portNumber = Number(new URL(url!).port);
     await addDevice(c.s, { siteCode: 'LTN01', name: 'Kuma itself', kind: 'other', checkType: 'port', address: '127.0.0.1', port: portNumber });
-    expect(await syncKumaFor(c.s)).toBe('ok');
+    expect(await syncKumaFor(handle.db, c.s, c.t.id)).toBe('ok');
     const o = await deviceStatusOverview(c.s);
-    expect(o.managed).toMatchObject({ managed: true, hasCredentials: true, syncNeeded: false, lastSyncError: null });
-    const row = await c.s.selectFrom('device_monitor_settings').select(['kuma_admin_user', 'kuma_admin_pass_enc']).executeTakeFirstOrThrow();
-    expect(row.kuma_admin_user).toBe('voxshift');
-    expect(row.kuma_admin_pass_enc).not.toContain('voxshift');
-    password = decryptSecret(row.kuma_admin_pass_enc!);
+    expect(o.managed).toMatchObject({ managed: true, syncNeeded: false, lastSyncError: null });
+    // The administrator is kept once for the whole installation (not per customer), encrypted.
+    const admin = (await getMonitoringAdmin(handle.db))!;
+    expect(admin.user).toBe('voxshift');
+    expect(admin.passEnc).not.toContain('voxshift');
+    password = decryptSecret(admin.passEnc);
     expect(password.length).toBeGreaterThanOrEqual(24);
     const monitors = await status();
     expect(monitors.map((m) => [m.name, m.monitorType, m.sitecode, m.deviceKind]).sort()).toEqual([
@@ -55,7 +58,7 @@ describe.skipIf(!url)('Uptime Kuma contract', () => {
       ['Loopback ping', 'ping', 'LTN01', 'algo'],
     ]);
     expect(monitors[0]!.group).toBe('LTN01 · Luton');
-    const page = (await fetch(`${url}/api/status-page/voxshift`).then((r) => r.json())) as { config: { customCSS: string } };
+    const page = (await fetch(`${url}/api/status-page/${slug()}`).then((r) => r.json())) as { config: { customCSS: string } };
     expect(page.config).toMatchObject({ showTags: true, showPoweredBy: false, title: 'Voxshift Device Status' });
     expect(page.config.customCSS).toContain('#4657D2');
     // The Voxshift logo, uploaded by Voxshift: Kuma stores it and serves it as a PNG (it is also the page's favicon).
@@ -75,41 +78,46 @@ describe.skipIf(!url)('Uptime Kuma contract', () => {
   });
 
   it('the manager signs in again with the stored password and says nothing is due until something changes', async () => {
-    expect(await syncKumaFor(c.s)).toBe('skipped');
+    expect(await syncKumaFor(handle.db, c.s, c.t.id)).toBe('skipped');
     await c.s.updateTable('device_monitor_settings').set({ sync_needed: true }).execute();
-    expect(await syncKumaFor(c.s)).toBe('ok');
+    expect(await syncKumaFor(handle.db, c.s, c.t.id)).toBe('ok');
   });
 
-  it('a Kuma that has an administrator Voxshift does not know is reported plainly', async () => {
-    await c.s.updateTable('device_monitor_settings').set({ kuma_admin_user: null, kuma_admin_pass_enc: null, sync_needed: true, last_sync_error: null }).execute();
-    expect(await syncKumaFor(c.s)).toBe('failed');
-    expect((await deviceStatusOverview(c.s)).managed.lastSyncError).toMatch(/already has an administrator that Voxshift does not know/);
+  it('a module with an administrator Voxshift does not know is reported plainly, and a wrong stored one too', async () => {
     const { encryptSecret } = await import('../../../../apps/worker/src/crypto');
-    await c.s.updateTable('device_monitor_settings').set({ kuma_admin_user: 'voxshift', kuma_admin_pass_enc: encryptSecret('wrong-password-123'), sync_needed: true, last_sync_error: null }).execute();
-    expect(await syncKumaFor(c.s)).toBe('failed');
+    const platform = handle.db.withSchema('platform');
+    await platform.deleteFrom('monitoring_admin').execute();
+    await c.s.updateTable('device_monitor_settings').set({ kuma_admin_user: null, kuma_admin_pass_enc: null, sync_needed: true, last_sync_error: null }).execute();
+    expect(await syncKumaFor(handle.db, c.s, c.t.id)).toBe('failed');
+    expect((await deviceStatusOverview(c.s)).managed.lastSyncError).toMatch(/already has an administrator that Voxshift does not know/);
+    await saveMonitoringAdmin(handle.db, 'voxshift', encryptSecret('wrong-password-123'));
+    await c.s.updateTable('device_monitor_settings').set({ sync_needed: true, last_sync_error: null }).execute();
+    expect(await syncKumaFor(handle.db, c.s, c.t.id)).toBe('failed');
     expect((await deviceStatusOverview(c.s)).managed.lastSyncError).toMatch(/did not accept the administrator sign-in/);
-    await c.s.updateTable('device_monitor_settings').set({ kuma_admin_pass_enc: encryptSecret(password), sync_needed: true, last_sync_error: null }).execute();
-    expect(await syncKumaFor(c.s)).toBe('ok');
+    // a working administrator this customer has of its own (made by hand, or by an earlier release) is used, and then kept for everyone
+    await c.s.updateTable('device_monitor_settings').set({ kuma_admin_user: 'voxshift', kuma_admin_pass_enc: encryptSecret(password), sync_needed: true, last_sync_error: null }).execute();
+    expect(await syncKumaFor(handle.db, c.s, c.t.id)).toBe('ok');
+    expect(decryptSecret((await getMonitoringAdmin(handle.db))!.passEnc)).toBe(password);
   });
 
   it('keeps a page someone has restyled: their CSS and logo stay, Voxshift CSS is brought up to date', async () => {
     type Raw = { call: (e: string, ...a: unknown[]) => Promise<{ ok: boolean; config: Record<string, unknown> }>; need: (e: string, ...a: unknown[]) => Promise<unknown> };
     const raw = client as unknown as Raw;
-    const read = async () => (await raw.call('getStatusPage', 'voxshift')).config;
+    const read = async () => (await raw.call('getStatusPage', slug())).config;
     const groups = [{ name: 'LTN01 · Luton', monitorList: [] as Array<{ id: number }> }];
     const cfg = await read();
     // 1. Voxshift's own (older) CSS is replaced by the current one on the next sync.
-    await raw.need('saveStatusPage', 'voxshift', { ...cfg, customCSS: '/* Voxshift brand for Uptime Kuma status pages (an older version) */ body { color: red; }', domainNameList: [] }, cfg.icon, groups);
+    await raw.need('saveStatusPage', slug(), { ...cfg, customCSS: '/* Voxshift brand for Uptime Kuma status pages (an older version) */ body { color: red; }', domainNameList: [] }, cfg.icon, groups);
     await syncDeviceInventory(c.s, client);
     expect(String((await read()).customCSS)).toContain('#4657D2');
     // 2. A person's CSS and logo are left as they are.
-    await raw.need('saveStatusPage', 'voxshift', { ...cfg, customCSS: 'body { background: hotpink; }', domainNameList: [] }, cfg.icon, groups);
+    await raw.need('saveStatusPage', slug(), { ...cfg, customCSS: 'body { background: hotpink; }', domainNameList: [] }, cfg.icon, groups);
     await syncDeviceInventory(c.s, client);
     const after = await read();
     expect(after.customCSS).toBe('body { background: hotpink; }');
     expect(after.icon).toBe(cfg.icon);
     // Put Voxshift's look back for the rest of the run.
-    await raw.need('saveStatusPage', 'voxshift', { ...cfg, customCSS: '', domainNameList: [] }, cfg.icon, groups);
+    await raw.need('saveStatusPage', slug(), { ...cfg, customCSS: '', domainNameList: [] }, cfg.icon, groups);
     await syncDeviceInventory(c.s, client);
     expect(String((await read()).customCSS)).toContain('#4657D2');
   });
@@ -155,7 +163,28 @@ describe.skipIf(!url)('Uptime Kuma contract', () => {
     fresh.close();
     expect((await status()).map((m) => m.name)).toEqual(['Loopback ping (renamed)']);
   });
+
+  it('two customers on the one service keep to their own pages, and the second needs no sign-in of its own', async () => {
+    const c2 = await seedCustomer(handle, { name: 'Second customer' });
+    await seedSite(c2.s, { sitecode: 'MAN02', name: 'Manchester' });
+    await enableManagedKuma(c2.s, { tenantId: c2.t.id, kumaUrl: url! });
+    await addDevice(c2.s, { siteCode: 'MAN02', name: 'Second gateway', kind: 'other', checkType: 'port', address: '127.0.0.1', port: Number(new URL(url!).port) });
+    // The administrator the first customer's setup made is kept for the whole installation: the second customer signs in with it, having none of its own.
+    expect((await c2.s.selectFrom('device_monitor_settings').select('kuma_admin_user').executeTakeFirstOrThrow()).kuma_admin_user).toBeNull();
+    expect(await syncKumaFor(handle.db, c2.s, c2.t.id)).toBe('ok');
+    const mine = (await status()).map((m) => m.name);
+    const theirs = (await statusOf(kumaSlugForTenant(c2.t.id))).map((m) => m.name);
+    expect(theirs).toEqual(['Second gateway']);
+    expect(mine).not.toContain('Second gateway');
+    expect(mine.length).toBeGreaterThan(0);
+    // The first customer syncing again does not disturb the second customer's page, and the other way round.
+    await c.s.updateTable('device_monitor_settings').set({ sync_needed: true }).execute();
+    expect(await syncKumaFor(handle.db, c.s, c.t.id)).toBe('ok');
+    expect((await statusOf(kumaSlugForTenant(c2.t.id))).map((m) => m.name)).toEqual(['Second gateway']);
+    expect((await status()).map((m) => m.name)).toEqual(mine);
+  });
 });
+
 
 // A Kuma with an empty data folder and no UPTIME_KUMA_DB_TYPE waits at its "choose your database" screen and serves no Socket.IO API. Point
 // KUMA_WIZARD_URL at one (start Kuma from source without that variable) to check the client says so plainly instead of "websocket error".

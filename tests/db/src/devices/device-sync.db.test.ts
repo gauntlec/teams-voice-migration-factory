@@ -1,6 +1,7 @@
 // Device inventory and the sync that keeps Kuma in step with it (migration 0071), against a fake Kuma.
 import { beforeAll, describe, expect, it } from 'vitest';
 import { addDevice, canonicalSiteCode, deviceStatusOverview, deviceSyncDue, disableManagedKuma, enableManagedKuma, listDeviceInventory, recordDeviceSync, removeDevice, syncDeviceInventory, updateDevice, type KumaApi, type KumaMonitorInfo } from '@tvmf/db';
+import { kumaSlugForTenant } from '@tvmf/shared';
 import { seedCustomer, seedSite, useDb, type TestCustomer } from '../helpers';
 
 const handle = useDb();
@@ -48,7 +49,7 @@ beforeAll(async () => {
 
 describe('inventory', () => {
   it('adds devices, lists them in order, and asks for a sync once Voxshift looks after Kuma', async () => {
-    await enableManagedKuma(c.s, {});
+    await enableManagedKuma(c.s, { tenantId: c.t.id });
     kuma = new FakeKuma();
     await addDevice(c.s, dect);
     const d = await addDevice(c.s, door);
@@ -56,7 +57,7 @@ describe('inventory', () => {
     expect(d).toMatchObject({ syncState: 'pending', siteCode: 'LTN01', port: null });
     const o = await deviceStatusOverview(c.s);
     expect(o.managed).toMatchObject({ managed: true, syncNeeded: true, hasCredentials: false });
-    expect(o.settings).toMatchObject({ enabled: true, kumaUrl: 'http://kuma:3001', statusSlug: 'voxshift' });
+    expect(o.settings).toMatchObject({ enabled: true, kumaUrl: 'http://kuma:3001', statusSlug: kumaSlugForTenant(c.t.id) });
     expect(o.inventory).toHaveLength(2);
   });
   it('matches a site code written in any case, or none', async () => {
@@ -75,7 +76,7 @@ describe('syncDeviceInventory', () => {
     expect(kuma.tagsOf(doorId)).toEqual(['device=algo', 'site=LTN01']);
     expect(kuma.monitors.get(doorId)).toMatchObject({ type: 'ping', hostname: '10.1.2.3' });
     expect([...kuma.monitors.values()].find((m) => m.name === 'DECT base')).toMatchObject({ type: 'port', port: 5060 });
-    expect(kuma.page).toMatchObject({ slug: 'voxshift', groups: [{ name: 'LTN01 · Luton', monitorIds: expect.arrayContaining([1, 2]) }] });
+    expect(kuma.page).toMatchObject({ slug: kumaSlugForTenant(c.t.id), groups: [{ name: 'LTN01 · Luton', monitorIds: expect.arrayContaining([1, 2]) }] });
     await recordDeviceSync(c.s, {});
     expect((await deviceStatusOverview(c.s)).managed).toMatchObject({ syncNeeded: false, lastSyncError: null });
   });
@@ -153,7 +154,7 @@ describe('when a sync is due', () => {
   it('is not due when Voxshift does not look after Kuma, or it is switched off', async () => {
     await disableManagedKuma(c.s);
     expect(await deviceSyncDue(c.s, at(0))).toBeNull();
-    await enableManagedKuma(c.s, {});
+    await enableManagedKuma(c.s, { tenantId: c.t.id });
   });
   it('is due at once for a change, after a minute for a failure, and hourly otherwise', async () => {
     await c.s.updateTable('device_monitor_settings').set({ sync_needed: true, last_sync_at: at(0).toISOString(), last_sync_error: null }).execute();
@@ -166,7 +167,7 @@ describe('when a sync is due', () => {
     expect(await deviceSyncDue(c.s, at(3_700_000))).not.toBeNull();
   });
   it('changing the Kuma address makes devices new again and drops what was removed', async () => {
-    await enableManagedKuma(c.s, { kumaUrl: 'http://other:3001' });
+    await enableManagedKuma(c.s, { tenantId: c.t.id, kumaUrl: 'http://other:3001' });
     expect((await listDeviceInventory(c.s)).every((x) => x.syncState === 'pending')).toBe(true);
     expect((await c.s.selectFrom('device_inventory').select('kuma_monitor_id').execute()).every((x) => x.kuma_monitor_id === null)).toBe(true);
   });

@@ -111,6 +111,14 @@ export interface EmailMessagesTable {
 }
 
 /** Platform-wide settings (one row, id is always true) - see 0025_app_settings.sql. */
+/** The monitoring module's administrator, one per installation (platform migration 0037). */
+export interface MonitoringAdminTable {
+  id: ColumnType<boolean, boolean | undefined, boolean>;
+  admin_user: string;
+  admin_pass_enc: string;
+  updated_at: ColumnType<string, string | undefined, string>;
+}
+
 export interface AppSettingsTable {
   id: ColumnType<boolean, boolean | undefined, boolean>;
   /** The address people use to reach this installation; null = use the WEB_ORIGIN environment value. */
@@ -1749,6 +1757,7 @@ export interface DB {
   platform_audit_log: PlatformAuditLogTable;
   maintenance_notice: MaintenanceNoticeTable;
   app_settings: AppSettingsTable;
+  monitoring_admin: MonitoringAdminTable;
   agents: AgentsTable;
   intake_sources: IntakeSourcesTable;
   msp_notifications: MspNotificationsTable;

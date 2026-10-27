@@ -72,7 +72,17 @@ export const deviceAutoSetupSchema = z.object({
 export type DeviceAutoSetupInput = z.infer<typeof deviceAutoSetupSchema>;
 
 export const KUMA_DEFAULT_URL = 'http://kuma:3001';
-export const KUMA_MANAGED_SLUG = 'voxshift';
+/**
+ * Each customer's managed status page has its own address, made from the customer's id, so customers sharing one monitoring service never share a page
+ * (what one customer's dashboard reads is only that customer's devices). Letters, digits and dashes only, as the service wants.
+ */
+export function kumaSlugForTenant(tenantId: string): string {
+  return `voxshift-${tenantId.replace(/[^0-9a-f]/gi, '').toLowerCase().slice(0, 12)}`;
+}
+/** True for an address Voxshift made for some customer (so one customer can be stopped from reading another's). */
+export const isTenantStatusSlug = (slug: string) => /^voxshift-[0-9a-f]{12}$/.test(slug);
+/** The one shared page earlier releases made for every customer; customers still on it move to their own on the next sync. */
+export const KUMA_LEGACY_SLUG = 'voxshift';
 export const KUMA_MANAGED_TITLE = 'Voxshift Device Status';
 
 // ---------------------------------------------------------------------------------------------------------------- the Kuma side

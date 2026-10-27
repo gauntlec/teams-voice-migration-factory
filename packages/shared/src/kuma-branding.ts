@@ -1,5 +1,5 @@
 /*
- * The look of the Kuma status page Voxshift manages (device-inventory.ts, KUMA_MANAGED_SLUG). The same text is kept in
+ * The look of the Kuma status page Voxshift manages (device-inventory.ts, kumaSlugForTenant). The same text is kept in
  * deploy/kuma/voxshift-status-page.css for people who set Kuma up by hand; kuma-branding.test.ts keeps the two identical.
  */
 export const KUMA_STATUS_PAGE_CSS = `/* Voxshift brand for Uptime Kuma status pages (Kuma 2.5.x: status page > Edit > Custom CSS).

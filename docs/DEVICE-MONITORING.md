@@ -108,6 +108,19 @@ database" screen unless `UPTIME_KUMA_DB_TYPE=sqlite` is set (the compose files a
 Not done: pause/disable a device without removing it, other check types (HTTP, DNS, SNMP, SIP), alerts, importing devices from Discovery's phone endpoints and
 resource accounts, per-device history in Voxshift, a Kuma administrator with 2FA.
 
+## Customer isolation (2026-10-27)
+
+There is one monitoring module (Kuma) per installation, shared by every customer on it, so isolation is built in layers:
+- **Voxshift's own data is per customer**: devices, status, history and alert settings live in the customer's own database area, and every route is scoped to the customer in the URL (plus site scope for site contacts and the monitoring permissions).
+- **Each customer has its own status page** in the module, `voxshift-<first 12 hex digits of the customer id>` (`kumaSlugForTenant`). A customer's sync writes only that page and its dashboard reads only that page, so one customer's device names and sites are never on another's page or screen.
+- **A customer only ever touches the monitors it made** (it stores their ids); removing or changing a device cannot reach another customer's monitor.
+- **The administrator is shared**: made once, by whichever customer sets monitoring up first, kept encrypted at installation level (`platform.monitoring_admin`); later customers reuse it. A customer's own sign-in (entered by hand, or kept by an earlier release) is used if the shared one is missing or refused, and is then kept for everyone.
+- **Nobody can point a customer at another customer's page**: saving the manual settings with another customer's page name is refused (`isTenantStatusSlug`).
+- **Customers on the old shared page** (`voxshift`, the first releases) move to their own page on the next look (within seconds), keep their monitors (no copies), and what was read from the shared page is dropped. The old page is left in the module, unused.
+- Tested in `tests/db/src/devices/device-isolation.db.test.ts` (rules, with a fake shared service) and `kuma-contract.db.test.ts` (two customers on one real module).
+
+Not isolated, by design: the module itself has one administrator and one set of tags (`site`, `device`), and a Super Admin with access to the module's own screen sees every customer's monitors there. Customers never get that screen.
+
 ## Menu, roles and email alerts (built 2026-10-27)
 
 **Menu** (left side, its own section **Monitoring**): **Devices** (the status screen), **Add devices**, **Watch list**, **Alerts**.

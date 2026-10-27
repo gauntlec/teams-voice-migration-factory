@@ -1,4 +1,4 @@
-import { KUMA_DEFAULT_URL, KUMA_MANAGED_SLUG, type DeviceCheckType, type DeviceInventoryInput, type DeviceInventoryRow, type DeviceKind, type DeviceManagedView, type DeviceSyncState } from '@tvmf/shared';
+import { KUMA_DEFAULT_URL, kumaSlugForTenant, type DeviceCheckType, type DeviceInventoryInput, type DeviceInventoryRow, type DeviceKind, type DeviceManagedView, type DeviceSyncState } from '@tvmf/shared';
 import type { Scoped } from './live-state';
 
 /*
@@ -83,27 +83,30 @@ export async function deviceManagedView(s: Scoped): Promise<DeviceManagedView> {
  * Hands Kuma to Voxshift: switches device status on, points it at Kuma (the compose stack's own by default) and the status page Voxshift owns, and
  * asks for a sync. Credentials are only given when Kuma already has an administrator that Voxshift did not create; the password arrives already encrypted.
  */
-export async function enableManagedKuma(s: Scoped, opts: { kumaUrl?: string; adminUser?: string; adminPassEnc?: string }): Promise<void> {
+export async function enableManagedKuma(s: Scoped, opts: { tenantId: string; kumaUrl?: string; adminUser?: string; adminPassEnc?: string }): Promise<void> {
   const before = await s.selectFrom('device_monitor_settings').select(['kuma_url', 'status_slug']).executeTakeFirst();
   const url = opts.kumaUrl || before?.kuma_url || KUMA_DEFAULT_URL;
-  const moved = before?.kuma_url !== url || before?.status_slug !== KUMA_MANAGED_SLUG;
+  const slug = kumaSlugForTenant(opts.tenantId);
+  const serviceMoved = before?.kuma_url !== url;
+  const pageChanged = before?.status_slug !== slug;
   const creds = opts.adminUser && opts.adminPassEnc ? { kuma_admin_user: opts.adminUser, kuma_admin_pass_enc: opts.adminPassEnc } : {};
   await s.transaction().execute(async (trx) => {
     await trx
       .insertInto('device_monitor_settings')
-      .values({ id: true, enabled: true, managed: true, kuma_url: url, status_slug: KUMA_MANAGED_SLUG, sync_needed: true, ...creds })
+      .values({ id: true, enabled: true, managed: true, kuma_url: url, status_slug: slug, sync_needed: true, ...creds })
       .onConflict((oc) =>
         oc.column('id').doUpdateSet({
-          enabled: true, managed: true, kuma_url: url, status_slug: KUMA_MANAGED_SLUG, sync_needed: true, last_sync_error: null,
+          enabled: true, managed: true, kuma_url: url, status_slug: slug, sync_needed: true, last_sync_error: null,
           ...creds,
-          ...(moved ? { last_polled_at: null, last_ok_at: null, last_error: null } : {}),
+          ...(serviceMoved || pageChanged ? { last_polled_at: null, last_ok_at: null, last_error: null } : {}),
         }),
       )
       .execute();
-    if (moved) await trx.deleteFrom('device_monitors').execute();
-    // Monitors Voxshift made in an earlier Kuma do not exist in this one.
-    if (moved) await trx.updateTable('device_inventory').set({ kuma_monitor_id: null, sync_state: 'pending', sync_error: null }).where('removed', '=', false).execute();
-    if (moved) await trx.deleteFrom('device_inventory').where('removed', '=', true).execute();
+    // What was read from another page or service is not this one's.
+    if (serviceMoved || pageChanged) await trx.deleteFrom('device_monitors').execute();
+    // Monitors Voxshift made in an earlier service do not exist in this one (a different page on the SAME service changes nothing about them).
+    if (serviceMoved) await trx.updateTable('device_inventory').set({ kuma_monitor_id: null, sync_state: 'pending', sync_error: null }).where('removed', '=', false).execute();
+    if (serviceMoved) await trx.deleteFrom('device_inventory').where('removed', '=', true).execute();
   });
 }
 

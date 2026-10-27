@@ -1,6 +1,7 @@
 // The Device status service the API routes call: managed setup, the device list, and what it refuses.
 process.env.DATA_ENCRYPTION_KEY ||= 'device-status-api-test-key';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { kumaSlugForTenant } from '@tvmf/shared';
 import { AuditService } from '../../../../apps/api/src/common/audit.service';
 import { decryptSecret } from '../../../../apps/api/src/common/crypto';
 import { DeviceStatusService } from '../../../../apps/api/src/modules/device-status/device-status.service';
@@ -40,7 +41,7 @@ describe('DeviceStatusService', () => {
 
   it('set up automatically: on, pointed at the stack\'s Kuma, a sync asked for', async () => {
     const o = await svc.autoSetup(c.t, owner, {});
-    expect(o.settings).toMatchObject({ enabled: true, kumaUrl: 'http://kuma:3001', statusSlug: 'voxshift' });
+    expect(o.settings).toMatchObject({ enabled: true, kumaUrl: 'http://kuma:3001', statusSlug: kumaSlugForTenant(c.t.id) });
     expect(o.managed).toMatchObject({ managed: true, syncNeeded: true, hasCredentials: false });
   });
 

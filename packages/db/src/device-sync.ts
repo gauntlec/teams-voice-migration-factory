@@ -1,4 +1,4 @@
-import { KUMA_MANAGED_SLUG, KUMA_MANAGED_TITLE, kumaMonitorFields, kumaNewMonitor, kumaTagsFor, planTagChanges, type DeviceKind } from '@tvmf/shared';
+import { KUMA_MANAGED_TITLE, kumaSlugForTenant, kumaMonitorFields, kumaNewMonitor, kumaTagsFor, planTagChanges, type DeviceKind } from '@tvmf/shared';
 import type { Scoped } from './live-state';
 
 /*
@@ -86,7 +86,9 @@ export async function syncDeviceInventory(s: Scoped, kuma: KumaApi): Promise<Dev
   const groups = [...grouped.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([code, monitorIds]) => ({ name: nameOf.get(code) ? `${code} · ${nameOf.get(code)}` : code, monitorIds }));
-  await kuma.saveStatusPage(KUMA_MANAGED_SLUG, KUMA_MANAGED_TITLE, groups);
+  const page = await s.selectFrom('device_monitor_settings').select('status_slug').executeTakeFirst();
+  if (!page?.status_slug) throw new Error('No status page is set for this customer.');
+  await kuma.saveStatusPage(page.status_slug, KUMA_MANAGED_TITLE, groups);
   return result;
 }
 
@@ -110,15 +112,22 @@ export const DEVICE_SYNC_RECHECK_MS = 3_600_000;
  * What the worker should do now for this customer: their Kuma's address and the stored sign-in, or null for nothing.
  * Due: a change nobody has synced yet (at once), a sync that failed (again after a minute), and a healthy one hourly (a monitor deleted by hand comes back).
  */
-export async function deviceSyncDue(s: Scoped, now = new Date()): Promise<{ url: string; adminUser: string | null; adminPassEnc: string | null } | null> {
-  const c = await s.selectFrom('device_monitor_settings').selectAll().executeTakeFirst();
+export async function deviceSyncDue(s: Scoped, now = new Date(), tenantId?: string): Promise<{ url: string; adminUser: string | null; adminPassEnc: string | null } | null> {
+  let c = await s.selectFrom('device_monitor_settings').selectAll().executeTakeFirst();
   if (!c?.enabled || !c.managed || !c.kuma_url) return null;
+  // A customer still on the one page earlier releases shared between customers moves to its own: the page is made on the next sync (which is asked for now),
+  // and what was read from the old page is dropped so nothing of another customer's lingers.
+  if (tenantId && c.status_slug !== kumaSlugForTenant(tenantId)) {
+    await s.transaction().execute(async (trx) => {
+      await trx.updateTable('device_monitor_settings').set({ status_slug: kumaSlugForTenant(tenantId), sync_needed: true, last_sync_error: null, last_polled_at: null, last_ok_at: null, last_error: null }).execute();
+      await trx.deleteFrom('device_monitors').execute();
+    });
+    c = await s.selectFrom('device_monitor_settings').selectAll().executeTakeFirst();
+    if (!c) return null;
+  }
+  const url = c.kuma_url;
+  if (!url) return null;
   const since = now.getTime() - (c.last_sync_at ? new Date(c.last_sync_at).getTime() : 0);
   const due = c.sync_needed ? (c.last_sync_error ? since >= DEVICE_SYNC_RETRY_MS : true) : since >= DEVICE_SYNC_RECHECK_MS;
-  return due ? { url: c.kuma_url, adminUser: c.kuma_admin_user, adminPassEnc: c.kuma_admin_pass_enc } : null;
-}
-
-/** Stores the administrator Voxshift made in Kuma (the password is already encrypted). */
-export async function saveKumaAdmin(s: Scoped, user: string, passEnc: string): Promise<void> {
-  await s.updateTable('device_monitor_settings').set({ kuma_admin_user: user, kuma_admin_pass_enc: passEnc }).execute();
+  return due ? { url, adminUser: c.kuma_admin_user, adminPassEnc: c.kuma_admin_pass_enc } : null;
 }

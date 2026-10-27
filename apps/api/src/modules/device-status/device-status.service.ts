@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { addDevice, canonicalSiteCode, deviceAlertView, deviceStatusOverview, disableManagedKuma, enableManagedKuma, removeDevice, saveDeviceAlertSettings, saveDeviceMonitorSettings, tenantDb, updateDevice, webOrigin } from '@tvmf/db';
-import { buildDeviceAlertContext, can, DEVICE_ALERT_FREQUENCY_LABEL, type DeviceAlertPlan, type DeviceAlertSettingsInput, type DeviceAutoSetupInput, type DeviceInventoryInput, type DeviceMonitorSettingsInput, type DeviceStatusOverview } from '@tvmf/shared';
+import { buildDeviceAlertContext, can, DEVICE_ALERT_FREQUENCY_LABEL, isTenantStatusSlug, kumaSlugForTenant, type DeviceAlertPlan, type DeviceAlertSettingsInput, type DeviceAutoSetupInput, type DeviceInventoryInput, type DeviceMonitorSettingsInput, type DeviceStatusOverview } from '@tvmf/shared';
 import { MailService } from '../../mail/mail.service';
 import { InjectDb, type Db } from '../../db/db.module';
 import { AuditService } from '../../common/audit.service';
@@ -75,6 +75,10 @@ export class DeviceStatusService {
   }
 
   async saveSettings(t: TenantContext, u: AuthedUser, input: DeviceMonitorSettingsInput) {
+    // Each customer's managed status page is its own. Nobody may point their customer at the page Voxshift made for a different one.
+    if (isTenantStatusSlug(input.statusSlug) && input.statusSlug !== kumaSlugForTenant(t.id)) {
+      throw new BadRequestException('That status page belongs to another customer. Use this customer\'s own, or a different one.');
+    }
     const saved = await saveDeviceMonitorSettings(this.s(t), input);
     await this.audit.tenant(t.schema, 'discovery.device_status_settings_updated', {
       actor: this.actor(u),
@@ -89,6 +93,7 @@ export class DeviceStatusService {
   async autoSetup(t: TenantContext, u: AuthedUser, input: DeviceAutoSetupInput) {
     if (!!input.adminUser !== !!input.adminPassword) throw new BadRequestException('Give both the administrator name and password, or neither.');
     await enableManagedKuma(this.s(t), {
+      tenantId: t.id,
       kumaUrl: input.kumaUrl || undefined,
       adminUser: input.adminUser || undefined,
       adminPassEnc: input.adminPassword ? encryptSecret(input.adminPassword) : undefined,
