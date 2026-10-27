@@ -25,6 +25,7 @@ export const EMAIL_TEMPLATES = [
   'incident_activity',
   'incident_major',
   'incident_review',
+  'device_alert',
   'mail_test',
   'sso_admin_signin',
   'sso_staff_access_request',
@@ -33,6 +34,25 @@ export type EmailTemplate = (typeof EMAIL_TEMPLATES)[number];
 
 export const EMAIL_STATUSES = ['queued', 'sent', 'failed', 'skipped'] as const;
 export type EmailStatus = (typeof EMAIL_STATUSES)[number];
+
+/** Context for the `device_alert` template: Monitoring tells people a device went down, came back, or is still down. */
+export interface DeviceAlertContext {
+  customerName: string;
+  /** The email's subject, worked out where the lines are (so a single device can be named). */
+  subject: string;
+  /** A test email says so and carries sample lines. */
+  test: boolean;
+  /** Each line is already worded: "Door paging · LTN01 · Algo paging, down since 09:42". */
+  wentDown: string[];
+  recovered: string[];
+  stillDown: string[];
+  /** Mentioned again only because it has been down a while. */
+  reminders: string[];
+  /** "Straight away", "At most every hour"... for the footer line about how to change it. */
+  frequencyLabel: string;
+  monitoringUrl: string;
+  alertsUrl: string;
+}
 
 /** Context for the `user_invitation` template. */
 export interface UserInvitationContext {

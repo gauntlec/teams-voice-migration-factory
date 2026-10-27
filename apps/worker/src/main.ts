@@ -54,6 +54,7 @@ import { planDelivery } from './mail/sandbox';
 import { contextForRender, invitationPasswordMissing, maskSecrets, removeInvitationPassword as removeInvitationPasswordRow } from './mail/invitation-secret';
 import { deliverWebhooks, sweepAgents } from './agents';
 import { deliverMspNotifications } from './msp-notify';
+import { sweepDeviceAlerts } from './device-alerts';
 import { sweepDeviceStatus } from './device-status';
 import { sweepKumaSync } from './kuma-manager';
 import { sweepIncidents } from './incidents';
@@ -313,6 +314,8 @@ setInterval(() => void sweepIncidents(db, enqueueMail).catch((e) => console.warn
 void sweepIncidents(db, enqueueMail).catch((e) => console.warn('incident sweep failed', e));
 // Device status: read each customer's Uptime Kuma status page (if switched on) every 15 seconds.
 setInterval(() => void sweepDeviceStatus(db).catch((e) => console.warn('device status sweep failed', e)), 15_000).unref();
+// Monitoring email alerts: tell people when a device goes down or comes back, as often as each customer chose.
+setInterval(() => void sweepDeviceAlerts(db, enqueueMail).catch((e) => console.warn('device alerts sweep failed', e)), 15_000).unref();
 // Device status, phase 2: where Voxshift looks after a customer's Kuma, make it match their device list (a change is picked up within 15 seconds).
 setInterval(() => void sweepKumaSync(db).catch((e) => console.warn('kuma sync failed', e)), 15_000).unref();
 // The Voxshift Hub (if one is connected): report this installation's version and health once a minute.

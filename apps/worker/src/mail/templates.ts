@@ -4,6 +4,7 @@ import {
   FEATURE_STATUS_LABELS,
   type BugReportStatusChangedContext,
   type DeploymentCompletedContext,
+  type DeviceAlertContext,
   type DiscoveryCompletedContext,
   type EmailTemplate,
   type IncidentActivityContext,
@@ -83,6 +84,8 @@ export function renderEmail(template: string, context: Record<string, unknown>, 
       return incidentMajor(context as unknown as IncidentMajorContext, branding);
     case 'incident_review':
       return incidentReview(context as unknown as IncidentReviewContext, branding);
+    case 'device_alert':
+      return deviceAlert(context as unknown as DeviceAlertContext, branding);
     case 'sso_admin_signin':
       return ssoAdminSignin(context as unknown as SsoAdminSigninContext);
     case 'sso_staff_access_request':
@@ -158,6 +161,24 @@ function ssoStaffAccessRequest(c: SsoStaffAccessRequestContext, branding?: Email
 }
 
 /** The test message from Platform settings > Email: proves this installation can send mail the way it is set up. */
+function deviceAlert(c: DeviceAlertContext, branding?: EmailBranding): RenderedEmail {
+  const block = (title: string, lines: string[]) => (lines.length ? [title, ...lines.map((l) => `•  ${l}`)] : []);
+  const intro = c.test
+    ? [`This is a test of Monitoring alerts for ${c.customerName}. If you can read it, alerts are reaching you.`, 'A real alert lists the devices that went down or came back, like this:']
+    : [`Monitoring for ${c.customerName} has something to tell you.`];
+  const body = [...block('Went down', c.wentDown), ...block('Back up', c.recovered), ...block('Still down (reminder)', c.reminders), ...block('Also down', c.stillDown)];
+  const layout: LayoutInput = {
+    previewText: c.subject,
+    eyebrow: 'Monitoring',
+    heading: c.test ? 'Test alert' : c.wentDown.length ? 'A device is down' : c.recovered.length ? 'A device is back' : 'A device is still down',
+    intro: [...intro, ...body],
+    cta: { label: 'Open Monitoring', url: c.monitoringUrl },
+    secondaryCta: { label: 'Change who gets these emails, and how often', url: c.alertsUrl },
+    outro: [`You get these emails: ${c.frequencyLabel.toLowerCase()}. Times are UTC.`],
+  };
+  return { subject: c.subject, html: renderHtml(layout, branding), text: renderText(layout) };
+}
+
 function mailTest(c: { installation: string; how: string; sentAt: string }, branding?: EmailBranding): RenderedEmail {
   const layout: LayoutInput = {
     previewText: 'Email from your Voxshift installation is working.',

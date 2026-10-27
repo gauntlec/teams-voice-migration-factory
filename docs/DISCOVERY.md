@@ -374,9 +374,9 @@ Build `claimNumber`) is refused with the date. **End cool-off** on the Numbers t
 `discovery.number_cooloff_ended`. Design-time moves (taking a number from one design row to another) do not start a cool-off:
 nothing was released in Teams.
 
-## Monitoring > Devices
+## Monitoring (Devices, Add devices, Watch list, Alerts)
 
-**Monitoring > Devices** shows whether each site's phones, paging units and gateways are answering, by **reading** an Uptime
+**Monitoring** shows whether each site's phones, paging units and gateways are answering, by **reading** an Uptime
 Kuma status page on the customer's network (tenant migration `0070`; design and test results in
 [DEVICE-MONITORING.md](DEVICE-MONITORING.md)). Voxshift never creates or changes anything in Kuma.
 
@@ -398,3 +398,5 @@ Kuma status page on the customer's network (tenant migration `0070`; design and 
 - **Not yet**: raising an incident from a down device, emailing, SIP and Teams Rooms sign-in checks, an inventory that flags devices that
   should be monitored but are not (phases 2 and 3 in DEVICE-MONITORING.md); Kuma is added to a Linux install with `--with-kuma` or `voxshift kuma on` (INSTALL-LINUX.md), and to a
   Dockge stack with `COMPOSE_PROFILES=kuma`.
+
+The screens, who may use them (`monitoring:read` / `monitoring:manage`) and the email alerts are described in [DEVICE-MONITORING.md](DEVICE-MONITORING.md) "Menu, roles and email alerts".

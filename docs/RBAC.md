@@ -112,6 +112,7 @@ audit:read:tenant   audit:read:platform
 feature:read  feature:create  feature:manage
 bug:read  bug:create  bug:manage
 tenantdiscovery:read  tenantdiscovery:run
+monitoring:read  monitoring:manage
 platform:operate
 sso:manage
 ```
@@ -150,6 +151,8 @@ sso:manage
 | intake:manage (alert sources for incident intake, demo incidents) | ✓ | | | |
 | agent:manage (Administration -> Assistants: create agents, tokens, customer policies, webhooks, kill switches) | ✓ | | | |
 | tenantdiscovery:read / run (Discovery: connect to the customer's live Teams tenant) | ✓ | | ✓ | |
+| monitoring:read (Monitoring > Devices: the live status screen; customers see only their own sites if scoped) | ✓ | ✓ | ✓ | ✓ |
+| monitoring:manage (Monitoring > Add devices, Watch list and Alerts: add / change / remove devices, set monitoring up, email alert settings) | ✓ | | ✓ | |
 | platform:operate (Release check page, set/clear the maintenance notice) | ✓ | | | |
 | sso:manage (Platform settings > Single sign-on: providers, role ceilings, linking people to provider identities, approving Voxshift staff access if the person did not sign in through the hub; see [SSO.md](SSO.md)) | ✓ | | | |
 

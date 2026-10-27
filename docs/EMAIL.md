@@ -269,6 +269,14 @@ Sent to every active Super Admin when someone signs in as Administrator through 
 
 Sent when a Voxshift staff sign-in is waiting for approval ([SSO.md](SSO.md) 4.3a): to every active Super Admin who did **not** come in through the Voxshift Hub (a person who signed in through the hub cannot approve, so is not asked). It names who is asking (name and email), the role the sign-in would get, the time and the address it came from, says that the administrator chooses how long to allow (the default is 4 hours, the most is 24) and that an unanswered request lapses after an hour, and links to Platform settings > Single sign-on, where the request is answered. One email per request: asking again while waiting, or straight after a denial, sends no second one. It is only sent when the installation's staff access setting is "Needs approval"; the master email switch also stops it (the request is still shown on the page and as a banner at the top of the application).
 
+## `device_alert`
+
+Monitoring tells people a device went down, came back, or is still down (and a "Send me a test alert" sample). Sent by the worker (`apps/worker/src/device-alerts.ts`)
+to the people each customer chose on Monitoring > Alerts: its engineers and the administrators, optionally its project managers, and any extra addresses. How often is
+the customer's setting (straight away, or a summary at most every 15 minutes to once a day, with optional reminders). Context `DeviceAlertContext`
+(`packages/shared/src/email.ts`): customer name, subject, lines for went down / back up / reminders / also down, the how-often text and links to Monitoring and Alerts.
+Branded with the customer's branding; times are UTC. See [DEVICE-MONITORING.md](DEVICE-MONITORING.md) "Menu, roles and email alerts".
+
 ## Incident emails
 
 Five templates, all with the customer's branding and a link to `/incidents/:id`

@@ -619,6 +619,23 @@ export interface DeviceMonitorsTable {
   message: ColumnType<string, string | undefined, string>;
   uptime_24h: ColumnType<string | null, number | null | undefined, number | null>;
   updated_at: ColumnType<string, string | undefined, string>;
+  /** When an alert email last said this device was down (migration 0072). */
+  last_alerted_at: ColumnType<string | null, string | null | undefined, string | null>;
+}
+
+/** Who is emailed when a device goes down or comes back, and how often; one row (migration 0072). */
+export interface DeviceAlertSettingsTable {
+  id: ColumnType<boolean, boolean | undefined, boolean>;
+  enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  frequency: ColumnType<string, string | undefined, string>;
+  reminder_hours: ColumnType<number, number | undefined, number>;
+  notify_engineers: ColumnType<boolean, boolean | undefined, boolean>;
+  notify_project_managers: ColumnType<boolean, boolean | undefined, boolean>;
+  recipients: ColumnType<string[], string | undefined, string>;
+  /** bigint: the driver hands it back as a string. */
+  cursor: ColumnType<string, string | undefined, string>;
+  last_sent_at: string | null;
+  updated_at: ColumnType<string, string | undefined, string>;
 }
 
 /** Every change of state seen, kept 90 days (migration 0070). */
@@ -1785,6 +1802,7 @@ export interface DB {
   device_monitor_settings: DeviceMonitorSettingsTable;
   device_monitors: DeviceMonitorsTable;
   device_status_changes: DeviceStatusChangesTable;
+  device_alert_settings: DeviceAlertSettingsTable;
   device_inventory: DeviceInventoryTable;
   voice_audio_files: VoiceAudioFilesTable;
   deployment_scripts: DeploymentScriptsTable;

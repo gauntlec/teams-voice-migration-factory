@@ -56,6 +56,8 @@ export const PERMISSIONS = [
   'bug:manage', // move status, edit labels, delete - SUPER_ADMIN only
   'tenantdiscovery:read', // view the live-tenant Discovery inventory - admin & engineer only
   'tenantdiscovery:run', // connect to the customer tenant and run a discovery - admin & engineer only
+  'monitoring:read', // Monitoring > Devices: the live status screen - admin, project manager, engineer and customer
+  'monitoring:manage', // Monitoring: add, change and remove devices, the watch list, set monitoring up, email alerts - admin & engineer only
   'intake:manage', // monitoring alert sources and the inbound mailbox settings: create, tokens, per-customer switches - SUPER_ADMIN only
   'agent:manage', // AI agents: create, tokens, per-customer autonomy, webhooks, kill switches - SUPER_ADMIN only
   'platform:operate', // release check + maintenance notice - SUPER_ADMIN only
@@ -99,6 +101,7 @@ export const PERMISSION_MATRIX: Record<Role, ReadonlySet<Permission>> = {
     'feature:create',
     'bug:read',
     'bug:create',
+    'monitoring:read', // the status screen only: project managers do not add devices or change alerts
   ]),
   ENGINEER: new Set<Permission>([
     'tenant:read',
@@ -136,6 +139,8 @@ export const PERMISSION_MATRIX: Record<Role, ReadonlySet<Permission>> = {
     // customers never connect to the customer's Microsoft tenant.
     'tenantdiscovery:read',
     'tenantdiscovery:run',
+    'monitoring:read',
+    'monitoring:manage',
   ]),
   CUSTOMER: new Set<Permission>([
     'tenant:read',
@@ -150,6 +155,7 @@ export const PERMISSION_MATRIX: Record<Role, ReadonlySet<Permission>> = {
     'inc:create',
     'files:read',
     'audit:read:tenant',
+    'monitoring:read', // the status screen, for their own sites if scoped
   ]),
 };
 

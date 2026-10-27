@@ -41,7 +41,7 @@ import { ServiceRequestPage } from './pages/ServiceRequestPage';
 import { ServiceRequests } from './pages/ServiceRequests';
 import { BugReports } from './pages/BugReports';
 import { Discovery } from './pages/Discovery';
-import { Monitoring } from './pages/Monitoring';
+import { MonitoringAdd, MonitoringAlerts, MonitoringDevices, MonitoringWatchList } from './pages/Monitoring';
 
 export function App() {
   const { status } = useAuth();
@@ -90,14 +90,10 @@ export function App() {
             </RequirePermission>
           }
         />
-        <Route
-          path="/monitoring/devices"
-          element={
-            <RequirePermission permission="discovery:read">
-              <Monitoring />
-            </RequirePermission>
-          }
-        />
+        <Route path="/monitoring/devices" element={<RequirePermission permission="monitoring:read"><MonitoringDevices /></RequirePermission>} />
+        <Route path="/monitoring/add" element={<RequirePermission permission="monitoring:manage"><MonitoringAdd /></RequirePermission>} />
+        <Route path="/monitoring/watch-list" element={<RequirePermission permission="monitoring:manage"><MonitoringWatchList /></RequirePermission>} />
+        <Route path="/monitoring/alerts" element={<RequirePermission permission="monitoring:manage"><MonitoringAlerts /></RequirePermission>} />
         <Route path="/monitoring" element={<Navigate to="/monitoring/devices" replace />} />
         <Route
           path="/build"

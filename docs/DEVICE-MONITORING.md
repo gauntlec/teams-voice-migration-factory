@@ -108,6 +108,30 @@ database" screen unless `UPTIME_KUMA_DB_TYPE=sqlite` is set (the compose files a
 Not done: pause/disable a device without removing it, other check types (HTTP, DNS, SNMP, SIP), alerts, importing devices from Discovery's phone endpoints and
 resource accounts, per-device history in Voxshift, a Kuma administrator with 2FA.
 
+## Menu, roles and email alerts (built 2026-10-27)
+
+**Menu** (left side, its own section **Monitoring**): **Devices** (the status screen), **Add devices**, **Watch list**, **Alerts**.
+
+| Screen | Who | What |
+|---|---|---|
+| Devices | `monitoring:read`: administrators, engineers, **project managers**, customers | Read-only status: tiles by site, down now, all devices, latest changes. A customer limited to some sites sees only those sites. |
+| Add devices | `monitoring:manage`: administrators and engineers only | One form (site, name, kind, ping or TCP port, address); stays open and keeps the site, kind and check so a whole site is quick to enter. Offers "Set up automatically" first if monitoring is not set up. |
+| Watch list | `monitoring:manage` | The devices being watched, with Change and Remove and their set-up state; the monitoring set-up (automatic or "I run my own"), the administrator sign-in prompt, Stop managing. |
+| Alerts | `monitoring:manage` | Email alerts (below). |
+
+Project managers therefore see the status screen only: the API (`GET /t/:id/device-status`) leaves out the watch list, addresses and set-up state for anyone without `monitoring:manage`, and every other route needs it (`tests/db/src/devices/device-status-permissions.db.test.ts` pins this per route).
+
+**Email alerts** (tenant migration `0072`, `packages/shared/src/device-alerts.ts` for the rules, `apps/worker/src/device-alerts.ts` for sending):
+- **What is news:** a device going down, and a device coming back after being down. Checking, maintenance and no-data changes are not.
+- **How often** (per customer): *straight away* (an email within about a minute), or a summary *at most every 15 minutes, 30 minutes, hour, 4 hours or once a day*. A summary mode sends only when something has changed since the last email, with everything that happened in between, plus the devices still down. The interval counts from the last email sent.
+- **Reminders** while a device stays down: none, or every hour, 4 hours or day (they ride on the next email under the same how-often setting).
+- **Who:** the customer's engineers and the administrators, optionally its project managers, plus up to 20 extra addresses. "Send me a test alert" sends a sample to the person asking, and only to them.
+- Switching alerts on starts from now: earlier history is not news and devices already down are not announced.
+- If email is switched off for the installation (Administration > Platform settings) nothing is generated; the Alerts screen says so.
+- Template `device_alert`, branded like the other emails, with the customer's name; times are UTC.
+
+Not done: per-device alert settings or muting a device, maintenance windows that silence alerts, Teams or SMS delivery, an alert history screen (the email log under Administration shows what was sent).
+
 ## Risks and open points
 
 - **ICMP needs `NET_RAW`** under `cap_drop: ALL`; that is a small, well understood capability but a change from "all dropped".

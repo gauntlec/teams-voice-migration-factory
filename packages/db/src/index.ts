@@ -13,6 +13,7 @@ export * from './sso-staff-access';
 export * from './plan-rows';
 export * from './validate-rows';
 export * from './preview';
+export * from './device-alerts';
 export * from './device-inventory';
 export * from './device-status';
 export * from './device-sync';
