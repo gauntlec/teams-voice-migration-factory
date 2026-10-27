@@ -54,6 +54,7 @@ import { planDelivery } from './mail/sandbox';
 import { contextForRender, invitationPasswordMissing, maskSecrets, removeInvitationPassword as removeInvitationPasswordRow } from './mail/invitation-secret';
 import { deliverWebhooks, sweepAgents } from './agents';
 import { deliverMspNotifications } from './msp-notify';
+import { sweepDeviceStatus } from './device-status';
 import { sweepIncidents } from './incidents';
 import { finishAgentDeployment, recordServiceRequestRun, sweepServiceRequests } from './service-requests';
 
@@ -309,6 +310,8 @@ void sweepServiceRequests(db, enqueueMail).catch((e) => console.warn('service re
 // Incidents: waiting-on-customer reminders, target warnings and misses, auto-close of resolved ones.
 setInterval(() => void sweepIncidents(db, enqueueMail).catch((e) => console.warn('incident sweep failed', e)), 5 * 60_000).unref();
 void sweepIncidents(db, enqueueMail).catch((e) => console.warn('incident sweep failed', e));
+// Device status: read each customer's Uptime Kuma status page (if switched on) every 15 seconds.
+setInterval(() => void sweepDeviceStatus(db).catch((e) => console.warn('device status sweep failed', e)), 15_000).unref();
 // The Voxshift Hub (if one is connected): report this installation's version and health once a minute.
 setInterval(() => void sendHubHeartbeat(db).catch((e) => console.warn('hub heartbeat failed', e)), HUB_HEARTBEAT_SECONDS * 1000).unref();
 setTimeout(() => void sendHubHeartbeat(db).catch((e) => console.warn('hub heartbeat failed', e)), 5_000).unref();

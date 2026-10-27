@@ -197,7 +197,38 @@ services:
     depends_on:
       - postgres
 
+  # Device status (docs/DEVICE-MONITORING.md): Uptime Kuma checks the customer's phones, paging units and gateways from inside the network,
+  # and Voxshift reads its status page. Off unless COMPOSE_PROFILES=kuma is in .env. Voxshift reaches it at http://kuma:3001 (set that under
+  # Discovery > Device status); the port is published to this host's loopback only, for an SSH tunnel when an engineer sets monitors up.
+  # Ping needs BOTH cap_add NET_RAW and the ping_group_range sysctl while every capability is dropped and no-new-privileges is on
+  # (verified 2026-10-27). The sysctl range is the container user's gid; some hosts refuse wider ranges.
+  kuma:
+    image: louislam/uptime-kuma:2-rootless
+    restart: unless-stopped
+    profiles: ["kuma"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_RAW
+    sysctls:
+      net.ipv4.ping_group_range: "1000 1000"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - kumadata:/app/data
+
 volumes:
   pgdata:
   redisdata:
   filesdata:
+  kumadata:

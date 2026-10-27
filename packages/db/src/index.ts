@@ -13,6 +13,7 @@ export * from './sso-staff-access';
 export * from './plan-rows';
 export * from './validate-rows';
 export * from './preview';
+export * from './device-status';
 export * from './drift';
 export * from './number-cooloff';
 export * from './voice-audio';

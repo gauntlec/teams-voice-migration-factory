@@ -373,3 +373,27 @@ by a Voxshift deployment as well as outside it, from the next sync. Assigning a 
 Build `claimNumber`) is refused with the date. **End cool-off** on the Numbers tab clears it, with a reason, audited as
 `discovery.number_cooloff_ended`. Design-time moves (taking a number from one design row to another) do not start a cool-off:
 nothing was released in Teams.
+
+## Device status
+
+Discovery > **Device status** shows whether each site's phones, paging units and gateways are answering, by **reading** an Uptime
+Kuma status page on the customer's network (tenant migration `0070`; design and test results in
+[DEVICE-MONITORING.md](DEVICE-MONITORING.md)). Voxshift never creates or changes anything in Kuma.
+
+- **Set up** (`discovery:sites:manage`): Kuma's address (`http://kuma:3001`, address only) and the status page name. Saved with
+  `PUT /t/:id/device-status/settings`, audited as `discovery.device_status_settings_updated`. Changing the address drops what was read from
+  the old one. Kuma itself is an optional compose service (profile `kuma`, `deploy/dockge/compose.yaml`).
+- **In Kuma**: put the monitors on that status page and tag each one `site` (the site code) and `device` (algo, poly, dect, audiocodes,
+  teams-room, other). Tags are matched to Voxshift sites ignoring case; a code Voxshift does not know is still shown, and a monitor with no
+  site tag appears under "No site tag". Turn **Show Tags** on for the status page or Kuma leaves the tags out.
+- **Reading** (`apps/worker/src/device-status.ts`, `pollDeviceStatus` in `packages/db/src/device-status.ts`): every 15 seconds, for each
+  customer that has it on, `GET /api/status-page/<slug>` and `/api/status-page/heartbeat/<slug>` (no login; the parser is
+  `parseKumaStatus` in `packages/shared/src/device-status.ts`, tested against recorded Kuma 2.5.7 samples; the tag shape `{name, value}` was checked live on 2026-10-27). Kuma holds only the last 100 beats,
+  so Voxshift keeps its own `device_monitors` (current state, `since`) and `device_status_changes` (90 days). A device first seen already
+  down is recorded from its first down beat; one that has been up or down for the whole window shows "at least" the time it can see.
+- **When Kuma cannot be read** the last known states stay, the page says why (`last_error`) and, after two minutes without a good read, that
+  the colours are old. It is never shown as all-green.
+- **Read**: `GET /t/:id/device-status` (`discovery:read`): settings, every device, a tile per site (colour = worst device) and the last 50 changes.
+- **Not yet**: raising an incident from a down device, emailing, SIP and Teams Rooms sign-in checks, an inventory that flags devices that
+  should be monitored but are not (phases 2 and 3 in DEVICE-MONITORING.md); the installer does not offer Kuma yet (add it by hand with
+  `COMPOSE_PROFILES=kuma`).

@@ -125,6 +125,9 @@ single shared claim. |
 | `deployment_changes` | id, deployment_id, seq, at, operator_user_id, correlation_id, object_type (`user`/`cap`/`resource_account`/`aa`/`cq`/`group`), object_id, cmdlet, parameters jsonb (redacted), before jsonb, after jsonb, result (`applied`/`skipped`/`failed`/`whatif`), message — **append-only**, enforced by a database trigger (tenant `0054_audit_tables_append_only.sql`: UPDATE, DELETE and TRUNCATE are refused; a deployment that has changes therefore cannot be deleted either, though nothing deletes deployments) |
 | `deployment_scripts` | id, deployment_id, filename, kind (`ps1`/`txt`), content — the "What-If" output |
 | `voice_audio_files` | id, filename, content_type, byte_size (≤ 5 MB), content bytea, teams_audio_file_id, imported_at, uploaded_by - redirect audio prompts, imported to Teams by the worker in the live run that uses them (tenant `0069`) |
+| `device_monitor_settings` | one row: enabled, kuma_url, status_slug, last_polled_at, last_ok_at, last_error - where the customer's Uptime Kuma status page is (tenant `0070`) |
+| `device_monitors` | kuma_id (pk), name, monitor_type, group_name, sitecode, device_kind, state (up/down/pending/maintenance/unknown), since, since_exact, last_beat_at, response_ms, message, uptime_24h - one row per monitor on the status page |
+| `device_status_changes` | kuma_id, name, sitecode, device_kind, from_state, to_state, at, message - every change of state seen, kept 90 days |
 | `number_policy` | one row: cooloff_days (default 90, 0 = off) - the number cool-off period (tenant `0066`); `phone_numbers` gains cooling_until, cooling_reason |
 | `deployment_drift` | site_id (PK, FK → `discovery_sites`), drifted, awaiting_sync, rows jsonb (`DriftRow[]`: rowId, objectType, name, state, cmdlets, lastDeployedAt), run_id, computed_at — the latest drift check for a site (tenant `0065`), replaced on every check; see DEPLOYMENT.md "Drift" |
 

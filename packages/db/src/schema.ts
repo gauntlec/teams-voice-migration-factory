@@ -568,6 +568,48 @@ export interface NumberPolicyTable {
   cooloff_days: ColumnType<number, number | undefined, number>;
 }
 
+/** Where the customer's Uptime Kuma status page is, one row (migration 0070). */
+export interface DeviceMonitorSettingsTable {
+  id: ColumnType<boolean, boolean | undefined, boolean>;
+  enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  kuma_url: string | null;
+  status_slug: string | null;
+  last_polled_at: string | null;
+  last_ok_at: string | null;
+  last_error: string | null;
+}
+
+/** The current state of each monitor on the status page (migration 0070). */
+export interface DeviceMonitorsTable {
+  kuma_id: number;
+  name: string;
+  monitor_type: ColumnType<string, string | undefined, string>;
+  group_name: string | null;
+  sitecode: string | null;
+  device_kind: ColumnType<string, string | undefined, string>;
+  state: string;
+  since: string;
+  since_exact: ColumnType<boolean, boolean | undefined, boolean>;
+  last_beat_at: string | null;
+  response_ms: ColumnType<string | null, number | null | undefined, number | null>;
+  message: ColumnType<string, string | undefined, string>;
+  uptime_24h: ColumnType<string | null, number | null | undefined, number | null>;
+  updated_at: ColumnType<string, string | undefined, string>;
+}
+
+/** Every change of state seen, kept 90 days (migration 0070). */
+export interface DeviceStatusChangesTable {
+  id: Generated<string>;
+  kuma_id: number;
+  name: string;
+  sitecode: string | null;
+  device_kind: ColumnType<string, string | undefined, string>;
+  from_state: string | null;
+  to_state: string;
+  at: string;
+  message: ColumnType<string, string | undefined, string>;
+}
+
 export interface DiscoveryUsersTable {
   id: Generated<string>;
   /** FK -> discovery_sites.id (ON DELETE SET NULL). null = not tied to a site. */
@@ -1716,6 +1758,9 @@ export interface DB {
   deployment_changes: DeploymentChangesTable;
   deployment_drift: DeploymentDriftTable;
   number_policy: NumberPolicyTable;
+  device_monitor_settings: DeviceMonitorSettingsTable;
+  device_monitors: DeviceMonitorsTable;
+  device_status_changes: DeviceStatusChangesTable;
   voice_audio_files: VoiceAudioFilesTable;
   deployment_scripts: DeploymentScriptsTable;
   handover_packs: HandoverPacksTable;
