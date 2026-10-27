@@ -73,6 +73,7 @@ interface Tenant {
   status: string;
   teams_read_only: boolean;
   managed_services_enabled: boolean;
+  monitoring_enabled: boolean;
   msp_id: string | null;
   branding: Branding | null;
   sandbox: boolean;
@@ -149,6 +150,14 @@ export function AdminTenants() {
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ['tenants'] });
       await refreshMe(); // the left nav shows Service Requests from the signed-in user's tenant list
+    },
+  });
+  const setMonitoring = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      api(`/tenants/${id}/monitoring`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['tenants'] });
+      await refreshMe(); // the left nav shows Monitoring from the signed-in user's tenant list
     },
   });
   const setSandbox = useMutation({
@@ -270,6 +279,7 @@ export function AdminTenants() {
                 <TableHeaderCell>Branding</TableHeaderCell>
                 <TableHeaderCell>Teams read-only</TableHeaderCell>
                 <TableHeaderCell>Managed Services</TableHeaderCell>
+                {featureOn('monitoring') && <TableHeaderCell>Monitoring</TableHeaderCell>}
                 {featureOn('msp') && <TableHeaderCell>MSP</TableHeaderCell>}
                 <TableHeaderCell>Test customer</TableHeaderCell>
                 {can('tenant:delete') && <TableHeaderCell>Danger zone</TableHeaderCell>}
@@ -336,6 +346,24 @@ export function AdminTenants() {
                       '—'
                     )}
                   </TableCell>
+                  {featureOn('monitoring') && (
+                    <TableCell>
+                      {can('tenant:update') ? (
+                        <Checkbox
+                          checked={t.monitoring_enabled}
+                          disabled={setMonitoring.isPending}
+                          label={t.monitoring_enabled ? 'On' : 'Off'}
+                          onChange={(_, d) => setMonitoring.mutate({ id: t.id, enabled: !!d.checked })}
+                        />
+                      ) : t.monitoring_enabled ? (
+                        <Badge appearance="tint" color="success">
+                          On
+                        </Badge>
+                      ) : (
+                        '—'
+                      )}
+                    </TableCell>
+                  )}
                   {featureOn('msp') && (
                   <TableCell>
                     {can('tenant:update') ? (

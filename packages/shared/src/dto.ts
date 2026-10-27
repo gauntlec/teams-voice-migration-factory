@@ -1550,6 +1550,10 @@ export type SearchQuery = z.infer<typeof searchQuerySchema>;
 export const updateTenantManagedServicesSchema = z.object({ enabled: z.boolean() }).strict();
 export type UpdateTenantManagedServicesInput = z.infer<typeof updateTenantManagedServicesSchema>;
 
+/** Super Admin switch: show this customer the Monitoring section (Devices, Watch list, Alerts) and let the platform watch their devices. */
+export const updateTenantMonitoringSchema = z.object({ enabled: z.boolean() }).strict();
+export type UpdateTenantMonitoringInput = z.infer<typeof updateTenantMonitoringSchema>;
+
 const UPN_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const srPersonSchema = z.object({
   upn: z.string().trim().regex(UPN_RE, 'Enter a sign-in address like name@company.com').max(200),

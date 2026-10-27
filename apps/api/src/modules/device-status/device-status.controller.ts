@@ -4,7 +4,9 @@ import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
 import type { AuthedUser, TenantContext } from '../../common/request';
 import { ZodBody } from '../../common/zod.pipe';
 import { RequirePermission } from '../../rbac/require-permission.decorator';
+import { RequireFeature } from '../../common/feature.guard';
 import { TenantGuard } from '../../rbac/tenant.guard';
+import { MonitoringEnabledGuard } from './monitoring-enabled.guard';
 import { DeviceStatusService } from './device-status.service';
 
 /**
@@ -13,7 +15,8 @@ import { DeviceStatusService } from './device-status.service';
  * and customers too); only engineers and administrators (monitoring:manage) see the watch list or change anything.
  */
 @Controller('t/:tenantId/device-status')
-@UseGuards(TenantGuard)
+@RequireFeature('monitoring')
+@UseGuards(TenantGuard, MonitoringEnabledGuard)
 export class DeviceStatusController {
   constructor(private readonly svc: DeviceStatusService) {}
 

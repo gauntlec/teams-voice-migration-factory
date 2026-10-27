@@ -89,6 +89,8 @@ export interface MeTenant {
   branding: Branding | null;
   /** Managed Services is switched on for this customer (service requests). */
   managedServices: boolean;
+  /** Monitoring (Devices, Watch list, Alerts) is switched on for this customer. On unless a Super Admin switched it off. */
+  monitoring: boolean;
   /** A test customer: its emails go to whoever triggered them, not the real recipients (badge in the customer switcher). */
   sandbox: boolean;
 }

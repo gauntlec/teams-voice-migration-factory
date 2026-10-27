@@ -20,6 +20,7 @@ Each can be switched **off** here (everything is on by default, so nothing chang
 |---|---|---|
 | Feature requests | Feature requests | `/api/feature-requests` |
 | Bug reports | Bug reports | `/api/bug-reports` |
+| Monitoring | Monitoring: Devices, Watch list, Alerts (and the Monitoring column on Customers) | `/api/t/:tenantId/device-status`; the worker stops reading, setting up and emailing (see [DEVICE-MONITORING.md](DEVICE-MONITORING.md#switching-monitoring-on-and-off)) |
 | MSP features | Incident console, Service request admin, MSPs (and the MSP column on Customers and MSP fields on Users) | `/api/msps`, `/api/msp/incidents`, `/api/msp/service-requests` |
 
 What "off" means:

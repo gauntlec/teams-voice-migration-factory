@@ -9,6 +9,7 @@ import { FeatureGuard } from '../../../../apps/api/src/common/feature.guard';
 import { BugReportsController } from '../../../../apps/api/src/bug-reports/bug-reports.controller';
 import { FeatureRequestsController } from '../../../../apps/api/src/feature-requests/feature-requests.controller';
 import { MailService } from '../../../../apps/api/src/mail/mail.service';
+import { DeviceStatusController } from '../../../../apps/api/src/modules/device-status/device-status.controller';
 import { MspsController } from '../../../../apps/api/src/msps/msps.controller';
 import { MspIncidentsController } from '../../../../apps/api/src/modules/incidents/msp-incidents.controller';
 import { MspServiceRequestsController } from '../../../../apps/api/src/modules/service-requests/msp-service-requests.controller';
@@ -81,5 +82,15 @@ describe('menus and features', () => {
 
     await svc.setDisabledFeatures([], admin.id);
     for (const c of [BugReportsController, MspsController, MspIncidentsController]) expect(await through(c, first(c))).toBe('ok');
+  });
+
+  it('can switch Monitoring off, and only Monitoring', async () => {
+    expect(await through(DeviceStatusController, first(DeviceStatusController))).toBe('ok');
+    await svc.setDisabledFeatures(['monitoring'], admin.id);
+    expect(await through(DeviceStatusController, first(DeviceStatusController))).toBe('not_found');
+    expect(await through(BugReportsController, first(BugReportsController))).toBe('ok');
+    expect(await through(MspsController, first(MspsController))).toBe('ok');
+    await svc.setDisabledFeatures([], admin.id);
+    expect(await through(DeviceStatusController, first(DeviceStatusController))).toBe('ok');
   });
 });

@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { Kysely } from 'kysely';
-import { deviceSyncDue, getMonitoringAdmin, platformDb, recordDeviceSync, saveMonitoringAdmin, syncDeviceInventory, tenantDb, type DB } from '@tvmf/db';
+import { deviceSyncDue, disabledFeatures, getMonitoringAdmin, platformDb, recordDeviceSync, saveMonitoringAdmin, syncDeviceInventory, tenantDb, type DB } from '@tvmf/db';
 import { decryptSecret, encryptSecret } from './crypto';
 import { KumaClient } from './kuma-client';
 
@@ -72,7 +72,9 @@ export async function sweepKumaSync(db: Kysely<DB>): Promise<void> {
   if (running) return;
   running = true;
   try {
-    const tenants = await platformDb(db).selectFrom('tenants').select(['id', 'schema_name']).where('status', '=', 'active').execute();
+    // Voxshift does not touch the monitoring service while Monitoring is switched off for the installation or for the customer.
+    if ((await disabledFeatures(db)).includes('monitoring')) return;
+    const tenants = await platformDb(db).selectFrom('tenants').select(['id', 'schema_name']).where('status', '=', 'active').where('monitoring_enabled', '=', true).execute();
     await Promise.all(
       tenants.map(async (t) => {
         try {

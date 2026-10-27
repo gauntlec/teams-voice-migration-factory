@@ -176,6 +176,17 @@ The worker decrypts the community string only while it builds the Kuma request (
 
 Tests: `tests/db/src/devices/device-snmp.db.test.ts` (fake Kuma), `packages/shared/src/device-inventory.test.ts`, and in `kuma-contract.db.test.ts` the "SNMP checks" group, which runs a fake Algo (a net-snmp agent) against a real Kuma, and with `SNMP_DEVICE_HOST` / `SNMP_DEVICE_COMMUNITY` set, a real device.
 
+## Switching monitoring on and off
+
+Two switches, both Super Admin only, both **keep everything** (devices, alert settings, history): off hides and stops, on brings it back as it was. Both are on by default, so nothing changed for existing customers.
+
+| Switch | Where | Off means |
+|---|---|---|
+| Whole installation | Administration > Platform settings > Menus and features > **Monitoring** (`monitoring` in `packages/shared/src/platform-features.ts`) | The Monitoring menu disappears for everyone, the pages say "switched off on this installation", the API (`/api/t/:tenantId/device-status`) answers "not found" (`@RequireFeature('monitoring')`), and the worker stops reading status, looking after the monitoring service and sending alert emails for every customer. |
+| One customer | Administration > **Customers** > Monitoring column (`platform.tenants.monitoring_enabled`, migration `0038`; `PATCH /api/tenants/:id/monitoring`, audited as `tenant.monitoring_changed`) | That customer's menu section disappears, a bookmarked page says "Monitoring is switched off for this customer", the API answers 403 (`MonitoringEnabledGuard`), and the worker skips that customer (no status reads, no changes in the monitoring service, no alert emails). The customer's devices stay in the module; it is only Voxshift that stops touching it. |
+
+The Monitoring column on Customers only appears while the installation-wide switch is on. Tests: `tests/db/src/devices/monitoring-switch.db.test.ts` and `tests/db/src/platform/features.db.test.ts`.
+
 ## Risks and open points
 
 - **ICMP needs `NET_RAW`** under `cap_drop: ALL`; that is a small, well understood capability but a change from "all dropped".

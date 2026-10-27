@@ -37,6 +37,8 @@ export interface TenantContext {
   teamsReadOnly: boolean;
   /** Managed Services is switched on: the customer can raise service requests. */
   managedServices: boolean;
+  /** Monitoring is switched on for this customer (set by TenantGuard; the monitoring controller refuses the customer when false). */
+  monitoringEnabled?: boolean;
 }
 
 /** An AI agent authenticated by its token (see AgentAuthGuard). */

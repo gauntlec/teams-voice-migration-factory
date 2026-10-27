@@ -29,7 +29,7 @@ export class TenantGuard implements CanActivate {
 
     const tenant = await platformDb(this.db)
       .selectFrom('tenants')
-      .select(['id', 'slug', 'name', 'schema_name', 'status', 'teams_read_only', 'managed_services_enabled'])
+      .select(['id', 'slug', 'name', 'schema_name', 'status', 'teams_read_only', 'managed_services_enabled', 'monitoring_enabled'])
       .where('id', '=', tenantId)
       .executeTakeFirst();
     if (!tenant || tenant.status !== 'active') throw new NotFoundException('tenant not found');
@@ -59,6 +59,7 @@ export class TenantGuard implements CanActivate {
       siteScope,
       teamsReadOnly: tenant.teams_read_only,
       managedServices: tenant.managed_services_enabled,
+      monitoringEnabled: tenant.monitoring_enabled,
     };
     return true;
   }

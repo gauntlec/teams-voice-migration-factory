@@ -6,7 +6,7 @@
  */
 import { z } from 'zod';
 
-export const PLATFORM_FEATURES = ['feature_requests', 'bug_reports', 'msp'] as const;
+export const PLATFORM_FEATURES = ['feature_requests', 'bug_reports', 'msp', 'monitoring'] as const;
 export type PlatformFeature = (typeof PLATFORM_FEATURES)[number];
 
 export const PLATFORM_FEATURE_INFO: Record<PlatformFeature, { label: string; description: string; menus: string[] }> = {
@@ -16,6 +16,11 @@ export const PLATFORM_FEATURE_INFO: Record<PlatformFeature, { label: string; des
     label: 'MSP features',
     description: 'The managed service provider console: the MSP incident console, the service request queue and MSP administration. Switch off on a customer\'s own installation.',
     menus: ['Incident console', 'Service request admin', 'MSPs'],
+  },
+  monitoring: {
+    label: 'Monitoring',
+    description: 'Live status of the devices each customer wants watched (Devices, Watch list, Alerts), and the background reading, set-up and alert emails behind it. Each customer can also be switched off on its own on the Customers page.',
+    menus: ['Devices', 'Watch list', 'Alerts'],
   },
 };
 
@@ -33,6 +38,7 @@ export const FEATURE_PERMISSIONS: Record<PlatformFeature, readonly string[]> = {
   feature_requests: ['feature:read', 'feature:create', 'feature:manage'],
   bug_reports: ['bug:read', 'bug:create', 'bug:manage'],
   msp: ['msp:create', 'msp:read', 'msp:update', 'msp:delete', 'inc:msp', 'sr:msp'],
+  monitoring: ['monitoring:read', 'monitoring:manage'],
 };
 
 /** Is this permission switched off because an area it belongs to is off? */

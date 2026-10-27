@@ -174,6 +174,8 @@ interface NavDef {
   permission?: Permission;
   /** Only shown when the active customer has Managed Services switched on. */
   requiresManagedServices?: boolean;
+  /** Only shown when Monitoring is switched on for the active customer (Administration > Customers). */
+  requiresMonitoring?: boolean;
 }
 
 const MIGRATION: NavDef[] = [
@@ -188,9 +190,9 @@ const MIGRATION: NavDef[] = [
 
 /** Monitoring: whether the customer's equipment is answering. */
 const MONITORING: NavDef[] = [
-  { to: '/monitoring/devices', label: 'Devices', icon: <HeartPulse24Regular />, permission: 'monitoring:read' },
-  { to: '/monitoring/watch-list', label: 'Watch list', icon: <Eye24Regular />, permission: 'monitoring:manage' },
-  { to: '/monitoring/alerts', label: 'Alerts', icon: <Alert24Regular />, permission: 'monitoring:manage' },
+  { to: '/monitoring/devices', label: 'Devices', icon: <HeartPulse24Regular />, permission: 'monitoring:read', requiresMonitoring: true },
+  { to: '/monitoring/watch-list', label: 'Watch list', icon: <Eye24Regular />, permission: 'monitoring:manage', requiresMonitoring: true },
+  { to: '/monitoring/alerts', label: 'Alerts', icon: <Alert24Regular />, permission: 'monitoring:manage', requiresMonitoring: true },
 ];
 
 /** The managed service for the active customer. The whole section is hidden unless that customer has Managed Services switched on. */
@@ -328,7 +330,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         : null;
 
   const managedServices = tenants.find((t) => t.id === activeTenantId)?.managedServices ?? false;
-  const navVisible = (i: NavDef) => (!i.permission || can(i.permission)) && (!i.requiresManagedServices || managedServices);
+  const monitoringOn = tenants.find((t) => t.id === activeTenantId)?.monitoring ?? true;
+  const navVisible = (i: NavDef) => (!i.permission || can(i.permission)) && (!i.requiresManagedServices || managedServices) && (!i.requiresMonitoring || monitoringOn);
   // No Operations heading unless there is something under it (Managed Services on for this customer, and a permission to see it).
   const operationsVisible = OPERATIONS.some(navVisible);
   const renderNav = (items: NavDef[]) =>

@@ -27,7 +27,7 @@ export class TenantsService {
   async list(user: { id: string; role: Role }, search?: string) {
     let q = platformDb(this.db)
       .selectFrom('tenants')
-      .select(['id', 'slug', 'name', 'primary_domain', 'status', 'teams_read_only', 'managed_services_enabled', 'msp_id', 'branding', 'sandbox', 'sandbox_email', 'created_at'])
+      .select(['id', 'slug', 'name', 'primary_domain', 'status', 'teams_read_only', 'managed_services_enabled', 'monitoring_enabled', 'msp_id', 'branding', 'sandbox', 'sandbox_email', 'created_at'])
       // A customer being deleted is gone as far as every list is concerned (the Customers page shows it in its own notice).
       .where('status', '!=', 'deleting')
       .orderBy('name');
@@ -128,6 +128,22 @@ export class TenantsService {
       tenantId,
       detail: { enabled },
     });
+    return tenant;
+  }
+
+  /**
+   * Switches Monitoring (Devices, Watch list, Alerts) on or off for a customer. SUPER_ADMIN only (tenant:update). Off keeps everything the customer
+   * has set up; their monitoring pages and API refuse access and the worker stops reading, setting up and emailing for them.
+   */
+  async setMonitoring(tenantId: string, enabled: boolean, actor: AuditActor) {
+    await this.getTenantOrThrow(tenantId);
+    const tenant = await platformDb(this.db)
+      .updateTable('tenants')
+      .set({ monitoring_enabled: enabled })
+      .where('id', '=', tenantId)
+      .returning(['id', 'slug', 'name', 'primary_domain', 'status', 'teams_read_only', 'managed_services_enabled', 'monitoring_enabled', 'created_at'])
+      .executeTakeFirstOrThrow();
+    await this.audit.platform('tenant.monitoring_changed', { actor, targetType: 'tenant', targetId: tenantId, tenantId, detail: { enabled } });
     return tenant;
   }
 

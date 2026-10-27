@@ -4,9 +4,10 @@ import { platformDb, saveDeviceAlertSettings } from '@tvmf/db';
 import { renderEmail } from '../../../../apps/worker/src/mail/templates';
 import { sweepDeviceAlerts } from '../../../../apps/worker/src/device-alerts';
 import type { EnqueueMailInput } from '../../../../apps/worker/src/mail/enqueue';
-import { seedCustomer, seedUser, useDb, type TestCustomer } from '../helpers';
+import { seedCustomer, seedUser, useDb, useGlobalSettingsLock, type TestCustomer } from '../helpers';
 
 const handle = useDb();
+useGlobalSettingsLock(handle); // the sweep reads the platform's switched-off features, which another test file changes
 let c: TestCustomer;
 let engineer: Awaited<ReturnType<typeof seedUser>>;
 let pm: Awaited<ReturnType<typeof seedUser>>;

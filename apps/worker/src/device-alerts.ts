@@ -1,6 +1,6 @@
 import type { Kysely } from 'kysely';
 import { alertRecipientList, buildDeviceAlertContext, DEVICE_ALERT_FREQUENCY_LABEL } from '@tvmf/shared';
-import { deviceAlertDue, deviceAlertPeople, platformDb, settleDeviceAlert, tenantDb, webOrigin as resolveWebOrigin, type DB } from '@tvmf/db';
+import { deviceAlertDue, deviceAlertPeople, disabledFeatures, platformDb, settleDeviceAlert, tenantDb, webOrigin as resolveWebOrigin, type DB } from '@tvmf/db';
 import type { MailEnqueuer } from './mail/enqueue';
 
 /**
@@ -14,7 +14,9 @@ export async function sweepDeviceAlerts(db: Kysely<DB>, enqueueMail: MailEnqueue
   running = true;
   let emails = 0;
   try {
-    let q = platformDb(db).selectFrom('tenants').select(['id', 'name', 'schema_name']).where('status', '=', 'active');
+    // No alert emails while Monitoring is switched off for the installation or for the customer.
+    if ((await disabledFeatures(db)).includes('monitoring')) return { emails: 0 };
+    let q = platformDb(db).selectFrom('tenants').select(['id', 'name', 'schema_name']).where('status', '=', 'active').where('monitoring_enabled', '=', true);
     if (opts.tenantId) q = q.where('id', '=', opts.tenantId);
     const tenants = await q.execute();
     const origin = await resolveWebOrigin(db);

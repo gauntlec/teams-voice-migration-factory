@@ -20,6 +20,8 @@ export interface TenantsTable {
   branding: Json<import('@tvmf/shared').Branding> | null;
   /** Managed Services switched on: this customer can raise service requests - see 0012_tenant_managed_services.sql. */
   managed_services_enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  /** Monitoring (Devices / Watch list / Alerts) switched on for this customer; on by default - see 0038_tenant_monitoring.sql. */
+  monitoring_enabled: ColumnType<boolean, boolean | undefined, boolean>;
   /** Managed Services settings: targets, approvals, change window - see 0014_tenant_sr_settings.sql. Written as JSON.stringify(...). */
   sr_settings: ColumnType<import('@tvmf/shared').SrSettings, string | undefined, string>;
   /** Incident targets and impact x urgency matrix - see 0016_tenant_inc_settings.sql. Written as JSON.stringify(...). */
