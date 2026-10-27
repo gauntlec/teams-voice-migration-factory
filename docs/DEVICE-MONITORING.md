@@ -1,6 +1,6 @@
 # Device status monitoring (spike)
 
-Status: **spike in progress** (2026-10-27). Feature request: "Explore a real-time status dashboard for Teams-related equipment (Algo,
+Status: **spike mostly done** (2026-10-27): points 1 and 2 answered by test, point 3 deliberately not run, recommendation below. Feature request: "Explore a real-time status dashboard for Teams-related equipment (Algo,
 Poly, DECT, AudioCodes, Teams Rooms), starting with Uptime Kuma on on-premise installs". This is a findings and design document;
 nothing here ships to www. On-premise installs only: one Voxshift per customer, so the LAN is reachable and customers never mix.
 
@@ -19,8 +19,8 @@ only read; nothing was created, changed or deleted in it.
 
 | Acceptance point | Result so far |
 |---|---|
-| 1. Kuma ping under our locked-down container settings | **Not answered yet.** The test host's Kuma is a default stack (`louislam/uptime-kuma:2`, root, no `cap_drop`, no `read_only`, no `security_opt`), so its working ping (response times of 0.08-15 ms) says nothing about hardened settings. Rootless images exist (`2-rootless`, `2-slim-rootless`). Expectation, to be tested: with `cap_drop: ALL` the `ping` binary needs `cap_add: NET_RAW` (the TrueNAS catalog lists NET_RAW for Kuma; a Railway report of `spawn EPERM` on a platform that blocks raw sockets points the same way). |
-| 2. Read status from the status page JSON and `/metrics` | **Status page JSON: works, no login.** `GET /api/status-page/<slug>` gives each monitor's id, name, type and tags (when "Show tags" is on); `GET /api/status-page/heartbeat/<slug>` gives the last 100 heartbeats per monitor (status 1 up / 0 down / 2 pending / 3 maintenance, UTC time, response time ms, message) and 24-hour uptime. `/metrics` answers 401 without a key (HTTP basic auth, any user name, the API key as the password); there are no API keys on this Kuma yet, so reading it needs one created (Settings > API Keys). |
+| 1. Kuma ping under our locked-down container settings | **Yes, with two additions to our usual hardening.** Tested on a throwaway stack (`louislam/uptime-kuma:2-rootless`, `read_only`, `no-new-privileges`, `cap_drop: ALL`) on the test host. Four variants: **A** nothing added: every ping fails with `spawn EPERM` (Kuma's `/usr/bin/ping` has the file capability `cap_net_raw=ep`, and with an empty bounding set it cannot even start). **B** `cap_add: NET_RAW` only: ping starts but `socket: Operation not permitted ... missing cap_net_raw+p`, because `no-new-privileges` stops a non-root user gaining the file capability. **C** the sysctl only: still `spawn EPERM`. **D** both: **works**, ping to the gateway answers in under 1 ms and Kuma shows Up. The working recipe is in "Container settings for Kuma" below. |
+| 2. Read status from the status page JSON and `/metrics` | **Both work.** Status page JSON: `GET /api/status-page/<slug>` gives each monitor's id, name, type and tags (when "Show tags" is on); `GET /api/status-page/heartbeat/<slug>` gives the last 100 heartbeats per monitor (status 1 up / 0 down / 2 pending / 3 maintenance, UTC time, response time ms, message) and 24-hour uptime; no login. `/metrics` (read on the throwaway, where login is off; with login on it answers 401 and needs an API key sent as the basic-auth password) gives `monitor_status` (1/0/2/3) and `monitor_response_time` per monitor with labels `monitor_id`, `monitor_name`, `monitor_type`, `monitor_hostname`, `monitor_port`, plus cert expiry and uptime ratio. **`/metrics` has no tags**, so mapping a monitor to a site needs the status page JSON (tags) or a naming convention. |
 | 3. Create a monitor through a third-party client | **Not tested yet.** Kuma has no REST endpoint for monitors: adding, editing and deleting go through its internal Socket.IO API and need the admin user name and password (an API key only opens `/metrics`). The project's wiki says that API is for the application's own use and may change between versions without notice. Python clients: `uptime-kuma-api` documents support only up to Kuma 1.23.2; the forks `uptime_kuma_api_v2` (targets 2.0.0-beta.2) and `uptime-kuma-api2` (v2.3.0, supported server versions not stated) are unofficial. None is documented against 2.5.7. |
 | 4. Recommendation | Below. |
 
@@ -31,6 +31,26 @@ There is **no SIP monitor**, as expected. Sources: Kuma wiki "Internal API", the
 
 Do not drive Kuma from Voxshift. Let engineers create monitors in Kuma (they already know it), tag each monitor, and have Voxshift
 **read** the status page and draw the dashboard. That needs only the documented, public, read-only endpoints.
+
+**Container settings for Kuma** (verified 2026-10-27 on the test host):
+
+```yaml
+kuma:
+  image: louislam/uptime-kuma:2-rootless      # pin an exact 2.x tag in the installer
+  read_only: true
+  tmpfs: [/tmp]
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  cap_add: [NET_RAW]            # lets the ping binary start (it carries a file capability)
+  sysctls:
+    net.ipv4.ping_group_range: "1000 1000"   # lets the node user (gid 1000) send ICMP echo without the capability
+  volumes: [kuma_data:/app/data]              # a named volume, so the rootless user can write it
+```
+
+Notes: `NET_RAW` alone is not enough and neither is the sysctl alone. The sysctl value is **host dependent**: on the test host (it
+rejects ranges that are not mapped to it) `0 2147483647` and `0 65535` failed with `invalid argument` at container start, and
+`1000 1000` worked, so the installer should set the range to the container user's gid, not a wide default, and check that the
+container starts. Without a sysctl the fallback is to drop `no-new-privileges` for this one container, which is a worse trade.
 
 **Phase 1: read-only dashboard.**
 - Kuma runs as an optional service in the on-prem compose (behind a compose profile), on the internal Docker network with the same
@@ -67,9 +87,17 @@ means building history, flapping rules and maintenance windows ourselves.
 - Teams Rooms and Poly Lens status need push or an API from those portals; not investigated.
 - Alerting: Kuma can notify by itself (email, Teams, webhook). Whether Voxshift should also email, or raise an incident, is open.
 
-## To finish the spike
+## Not done
 
-1. Run Kuma with the same hardening as the Voxshift services on the test host (a separate throwaway stack, one `ping` monitor) and
-   record whether ping works with `cap_drop: ALL`, with and without `NET_RAW`, on the rootless image.
-2. Create a Kuma API key on the test Kuma, read `/metrics`, and delete the key.
-3. Try one `add_monitor` through `uptime-kuma-api2` against 2.5.7 and record whether it works.
+- **Point 3, creating a monitor through a third-party client**, was not run: it means installing an unofficial package and giving it
+  the Kuma password. The recommendation does not depend on it (Voxshift does not create monitors). If wanted later, it would run
+  in the engineer's own terminal against a throwaway Kuma.
+- ICMP is the only check tested. Not tested: SNMP, TCP and HTTP monitors against real Algo, Poly, DECT or AudioCodes devices,
+  Teams Rooms or Poly Lens status, and a down device's effect on the 15-30 s refresh.
+- Hardened settings with the full-size image were tested on one host kernel; the sysctl behaviour needs a check on each target OS
+  by the installer.
+
+## Test environment
+
+The throwaway stack `kuma-spike` (Dockge, port 3002, volume `kuma_spike_data`, login switched off on purpose, two test ping monitors)
+is still running on the test host and is to be removed only when the user says so.
