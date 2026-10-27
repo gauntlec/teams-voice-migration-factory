@@ -148,6 +148,8 @@ services:
   kuma:
     image: \${KUMA_IMAGE:-$KUMA_IMAGE_DEFAULT}
     restart: unless-stopped
+    environment:
+      UPTIME_KUMA_DB_TYPE: sqlite
     read_only: true
     tmpfs:
       - /tmp
@@ -223,6 +225,8 @@ services:
   kuma:
     image: \${KUMA_IMAGE:-$KUMA_IMAGE_DEFAULT}
     restart: unless-stopped
+    environment:
+      UPTIME_KUMA_DB_TYPE: sqlite
     read_only: true
     tmpfs:
       - /tmp

@@ -24,13 +24,31 @@ export class KumaClient implements KumaApi {
     socket.on('deleteMonitorFromList', (id: number) => { this.list.delete(id); });
   }
 
+  /** Why Kuma could not be reached, said as plainly as can be found out. A Kuma with an empty data folder waits at a "choose your database" screen and serves no Socket.IO API. */
+  private static async explain(url: string, fallback: string): Promise<Error> {
+    try {
+      const r = (await fetch(`${url}/api/entry-page`, { signal: AbortSignal.timeout(4000) }).then((x) => x.json())) as { type?: string };
+      if (r?.type === 'setup-database') {
+        return new Error('Kuma is waiting for you to choose its database, so it cannot be set up yet. Start Kuma with UPTIME_KUMA_DB_TYPE=sqlite (Voxshift\'s compose files and installer do) or finish that screen in Kuma.');
+      }
+    } catch {
+      // not Kuma, or not reachable at all: the original reason stands
+    }
+    return new Error(fallback);
+  }
+
   static async connect(url: string): Promise<KumaClient> {
     const socket = io(url, { transports: ['websocket'], reconnection: false, timeout: 10_000 });
-    await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error('Kuma did not answer. Is it running, and is the address right?')), 12_000);
-      socket.once('connect', () => { clearTimeout(t); resolve(); });
-      socket.once('connect_error', (e) => { clearTimeout(t); reject(new Error(`Cannot reach Kuma at ${url}: ${e.message}`)); });
-    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error('Kuma did not answer. Is it running, and is the address right?')), 12_000);
+        socket.once('connect', () => { clearTimeout(t); resolve(); });
+        socket.once('connect_error', (e) => { clearTimeout(t); reject(new Error(`Cannot reach Kuma at ${url}: ${e.message}`)); });
+      });
+    } catch (e) {
+      socket.close();
+      throw await KumaClient.explain(url, (e as Error).message);
+    }
     const client = new KumaClient(socket);
     await client.waitUntilReady();
     return client;

@@ -208,6 +208,9 @@ services:
     image: louislam/uptime-kuma:2.5.7-rootless
     restart: unless-stopped
     profiles: ["kuma"]
+    # Without this a Kuma with an empty data folder stops at a "choose your database" screen and never serves the API Voxshift uses to set it up.
+    environment:
+      UPTIME_KUMA_DB_TYPE: sqlite
     read_only: true
     tmpfs:
       - /tmp

@@ -32,7 +32,7 @@ f="$T/k1/compose.override.yaml"
 [ -s "$f" ] && good "compose.override.yaml written" || bad "no compose.override.yaml with --with-kuma"
 grep -q '"127.0.0.1:3001:3001"' "$f" && good "published on 127.0.0.1 only, port 3001 by default" || bad "port mapping is not 127.0.0.1:3001:3001"
 grep -qE '"(0\.0\.0\.0:)?[0-9]+:3001"' "$f" && bad "Kuma is published on every interface" || good "never published on every interface"
-for want in 'cap_drop:' '- ALL' '- NET_RAW' 'no-new-privileges:true' 'read_only: true' 'net.ipv4.ping_group_range: "1000 1000"' 'kumadata:/app/data' 'rootless'; do grep -qF -- "$want" "$f" || bad "compose.override.yaml lacks: $want"; done
+for want in 'cap_drop:' '- ALL' '- NET_RAW' 'no-new-privileges:true' 'read_only: true' 'net.ipv4.ping_group_range: "1000 1000"' 'kumadata:/app/data' 'rootless' 'UPTIME_KUMA_DB_TYPE: sqlite'; do grep -qF -- "$want" "$f" || bad "compose.override.yaml lacks: $want"; done
 good "hardening lines present"
 grep -q '^# Written by Voxshift' "$f" && good "marked as written by Voxshift (so 'voxshift kuma' never overwrites someone else's file)" || bad "no 'Written by Voxshift' marker"
 if command -v ruby >/dev/null 2>&1; then ruby -ryaml -e 'begin; YAML.load_file(ARGV[0], aliases: true); rescue ArgumentError; YAML.load_file(ARGV[0]); end' "$f" 2>/dev/null && good "it parses as YAML" || bad "compose.override.yaml does not parse"; fi

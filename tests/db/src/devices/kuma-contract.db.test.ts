@@ -128,3 +128,11 @@ describe.skipIf(!url)('Uptime Kuma contract', () => {
     expect((await status()).map((m) => m.name)).toEqual(['Loopback ping (renamed)']);
   });
 });
+
+// A Kuma with an empty data folder and no UPTIME_KUMA_DB_TYPE waits at its "choose your database" screen and serves no Socket.IO API. Point
+// KUMA_WIZARD_URL at one (start Kuma from source without that variable) to check the client says so plainly instead of "websocket error".
+describe.skipIf(!process.env.KUMA_WIZARD_URL)('Uptime Kuma at its database wizard', () => {
+  it('is explained in plain words', async () => {
+    await expect(KumaClient.connect(process.env.KUMA_WIZARD_URL!)).rejects.toThrow(/waiting for you to choose its database.*UPTIME_KUMA_DB_TYPE=sqlite/);
+  });
+});

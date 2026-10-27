@@ -101,8 +101,9 @@ The spike recommended not driving Kuma from Voxshift. Setting Kuma up by hand (a
 for the people who install it, so phase 2 reverses that for the part that matters: Voxshift creates the administrator, the monitors, the tags and the
 status page itself, from a device list. The risk (Kuma's Socket.IO API is internal and may change) is contained: one file (`apps/worker/src/kuma-client.ts`),
 Kuma pinned to an exact version, and a contract test run against a real Kuma (`tests/db/src/devices/kuma-contract.db.test.ts`, verified on 2.5.7). If the API
-ever breaks, reading the status page does not depend on it, and engineers can still use Kuma's own screen. The first-run quirk found: Kuma answers requests only a
-moment after accepting the connection, so the client retries a cheap call until it is answered. Details: [DISCOVERY.md](DISCOVERY.md) "Device status".
+ever breaks, reading the status page does not depend on it, and engineers can still use Kuma's own screen. Two first-run quirks found: Kuma answers requests only a
+moment after accepting the connection (the client retries a cheap call until it is answered), and a Kuma with an empty data folder stops at a "choose your
+database" screen unless `UPTIME_KUMA_DB_TYPE=sqlite` is set (the compose files and installer set it; the client says so plainly if it meets one that does not). Details: [DISCOVERY.md](DISCOVERY.md) "Device status".
 
 Not done: pause/disable a device without removing it, other check types (HTTP, DNS, SNMP, SIP), alerts, importing devices from Discovery's phone endpoints and
 resource accounts, per-device history in Voxshift, a Kuma administrator with 2FA.

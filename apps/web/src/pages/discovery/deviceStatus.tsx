@@ -384,6 +384,11 @@ export function DeviceStatus({ base, canManage }: { base: string; canManage: boo
             Settings
           </Button>
         )}
+        {canManage && !editing && !data.managed.managed && (
+          <Button size="small" appearance="primary" onClick={() => autoSetup.mutate()} disabled={autoSetup.isPending}>
+            Let Voxshift look after Kuma
+          </Button>
+        )}
       </div>
 
       {editing && settingsForm}
