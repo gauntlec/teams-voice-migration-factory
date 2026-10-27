@@ -1,11 +1,106 @@
 import { Card, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, mergeClasses } from '@fluentui/react-components';
 import { Link } from 'react-router';
-import { DEVICE_KIND_LABEL } from '@tvmf/shared';
+import { DEVICE_KIND_LABEL, SITE_REGION_LABEL, groupSiteTiles, type SiteTile } from '@tvmf/shared';
 import { DataTable } from '../../components/DataTable';
 import { LoadError } from '../../components/records';
 import { EmptyState } from '../../components/states';
 import { DangerText, MutedText } from '../../components/ui';
 import { StateBadge, STATE, ago, isConfigured, useOverview, useStyles, useTick } from './common';
+
+function Tile({ t }: { t: SiteTile }) {
+  const s = useStyles();
+  return (
+    <Card className={mergeClasses(s.tile, s[t.state])}>
+      <div className={s.tileTop}>
+        <Text weight="semibold">{t.sitecode ?? 'No site tag'}</Text>
+        <StateBadge state={t.state} />
+      </div>
+      <MutedText size={200}>{t.sitecode ? (t.name ?? (t.known ? '' : 'Not a site in Voxshift')) : 'Monitors with no site tag'}</MutedText>
+      <Text size={200}>
+        {t.total} device{t.total === 1 ? '' : 's'}
+        {t.counts.down > 0 && <DangerText size={200}> · {t.counts.down} down</DangerText>}
+        {t.counts.pending > 0 && ` · ${t.counts.pending} checking`}
+        {t.counts.maintenance > 0 && ` · ${t.counts.maintenance} in maintenance`}
+      </Text>
+    </Card>
+  );
+}
+
+/** "3 sites · 1 device down", for a region or country heading, so a problem shows without opening anything. */
+function Rollup({ sites, down }: { sites: number; down: number }) {
+  return (
+    <MutedText size={200}>
+      {sites} site{sites === 1 ? '' : 's'}
+      {down > 0 && <DangerText size={200}> · {down} device{down === 1 ? '' : 's'} down</DangerText>}
+    </MutedText>
+  );
+}
+
+/**
+ * The site tiles, grouped by region (AMER, EMEA, APAC) and, inside each, by country. A customer whose sites have neither gets the plain grid, as before;
+ * a customer with only countries (or only regions) gets just that level.
+ */
+function SiteTiles({ tiles }: { tiles: SiteTile[] }) {
+  const s = useStyles();
+  const { regions, unassigned } = groupSiteTiles(tiles);
+  const showRegion = regions.some((r) => r.region !== '');
+  const showCountry = regions.some((r) => r.countries.some((c) => c.country !== ''));
+  if (!showRegion && !showCountry) {
+    return (
+      <div className={s.tiles}>
+        {[...regions.flatMap((r) => r.countries.flatMap((c) => c.tiles)), ...unassigned].map((t) => (
+          <Tile key={t.sitecode ?? '—'} t={t} />
+        ))}
+      </div>
+    );
+  }
+  return (
+    <>
+      {regions.map((r) => (
+        <section key={r.region || 'none'} className={s.region}>
+          {showRegion && (
+            <div className={s.regionHead}>
+              <Text weight="semibold" size={400}>
+                {r.region ? SITE_REGION_LABEL[r.region] : 'No region set'}
+              </Text>
+              <StateBadge state={r.state} />
+              <Rollup sites={r.siteCount} down={r.down} />
+            </div>
+          )}
+          {r.countries.map((c) => (
+            <div key={c.country || 'none'} className={s.section}>
+              {showCountry && (
+                <div className={s.countryHead}>
+                  <Text weight="semibold">{c.country || 'No country set'}</Text>
+                  <Rollup sites={c.tiles.length} down={c.down} />
+                </div>
+              )}
+              <div className={s.tiles}>
+                {c.tiles.map((t) => (
+                  <Tile key={t.sitecode ?? '—'} t={t} />
+                ))}
+              </div>
+            </div>
+          ))}
+        </section>
+      ))}
+      {unassigned.length > 0 && (
+        <section className={s.region}>
+          <div className={s.regionHead}>
+            <Text weight="semibold" size={400}>
+              Not assigned to a site
+            </Text>
+          </div>
+          <div className={s.tiles}>
+            {unassigned.map((t) => (
+              <Tile key="none" t={t} />
+            ))}
+          </div>
+        </section>
+      )}
+    </>
+  );
+}
 
 /**
  * Monitoring > Devices: the status screen. Read only, and the only Monitoring screen project managers and customers get: tiles by site, what is down
@@ -64,23 +159,7 @@ export function DevicesStatus({ base, canManage }: { base: string; canManage: bo
         ) : null
       ) : (
         <>
-        <div className={s.tiles}>
-          {data.sites.map((t) => (
-            <Card key={t.sitecode ?? '—'} className={mergeClasses(s.tile, s[t.state])}>
-              <div className={s.tileTop}>
-                <Text weight="semibold">{t.sitecode ?? 'No site tag'}</Text>
-                <StateBadge state={t.state} />
-              </div>
-              <MutedText size={200}>{t.sitecode ? (t.name ?? (t.known ? '' : 'Not a site in Voxshift')) : 'Monitors with no site tag'}</MutedText>
-              <Text size={200}>
-                {t.total} device{t.total === 1 ? '' : 's'}
-                {t.counts.down > 0 && <DangerText size={200}> · {t.counts.down} down</DangerText>}
-                {t.counts.pending > 0 && ` · ${t.counts.pending} checking`}
-                {t.counts.maintenance > 0 && ` · ${t.counts.maintenance} in maintenance`}
-              </Text>
-            </Card>
-          ))}
-        </div>
+        <SiteTiles tiles={data.sites} />
 
         {down.length > 0 && (
           <div className={s.section}>

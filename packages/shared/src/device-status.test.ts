@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deviceMonitorSettingsSchema, kumaTime, parseKumaStatus, readDeviceTags, summariseBySite } from './device-status';
+import { deviceMonitorSettingsSchema, groupSiteTiles, kumaTime, parseKumaStatus, readDeviceTags, summariseBySite, type SiteTile } from './device-status';
 
 // Shapes recorded from Uptime Kuma 2.5.7 (/api/status-page/<slug> and /api/status-page/heartbeat/<slug>), trimmed.
 const page = {
@@ -103,5 +103,49 @@ describe('settings', () => {
     expect(deviceMonitorSettingsSchema.safeParse({ enabled: true, kumaUrl: 'http://kuma:3001/dashboard', statusSlug: 'x' }).success).toBe(false);
     expect(deviceMonitorSettingsSchema.safeParse({ enabled: true, kumaUrl: 'ftp://kuma', statusSlug: 'x' }).success).toBe(false);
     expect(deviceMonitorSettingsSchema.safeParse({ enabled: true, kumaUrl: 'http://kuma', statusSlug: '../x' }).success).toBe(false);
+  });
+});
+
+describe('groupSiteTiles', () => {
+  const tile = (sitecode: string | null, state: SiteTile['state'], country: string | null, region: SiteTile['region'], down = state === 'down' ? 1 : 0): SiteTile => ({
+    sitecode, state, name: sitecode, known: sitecode !== null, country, region, total: 1, counts: { up: state === 'up' ? 1 : 0, down, pending: 0, maintenance: 0, unknown: 0 },
+  });
+  const tiles = [
+    tile('MAN02', 'up', 'United Kingdom', 'EMEA'),
+    tile('PAR01', 'down', 'France', 'EMEA'),
+    tile('LON01', 'down', 'United Kingdom', 'EMEA'),
+    tile('LTN01', 'up', 'united kingdom ', 'EMEA'),
+    tile('NYC01', 'up', 'USA', 'AMER'),
+    tile('SYD01', 'maintenance', 'Australia', 'APAC'),
+    tile('OLD01', 'up', 'Canada', null),
+    tile('BARE1', 'up', null, null),
+    tile(null, 'down', null, null),
+  ];
+  const g = groupSiteTiles(tiles);
+
+  it('orders regions AMER, EMEA, APAC and then sites with no region', () => {
+    expect(g.regions.map((r) => r.region)).toEqual(['AMER', 'EMEA', 'APAC', '']);
+  });
+  it('orders countries A to Z inside a region, and sites with no country last', () => {
+    expect(g.regions[1]!.countries.map((c) => c.country)).toEqual(['France', 'United Kingdom']);
+    expect(g.regions[3]!.countries.map((c) => c.country)).toEqual(['Canada', '']);
+  });
+  it('treats a country written two ways as one, and puts the worst sites first', () => {
+    const uk = g.regions[1]!.countries.find((c) => c.country === 'United Kingdom')!;
+    expect(uk.tiles.map((t) => t.sitecode)).toEqual(['LON01', 'LTN01', 'MAN02']);
+  });
+  it('rolls the worst state and the devices down up to each country and region', () => {
+    const emea = g.regions[1]!;
+    expect(emea).toMatchObject({ state: 'down', down: 2, siteCount: 4 });
+    expect(emea.countries.find((c) => c.country === 'France')).toMatchObject({ state: 'down', down: 1 });
+    expect(g.regions[0]).toMatchObject({ state: 'up', down: 0, siteCount: 1 });
+    expect(g.regions[2]!.state).toBe('maintenance');
+  });
+  it('keeps monitors with no site tag apart', () => {
+    expect(g.unassigned).toHaveLength(1);
+    expect(g.regions.flatMap((r) => r.countries.flatMap((c) => c.tiles)).some((t) => t.sitecode === null)).toBe(false);
+  });
+  it('copes with nothing at all', () => {
+    expect(groupSiteTiles([])).toEqual({ regions: [], unassigned: [] });
   });
 });

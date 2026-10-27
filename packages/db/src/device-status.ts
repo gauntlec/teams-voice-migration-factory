@@ -1,4 +1,4 @@
-import { DEVICE_STATUS_STALE_SECONDS, parseKumaStatus, summariseBySite, type DeviceChangeRow, type DeviceKind, type DeviceMonitor, type DeviceMonitorSettingsInput, type DeviceMonitorSettingsView, type DeviceRow, type DeviceState, type DeviceStatusOverview } from '@tvmf/shared';
+import { asSiteRegion, DEVICE_STATUS_STALE_SECONDS, parseKumaStatus, summariseBySite, type DeviceChangeRow, type DeviceKind, type DeviceMonitor, type DeviceMonitorSettingsInput, type DeviceMonitorSettingsView, type DeviceRow, type DeviceState, type DeviceStatusOverview } from '@tvmf/shared';
 import { deviceManagedView, listDeviceInventory } from './device-inventory';
 import type { Scoped } from './live-state';
 
@@ -136,7 +136,7 @@ export async function deviceStatusOverview(s: Scoped, now = new Date()): Promise
     listDeviceInventory(s),
     s.selectFrom('device_monitors').selectAll().orderBy('name').execute(),
     s.selectFrom('device_status_changes').selectAll().orderBy('at', 'desc').orderBy('id', 'desc').limit(50).execute(),
-    s.selectFrom('discovery_sites').select(['sitecode', 'name']).execute(),
+    s.selectFrom('discovery_sites').select(['sitecode', 'name', 'country', 'region']).execute(),
   ]);
   // A tag may differ from the site code in case only; show the site's own code.
   const canon = new Map(sites.map((x) => [x.sitecode.toLowerCase(), x]));
@@ -158,7 +158,7 @@ export async function deviceStatusOverview(s: Scoped, now = new Date()): Promise
   }));
   const tiles = summariseBySite(devices).map((t) => {
     const site = t.sitecode ? canon.get(t.sitecode.toLowerCase()) : undefined;
-    return { ...t, name: site?.name ?? null, known: !!site };
+    return { ...t, name: site?.name ?? null, known: !!site, country: site?.country?.trim() || null, region: asSiteRegion(site?.region) || null };
   });
   const stale = settings.enabled && (!settings.lastOkAt || now.getTime() - Date.parse(settings.lastOkAt) > DEVICE_STATUS_STALE_SECONDS * 1000);
   return {

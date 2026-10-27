@@ -113,3 +113,18 @@ describe('pollDeviceStatus', () => {
     expect(o.settings).toMatchObject({ lastOkAt: null, lastError: null });
   });
 });
+
+describe('where a site is, for grouping the tiles', () => {
+  it('carries the site\'s country and region on its tile, and nothing for a site that does not exist', async () => {
+    await c.s.updateTable('discovery_sites').set({ country: 'United Kingdom ', region: 'emea' } as never).where('sitecode', '=', 'LTN01').execute();
+    await saveDeviceMonitorSettings(c.s, { enabled: true, kumaUrl: 'http://kuma:3001', statusSlug: 'voxshift' });
+    await c.s.insertInto('device_monitors').values([
+      { kuma_id: 901, name: 'Here', sitecode: 'ltn01', device_kind: 'algo', state: 'up', since: new Date().toISOString() },
+      { kuma_id: 902, name: 'Mystery site', sitecode: 'ZZZ99', device_kind: 'algo', state: 'up', since: new Date().toISOString() },
+    ] as never).execute();
+    const o = await deviceStatusOverview(c.s);
+    expect(o.sites.find((t) => t.sitecode === 'LTN01')).toMatchObject({ country: 'United Kingdom', region: 'EMEA', known: true });
+    expect(o.sites.find((t) => t.sitecode === 'ZZZ99')).toMatchObject({ country: null, region: null, known: false });
+    await c.s.deleteFrom('device_monitors').where('kuma_id', 'in', [901, 902]).execute();
+  });
+});

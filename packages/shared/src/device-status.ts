@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SITE_REGIONS, type SiteRegion } from './domain';
 
 /*
  * Device status (docs/DEVICE-MONITORING.md): reads an Uptime Kuma status page and turns it into one row per monitor.
@@ -147,6 +148,71 @@ export function summariseBySite(monitors: Array<Pick<DeviceMonitor, 'sitecode' |
   });
 }
 
+/** A site's tile on the status screen: its devices' state, plus where the site is so the tiles can be grouped. */
+export interface SiteTile extends SiteDeviceSummary {
+  name: string | null;
+  /** The site exists in Voxshift (its tag matched a site code). */
+  known: boolean;
+  country: string | null;
+  region: SiteRegion | null;
+}
+
+export const SITE_REGION_LABEL: Record<SiteRegion, string> = { AMER: 'Americas (AMER)', EMEA: 'Europe, Middle East & Africa (EMEA)', APAC: 'Asia Pacific (APAC)' };
+
+export interface SiteTileCountry {
+  /** '' = the sites have no country. */
+  country: string;
+  tiles: SiteTile[];
+  state: DeviceState;
+  down: number;
+}
+export interface SiteTileRegion {
+  /** '' = the sites have no region. */
+  region: SiteRegion | '';
+  countries: SiteTileCountry[];
+  state: DeviceState;
+  down: number;
+  siteCount: number;
+}
+
+const worst = (states: DeviceState[]): DeviceState => states.reduce<DeviceState>((w, x) => (SEVERITY[x] > SEVERITY[w] ? x : w), 'up');
+
+/**
+ * Groups the site tiles by region (AMER, EMEA, APAC, then sites with no region) and, inside a region, by country (A to Z, no country last). The worst
+ * tiles come first inside a country, and each region and country carries the worst state and the number of devices down so a problem shows without opening
+ * anything. Tiles that are not a site (monitors with no site tag) are returned apart.
+ */
+export function groupSiteTiles(tiles: SiteTile[]): { regions: SiteTileRegion[]; unassigned: SiteTile[] } {
+  const sitesOnly = tiles.filter((t) => t.sitecode !== null);
+  const unassigned = tiles.filter((t) => t.sitecode === null);
+  const order = (r: SiteRegion | '') => (r === '' ? SITE_REGIONS.length : SITE_REGIONS.indexOf(r));
+  const byRegion = new Map<SiteRegion | '', Map<string, SiteTile[]>>();
+  const spelling = new Map<string, string>();
+  for (const t of sitesOnly) {
+    const region = t.region ?? '';
+    const typed = (t.country ?? '').trim();
+    const key = typed.toLowerCase();
+    if (typed && !spelling.has(key)) spelling.set(key, typed);
+    const countries = byRegion.get(region) ?? new Map<string, SiteTile[]>();
+    countries.set(key, [...(countries.get(key) ?? []), t]);
+    byRegion.set(region, countries);
+  }
+  const regions: SiteTileRegion[] = [...byRegion.entries()]
+    .sort(([a], [b]) => order(a) - order(b))
+    .map(([region, countries]) => {
+      const list: SiteTileCountry[] = [...countries.entries()]
+        .sort(([a], [b]) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b)))
+        .map(([key, ts]) => ({
+          country: key === '' ? '' : (spelling.get(key) ?? key),
+          tiles: [...ts].sort((x, y) => SEVERITY[y.state] - SEVERITY[x.state] || (x.sitecode ?? '').localeCompare(y.sitecode ?? '')),
+          state: worst(ts.map((x) => x.state)),
+          down: ts.reduce((n, x) => n + x.counts.down, 0),
+        }));
+      return { region, countries: list, state: worst(list.map((c) => c.state)), down: list.reduce((n, c) => n + c.down, 0), siteCount: list.reduce((n, c) => n + c.tiles.length, 0) };
+    });
+  return { regions, unassigned };
+}
+
 /** How old a poll may be before the tiles say the status is stale rather than showing old colours as current. */
 export const DEVICE_STATUS_STALE_SECONDS = 120;
 
@@ -210,7 +276,7 @@ export interface DeviceStatusOverview {
   /** Enabled, but the last good read is older than DEVICE_STATUS_STALE_SECONDS (or there has been none): colours below are old. */
   stale: boolean;
   devices: DeviceRow[];
-  sites: Array<SiteDeviceSummary & { name: string | null; known: boolean }>;
+  sites: SiteTile[];
   changes: DeviceChangeRow[];
 }
 

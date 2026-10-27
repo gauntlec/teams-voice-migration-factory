@@ -114,7 +114,7 @@ resource accounts, per-device history in Voxshift, a Kuma administrator with 2FA
 
 | Screen | Who | What |
 |---|---|---|
-| Devices | `monitoring:read`: administrators, engineers, **project managers**, customers | Read-only status: tiles by site, down now, all devices, latest changes. A customer limited to some sites sees only those sites. |
+| Devices | `monitoring:read`: administrators, engineers, **project managers**, customers | Read-only status: site tiles grouped by region (AMER, EMEA, APAC) and then country, each heading rolling up its worst state and devices down; down now, all devices, latest changes. A customer limited to some sites sees only those sites. Region and country come from the site (Administration > Sites); with neither set on any site the tiles stay a plain grid, sites without a region or country are grouped last, and monitors with no site tag are shown apart (`groupSiteTiles` in `packages/shared/src/device-status.ts`). |
 | Add devices | `monitoring:manage`: administrators and engineers only | One form (site, name, kind, ping or TCP port, address); stays open and keeps the site, kind and check so a whole site is quick to enter. Offers "Set up automatically" first if monitoring is not set up. |
 | Watch list | `monitoring:manage` | The devices being watched, with Change and Remove and their set-up state; the monitoring set-up (automatic or "I run my own"), the administrator sign-in prompt, Stop managing. |
 | Alerts | `monitoring:manage` | Email alerts (below). |
