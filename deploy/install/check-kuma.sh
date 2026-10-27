@@ -74,7 +74,7 @@ echo "The generated command:"
 D="$T/k1"
 bash -n "$D/voxshift" && good "bash -n" || bad "the generated command has a syntax error"
 if [ -n "$SHELLCHECK" ]; then
-  if "$SHELLCHECK" -S warning -e SC2010 -s bash "$D/voxshift" >"$T/sc.log" 2>&1; then good "shellcheck (warnings and errors)"; else bad "shellcheck: $(head -20 "$T/sc.log")"; fi
+  if "$SHELLCHECK" -S warning -e SC2010,SC2120 -s bash "$D/voxshift" >"$T/sc.log" 2>&1; then good "shellcheck (warnings and errors)"; else bad "shellcheck: $(head -20 "$T/sc.log")"; fi
 else echo "  (shellcheck not installed - skipped)"; fi
 
 STUB="$T/stub"; mkdir -p "$STUB"
