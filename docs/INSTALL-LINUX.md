@@ -287,20 +287,23 @@ Voxshift can show whether each site's phones, paging units and gateways are answ
 by **Uptime Kuma**, a small free monitoring program that runs next to Voxshift on this server. Add it when you want this; Voxshift works
 without it.
 
-Add it during the install by putting `--with-kuma` on the install command (Step 3), or to a running installation any time:
+Add it during the install by putting `--with-kuma --kuma-web` on the install command (Step 3), or to a running installation any time:
 
 ```bash
-sudo voxshift kuma on
+sudo voxshift kuma on --web
 ```
 
 It starts Kuma and prints what to do next. In short:
 
-1. Kuma is **not** on the network, only on this server. From your own computer open a tunnel: `ssh -L 3001:127.0.0.1:3001 you@the-server`, then browse to `http://localhost:3001` and create Kuma's administrator account. (Port 3001 in use? `sudo voxshift kuma on --port 3005`, and use that number.)
+1. Open Kuma's screen at **`https://<your Voxshift address>:8443`** (the same certificate as Voxshift; use another port with `--web 9443`) and create Kuma's administrator account.
+   Open that port in the server's firewall **for the networks your staff use only**: anyone who can reach it sees Kuma's sign-in page. (`--open-firewall` at install time opens it too.)
+   Prefer not to open a port? Leave out `--web`: Kuma is then only on the server itself, reached from your own computer through an SSH tunnel
+   (`ssh -L 3001:127.0.0.1:3001 you@the-server`, then `http://localhost:3001`). Port 3001 in use? `sudo voxshift kuma on --port 3005`.
 2. In Kuma add a monitor for each device and give it two tags: **site** (the site code, as in Voxshift) and **device** (`algo`, `poly`, `dect`, `audiocodes`, `teams-room` or `other`).
 3. Make a **status page** in Kuma, add the monitors to it, and turn **Show Tags** on.
 4. In Voxshift open **Discovery > Device status**, enter the address `http://kuma:3001` and the status page's name, and switch it on.
 
-`sudo voxshift kuma status` shows whether it is running; `sudo voxshift kuma off` removes it (its data stays unless you add `--delete-data`).
+`sudo voxshift kuma status` shows whether it is running and where its screen is; `sudo voxshift kuma on --no-web` closes the web port again; `sudo voxshift kuma off` removes it (its data stays unless you add `--delete-data`).
 Backups include Kuma's data and settings once it is on.
 
 ## Trusting a self-signed certificate (Install D or E)

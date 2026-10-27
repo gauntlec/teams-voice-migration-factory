@@ -13,9 +13,12 @@ good() { echo "  ok: $*"; }
 
 # ---------------------------------------------------------------- one text, two places
 echo "The installer and the generated command write the same Kuma file:"
-blocks="$(awk '/^kuma_override\(\) \{/{f=1; n++} f{print > ("'"$T"'/block" n ".txt")} /^\}/{f=0}' "$HERE/install.sh"; ls "$T"/block*.txt 2>/dev/null | wc -l | tr -d ' ')"
-[ "$blocks" = 2 ] && good "two kuma_override functions found" || bad "expected 2 kuma_override functions in install.sh, found $blocks"
-cmp -s "$T/block1.txt" "$T/block2.txt" && good "they are identical" || bad "kuma_override differs between the installer and the generated command"
+for fn in kuma_override kuma_caddy_block; do
+  rm -f "$T"/block*.txt
+  blocks="$(awk '/^'"$fn"'\(\) \{/{f=1; n++} f{print > ("'"$T"'/block" n ".txt")} /^\}/{f=0}' "$HERE/install.sh"; ls "$T"/block*.txt 2>/dev/null | wc -l | tr -d ' ')"
+  [ "$blocks" = 2 ] && good "two $fn functions found" || bad "expected 2 $fn functions in install.sh, found $blocks"
+  cmp -s "$T/block1.txt" "$T/block2.txt" && good "$fn is identical in both" || bad "$fn differs between the installer and the generated command"
+done
 imgs="$(grep -c '^ *KUMA_IMAGE_DEFAULT="' "$HERE/install.sh")"; [ "$imgs" = 2 ] && [ "$(grep '^ *KUMA_IMAGE_DEFAULT="' "$HERE/install.sh" | sed 's/^ *//; s/" *#.*/"/' | sort -u | wc -l | tr -d ' ')" = 1 ] && good "one pinned Kuma image in both places" || bad "KUMA_IMAGE_DEFAULT differs or is missing"
 grep -q '^KUMA_IMAGE_DEFAULT=".*:[0-9][0-9.]*-rootless"' "$HERE/install.sh" && good "the image is pinned to an exact version (rootless)" || bad "the Kuma image is not pinned to an exact version"
 
@@ -41,6 +44,31 @@ refuse port-big     --with-kuma --kuma-port 70000
 refuse port-alone   --kuma-port 3003
 bash "$HERE/install.sh" --help | grep -q -- '--with-kuma' && good "--help describes --with-kuma" || bad "--help lacks --with-kuma"
 
+
+# ---------------------------------------------------------------- Kuma's screen through the web front door
+echo "Serving Kuma's screen through the web front door (--kuma-web):"
+caddy_ok() { [ "$(tr -cd '{' <"$1" | wc -c)" = "$(tr -cd '}' <"$1" | wc -c)" ]; }
+renderw() { label="$1"; shift; bash "$HERE/install.sh" --generate-only -y --admin-email admin@example.com --dir "$T/$label" --with-kuma "$@" >"$T/$label.log" 2>&1; }
+renderw w-acme --base-url https://voice.contoso.com --kuma-web || bad "acme + --kuma-web failed: $(tail -2 "$T/w-acme.log")"
+grep -q '^voice.contoso.com:8443 {' "$T/w-acme/Caddyfile" && grep -q 'reverse_proxy kuma:3001' "$T/w-acme/Caddyfile" && good "acme: a Caddyfile block for voice.contoso.com:8443 proxies to Kuma" || bad "acme: no Kuma block in the Caddyfile"
+awk '/^voice.contoso.com:8443 \{/,/^\}/' "$T/w-acme/Caddyfile" | grep -q 'tls' && bad "acme: the Kuma block must not set its own tls (Caddy gets the certificate by itself)" || good "acme: the Kuma block leaves the certificate to Caddy"
+caddy_ok "$T/w-acme/Caddyfile" && good "acme: Caddyfile braces balance" || bad "acme: Caddyfile braces do not balance"
+grep -q '^# BEGIN voxshift kuma' "$T/w-acme/Caddyfile" && grep -q '^# END voxshift kuma' "$T/w-acme/Caddyfile" && good "the block is marked so it can be found and removed" || bad "no BEGIN/END markers"
+grep -q 'caddy:' "$T/w-acme/compose.override.yaml" && grep -q '"8443:8443"' "$T/w-acme/compose.override.yaml" && good "the override publishes 8443 on the front door" || bad "the override lacks the caddy port"
+grep -q '"127.0.0.1:3001:3001"' "$T/w-acme/compose.override.yaml" && good "Kuma's own port is still host-only" || bad "Kuma's own port changed"
+if command -v ruby >/dev/null 2>&1; then ruby -ryaml -e 'begin; d=YAML.load_file(ARGV[0], aliases: true); rescue ArgumentError; d=YAML.load_file(ARGV[0]); end; exit(d["services"]["caddy"]["ports"] == ["8443:8443"] ? 0 : 1)' "$T/w-acme/compose.override.yaml" && good "the override parses and adds the caddy port" || bad "override with a web port does not parse as expected"; fi
+renderw w-int --base-url https://10.1.2.3 --kuma-web-port 9443 || bad "internal render failed"
+awk '/^10.1.2.3:9443 \{/,/^\}/' "$T/w-int/Caddyfile" | grep -q '^	tls internal$' && good "internal: the Kuma block uses the private CA too" || bad "internal: Kuma block lacks tls internal"
+renderw w-self --base-url https://voice.contoso.corp --tls selfsigned --kuma-web || bad "selfsigned render failed"
+awk '/^voice.contoso.corp:8443 \{/,/^\}/' "$T/w-self/Caddyfile" | grep -q '^	tls /certs/server.crt /certs/server.key$' && good "self-signed: the Kuma block uses the same certificate files" || bad "self-signed: Kuma block lacks the certificate"
+renderw w-none --base-url http://10.0.0.20 --kuma-web || bad "http render failed"
+grep -q '^:8443 {' "$T/w-none/Caddyfile" && caddy_ok "$T/w-none/Caddyfile" && good "http: a plain :8443 block" || bad "http: no :8443 block"
+refuse web-without-kuma --kuma-web
+refuse web-port-80      --with-kuma --kuma-web-port 80
+refuse web-port-clash   --with-kuma --kuma-port 3003 --kuma-web-port 3003
+refuse web-port-text    --with-kuma --kuma-web-port x
+render w-none2 --with-kuma && ! grep -q 'voxshift kuma' "$T/w-none2/Caddyfile" && good "no Kuma block without --kuma-web" || bad "Kuma block written without --kuma-web"
+
 # ---------------------------------------------------------------- the generated command
 echo "The generated command:"
 D="$T/k1"
@@ -60,6 +88,7 @@ if [ "${1:-}" = compose ]; then
   case "$*" in
     *"up -d kuma"*) [ -z "${STUB_KUMA_FAILS:-}" ] || exit 1; : > "$STUB_FLAG" ;;
     *"rm -sf kuma"*) rm -f "$STUB_FLAG" ;;
+    *"ps --services --filter status=running"*) echo caddy ;;
     *"ps kuma"*) [ ! -f "$STUB_FLAG" ] || echo "voxshift-kuma-1  louislam/uptime-kuma:2.5.7-rootless  kuma  Up 5 seconds (healthy)  127.0.0.1:3001->3001/tcp" ;;
     *"exec -T postgres pg_dump"*) cat "$STUB_DUMP" ;;
     *"exec -T web wget -q -O - "*) echo '{"version":"2026.10.52"}' ;;
@@ -126,6 +155,35 @@ b2="$(ls -1 "$P/backups" | grep -E '^[0-9]{8}-[0-9]{6}$' | tail -n 1)"
 [ ! -e "$P/backups/$b2/kuma-data.tar.gz" ] && [ ! -e "$P/backups/$b2/compose.override.yaml" ] && good "no Kuma files in a backup when Kuma is off" || bad "Kuma files in a backup of a host without Kuma"
 vp kuma off --delete-data >"$T/off2.log" 2>&1; vp kuma on >/dev/null 2>&1; vp kuma off --delete-data >"$T/off3.log" 2>&1
 grep -q 'docker volume rm voxshift_kumadata' "$STUB_LOG" && good "--delete-data removes the volume" || bad "--delete-data did not remove the volume"
+
+
+echo "voxshift kuma on --web / --no-web (http install, then https):"
+P="$T/plain"; vp() { PATH="$BASEPATH" bash "$P/voxshift" "$@"; }
+vp kuma on --port 3007 --web >"$T/w1.log" 2>&1 || bad "kuma on --web failed: $(tail -3 "$T/w1.log")"
+grep -q '^:8443 {' "$P/Caddyfile" && grep -q '"8443:8443"' "$P/compose.override.yaml" && good "--web: Caddyfile block and front-door port added (default 8443)" || bad "--web did not add the block and port"
+grep -q 'docker compose up -d kuma caddy' "$STUB_LOG" && good "--web: the front door is recreated to publish the port" || bad "--web did not recreate caddy"
+grep -q 'firewall' "$T/w1.log" && grep -q 'Open port 8443' "$T/w1.log" && good "--web: tells you to open the port (it never touches the firewall)" || bad "--web: no firewall note"
+vp kuma status 2>&1 | grep -q 'Screen:.*:8443' && good "status shows the web address" || bad "status does not show the web address"
+vp kuma on >"$T/w2.log" 2>&1 || bad "kuma on (again) failed"
+grep -q '"127.0.0.1:3007:3001"' "$P/compose.override.yaml" && grep -q '"8443:8443"' "$P/compose.override.yaml" && good "running 'kuma on' again keeps the port and the web setting" || bad "a second 'kuma on' lost a setting"
+[ "$(grep -c '^# BEGIN voxshift kuma' "$P/Caddyfile")" = 1 ] && good "... and the block is not duplicated" || bad "the Caddyfile block was duplicated"
+vp kuma on --web 9443 >/dev/null 2>&1; grep -q '^:9443 {' "$P/Caddyfile" && ! grep -q '^:8443 {' "$P/Caddyfile" && good "changing the web port replaces the block" || bad "web port change left the old block"
+vp kuma on --no-web >/dev/null 2>&1; ! grep -q 'voxshift kuma' "$P/Caddyfile" && ! grep -q '"9443:9443"' "$P/compose.override.yaml" && good "--no-web removes the block and the port" || bad "--no-web left something behind"
+vp kuma on --web 3007 >"$T/w3.log" 2>&1 && bad "the web port was allowed to equal Kuma's own port" || good "refuses a web port equal to Kuma's own"
+vp kuma on --web 8443 >/dev/null 2>&1
+vp backup >/dev/null 2>&1 || bad "backup with the web setting failed"
+vp kuma off >/dev/null 2>&1; ! grep -q 'voxshift kuma' "$P/Caddyfile" && good "kuma off takes the block out of the Caddyfile" || bad "kuma off left the Caddyfile block"
+# restore puts the override back and the Caddyfile follows it
+sleep 1; bk="$(ls -1 "$P/backups" | grep -E '^[0-9]{8}-[0-9]{6}$' | tail -n 1)"
+vp restore "$P/backups/$bk" --yes >"$T/w4.log" 2>&1 || bad "restore failed: $(tail -3 "$T/w4.log")"
+grep -q '^:8443 {' "$P/Caddyfile" && good "restore brings the Caddyfile block back with the override" || bad "restore left the Caddyfile without the Kuma block"
+vp kuma off >/dev/null 2>&1
+
+H="$T/w-acme"; vh() { CERT_WAIT=0 PATH="$BASEPATH" bash "$H/voxshift" "$@"; }
+vh certificate selfsigned --name voice.contoso.com >"$T/c1.log" 2>&1 || bad "certificate selfsigned failed: $(tail -3 "$T/c1.log")"
+awk '/^voice.contoso.com:8443 \{/,/^\}/' "$H/Caddyfile" | grep -q '^	tls /certs/server.crt /certs/server.key$' && awk '/^voice.contoso.com \{/,/^\}/' "$H/Caddyfile" | grep -q '^	tls /certs/server.crt' && good "a certificate change reaches the Kuma block too" || bad "the Kuma block kept the old certificate setting after 'certificate selfsigned'"
+vh kuma on --no-web >/dev/null 2>&1; vh kuma on --web >/dev/null 2>&1
+awk '/^voice.contoso.com:8443 \{/,/^\}/' "$H/Caddyfile" | grep -q '^	tls /certs/server.crt /certs/server.key$' && good "turning --web on later follows the current certificate mode" || bad "a later --web did not follow the certificate mode"
 
 [ "$fail" = 0 ] && echo "device status (Kuma) installer checks: all passed"
 exit "$fail"

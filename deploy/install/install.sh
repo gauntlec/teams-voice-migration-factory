@@ -38,6 +38,7 @@ ARM64=0               # 1 on a 64-bit ARM host (experimental)
 REFRESH=0
 WITH_KUMA=0           # 1 = also write compose.override.yaml with Uptime Kuma (device status)
 KUMA_PORT="3001"      # the host-only (127.0.0.1) port Kuma's screen is published on
+KUMA_WEB_PORT=""      # set = also serve Kuma's screen through the web front door (Caddy) on this port, https like the main address
 KUMA_IMAGE_DEFAULT="louislam/uptime-kuma:2.5.7-rootless"   # the version device status was checked against; kept in step with the generated command
 AUTO_UPDATE=""        # "" = ask (interactive) or no | daily | weekly | no
 BACKUP_RECIPIENTS=()  # public keys (or files of them) that backups are encrypted to; empty = backups are not encrypted
@@ -99,6 +100,10 @@ Device status (optional):
                          (Discovery > Device status reads it). Written to compose.override.yaml, published on this host only (127.0.0.1).
                          Add it to an existing installation later with: voxshift kuma on
   --kuma-port N          The host-only port for Kuma's screen (default 3001; 1024-65535), when 3001 is already used
+  --kuma-web             Also open Kuma's screen to staff through the web front door, on its own port (8443), with the same certificate as the
+                         main address and Kuma's own sign-in, so nobody needs an SSH tunnel. Anyone who can reach that port can see the sign-in
+                         page: open it in the firewall only to the networks staff use. Change it later: voxshift kuma on --web [PORT] / --no-web
+  --kuma-web-port N      As --kuma-web, on port N (1024-65535)
 
 Existing installation:
   --refresh-command      Only rewrite the 'voxshift' command (and, with --auto-update, switch the update job on). Touches no
@@ -129,12 +134,13 @@ make_selfsigned() {
 # kuma_override PORT: the text of compose.override.yaml (Uptime Kuma for device status).
 # (The generated 'voxshift' command has the same function: keep the two in step; check-kuma.sh compares them.)
 kuma_override() {
-  local port="$1"
+  local port="$1" webport="${2:-}"
   cat <<EOF
 # Written by Voxshift (install.sh --with-kuma, or: voxshift kuma on). Remove it with: voxshift kuma off
 # Uptime Kuma checks the customer's phones, paging units and gateways from inside this network, and Voxshift reads its status page
 # (Discovery > Device status, address http://kuma:3001). Docker Compose merges this file into compose.yaml by itself, so 'voxshift update' and
-# 'voxshift restart' keep it. Kuma is published to this host only (127.0.0.1): reach its screen through an SSH tunnel, never the network.
+# 'voxshift restart' keep it. Kuma's own port is published to this host only (127.0.0.1). Its screen is reached either through the web front door
+# (voxshift kuma on --web: https://<address>:<port>, Kuma's own sign-in) or, without that, through an SSH tunnel.
 # To use another Kuma version, put KUMA_IMAGE=<image:tag> in .env.
 # Ping needs BOTH NET_RAW and the ping_group_range setting while every capability is dropped (checked on Kuma $KUMA_IMAGE_DEFAULT); some hosts refuse
 # other ranges.
@@ -162,10 +168,24 @@ services:
       - "127.0.0.1:$port:3001"
     volumes:
       - kumadata:/app/data
-
+$( [ -z "$webport" ] || printf '  caddy:\n    ports:\n      - "%s:%s"\n' "$webport" "$webport" )
 volumes:
   kumadata:
 EOF
+}
+# kuma_caddy_block HOST MODE WEBPORT: the Caddyfile site block that serves Kuma's screen on its own port, with the same certificate settings
+# as the main address (MODE: none | acme | internal | custom). Marked so 'voxshift kuma' can find and remove it again.
+kuma_caddy_block() {
+  local host="$1" mode="$2" webport="$3" addr tlsline=""
+  case "$mode" in
+    none) addr=":$webport" ;;
+    internal) addr="$host:$webport"; tlsline="	tls internal" ;;
+    custom) addr="$host:$webport"; tlsline="	tls /certs/server.crt /certs/server.key" ;;
+    *) addr="$host:$webport" ;;
+  esac
+  printf '# BEGIN voxshift kuma (voxshift kuma on --web; remove with: voxshift kuma on --no-web)\n%s {\n' "$addr"
+  [ -z "$tlsline" ] || printf '%s\n' "$tlsline"
+  printf '\tencode gzip\n\treverse_proxy kuma:3001\n}\n# END voxshift kuma\n'
 }
 
 write_command() {
@@ -189,12 +209,13 @@ need_root() { [ "$(id -u)" -eq 0 ] || { echo "Run as root: sudo voxshift $*" >&2
 KUMA_IMAGE_DEFAULT="louislam/uptime-kuma:2.5.7-rootless"
 # kuma_override PORT: the text of compose.override.yaml (Uptime Kuma for device status). Same text as the installer's: check-kuma.sh compares them.
 kuma_override() {
-  local port="$1"
+  local port="$1" webport="${2:-}"
   cat <<EOF
 # Written by Voxshift (install.sh --with-kuma, or: voxshift kuma on). Remove it with: voxshift kuma off
 # Uptime Kuma checks the customer's phones, paging units and gateways from inside this network, and Voxshift reads its status page
 # (Discovery > Device status, address http://kuma:3001). Docker Compose merges this file into compose.yaml by itself, so 'voxshift update' and
-# 'voxshift restart' keep it. Kuma is published to this host only (127.0.0.1): reach its screen through an SSH tunnel, never the network.
+# 'voxshift restart' keep it. Kuma's own port is published to this host only (127.0.0.1). Its screen is reached either through the web front door
+# (voxshift kuma on --web: https://<address>:<port>, Kuma's own sign-in) or, without that, through an SSH tunnel.
 # To use another Kuma version, put KUMA_IMAGE=<image:tag> in .env.
 # Ping needs BOTH NET_RAW and the ping_group_range setting while every capability is dropped (checked on Kuma $KUMA_IMAGE_DEFAULT); some hosts refuse
 # other ranges.
@@ -222,17 +243,46 @@ services:
       - "127.0.0.1:$port:3001"
     volumes:
       - kumadata:/app/data
-
+$( [ -z "$webport" ] || printf '  caddy:\n    ports:\n      - "%s:%s"\n' "$webport" "$webport" )
 volumes:
   kumadata:
 EOF
 }
+# kuma_caddy_block HOST MODE WEBPORT: the Caddyfile site block that serves Kuma's screen on its own port, with the same certificate settings
+# as the main address (MODE: none | acme | internal | custom). Marked so 'voxshift kuma' can find and remove it again.
+kuma_caddy_block() {
+  local host="$1" mode="$2" webport="$3" addr tlsline=""
+  case "$mode" in
+    none) addr=":$webport" ;;
+    internal) addr="$host:$webport"; tlsline="	tls internal" ;;
+    custom) addr="$host:$webport"; tlsline="	tls /certs/server.crt /certs/server.key" ;;
+    *) addr="$host:$webport" ;;
+  esac
+  printf '# BEGIN voxshift kuma (voxshift kuma on --web; remove with: voxshift kuma on --no-web)\n%s {\n' "$addr"
+  [ -z "$tlsline" ] || printf '%s\n' "$tlsline"
+  printf '\tencode gzip\n\treverse_proxy kuma:3001\n}\n# END voxshift kuma\n'
+}
 
 kuma_enabled() { [ -f "$DIR/compose.override.yaml" ] && grep -q '^  kuma:' "$DIR/compose.override.yaml"; }
-kuma_port() { sed -n 's/^ *- "127\.0\.0\.1:\([0-9]*\):3001"$/\1/p' "$DIR/compose.override.yaml" 2>/dev/null | head -n 1; }
+kuma_port() { sed -n 's/^ *- "127\.0\.0\.1:\([0-9]*\):3001"$/\1/p' "$DIR/compose.override.yaml" 2>/dev/null | head -n 1 || true; }
+# The port Kuma's screen is served on through the web front door (empty = not served there).
+kuma_web_port() { sed -n 's/^      - "\([0-9]*\):\1"$/\1/p' "$DIR/compose.override.yaml" 2>/dev/null | head -n 1 || true; }
 kuma_state() { dc ps kuma 2>/dev/null | grep -q 'healthy' && echo healthy || { dc ps kuma 2>/dev/null | grep -q ' kuma\| kuma-' && echo "running, not healthy yet" || echo "not running"; }; }
+# kuma_web_sync: make the Caddyfile agree with compose.override.yaml (a Kuma site block when the override publishes a web port, none otherwise).
+kuma_web_sync() {
+  local wp tmpf mode host
+  wp="$(kuma_web_port)"
+  tmpf="$(mktemp "$DIR/.Caddyfile.XXXXXX")"
+  awk '/^# BEGIN voxshift kuma/ {skip=1} !skip {print} /^# END voxshift kuma/ {skip=0}' Caddyfile > "$tmpf"
+  if [ -n "$wp" ]; then
+    host="$(cert_host)"; mode="$(cert_mode)"
+    if [ "$mode" != none ] && [ -z "$host" ]; then rm -f "$tmpf"; echo "Could not read the web address from the Caddyfile." >&2; return 1; fi
+    kuma_caddy_block "$host" "$mode" "$wp" >> "$tmpf"
+  fi
+  cat "$tmpf" > Caddyfile; rm -f "$tmpf"
+}
 kuma_cmd() {
-  local sub="${1:-help}" port="3001" old="" delete=0 n
+  local sub="${1:-help}" port="" web="" noweb=0 old="" oldcf="" delete=0 n url mode host
   shift || true
   case "$sub" in
     on)
@@ -240,29 +290,49 @@ kuma_cmd() {
       while [ $# -gt 0 ]; do
         case "$1" in
           --port) port="${2:-}"; shift 2 ;;
-          *) echo "Use: voxshift kuma on [--port N]" >&2; exit 1 ;;
+          --web) case "${2:-}" in ''|--*) web="8443"; shift ;; *) web="$2"; shift 2 ;; esac ;;
+          --no-web) noweb=1; shift ;;
+          *) echo "Use: voxshift kuma on [--port N] [--web [PORT] | --no-web]" >&2; exit 1 ;;
         esac
       done
+      # What is already set up is kept unless you say otherwise.
+      [ -n "$port" ] || port="$(kuma_port)"; [ -n "$port" ] || port="3001"
+      if [ "$noweb" = 1 ]; then web=""; elif [ -z "$web" ]; then web="$(kuma_web_port)"; fi
       case "$port" in ''|*[!0-9]*) echo "--port must be a whole number from 1024 to 65535." >&2; exit 1 ;; esac
       { [ "$port" -ge 1024 ] && [ "$port" -le 65535 ]; } || { echo "--port must be from 1024 to 65535." >&2; exit 1; }
+      if [ -n "$web" ]; then
+        case "$web" in *[!0-9]*) echo "--web must be a whole number from 1024 to 65535." >&2; exit 1 ;; esac
+        { [ "$web" -ge 1024 ] && [ "$web" -le 65535 ]; } || { echo "--web must be from 1024 to 65535." >&2; exit 1; }
+        [ "$web" != "$port" ] || { echo "--web and --port must differ." >&2; exit 1; }
+      fi
       if [ -f compose.override.yaml ] && ! grep -q '^# Written by Voxshift' compose.override.yaml; then
         echo "compose.override.yaml already exists here and was not written by Voxshift, so it was left alone. Nothing changed." >&2; exit 1
       fi
       if [ -f compose.override.yaml ]; then old="$(mktemp "$DIR/.override.XXXXXX")"; cp compose.override.yaml "$old"; fi
-      kuma_override "$port" > compose.override.yaml.new && mv compose.override.yaml.new compose.override.yaml
+      oldcf="$(mktemp "$DIR/.Caddyfile.old.XXXXXX")"; cp Caddyfile "$oldcf"
+      kuma_override "$port" "$web" > compose.override.yaml.new && mv compose.override.yaml.new compose.override.yaml
       chmod 644 compose.override.yaml
-      if ! dc config -q >/dev/null 2>&1 || ! dc up -d kuma; then
-        if [ -n "$old" ]; then cp "$old" compose.override.yaml; rm -f "$old"; else rm -f compose.override.yaml; fi
-        echo "Kuma could not be started, so nothing was changed. If port $port is in use, try: voxshift kuma on --port <another port>" >&2; exit 1
+      if ! kuma_web_sync || ! dc config -q >/dev/null 2>&1 || ! dc up -d kuma caddy; then
+        if [ -n "$old" ]; then cp "$old" compose.override.yaml; else rm -f compose.override.yaml; fi
+        cp "$oldcf" Caddyfile; rm -f "$old" "$oldcf"
+        dc up -d caddy >/dev/null 2>&1 || true
+        echo "Kuma could not be started, so nothing was changed. If a port is in use, try: voxshift kuma on --port <another port>   (and --web <another port>)" >&2; exit 1
       fi
-      [ -z "$old" ] || rm -f "$old"
+      rm -f "$old" "$oldcf"
       for n in $(seq 1 24); do [ "$(kuma_state)" = healthy ] && break; sleep 5; done
       echo "Kuma is $(kuma_state)."
       echo
       echo "Next:"
-      echo "  1. Open Kuma's screen from your own computer through an SSH tunnel (it is not on the network):"
-      echo "       ssh -L $port:127.0.0.1:$port <you>@<this server>      then browse to http://localhost:$port"
-      echo "     and create the Kuma admin account."
+      if [ -n "$web" ]; then
+        mode="$(cert_mode)"; host="$(cert_host)"; url="https://${host}:$web"; [ "$mode" != none ] || url="http://<this server>:$web"
+        echo "  1. Open Kuma's screen at $url and create the Kuma admin account."
+        echo "     Open port $web in this server's firewall for the networks your staff use (this command does not change the firewall; with ufw: ufw allow $web/tcp)."
+        echo "     Anyone who can reach that port sees Kuma's sign-in page, so keep it to staff networks."
+      else
+        echo "  1. Kuma's screen is on this server only. Either serve it through the web front door:  voxshift kuma on --web"
+        echo "     or open a tunnel from your own computer:  ssh -L $port:127.0.0.1:$port <you>@<this server>   then browse to http://localhost:$port"
+        echo "     Then create the Kuma admin account."
+      fi
       echo "  2. Add a monitor for each device and tag it: site = the site code, device = algo, poly, dect, audiocodes, teams-room or other."
       echo "  3. Make a status page, add the monitors to it and turn Show Tags on."
       echo "  4. In Voxshift open Discovery > Device status, enter http://kuma:3001 and the status page name, and switch it on."
@@ -279,6 +349,8 @@ kuma_cmd() {
       kuma_enabled || { echo "Kuma is not switched on here (no compose.override.yaml)."; exit 0; }
       dc rm -sf kuma >/dev/null 2>&1 || true
       rm -f compose.override.yaml
+      kuma_web_sync || true
+      dc up -d caddy >/dev/null 2>&1 || true
       echo "Kuma is stopped and removed from this installation."
       if [ "$delete" = 1 ]; then docker volume rm voxshift_kumadata >/dev/null 2>&1 && echo "Its data (monitors, history) is deleted." || echo "Its data volume could not be removed (it may not exist)."
       else echo "Its data (monitors, history) is kept in the Docker volume voxshift_kumadata: 'voxshift kuma on' brings it all back. To delete it too: voxshift kuma off --delete-data"; fi
@@ -286,7 +358,14 @@ kuma_cmd() {
     status)
       if kuma_enabled; then
         echo "Kuma:     switched on, $(kuma_state)"
-        echo "Screen:   http://127.0.0.1:$(kuma_port) on this server only (use an SSH tunnel)"
+        n="$(kuma_web_port)"
+        if [ -n "$n" ]; then
+          mode="$(cert_mode)"; host="$(cert_host)"
+          if [ "$mode" = none ]; then echo "Screen:   http://<this server>:$n (through the web front door)"; else echo "Screen:   https://$host:$n (through the web front door; Kuma's own sign-in)"; fi
+          echo "          also http://127.0.0.1:$(kuma_port) on this server"
+        else
+          echo "Screen:   http://127.0.0.1:$(kuma_port) on this server only (SSH tunnel, or: voxshift kuma on --web)"
+        fi
         echo "Voxshift: Discovery > Device status, address http://kuma:3001"
       else
         echo "Kuma:     not switched on. To add it: voxshift kuma on"
@@ -295,10 +374,13 @@ kuma_cmd() {
     *)
       cat <<EOF
 voxshift kuma <command>
-  on [--port N]          install Uptime Kuma (device status): writes compose.override.yaml, starts it, tells you what to do next.
-                         Published on this host only (127.0.0.1), port 3001 unless you choose another
+  on [--port N] [--web [PORT] | --no-web]
+                         install Uptime Kuma (device status): writes compose.override.yaml, starts it, tells you what to do next.
+                         Its own port is on this host only (127.0.0.1, 3001 unless you choose another). --web also serves its screen through the
+                         web front door on its own port (8443 unless you choose another), with the main address's certificate and Kuma's own
+                         sign-in, so staff need no SSH tunnel; --no-web takes that away again
   off [--delete-data]    stop and remove it (its data stays in a Docker volume unless you add --delete-data)
-  status                 whether it is on, and its state
+  status                 whether it is on, where its screen is, and its state
 EOF
       ;;
   esac
@@ -857,6 +939,7 @@ restore_cmd() {
     if [ -f "$src/compose.override.yaml" ]; then
       [ ! -f compose.override.yaml ] || cp compose.override.yaml "compose.override.yaml.before-restore-$ts"
       cp "$src/compose.override.yaml" compose.override.yaml
+      kuma_web_sync || true   # the Caddyfile must agree with the restored file (a restore without --with-config leaves the Caddyfile as it is)
     fi
     if kuma_enabled; then
       dc stop kuma >/dev/null 2>&1 || true
@@ -947,7 +1030,7 @@ cert_apply() {
   chmod 644 certs/server.crt; chmod 600 certs/server.key
   tmpf="$(mktemp "$DIR/.Caddyfile.XXXXXX")"
   awk -v host="$host" '
-    inblk == 0 && $1 == host && $2 == "{" { print; print "\ttls /certs/server.crt /certs/server.key"; inblk = 1; next }
+    inblk == 0 && ($1 == host || substr($1, 1, length(host) + 1) == host ":") && $2 == "{" { print; print "\ttls /certs/server.crt /certs/server.key"; inblk = 1; next }
     inblk == 1 && /^[ \t]*tls[ \t]/ { next }
     inblk == 1 && /^}/ { inblk = 0 }
     { print }' Caddyfile > "$tmpf"
@@ -1138,8 +1221,9 @@ voxshift <command>
   certificate status | selfsigned | install | export
                     see which HTTPS certificate is in use and when it runs out; make a self-signed one; install your own (checked first,
                     the old settings come back if the front door does not start); save the public certificate to trust it on computers
-  kuma on [--port N] | off [--delete-data] | status
-                    device status: add Uptime Kuma (checks phones, paging units and gateways; shown in Discovery > Device status), remove it, or see it
+  kuma on [--port N] [--web [PORT] | --no-web] | off [--delete-data] | status
+                    device status: add Uptime Kuma (checks phones, paging units and gateways; shown in Discovery > Device status), with its screen
+                    served through the web front door (--web) or only on this server; remove it, or see it
   logs [service]    follow logs (api, worker, web, caddy, postgres, redis, kuma)
   reset-admin       set a new password for the first Super Admin and unlock the account
 Files: $DIR/.env (settings, secrets), $DIR/compose.yaml (and compose.override.yaml when Kuma is on), $DIR/Caddyfile
@@ -1181,6 +1265,8 @@ while [ $# -gt 0 ]; do
     --refresh-command) REFRESH=1; shift ;;
     --with-kuma) WITH_KUMA=1; shift ;;
     --kuma-port) KUMA_PORT="${2:-}"; shift 2 ;;
+    --kuma-web) [ -n "$KUMA_WEB_PORT" ] || KUMA_WEB_PORT="8443"; shift ;;
+    --kuma-web-port) KUMA_WEB_PORT="${2:-}"; shift 2 ;;
     --no-docker-install) INSTALL_DOCKER=0; shift ;;
     --open-firewall) OPEN_FIREWALL=1; shift ;;
     --generate-only) START=0; INSTALL_DOCKER=0; shift ;;
@@ -1373,8 +1459,13 @@ case "$HSTS_MAX_AGE" in ''|*[!0-9]*) die "--hsts-max-age must be a whole number 
 if [ "$WITH_KUMA" = 1 ]; then
   case "$KUMA_PORT" in ''|*[!0-9]*) die "--kuma-port must be a whole number from 1024 to 65535." ;; esac
   { [ "$KUMA_PORT" -ge 1024 ] && [ "$KUMA_PORT" -le 65535 ]; } || die "--kuma-port must be from 1024 to 65535."
-elif [ "$KUMA_PORT" != "3001" ]; then
-  die "--kuma-port only makes sense together with --with-kuma."
+  if [ -n "$KUMA_WEB_PORT" ]; then
+    case "$KUMA_WEB_PORT" in *[!0-9]*) die "--kuma-web-port must be a whole number from 1024 to 65535." ;; esac
+    { [ "$KUMA_WEB_PORT" -ge 1024 ] && [ "$KUMA_WEB_PORT" -le 65535 ]; } || die "--kuma-web-port must be from 1024 to 65535."
+    [ "$KUMA_WEB_PORT" != "$KUMA_PORT" ] || die "--kuma-web-port and --kuma-port must differ."
+  fi
+elif [ "$KUMA_PORT" != "3001" ] || [ -n "$KUMA_WEB_PORT" ]; then
+  die "--kuma-port, --kuma-web and --kuma-web-port only make sense together with --with-kuma."
 fi
 [ "${#HSTS_MAX_AGE}" -le 9 ] && [ "$HSTS_MAX_AGE" -le 63072000 ] || die "--hsts-max-age may be at most 63072000 (two years)."
 HSTS_MAX_AGE=$((10#$HSTS_MAX_AGE))
@@ -1797,8 +1888,13 @@ EOF
 esac
 ok "compose.yaml and Caddyfile"
 if [ "$WITH_KUMA" = 1 ]; then
-  kuma_override "$KUMA_PORT" > "$DIR/compose.override.yaml"; chmod 644 "$DIR/compose.override.yaml"
+  kuma_override "$KUMA_PORT" "$KUMA_WEB_PORT" > "$DIR/compose.override.yaml"; chmod 644 "$DIR/compose.override.yaml"
   ok "compose.override.yaml (Uptime Kuma for device status, on this host only: 127.0.0.1:$KUMA_PORT)"
+  if [ -n "$KUMA_WEB_PORT" ]; then
+    kmode="$TLS"; [ "$kmode" != "selfsigned" ] || kmode="custom"
+    kuma_caddy_block "$HOST" "$kmode" "$KUMA_WEB_PORT" >> "$DIR/Caddyfile"
+    ok "Kuma's screen is also served through the web front door on port $KUMA_WEB_PORT (Caddyfile)"
+  fi
 fi
 
 write_command
@@ -1825,9 +1921,9 @@ if [ "$OPEN_FIREWALL" = 1 ]; then
   step "Firewall"
   ufw_state="$(ufw status 2>/dev/null || true)"
   if command -v ufw >/dev/null 2>&1 && [ "${ufw_state#*Status: active}" != "$ufw_state" ]; then
-    ufw allow "$HTTP_PORT/tcp" >/dev/null; [ "$TLS" != "none" ] && ufw allow "$HTTPS_PORT/tcp" >/dev/null; ok "ufw: opened the web ports"
+    ufw allow "$HTTP_PORT/tcp" >/dev/null; [ "$TLS" != "none" ] && ufw allow "$HTTPS_PORT/tcp" >/dev/null; [ -z "$KUMA_WEB_PORT" ] || ufw allow "$KUMA_WEB_PORT/tcp" >/dev/null; ok "ufw: opened the web ports"
   elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-    firewall-cmd --permanent --add-port="$HTTP_PORT/tcp" >/dev/null; [ "$TLS" != "none" ] && firewall-cmd --permanent --add-port="$HTTPS_PORT/tcp" >/dev/null
+    firewall-cmd --permanent --add-port="$HTTP_PORT/tcp" >/dev/null; [ "$TLS" != "none" ] && firewall-cmd --permanent --add-port="$HTTPS_PORT/tcp" >/dev/null; [ -z "$KUMA_WEB_PORT" ] || firewall-cmd --permanent --add-port="$KUMA_WEB_PORT/tcp" >/dev/null
     firewall-cmd --reload >/dev/null; ok "firewalld: opened the web ports"
   else
     warn "No active ufw or firewalld found; nothing changed."
@@ -1875,7 +1971,10 @@ $( [ -n "$SMTP_HOST" ] || printf '      To send email, set SMTP_HOST (and the ot
    2. Back up regularly:  voxshift backup   (copy the result off this host)
 $( if [ ${#BACKUP_RECIPIENTS[@]} -gt 0 ]; then printf '      Backups are ENCRYPTED. Keep the matching private key OFF this host; without it they cannot be read.\n'; else printf '      Backups are not encrypted yet: voxshift backup-encryption on <public-key>   (docs/INSTALL-LINUX-REFERENCE.md, Backups)\n'; fi )
 $( if [ "$AUTO_UPDATE" != "no" ]; then printf '   3. Updates:            automatic (%s); see or change with: voxshift auto-update status\n' "$AUTO_UPDATE"; else printf '   3. Upgrade later:      voxshift update   (or let it do it for you: voxshift auto-update on)\n'; fi )
-$( if [ "$WITH_KUMA" = 1 ]; then printf '   4. Device status:      Kuma is installed (this host only, 127.0.0.1:%s). Open it through an SSH tunnel, create its admin account, tag the monitors\n                          and make a status page; then Discovery > Device status in Voxshift, address http://kuma:3001. More: voxshift kuma status\n' "$KUMA_PORT"; fi )
+$( if [ "$WITH_KUMA" = 1 ]; then
+  if [ -n "$KUMA_WEB_PORT" ]; then printf '   4. Device status:      Kuma is installed. Open its screen at %s://%s:%s (open that port in the firewall for staff networks), create its admin\n                          account, tag the monitors and make a status page; then Discovery > Device status in Voxshift, address http://kuma:3001\n' "$([ "$TLS" = none ] && echo http || echo https)" "${HOST:-<this server>}" "$KUMA_WEB_PORT"
+  else printf '   4. Device status:      Kuma is installed (this host only, 127.0.0.1:%s). Open it through an SSH tunnel, or run: voxshift kuma on --web. Create its admin account, tag the monitors\n                          and make a status page; then Discovery > Device status in Voxshift, address http://kuma:3001. More: voxshift kuma status\n' "$KUMA_PORT"; fi
+fi )
 EOF
 if [ "$TLS" = "internal" ]; then
   cat <<EOF
