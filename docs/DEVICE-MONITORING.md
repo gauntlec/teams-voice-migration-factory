@@ -84,8 +84,8 @@ Appearance offers only language, light/dark and heartbeat-bar style. The **statu
 showing to site staff:
 
 - Files: `deploy/kuma/voxshift-status-page.css` (paste into status page > Edit > **Custom CSS**) and `deploy/kuma/voxshift-logo.png`
-  (the brand tile, 512 px; upload by clicking the logo in the editor, which also becomes the page's favicon).
-- Other settings used: title "Voxshift device status", a description, footer text "Voxshift · Microsoft Teams voice, migrated and
+  (the brand tile, 256 px; upload by clicking the logo in the editor, which also becomes the page's favicon).
+- Other settings used: title "Voxshift Device Status", a description, footer text "Voxshift · Microsoft Teams voice, migrated and
   managed", theme **Light**, **Show Tags** on, **Show Powered By** off (a setting Kuma provides).
 - The CSS uses the Voxshift palette and Segoe UI, thin `#E3E3EC` dividers, a 7 px radius and white surfaces. Up and down colours are
   Kuma's own green and red on purpose.
@@ -93,7 +93,7 @@ showing to site staff:
   would do it, but the card keeps other stacks out of scope, so it was not tried. The engineer-only dashboard stays plain
   Kuma; customers see Voxshift's own dashboard tiles (phase 1) or this status page.
 - The two-tone `vox`+`shift` wordmark cannot be drawn by Kuma's title (plain text), so the page shows the tile and the text
-  "Voxshift device status". A lockup image could replace the tile if one is made.
+  "Voxshift Device Status". A lockup image could replace the tile if one is made.
 
 ## Phase 2: Voxshift sets Kuma up (built 2026-10-27)
 

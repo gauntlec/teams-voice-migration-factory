@@ -1,6 +1,6 @@
 import { io, type Socket } from 'socket.io-client';
 import type { KumaApi, KumaMonitorInfo } from '@tvmf/db';
-import { KUMA_STATUS_PAGE_CSS, KUMA_STATUS_PAGE_DESCRIPTION, KUMA_STATUS_PAGE_FOOTER } from '@tvmf/shared';
+import { KUMA_STATUS_PAGE_CSS, KUMA_STATUS_PAGE_CSS_MARKER, KUMA_STATUS_PAGE_DESCRIPTION, KUMA_STATUS_PAGE_FOOTER, KUMA_STATUS_PAGE_LOGO_DATA_URL } from '@tvmf/shared';
 
 /**
  * The only code that speaks Uptime Kuma's Socket.IO API (the one its own screen uses; Kuma documents no other way to make monitors). Written against
@@ -124,7 +124,13 @@ export class KumaClient implements KumaApi {
       got = await this.need('getStatusPage', slug);
     }
     const cfg = got.config as Record<string, unknown>;
-    // Voxshift sets what it needs (the title, tags shown, no "powered by") and the look once; a page someone has already styled keeps its CSS, description and footer.
+    // Voxshift owns this page. It sets what it needs (the title, tags shown, no "powered by", the light theme) every time. The look is set when the page has none, and brought
+    // up to date while the CSS is still Voxshift's own (it starts with the marker); a page someone has restyled keeps its CSS, description and footer. The logo is set while
+    // the page still has Kuma's own icon, so a logo a person uploaded stays.
+    const css = typeof cfg.customCSS === 'string' ? cfg.customCSS : '';
+    const ownCss = !css.trim() || css.startsWith(KUMA_STATUS_PAGE_CSS_MARKER);
+    const icon = typeof cfg.icon === 'string' ? cfg.icon : '';
+    const kumaIcon = !icon || icon === '/icon.svg';
     const config = {
       ...cfg,
       title,
@@ -134,8 +140,8 @@ export class KumaClient implements KumaApi {
       domainNameList: (cfg.domainNameList as unknown[] | undefined) ?? [],
       description: cfg.description || KUMA_STATUS_PAGE_DESCRIPTION,
       footerText: cfg.footerText || KUMA_STATUS_PAGE_FOOTER,
-      customCSS: cfg.customCSS || KUMA_STATUS_PAGE_CSS,
+      customCSS: ownCss ? KUMA_STATUS_PAGE_CSS : css,
     };
-    await this.need('saveStatusPage', slug, config, (cfg.icon as string | undefined) || '/icon.svg', groups.map((g) => ({ name: g.name, monitorList: g.monitorIds.map((id) => ({ id })) })));
+    await this.need('saveStatusPage', slug, config, kumaIcon ? KUMA_STATUS_PAGE_LOGO_DATA_URL : icon, groups.map((g) => ({ name: g.name, monitorList: g.monitorIds.map((id) => ({ id })) })));
   }
 }

@@ -73,7 +73,7 @@ export type DeviceAutoSetupInput = z.infer<typeof deviceAutoSetupSchema>;
 
 export const KUMA_DEFAULT_URL = 'http://kuma:3001';
 export const KUMA_MANAGED_SLUG = 'voxshift';
-export const KUMA_MANAGED_TITLE = 'Voxshift device status';
+export const KUMA_MANAGED_TITLE = 'Voxshift Device Status';
 
 // ---------------------------------------------------------------------------------------------------------------- the Kuma side
 

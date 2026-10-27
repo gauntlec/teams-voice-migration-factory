@@ -44,5 +44,10 @@ footer .custom-footer-text { color: #616161; text-align: center !important; }
 footer .refresh-info, footer .refresh-info * { color: #616161; font-size: 0.85rem; }
 `;
 
+export { KUMA_STATUS_PAGE_LOGO_DATA_URL } from './kuma-logo';
+
+/** The CSS starts with this line, which is how Voxshift knows the page's CSS is its own (and may be brought up to date) rather than something a person wrote. */
+export const KUMA_STATUS_PAGE_CSS_MARKER = '/* Voxshift brand for Uptime Kuma status pages';
+
 export const KUMA_STATUS_PAGE_DESCRIPTION = 'Live status of the Teams voice equipment at your sites. Checked from inside your network.';
 export const KUMA_STATUS_PAGE_FOOTER = 'Voxshift \u00b7 Microsoft Teams voice, migrated and managed';

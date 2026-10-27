@@ -56,8 +56,14 @@ describe.skipIf(!url)('Uptime Kuma contract', () => {
     ]);
     expect(monitors[0]!.group).toBe('LTN01 · Luton');
     const page = (await fetch(`${url}/api/status-page/voxshift`).then((r) => r.json())) as { config: { customCSS: string } };
-    expect(page.config).toMatchObject({ showTags: true, showPoweredBy: false, title: 'Voxshift device status' });
+    expect(page.config).toMatchObject({ showTags: true, showPoweredBy: false, title: 'Voxshift Device Status' });
     expect(page.config.customCSS).toContain('#4657D2');
+    // The Voxshift logo, uploaded by Voxshift: Kuma stores it and serves it as a PNG (it is also the page's favicon).
+    const icon = (page.config as unknown as { icon: string }).icon;
+    expect(icon).toMatch(/^\/upload\/logo\d+\.png/);
+    const img = await fetch(`${url}${icon}`);
+    expect(img.headers.get('content-type')).toContain('image/png');
+    expect((await img.arrayBuffer()).byteLength).toBeGreaterThan(5000);
     client = await KumaClient.connect(url!);
     await client.login('voxshift', password);
   });
@@ -84,6 +90,28 @@ describe.skipIf(!url)('Uptime Kuma contract', () => {
     expect((await deviceStatusOverview(c.s)).managed.lastSyncError).toMatch(/did not accept the administrator sign-in/);
     await c.s.updateTable('device_monitor_settings').set({ kuma_admin_pass_enc: encryptSecret(password), sync_needed: true, last_sync_error: null }).execute();
     expect(await syncKumaFor(c.s)).toBe('ok');
+  });
+
+  it('keeps a page someone has restyled: their CSS and logo stay, Voxshift CSS is brought up to date', async () => {
+    type Raw = { call: (e: string, ...a: unknown[]) => Promise<{ ok: boolean; config: Record<string, unknown> }>; need: (e: string, ...a: unknown[]) => Promise<unknown> };
+    const raw = client as unknown as Raw;
+    const read = async () => (await raw.call('getStatusPage', 'voxshift')).config;
+    const groups = [{ name: 'LTN01 · Luton', monitorList: [] as Array<{ id: number }> }];
+    const cfg = await read();
+    // 1. Voxshift's own (older) CSS is replaced by the current one on the next sync.
+    await raw.need('saveStatusPage', 'voxshift', { ...cfg, customCSS: '/* Voxshift brand for Uptime Kuma status pages (an older version) */ body { color: red; }', domainNameList: [] }, cfg.icon, groups);
+    await syncDeviceInventory(c.s, client);
+    expect(String((await read()).customCSS)).toContain('#4657D2');
+    // 2. A person's CSS and logo are left as they are.
+    await raw.need('saveStatusPage', 'voxshift', { ...cfg, customCSS: 'body { background: hotpink; }', domainNameList: [] }, cfg.icon, groups);
+    await syncDeviceInventory(c.s, client);
+    const after = await read();
+    expect(after.customCSS).toBe('body { background: hotpink; }');
+    expect(after.icon).toBe(cfg.icon);
+    // Put Voxshift's look back for the rest of the run.
+    await raw.need('saveStatusPage', 'voxshift', { ...cfg, customCSS: '', domainNameList: [] }, cfg.icon, groups);
+    await syncDeviceInventory(c.s, client);
+    expect(String((await read()).customCSS)).toContain('#4657D2');
   });
 
   it('a second sync changes nothing', async () => {
