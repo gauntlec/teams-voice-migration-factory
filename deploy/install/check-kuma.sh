@@ -123,7 +123,7 @@ vp kuma on --port 80 >"$T/on0.log" 2>&1 && bad "kuma on accepted port 80" || goo
 vp kuma on --port 3005 >"$T/on1.log" 2>&1 || bad "kuma on failed: $(tail -3 "$T/on1.log")"
 grep -q '"127.0.0.1:3005:3001"' "$P/compose.override.yaml" && good "kuma on wrote the file with the chosen port" || bad "kuma on did not write compose.override.yaml"
 grep -q 'docker compose up -d kuma' "$STUB_LOG" && good "kuma on started the container" || bad "kuma on did not start Kuma"
-grep -q 'Kuma is healthy' "$T/on1.log" && grep -q 'ssh -L 3005:127.0.0.1:3005' "$T/on1.log" && good "it says what to do next (SSH tunnel on that port)" || bad "no next steps: $(cat "$T/on1.log")"
+grep -q 'Kuma is healthy' "$T/on1.log" && grep -q 'ssh -L 3005:127.0.0.1:3005' "$T/on1.log" && grep -q 'Set up automatically' "$T/on1.log" && good "it says what to do next (SSH tunnel on that port)" || bad "no next steps: $(cat "$T/on1.log")"
 cmp -s <(sed -n '/^# Written/,$p' "$P/compose.override.yaml") <(sed -n '/^# Written/,$p' "$T/k2/compose.override.yaml" | sed 's/3003:3001/3005:3001/') && good "same text as the installer writes" || bad "kuma on and --with-kuma write different text"
 vp kuma status >"$T/st1.log" 2>&1; grep -q 'switched on, healthy' "$T/st1.log" && grep -q '127.0.0.1:3005' "$T/st1.log" && good "status reports it, with the port" || bad "status after on: $(cat "$T/st1.log")"
 # someone else's file is never overwritten

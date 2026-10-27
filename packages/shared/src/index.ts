@@ -558,6 +558,8 @@ export * from './voice-compare';
 export * from './licence-report';
 export * from './number-cooloff';
 export * from './device-status';
+export * from './device-inventory';
+export * from './kuma-branding';
 export * from './opening-hours';
 export * from './scheduled-run';
 export * from './voice-app-access';

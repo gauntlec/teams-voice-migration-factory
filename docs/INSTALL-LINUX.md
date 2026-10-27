@@ -295,13 +295,14 @@ sudo voxshift kuma on --web
 
 It starts Kuma and prints what to do next. In short:
 
-1. Open Kuma's screen at **`https://<your Voxshift address>:8443`** (the same certificate as Voxshift; use another port with `--web 9443`) and create Kuma's administrator account.
+1. (Optional) Kuma's own screen is at **`https://<your Voxshift address>:8443`** with `--web` (the same certificate as Voxshift; use another port with `--web 9443`). Voxshift makes the administrator, so there is no account to create; the password is kept inside Voxshift.
    Open that port in the server's firewall **for the networks your staff use only**: anyone who can reach it sees Kuma's sign-in page. (`--open-firewall` at install time opens it too.)
    Prefer not to open a port? Leave out `--web`: Kuma is then only on the server itself, reached from your own computer through an SSH tunnel
    (`ssh -L 3001:127.0.0.1:3001 you@the-server`, then `http://localhost:3001`). Port 3001 in use? `sudo voxshift kuma on --port 3005`.
-2. In Kuma add a monitor for each device and give it two tags: **site** (the site code, as in Voxshift) and **device** (`algo`, `poly`, `dect`, `audiocodes`, `teams-room` or `other`).
-3. Make a **status page** in Kuma, add the monitors to it, and turn **Show Tags** on.
-4. In Voxshift open **Discovery > Device status**, enter the address `http://kuma:3001` and the status page's name, and switch it on.
+2. In Voxshift open **Discovery > Device status** and press **Set up automatically**. Voxshift creates Kuma's administrator account itself (you do not need to), sets up the checking and the status page, and keeps them up to date.
+3. Press **Add a device** for each phone, paging unit or gateway: its site, a name, the kind of device, how to check it (ping, or a TCP port) and its IP address. Within seconds it shows on the tab as up or down.
+
+You only need to open Kuma's own screen (step 1) if you want to see its detail. Kuma already running with an administrator of your own? Enter that sign-in when Voxshift asks for it, or use **I run Kuma myself** and add the monitors in Kuma, tagged **site** and **device** on a status page with **Show Tags** on.
 
 `sudo voxshift kuma status` shows whether it is running and where its screen is; `sudo voxshift kuma on --no-web` closes the web port again; `sudo voxshift kuma off` removes it (its data stays unless you add `--delete-data`).
 Backups include Kuma's data and settings once it is on.

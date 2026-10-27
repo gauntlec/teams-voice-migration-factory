@@ -128,6 +128,7 @@ single shared claim. |
 | `device_monitor_settings` | one row: enabled, kuma_url, status_slug, last_polled_at, last_ok_at, last_error - where the customer's Uptime Kuma status page is (tenant `0070`) |
 | `device_monitors` | kuma_id (pk), name, monitor_type, group_name, sitecode, device_kind, state (up/down/pending/maintenance/unknown), since, since_exact, last_beat_at, response_ms, message, uptime_24h - one row per monitor on the status page |
 | `device_status_changes` | kuma_id, name, sitecode, device_kind, from_state, to_state, at, message - every change of state seen, kept 90 days |
+| `device_inventory` | id, site_code, name, kind, check_type (ping/port), address, port, kuma_monitor_id, sync_state (pending/synced/error), sync_error, removed - the devices to watch; the worker keeps a Kuma monitor for each (tenant `0071`). `device_monitor_settings` also gains managed, kuma_admin_user, kuma_admin_pass_enc (encrypted), sync_needed, last_sync_at, last_sync_error |
 | `number_policy` | one row: cooloff_days (default 90, 0 = off) - the number cool-off period (tenant `0066`); `phone_numbers` gains cooling_until, cooling_reason |
 | `deployment_drift` | site_id (PK, FK → `discovery_sites`), drifted, awaiting_sync, rows jsonb (`DriftRow[]`: rowId, objectType, name, state, cmdlets, lastDeployedAt), run_id, computed_at — the latest drift check for a site (tenant `0065`), replaced on every check; see DEPLOYMENT.md "Drift" |
 

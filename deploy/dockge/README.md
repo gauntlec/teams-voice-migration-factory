@@ -79,9 +79,9 @@ Discovery > **Device status** shows whether each site's phones, paging units and
    Kuma's screen to the LAN (default `127.0.0.1`: this host only). With `KUMA_BIND=0.0.0.0`, anyone who can reach the port sees Kuma's sign-in page:
    limit it to staff networks, or put nginx-proxy-manager (HTTPS) in front and keep the default.
 3. **Deploy**. Voxshift reaches Kuma at `http://kuma:3001` inside the stack.
-4. Open Kuma's screen (`http://<host>:<port>`), create its admin account, add the devices as monitors tagged `site` (the site code) and `device`
-   (`algo`, `poly`, `dect`, `audiocodes`, `teams-room`, `other`), make a status page and turn **Show Tags** on.
-5. In Voxshift: Discovery > Device status > Set up: address `http://kuma:3001`, the status page name, switch on.
+4. In Voxshift: Discovery > Device status > **Set up automatically**, then **Add a device** for each phone, paging unit or gateway. Voxshift creates Kuma's
+   administrator and the status page itself and keeps them in step with the device list, so you never need to open Kuma. (Kuma's own screen is at
+   `http://<host>:<port>` if you want to look; or enter the address and status page name yourself with **I run Kuma myself**.)
 
 Ping needs both `NET_RAW` and the `ping_group_range` sysctl in the compose file; a host that rejects the sysctl range needs a different one.
 On a Linux server installed with `install.sh` this is `voxshift kuma on` instead (docs/INSTALL-LINUX.md).

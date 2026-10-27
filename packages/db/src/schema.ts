@@ -577,6 +577,30 @@ export interface DeviceMonitorSettingsTable {
   last_polled_at: string | null;
   last_ok_at: string | null;
   last_error: string | null;
+  /** Phase 2 (migration 0071): Voxshift looks after Kuma for this customer. */
+  managed: ColumnType<boolean, boolean | undefined, boolean>;
+  kuma_admin_user: string | null;
+  kuma_admin_pass_enc: string | null;
+  sync_needed: ColumnType<boolean, boolean | undefined, boolean>;
+  last_sync_at: string | null;
+  last_sync_error: string | null;
+}
+
+/** A device the customer wants watched; the worker keeps a Kuma monitor for it (migration 0071). */
+export interface DeviceInventoryTable {
+  id: Generated<string>;
+  site_code: string;
+  name: string;
+  kind: ColumnType<string, string | undefined, string>;
+  check_type: string;
+  address: string;
+  port: number | null;
+  kuma_monitor_id: number | null;
+  sync_state: ColumnType<string, string | undefined, string>;
+  sync_error: string | null;
+  removed: ColumnType<boolean, boolean | undefined, boolean>;
+  created_at: ColumnType<string, string | undefined, string>;
+  updated_at: ColumnType<string, string | undefined, string>;
 }
 
 /** The current state of each monitor on the status page (migration 0070). */
@@ -1761,6 +1785,7 @@ export interface DB {
   device_monitor_settings: DeviceMonitorSettingsTable;
   device_monitors: DeviceMonitorsTable;
   device_status_changes: DeviceStatusChangesTable;
+  device_inventory: DeviceInventoryTable;
   voice_audio_files: VoiceAudioFilesTable;
   deployment_scripts: DeploymentScriptsTable;
   handover_packs: HandoverPacksTable;

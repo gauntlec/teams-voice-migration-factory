@@ -1,6 +1,6 @@
 # Device status monitoring (spike)
 
-Status: **spike done, phase 1 built** (2026-10-27): points 1 and 2 answered by test, point 3 deliberately not run, recommendation below. Phase 1 (read-only Device status tab) is built; see [DISCOVERY.md](DISCOVERY.md) "Device status". Deployed to the test host only (2026.10.52); the Linux installer offers Kuma (`--with-kuma`, `voxshift kuma on`). Not yet tried against real devices. Feature request: "Explore a real-time status dashboard for Teams-related equipment (Algo,
+Status: **spike done, phase 1 built** (2026-10-27): points 1 and 2 answered by test, point 3 deliberately not run, recommendation below. Phase 1 (read-only Device status tab) and the core of phase 2 (a device list in Voxshift that Voxshift turns into Kuma monitors, and Kuma's administrator and status page made automatically, so nobody opens Kuma) are built; see [DISCOVERY.md](DISCOVERY.md) "Device status". Deployed to the test host only (2026.10.52); the Linux installer offers Kuma (`--with-kuma`, `voxshift kuma on`). Not yet tried against real devices. Feature request: "Explore a real-time status dashboard for Teams-related equipment (Algo,
 Poly, DECT, AudioCodes, Teams Rooms), starting with Uptime Kuma on on-premise installs". This is a findings and design document;
 nothing here ships to www. On-premise installs only: one Voxshift per customer, so the LAN is reachable and customers never mix.
 
@@ -95,11 +95,24 @@ showing to site staff:
 - The two-tone `vox`+`shift` wordmark cannot be drawn by Kuma's title (plain text), so the page shows the tile and the text
   "Voxshift device status". A lockup image could replace the tile if one is made.
 
+## Phase 2: Voxshift sets Kuma up (built 2026-10-27)
+
+The spike recommended not driving Kuma from Voxshift. Setting Kuma up by hand (an SSH tunnel or a port, an admin account, tags, a status page) proved too hard
+for the people who install it, so phase 2 reverses that for the part that matters: Voxshift creates the administrator, the monitors, the tags and the
+status page itself, from a device list. The risk (Kuma's Socket.IO API is internal and may change) is contained: one file (`apps/worker/src/kuma-client.ts`),
+Kuma pinned to an exact version, and a contract test run against a real Kuma (`tests/db/src/devices/kuma-contract.db.test.ts`, verified on 2.5.7). If the API
+ever breaks, reading the status page does not depend on it, and engineers can still use Kuma's own screen. The first-run quirk found: Kuma answers requests only a
+moment after accepting the connection, so the client retries a cheap call until it is answered. Details: [DISCOVERY.md](DISCOVERY.md) "Device status".
+
+Not done: pause/disable a device without removing it, other check types (HTTP, DNS, SNMP, SIP), alerts, importing devices from Discovery's phone endpoints and
+resource accounts, per-device history in Voxshift, a Kuma administrator with 2FA.
+
 ## Risks and open points
 
 - **ICMP needs `NET_RAW`** under `cap_drop: ALL`; that is a small, well understood capability but a change from "all dropped".
 - **Status page JSON is public** to anyone who can reach Kuma, and lists monitor names. Keeping Kuma on the internal network avoids it.
-- **Kuma's public API is informal.** The status page JSON has been stable across 1.x and 2.x, but it is not a supported contract:
+- **Kuma's Socket.IO API is informal** (phase 2 uses it; see above).
+- **Kuma's public status page JSON is informal.** The status page JSON has been stable across 1.x and 2.x, but it is not a supported contract:
   pin the image tag, and add a test that parses a recorded sample so an upgrade that changes it is caught.
 - Kuma stores its data in SQLite or MariaDB under `/app/data`; the installer's backups would need to include it.
 - Teams Rooms and Poly Lens status need push or an API from those portals; not investigated.

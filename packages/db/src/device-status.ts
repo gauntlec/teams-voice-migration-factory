@@ -1,4 +1,5 @@
 import { DEVICE_STATUS_STALE_SECONDS, parseKumaStatus, summariseBySite, type DeviceChangeRow, type DeviceKind, type DeviceMonitor, type DeviceMonitorSettingsInput, type DeviceMonitorSettingsView, type DeviceRow, type DeviceState, type DeviceStatusOverview } from '@tvmf/shared';
+import { deviceManagedView, listDeviceInventory } from './device-inventory';
 import type { Scoped } from './live-state';
 
 /*
@@ -129,8 +130,10 @@ const num = (v: string | number | null | undefined) => (v === null || v === unde
 
 /** What the Device status tab shows: the settings, every device, a tile per site and the latest changes. */
 export async function deviceStatusOverview(s: Scoped, now = new Date()): Promise<DeviceStatusOverview> {
-  const [settings, rows, changes, sites] = await Promise.all([
+  const [settings, managed, inventory, rows, changes, sites] = await Promise.all([
     deviceMonitorSettings(s),
+    deviceManagedView(s),
+    listDeviceInventory(s),
     s.selectFrom('device_monitors').selectAll().orderBy('name').execute(),
     s.selectFrom('device_status_changes').selectAll().orderBy('at', 'desc').orderBy('id', 'desc').limit(50).execute(),
     s.selectFrom('discovery_sites').select(['sitecode', 'name']).execute(),
@@ -160,6 +163,9 @@ export async function deviceStatusOverview(s: Scoped, now = new Date()): Promise
   const stale = settings.enabled && (!settings.lastOkAt || now.getTime() - Date.parse(settings.lastOkAt) > DEVICE_STATUS_STALE_SECONDS * 1000);
   return {
     settings,
+    managed,
+    inventory,
+    siteOptions: [...sites].sort((a, b) => a.sitecode.localeCompare(b.sitecode)),
     stale,
     devices,
     sites: tiles,

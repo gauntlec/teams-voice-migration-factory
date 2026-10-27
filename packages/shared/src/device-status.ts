@@ -202,6 +202,11 @@ export interface DeviceChangeRow {
 }
 export interface DeviceStatusOverview {
   settings: DeviceMonitorSettingsView;
+  /** Phase 2: Voxshift looks after Kuma (see device-inventory.ts). */
+  managed: import('./device-inventory').DeviceManagedView;
+  inventory: import('./device-inventory').DeviceInventoryRow[];
+  /** The customer's sites, for the Add device form. */
+  siteOptions: Array<{ sitecode: string; name: string | null }>;
   /** Enabled, but the last good read is older than DEVICE_STATUS_STALE_SECONDS (or there has been none): colours below are old. */
   stale: boolean;
   devices: DeviceRow[];
