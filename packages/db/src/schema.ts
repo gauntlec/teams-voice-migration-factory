@@ -471,7 +471,7 @@ export interface DiscoverySiteAddressesTable {
 export interface SiteHandsetTrackingTable {
   site_id: string;
   model_key: string;
-  status: 'ordered' | 'in_tooling' | 'installed';
+  status: 'ordered' | 'delivered' | 'in_tooling' | 'installed';
   updated_by: string | null;
   updated_at: ColumnType<string, string | undefined, string>;
 }

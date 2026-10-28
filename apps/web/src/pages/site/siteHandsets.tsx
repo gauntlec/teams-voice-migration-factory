@@ -22,6 +22,7 @@ import { LoadError, useRecordStyles } from '../../components/records';
 const STAGE_COLOUR: Record<HandsetStage, BadgeProps['color']> = {
   not_ordered: 'informative',
   ordered: 'warning',
+  delivered: 'important',
   in_tooling: 'brand',
   installed: 'success',
 };

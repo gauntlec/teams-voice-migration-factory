@@ -47,6 +47,9 @@ describe('handset tracker', () => {
   it('records the stage per model and moves it on; not_ordered clears it', async () => {
     let r = await svc.setSiteHandsetStatus(c.t, pm, siteA, { model: 'POLY CCX 400', status: 'ordered' });
     expect(r.models.find((m) => m.key === 'poly ccx 400')).toMatchObject({ status: 'ordered', updatedBy: pm.displayName });
+    r = await svc.setSiteHandsetStatus(c.t, pm, siteA, { model: 'Poly CCX 400', status: 'delivered' });
+    expect(r.models.find((m) => m.key === 'poly ccx 400')!.status).toBe('delivered');
+    expect(r.totals.delivered).toBe(3);
     r = await svc.setSiteHandsetStatus(c.t, pm, siteA, { model: 'Poly CCX 400', status: 'installed' });
     expect(r.models.find((m) => m.key === 'poly ccx 400')!.status).toBe('installed');
     expect(r.totals).toMatchObject({ installed: 3, not_ordered: 1 });
