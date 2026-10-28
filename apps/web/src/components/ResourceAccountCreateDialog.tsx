@@ -70,6 +70,8 @@ export function ResourceAccountCreateDialog({
   const [name, setName] = useState('');
   const [phoneNumberId, setPhoneNumberId] = useState('');
   const [error, setError] = useState<string | null>(null);
+  /** Set as soon as the account exists, so a failure attaching the number can be retried without creating it twice. */
+  const [created, setCreated] = useState<{ id: string; name: string } | null>(null);
 
   const avail = useQuery({
     queryKey: ['site-avail-numbers', tenantId, siteId],
@@ -83,31 +85,57 @@ export function ResourceAccountCreateDialog({
     setName('');
     setPhoneNumberId('');
     setError(null);
+    setCreated(null);
+  };
+
+  /** Brings every list that shows resource accounts or free numbers up to date, and waits for the wizard's own list, so the new account can be picked straight away. */
+  const refreshLists = async () => {
+    qc.invalidateQueries({ queryKey: ['ras', tenantId, siteId] });
+    qc.invalidateQueries({ queryKey: ['site-avail-numbers', tenantId, siteId] });
+    await qc.refetchQueries({ queryKey: ['site-ras-lite', tenantId, siteId] });
+  };
+
+  /** The fields the API names (`site_id`, `phone_number_id`, ...) in the words this form uses. */
+  const describe = (e: unknown): string => {
+    if (!(e instanceof ApiError)) return 'Save failed';
+    const issues = (e.body as { issues?: { path?: string; message?: string }[] } | undefined)?.issues;
+    if (!Array.isArray(issues) || !issues.length) return e.message;
+    const label: Record<string, string> = { name: 'Name of service', site_id: 'Site', kind: 'Type', phone_number_id: 'Phone number' };
+    return `Could not save: ${issues.map((i) => `${label[i.path ?? ''] ?? i.path ?? 'Request'} - ${i.message ?? 'not valid'}`).join('; ')}`;
   };
 
   const save = useMutation({
     mutationFn: async () => {
-      const ra = await api<{ id: string; name: string }>(`${base}/resource-accounts`, {
-        method: 'POST',
-        body: JSON.stringify({ site_id: siteId, name, kind }),
-      });
-      if (phoneNumberId) {
-        await api(`${base}/resource-accounts/${ra.id}/numbers`, {
+      let ra = created;
+      if (!ra) {
+        ra = await api<{ id: string; name: string }>(`${base}/resource-accounts`, {
           method: 'POST',
-          body: JSON.stringify({ phone_number_id: phoneNumberId }),
+          body: JSON.stringify({ site_id: siteId, name: name.trim(), kind }),
         });
+        setCreated(ra);
+        await refreshLists();
+      }
+      if (phoneNumberId) {
+        try {
+          await api(`${base}/resource-accounts/${ra.id}/numbers`, {
+            method: 'POST',
+            body: JSON.stringify({ phone_number_id: phoneNumberId }),
+          });
+        } catch (e) {
+          // The account exists and can be picked; only the number is missing.
+          await refreshLists();
+          throw new Error(`"${ra.name}" was created, but its phone number could not be attached: ${describe(e)}. Choose another number and press Create again, or close this and add a number later.`);
+        }
       }
       return ra;
     },
-    onSuccess: (ra) => {
-      qc.invalidateQueries({ queryKey: ['ras', tenantId, siteId] });
-      qc.invalidateQueries({ queryKey: ['site-ras-lite', tenantId, siteId] });
-      qc.invalidateQueries({ queryKey: ['site-avail-numbers', tenantId, siteId] });
+    onSuccess: async (ra) => {
+      await refreshLists();
       reset();
       onOpenChange(false);
       onCreated(ra);
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Save failed'),
+    onError: (e) => setError(e instanceof ApiError ? describe(e) : e instanceof Error ? e.message : 'Save failed'),
   });
 
   return (
@@ -115,7 +143,11 @@ export function ResourceAccountCreateDialog({
       open={open}
       onOpenChange={(_, d) => {
         onOpenChange(d.open);
-        if (!d.open) reset();
+        if (!d.open) {
+          // Closing after the account was made but its number was not: the account is still there, so offer it.
+          if (created) onCreated(created);
+          reset();
+        }
       }}
     >
       <DialogSurface>
@@ -123,7 +155,7 @@ export function ResourceAccountCreateDialog({
           <DialogTitle>New resource account</DialogTitle>
           <DialogContent className={ls.gridGap12}>
             <Field label="Name of service" required>
-              <Input value={name} placeholder="Sales Line" onChange={(_, d) => setName(d.value)} />
+              <Input value={name} placeholder="Sales Line" disabled={!!created} onChange={(_, d) => setName(d.value)} />
             </Field>
             <Field label="Phone number (optional - can be set later)">
               <Dropdown
@@ -152,7 +184,7 @@ export function ResourceAccountCreateDialog({
               </Button>
             </DialogTrigger>
             <Button appearance="primary" disabled={save.isPending || !name.trim()} onClick={() => save.mutate()}>
-              {save.isPending ? 'Saving…' : 'Create'}
+              {save.isPending ? 'Saving…' : created ? 'Add number' : 'Create'}
             </Button>
           </DialogActions>
         </DialogBody>

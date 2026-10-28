@@ -32,6 +32,23 @@ export const auth = {
   },
 };
 
+/**
+ * The API's body validation answers `{message: 'Validation failed', issues: [{path, message}]}`. On its own that
+ * says nothing, so name the fields that failed: "Validation failed - name: Too small; site_id: Invalid GUID".
+ */
+function withIssues(message: string, body: unknown): string {
+  const issues = body && typeof body === 'object' ? (body as { issues?: unknown }).issues : undefined;
+  if (!Array.isArray(issues) || !issues.length) return message;
+  const parts = issues
+    .map((i) => {
+      const { path, message: m } = (i ?? {}) as { path?: unknown; message?: unknown };
+      const text = typeof m === 'string' ? m : '';
+      return path ? `${String(path)}: ${text}` : text;
+    })
+    .filter(Boolean);
+  return parts.length ? `${message} - ${parts.join('; ')}` : message;
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -80,7 +97,7 @@ export async function api<T = unknown>(path: string, init: RequestInit = {}): Pr
   if (!res.ok) {
     const msg =
       (body && (body.message || body.error)) || `${res.status} ${res.statusText}`;
-    throw new ApiError(res.status, Array.isArray(msg) ? msg.join(', ') : String(msg), body);
+    throw new ApiError(res.status, withIssues(Array.isArray(msg) ? msg.join(', ') : String(msg), body), body);
   }
   return body as T;
 }
