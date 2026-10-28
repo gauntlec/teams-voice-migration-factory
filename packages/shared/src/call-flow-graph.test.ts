@@ -136,18 +136,24 @@ describe('Call Queue graph: PowerShell-only extras', () => {
     expect(g.nodes.some((n) => n.kind === 'announcement')).toBe(false);
   });
 
+  it('does not write Teams\' default priority (3) on a live line nobody set', () => {
+    const data = { Identity: 'cq-2', OverflowAction: 'Forward', OverflowActionTarget: { Id: 'app-1', Type: 'ApplicationInstance' }, OverflowActionCallPriority: 3, TimeoutAction: 'Forward', TimeoutActionTarget: { Id: 'app-2', Type: 'ApplicationInstance' }, TimeoutActionCallPriority: 1 };
+    const g = buildCallQueueFlowGraphFromLive({ name: 'Support', data });
+    expect(g.edges.map((e) => e.label).sort()).toEqual(['Overflow', 'Timeout (priority 1)']);
+  });
+
   it('reads them from the live queue too', () => {
     const data = {
       Identity: 'cq-1',
       OverflowAction: 'Forward',
       OverflowActionTarget: { Id: 'tel:+15551234567', Type: 'Phone' },
-      OverflowActionCallPriority: 3,
+      OverflowActionCallPriority: 2,
       NoAgentAction: 'Voicemail',
       NoAgentActionTarget: { Id: 'agent-1', Type: 'MailBox' },
       NoAgentRedirectVoicemailAudioFilePrompt: 'teams-audio-id',
     };
     const g = buildCallQueueFlowGraphFromLive({ name: 'Support', data }, new Map([['agent-1', 'agent.one@contoso.test']]));
-    expect(g.edges.find((e) => e.branch === 'overflow')!.label).toBe('Overflow (priority 3)');
+    expect(g.edges.find((e) => e.branch === 'overflow')!.label).toBe('Overflow (priority 2)');
     const heard = g.nodes.find((n) => n.id === 'cq:cq-1:redirect:no_agent')!;
     expect(heard.sublabel).toBe('🔊 Audio file');
     expect(g.edges.find((e) => e.source === heard.id)!.target).toBe('voicemail:agent-1');

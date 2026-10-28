@@ -540,6 +540,8 @@ function liveHasPhoneNumber(data: Record<string, unknown>): boolean {
 const CQ_ACTION_LABEL: Record<'overflow' | 'timeout' | 'no_agent', string> = { overflow: 'Overflow', timeout: 'Timeout', no_agent: 'No agents' };
 /** The parameter prefix Get-CsCallQueue / Set-CsCallQueue use for each exception (-OverflowActionCallPriority, -NoAgentRedirectPerson…). */
 const CQ_PREFIX = { overflow: 'Overflow', timeout: 'Timeout', no_agent: 'NoAgent' } as const;
+/** The call priority Teams uses when none is set (1 highest to 5 lowest). */
+const DEFAULT_CALL_PRIORITY = 3;
 
 /** One node + edge per agent, feeding into the queue - "28 agents" as a sublabel count isn't the same as seeing who they are. Get-CsCallQueue's Agents entries carry `.ObjectId`, the same tenant_users.entra_id key as every other live person reference. */
 function liveCqAgentEdges(b: GraphBuilder, cq: LiveCallQueueInput, usersByEntraId?: Map<string, string>): void {
@@ -617,7 +619,8 @@ function liveCqActionEdges(
     if (nodeId) {
       const live = liveCallQueueActionExtras(CQ_PREFIX[branch], cq.data, action);
       addActionEdge(b, sourceId, nodeId, CQ_ACTION_LABEL[branch], branch, {
-        priority: live.priority,
+        // Teams reports its default priority (3) on every forward to another queue or attendant, whether or not anyone chose it: only a different one is worth writing on the line.
+        priority: live.priority === DEFAULT_CALL_PRIORITY ? undefined : live.priority,
         prompt: live.redirectPrompt,
         audio: live.redirectAudioId ? 'Audio file' : undefined,
       });
