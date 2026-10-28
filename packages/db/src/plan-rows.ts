@@ -7,7 +7,7 @@ import {
   type LiveIdentityState,
   type PickupGroupSettings,
 } from '@tvmf/shared';
-import { identitySkipReasons } from './validate-rows';
+import { identitySkipReasons, rejectedNumberChanges } from './validate-rows';
 import { resolveLiveIdentityState, resolveLivePolicyNames, type Scoped } from './live-state';
 
 /*
@@ -52,6 +52,8 @@ export async function planIdentityRows(
   if (rowIds) q = q.where('id', 'in', rowIds);
   const rows = await q.execute();
   const skipReasons = withSkipReasons ? await identitySkipReasons(s, rows) : new Map<string, string[]>();
+  // a number change the engineer rejected: the user keeps the number they have in Teams
+  const keepNumber = await rejectedNumberChanges(s, rows);
   const [liveNames, liveState] = await Promise.all([
     resolveLivePolicyNames(
       s,
@@ -77,7 +79,7 @@ export async function planIdentityRows(
       {
         id: row.id,
         upn: row.upn,
-        e164: row.e164,
+        e164: keepNumber.has(row.id) ? null : row.e164,
         number_type: row.number_type,
         revoke_ev: row.revoke_ev,
         policies,

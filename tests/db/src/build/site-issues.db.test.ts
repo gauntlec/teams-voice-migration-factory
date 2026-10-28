@@ -1,5 +1,6 @@
 // The Validation issues tab: every issue on a site in one list, with how serious each is.
 import { beforeAll, describe, expect, it } from 'vitest';
+import { planIdentityRows } from '@tvmf/db';
 import { AuditService } from '../../../../apps/api/src/common/audit.service';
 import { BuildService } from '../../../../apps/api/src/modules/build/build.service';
 import { BuildValidationService } from '../../../../apps/api/src/modules/build/build-validation.service';
@@ -81,6 +82,32 @@ describe('number changes', () => {
     expect((await numberChange('moved@contoso.test'))[0].issue.decision).toBe('rejected');
     await build.decideNumberChange(c.t, engineer, 'build_users', moved.id, 'reset');
     expect((await numberChange('moved@contoso.test'))[0].issue.decision).toBe('pending');
+  });
+
+  it('Accept deploys the designed number; Reject leaves the number the user has in Teams; the text says which', async () => {
+    const [{ id }] = await c.s.selectFrom('build_users').select('id').where('upn', '=', 'moved@contoso.test').execute();
+    const assigns = async () => {
+      const rows = await planIdentityRows(c.s, 'build_users', 'user', siteId, [id]);
+      return rows[0]!.calls.filter((k) => k.cmdlet === 'Set-CsPhoneNumberAssignment' && k.parameters.PhoneNumber).length;
+    };
+    const detail = async () => (await numberChange('moved@contoso.test'))[0]!.issue.detail;
+
+    expect(await assigns()).toBe(1); // undecided: the design goes ahead
+    expect(await detail()).toMatch(/Accept: deployment changes the user's number to \+12125550298\. Reject: deployment leaves the user's number as it is in Teams \(\+12125550200\)/);
+
+    await build.decideNumberChange(c.t, engineer, 'build_users', id, 'rejected');
+    expect(await assigns()).toBe(0);
+    expect(await detail()).toContain('Rejected: deployment leaves the user\'s number as it is in Teams (+12125550200)');
+
+    await build.decideNumberChange(c.t, engineer, 'build_users', id, 'accepted');
+    expect(await assigns()).toBe(1);
+    expect(await detail()).toContain('Accepted: deployment will change the user\'s number to +12125550298');
+
+    // a rejection stops applying once a number changes
+    await build.decideNumberChange(c.t, engineer, 'build_users', id, 'rejected');
+    await c.s.updateTable('build_users').set({ e164: '+12125550297' }).where('id', '=', id).execute();
+    expect(await assigns()).toBe(1);
+    await build.decideNumberChange(c.t, engineer, 'build_users', id, 'reset');
   });
 
   it('flags a number that differs from Site Data only once the site has been submitted', async () => {

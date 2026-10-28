@@ -200,10 +200,10 @@ export function ValidationIssuesTab({
                     {i.issue.code === 'number_change' && canDecide && i.sheet !== 'resource-accounts' && (
                       i.issue.decision === 'pending' ? (
                         <>
-                          <Button size="small" appearance="primary" disabled={deciding} onClick={() => onDecide(i, 'accepted')} title="Go ahead with the designed number">
+                          <Button size="small" appearance="primary" disabled={deciding} onClick={() => onDecide(i, 'accepted')} title="Deployment will change this user's number to the designed number">
                             Accept
                           </Button>{' '}
-                          <Button size="small" disabled={deciding} onClick={() => onDecide(i, 'rejected')} title="Record that this change is not wanted. The design is not changed: edit the row's number if it should be different.">
+                          <Button size="small" disabled={deciding} onClick={() => onDecide(i, 'rejected')} title="Deployment will leave this user's number as it is in Teams. The design itself is not changed: edit the row's number if it should match.">
                             Reject
                           </Button>{' '}
                         </>

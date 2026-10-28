@@ -97,10 +97,10 @@ const liveLabel = (l: Pick<LiveNumber, 'name' | 'upn'>) => l.name ?? l.upn ?? 'a
 export function numberConflict(row: { status: string; holder_type: string | null; holder_id: string | null }, design: Holder | undefined, live: LiveNumber | null): string | null {
   if (!live) return null;
   const on = liveLabel(live);
-  if (!row.holder_id) return row.status === 'reserved' ? `Live in Teams on ${on}, but reserved here.` : null;
-  if (row.holder_type === 'analogue') return `Live in Teams on ${on}, but Site Data has it as an analogue line.`;
+  if (!row.holder_id) return row.status === 'reserved' ? `Live in Teams on ${on}, but reserved here. Nothing has been changed: release the reservation here, or free the number in Teams.` : null;
+  if (row.holder_type === 'analogue') return `Live in Teams on ${on}, but Site Data has it as an analogue line. Nothing has been changed: correct the entry here to match Teams, or free the number in Teams.`;
   if (!design?.upn || !live.upn) return null;
-  return design.upn === live.upn ? null : `Live in Teams on ${on}, but Site Data has it for ${design.name ?? design.upn}.`;
+  return design.upn === live.upn ? null : `Live in Teams on ${on}, but Site Data has it for ${design.name ?? design.upn}. Nothing has been changed: change the entry here to match Teams, or move the number in Teams.`;
 }
 
 /** Brings the inventory in line with Teams. `releaseMissing`: also stop treating numbers Teams no longer lists as live (only when the sync read every number). */
