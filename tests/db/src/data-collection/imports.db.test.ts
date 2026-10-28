@@ -1,4 +1,4 @@
-// Bulk imports in Data Collection: number ranges (DID-START, DID-END) and the preview context for the user import.
+// Bulk imports in Site Data: number ranges (DID-START, DID-END) and the preview context for the user import.
 import { BadRequestException } from '@nestjs/common';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { AuditService } from '../../../../apps/api/src/common/audit.service';

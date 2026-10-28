@@ -1,4 +1,4 @@
-// Searching for people matches both the UPN and the display name: Design & Build users and CAPs, and Data Collection's Number Assignments.
+// Searching for people matches both the UPN and the display name: Design & Build users and CAPs, and Site Data's Number Assignments.
 import { beforeAll, describe, expect, it } from 'vitest';
 import { AuditService } from '../../../../apps/api/src/common/audit.service';
 import { BuildService } from '../../../../apps/api/src/modules/build/build.service';
@@ -27,8 +27,8 @@ const upnsOf = (r: { items: unknown[] }) => (r.items as { upn: string }[]).map((
 const list = (q: string) => build.listUsers(c.t, { siteId, q, page: 1, limit: 50 } as never);
 
 describe('Design & Build user search', () => {
-  it('matches the UPN, the name from Data Collection and the name from the tenant, and shows the name', async () => {
-    // a row populated from Data Collection: its name lives on the Data Collection user
+  it('matches the UPN, the name from Site Data and the name from the tenant, and shows the name', async () => {
+    // a row populated from Site Data: its name lives on the Site Data user
     const dcUser = await c.s.insertInto('discovery_users').values({ site_id: siteId, upn: 'jo.b@contoso.test', display_name: 'Joanna Brightwell' } as never).returning('id').executeTakeFirstOrThrow();
     await c.s.insertInto('build_users').values({ site_id: siteId, upn: 'jo.b@contoso.test', discovery_user_id: dcUser.id } as never).execute();
     // a row added by hand: its name only exists on the tenant user with that UPN

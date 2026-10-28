@@ -5,7 +5,7 @@ import type { LiveAutoAttendantStructured } from './aa-live-parse';
 import { CALL_QUEUE_NO_AGENT_ACTIONS, CALL_QUEUE_OVERFLOW_ACTIONS, CALL_QUEUE_ROUTING_METHODS, CALL_QUEUE_TIMEOUT_ACTIONS } from './domain';
 
 /**
- * Plain-words descriptions of a discovered auto attendant or call queue, for the free-text fields of its Data Collection
+ * Plain-words descriptions of a discovered auto attendant or call queue, for the free-text fields of its Site Data
  * resource account record (business hours, who answers, out-of-hours action, exception handling, holiday handling, advanced
  * features). Used when a discovered voice app is added to a site, so what Teams already has is not lost on the way in.
  * Anything Teams does not hold for a field is null, never invented.

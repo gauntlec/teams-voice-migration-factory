@@ -44,7 +44,7 @@ export function SuggestedSiteCell({ id, byId, mixedById }: { id: string; byId: M
         Suggest {s.sitecode}
       </Badge>
     ) : (
-      <Badge appearance="tint" color="warning" size="small" title={`${numbers} is in the number ranges of ${s.sitecode}, but it is on ${s.onSitecode ?? 'another site'} in Data Collection. It is not moved automatically.`}>
+      <Badge appearance="tint" color="warning" size="small" title={`${numbers} is in the number ranges of ${s.sitecode}, but it is on ${s.onSitecode ?? 'another site'} in Site Data. It is not moved automatically.`}>
         On {s.onSitecode ?? 'another site'} · number in {s.sitecode}
       </Badge>
     );

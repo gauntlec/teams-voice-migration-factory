@@ -113,7 +113,7 @@ request, but **listing only the rows designed for this request**.
   the new row in `service_request_items`. It refuses, before anything is made,
   unless Managed Services is on, the caller has `sr:manage`, the request is
   Planned and the row is on the request's site.
-- Site-wide tools (Populate from Data Collection, Reset site, bulk edit, templates,
+- Site-wide tools (Populate from Site Data, Reset site, bulk edit, templates,
   resource account requests) stay on the site's own Design & Build page.
 - Linked rows are **ordinary Design & Build rows**: they also show on the site's
   Design & Build page, tagged with the request reference (e.g. `SR-0042`).
@@ -174,7 +174,7 @@ number is also put on the row now, if it's still free.
 
 The Design tab asks for the carrier's range (first / last number, carrier).
 `POST :id/numbers` adds it to the site's inventory as free numbers (not blocked
-by a locked Data Collection) and links it to the request (`number_range` item).
+by a locked Site Data) and links it to the request (`number_range` item).
 There's nothing to deploy.
 
 ### Deploy
@@ -273,7 +273,7 @@ request's Overview). It is linked to the request:
 
 - **The phone number is always left for the engineer** to pick in Design & Build.
 - **Agents** typed as names rather than sign-in addresses are looked up in the
-  synced directory (then Data Collection's users); a name that matches exactly
+  synced directory (then Site Data's users); a name that matches exactly
   one person becomes their UPN. Anyone not found is listed as a warning.
   How calls are shared out maps to the routing method: All at once ->
   `Attendant`, In order -> `Serial`, Round robin -> `RoundRobin`, Longest idle ->
@@ -287,7 +287,7 @@ request's Overview). It is linked to the request:
   auto attendants, site code for sites; all case-insensitive) it's reported as
   "already in Design & Build" with a link, and left as it is. Pressing the
   button twice is safe.
-- A new site is added even when the customer's Data Collection is accepted and
+- A new site is added even when the customer's Site Data is accepted and
   locked: a site added after go-live is an operational change
   (`DataCollectionService.insertSite`).
 - The request's **status doesn't change**. Mark it Designed & built once the row
@@ -347,7 +347,7 @@ The request form avoids free text wherever Voxshift already has the data
 
 - **People** (new user, site contact, call queue agents, "a person" as a call
   target) are searched in the customer's directory: the synced Teams users,
-  then Data Collection users not synced yet. "Not listed?" allows typing a
+  then Site Data users not synced yet. "Not listed?" allows typing a
   person who isn't in either.
 - **New number**: when "New number" is chosen and a site is picked, the first
   free number at that site is picked automatically and can be changed. Free

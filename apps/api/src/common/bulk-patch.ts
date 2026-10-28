@@ -7,7 +7,7 @@ type Scoped = ReturnType<typeof tenantDb>;
 /**
  * Shared core of every "select many rows, set a handful of fields once,
  * apply to all of them in one request" bulk-edit action - Design & Build's
- * Users/CAPs and Data Collection's Users/CAPs both funnel through this. One
+ * Users/CAPs and Site Data's Users/CAPs both funnel through this. One
  * implementation, so a fix or improvement here (chunking very large id
  * lists, the merge behaviour, the audit shape, …) lands in every module at
  * once instead of drifting between hand-copied versions.

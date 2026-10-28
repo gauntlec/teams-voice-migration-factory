@@ -52,7 +52,7 @@ export interface LiveIdentityState {
   callingSettings?: import('./calling-settings').LiveCallingSettings;
 }
 
-/** Last 10 significant digits, for loose number matching (same rule Data Collection and Design & Build use). */
+/** Last 10 significant digits, for loose number matching (same rule Site Data and Design & Build use). */
 function numKey(v: string | null | undefined): string {
   return String(v ?? '').replace(/\D/g, '').slice(-10);
 }
@@ -363,7 +363,7 @@ function toHms(totalSeconds: number): string {
  * Flags a build_users/build_caps row whose phone number won't actually get
  * assigned: planIdentityRow's Set-CsPhoneNumberAssignment guard (below)
  * requires `number_type` too, and a row can easily have `e164` set with
- * `number_type` still null (e.g. populated from Data Collection on a site with no
+ * `number_type` still null (e.g. populated from Site Data on a site with no
  * PSTN/licensing model chosen yet) - that command, and the Enterprise Voice
  * enablement it carries, then just silently never appears in the plan.
  */

@@ -727,7 +727,7 @@ export function RunCard({ base, summary }: { base: string; summary: TenantDiscov
       </div>
       <Text size={200} className={s.muted}>
         {autoAdd
-          ? `After each full run, users, common area phones, resource accounts, auto attendants and call queues that are on no site and have a number in a site's range are added to that site's Data Collection. Nothing already on a site is moved, and Design & Build is not touched.${
+          ? `After each full run, users, common area phones, resource accounts, auto attendants and call queues that are on no site and have a number in a site's range are added to that site's Site Data. Nothing already on a site is moved, and Design & Build is not touched.${
               autoAddLast ? ` Last time (${new Date(autoAddLast.at).toLocaleString()}): ${autoAddLast.added} added${autoAddLast.skipped ? `, ${autoAddLast.skipped} not added` : ''}.` : ''
             }`
           : 'Off: Discovery suggests a site for each object, and a person adds it from the site or the Discovery list.'}
@@ -781,7 +781,7 @@ export function PurgeCard({
       <Text weight="semibold">Delete discovered data</Text>
       <Text size={200} className={s.muted}>
         Removes every discovered object, the Users and Policies projections, the M365 group cache
-        and the run history for this customer. Data Collection entries are kept, but lose their link to a discovered user.
+        and the run history for this customer. Site Data entries are kept, but lose their link to a discovered user.
         Design &amp; Build calling-policy choices that point at a discovered policy are removed too (the sites and calling policies themselves stay).
         Re-run discovery to rebuild. This cannot be undone.
       </Text>
@@ -814,7 +814,7 @@ export function PurgeCard({
               <b>{summary?.tenant?.displayName ?? 'this customer'}</b>: {total.toLocaleString()} object
               {total === 1 ? '' : 's'}, the Users and Policies projections
               {summary?.groupsCount ? `, ${summary.groupsCount.toLocaleString()} cached M365 groups` : ''}
-              {summary?.lastRun ? ' and the run history' : ''}. Any Data Collection users stay, but
+              {summary?.lastRun ? ' and the run history' : ''}. Any Site Data users stay, but
               lose their link to a discovered identity, and any Design &amp; Build calling-policy choice that points at a discovered policy is removed. This cannot be undone.
               {running && (
                 <Text className={ls.blockMt8Danger}>

@@ -5,7 +5,7 @@ import type { AutoAttendantWizardAnswers, CallQueueWizardAnswers, WizardCallFlow
 /**
  * Converts the AA/CQ creation wizard's plain-language capture into a real,
  * deployable `build_auto_attendants`/`build_call_queues` row - the "Import
- * to Design & Build" action (Data Collection's Call flows tab). Pure and
+ * to Design & Build" action (Site Data's Call flows tab). Pure and
  * DB-free by design: anything that needs a live lookup (matching a
  * free-text person's name to a synced user, or a department name to an
  * already-built Call Queue/Auto Attendant) is injected by the caller via

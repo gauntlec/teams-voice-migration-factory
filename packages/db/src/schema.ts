@@ -447,7 +447,7 @@ export interface DiscoverySitesTable {
   mode: ColumnType<'project' | 'operations', 'project' | 'operations' | undefined, 'project' | 'operations'>;
   mode_changed_at: string | null;
   mode_changed_by: string | null;
-  /** The site's Data Collection review. Nothing is locked; changes after submission are recorded in discovery_site_changes. */
+  /** The site's Site Data review. Nothing is locked; changes after submission are recorded in discovery_site_changes. */
   review_status: ColumnType<'draft' | 'submitted' | 'accepted', 'draft' | 'submitted' | 'accepted' | undefined, 'draft' | 'submitted' | 'accepted'>;
   submitted_by: string | null;
   submitted_at: string | null;
@@ -467,7 +467,7 @@ export interface DiscoverySiteAddressesTable {
   created_at: Ts;
 }
 
-/** The stage a handset model has reached on a site (migration 0078); the quantities are counted from Data Collection, not stored. */
+/** The stage a handset model has reached on a site (migration 0078); the quantities are counted from Site Data, not stored. */
 export interface SiteHandsetTrackingTable {
   site_id: string;
   model_key: string;
@@ -592,9 +592,9 @@ export interface PhoneNumbersTable {
   live_holder_upn: string | null;
   live_holder_name: string | null;
   live_seen_at: string | null;
-  /** Assigned only because Teams has it: no Data Collection holder claims it. A claim by a holder takes it over. */
+  /** Assigned only because Teams has it: no Site Data holder claims it. A claim by a holder takes it over. */
   live_only: ColumnType<boolean, boolean | undefined, boolean>;
-  /** Plain-words clash between Teams and the Data Collection holder; null = none. */
+  /** Plain-words clash between Teams and the Site Data holder; null = none. */
   conflict: string | null;
   created_at: Ts;
 }
@@ -884,7 +884,7 @@ export interface BuildCapsTable extends BuildIdentityRowBase {
   lan_jack: string | null;
 }
 
-/** Per site: which real tenant_policies row a Data Collection generic
+/** Per site: which real tenant_policies row a Site Data generic
  * calling-policy catalog entry resolves to for THIS site. See
  * 0023_build_templates_and_calling_policy_map.sql. */
 export interface CallingPolicySiteMapTable {
@@ -1616,7 +1616,7 @@ export interface HandoverSectionsTable {
  * FILES_DIR, this row is just the index. First consumer: Deployment
  * change-recording .docx files (category deployment_change_document);
  * category is a closed CHECK list in the migration, so future producers
- * (Data Collection, Discovery, Design & Build, Service Handover) each add
+ * (Site Data, Discovery, Design & Build, Service Handover) each add
  * their own value(s) via a follow-up migration when they integrate.
  */
 export interface FilesTable {

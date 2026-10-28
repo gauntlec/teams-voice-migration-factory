@@ -29,7 +29,7 @@ export function AddDeviceForm({ base, data }: { base: string; data: DeviceStatus
   });
 
   if (data.siteOptions.length === 0) {
-    return <MutedText size={200}>This customer has no sites yet. Devices belong to a site: add the customer's sites in Data Collection first.</MutedText>;
+    return <MutedText size={200}>This customer has no sites yet. Devices belong to a site: add the customer's sites in Site Data first.</MutedText>;
   }
   const form = f ?? emptyDeviceForm(data.siteOptions[0]!.sitecode);
   return (

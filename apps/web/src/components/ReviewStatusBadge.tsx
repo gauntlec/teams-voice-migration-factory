@@ -7,7 +7,7 @@ const COLOR: Record<DiscoveryStatus, 'informative' | 'warning' | 'success'> = {
   accepted: 'success',
 };
 
-/** A site's Data Collection review status, with how many changes were made since it was submitted. */
+/** A site's Site Data review status, with how many changes were made since it was submitted. */
 export function ReviewStatusBadge({ status, pendingChanges = 0 }: { status: DiscoveryStatus; pendingChanges?: number }) {
   return (
     <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>

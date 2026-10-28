@@ -1,6 +1,6 @@
 /**
  * The home-page migration progress: where each site of a customer is, from
- * Data Collection to Operations, derived only from data the app already
+ * Site Data to Operations, derived only from data the app already
  * stores - there is no manual status field. ProgressService (apps/api) gathers
  * the inputs; deriveSiteProgress turns them into stages and plain-words
  * blockers. Kept pure so the rules are unit-tested. See docs/PROGRESS.md.
@@ -17,7 +17,7 @@ export type ProgressStageKey = (typeof PROGRESS_STAGES)[number];
 export type ProgressStageViewKey = ProgressStageKey | 'delivery';
 
 export const PROGRESS_STAGE_LABELS: Record<ProgressStageViewKey, string> = {
-  data_collection: 'Data Collection',
+  data_collection: 'Site Data',
   designed: 'Designed',
   validated: 'Validated',
   dry_run: 'Dry run',
@@ -41,9 +41,9 @@ export interface ProgressRun {
 }
 
 export interface SiteProgressInput {
-  /** the customer-wide Data Collection status (one discovery row per customer) */
+  /** the customer-wide Site Data status (one discovery row per customer) */
   discoveryStatus: DiscoveryStatus;
-  /** rows captured for this site in Data Collection */
+  /** rows captured for this site in Site Data */
   captured: { users: number; caps: number; resourceAccounts: number };
   build: {
     users: number;
@@ -110,7 +110,7 @@ export interface CustomerProgressItem {
 
 /** GET /t/:tenantId/progress */
 export interface CustomerProgress {
-  /** Data Collection review, site by site: how many sites are in each state and how many changed after submission. */
+  /** Site Data review, site by site: how many sites are in each state and how many changed after submission. */
   dataCollection: { sites: number; draft: number; submitted: number; accepted: number; withChanges: number };
   /** the caller sees designed/validated/dry_run/deployed rather than one 'delivery' stage */
   fullView: boolean;
@@ -148,7 +148,7 @@ export function deriveSiteProgress(input: SiteProgressInput, fullView = true): S
   const add = (key: ProgressStageViewKey, state: ProgressStageState, detail: string | null) =>
     stages.push({ key, label: PROGRESS_STAGE_LABELS[key], state, detail });
 
-  /* Data Collection: something captured for the site and the customer's Data Collection submitted. */
+  /* Site Data: something captured for the site and the customer's Site Data submitted. */
   const capturedLine = `${capturedTotal} captured`;
   if (capturedTotal > 0 && input.discoveryStatus !== 'draft') {
     // "awaiting review" is a customer-wide item, not repeated on every site.

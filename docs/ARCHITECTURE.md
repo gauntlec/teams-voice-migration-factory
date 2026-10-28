@@ -7,7 +7,7 @@ Microsoft Teams voice migration with role-scoped web views:
 
 | Stage | Replaces | Primary role |
 |-------|----------|--------------|
-| **Data Collection** | Discovery workbook filled in by the customer | Customer |
+| **Site Data** | Discovery workbook filled in by the customer | Customer |
 | **Design & Build** | `ATTC MS Teams Build 5.x.xlsx` build sheet | Engineer |
 | **Deployment & Audit** | `Teams-Migration-Build-*.ps1` run against the tenant | Engineer |
 | **Service Handover** | `Service Hand-Over Pack V1.x.docx` | Engineer (customer consumes) |
@@ -103,7 +103,7 @@ the worker renders a branded template and sends it via SMTP. See
 | audit | `/t/:tenantId/audit` + `/audit` | read-only audit views |
 | progress | `/t/:tenantId/progress` | home-page dashboard: each site's migration stage and blockers, derived from the other modules' data. See `docs/PROGRESS.md` |
 | feature-requests | `/feature-requests` | staff-only enhancement board (kanban); SUPER_ADMIN moves cards, generates a "prompt for Claude" per card |
-| tenant-discovery | `/t/:tenantId/tenant-discovery` | **Discovery**: admin/engineer connects to the customer's live Teams tenant (device code, PowerShell in the worker) and snapshots users, licences, numbers and every voice policy; links to Data Collection. See `docs/DISCOVERY.md` |
+| tenant-discovery | `/t/:tenantId/tenant-discovery` | **Discovery**: admin/engineer connects to the customer's live Teams tenant (device code, PowerShell in the worker) and snapshots users, licences, numbers and every voice policy; links to Site Data. See `docs/DISCOVERY.md` |
 
 This scaffold ships the **auth / users / tenants / RBAC / tenancy** layer working
 end to end; the four migration modules are present as guarded stubs with the data

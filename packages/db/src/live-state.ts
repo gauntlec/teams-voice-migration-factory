@@ -161,7 +161,7 @@ export interface LiveRowRef {
 
 /**
  * Finds the live object (Discovery's tenant_objects) behind each Design & Build row, keyed by the row's id. A row made from, or linked
- * to, a Data Collection voice app is matched on that voice app's exact discovered object (its Teams GUID) - never on its name, which
+ * to, a Site Data voice app is matched on that voice app's exact discovered object (its Teams GUID) - never on its name, which
  * two voice apps can share. Only a row with no link falls back to its name, and then only when exactly one live object has that name
  * and no other row has already claimed it: a name that fits several is not guessed at.
  */

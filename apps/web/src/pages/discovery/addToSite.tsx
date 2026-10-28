@@ -67,7 +67,7 @@ function describe(r: AddFromDiscoveryItemResult): { dc: string; build: string } 
 }
 
 /**
- * Add the picked discovered objects to a site: the Data Collection record first, then (unless switched off) the Design & Build row,
+ * Add the picked discovered objects to a site: the Site Data record first, then (unless switched off) the Design & Build row,
  * filled from the discovered data. Objects are named by id/UPN, so two with the same display name stay two. An account can be routed
  * to Users or Common area phones; the choice starts from what its licence plan says.
  */
@@ -128,7 +128,7 @@ export function AddToSiteDialog({ items, onClose, onDone }: { items: AddItem[]; 
               {!results ? (
                 <>
                   <Text size={200}>
-                    Adds {items.length === 1 ? 'this object' : `these ${items.length} objects`} to the site you pick: first the Data Collection record, then
+                    Adds {items.length === 1 ? 'this object' : `these ${items.length} objects`} to the site you pick: first the Site Data record, then
                     {' '}the Design & Build row, filled from the discovered data. Each is matched on its own UPN or ID, so objects that share a name stay separate.
                     An object already on the site is left as it is, and one on another site is not moved.
                   </Text>
@@ -198,7 +198,7 @@ export function AddToSiteDialog({ items, onClose, onDone }: { items: AddItem[]; 
                     <TableHeader>
                       <TableRow>
                         <TableHeaderCell>Object</TableHeaderCell>
-                        <TableHeaderCell>Data Collection</TableHeaderCell>
+                        <TableHeaderCell>Site Data</TableHeaderCell>
                         <TableHeaderCell>Design & Build</TableHeaderCell>
                       </TableRow>
                     </TableHeader>

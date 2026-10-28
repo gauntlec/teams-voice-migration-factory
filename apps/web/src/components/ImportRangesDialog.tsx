@@ -30,7 +30,7 @@ import { DataTable } from './DataTable';
 import { DangerText } from './ui';
 
 /**
- * Bulk-add number ranges to a Data Collection site from an xlsx/csv with the
+ * Bulk-add number ranges to a Site Data site from an xlsx/csv with the
  * columns DID-START and DID-END. Parsing and the template are done in the
  * browser with a lazy-loaded SheetJS (same approach as ImportUsersDialog) - the
  * API only ever sees validated rows.

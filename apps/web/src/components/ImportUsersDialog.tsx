@@ -32,7 +32,7 @@ const useLocalStyles = makeStyles({
 
 
 /**
- * Import users into a Data Collection site from an xlsx/csv. Parsing and the
+ * Import users into a Site Data site from an xlsx/csv. Parsing and the
  * template are done in the browser with a lazy-loaded SheetJS - the API only
  * ever sees validated JSON rows. See feature request "Import from Excel".
  */

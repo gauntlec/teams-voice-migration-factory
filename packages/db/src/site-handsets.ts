@@ -2,7 +2,7 @@ import { handsetModelKey, summariseHandsets, type SiteHandsets, type HandsetStag
 import type { Scoped } from './live-state';
 
 /*
- * The handsets a site needs, counted from Data Collection: each user's handset model and each common area phone's device model, one row
+ * The handsets a site needs, counted from Site Data: each user's handset model and each common area phone's device model, one row
  * per model with how many of each and the stage the project manager has recorded (site_handset_tracking, migration 0078).
  */
 

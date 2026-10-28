@@ -27,7 +27,7 @@ const actorOf = (u: AuthedUser): Actor => ({ id: u.id, email: u.email });
 const RE_POINT_NO_PORTING = "A re-point range doesn't need porting.";
 
 /**
- * "LOA Data Collection and Tracking" - PM/Engineer builds a per-number-range
+ * "LOA Site Data and Tracking" - PM/Engineer builds a per-number-range
  * document checklist (from a site-enabled subset of a global catalog),
  * submits it, and the customer uploads against it. See
  * packages/db/migrations/tenant/0021_number_port_requests.sql for the

@@ -12,7 +12,7 @@ export const MODULES = [
 ] as const;
 export type ModuleId = (typeof MODULES)[number];
 
-/* --------------------------- Data Collection --------------------------- */
+/* --------------------------- Site Data --------------------------- */
 
 export const DISCOVERY_STATUSES = ['draft', 'submitted', 'accepted'] as const;
 export type DiscoveryStatus = (typeof DISCOVERY_STATUSES)[number];
@@ -190,7 +190,7 @@ export const POLICY_KIND_TO_TENANT_TYPE: Partial<Record<PolicyKey, TenantPolicyT
  * Voicemail prompt languages Teams accepts for
  * `Set-CsOnlineVoicemailUserSettings -PromptLanguage` - culture codes, not
  * names ("English" is rejected). This is the picker list everywhere a
- * voicemail language is entered (Data Collection, Excel import, Design &
+ * voicemail language is entered (Site Data, Excel import, Design &
  * Build), so what's stored is always deployable as-is.
  */
 export const VOICEMAIL_PROMPT_LANGUAGES = [
@@ -598,7 +598,7 @@ export const FEATURE_PRIORITY_LABELS: Record<FeaturePriority, string> = {
 
 /** Which part of the product a request is about — used as a filter/label. */
 export const FEATURE_AREAS = [
-  'Data Collection',
+  'Site Data',
   'Discovery',
   'Design & Build',
   'Deployment',

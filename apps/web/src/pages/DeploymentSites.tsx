@@ -280,7 +280,7 @@ export function DeploymentSites() {
 
         {allSites.length === 0 ? (
           <Text size={200} className={s.muted}>
-            No sites yet — add one in Data Collection first.
+            No sites yet — add one in Site Data first.
           </Text>
         ) : sites.length === 0 ? (
           <Text size={200} className={s.muted}>

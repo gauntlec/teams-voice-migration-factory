@@ -326,7 +326,7 @@ level 2 until a template is allow-listed.
    `get_incident`, `add_internal_note`, `propose_action`, `run_diagnostic`, `draft_update`,
    `handoff`, ...) so Claude and other agent runtimes can work incidents natively.
 4. **Diagnostics runner** (chunk 6): read-only checks the worker already knows how to do
-   (user's Enterprise Voice state, number assignment vs Data Collection, queue/AA live
+   (user's Enterprise Voice state, number assignment vs Site Data, queue/AA live
    config vs designed, Discovery drift, last deployments touching the object, licence
    check, SBC/pairing health, certificate expiry from discovery) exposed as named
    **runbook steps** with typed inputs/outputs, so a bot can call them and humans see

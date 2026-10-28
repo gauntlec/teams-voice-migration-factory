@@ -134,7 +134,7 @@ export function Files() {
 
   // Site picker: Deployment's summary needs deployment:read, which
   // PROJECT_MANAGER and CUSTOMER don't have, but this page (files:read) is
-  // visible to all 4 roles - so it lists sites via Data Collection's landing
+  // visible to all 4 roles - so it lists sites via Site Data's landing
   // endpoint (discovery:read, granted to all 4, and already site-scope-aware
   // for a CUSTOMER site contact) instead.
   const sites = useQuery({

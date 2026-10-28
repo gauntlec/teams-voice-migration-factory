@@ -49,7 +49,7 @@ const useLocalStyles = makeStyles({
 
 
 /**
- * "LOA Data Collection and Tracking" - one page per site, gated internally by
+ * "LOA Site Data and Tracking" - one page per site, gated internally by
  * permission rather than split into separate routes (per the feature-request
  * clarification that PM/Engineer roles are interchangeable and site rules
  * differ by country): catalog + site-enablement admin, PM/Engineer checklist

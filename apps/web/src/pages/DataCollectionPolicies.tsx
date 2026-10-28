@@ -12,7 +12,7 @@ interface PoliciesResponse {
 }
 
 /**
- * Customer-wide outbound calling policies. Moved off the Data Collection
+ * Customer-wide outbound calling policies. Moved off the Site Data
  * landing page into this sub-page; users and CAPs reference one of these.
  */
 export function DataCollectionPolicies() {
@@ -32,7 +32,7 @@ export function DataCollectionPolicies() {
   if (q.isLoading) return <Spinner label="Loading…" />;
   if (q.isError) return <LoadError message={(q.error as Error).message} />;
 
-  // Not tied to one site, so the site reviews don't lock it: it is editable by anyone who can write Data Collection.
+  // Not tied to one site, so the site reviews don't lock it: it is editable by anyone who can write Site Data.
   const locked = !can('discovery:write');
 
   return (

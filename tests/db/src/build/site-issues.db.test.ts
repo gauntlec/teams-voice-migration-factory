@@ -83,7 +83,7 @@ describe('number changes', () => {
     expect((await numberChange('moved@contoso.test'))[0].issue.decision).toBe('pending');
   });
 
-  it('flags a number that differs from Data Collection only once the site has been submitted', async () => {
+  it('flags a number that differs from Site Data only once the site has been submitted', async () => {
     const [n] = await seedNumbers(c.s, 'NYC01', ['+12125550301']);
     const dc = await c.s.insertInto('discovery_users').values({ site_id: siteId, upn: 'dc@contoso.test', display_name: 'Dee Cee' } as never).returning('id').executeTakeFirstOrThrow();
     await c.s.updateTable('phone_numbers').set({ status: 'assigned', holder_type: 'user', holder_id: dc.id }).where('id', '=', n.id).execute();

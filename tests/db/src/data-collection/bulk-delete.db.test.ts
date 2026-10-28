@@ -1,4 +1,4 @@
-// Data Collection bulk delete: the ticked rows, or every row of a kind on one
+// Site Data bulk delete: the ticked rows, or every row of a kind on one
 // site. Each row must go exactly as a single delete would - its numbers back
 // to the free pool, Design & Build rows kept but unlinked - and the usual
 // site-scope rules apply, and a change to a submitted site is recorded for the engineer.
@@ -32,7 +32,7 @@ const number = (id: string) =>
   c.s.selectFrom('phone_numbers').select(['status', 'holder_id']).where('id', '=', id).executeTakeFirstOrThrow();
 const usersOn = (site: string) => c.s.selectFrom('discovery_users').select('upn').where('site_id', '=', site).orderBy('upn').execute();
 
-describe('Data Collection bulk delete', () => {
+describe('Site Data bulk delete', () => {
   it('deletes the ticked users and frees their numbers', async () => {
     const [n1] = (await seedNumbers(c.s, 'LON01', ['+442070000101'])).map((n) => n.id);
     const u1 = await addUser(siteA, 'a1@contoso.test');

@@ -6,7 +6,7 @@
 every user with their Teams voice state and licence-derived features, resource
 accounts, phone numbers, **every voice policy definition**, PSTN routing,
 emergency locations, auto attendants, call queues and schedules — stored in
-Voxshift so Data Collection, Design & Build and Deployment can reference reality.
+Voxshift so Site Data, Design & Build and Deployment can reference reality.
 
 ## How a run works
 
@@ -165,21 +165,21 @@ storage.
   resource accounts stored earlier in the same run and adds
   `AssignedTo {upn, displayName, kind}` to the stored record, so the Phone numbers
   tab shows a name rather than a GUID.
-- `discovery_users.tenant_user_id` — the Data Collection user's link to the real one.
+- `discovery_users.tenant_user_id` — the Site Data user's link to the real one.
 
 Postgres was chosen over Elasticsearch on purpose: a tenant is thousands of users
 and hundreds of policies, and JSONB + GIN + `tsvector` searches that instantly
 without a second datastore to run, sync and back up.
 
-## Data Collection link
+## Site Data link
 
 - **Autofill:** on the site *Users* tab, leaving the UPN field calls
   `GET /t/:id/tenant-discovery/users/lookup?upn=` and prefills the display name,
   showing "Found in tenant: +1913… · Enterprise Voice on · Calling policy X".
 - **Link:** `addUser` / `updateUser` set `tenant_user_id` when the UPN matches a
   live tenant user; the table shows a **Linked** badge.
-- **Bulk import:** Discovery → Users → *Import into Data Collection…* creates a
-  Data Collection user for every discovered (optionally EV-enabled) tenant user
+- **Bulk import:** Discovery → Users → *Import into Site Data…* creates a
+  Site Data user for every discovered (optionally EV-enabled) tenant user
   not yet captured, under a chosen site, and links unlinked matches. For a site
   that has been submitted for review, the import is recorded in the site's changes
   since submission.
@@ -206,7 +206,7 @@ customer: first the Design & Build calling-policy mappings (`calling_policy_site
 `tenant_policy_id` is `ON DELETE RESTRICT`, so one left in place made the whole purge fail with a
 foreign-key error; the site and the calling policy it joined stay), then `tenant_objects` (which cascades to `tenant_users`, `tenant_policies`
 and `tenant_object_versions`), then `tenant_discovery_runs` and the M365 group
-cache (`tenant_groups`). Data Collection users are kept —
+cache (`tenant_groups`). Site Data users are kept —
 their `discovery_users.tenant_user_id` link is set null by the FK. `connections`
 are untouched. Blocked while a run is `queued`/`running`. Not reversible; re-run
 discovery to rebuild. Audited as `tenant_discovery.purged` (tenant + platform)
@@ -296,7 +296,7 @@ with the deleted row counts (including `callingPolicyMappingsRemoved`).
 
 ## Voice apps and resource accounts (2026.10.38)
 
-Teams keeps these apart, and so do Data Collection and Design & Build:
+Teams keeps these apart, and so do Site Data and Design & Build:
 
 - A **voice app** (auto attendant or call queue) has its own name and Id and lists its resource accounts (`ApplicationInstances`). A
   voice app that is only reached from another voice app (nested) has none.
@@ -306,7 +306,7 @@ Teams keeps these apart, and so do Data Collection and Design & Build:
 
 | You add | You get |
 |---|---|
-| A voice app | the Voice apps record named as in Teams, its Call flow, a Design & Build attendant/queue with the same name, and one resource account row (Data Collection and Design & Build) for each resource account it lists. None listed, none made |
+| A voice app | the Voice apps record named as in Teams, its Call flow, a Design & Build attendant/queue with the same name, and one resource account row (Site Data and Design & Build) for each resource account it lists. None listed, none made |
 | A resource account on its own | only the resource account (never a voice app named after it). If the voice app it answers for is already on the site it joins it; if not, the result says which voice app to add. Adding that voice app later links the resource account that is already there |
 
 Everything is matched on the Teams Id / UPN (`tenant_object_id`), never on a name, so two voice apps or two resource accounts with the same name stay
@@ -359,7 +359,7 @@ Discovery > **Licences & costs** (`GET /t/:id/tenant-discovery/licence-report`, 
 | Resource accounts no voice app uses | `ResourceAccount` whose Entra id is in no auto attendant's or call queue's `ApplicationInstances` |
 | Resource accounts with a number but no resource account licence | a line URI and no live MCOEV_VIRTUALUSER plan |
 
-Each item carries the Data Collection site its UPN is captured on (users, common area phones, resource accounts), and each
+Each item carries the Site Data site its UPN is captured on (users, common area phones, resource accounts), and each
 finding counts per site. The page shows the data's age and downloads an Excel workbook (a summary sheet and one per finding).
 Counts only: Voxshift holds no prices.
 
@@ -369,7 +369,7 @@ A number released in Teams is held back from reassignment so its new holder does
 (`packages/db/src/number-cooloff.ts`, tenant migration `0066`). A Discovery sync that sees a `phone_number` go from assigned to
 `Unassigned` (`numberReleasedInTeams`) sets that inventory number's `cooling_until` to now + the customer's period
 (`number_policy.cooloff_days`, default 90, 0 = off; the site's Numbers tab shows and changes it) - this covers numbers released
-by a Voxshift deployment as well as outside it, from the next sync. Assigning a cooling number (Data Collection and Design &
+by a Voxshift deployment as well as outside it, from the next sync. Assigning a cooling number (Site Data and Design &
 Build `claimNumber`) is refused with the date. **End cool-off** on the Numbers tab clears it, with a reason, audited as
 `discovery.number_cooloff_ended`. Design-time moves (taking a number from one design row to another) do not start a cool-off:
 nothing was released in Teams.

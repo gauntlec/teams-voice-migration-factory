@@ -648,7 +648,7 @@ export class ServiceRequestsService {
     };
   }
 
-  /** The customer's directory: synced users, then Data Collection users not yet synced. */
+  /** The customer's directory: synced users, then Site Data users not yet synced. */
   async people(t: TenantContext, q: string) {
     this.assertEnabled(t);
     const term = q.trim();
@@ -1705,7 +1705,7 @@ export class ServiceRequestsService {
   /**
    * Designs a "new phone numbers" request: adds the range the carrier gave to
    * the site's inventory (free numbers, ready to use) and links it to the
-   * request. Not blocked by a locked Data Collection - adding numbers after
+   * request. Not blocked by a locked Site Data - adding numbers after
    * go-live is an operational change.
    */
   async addNumbers(t: TenantContext, user: AuthedUser, id: string, input: ServiceRequestNumbersInput) {

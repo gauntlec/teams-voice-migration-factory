@@ -126,7 +126,7 @@ export const SITE_MODE_LABELS: Record<SiteMode, string> = { project: 'Project', 
  * How a field is answered. Plain text kinds are only used where Voxshift has no
  * data to offer (names, addresses, greetings); everything else is picked from
  * existing data:
- * - person / people: the customer's directory (synced users, plus Data Collection users)
+ * - person / people: the customer's directory (synced users, plus Site Data users)
  * - phone_number: a number at the request's site - `numberSource` 'available'
  *   offers free numbers (and one is picked automatically), 'site' offers any of
  *   the site's numbers (keeping an existing one)

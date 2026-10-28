@@ -81,7 +81,7 @@ export function validationIssues(v: BuildRowValidation | null | undefined): Vali
   if (nc) {
     const bits: string[] = [];
     if (nc.live) bits.push(`the user already has ${nc.live} in the tenant`);
-    if (nc.dataCollection) bits.push(`Data Collection has ${nc.dataCollection} assigned`);
+    if (nc.dataCollection) bits.push(`Site Data has ${nc.dataCollection} assigned`);
     out.push({
       code: 'number_change',
       // an undecided change needs the engineer; once decided it is just a record

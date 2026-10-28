@@ -23,7 +23,7 @@ import { DataCollectionService } from './data-collection.service';
 import { GeocodeService } from './geocode.service';
 
 /**
- * Data Collection view - the customer's discovery of their current voice
+ * Site Data view - the customer's discovery of their current voice
  * estate. Replaces the discovery workbook. See docs/DATA-MODEL.md.
  */
 @Controller('t/:tenantId/discovery')

@@ -18,9 +18,9 @@ export function EmbeddedShell({ children }: { title: string; subtitle?: string; 
 
 /**
  * "Link discovered resource account" - pulls one specific live resource
- * account (not yet in Data Collection at all) straight into this site,
- * without the engineer having to visit Data Collection first. Candidates
- * come from the same tenant-wide preview Data Collection's own Resource
+ * account (not yet in Site Data at all) straight into this site,
+ * without the engineer having to visit Site Data first. Candidates
+ * come from the same tenant-wide preview Site Data's own Resource
  * accounts import uses (TenantDiscoveryService.importResourceAccountsPreview) -
  * ones whose auto-suggested site matches this workspace sort first, since
  * the live object may not carry this site's own naming convention at all.
@@ -69,8 +69,8 @@ export function LinkDiscoveredResourceAccountDialog({
           <DialogContent>
             <div className={ls.gridGap12}>
               <Text size={200}>
-                Pulls one live resource account that isn't in Data Collection yet straight into this
-                site - creates its Data Collection row and populates it here in one step.
+                Pulls one live resource account that isn't in Site Data yet straight into this
+                site - creates its Site Data row and populates it here in one step.
               </Text>
               {preview.isLoading ? (
                 <Spinner size="tiny" />

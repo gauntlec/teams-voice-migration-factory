@@ -1,4 +1,4 @@
-// Numbers follow Teams: whatever Teams has assigned is shown as assigned to its real holder, and a clash with Data Collection is flagged.
+// Numbers follow Teams: whatever Teams has assigned is shown as assigned to its real holder, and a clash with Site Data is flagged.
 import { beforeAll, describe, expect, it } from 'vitest';
 import { reconcileNumbersWithTeams } from '@tvmf/db';
 import { seedCustomer, seedNumbers, seedSite, useDb, type TestCustomer } from '../helpers';
@@ -44,7 +44,7 @@ describe('reconcileNumbersWithTeams', () => {
     expect((await row('+12125550101')).status).toBe('assigned');
   });
 
-  it('flags a Data Collection holder that differs from Teams, and leaves the design alone', async () => {
+  it('flags a Site Data holder that differs from Teams, and leaves the design alone', async () => {
     const du = await c.s.insertInto('discovery_users').values({ site_id: siteId, upn: 'carol@contoso.test', display_name: 'Carol' } as never).returning('id').executeTakeFirstOrThrow();
     await c.s.updateTable('phone_numbers').set({ status: 'assigned', holder_type: 'user', holder_id: du.id }).where('e164', '=', '+12125550102').execute();
     await liveNumber('+12125550102', 'PhoneNumberAssigned', { kind: 'user', upn: 'dave@contoso.test', displayName: 'Dave' });
@@ -55,7 +55,7 @@ describe('reconcileNumbersWithTeams', () => {
     expect(n.conflict).toMatch(/Dave.*Carol/);
   });
 
-  it('does not flag a Data Collection holder that matches Teams', async () => {
+  it('does not flag a Site Data holder that matches Teams', async () => {
     const du = await c.s.insertInto('discovery_users').values({ site_id: siteId, upn: 'erin@contoso.test', display_name: 'Erin' } as never).returning('id').executeTakeFirstOrThrow();
     await c.s.updateTable('phone_numbers').set({ status: 'assigned', holder_type: 'user', holder_id: du.id }).where('e164', '=', '+12125550103').execute();
     await liveNumber('+12125550103', 'PhoneNumberAssigned', { kind: 'user', upn: 'Erin@Contoso.test', displayName: 'Erin' });

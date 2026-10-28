@@ -176,7 +176,7 @@ export function isGlobalRole(role: Role): boolean {
  * narrows SUPER_ADMIN, PROJECT_MANAGER or ENGINEER - they always see the whole
  * customer. Sites are added/edited from the Sites admin page by SUPER_ADMIN,
  * PROJECT_MANAGER or ENGINEER (`discovery:sites:manage`). Enforced by
- * `TenantGuard` and the Data Collection services. See docs/RBAC.md.
+ * `TenantGuard` and the Site Data services. See docs/RBAC.md.
  */
 export function siteScopeApplies(role: Role): boolean {
   return role === 'CUSTOMER';

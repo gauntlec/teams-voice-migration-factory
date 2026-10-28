@@ -113,7 +113,7 @@ export async function seedUser(
   return { id, email, displayName, role, totpEnrolled: true, enrolOnly: false, pwresetOnly: false };
 }
 
-/** A Data Collection site. */
+/** A Site Data site. */
 export async function seedSite(s: Scoped, opts: { sitecode?: string; name?: string } = {}) {
   const sitecode = opts.sitecode ?? `S${randomUUID().slice(0, 6).toUpperCase()}`;
   return s

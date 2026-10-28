@@ -34,7 +34,7 @@ export interface WizardStep {
 
 /**
  * Generic multi-step dialog chrome for the AA/CQ creation wizard (and any
- * future wizard added to the Data Collection site workspace's tile grid -
+ * future wizard added to the Site Data site workspace's tile grid -
  * see WizardTiles.tsx). No stepper precedent existed elsewhere in this
  * codebase, so this is deliberately minimal: a step index, a progress
  * label, per-step validation gating "Next", and a final step whose button

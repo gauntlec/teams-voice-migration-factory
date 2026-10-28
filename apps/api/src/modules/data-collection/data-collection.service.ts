@@ -72,7 +72,7 @@ export class DataCollectionService {
   }
 
   /**
-   * Landing payload for the Data Collection module: the
+   * Landing payload for the Site Data module: the
    * customer-wide calling policies, and every site the caller may see with a
    * per-site rollup of how much has been captured. Per-entity lists (users,
    * numbers, …) are fetched separately, one site at a time, paginated.
@@ -442,7 +442,7 @@ export class DataCollectionService {
     return site;
   }
 
-  /** Marks a site's Data Collection as submitted for review. Nothing is locked; later changes are recorded for the engineer. */
+  /** Marks a site's Site Data as submitted for review. Nothing is locked; later changes are recorded for the engineer. */
   async submitSite(t: TenantContext, user: AuthedUser, siteId: string) {
     const site = await this.siteForReview(t, siteId);
     if (site.review_status !== 'draft') {
@@ -530,10 +530,10 @@ export class DataCollectionService {
   }
 
   /**
-   * The insert behind addSite, without its Data Collection guards. Also used
+   * The insert behind addSite, without its Site Data guards. Also used
    * by Managed Services' "Create in Design & Build" for a new-site request: a
    * site added after go-live is an operational change, so it mustn't need the
-   * (accepted, locked) migration Data Collection reopened. Callers check
+   * (accepted, locked) migration Site Data reopened. Callers check
    * permissions and validate `input` with discoverySiteSchema first.
    */
   async insertSite(t: TenantContext, user: AuthedUser, input: DiscoverySiteInput) {

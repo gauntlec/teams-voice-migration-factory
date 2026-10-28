@@ -3,7 +3,7 @@ import { autoAttendantFields, callQueueFields } from './voice-app-summary';
 
 const hours = { monday: [{ start: '09:00', end: '17:00' }], tuesday: [{ start: '09:00', end: '17:00' }], wednesday: [{ start: '09:00', end: '17:00' }], thursday: [{ start: '09:00', end: '17:00' }], friday: [{ start: '09:00', end: '17:00' }], saturday: [], sunday: [] };
 
-describe('what a discovered voice app says in Data Collection', () => {
+describe('what a discovered voice app says in Site Data', () => {
   it('describes an auto attendant: hours, who answers, out of hours, holidays and settings', () => {
     const f = autoAttendantFields(
       {

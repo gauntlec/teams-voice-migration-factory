@@ -48,7 +48,7 @@ import type { CmdletInvocation } from './deployment';
 /** Header the web app sends to select the active tenant for `/t/:tenantId/*`. */
 export const TENANT_HEADER = 'x-tenant-id';
 
-/** One page of a paginated Data Collection list endpoint. */
+/** One page of a paginated Site Data list endpoint. */
 export interface Paginated<T> {
   items: T[];
   total: number;
@@ -280,7 +280,7 @@ export interface TenantUserSummary {
   when_changed: string | null;
   last_seen_run_id: string | null;
   removed_at: string | null;
-  /** id of the Data Collection user linked to this tenant user, when one exists */
+  /** id of the Site Data user linked to this tenant user, when one exists */
   discovery_user_id?: string | null;
 }
 
@@ -377,12 +377,12 @@ export interface TenantDiscoverySummary {
  * joining against Discovery's tenant_users/tenant_policies - the replacement
  * for the build workbook's manually-refreshed `G-*` columns.
  */
-/** A designed number that differs from the live one or from Data Collection's - see BuildRowValidation.numberChange. */
+/** A designed number that differs from the live one or from Site Data's - see BuildRowValidation.numberChange. */
 export interface NumberChange {
   designed: string;
   /** the number the user has live in the tenant now, when it differs from the designed one */
   live: string | null;
-  /** the number Data Collection assigned, when the site has been submitted and it differs from the designed one */
+  /** the number Site Data assigned, when the site has been submitted and it differs from the designed one */
   dataCollection: string | null;
   decision: 'pending' | 'accepted' | 'rejected';
 }
@@ -413,14 +413,14 @@ export interface BuildRowValidation {
    */
   usageLocationMismatch: { live: string | null; expected: string; country: string } | null;
   /**
-   * The customer's requested number (Data Collection) differs from the number assigned to the user.
-   * null when they match, when nothing was requested, or for rows not linked to a Data Collection user.
+   * The customer's requested number (Site Data) differs from the number assigned to the user.
+   * null when they match, when nothing was requested, or for rows not linked to a Site Data user.
    * Absent on validation stored before this check existed.
    */
   requestedNumberMismatch?: { requested: string; assigned: string | null } | null;
   /**
    * The designed number differs from the number the user has live in the tenant, or (once the site has been
-   * submitted for review) from the one Data Collection assigned. The engineer accepts or rejects the change.
+   * submitted for review) from the one Site Data assigned. The engineer accepts or rejects the change.
    * null when the numbers agree or there is no number. Absent on validation stored before this check existed.
    */
   numberChange?: NumberChange | null;
@@ -449,7 +449,7 @@ export interface AddFromDiscoveryItemResult {
   dataCollection: 'added' | 'already_on_site' | 'on_other_site' | 'not_found' | 'ambiguous';
   /** an account added as a user or as a common area phone: where it was routed */
   as?: 'user' | 'cap';
-  /** Design & Build: not attempted when switched off or Data Collection did not take it */
+  /** Design & Build: not attempted when switched off or Site Data did not take it */
   designAndBuild: 'added' | 'already_on_site' | 'not_added' | 'off';
   /** the site code it is on, when that is not the one chosen */
   otherSite?: string | null;
@@ -592,7 +592,7 @@ export interface SiteSuggestion {
   numbers: string[];
   siteId: string;
   sitecode: string;
-  /** suggest: not on any site yet. other_site: already on a different site in Data Collection (never moved automatically). */
+  /** suggest: not on any site yet. other_site: already on a different site in Site Data (never moved automatically). */
   state: 'suggest' | 'other_site';
   onSiteId?: string;
   onSitecode?: string;

@@ -29,7 +29,7 @@ interface PhoneNumber {
   /** released in Teams: not to be reassigned before this (number cool-off) */
   cooling_until: string | null;
   cooling_reason: string | null;
-  /** what Teams says (set by the Discovery sync): the live holder, and any clash with the Data Collection holder */
+  /** what Teams says (set by the Discovery sync): the live holder, and any clash with the Site Data holder */
   live_status: string | null;
   live_holder_name: string | null;
   live_holder_upn: string | null;

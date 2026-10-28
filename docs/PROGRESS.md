@@ -17,11 +17,11 @@ Each site has seven stages. Each is **done**, **needs attention** (reached or
 tried, but something must be fixed - it comes with a blocker) or **not
 started**. The site's *current* stage is the one after the furthest stage that
 is done, so a site designed straight from the live tenant still shows where it
-really is even if Data Collection was never finished.
+really is even if Site Data was never finished.
 
 | Stage | Done when | Blockers (plain words) |
 | --- | --- | --- |
-| Data Collection | the site has at least one captured user, phone (CAP) or resource account (`discovery_users` / `discovery_caps` / `discovery_resource_accounts`), and the customer's Data Collection is submitted or accepted (`discovery.status`) | "No users, phones or resource accounts captured yet" - only when nothing has been designed either |
+| Site Data | the site has at least one captured user, phone (CAP) or resource account (`discovery_users` / `discovery_caps` / `discovery_resource_accounts`), and the customer's Site Data is submitted or accepted (`discovery.status`) | "No users, phones or resource accounts captured yet" - only when nothing has been designed either |
 | Designed | any Design & Build row for the site (users, CAPs, resource accounts, auto attendants, call queues, shared calling policies) | - |
 | Validated | designed, and `BuildService.siteRollup`'s `validationIssues` is 0 (the same count Design & Build shows) | "12 rows have validation issues" |
 | Dry run | the site's latest finished dry run completed with no failures and started after the latest build-row change (max `updated_at`). A clean live run after the latest change counts too | "Last dry run failed", "Last dry run reported N failures", "Dry run is older than the latest design change" |
@@ -38,7 +38,7 @@ as "in progress" on its stage. Deleting a build row doesn't change any
 Shown above the sites ("Needs attention" when they need action, otherwise as a
 status line):
 
-- Data Collection status - not submitted yet (attention), submitted and waiting
+- Site Data status - not submitted yet (attention), submitted and waiting
   for review (attention for roles with `discovery:review`).
 - Last Discovery sync of the live tenant (roles with `tenantdiscovery:read`) -
   the latest `tenant_discovery_runs` row of kind `sync`, the same run the

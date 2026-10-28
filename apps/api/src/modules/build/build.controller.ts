@@ -73,7 +73,7 @@ import { ServiceRequestLinkInterceptor } from './service-request-link.intercepto
 
 /**
  * Design & Build - target configuration for Users, Common Area Phones and
- * Resource Accounts, organised per site (same shape as Data Collection).
+ * Resource Accounts, organised per site (same shape as Site Data).
  * Replaces the ATTC build workbook: [VRP]/[DOP]/... target columns are the
  * write side here, `G-*` live-comparison columns are the computed
  * `validation` field (see BuildValidationService), `S-*` status columns are
@@ -415,7 +415,7 @@ export class BuildController {
     return this.svc.refreshVoiceAppFromLive(t, user, 'call_queue', id);
   }
 
-  /* wizard import - Data Collection's Call flows tab, "Import to Design & Build" */
+  /* wizard import - Site Data's Call flows tab, "Import to Design & Build" */
 
   @Post('flows/:id/import')
   @RequirePermission('build:write')
@@ -488,7 +488,7 @@ export class BuildController {
 
   /**
    * Wipe every Users/CAPs/Resource accounts row for a site so it can be
-   * Populated from Data Collection again from scratch. Doesn't touch Data
+   * Populated from Site Data again from scratch. Doesn't touch Data
    * Collection or the customer tenant - only this site's build_* rows.
    */
   @Post('reset')

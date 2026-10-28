@@ -3,7 +3,7 @@ import { normalizeTeamsNumber } from './number-reconcile';
 import type { Scoped } from './live-state';
 
 /*
- * Which site a discovered object belongs to, judged by its phone number: each site owns number ranges (Data Collection > Numbers),
+ * Which site a discovered object belongs to, judged by its phone number: each site owns number ranges (Site Data > Numbers),
  * so an account, resource account, auto attendant or call queue whose number is in a site's range most likely belongs to that site.
  * An auto attendant or call queue has no number of its own; it takes the numbers of the resource accounts it lists.
  *
@@ -49,7 +49,7 @@ export async function siteSuggestions(s: Scoped): Promise<SiteSuggestions> {
     }
     const sitecode = codes[0]!;
     const sid = siteId.get(sitecode)!;
-    if (current && !current.site_id) return false; // in Data Collection with no site: not ours to move
+    if (current && !current.site_id) return false; // in Site Data with no site: not ours to move
     if (current && current.site_id === sid) return false; // already where its number says
     items.push({
       ...base,

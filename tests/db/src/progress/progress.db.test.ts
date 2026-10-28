@@ -1,5 +1,5 @@
 // Home-page progress: each site's migration stage is derived from rows that
-// Data Collection, Design & Build, Deployment and Handover already write. These
+// Site Data, Design & Build, Deployment and Handover already write. These
 // check the queries that feed deriveSiteProgress pick the right rows - the
 // rules themselves are unit-tested in packages/shared/src/progress.test.ts.
 import { beforeAll, describe, expect, it } from 'vitest';

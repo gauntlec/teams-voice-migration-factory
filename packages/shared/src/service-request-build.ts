@@ -360,7 +360,7 @@ export interface SrBuildDraftResult {
   applied?: string[];
 }
 
-/** Where a row lives in the app - the Design & Build tab, or the site's Data Collection page. */
+/** Where a row lives in the app - the Design & Build tab, or the site's Site Data page. */
 export function srBuildHref(kind: SrBuildKind, siteId: string): string {
   if (kind === 'site') return `/data-collection/sites/${siteId}`;
   const tab = { user: 'users', cap: 'caps', call_queue: 'call-queues', auto_attendant: 'auto-attendants' }[kind];
