@@ -207,16 +207,6 @@ export function SiteWorkspace() {
       />
       {canReview && pendingChanges > 0 && <SiteChangesCard base={base} siteId={siteId} onChanged={refreshSummary} />}
 
-      {!locked && (
-        <WizardTiles
-          base={base}
-          tenantId={tid}
-          siteId={siteId}
-          resourceAccountChoices={resourceAccountChoices}
-          onCreated={() => qc.invalidateQueries({ queryKey: ['flows', tid, siteId] })}
-        />
-      )}
-
       <BulkEditDialog
         open={bulkOpen !== null}
         onOpenChange={(o) => !o && setBulkOpen(null)}
@@ -665,6 +655,17 @@ export function SiteWorkspace() {
       )}
 
       {tab === 'flows' && (
+        <>
+        {!locked && (
+          <WizardTiles
+            base={base}
+            tenantId={tid}
+            siteId={siteId}
+            resourceAccountChoices={resourceAccountChoices}
+            onCreated={() => qc.invalidateQueries({ queryKey: ['flows', tid, siteId] })}
+          />
+        )}
+
         <PagedSection
           title="Call flows"
           hint="Free-text notes on existing routing, or captured via the guided wizards above. Structured AA/CQ config lives under Voice apps and Design & Build."
@@ -728,6 +729,7 @@ export function SiteWorkspace() {
             { key: 'description', label: 'Description', type: 'textarea', full: true },
           ]}
         />
+        </>
       )}
 
       {/* Reopening a wizard-captured Call flows row for editing (see onEditRow above) - a
