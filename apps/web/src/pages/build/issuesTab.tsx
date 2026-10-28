@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type CSSProperties } from 'react';
 import { Badge, Button, Checkbox, Text, makeStyles, tokens } from '@fluentui/react-components';
 import { ArrowClockwiseRegular, ArrowDownloadRegular, ErrorCircleRegular, InfoRegular, MailRegular, WarningRegular } from '@fluentui/react-icons';
 import { issuesCsv, licenceRequestCsv, licenceRequestUpns, type BuildIssueRow, type ValidationSeverity } from '@tvmf/shared';
@@ -14,9 +14,11 @@ const useStyles = makeStyles({
   bar: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', marginBottom: '8px' },
   grow: { flexGrow: 1 },
   muted: { color: tokens.colorNeutralForeground3 },
-  wrap: { whiteSpace: 'normal' },
   person: { display: 'flex', flexDirection: 'column' },
 });
+
+/** The table keeps every cell on one line with an ellipsis; these columns hold sentences, so they wrap onto as many lines as they need. */
+const WRAP: CSSProperties = { whiteSpace: 'normal', overflow: 'visible', textOverflow: 'clip', overflowWrap: 'anywhere', maxWidth: 'none' };
 
 const SEVERITY: Record<ValidationSeverity, { label: string; plural: string; color: 'danger' | 'warning' | 'informative'; icon: JSX.Element; hint: string }> = {
   blocking: {
@@ -149,7 +151,7 @@ export function ValidationIssuesTab({
       {issues && issues.length === 0 ? (
         <EmptyState title="No validation issues" hint="Every user, common area phone and resource account on this site matches the tenant. Use Validate against tenant to check again." />
       ) : (
-        <DataTable size="small" minWidth={900} fitScreen>
+        <DataTable size="small" minWidth={1100} fitScreen>
           <TableHeader>
             <TableRow>
               {canEmail && (
@@ -186,14 +188,14 @@ export function ValidationIssuesTab({
                     </Badge>
                   </TableCell>
                   <TableCell>{SHEET_LABEL[i.sheet]}</TableCell>
-                  <TableCell>
+                  <TableCell style={{ ...WRAP, minWidth: 180 }}>
                     <div className={s.person}>
                       <span>{i.displayName ?? i.upn}</span>
                       {i.displayName && <Text size={200} className={s.muted}>{i.upn}</Text>}
                     </div>
                   </TableCell>
-                  <TableCell>{i.issue.label}</TableCell>
-                  <TableCell className={s.wrap}>{i.issue.detail}</TableCell>
+                  <TableCell style={{ ...WRAP, minWidth: 160 }}>{i.issue.label}</TableCell>
+                  <TableCell style={{ ...WRAP, minWidth: 320 }}>{i.issue.detail}</TableCell>
                   <TableCell>
                     {i.issue.code === 'number_change' && canDecide && i.sheet !== 'resource-accounts' && (
                       i.issue.decision === 'pending' ? (
