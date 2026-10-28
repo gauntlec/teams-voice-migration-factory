@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BuildRowValidation } from './index';
-import { blockingIssues, hasValidationIssue, validationIssues } from './validation-issues';
+import { blockingIssues, hasValidationIssue, issuesCsv, LICENCE_REQUEST_HEADER, licenceRequestCsv, licenceRequestUpns, validationIssues, type BuildIssueRow } from './validation-issues';
 
 const clean: BuildRowValidation = {
   existsInTenant: true,
@@ -38,7 +38,6 @@ describe('validationIssues', () => {
       'blocking:number_conflict',
       'blocking:unknown_policy',
       'warning:account_disabled',
-      'info:policy_mismatch',
     ]);
     expect(blockingIssues(v)).toHaveLength(3);
   });
@@ -55,9 +54,13 @@ describe('validationIssues', () => {
     expect(validationIssues({ ...clean, requestedNumberMismatch: undefined })).toEqual([]);
   });
 
-  it('does not count a policy rename as needing attention', () => {
-    const v: BuildRowValidation = { ...clean, renamedPolicies: [{ key: 'calling_policy' as never, label: 'Calling policy', storedName: 'A', liveName: 'B' }] };
-    expect(validationIssues(v)).toHaveLength(1);
+  it('does not list what deployment will change (a policy that differs from live, or one that was renamed) as an issue', () => {
+    const v: BuildRowValidation = {
+      ...clean,
+      policyMismatches: [{ key: 'calling_policy' as never, label: 'Calling policy', target: 'UK', live: null }],
+      renamedPolicies: [{ key: 'calling_policy' as never, label: 'Calling policy', storedName: 'A', liveName: 'B' }],
+    };
+    expect(validationIssues(v)).toEqual([]);
     expect(hasValidationIssue(v)).toBe(false);
   });
 
@@ -70,5 +73,37 @@ describe('validationIssues', () => {
     expect(validationIssues(accepted)[0]).toMatchObject({ severity: 'info', decision: 'accepted' });
     expect(hasValidationIssue(accepted)).toBe(false);
     expect(blockingIssues({ ...clean, numberChange: { ...change, decision: 'pending' } })).toEqual([]);
+  });
+});
+
+describe('exports', () => {
+  const row = (upn: string, code: 'no_phone_licence' | 'not_in_tenant', extra: Partial<BuildIssueRow> = {}): BuildIssueRow => ({
+    sheet: 'users',
+    rowId: upn,
+    upn,
+    displayName: null,
+    issue: { code, severity: code === 'not_in_tenant' ? 'blocking' : 'warning', label: code === 'not_in_tenant' ? 'Not in tenant' : 'No phone licence', detail: 'A detail, with a comma and a "quote".' },
+    ...extra,
+  });
+
+  it('lists each UPN missing a phone licence once under the title the bulk upload expects', () => {
+    const issues = [row('b@contoso.test', 'no_phone_licence'), row('a@contoso.test', 'no_phone_licence'), row('B@Contoso.test', 'no_phone_licence'), row('c@contoso.test', 'not_in_tenant')];
+    expect(licenceRequestUpns(issues)).toEqual(['a@contoso.test', 'b@contoso.test']);
+    expect(licenceRequestCsv(issues)).toBe(`${LICENCE_REQUEST_HEADER}\r\na@contoso.test\r\nb@contoso.test\r\n`);
+    expect(LICENCE_REQUEST_HEADER).toBe('Member object ID or user principal name [memberObjectIdOrUpn] Required');
+  });
+
+  it('is just the title when nobody needs a licence', () => {
+    expect(licenceRequestCsv([row('c@contoso.test', 'not_in_tenant')])).toBe(`${LICENCE_REQUEST_HEADER}\r\n`);
+  });
+
+  it('writes every issue as a line, quoting what needs it', () => {
+    const csv = issuesCsv([row('a@contoso.test', 'not_in_tenant', { displayName: 'Ann, A.' })]);
+    expect(csv.split('\r\n')[0]).toBe('Severity,Sheet,Name,UPN,Issue,Detail');
+    expect(csv.split('\r\n')[1]).toBe('Blocks deployment,Users,"Ann, A.",a@contoso.test,Not in tenant,"A detail, with a comma and a ""quote""."');
+  });
+
+  it('stops a spreadsheet running a cell that starts like a formula', () => {
+    expect(issuesCsv([row('a@contoso.test', 'not_in_tenant', { displayName: '=HYPERLINK("x")' })])).toContain(`"'=HYPERLINK(""x"")"`);
   });
 });
