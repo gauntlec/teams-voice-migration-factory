@@ -551,6 +551,9 @@ export function SiteWorkspace() {
           onChanged={() => {
             refreshSummary();
             siteVoiceApps.refetch();
+            // adding one with a number also makes its resource account
+            qc.invalidateQueries({ queryKey: ['ras', tid, siteId] });
+            qc.invalidateQueries({ queryKey: ['site-ras-lite', tid, siteId] });
           }}
           columns={[
             { key: 'name', label: 'Name' },
@@ -579,6 +582,7 @@ export function SiteWorkspace() {
           fields={[
             { key: 'name', label: 'Name of service', required: true, placeholder: 'Main Line' },
             { key: 'kind', label: 'Kind', type: 'select', options: RESOURCE_ACCOUNT_KINDS, required: true },
+            { key: 'phone_number_id', label: 'Telephone number (optional - one of this site\'s free numbers)', type: 'ref', choices: availableChoices, addOnly: true, full: true },
             { key: 'directory_entry', label: 'Directory entry' },
             { key: 'business_hours', label: 'Business hours', placeholder: '24/7' },
             { key: 'who_answers', label: 'Who should answer the call', type: 'textarea', full: true },
@@ -587,7 +591,7 @@ export function SiteWorkspace() {
             { key: 'exception_action', label: 'Exception handling — action', type: 'textarea', full: true },
             { key: 'holiday', label: 'Holiday handling', type: 'textarea', full: true },
             { key: 'advanced_features', label: 'Advanced features', type: 'textarea', full: true },
-            { key: 'comments', label: 'Comments', type: 'textarea', full: true },
+            { key: 'comments', label: 'Comments', type: 'textarea', full: true, rows: 6 },
           ]}
         />
       )}
