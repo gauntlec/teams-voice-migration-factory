@@ -27,7 +27,7 @@ describe('summariseHandsets', () => {
     ]);
     const byModel = Object.fromEntries(r.models.map((m) => [m.model, m.status]));
     expect(byModel).toEqual({ A1: 'ordered', B2: 'installed', C3: 'not_ordered' });
-    expect(r.totals).toEqual({ not_ordered: 1, ordered: 2, in_tooling: 0, installed: 1 });
+    expect(r.totals).toEqual({ not_ordered: 1, ordered: 2, delivered: 0, in_tooling: 0, installed: 1 });
     expect(r.models.find((m) => m.model === 'A1')).toMatchObject({ updatedBy: 'Pat', updatedAt: '2026-10-28T10:00:00.000Z' });
   });
 

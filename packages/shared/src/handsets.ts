@@ -3,15 +3,16 @@
  * common area phone's device model. The project manager tracks each model through the stages below.
  */
 
-export const HANDSET_STAGES = ['not_ordered', 'ordered', 'in_tooling', 'installed'] as const;
+export const HANDSET_STAGES = ['not_ordered', 'ordered', 'delivered', 'in_tooling', 'installed'] as const;
 export type HandsetStage = (typeof HANDSET_STAGES)[number];
 
 /** The stages a person can set (a model with nothing recorded is "not ordered"). */
-export const HANDSET_SET_STAGES = ['ordered', 'in_tooling', 'installed'] as const;
+export const HANDSET_SET_STAGES = ['ordered', 'delivered', 'in_tooling', 'installed'] as const;
 
 export const HANDSET_STAGE_LABELS: Record<HandsetStage, string> = {
   not_ordered: 'Not ordered yet',
   ordered: 'Ordered',
+  delivered: 'Delivered',
   in_tooling: 'Added to tooling & updated',
   installed: 'Installed & working',
 };
@@ -79,7 +80,7 @@ export function summariseHandsets(
     })
     .sort((a, b) => a.model.localeCompare(b.model));
 
-  const totals: Record<HandsetStage, number> = { not_ordered: 0, ordered: 0, in_tooling: 0, installed: 0 };
+  const totals: Record<HandsetStage, number> = { not_ordered: 0, ordered: 0, delivered: 0, in_tooling: 0, installed: 0 };
   for (const m of models) totals[m.status] += m.total;
   return { models, usersWithoutModel, totals };
 }
