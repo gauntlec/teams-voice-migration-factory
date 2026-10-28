@@ -361,7 +361,13 @@ export interface TenantDiscoverySummary {
   /** rows in `tenant_groups` - see `TenantGroupSummary` */
   groupsCount: number;
   /** per-customer Discovery settings */
-  settings: { filterUsers: boolean; notifyOnComplete: boolean };
+  settings: {
+    filterUsers: boolean;
+    notifyOnComplete: boolean;
+    autoAddByNumberRange: boolean;
+    /** what the last automatic add did, null if it has not run */
+    autoAddLast: { at: string; added: number; skipped: number; bySite: Record<string, number> } | null;
+  };
 }
 
 /* ------------------------------ Design & Build ----------------------------- */
@@ -566,3 +572,40 @@ export * from './kuma-branding';
 export * from './opening-hours';
 export * from './scheduled-run';
 export * from './voice-app-access';
+
+/* ----- Site suggestions from number ranges (Discovery; computed in packages/db/src/site-suggestions.ts) ----- */
+
+export type SuggestionKind = 'account' | 'resource_account' | 'auto_attendant' | 'call_queue';
+
+export interface SiteSuggestion {
+  kind: SuggestionKind;
+  /** tenant_users.id for an account, tenant_objects.id for everything else - what Add to site takes */
+  id: string;
+  /** an account is a user or a common area phone, from its licence plan */
+  as?: 'user' | 'cap';
+  label: string;
+  /** the UPN, or the object's own key */
+  key: string;
+  /** the numbers that put it in this site's ranges */
+  numbers: string[];
+  siteId: string;
+  sitecode: string;
+  /** suggest: not on any site yet. other_site: already on a different site in Data Collection (never moved automatically). */
+  state: 'suggest' | 'other_site';
+  onSiteId?: string;
+  onSitecode?: string;
+}
+
+export interface MixedSuggestion {
+  kind: SuggestionKind;
+  id: string;
+  label: string;
+  /** its numbers are in the ranges of more than one site, so no site is suggested */
+  sitecodes: string[];
+}
+
+export interface SiteSuggestions {
+  items: SiteSuggestion[];
+  mixed: MixedSuggestion[];
+}
+
