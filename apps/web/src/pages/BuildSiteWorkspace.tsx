@@ -428,7 +428,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
                 {site.counts.resourceAccounts} resource account{site.counts.resourceAccounts === 1 ? '' : 's'}{' '}
                 designed for this site, <b>and every call queue and auto attendant</b> (with their agents, menus and
                 schedules), and releases any numbers they hold back to the inventory. Data Collection is not
-                affected - Populate from Discovery brings back what came from there, but anything designed by hand
+                affected - Populate from Data Collection brings back what came from there, but anything designed by hand
                 here is lost.
               </Text>
               <Text block weight="semibold" className={ls.mt8}>
@@ -618,7 +618,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
                   Quick add
                 </Button>
                 <Button size="small" disabled={populate.isPending} onClick={() => populate.mutate('users')}>
-                  Populate from Discovery
+                  Populate from Data Collection
                 </Button>
                 <Button size="small" disabled={importVoice.isPending} onClick={() => importVoice.mutate('users')}>
                   Import voice settings
@@ -694,7 +694,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
                   Quick add
                 </Button>
                 <Button size="small" disabled={populate.isPending} onClick={() => populate.mutate('caps')}>
-                  Populate from Discovery
+                  Populate from Data Collection
                 </Button>
                 <Button size="small" disabled={importVoice.isPending} onClick={() => importVoice.mutate('caps')}>
                   Import voice settings
@@ -763,7 +763,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
             siteTools && (
               <>
                 <Button size="small" disabled={populate.isPending} onClick={() => populate.mutate('resource-accounts')}>
-                  Populate from Discovery
+                  Populate from Data Collection
                 </Button>
                 <Button size="small" disabled={requestAccounts.isPending} onClick={() => requestAccounts.mutate()}>
                   {requestAccounts.isPending ? 'Generating…' : 'Request accounts'}
@@ -908,14 +908,14 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
         <PagedSection
           fitScreen
           title="Call queues"
-          hint="Routing, agents and overflow/timeout behaviour for Call Queue resource accounts. New rows are seeded by Populate from Discovery on the Resource accounts tab."
+          hint="Routing, agents and overflow/timeout behaviour for Call Queue resource accounts. New rows are seeded by Populate from Data Collection on the Resource accounts tab."
           endpoint={`${base}/call-queues`}
           queryKey={['call-queues', tid, siteId]}
           params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
           onChanged={embedded?.onChanged}
-          emptyText="No call queues yet - Populate from Discovery on the Resource accounts tab first."
+          emptyText="No call queues yet - Populate from Data Collection on the Resource accounts tab first."
           columns={[
             withSrTags({ key: 'name', label: 'Name' }),
             { key: 'routing_method', label: 'Routing' },
@@ -1007,14 +1007,14 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
         <PagedSection
           fitScreen
           title="Auto attendants"
-          hint="Language/voice and the real call-flow menu (business hours, after hours, holidays) for Auto Attendant resource accounts. Populate from Discovery pre-fills these from a live tenant; for a greenfield site, add one by hand and link resource accounts to it in Configure… - it just won't get a phone number until that account is created and licensed."
+          hint="Language/voice and the real call-flow menu (business hours, after hours, holidays) for Auto Attendant resource accounts. Populate from Data Collection pre-fills these from a live tenant; for a greenfield site, add one by hand and link resource accounts to it in Configure… - it just won't get a phone number until that account is created and licensed."
           endpoint={`${base}/auto-attendants`}
           queryKey={['auto-attendants', tid, siteId]}
           params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
           onChanged={embedded?.onChanged}
-          emptyText="No auto attendants yet - add one, or Populate from Discovery on the Resource accounts tab."
+          emptyText="No auto attendants yet - add one, or Populate from Data Collection on the Resource accounts tab."
           columns={[
             withSrTags({ key: 'name', label: 'Name' }),
             { key: 'language_id', label: 'Language' },

@@ -82,7 +82,7 @@ export function CallingPolicyMapDialog({
               Which real tenant Voice Routing Policy each Data Collection calling policy means for this site -
               that's the Teams policy that actually governs local/national/international dialing, not the Teams
               Calling Policy. "International" here might be a different real policy on a US site than on a Belgium
-              one. A policy marked "in use, unmapped" must be mapped before Populate from Discovery can run.
+              one. A policy marked "in use, unmapped" must be mapped before Populate from Data Collection can run.
             </Text>
             {rowsQ.isLoading ? (
               <Spinner size="tiny" label="Loading…" />

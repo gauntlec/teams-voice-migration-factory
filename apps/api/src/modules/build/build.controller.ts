@@ -468,7 +468,7 @@ export class BuildController {
 
   /**
    * Wipe every Users/CAPs/Resource accounts row for a site so it can be
-   * Populated from Discovery again from scratch. Doesn't touch Data
+   * Populated from Data Collection again from scratch. Doesn't touch Data
    * Collection or the customer tenant - only this site's build_* rows.
    */
   @Post('reset')
