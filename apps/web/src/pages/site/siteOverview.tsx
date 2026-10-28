@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Button, Card, Dropdown, Field, Input, Option, Spinner, Text, Textarea  } from '@fluentui/react-components';
+import { Button, Card, Dropdown, Field, Input, Option, Spinner, Text } from '@fluentui/react-components';
 import { LICENSING_MODELS, SITE_REGIONS, type DiscoverySiteOverview, type Paginated, type SiteContacts } from '@tvmf/shared';
 import { api, ApiError } from '../../api';
+import { AutoGrowTextarea } from '../../components/AutoGrowTextarea';
 import { NetworkDiagram, type NetworkRow } from '../../components/NetworkDiagram';
 import { LoadError, PagedSection, useRecordStyles, type FieldDef } from '../../components/records';
 import { SiteContactsEditor, type ContactUser } from './siteContacts';
@@ -139,9 +140,8 @@ export function OverviewTab({
                 )}
               </div>
             ) : f.type === 'textarea' ? (
-              <Textarea
+              <AutoGrowTextarea
                 value={draft[f.key] ?? ''}
-                resize="vertical"
                 onChange={(_, d) => setDraft((v) => ({ ...v, [f.key]: d.value }))}
               />
             ) : f.type === 'select' ? (
