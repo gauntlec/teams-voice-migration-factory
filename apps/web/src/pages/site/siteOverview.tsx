@@ -9,7 +9,6 @@ import { SiteContactsEditor, type ContactUser } from './siteContacts';
 
 const OVERVIEW_FIELDS: FieldDef[] = [
   { key: 'region', label: 'Region', type: 'select', options: SITE_REGIONS },
-  { key: 'author', label: 'Author' },
   { key: 'licensingModel', label: 'PSTN / licensing model', type: 'select', options: LICENSING_MODELS },
   { key: 'targetGoLive', label: 'Target go-live', placeholder: 'e.g. Q3 2026' },
   {
