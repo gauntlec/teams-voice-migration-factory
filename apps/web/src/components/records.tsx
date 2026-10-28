@@ -89,7 +89,7 @@ export interface FieldDef {
   key: string;
   label: string;
   /** 'addresses' is a site's list of extra addresses (AddressListEditor); its value is that list as JSON text. */
-  type?: 'text' | 'textarea' | 'number' | 'select' | 'boolean' | 'ref' | 'radio' | 'string-array' | 'addresses';
+  type?: 'text' | 'textarea' | 'number' | 'select' | 'boolean' | 'ref' | 'radio' | 'string-array' | 'addresses' | 'date';
   options?: readonly string[];
   choices?: Choice[] | ((row: Row | null) => Choice[]);
   required?: boolean;
@@ -568,7 +568,7 @@ export function RecordDialog({
                     <Input
                       // A browser's number box strips the comma and dot out of pasted text, so the coordinate boxes are text
                       // boxes that take "lat, long" pasted from a map site (split across both boxes) or one number at a time.
-                      type={f.type === 'number' && !isCoordinateField(f.key) ? 'number' : 'text'}
+                      type={f.type === 'date' ? 'date' : f.type === 'number' && !isCoordinateField(f.key) ? 'number' : 'text'}
                       inputMode={isCoordinateField(f.key) ? 'decimal' : undefined}
                       placeholder={f.placeholder}
                       value={values[f.key] ?? ''}
