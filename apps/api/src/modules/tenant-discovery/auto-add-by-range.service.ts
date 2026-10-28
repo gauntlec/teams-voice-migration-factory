@@ -21,7 +21,7 @@ const AUTO_ACTOR: AuthedUser = {
 /**
  * For a customer that has switched it on (Discovery > Settings), adds what a finished full discovery run found to the site its number
  * says: an account, resource account, auto attendant or call queue whose number is in a site's range and that is on no site yet.
- * Data Collection only - Design & Build takes it from there with Populate from Discovery. Something already on another site is never
+ * Data Collection only - Design & Build takes it from there with Populate from Data Collection. Something already on another site is never
  * moved. Each run is handled once.
  */
 @Injectable()
