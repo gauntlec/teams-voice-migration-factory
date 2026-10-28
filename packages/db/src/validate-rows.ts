@@ -246,14 +246,14 @@ export async function identitySkipReasons(s: Scoped, rows: IdentityRow[]): Promi
  * The rows whose number change the engineer rejected (and the decision still stands: neither number has moved since). A deployment
  * does not assign the designed number to these; the user keeps whatever number they have in Teams. `live` is that number, if any.
  */
-export async function rejectedNumberChanges(s: Scoped, rows: IdentityRow[]): Promise<Map<string, { designed: string; live: string | null }>> {
-  const out = new Map<string, { designed: string; live: string | null }>();
+export async function rejectedNumberChanges(s: Scoped, rows: IdentityRow[]): Promise<Map<string, { designed: string; live: string | null; dataCollection: string | null }>> {
+  const out = new Map<string, { designed: string; live: string | null; dataCollection: string | null }>();
   const candidates = rows.filter((r) => (r.number_decision as { decision?: string } | null | undefined)?.decision === 'rejected');
   if (!candidates.length) return out;
   const validated = await validateIdentityRows(s, candidates);
   for (const r of candidates) {
     const nc = validated.get(r.id)?.numberChange;
-    if (nc && nc.decision === 'rejected') out.set(r.id, { designed: nc.designed, live: nc.live });
+    if (nc && nc.decision === 'rejected') out.set(r.id, { designed: nc.designed, live: nc.live, dataCollection: nc.dataCollection });
   }
   return out;
 }
