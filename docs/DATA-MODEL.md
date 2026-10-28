@@ -85,10 +85,10 @@ Features & Settings feature-discovery questionnaire, detailed E911 tables.
 Mirrors the build sheet, organised **per site** (same shape as Data Collection -
 a rollup page links into a per-site workspace; see `docs/DEPLOYMENT.md`). Every
 row carries a required `site_id` FK -> `discovery_sites.id` and a `discovery_*_id`
-link to the row it was bulk-seeded from ("Populate from Discovery"), so
+link to the row it was bulk-seeded from ("Populate from Data Collection"), so
 re-populating is idempotent. `POST .../build/reset {site_id}` wipes every
 build_users/build_caps/build_resource_accounts row for a site (releasing any
-phone_numbers they held) so it can be Populated from Discovery again from
+phone_numbers they held) so it can be Populated from Data Collection again from
 scratch - Data Collection and the customer tenant are untouched.
 | Table | Maps to sheet | Selected columns |
 |-------|---------------|------------------|

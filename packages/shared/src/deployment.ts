@@ -363,7 +363,7 @@ function toHms(totalSeconds: number): string {
  * Flags a build_users/build_caps row whose phone number won't actually get
  * assigned: planIdentityRow's Set-CsPhoneNumberAssignment guard (below)
  * requires `number_type` too, and a row can easily have `e164` set with
- * `number_type` still null (e.g. populated from Discovery on a site with no
+ * `number_type` still null (e.g. populated from Data Collection on a site with no
  * PSTN/licensing model chosen yet) - that command, and the Enterprise Voice
  * enablement it carries, then just silently never appears in the plan.
  */

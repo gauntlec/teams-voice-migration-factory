@@ -2127,7 +2127,7 @@ export class BuildService {
   /**
    * The number a discovery_users/discovery_caps row currently has claimed in
    * the shared `phone_numbers` inventory (via Data Collection's own picker) -
-   * read-only. Populate from Discovery copies both the id and the e164 onto
+   * read-only. Populate from Data Collection copies both the id and the e164 onto
    * the new build row (phone_number_id, e164) as a real reference, not just
    * text - see 0017_build_phone_number_id.sql. Data Collection's own claim
    * (phone_numbers.holder_id) is never touched, so its Number column keeps
@@ -2648,7 +2648,7 @@ export class BuildService {
 
   /**
    * Wipe every build_users/build_caps/build_resource_accounts row for a site
-   * so Populate from Discovery can start fresh. Releases any phone_numbers
+   * so Populate from Data Collection can start fresh. Releases any phone_numbers
    * those rows held back to 'available' first - this never touches the
    * customer tenant itself, only Voxshift's own draft configuration, and
    * discovery_users/discovery_caps in Data Collection (the source data) are

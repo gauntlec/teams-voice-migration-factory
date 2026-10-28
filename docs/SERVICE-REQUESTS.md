@@ -113,7 +113,7 @@ request, but **listing only the rows designed for this request**.
   the new row in `service_request_items`. It refuses, before anything is made,
   unless Managed Services is on, the caller has `sr:manage`, the request is
   Planned and the row is on the request's site.
-- Site-wide tools (Populate from Discovery, Reset site, bulk edit, templates,
+- Site-wide tools (Populate from Data Collection, Reset site, bulk edit, templates,
   resource account requests) stay on the site's own Design & Build page.
 - Linked rows are **ordinary Design & Build rows**: they also show on the site's
   Design & Build page, tagged with the request reference (e.g. `SR-0042`).
