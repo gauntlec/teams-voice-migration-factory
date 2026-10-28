@@ -71,7 +71,7 @@ export function readDeviceTags(tags: Array<{ name?: string; value?: string | nul
   for (const t of tags) {
     let name = (t.name ?? '').trim();
     let value = (t.value ?? '').trim();
-    const eq = name.match(/^(site|device)\s*[=:]\s*(.+)$/i);
+    const eq = name.match(/^(site|device)\s*[=:]\s*(\S.*)$/i); // \S: the value cannot start with the spaces \s* already took (no slow backtracking)
     if (eq) { name = eq[1]!; value = eq[2]!.trim(); }
     name = name.toLowerCase();
     if (name === 'site' && value) sitecode = clean(value);

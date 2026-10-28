@@ -70,7 +70,7 @@ function readSegment(seg: string): { days: number[]; ranges: AutoAttendantTimeRa
     pos += m[0].length;
     const g = m.groups!;
     if (g.dayrange) {
-      const [a, b] = g.dayrange.split(/\s*(?:-|–|to|through|thru)\s*/i).map(dayIndex);
+      const [a, b] = g.dayrange.split(/-|–|to|through|thru/i).map((w) => dayIndex(w.trim())); // trim, not \s* in the pattern (no slow backtracking)
       if (a === undefined || b === undefined || b < a) return null;
       for (let d = a; d <= b; d++) out.days.push(d);
     } else if (g.day) {
