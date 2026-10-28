@@ -36,9 +36,11 @@ import {
   type AutoAttendantCallFlow,
   type AutoAttendantMenuOption,
   type AutoAttendantSchedule,
+  liveCallQueueActionExtras,
   type CallQueueActionSettings,
 } from './deployment';
 import { CALL_QUEUE_NO_AGENT_ACTIONS, CALL_QUEUE_OVERFLOW_ACTIONS, CALL_QUEUE_TIMEOUT_ACTIONS } from './domain';
+import { decodeUserNameExtension } from './voice-app-access';
 
 export type CallFlowNodeKind =
   | 'auto_attendant'
@@ -191,6 +193,43 @@ export function formatWeeklyHours(weekly: {
   return weekly.complement === false ? ['Closed during:', ...lines] : lines;
 }
 
+/** The PowerShell-only settings of one queue exception (overflow, time-out, no agents) that change what a caller meets on the way out. */
+interface ActionExtras {
+  /** Call priority 1-5 when the call is forwarded (-<X>ActionCallPriority). */
+  priority?: number;
+  /** What the caller hears (text to speech) before being put through to a person or a personal voicemail. */
+  prompt?: string;
+  /** The audio file played instead (its name, or "Audio file" when only Teams' own id is known). */
+  audio?: string;
+}
+
+/**
+ * The line from a queue's exception to where the call goes, with the PowerShell-only extras drawn: the call priority is written on the
+ * line, and what the caller hears first is a box between the queue and the target ("Caller hears" - spoken text, and/or an audio file).
+ * No extras: the plain line, exactly as before.
+ */
+function addActionEdge(b: GraphBuilder, sourceId: string, targetId: string, label: string, branch: CallFlowBranch, extras: ActionExtras): void {
+  const edgeLabel = extras.priority != null ? `${label} (priority ${extras.priority})` : label;
+  if (!extras.prompt && !extras.audio) {
+    b.addEdge(sourceId, targetId, edgeLabel, branch);
+    return;
+  }
+  const heardId = b.ensureNode({
+    id: `${sourceId}:redirect:${branch}`,
+    kind: 'announcement',
+    label: 'Caller hears',
+    sublabel: extras.prompt ? snippet([extras.prompt], false) : `🔊 ${extras.audio}`,
+    details: extras.prompt && extras.audio ? [`🔊 ${extras.audio}`] : undefined,
+  });
+  b.addEdge(sourceId, heardId, edgeLabel, branch);
+  b.addEdge(heardId, targetId, 'then', branch);
+}
+
+/** "Dial by name also says: Department" - the PowerShell-only -UserNameExtension of an auto attendant (None adds nothing to say). */
+function dialByNameDetails(extension: string | null | undefined): string[] {
+  return extension === 'Office' || extension === 'Department' ? [`Dial by name also says: ${extension}`] : [];
+}
+
 /** The lines under a front door: each resource account's name and number. */
 function resourceAccountDetails(accounts: CallFlowResourceAccount[] | undefined): string[] {
   const out: string[] = [];
@@ -218,6 +257,8 @@ export interface DesignAutoAttendantInput {
   /** The weekly business hours (with Complement) - drawn on the Business hours box. */
   schedule?: AutoAttendantSchedule | null;
   timeZone?: string | null;
+  /** -UserNameExtension (None, Office, Department): what dial-by-name adds after a name two people share. null = not managed. */
+  userNameExtension?: string | null;
 }
 
 export interface DesignCallQueueInput {
@@ -247,6 +288,16 @@ function designCqSublabel(cq: DesignCallQueueInput): string | undefined {
   return parts.length ? parts.join(' · ') : undefined;
 }
 
+function designActionExtras(s: CallQueueActionSettings): ActionExtras {
+  const toPerson = s.action === 'Forward';
+  const toVoicemail = s.action === 'Voicemail';
+  return {
+    priority: toPerson ? s.priority : undefined,
+    prompt: toPerson || toVoicemail ? s.redirectPrompt?.trim() || undefined : undefined,
+    audio: toPerson || toVoicemail ? s.redirectAudio?.filename : undefined,
+  };
+}
+
 function designCqActionEdges(b: GraphBuilder, cq: DesignCallQueueInput): void {
   const sourceId = `cq:${cq.buildId}`;
   const action = (settings: CallQueueActionSettings | null, branch: CallFlowBranch, label: string) => {
@@ -264,7 +315,7 @@ function designCqActionEdges(b: GraphBuilder, cq: DesignCallQueueInput): void {
           : looksLikeNumber
             ? b.ensureNode({ id: `ext:${settings.target}`, kind: 'external_number', label: settings.target.replace(/^tel:/i, '') })
             : b.ensureNode({ id: `user:${settings.target.toLowerCase()}`, kind: 'person', label: settings.target });
-      b.addEdge(sourceId, targetId, label, branch);
+      addActionEdge(b, sourceId, targetId, label, branch, designActionExtras(settings));
     } else if (settings.action === 'SharedVoicemail') {
       b.addEdge(sourceId, b.ensureNode({ id: 'shared_voicemail', kind: 'shared_voicemail', label: 'Shared voicemail' }), label, branch);
     } else if (settings.action === 'Voicemail') {
@@ -272,7 +323,7 @@ function designCqActionEdges(b: GraphBuilder, cq: DesignCallQueueInput): void {
       const targetId = settings.target
         ? b.ensureNode({ id: `voicemail:${settings.target.toLowerCase()}`, kind: 'voicemail', label: 'Voicemail', sublabel: settings.target })
         : b.ensureNode({ id: 'voicemail', kind: 'voicemail', label: 'Voicemail (no person set)' });
-      b.addEdge(sourceId, targetId, label, branch);
+      addActionEdge(b, sourceId, targetId, label, branch, designActionExtras(settings));
     } else if (settings.action === 'Disconnect' || settings.action === 'DisconnectWithBusy') {
       b.addEdge(sourceId, b.ensureNode({ id: 'disconnect', kind: 'disconnect', label: 'Disconnect' }), label, branch);
     }
@@ -413,7 +464,7 @@ export function buildAutoAttendantFlowGraphFromDesign(
       kind: 'auto_attendant',
       label: a.name,
       badge: a.hasPhoneNumber ? FRONT_DOOR_BADGE : undefined,
-      details: resourceAccountDetails(a.resourceAccounts),
+      details: [...resourceAccountDetails(a.resourceAccounts), ...dialByNameDetails(a.userNameExtension)],
     });
     const hoursDetails = [...(a.schedule?.weekly ? formatWeeklyHours(a.schedule.weekly) : []), ...(a.timeZone ? [`Time zone: ${a.timeZone}`] : [])];
     const addBranch = (cf: AutoAttendantCallFlow | null, key: string, branchLabel: string, branch: CallFlowBranch) => {
@@ -487,6 +538,8 @@ function liveHasPhoneNumber(data: Record<string, unknown>): boolean {
 }
 
 const CQ_ACTION_LABEL: Record<'overflow' | 'timeout' | 'no_agent', string> = { overflow: 'Overflow', timeout: 'Timeout', no_agent: 'No agents' };
+/** The parameter prefix Get-CsCallQueue / Set-CsCallQueue use for each exception (-OverflowActionCallPriority, -NoAgentRedirectPerson…). */
+const CQ_PREFIX = { overflow: 'Overflow', timeout: 'Timeout', no_agent: 'NoAgent' } as const;
 
 /** One node + edge per agent, feeding into the queue - "28 agents" as a sublabel count isn't the same as seeing who they are. Get-CsCallQueue's Agents entries carry `.ObjectId`, the same tenant_users.entra_id key as every other live person reference. */
 function liveCqAgentEdges(b: GraphBuilder, cq: LiveCallQueueInput, usersByEntraId?: Map<string, string>): void {
@@ -561,7 +614,14 @@ function liveCqActionEdges(
         nodeId = resolveVoiceApp?.(id) ?? b.ensureNode({ id: `user:${id}`, kind: 'person', label: personLabel(id) });
       }
     }
-    if (nodeId) b.addEdge(sourceId, nodeId, CQ_ACTION_LABEL[branch], branch);
+    if (nodeId) {
+      const live = liveCallQueueActionExtras(CQ_PREFIX[branch], cq.data, action);
+      addActionEdge(b, sourceId, nodeId, CQ_ACTION_LABEL[branch], branch, {
+        priority: live.priority,
+        prompt: live.redirectPrompt,
+        audio: live.redirectAudioId ? 'Audio file' : undefined,
+      });
+    }
   }
 }
 
@@ -742,7 +802,7 @@ export function buildAutoAttendantFlowGraphFromLive(
       kind: 'auto_attendant',
       label: a.name,
       badge: liveHasPhoneNumber(a.data) ? FRONT_DOOR_BADGE : undefined,
-      details: resourceAccountDetails(accounts),
+      details: [...resourceAccountDetails(accounts), ...dialByNameDetails(decodeUserNameExtension(a.data.UserNameExtension))],
     });
     // The business hours are the weekly schedule of the After hours association (its Complement is what makes the rest "after hours").
     const associations = Array.isArray(a.data.CallHandlingAssociations) ? (a.data.CallHandlingAssociations as Record<string, unknown>[]) : [];

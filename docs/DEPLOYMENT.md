@@ -269,6 +269,13 @@ A null column means not managed: the deployment leaves whatever Teams has, so ro
 Only a set value is compared; an empty list clears it. Populate imports the live lists as UPNs, or leaves them null if anyone in
 them cannot be named. Auto attendants set them on the `Get-CsAutoAttendant` instance before `Set-CsAutoAttendant`.
 
+**On the call flow diagrams** (Design & Build and Discovery, `call-flow-graph.ts`): the settings that change what a caller meets are drawn,
+both as designed and as read live from Teams. The **call priority** is written on the line to the target ("Overflow (priority 2)"); the
+**prompt before the redirect** is a "Caller hears" box between the queue and the person or voicemail (the spoken text, and/or the audio
+file by name, or "Audio file" when only Teams' own id is known); the auto attendant's **dial-by-name extension** is a line on its box
+("Dial by name also says: Department"; None adds nothing). Authorised users and hidden authorised users are who may edit a voice app, not
+the path of a call, so they are not drawn; the shared voicemail triage template (private preview) is not drawn either.
+
 Tests: `packages/shared/src/call-queue-extras.test.ts`, `voice-app-access.test.ts`; `tests/db/src/deployment/redirect-audio.db.test.ts`,
 `voice-app-access.db.test.ts`. Microsoft notes that authorised users cannot edit a queue that uses call priorities.
 
