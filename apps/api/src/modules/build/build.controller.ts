@@ -29,6 +29,8 @@ import {
   buildValidateSchema,
   buildNumberDecisionSchema,
   addFromDiscoverySchema,
+  emailBuildIssuesSchema,
+  type EmailBuildIssuesInput,
   buildQuickAddSchema,
   callingPolicyMapListQuerySchema,
   callingPolicySiteMapSetSchema,
@@ -65,6 +67,7 @@ import type { AuthedUser, TenantContext } from '../../common/request';
 import { ZodBody } from '../../common/zod.pipe';
 import { RequirePermission } from '../../rbac/require-permission.decorator';
 import { TenantGuard } from '../../rbac/tenant.guard';
+import { BuildIssuesEmailService } from './build-issues-email.service';
 import { BuildService } from './build.service';
 import { ServiceRequestLinkInterceptor } from './service-request-link.interceptor';
 
@@ -81,7 +84,10 @@ import { ServiceRequestLinkInterceptor } from './service-request-link.intercepto
 // Links rows made on a service request's Design tab to that request.
 @UseInterceptors(ServiceRequestLinkInterceptor)
 export class BuildController {
-  constructor(private readonly svc: BuildService) {}
+  constructor(
+    private readonly svc: BuildService,
+    private readonly issuesEmail: BuildIssuesEmailService,
+  ) {}
 
   @Get('summary')
   @RequirePermission('build:read')
@@ -454,6 +460,20 @@ export class BuildController {
   @RequirePermission('build:read')
   siteIssues(@TenantCtx() t: TenantContext, @Query('siteId') siteId: string) {
     return this.svc.siteIssues(t, siteId);
+  }
+
+  /** The site contacts an issues email would go to. */
+  @Get('issues/recipients')
+  @RequirePermission('build:write')
+  issueRecipients(@TenantCtx() t: TenantContext, @Query('siteId') siteId: string) {
+    return this.issuesEmail.recipients(t, siteId);
+  }
+
+  /** Email the picked issues to the site's contacts. */
+  @Post('issues/email')
+  @RequirePermission('build:write')
+  emailIssues(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Body(new ZodBody(emailBuildIssuesSchema)) body: EmailBuildIssuesInput) {
+    return this.issuesEmail.send(t, user, body);
   }
 
   @Post('validate')

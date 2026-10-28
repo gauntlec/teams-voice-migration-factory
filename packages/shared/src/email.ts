@@ -13,6 +13,7 @@ export const EMAIL_TEMPLATES = [
   'port_documents_reminder',
   'port_documents_completed',
   'port_completed',
+  'validation_issues_alert',
   'feature_request_status_changed',
   'bug_report_status_changed',
   'service_request_created',
@@ -178,6 +179,29 @@ export interface PortCompletedContext {
   /** the day the port completed, written out */
   completedOn: string;
   portalUrl: string;
+}
+
+/** One issue in a `validation_issues_alert` email. */
+export interface ValidationIssuesAlertItem {
+  /** the person or account: name when there is one */
+  name: string | null;
+  upn: string;
+  sheet: string;
+  label: string;
+  detail: string;
+}
+
+/** Context for `validation_issues_alert` - sent to a site's contacts when an engineer picks issues on a site's Validation issues tab. */
+export interface ValidationIssuesAlertContext {
+  recipientName: string | null;
+  customerName: string;
+  siteName: string;
+  sitecode: string;
+  /** who sent it, and where replies go */
+  senderName: string;
+  /** the engineer's own note, if any */
+  message: string | null;
+  issues: ValidationIssuesAlertItem[];
 }
 
 /** Context for `port_documents_completed` - sent to whoever submitted the request, once every item clears. */

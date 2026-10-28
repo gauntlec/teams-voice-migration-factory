@@ -586,6 +586,9 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
       {tab === 'issues' && !embedded && (
         <ValidationIssuesTab
           fileBase={site.sitecode}
+          base={base}
+          siteId={siteId}
+          canEmail={canWrite}
           issues={issuesQ.data}
           loading={issuesQ.isFetching}
           error={issuesQ.error}
