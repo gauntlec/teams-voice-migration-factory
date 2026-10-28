@@ -39,7 +39,7 @@ that refers to a customer, add it to the list and make `TenantDeletionService` h
 
 ## tenant `tenant_<shortid>` schema
 
-### Data Collection (discovery)
+### Site Data (discovery)
 Aligned to `Overland Park - ATTC MS Teams Telephony Discovery Template`.
 | Table | Notes |
 |-------|-------|
@@ -63,7 +63,7 @@ Aligned to `Overland Park - ATTC MS Teams Telephony Discovery Template`.
 "Delete selected (N)" and "Delete all…" (typed DELETE to confirm) -
 `POST .../{users|caps|resource-accounts}/bulk-delete` with `{ ids }` or
 `{ site_id, all: true }` (`TelephonyService.bulkDelete`). Each row goes exactly
-as a single delete would: Data Collection lock and site scope apply, its
+as a single delete would: Site Data lock and site scope apply, its
 `phone_numbers` claims return to `available`, and Design & Build rows populated
 from it stay with their `discovery_*_id` link cleared (FK `ON DELETE SET NULL`).
 One transaction, one audit row (`discovery.<kind>s_bulk_deleted`).
@@ -82,21 +82,21 @@ Deferred from the template (later pass): Analogue/SIP/paging devices, the
 Features & Settings feature-discovery questionnaire, detailed E911 tables.
 
 ### Design & Build
-Mirrors the build sheet, organised **per site** (same shape as Data Collection -
+Mirrors the build sheet, organised **per site** (same shape as Site Data -
 a rollup page links into a per-site workspace; see `docs/DEPLOYMENT.md`). Every
 row carries a required `site_id` FK -> `discovery_sites.id` and a `discovery_*_id`
-link to the row it was bulk-seeded from ("Populate from Data Collection"), so
+link to the row it was bulk-seeded from ("Populate from Site Data"), so
 re-populating is idempotent. `POST .../build/reset {site_id}` wipes every
 build_users/build_caps/build_resource_accounts row for a site (releasing any
-phone_numbers they held) so it can be Populated from Data Collection again from
-scratch - Data Collection and the customer tenant are untouched.
+phone_numbers they held) so it can be Populated from Site Data again from
+scratch - Site Data and the customer tenant are untouched.
 | Table | Maps to sheet | Selected columns |
 |-------|---------------|------------------|
 | `build_users` | USERS | **site_id**, discovery_user_id, upn (unique per site), did, ext, e164, number_type (`DirectRouting`/`CallingPlan`/`OperatorConnect`/`SharedCalling`), revoke_ev, hold_uri, action, migration_wave, `policies` jsonb (keyed by `PolicyKey` from `@tvmf/shared` - voice_routing_policy/dial_out_policy/shared_calling_policy/dial_plan/calling_policy/call_hold_policy/call_park_policy/caller_id_policy/voice_app_policy/voicemail_policy/emergency_calling_policy/emergency_call_routing_policy/ip_phone_policy), `voicemail` jsonb (`{enabled, language}` - the real `Set-CsOnlineVoicemailUserSettings` deploy target, editable in the Users tab; Populate seeds it from discovery_users as a starting point; distinct from `policies.voicemail_policy` above, a separate tenant-defined policy grant), call_forwarding/delegates/pickup_group jsonb (schema'd, not yet surfaced in the UI or deployed - next increment), comments, `validation` jsonb (last "Validate" snapshot - live-tenant check results, computed live on every read via `BuildValidationService`), `status` jsonb, `errors` text.
-Design & Build **imports a copy** of the number Data Collection already has
+Design & Build **imports a copy** of the number Site Data already has
 claimed for that user (via the shared `phone_numbers` inventory,
 `discovery_users`/`discovery_caps`' own `phone_number_id`) into `e164` at
-Populate time - Data Collection's own claim is never touched, so its Number
+Populate time - Site Data's own claim is never touched, so its Number
 column keeps showing it too; this is the source input record, not something
 Populate consumes. `GET .../build/users` and `.../build/caps` also join in
 read-only reference fields from the linked discovery row - `requested_number`

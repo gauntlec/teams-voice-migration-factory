@@ -1,4 +1,4 @@
-// Licence and cost report: built from what Discovery stored, counted per Data Collection site.
+// Licence and cost report: built from what Discovery stored, counted per Site Data site.
 import { beforeAll, describe, expect, it } from 'vitest';
 import { AuditService } from '../../../../apps/api/src/common/audit.service';
 import { TenantDiscoveryService } from '../../../../apps/api/src/modules/tenant-discovery/tenant-discovery.service';

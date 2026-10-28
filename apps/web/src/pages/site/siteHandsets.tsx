@@ -29,7 +29,7 @@ const STAGE_COLOUR: Record<HandsetStage, BadgeProps['color']> = {
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /**
- * Handsets the site's users and common area phones need, counted from Data Collection, one row per model. The project manager moves
+ * Handsets the site's users and common area phones need, counted from Site Data, one row per model. The project manager moves
  * each model through Ordered > Added to tooling & updated > Installed & working. Shown only when handsets have been detected.
  */
 export function HandsetTrackerCard({ base, siteId, canEdit }: { base: string; siteId: string; canEdit: boolean }) {
@@ -60,7 +60,7 @@ export function HandsetTrackerCard({ base, siteId, canEdit }: { base: string; si
         <div>
           <Text weight="semibold">Handsets</Text>
           <Text size={200} className={s.muted} block>
-            {plural(total, 'handset')} across {plural(data.models.length, 'model')}, from the users and common area phones in Data Collection.
+            {plural(total, 'handset')} across {plural(data.models.length, 'model')}, from the users and common area phones in Site Data.
             {canEdit ? ' Set where each model has got to.' : ''}
           </Text>
         </div>

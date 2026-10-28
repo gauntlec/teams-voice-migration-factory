@@ -480,7 +480,7 @@ export function UsersTable({ base, canImport, canAdd, onImported }: { base: stri
           <SearchBox size="small" placeholder="Search UPN, name, number, department…" value={qInput} onChange={(_, d) => setQInput(d.value)} className={ls.minW260} />
           {canImport && (
             <Button size="small" appearance="primary" onClick={() => setImportOpen(true)}>
-              Import into Data Collection…
+              Import into Site Data…
             </Button>
           )}
           <Button
@@ -526,7 +526,7 @@ export function UsersTable({ base, canImport, canAdd, onImported }: { base: stri
                 <TableHeaderCell>Features</TableHeaderCell>
                 <TableHeaderCell>Calling policy</TableHeaderCell>
                 <TableHeaderCell>Department</TableHeaderCell>
-                <TableHeaderCell>Data Collection</TableHeaderCell>
+                <TableHeaderCell>Site Data</TableHeaderCell>
                 <TableHeaderCell>Site (from number)</TableHeaderCell>
                 <TableHeaderCell />
               </TableRow>
@@ -648,7 +648,7 @@ export function ResourceAccountsTab({ base, canImport, canAdd, onImported }: { b
         actions={
           canImport && (
             <Button size="small" appearance="primary" onClick={() => setImportOpen(true)}>
-              Import into Data Collection…
+              Import into Site Data…
             </Button>
           )
         }
@@ -676,7 +676,7 @@ type ImportCandidate = { id: string; name: string | null; upn?: string | null; k
 
 /**
  * Reverse-import a live-discovered object (Users tab or Resource accounts
- * tab) into Data Collection. Each candidate gets its own destination site -
+ * tab) into Site Data. Each candidate gets its own destination site -
  * pre-filled from a best-effort suggestion (phone-number range match, then
  * naming-convention match against known sitecodes) and editable per row -
  * plus a "set all to" convenience for the common single-site case.
@@ -742,12 +742,12 @@ function ImportDialog({
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
       <DialogSurface>
         <DialogBody>
-          <DialogTitle>Import discovered {noun}s into Data Collection</DialogTitle>
+          <DialogTitle>Import discovered {noun}s into Site Data</DialogTitle>
           <DialogContent>
             {result ? (
               <MessageBar intent="success">
                 <MessageBarBody>
-                  Created <b>{result.created}</b> Data Collection {noun}
+                  Created <b>{result.created}</b> Site Data {noun}
                   {result.created === 1 ? '' : 's'}
                   {result.linked ? ` and linked ${result.linked} existing` : ''}
                   {result.skipped ? `; skipped ${result.skipped} left out or with no site` : ''}.
@@ -757,8 +757,8 @@ function ImportDialog({
               <div className={ls.gridGap12}>
                 <Text size={200}>
                   {kind === 'user'
-                    ? 'Creates a Data Collection user for every discovered tenant user that is not captured yet (matched on UPN). Existing users are never overwritten; unlinked matches are linked.'
-                    : 'Creates a Data Collection resource account for every discovered resource account that is not captured yet (matched on name).'}
+                    ? 'Creates a Site Data user for every discovered tenant user that is not captured yet (matched on UPN). Existing users are never overwritten; unlinked matches are linked.'
+                    : 'Creates a Site Data resource account for every discovered resource account that is not captured yet (matched on name).'}
                   {' '}Each row below is pre-filled with a best-effort site suggestion (phone number range, then
                   naming convention) - review and override before importing; rows left blank are skipped.
                 </Text>

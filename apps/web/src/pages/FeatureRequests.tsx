@@ -222,7 +222,7 @@ const FEATURE_STATUS_COLOR: Record<FeatureStatus, string> = {
  * board.
  */
 const AREA_COLOR: Record<FeatureArea, { fg: string; bg: string; border: string }> = {
-  'Data Collection': { fg: tokens.colorPaletteBlueForeground2, bg: tokens.colorPaletteBlueBackground2, border: tokens.colorPaletteBlueBorderActive },
+  'Site Data': { fg: tokens.colorPaletteBlueForeground2, bg: tokens.colorPaletteBlueBackground2, border: tokens.colorPaletteBlueBorderActive },
   Discovery: { fg: tokens.colorPaletteTealForeground2, bg: tokens.colorPaletteTealBackground2, border: tokens.colorPaletteTealBorderActive },
   'Design & Build': { fg: tokens.colorPalettePurpleForeground2, bg: tokens.colorPalettePurpleBackground2, border: tokens.colorPalettePurpleBorderActive },
   Deployment: { fg: tokens.colorPalettePumpkinForeground2, bg: tokens.colorPalettePumpkinBackground2, border: tokens.colorPalettePumpkinBorderActive },

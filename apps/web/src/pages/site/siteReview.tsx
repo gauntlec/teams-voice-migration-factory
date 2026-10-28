@@ -46,7 +46,7 @@ const ACTION_COLOR = { added: 'success', changed: 'warning', removed: 'danger' }
 const when = (iso: string) => new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
 /**
- * A site's Data Collection review: its status and the buttons to move it on. Nothing is locked, so people can keep
+ * A site's Site Data review: its status and the buttons to move it on. Nothing is locked, so people can keep
  * adding and changing data after it is submitted; those changes are listed for the engineer in SiteChangesCard.
  */
 export function SiteReviewBar({

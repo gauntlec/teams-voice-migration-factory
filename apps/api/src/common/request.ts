@@ -30,7 +30,7 @@ export interface TenantContext {
   /**
    * null  -> whole-customer access (SUPER_ADMIN, ENGINEER, unscoped CUSTOMER).
    * array -> a "site contact": limited to these discovery_sites.id values.
-   * Set by TenantGuard; enforced by the Data Collection services.
+   * Set by TenantGuard; enforced by the Site Data services.
    */
   siteScope: string[] | null;
   /** true -> no write cmdlet may ever reach this customer's live Microsoft Teams tenant - see docs/SECURITY.md. */

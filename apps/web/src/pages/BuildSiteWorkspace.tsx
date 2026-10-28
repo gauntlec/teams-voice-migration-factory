@@ -81,7 +81,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
         ? [{ value: String(row.phone_number_id), label: `${row.e164 ?? row.phone_number} (current)` }]
         : [];
     // Users only: flag the choice that matches what the customer asked for
-    // in Data Collection (discovery_users.requested_number), so it's easy to
+    // in Site Data (discovery_users.requested_number), so it's easy to
     // spot and pick - never auto-selected.
     const requested = row?.requested_number ? String(row.requested_number) : null;
     const rest = availableChoices.map((c) =>
@@ -218,7 +218,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
     },
   });
   // "Link discovered resource account" - pulls one specific live resource
-  // account straight into this site without visiting Data Collection first
+  // account straight into this site without visiting Site Data first
   // (BuildService.importAndLinkResourceAccount).
   const [linkOpen, setLinkOpen] = useState(false);
   const [validateMsg, setValidateMsg] = useState<string | null>(null);
@@ -427,8 +427,8 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
                 {site.counts.caps} common area phone{site.counts.caps === 1 ? '' : 's'} and{' '}
                 {site.counts.resourceAccounts} resource account{site.counts.resourceAccounts === 1 ? '' : 's'}{' '}
                 designed for this site, <b>and every call queue and auto attendant</b> (with their agents, menus and
-                schedules), and releases any numbers they hold back to the inventory. Data Collection is not
-                affected - Populate from Data Collection brings back what came from there, but anything designed by hand
+                schedules), and releases any numbers they hold back to the inventory. Site Data is not
+                affected - Populate from Site Data brings back what came from there, but anything designed by hand
                 here is lost.
               </Text>
               <Text block weight="semibold" className={ls.mt8}>
@@ -622,7 +622,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
                   Quick add
                 </Button>
                 <Button size="small" disabled={populate.isPending} onClick={() => populate.mutate('users')}>
-                  Populate from Data Collection
+                  Populate from Site Data
                 </Button>
                 <Button size="small" disabled={importVoice.isPending} onClick={() => importVoice.mutate('users')}>
                   Import voice settings
@@ -698,7 +698,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
                   Quick add
                 </Button>
                 <Button size="small" disabled={populate.isPending} onClick={() => populate.mutate('caps')}>
-                  Populate from Data Collection
+                  Populate from Site Data
                 </Button>
                 <Button size="small" disabled={importVoice.isPending} onClick={() => importVoice.mutate('caps')}>
                   Import voice settings
@@ -767,7 +767,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
             siteTools && (
               <>
                 <Button size="small" disabled={populate.isPending} onClick={() => populate.mutate('resource-accounts')}>
-                  Populate from Data Collection
+                  Populate from Site Data
                 </Button>
                 <Button size="small" disabled={requestAccounts.isPending} onClick={() => requestAccounts.mutate()}>
                   {requestAccounts.isPending ? 'Generating…' : 'Request accounts'}
@@ -912,14 +912,14 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
         <PagedSection
           fitScreen
           title="Call queues"
-          hint="Routing, agents and overflow/timeout behaviour for Call Queue resource accounts. New rows are seeded by Populate from Data Collection on the Resource accounts tab."
+          hint="Routing, agents and overflow/timeout behaviour for Call Queue resource accounts. New rows are seeded by Populate from Site Data on the Resource accounts tab."
           endpoint={`${base}/call-queues`}
           queryKey={['call-queues', tid, siteId]}
           params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
           onChanged={embedded?.onChanged}
-          emptyText="No call queues yet - Populate from Data Collection on the Resource accounts tab first."
+          emptyText="No call queues yet - Populate from Site Data on the Resource accounts tab first."
           columns={[
             withSrTags({ key: 'name', label: 'Name' }),
             { key: 'routing_method', label: 'Routing' },
@@ -1011,14 +1011,14 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
         <PagedSection
           fitScreen
           title="Auto attendants"
-          hint="Language/voice and the real call-flow menu (business hours, after hours, holidays) for Auto Attendant resource accounts. Populate from Data Collection pre-fills these from a live tenant; for a greenfield site, add one by hand and link resource accounts to it in Configure… - it just won't get a phone number until that account is created and licensed."
+          hint="Language/voice and the real call-flow menu (business hours, after hours, holidays) for Auto Attendant resource accounts. Populate from Site Data pre-fills these from a live tenant; for a greenfield site, add one by hand and link resource accounts to it in Configure… - it just won't get a phone number until that account is created and licensed."
           endpoint={`${base}/auto-attendants`}
           queryKey={['auto-attendants', tid, siteId]}
           params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
           onChanged={embedded?.onChanged}
-          emptyText="No auto attendants yet - add one, or Populate from Data Collection on the Resource accounts tab."
+          emptyText="No auto attendants yet - add one, or Populate from Site Data on the Resource accounts tab."
           columns={[
             withSrTags({ key: 'name', label: 'Name' }),
             { key: 'language_id', label: 'Language' },

@@ -64,11 +64,11 @@ describe('accounts: routed to Users or Common area phones', () => {
     expect(res.find((r) => r.key === 'pat@contoso.test')).toMatchObject({ dataCollection: 'already_on_site', designAndBuild: 'already_on_site' });
     expect(res.find((r) => r.key === 'lobby@contoso.test')).toMatchObject({ dataCollection: 'on_other_site', otherSite: 'LUT01', designAndBuild: 'not_added' });
     const wrongKind = await build.addFromDiscovery(c.t, engineer, { kind: 'account', items: [{ id: pat.id, siteId: luton, as: 'cap' }], alsoBuild: true });
-    expect(wrongKind[0].note).toMatch(/already in data collection as a user/i);
+    expect(wrongKind[0].note).toMatch(/already in site data as a user/i);
     expect((await c.s.selectFrom('discovery_caps').select('id').where('upn', '=', 'pat@contoso.test').execute())).toHaveLength(0);
   });
 
-  it('can stop at Data Collection', async () => {
+  it('can stop at Site Data', async () => {
     const id = await account('dc.only@contoso.test', 'DC Only');
     const res = await build.addFromDiscovery(c.t, engineer, { kind: 'account', items: [{ id, siteId: luton }], alsoBuild: false });
     expect(res[0]).toMatchObject({ dataCollection: 'added', designAndBuild: 'off' });
@@ -92,7 +92,7 @@ describe('voice apps: two with the same name stay two', () => {
     expect(res.map((r) => r.dataCollection)).toEqual(['added', 'added']);
     expect(res.map((r) => r.designAndBuild)).toEqual(['added', 'added']);
 
-    // Data Collection: a voice app named as in Teams, and a resource account named as in Teams that answers for it
+    // Site Data: a voice app named as in Teams, and a resource account named as in Teams that answers for it
     const apps = await c.s.selectFrom('discovery_voice_apps').selectAll().orderBy('site_id').execute();
     expect(apps).toHaveLength(2);
     expect(apps.map((r) => r.tenant_object_id).sort()).toEqual([aaA, aaB].sort());
@@ -160,7 +160,7 @@ describe('voice apps without a resource account', () => {
   });
 });
 
-describe('what a discovered call queue brings into Data Collection', () => {
+describe('what a discovered call queue brings into Site Data', () => {
   it('describes its agents, routing and exception handling on the voice app, puts the number on its resource account, and adds a number outside the ranges', async () => {
     await seedNumbers(c.s, 'LUT01', ['+442070000050']);
     await account('agent.one@contoso.test', 'Agent One');
@@ -232,7 +232,7 @@ describe('Call flows for discovered voice apps', () => {
     const options = (menuFlow.wizard_answers as { businessFlow: { options: { key: string; target: Record<string, unknown> }[] } }).businessFlow.options;
     expect(options[0]).toMatchObject({ key: '1', target: { kind: 'call_queue', label: 'Billing Queue', flowId: queueFlow.id } });
     expect(options[1]).toMatchObject({ key: '0', target: { kind: 'operator' } });
-    // Data Collection only so far: not in Design & Build, so the flow is not marked imported
+    // Site Data only so far: not in Design & Build, so the flow is not marked imported
     expect(menuFlow.imported_at).toBeNull();
 
     // Import to Design & Build: builds the row from the live settings and links it, once
@@ -254,7 +254,7 @@ describe('one voice app with several resource accounts', () => {
     const aa = await object('auto_attendant', `aa-${tag}`, `Main ${tag}`, { Identity: `aa-${tag}`, LanguageId: 'en-GB', ApplicationInstances: [`ra-${tag}-1`, `ra-${tag}-2`] });
     return { ra1, ra2, aa };
   }
-  /** One voice app and two resource accounts in Data Collection, one attendant and two resource accounts in Design & Build, all tied together. */
+  /** One voice app and two resource accounts in Site Data, one attendant and two resource accounts in Design & Build, all tied together. */
   async function expectWhole(tag: string, siteId: string, nums: [string, string]) {
     const apps = await c.s.selectFrom('discovery_voice_apps').select('id').where('site_id', '=', siteId).where('name', '=', `Main ${tag}`).execute();
     expect(apps).toHaveLength(1);
@@ -352,7 +352,7 @@ describe('two discovered objects with the same name on the same site', () => {
   });
 });
 
-describe('the Data Collection lists show every resource account', () => {
+describe('the Site Data lists show every resource account', () => {
   it('lists two same-named resource accounts of one attendant as two, with a number outside the site ranges added', async () => {
     await seedNumbers(c.s, 'NYC01', ['+12125557001']);
     await object('resource_account', 'ra-show-1', 'Hauppauge Main Number', { UserPrincipalName: 'main@contoso.test', ApplicationId: AA_APP, PhoneNumber: 'tel:+12125557001' });

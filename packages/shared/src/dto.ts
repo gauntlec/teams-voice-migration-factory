@@ -309,21 +309,21 @@ export const generateDeploymentDocumentSchema = z.object({
 });
 export type GenerateDeploymentDocumentInput = z.infer<typeof generateDeploymentDocumentSchema>;
 
-/* ------------------------- Data Collection DTOs ------------------------- */
+/* ------------------------- Site Data DTOs ------------------------- */
 
 const str = (max = 400) => z.string().trim().max(max);
 const optStr = (max = 400) => str(max).optional().or(z.literal(''));
 
 /**
  * Shared shape for every "bulk edit N selected rows" action (Design &
- * Build's Users/CAPs, Data Collection's Users/CAPs, …): a bounded list of
+ * Build's Users/CAPs, Site Data's Users/CAPs, …): a bounded list of
  * row ids plus a strict partial patch over just the fields that entity
  * allows to bulk-set. One definition of the id-list bound, so raising or
  * lowering how many rows a bulk edit can touch at once changes for every
  * module together.
  */
 /**
- * Data Collection bulk delete (users / CAPs / resource accounts): either the
+ * Site Data bulk delete (users / CAPs / resource accounts): either the
  * rows ticked in the grid, or every row of that kind on one site ("start
  * again"). Each row is deleted exactly as a single delete would be.
  */
@@ -488,7 +488,7 @@ export const numberRangesImportSchema = z
 export type NumberRangesImportInput = z.infer<typeof numberRangesImportSchema>;
 
 /* --------------------- Number-port document collection --------------------- */
-// "LOA Data Collection and Tracking" - a number-port request's document
+// "LOA Site Data and Tracking" - a number-port request's document
 // checklist. See docs on the three-tier model: port_document_types (global
 // catalog) -> site_port_document_types (per-site enabled subset) ->
 // number_port_request_items (per-request checklist, picked from the site's
@@ -727,7 +727,7 @@ export type DiscoveryCapInput = z.infer<typeof discoveryCapSchema>;
 
 /**
  * Bulk-edit for discovery_users/discovery_caps - the same patch applied to
- * many rows at once, the Data Collection counterpart to
+ * many rows at once, the Site Data counterpart to
  * buildBulkPatchSchema above (both built on the shared bulkPatchSchema).
  * `site_id`, `upn`/`display_name` and `phone_number_id` are excluded for the
  * same reason as Design & Build's: they're per-row-unique identifiers, so
@@ -745,7 +745,7 @@ const { site_id: _bulkCapSiteId, upn: _bulkCapUpn, display_name: _bulkCapName, p
 export const discoveryCapBulkPatchSchema = bulkPatchSchema(discoveryCapBulkWritable);
 export type DiscoveryCapBulkPatchInput = z.infer<typeof discoveryCapBulkPatchSchema>;
 
-/** A voice app (auto attendant or call queue) as Data Collection captures it: its name, kind and the plain-words detail of how it behaves. */
+/** A voice app (auto attendant or call queue) as Site Data captures it: its name, kind and the plain-words detail of how it behaves. */
 export const discoveryVoiceAppSchema = z
   .object({
     site_id: siteIdRef,
@@ -794,16 +794,16 @@ export const numberPolicyPatchSchema = z.object({ cooloff_days: z.number().int()
 export type NumberPolicyPatchInput = z.infer<typeof numberPolicyPatchSchema>;
 
 /**
- * Link every not-yet-linked Data Collection user for a site to the tenant user
+ * Link every not-yet-linked Site Data user for a site to the tenant user
  * with the same UPN (from the last Discovery run). Idempotent.
  */
 export const relinkUsersSchema = z.object({ site_id: z.guid() }).strict();
 export type RelinkUsersInput = z.infer<typeof relinkUsersSchema>;
 
-/* ------------------- Data Collection list queries ------------------- */
+/* ------------------- Site Data list queries ------------------- */
 
 /**
- * Query string for the paginated Data Collection list endpoints
+ * Query string for the paginated Site Data list endpoints
  * (`GET .../users`, `.../numbers`, etc). Everything is optional; `page`/`limit`
  * default. `siteId` narrows to one site (ignored/clamped for site contacts).
  */
@@ -926,7 +926,7 @@ export const tenantDiscoverySettingsSchema = z
     filterUsers: z.boolean().optional(),
     /** when true (default), email the person who started a run when it finishes */
     notifyOnComplete: z.boolean().optional(),
-    /** when true (default false), after each full run add objects whose number is in a site's range to that site's Data Collection */
+    /** when true (default false), after each full run add objects whose number is in a site's range to that site's Site Data */
     autoAddByNumberRange: z.boolean().optional(),
   })
   .strict()
@@ -964,7 +964,7 @@ export const tenantGroupsQuerySchema = z.object({
 });
 export type TenantGroupsQuery = z.infer<typeof tenantGroupsQuerySchema>;
 
-/** Exact-UPN lookup used by the Data Collection add-user autofill. */
+/** Exact-UPN lookup used by the Site Data add-user autofill. */
 /** GET discovery/users/compare - two discovered users (tenant_users.id) side by side. */
 export const tenantUserCompareSchema = z.object({ a: z.guid(), b: z.guid() });
 export type TenantUserCompareQuery = z.infer<typeof tenantUserCompareSchema>;
@@ -978,7 +978,7 @@ export type TenantUserLookupQuery = z.infer<typeof tenantUserLookupSchema>;
 const importAssignmentSchema = z.object({ id: z.guid(), siteId: z.guid() }).strict();
 
 /**
- * Bulk-create Data Collection users from the discovered tenant users that are
+ * Bulk-create Site Data users from the discovered tenant users that are
  * not already captured (matched on lower(upn)). `assignments` gives each
  * included candidate its own site (from the import dialog's per-row
  * suggestion/override); `siteId` is an optional fallback applied to any
@@ -1006,7 +1006,7 @@ export const tenantResourceAccountsImportSchema = z
 export type TenantResourceAccountsImportInput = z.infer<typeof tenantResourceAccountsImportSchema>;
 
 /**
- * Add selected discovered objects to a site, in Data Collection and (optionally) Design & Build. Each item names the exact
+ * Add selected discovered objects to a site, in Site Data and (optionally) Design & Build. Each item names the exact
  * object - a tenant_users id for a user or common area phone account, a tenant_objects id for resource accounts, auto attendants
  * and call queues - never a display name, which can repeat.
  */
@@ -1180,7 +1180,7 @@ export type BuildPopulateInput = z.infer<typeof buildPopulateSchema>;
  * Design & Build's "Link discovered resource account" action - pulls one
  * specific `tenant_objects` row (a live resource account not yet in Data
  * Collection at all) straight into this site, without the engineer having
- * to visit Data Collection first.
+ * to visit Site Data first.
  */
 export const buildImportAndLinkResourceAccountSchema = z.object({ site_id: z.guid(), object_id: z.guid() }).strict();
 export type BuildImportAndLinkResourceAccountInput = z.infer<typeof buildImportAndLinkResourceAccountSchema>;
@@ -1486,7 +1486,7 @@ export const buildAutoAttendantPatchSchema = z.object({ name: optStr(160), ...bu
 export type BuildAutoAttendantPatchInput = z.infer<typeof buildAutoAttendantPatchSchema>;
 
 /**
- * Per site: which real tenant_policies row a Data Collection generic
+ * Per site: which real tenant_policies row a Site Data generic
  * calling-policy catalog entry ("International", "Standard", …) resolves to
  * for THIS site - see BuildService.assertCallingPoliciesMapped, which blocks
  * Populate until every catalog entry actually in use has one of these.

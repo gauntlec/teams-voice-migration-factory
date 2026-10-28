@@ -24,7 +24,7 @@ beforeAll(async () => {
 });
 
 describe('quick add', () => {
-  it('imports the number, policies, voicemail and Data Collection link from the discovered data', async () => {
+  it('imports the number, policies, voicemail and Site Data link from the discovered data', async () => {
     const pol = await c.s.insertInto('tenant_objects').values({ object_type: 'policy', object_key: 'TeamsCallingPolicy:AllowCalling', display_name: 'AllowCalling', data: {} } as never).returning('id').executeTakeFirstOrThrow();
     const policy = await c.s.insertInto('tenant_policies').values({ object_id: pol.id, policy_type: 'TeamsCallingPolicy', identity: 'Tag:AllowCalling', name: 'AllowCalling', data: {} } as never).returning('id').executeTakeFirstOrThrow();
     const [n] = await seedNumbers(c.s, 'NYC01', ['+12125550111']);
@@ -39,7 +39,7 @@ describe('quick add', () => {
     expect(row.policies).toMatchObject({ calling_policy: 'AllowCalling' });
     expect(row.policy_ids).toMatchObject({ calling_policy: policy.id });
     expect(row.voicemail).toEqual({ enabled: true, language: 'en-US' });
-    // the number is a copy: Data Collection's inventory claim is untouched
+    // the number is a copy: Site Data's inventory claim is untouched
     expect((await c.s.selectFrom('phone_numbers').select('status').where('id', '=', n.id).executeTakeFirstOrThrow()).status).toBe('available');
   });
 

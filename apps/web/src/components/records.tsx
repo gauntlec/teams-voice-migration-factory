@@ -120,7 +120,7 @@ export interface ColumnDef {
 /**
  * Autofill: when the user leaves `field`, call `run(value)`; any keys it returns
  * are copied into fields that are still empty, and `note` (if returned) is shown
- * under the field. Used by Data Collection to prefill from the Discovery snapshot.
+ * under the field. Used by Site Data to prefill from the Discovery snapshot.
  */
 export interface SuggestConfig {
   field: string;
@@ -226,7 +226,7 @@ const UNCHANGED = '__unchanged__';
 /**
  * Select many rows, set a handful of fields once, apply to all of them in
  * one request - the bulk-edit flow shared by Design & Build (BuildSiteWorkspace)
- * and Data Collection (SiteWorkspace), "Bulk edit (N selected)". One
+ * and Site Data (SiteWorkspace), "Bulk edit (N selected)". One
  * component so an improvement to the flow - a new field type, better
  * validation, whatever - lands in every page that uses it at once, instead
  * of drifting between copies. Deliberately not a mode of the RecordDialog

@@ -129,9 +129,9 @@ export class TelephonyService {
   }
 
   /**
-   * Bulk delete for Data Collection's Users / CAPs / Resource accounts tabs -
+   * Bulk delete for Site Data's Users / CAPs / Resource accounts tabs -
    * the ticked rows, or every row of that kind on one site. Same rules and
-   * side effects as deleting each row on its own (Data Collection lock, site
+   * side effects as deleting each row on its own (Site Data lock, site
    * scope, numbers back to the free pool; Design & Build rows populated from
    * them stay, just unlinked), in one transaction and one audit row.
    */
@@ -866,7 +866,7 @@ export class TelephonyService {
       .set({ holder_type: holderType, holder_id: holderId, status: 'assigned', live_only: false })
       .where('id', '=', numberId)
       .where('holder_id', 'is', null)
-      // free, or assigned only because Teams has it (number-reconcile.ts): a holder in Data Collection takes it over, and any clash with Teams is flagged
+      // free, or assigned only because Teams has it (number-reconcile.ts): a holder in Site Data takes it over, and any clash with Teams is flagged
       .where((eb) => eb.or([eb.and([eb('status', '=', 'available'), eb('live_status', 'is', null)]), eb('live_only', '=', true)]))
       .executeTakeFirst();
     if (!Number(res.numUpdatedRows)) {
@@ -938,7 +938,7 @@ export class TelephonyService {
 
   /**
    * Discovery link: the real tenant user (from the last Discovery run) whose UPN
-   * matches, or null. Purely additive - Data Collection works without a run.
+   * matches, or null. Purely additive - Site Data works without a run.
    */
   private async tenantUserIdFor(t: TenantContext, upn: string | null | undefined) {
     if (!upn) return null;
@@ -1078,7 +1078,7 @@ export class TelephonyService {
    * already linked. `unmatched` is how many unlinked users still have no live
    * tenant user. Discovery is the true source of what the customer's directory
    * actually calls this person, so every click of "Link to tenant" - not just
-   * the initial link - overwrites whatever name Data Collection had (typed by
+   * the initial link - overwrites whatever name Site Data had (typed by
    * hand, or from an Excel import) with the live tenant user's name. COALESCE
    * keeps the existing name only for the edge case where the live tenant user
    * has none recorded.

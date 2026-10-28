@@ -8,7 +8,7 @@ const useLocalStyles = makeStyles({
 });
 
 
-/** Last 10 significant digits, for loose number matching (same rule Data Collection uses). */
+/** Last 10 significant digits, for loose number matching (same rule Site Data uses). */
 export const numKey = (v: string | null | undefined): string => String(v ?? '').replace(/\D/g, '').slice(-10);
 
 export const VOICEMAIL_LANGUAGE_CHOICES: Choice[] = VOICEMAIL_PROMPT_LANGUAGES.map((l) => ({

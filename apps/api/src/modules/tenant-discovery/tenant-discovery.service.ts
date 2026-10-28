@@ -625,7 +625,7 @@ export class TenantDiscoveryService {
   /**
    * Delete every discovered object, the Users/Policies projections, the M365
    * group cache and the run history for this customer. `tenant_users` / `tenant_policies` cascade from
-   * `tenant_objects.object_id`; Data Collection users are kept but their
+   * `tenant_objects.object_id`; Site Data users are kept but their
    * `tenant_user_id` link is cleared (FK is ON DELETE SET NULL). Blocked while a
    * discovery is queued or running. Not reversible - re-run discovery to rebuild.
    */
@@ -948,7 +948,7 @@ export class TenantDiscoveryService {
 
   /**
    * Licence and cost hygiene from the last Discovery (shared/licence-report.ts): Teams Phone licences, resource accounts and numbers
-   * paid for but not used, and resource accounts that cannot work. Items are counted per Data Collection site where captured.
+   * paid for but not used, and resource accounts that cannot work. Items are counted per Site Data site where captured.
    */
   async licenceReport(t: TenantContext): Promise<{ findings: LicenceFinding[]; dataAsOf: string | null }> {
     const s = this.s(t);
@@ -1067,7 +1067,7 @@ export class TenantDiscoveryService {
   }
 
   /**
-   * Create Data Collection users for discovered tenant users that aren't captured
+   * Create Site Data users for discovered tenant users that aren't captured
    * yet (matched on lower(upn)), and link any existing unlinked matches.
    * `input.assignments` gives each included candidate its own site; a
    * candidate not named there falls back to `input.siteId` (the "set all
@@ -1078,7 +1078,7 @@ export class TenantDiscoveryService {
     const assignmentMap = new Map(input.assignments.map((a) => [a.id, a.siteId]));
     await this.assertSitesUsable(t, new Set([...assignmentMap.values(), ...(input.siteId ? [input.siteId] : [])]));
 
-    // 1. Link existing Data Collection users that match a tenant user but aren't linked yet.
+    // 1. Link existing Site Data users that match a tenant user but aren't linked yet.
     const relinked = await s
       .updateTable('discovery_users')
       .set({
@@ -1176,9 +1176,9 @@ export class TenantDiscoveryService {
   /**
    * Same idea as `importPreview`/`importUsers` but for discovered resource
    * accounts (`tenant_objects`, `object_type = 'resource_account'`) -
-   * Data Collection's own import never covered these until now. Matched
+   * Site Data's own import never covered these until now. Matched
    * on lower(name), same convention `BuildService.populateResourceAccounts`
-   * already uses to correlate a Data Collection row to its live match.
+   * already uses to correlate a Site Data row to its live match.
    */
   async importResourceAccountsPreview(t: TenantContext) {
     const s = this.s(t);
@@ -1291,7 +1291,7 @@ export class TenantDiscoveryService {
   }
 
   /**
-   * Attaches the discovered numbers to a Data Collection resource account. A number in none of the ranges is first added to this
+   * Attaches the discovered numbers to a Site Data resource account. A number in none of the ranges is first added to this
    * site's ranges (as a single-number "re-point" range, since it already exists live); one in another site's range, or already
    * assigned, is left alone. Returns what could not be attached, in words, for the result screen.
    */
@@ -1316,7 +1316,7 @@ export class TenantDiscoveryService {
       if (!row) problems.push(`${e164} could not be added to a number range, so it was not attached.`);
       else if (row.sitecode !== sitecode) problems.push(row.sitecode ? `${e164} is in the number range of site ${row.sitecode}, so it was not attached.` : `${e164} is in a number range that has no site, so it was not attached.`);
       else if (row.holder_id === raId) continue;
-      else if (row.holder_id) problems.push(`${e164} is already assigned in Data Collection, so it was not attached.`);
+      else if (row.holder_id) problems.push(`${e164} is already assigned in Site Data, so it was not attached.`);
       else await this.telephony.attachRaNumber(t, user, raId, row.id, false);
     }
     return problems;
@@ -1325,7 +1325,7 @@ export class TenantDiscoveryService {
   /**
    * One resource account on a site, from a discovered resource account. Found by the exact object; else a design row on this site
    * with the same UPN is linked to it (the design and the live account are the same thing); else a new row is made, with its number.
-   * `voiceApp` is the Data Collection voice app it answers for, when that is on this site.
+   * `voiceApp` is the Site Data voice app it answers for, when that is on this site.
    */
   private async ensureResourceAccount(
     t: TenantContext,
@@ -1444,12 +1444,12 @@ export class TenantDiscoveryService {
   }
 
   /**
-   * The Data Collection half of "add to site" for objects picked on a Discovery tab. Every object is matched on its own key and
+   * The Site Data half of "add to site" for objects picked on a Discovery tab. Every object is matched on its own key and
    * never on a display name, which can repeat: an account on its UPN, a resource account, auto attendant or call queue on its tenant
    * object id (the exact discovered object, which carries the Teams GUID). A voice app brings its own resource accounts; a resource
    * account brings only itself and joins the voice app that lists it when that voice app is already on the site. An object already on
    * the chosen site is left alone; one on another site is reported and not moved.
-   * Returns each item's result, the Data Collection row it ended up on, and the resource account rows Design & Build should follow.
+   * Returns each item's result, the Site Data row it ended up on, and the resource account rows Design & Build should follow.
    */
   async captureSelected(
     t: TenantContext,
@@ -1509,7 +1509,7 @@ export class TenantDiscoveryService {
             dataCollection: same ? 'already_on_site' : 'on_other_site',
             designAndBuild: off,
             otherSite: same ? null : siteCode(other.site_id),
-            note: `Already in Data Collection as ${as === 'user' ? 'a common area phone' : 'a user'}. Remove it there first to add it as ${as === 'user' ? 'a user' : 'a common area phone'}.`,
+            note: `Already in Site Data as ${as === 'user' ? 'a common area phone' : 'a user'}. Remove it there first to add it as ${as === 'user' ? 'a user' : 'a common area phone'}.`,
           });
           continue;
         }
@@ -1589,7 +1589,7 @@ export class TenantDiscoveryService {
   }
 
   /**
-   * Bulk "Import into Data Collection" for discovered resource accounts: each candidate becomes a resource account on the site chosen
+   * Bulk "Import into Site Data" for discovered resource accounts: each candidate becomes a resource account on the site chosen
    * for it, tied to the voice app that lists it when that voice app is already there. A voice app itself is brought in with Add to site.
    */
   async importResourceAccounts(t: TenantContext, user: AuthedUser, input: TenantResourceAccountsImportInput, canReview: boolean) {

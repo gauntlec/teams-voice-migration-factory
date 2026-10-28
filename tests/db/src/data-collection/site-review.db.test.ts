@@ -1,4 +1,4 @@
-// The Data Collection review is per site: each site is draft, submitted or accepted on its own. Nothing is locked; changes made
+// The Site Data review is per site: each site is draft, submitted or accepted on its own. Nothing is locked; changes made
 // to a site after it was submitted are recorded for the engineer until they are acknowledged. The site overview keeps one region
 // (on the site) and the people on the site by role.
 import { ConflictException, ForbiddenException } from '@nestjs/common';

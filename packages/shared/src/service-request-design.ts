@@ -15,7 +15,7 @@ import type { DEPLOYMENT_SHEETS } from './domain';
 import { SR_BUILD_KIND } from './service-request-build';
 import { SR_OPEN_STATUSES, SR_STATUS_LABELS, srReference, type SrStatus, type SrType } from './service-requests';
 
-/** What a request can be linked to. `site` is a new site (Data Collection); the rest are Design & Build rows. */
+/** What a request can be linked to. `site` is a new site (Site Data); the rest are Design & Build rows. */
 export const SR_ITEM_KINDS = ['site', 'user', 'cap', 'resource_account', 'shared_calling_policy', 'call_queue', 'auto_attendant', 'number_range'] as const;
 export type SrItemKind = (typeof SR_ITEM_KINDS)[number];
 
@@ -59,7 +59,7 @@ export const SR_DESIGN_HEADER = 'x-service-request';
 
 /**
  * Request types designed on the Design tab and deployed on the Deploy tab.
- * A new site is made in Data Collection, and new numbers / "other" are
+ * A new site is made in Site Data, and new numbers / "other" are
  * handled by hand, so those keep the manual status buttons only.
  */
 export function srHasDesign(type: SrType): boolean {

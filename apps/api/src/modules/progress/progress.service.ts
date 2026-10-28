@@ -29,7 +29,7 @@ interface PackSource {
 
 /**
  * The home-page dashboard: each site's stage in the migration, derived from
- * what Data Collection, Design & Build, Deployment, Handover and the site's
+ * what Site Data, Design & Build, Deployment, Handover and the site's
  * mode already store (deriveSiteProgress in @tvmf/shared holds the rules).
  * Read-only, and readable by every role - what each role is shown is cut down
  * here, not by the route's permission. See docs/PROGRESS.md.
@@ -74,7 +74,7 @@ export class ProgressService {
     const items: CustomerProgressItem[] = [];
     const sitesWord = (n: number) => `${n} ${n === 1 ? 'site' : 'sites'}`;
     if (dataCollection.draft > 0) {
-      items.push({ kind: 'data_collection', message: `Data Collection has not been submitted for ${sitesWord(dataCollection.draft)}`, attention: true });
+      items.push({ kind: 'data_collection', message: `Site Data has not been submitted for ${sitesWord(dataCollection.draft)}`, attention: true });
     }
     if (dataCollection.submitted > 0) {
       items.push({

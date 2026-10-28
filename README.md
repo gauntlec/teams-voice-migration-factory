@@ -1,7 +1,7 @@
 # Teams Voice Migration Factory
 
 Multi-tenant web platform that replaces the manual Microsoft Teams voice
-migration workflow — **Data Collection → Design & Build → Deployment (audited) →
+migration workflow — **Site Data → Design & Build → Deployment (audited) →
 Service Handover** — styled to feel like the Microsoft Teams Admin Center.
 
 > This repository is intended to be maintained with AI coding assistance. The

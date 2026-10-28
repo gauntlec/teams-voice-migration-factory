@@ -113,7 +113,7 @@ export function DataCollection() {
 
   return (
     <Page
-      title="Data Collection"
+      title="Site Data"
       subtitle="Pick a site to capture its overview, numbers, users, CAPs and resource accounts."
     >
       {!siteScoped && (

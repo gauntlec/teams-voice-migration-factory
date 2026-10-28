@@ -226,7 +226,7 @@ export class BuildService {
 
   /**
    * Read-only reference from the linked discovery_users row - what the
-   * customer told us in Data Collection, kept visible in Design & Build for
+   * customer told us in Site Data, kept visible in Design & Build for
    * comparison, never overwritten there. `requested_number` is the free-text
    * ask (separate from the actual number import, see populateUsers);
    * `caller_id`/`voicemail_enabled`/`voicemail_language` are shown so the
@@ -269,7 +269,7 @@ export class BuildService {
   /**
    * Quick add: the engineer types only UPNs and each row is imported from the discovered tenant data - the live number
    * (and its type), the live policy assignments and, once a Validate check has read it, the voicemail settings. For a
-   * common area phone the tenant's display name too. Linked to the site's Data Collection record when it has one.
+   * common area phone the tenant's display name too. Linked to the site's Site Data record when it has one.
    * A UPN that is not in the discovered data is reported, not added: Validate against tenant can find it live.
    */
   async quickAddIdentity(t: TenantContext, u: AuthedUser, table: 'build_users' | 'build_caps', objectType: 'user' | 'cap', siteId: string, rawUpns: string[]): Promise<BuildQuickAddResult> {
@@ -464,7 +464,7 @@ export class BuildService {
   }
 
   /**
-   * "Add to site" for objects picked on a Discovery tab: Data Collection first (TenantDiscoveryService.captureSelected, which
+   * "Add to site" for objects picked on a Discovery tab: Site Data first (TenantDiscoveryService.captureSelected, which
    * matches on UPN / tenant object id, never on a name), then - unless switched off - the Design & Build row, filled from the
    * discovered data the same way Quick add and Populate do. An account is routed to Users or Common area phones.
    */
@@ -535,9 +535,9 @@ export class BuildService {
   async populateUsers(t: TenantContext, u: AuthedUser, siteId: string) {
     const s = this.s(t);
     await this.assertCallingPoliciesMapped(t, siteId, 'discovery_users', 'build_users', 'discovery_user_id');
-    // Data Collection's Users tab assigns a real phone_numbers claim (the
+    // Site Data's Users tab assigns a real phone_numbers claim (the
     // picker, not the free-text requested_number). Design & Build imports a
-    // *copy* of that number as this row's starting target - Data Collection
+    // *copy* of that number as this row's starting target - Site Data
     // keeps its own claim untouched; it's the input record, not something
     // Populate should consume. See BuildValidationService for the
     // duplicate-number check this now depends on instead of a shared claim.
@@ -554,7 +554,7 @@ export class BuildService {
       siteId,
       map: (d) => {
         // Every new row starts from the site's default Users template (if
-        // any); a user with a Data Collection calling policy set gets that
+        // any); a user with a Site Data calling policy set gets that
         // specific mapped real Voice Routing Policy instead of the
         // template's default - the Teams concept that actually governs
         // local/national/international dialing permission is
@@ -685,7 +685,7 @@ export class BuildService {
         }
         return mapped;
       },
-      skip: (d) => !d.upn, // a CAP row with no UPN yet can't be provisioned in Teams; leave it in Data Collection
+      skip: (d) => !d.upn, // a CAP row with no UPN yet can't be provisioned in Teams; leave it in Site Data
     });
   }
 
@@ -700,7 +700,7 @@ export class BuildService {
     else base = base.where('hidden', '=', false);
     if (q.q) {
       // The UPN, the number and the person's name. A row has no name of its own (a CAP does), so the name is looked up from the
-      // tenant user with that UPN and from the Data Collection record the row was populated from.
+      // tenant user with that UPN and from the Site Data record the row was populated from.
       const like = `%${q.q}%`;
       const linkTable = table === 'build_users' ? 'discovery_users' : 'discovery_caps';
       const linkCol = table === 'build_users' ? 'discovery_user_id' : 'discovery_cap_id';
@@ -751,7 +751,7 @@ export class BuildService {
     return { items, total: Number(n), page: q.page, limit: q.limit } satisfies Paginated<unknown>;
   }
 
-  /** Each row's person name: the tenant user with that UPN, else the Data Collection record the row came from. */
+  /** Each row's person name: the tenant user with that UPN, else the Site Data record the row came from. */
   private async nameLookup(
     t: TenantContext,
     table: 'build_users' | 'build_caps',
@@ -1087,9 +1087,9 @@ export class BuildService {
    * Deletes the build row, and - the "disassociate from a site" path for a
    * resource account picked by mistake via "Link discovered resource
    * account" (BuildService.importAndLinkResourceAccount) - also removes its
-   * underlying Data Collection row (discovery_resource_accounts), but only
+   * underlying Site Data row (discovery_resource_accounts), but only
    * when that row is still the empty shell Populate/Link created (every
-   * narrative field null). A Data Collection row a human has since filled
+   * narrative field null). A Site Data row a human has since filled
    * in with real content is left alone, exactly as this always behaved:
    * deleting the build row must not silently destroy hand-entered Data
    * Collection content. Any build_auto_attendants/build_call_queues row
@@ -1305,7 +1305,7 @@ export class BuildService {
   }
 
   /**
-   * Populate, Data Collection -> Design & Build. Voice apps and resource accounts are two different things (a voice app has its own
+   * Populate, Site Data -> Design & Build. Voice apps and resource accounts are two different things (a voice app has its own
    * name and settings; a resource account its own UPN and number; a voice app lists its resource accounts), so each has its own
    * Populate, and a final step lists the resource accounts on the voice app they answer for. `populateVoiceApps` and
    * `populateResourceAccounts` can each be run on their own; the Resource accounts tab's button runs both.
@@ -1317,7 +1317,7 @@ export class BuildService {
   }
 
   /**
-   * Each Data Collection voice app becomes an auto attendant or call queue row, named with the voice app's own name, and the narrative
+   * Each Site Data voice app becomes an auto attendant or call queue row, named with the voice app's own name, and the narrative
    * fields (business_hours/who_answers/...) are kept so they don't vanish (only `comments` maps onto call queues, as notes). A voice
    * app linked to a discovered one is then filled in from that live voice app; a designed one with no live object is linked to a live
    * voice app of the same kind and exact name when there is exactly one (the design and the live object are the same thing).
@@ -1409,8 +1409,8 @@ export class BuildService {
   }
 
   /**
-   * Each Data Collection resource account becomes a Design & Build resource account row: its own name and UPN (blank until the account
-   * exists), its kind, and its number - from what Teams has live, else the number chosen for it in Data Collection. A row for the same
+   * Each Site Data resource account becomes a Design & Build resource account row: its own name and UPN (blank until the account
+   * exists), its kind, and its number - from what Teams has live, else the number chosen for it in Site Data. A row for the same
    * UPN made by hand is linked, not duplicated.
    */
   async populateResourceAccounts(t: TenantContext, u: AuthedUser, siteId: string, onlyIds?: string[]) {
@@ -1466,7 +1466,7 @@ export class BuildService {
   }
 
   /**
-   * Lists each Design & Build resource account on the auto attendant or call queue it answers for (the voice app its Data Collection
+   * Lists each Design & Build resource account on the auto attendant or call queue it answers for (the voice app its Site Data
    * row belongs to). Safe to run again: it only adds what is missing.
    */
   private async linkResourceAccountsToVoiceApps(s: Scoped, siteId: string) {
@@ -1492,7 +1492,7 @@ export class BuildService {
 
   /**
    * "Link discovered resource account" - lets an engineer pull one specific live resource account (`tenant_objects.id`) straight into
-   * this site without visiting Data Collection first: the resource account row in Data Collection, then its Design & Build row. It
+   * this site without visiting Site Data first: the resource account row in Site Data, then its Design & Build row. It
    * brings only the resource account; the voice app it answers for is added with Add to site (the result says which one).
    */
   async importAndLinkResourceAccount(t: TenantContext, u: AuthedUser, objectId: string, siteId: string, canReview: boolean) {
@@ -1520,7 +1520,7 @@ export class BuildService {
     ]);
     if (createdAa.length === 0 && createdCq.length === 0) return;
 
-    // Every live auto attendant and call queue: a voice app is matched to its live object by the exact object (the Data Collection
+    // Every live auto attendant and call queue: a voice app is matched to its live object by the exact object (the Site Data
     // voice app's tenant_object_id), never by a name that two of them could share.
     const [liveApps, liveSchedules, liveUsers, voiceApps] = await Promise.all([
       s.selectFrom('tenant_objects').select(['id', 'object_type', 'data']).where('object_type', 'in', ['auto_attendant', 'call_queue']).where('removed_at', 'is', null).execute(),
@@ -1837,7 +1837,7 @@ export class BuildService {
     if (!row) throw new NotFoundException('row not found');
     if (!row.discovery_voice_app_id) throw new BadRequestException('This row was not made from a discovered voice app, so there is nothing to refresh it from. Add the discovered one to the site first.');
     const app = await s.selectFrom('discovery_voice_apps').select('tenant_object_id').where('id', '=', row.discovery_voice_app_id).executeTakeFirst();
-    if (!app?.tenant_object_id) throw new BadRequestException('Its Data Collection voice app is not linked to a discovered object, so there is nothing to refresh it from.');
+    if (!app?.tenant_object_id) throw new BadRequestException('Its Site Data voice app is not linked to a discovered object, so there is nothing to refresh it from.');
     await this.populateStructuredFromLive(s, row.site_id, [row.discovery_voice_app_id]);
     await this.audit.tenant(t.schema, 'build.voice_app_refreshed', { actor: actorOf(u), targetType: table, targetId: id, detail: { name: row.name } });
     return { ok: true };
@@ -1913,7 +1913,7 @@ export class BuildService {
   /* ==================== import wizard capture into Design & Build =================== */
 
   /**
-   * "Import to Design & Build" (Data Collection's Call flows tab). Converts
+   * "Import to Design & Build" (Site Data's Call flows tab). Converts
    * the AA/CQ creation wizard's plain-language capture
    * (discovery_flows.wizard_answers) into a real build_auto_attendants/
    * build_call_queues row via the same create/update methods the
@@ -1948,7 +1948,7 @@ export class BuildService {
     // case-insensitive match on UPN or display name resolves. A
     // discovery_users match already linked to a live user (tenant_user_id,
     // set by "Link to tenant") resolves to that user's real UPN; otherwise
-    // it resolves to the UPN the customer typed into Data Collection
+    // it resolves to the UPN the customer typed into Site Data
     // themselves - not yet confirmed live, but a deliberate answer, not a
     // guess. Anything matching neither source is carried through as typed
     // rather than dropped (a typed-but-unmatched name used to vanish
@@ -2113,7 +2113,7 @@ export class BuildService {
       .set({ holder_type: holderType, holder_id: holderId, status: 'assigned', live_only: false })
       .where('id', '=', numberId)
       .where('holder_id', 'is', null)
-      // free, or assigned only because Teams has it (number-reconcile.ts): a holder in Data Collection takes it over, and any clash with Teams is flagged
+      // free, or assigned only because Teams has it (number-reconcile.ts): a holder in Site Data takes it over, and any clash with Teams is flagged
       .where((eb) => eb.or([eb.and([eb('status', '=', 'available'), eb('live_status', 'is', null)]), eb('live_only', '=', true)]))
       .executeTakeFirst();
     if (!Number(res.numUpdatedRows)) {
@@ -2126,10 +2126,10 @@ export class BuildService {
 
   /**
    * The number a discovery_users/discovery_caps row currently has claimed in
-   * the shared `phone_numbers` inventory (via Data Collection's own picker) -
-   * read-only. Populate from Data Collection copies both the id and the e164 onto
+   * the shared `phone_numbers` inventory (via Site Data's own picker) -
+   * read-only. Populate from Site Data copies both the id and the e164 onto
    * the new build row (phone_number_id, e164) as a real reference, not just
-   * text - see 0017_build_phone_number_id.sql. Data Collection's own claim
+   * text - see 0017_build_phone_number_id.sql. Site Data's own claim
    * (phone_numbers.holder_id) is never touched, so its Number column keeps
    * showing it too. Batched: one query for the whole site.
    */
@@ -2648,10 +2648,10 @@ export class BuildService {
 
   /**
    * Wipe every build_users/build_caps/build_resource_accounts row for a site
-   * so Populate from Data Collection can start fresh. Releases any phone_numbers
+   * so Populate from Site Data can start fresh. Releases any phone_numbers
    * those rows held back to 'available' first - this never touches the
    * customer tenant itself, only Voxshift's own draft configuration, and
-   * discovery_users/discovery_caps in Data Collection (the source data) are
+   * discovery_users/discovery_caps in Site Data (the source data) are
    * untouched, so re-populating recovers everything.
    */
   async resetSite(t: TenantContext, u: AuthedUser, siteId: string) {

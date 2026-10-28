@@ -61,7 +61,7 @@ export function useTeamChoices(tenantId: string, siteId: string): TeamChoice[] {
 
 /**
  * "Guided setup" - a small, data-driven tile grid above the site workspace's
- * tab bar (Data Collection's "Discovery" site page). Each tile launches a
+ * tab bar (Site Data's "Discovery" site page). Each tile launches a
  * multi-step wizard that captures Auto Attendant/Call Queue requirements in
  * plain language and saves them onto a Call flows row (see the "Auto
  * Attendant / Call Queue Creation Wizard" plan). Adding a future wizard is

@@ -1,5 +1,5 @@
 // Handset tracker: counted from the site's users (handset_model) and common area phones (device_model), with the stage the project
-// manager sets for each model. Quantities follow Data Collection; the stage is kept per site and model.
+// manager sets for each model. Quantities follow Site Data; the stage is kept per site and model.
 import { NotFoundException } from '@nestjs/common';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { AuditService } from '../../../../apps/api/src/common/audit.service';

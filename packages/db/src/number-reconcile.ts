@@ -3,10 +3,10 @@ import type { Scoped } from './live-state';
 
 /*
  * Numbers follow Teams (migration 0074). At the end of every Discovery sync, each number Teams has assigned is shown as assigned to its
- * real holder in the number inventory, whatever site it belongs to and whether or not that holder is in Data Collection yet:
+ * real holder in the number inventory, whatever site it belongs to and whether or not that holder is in Site Data yet:
  *  - a number in no range is added to a "Found in Teams" range with no site, so it is never offered as free;
- *  - a free number becomes assigned (live_only) until a Data Collection holder claims it;
- *  - when the Data Collection holder (or a reservation) disagrees with Teams, Teams wins and `conflict` says what clashes, for an
+ *  - a free number becomes assigned (live_only) until a Site Data holder claims it;
+ *  - when the Site Data holder (or a reservation) disagrees with Teams, Teams wins and `conflict` says what clashes, for an
  *    engineer to resolve - nothing in the design is overwritten;
  *  - a number Teams no longer has assigned stops being live; if only Teams was holding it, it goes back to available (the cool-off
  *    is started separately, as the sync sees the release).
@@ -19,7 +19,7 @@ export interface NumberReconcileResult {
   added: number;
   /** free numbers now shown as assigned because Teams has them */
   taken: number;
-  /** numbers whose Data Collection holder or reservation disagrees with Teams */
+  /** numbers whose Site Data holder or reservation disagrees with Teams */
   conflicts: number;
   /** numbers Teams no longer has assigned */
   released: number;
@@ -67,7 +67,7 @@ interface Holder {
   name: string | null;
 }
 
-/** The Data Collection holders (user, common area phone, resource account) of these numbers. */
+/** The Site Data holders (user, common area phone, resource account) of these numbers. */
 async function designHolders(s: Scoped, rows: HolderRow[]): Promise<Map<string, Holder>> {
   const ids = (type: string) => [...new Set(rows.filter((r) => r.holder_type === type && r.holder_id).map((r) => r.holder_id as string))];
   const out = new Map<string, Holder>();
@@ -77,7 +77,7 @@ async function designHolders(s: Scoped, rows: HolderRow[]): Promise<Map<string, 
   if (caps.length) for (const c of await s.selectFrom('discovery_caps').select(['id', 'upn', 'display_name']).where('id', 'in', caps).execute()) out.set(c.id, { upn: c.upn?.toLowerCase() ?? null, name: c.display_name });
   const ras = ids('resource_account');
   if (ras.length) for (const r of await s.selectFrom('discovery_resource_accounts').select(['id', 'upn', 'name']).where('id', 'in', ras).execute()) out.set(r.id, { upn: r.upn?.toLowerCase() ?? null, name: r.name });
-  // Design & Build rows claim numbers under their own ids, so look there for any holder the Data Collection tables did not know.
+  // Design & Build rows claim numbers under their own ids, so look there for any holder the Site Data tables did not know.
   const unknown = (type: string) => ids(type).filter((id) => !out.has(id));
   const bUsers = unknown('user');
   if (bUsers.length) for (const u of await s.selectFrom('build_users').select(['id', 'upn']).where('id', 'in', bUsers).execute()) out.set(u.id, { upn: u.upn?.toLowerCase() ?? null, name: u.upn });
@@ -91,16 +91,16 @@ async function designHolders(s: Scoped, rows: HolderRow[]): Promise<Map<string, 
 const liveLabel = (l: Pick<LiveNumber, 'name' | 'upn'>) => l.name ?? l.upn ?? 'another object';
 
 /**
- * The clash between what Teams has and what Data Collection has, in words; null when they agree or cannot be compared (a live
- * holder Voxshift does not know - e.g. an unlicensed user the sync skips - or a Data Collection holder with no UPN).
+ * The clash between what Teams has and what Site Data has, in words; null when they agree or cannot be compared (a live
+ * holder Voxshift does not know - e.g. an unlicensed user the sync skips - or a Site Data holder with no UPN).
  */
 export function numberConflict(row: { status: string; holder_type: string | null; holder_id: string | null }, design: Holder | undefined, live: LiveNumber | null): string | null {
   if (!live) return null;
   const on = liveLabel(live);
   if (!row.holder_id) return row.status === 'reserved' ? `Live in Teams on ${on}, but reserved here.` : null;
-  if (row.holder_type === 'analogue') return `Live in Teams on ${on}, but Data Collection has it as an analogue line.`;
+  if (row.holder_type === 'analogue') return `Live in Teams on ${on}, but Site Data has it as an analogue line.`;
   if (!design?.upn || !live.upn) return null;
-  return design.upn === live.upn ? null : `Live in Teams on ${on}, but Data Collection has it for ${design.name ?? design.upn}.`;
+  return design.upn === live.upn ? null : `Live in Teams on ${on}, but Site Data has it for ${design.name ?? design.upn}.`;
 }
 
 /** Brings the inventory in line with Teams. `releaseMissing`: also stop treating numbers Teams no longer lists as live (only when the sync read every number). */

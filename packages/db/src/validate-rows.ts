@@ -11,9 +11,9 @@ export interface IdentityRow {
   policy_ids: Record<string, string | null> | null;
   /** the site the row belongs to, for the usage location check */
   site_id?: string | null;
-  /** the Data Collection user this row came from, for the requested-number check (users only) */
+  /** the Site Data user this row came from, for the requested-number check (users only) */
   discovery_user_id?: string | null;
-  /** the Data Collection common area phone this row came from, for the number change check (CAPs only) */
+  /** the Site Data common area phone this row came from, for the number change check (CAPs only) */
   discovery_cap_id?: string | null;
   /** the engineer's accept/reject of a number change (build_users/build_caps.number_decision) */
   number_decision?: unknown;
@@ -90,7 +90,7 @@ export async function validateIdentityRows(s: Scoped, rows: IdentityRow[]): Prom
       : [];
     const byLinkedId = new Map(linkedPolicies.map((p) => [p.id, p]));
 
-    // Design & Build imports a *copy* of the number Data Collection already
+    // Design & Build imports a *copy* of the number Site Data already
     // assigned (see BuildService.populateUsers/populateCaps) - it doesn't
     // take over the claim, so the phone_numbers inventory can no longer tell
     // us "does another build row have this too". Count occurrences directly
@@ -112,7 +112,7 @@ export async function validateIdentityRows(s: Scoped, rows: IdentityRow[]): Prom
       }
     }
 
-    // What the customer asked for in Data Collection vs what is assigned to them.
+    // What the customer asked for in Site Data vs what is assigned to them.
     const dUserIds = [...new Set(rows.map((r) => r.discovery_user_id).filter((v): v is string => !!v))];
     const requestedByDUser = new Map<string, { requested: string; assigned: string | null }>();
     if (dUserIds.length) {
@@ -129,7 +129,7 @@ export async function validateIdentityRows(s: Scoped, rows: IdentityRow[]): Prom
       }
     }
 
-    // The number Data Collection assigned to each person. Only compared once the site has been submitted for
+    // The number Site Data assigned to each person. Only compared once the site has been submitted for
     // review: before that the design is still being shaped and a different number is no surprise.
     const assignedByHolder = new Map<string, string>();
     for (const [holderType, ids] of [
@@ -186,7 +186,7 @@ export async function validateIdentityRows(s: Scoped, rows: IdentityRow[]): Prom
             row.needsPhoneLicence ?? true,
           )
         : { accountDisabled: false, noPhoneLicence: false };
-      // A designed number that differs from the live one, or from Data Collection's once the site is submitted.
+      // A designed number that differs from the live one, or from Site Data's once the site is submitted.
       let numberChange: NumberChange | null = null;
       if (row.e164) {
         const liveNumber = lineUriToNumber(live?.line_uri);

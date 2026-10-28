@@ -1,5 +1,5 @@
 /**
- * The people on a site, shown on the Site Overview in Data Collection. Five roles, each holding any number of people. A person is
+ * The people on a site, shown on the Site Overview in Site Data. Five roles, each holding any number of people. A person is
  * either picked from the active users (`userId`) or typed as free text (`name` and/or `email`).
  */
 

@@ -71,11 +71,11 @@ export function TargetPicker({
   onChange: (v: WizardTarget | undefined) => void;
   kinds?: WizardTarget['kind'][];
   allowNone?: boolean;
-  /** Tenant-scoped Data Collection API base (e.g. `/t/:tenantId/discovery`) - needed only for the "Set up a new call queue" kind's nested wizard. */
+  /** Tenant-scoped Site Data API base (e.g. `/t/:tenantId/discovery`) - needed only for the "Set up a new call queue" kind's nested wizard. */
   base?: string;
   /** Enables live-matching against synced tenant users for kind 'person'. */
   tenantId?: string;
-  /** Also suggests this site's own Data Collection Users tab entries, not just the live tenant sync. */
+  /** Also suggests this site's own Site Data Users tab entries, not just the live tenant sync. */
   siteId?: string;
   /** This site's existing Call Queue/Auto Attendant names, suggested for kind 'team'. */
   teamChoices?: TeamChoice[];

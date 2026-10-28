@@ -29,7 +29,7 @@ export interface LicenceReportInput {
   numbers: LicenceReportNumber[];
   /** Entra object ids of resource accounts that some auto attendant or call queue uses */
   attachedResourceAccountIds: Set<string>;
-  /** lower-case UPN -> the Data Collection site it is captured on */
+  /** lower-case UPN -> the Site Data site it is captured on */
   siteOf: Map<string, string>;
 }
 

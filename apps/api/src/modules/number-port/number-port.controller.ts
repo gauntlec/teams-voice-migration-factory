@@ -24,9 +24,9 @@ import { TenantGuard } from '../../rbac/tenant.guard';
 import { NumberPortService } from './number-port.service';
 
 /**
- * "LOA Data Collection and Tracking" - number-port document checklist.
+ * "LOA Site Data and Tracking" - number-port document checklist.
  * Shares the `t/:tenantId/discovery` base with DataCollectionController /
- * TelephonyController, since this is conceptually part of Data Collection.
+ * TelephonyController, since this is conceptually part of Site Data.
  */
 @Controller('t/:tenantId/discovery')
 @UseGuards(TenantGuard)

@@ -2,7 +2,7 @@ import { ForbiddenException } from '@nestjs/common';
 import type { TenantContext } from '../../common/request';
 
 /**
- * Site-scope enforcement for Data Collection. `t.siteScope` is set by
+ * Site-scope enforcement for Site Data. `t.siteScope` is set by
  * `TenantGuard`: `null` for whole-customer access, or the list of
  * `discovery_sites.id` values a "site contact" is limited to.
  */

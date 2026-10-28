@@ -14,7 +14,7 @@ import {
 
 /**
  * A discovered auto attendant or call queue as the Call flows wizard's plain-language answers - the reverse of wizard-convert.ts -
- * so a voice app added to a site from Discovery appears on Data Collection's Call flows tab like one captured by hand. Names are
+ * so a voice app added to a site from Discovery appears on Site Data's Call flows tab like one captured by hand. Names are
  * only ever taken from ids the caller can resolve (`ctx`); anything the wizard cannot say is left out and listed in `notes`.
  */
 export interface VoiceAppWizardContext {

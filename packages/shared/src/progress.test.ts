@@ -27,7 +27,7 @@ const designed = (over: Partial<SiteProgressInput['build']> = {}): SiteProgressI
 const stateOf = (p: ReturnType<typeof deriveSiteProgress>) => Object.fromEntries(p.stages.map((s) => [s.key, s.state]));
 
 describe('deriveSiteProgress', () => {
-  it('a brand-new site is at Data Collection with one blocker', () => {
+  it('a brand-new site is at Site Data with one blocker', () => {
     const p = deriveSiteProgress(base({ discoveryStatus: 'draft' }));
     expect(p.current).toBe('data_collection');
     expect(p.complete).toBe(false);
@@ -35,7 +35,7 @@ describe('deriveSiteProgress', () => {
     expect(p.blockers).toEqual([{ stage: 'data_collection', message: 'No users, phones or resource accounts captured yet' }]);
   });
 
-  it('Data Collection is done once something is captured and the customer has submitted', () => {
+  it('Site Data is done once something is captured and the customer has submitted', () => {
     const captured = { users: 5, caps: 1, resourceAccounts: 0 };
     expect(stateOf(deriveSiteProgress(base({ captured, discoveryStatus: 'draft' }))).data_collection).toBe('todo');
     const submitted = deriveSiteProgress(base({ captured, discoveryStatus: 'submitted' }));
@@ -151,7 +151,7 @@ describe('deriveSiteProgress', () => {
   });
 
   it('the current stage is the one after the furthest finished stage, even if an earlier one is unfinished', () => {
-    // Designed straight from the live tenant: nothing captured, Data Collection never submitted.
+    // Designed straight from the live tenant: nothing captured, Site Data never submitted.
     const p = deriveSiteProgress(base({ discoveryStatus: 'draft', build: designed() }));
     expect(stateOf(p)).toMatchObject({ data_collection: 'todo', validated: 'done' });
     expect(p.current).toBe('dry_run');

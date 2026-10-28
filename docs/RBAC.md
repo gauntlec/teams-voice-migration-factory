@@ -26,7 +26,7 @@ those are engineer/admin only. Cannot create tenants or manage staff accounts.
 ### `ENGINEER`
 Delivery staff. Assigned to **one or more** customers via
 `tenant_memberships` (always whole-customer — never site-scoped). Within an
-assigned customer, full access to every module (Data Collection, Design & Build,
+assigned customer, full access to every module (Site Data, Design & Build,
 Deployment, Handover, Audit), including adding/editing **sites** (Sites admin
 page). Can switch between their assigned customers (`X-Tenant-Id`). An engineer
 can **create** customer users in a customer they are assigned to and grant them
@@ -34,7 +34,7 @@ whole-customer or site-scoped access. Cannot create tenants, cannot manage staff
 accounts, cannot see tenants they are not assigned to.
 
 ### `CUSTOMER`
-Belongs to exactly **one** tenant. Data Collection: read + write (this is their
+Belongs to exactly **one** tenant. Site Data: read + write (this is their
 job — fill in discovery). Service Handover: read-only. Audit: read-only, own
 tenant only. **Design & Build and Deployment are not shown**; **cannot add or
 edit sites** (engineer/admin only). No access to users, tenants, or any other
@@ -62,7 +62,7 @@ and raises requests for their own sites. See [SERVICE-REQUESTS.md](SERVICE-REQUE
 #### Site-scoped customer ("site contact")
 A `CUSTOMER` membership can carry `tenant_memberships.site_ids` (a list of
 `discovery_sites.id`). Empty = the whole customer. Non-empty = the user is a
-**site contact**: they see and edit only Data Collection rows tied to those
+**site contact**: they see and edit only Site Data rows tied to those
 sites — number ranges + inventory, users, CAPs, resource accounts, network
 subnets and call-flow notes. Site records and each site's **Overview**
 (`discovery_sites.overview` — the 7 overview fields + assigned engineers/PMs) are
@@ -93,7 +93,7 @@ People can also sign in through the Voxshift Hub or the customer's own OpenID Co
 
 Site records (sitecode, address, map coordinates) are created and edited on the
 **Sites admin page** (`/admin/sites`, `discovery:sites:manage` → SUPER_ADMIN,
-PROJECT_MANAGER, ENGINEER). The Data Collection module shows sites read-only
+PROJECT_MANAGER, ENGINEER). The Site Data module shows sites read-only
 (map + list, "open site"). The API for site CRUD is unchanged
 (`POST/PATCH/DELETE /t/:id/discovery/sites`).
 
@@ -164,7 +164,7 @@ sso:manage
    schema and the membership's `siteScope` (null = whole customer) on the request.
 3. `PermissionsGuard` — reads `@RequirePermission('build:write')` metadata and
    checks `can(role, permission)` from the shared matrix.
-4. Site scope — the Data Collection services (`data-collection.service.ts`,
+4. Site scope — the Site Data services (`data-collection.service.ts`,
    `data-collection.telephony.service.ts`) narrow every read to `req.tenant.siteScope`
    and reject any write to a row outside it (`site-scope.ts` helpers). Customer-wide
    actions (overview, calling policies, sites, submit) call `assertCustomerWide`.

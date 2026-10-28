@@ -361,7 +361,7 @@ async function runDiscovery(
 
   progress.step = null;
   progress.note = null;
-  // Numbers follow Teams: whatever Teams has assigned is shown as assigned to its real holder, and a clash with Data Collection is flagged.
+  // Numbers follow Teams: whatever Teams has assigned is shown as assigned to its real holder, and a clash with Site Data is flagged.
   // Numbers Teams no longer lists are only released when this run read every number cleanly. Best-effort.
   let numbers: NumberReconcileResult | null = null;
   if (!signInLost) {

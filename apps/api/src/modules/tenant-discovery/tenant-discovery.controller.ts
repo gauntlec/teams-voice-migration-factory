@@ -213,8 +213,8 @@ export class TenantDiscoveryController {
   }
 
   /**
-   * Exact-UPN lookup for the Data Collection add-user autofill. Anyone who can
-   * write Data Collection may call it (they only learn about the UPN they typed).
+   * Exact-UPN lookup for the Site Data add-user autofill. Anyone who can
+   * write Site Data may call it (they only learn about the UPN they typed).
    */
   @Get('users/lookup')
   @RequirePermission('discovery:write')
@@ -241,7 +241,7 @@ export class TenantDiscoveryController {
     return this.svc.getSiteSuggestions(t, siteId || undefined);
   }
 
-  /* import into Data Collection */
+  /* import into Site Data */
 
   @Get('import-users/preview')
   @RequirePermission('tenantdiscovery:read', 'discovery:write')

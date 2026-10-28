@@ -35,10 +35,10 @@ export function Discovery() {
   });
   const invalidateAll = () => {
     qc.invalidateQueries({ queryKey: ['tdisc'] });
-    // what was just added to a site shows up in Data Collection and Design & Build
+    // what was just added to a site shows up in Site Data and Design & Build
     qc.invalidateQueries({ queryKey: ['build-summary'] });
   };
-  // Adding a discovered object to a site writes to Data Collection and to Design & Build, so it needs both.
+  // Adding a discovered object to a site writes to Site Data and to Design & Build, so it needs both.
   const canAdd = can('discovery:write') && can('build:write');
 
   if (!tid) return <NoTenant />;
@@ -49,7 +49,7 @@ export function Discovery() {
   return (
     <Page
       title="Discovery"
-      subtitle="A point-in-time inventory of the customer's live Microsoft Teams tenant - users, licences, numbers and every voice policy - for Data Collection, Design & Build and Deployment to reference."
+      subtitle="A point-in-time inventory of the customer's live Microsoft Teams tenant - users, licences, numbers and every voice policy - for Site Data, Design & Build and Deployment to reference."
     >
       <div className={s.grid}>
         <ConnectCard base={base} summary={sm} canRun={can('tenantdiscovery:run')} onChanged={invalidateAll} />
@@ -88,7 +88,7 @@ export function Discovery() {
               .map((t) => (
                 <StatTile key={t} count={counts[t] ?? 0} label={TENANT_OBJECT_TYPE_LABELS[t]} to={TILE_TAB[t]} onOpen={setTab} />
               ))}
-            <StatTile count={sm?.linkedDiscoveryUsers ?? 0} label="Linked to Data Collection" to="users" onOpen={setTab} />
+            <StatTile count={sm?.linkedDiscoveryUsers ?? 0} label="Linked to Site Data" to="users" onOpen={setTab} />
             <StatTile count={sm?.groupsCount ?? 0} label="M365 groups" to="groups" onOpen={setTab} />
           </div>
           <PurgeCard

@@ -14,7 +14,7 @@ interface TenantUserHit {
  * Type-ahead UPN field, backed by the tenant's live synced users
  * (GET /t/:id/tenant-discovery/users - the same source Discovery's own
  * Users tab searches). When `siteId` is given, also searches that site's
- * own Data Collection Users tab (discovery_users) - a greenfield site often
+ * own Site Data Users tab (discovery_users) - a greenfield site often
  * has people typed in there long before a live tenant sync ever runs, so
  * restricting suggestions to tenant_users alone would offer nothing for it.
  * A discovery_users-only hit (not already live) is labelled "not yet
@@ -33,7 +33,7 @@ export function UpnAutocomplete({
   className,
 }: {
   tenantId: string;
-  /** Also suggest this site's own Data Collection Users tab entries, not just the live tenant sync. */
+  /** Also suggest this site's own Site Data Users tab entries, not just the live tenant sync. */
   siteId?: string;
   value: string;
   onChange: (value: string) => void;

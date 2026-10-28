@@ -180,7 +180,7 @@ interface NavDef {
 
 const MIGRATION: NavDef[] = [
   { to: '/', label: 'Dashboard', icon: <Home24Regular /> },
-  { to: '/data-collection', label: 'Data Collection', icon: <ClipboardTaskListLtr24Regular />, permission: 'discovery:read' },
+  { to: '/data-collection', label: 'Site Data', icon: <ClipboardTaskListLtr24Regular />, permission: 'discovery:read' },
   { to: '/discovery', label: 'Discovery', icon: <Search24Regular />, permission: 'tenantdiscovery:read' },
   { to: '/build', label: 'Design & Build', icon: <Board24Regular />, permission: 'build:read' },
   { to: '/deployment', label: 'Deployment', icon: <CloudArrowUp24Regular />, permission: 'deployment:read' },

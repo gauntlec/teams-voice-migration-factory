@@ -65,7 +65,7 @@ container starts. Without a sysctl the fallback is to drop `no-new-privileges` f
 - To meet "red within a minute", critical monitors need a 20-30 s interval (Kuma's minimum is 20 s) and Voxshift polls at 15 s.
 
 **Phase 2: inventory and gaps.** A site device inventory in Design & Build (type, vendor, model, address, expected monitor), so
-Voxshift can show devices that should be monitored but are not, and use the data Data Collection already has (subnets, VLANs, handset
+Voxshift can show devices that should be monitored but are not, and use the data Site Data already has (subnets, VLANs, handset
 models). Still no monitor creation by Voxshift.
 
 **Phase 3: what Kuma cannot see.** SIP checks (a script feeding a push monitor), Teams sign-in state (Poly Lens or the Teams Rooms

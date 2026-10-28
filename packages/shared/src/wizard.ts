@@ -8,7 +8,7 @@ import {
 } from './domain';
 
 /**
- * The Auto Attendant / Call Queue creation wizard (Data Collection site
+ * The Auto Attendant / Call Queue creation wizard (Site Data site
  * workspace, "Call flows" tab) - a guided, plain-language requirements
  * capture a non-technical customer stakeholder could plausibly fill in
  * themselves. Deliberately looser than the Teams-native shapes in dto.ts

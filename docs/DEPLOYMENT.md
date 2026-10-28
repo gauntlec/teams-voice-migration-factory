@@ -106,7 +106,7 @@ identically - only the `object_type` tag differs):
    designed yet" is left alone) -> `Set-CsOnlineVoicemailUserSettings
    -VoicemailEnabled` (+ `-PromptLanguage` when enabling with a language
    set). This is the actual per-user voicemail on/off + language setting -
-   what Data Collection's `voicemail_enabled`/`voicemail_language` capture
+   what Site Data's `voicemail_enabled`/`voicemail_language` capture
    and Populate copies onto the row as the real deploy target, not just a
    reference.
 
@@ -117,10 +117,10 @@ deliberate scope cut for this delivery. The reference cmdlets are known
 (`Set-CsUserCallingSettings`, `New-CsUserCallingDelegate`) and this is the
 natural next increment.
 
-Caller ID works differently: Data Collection's `caller_id` field ('user' /
+Caller ID works differently: Site Data's `caller_id` field ('user' /
 'anonymous' / 'main_number') is a customer preference, not a Teams policy
 name, so there's no direct value -> cmdlet mapping - it's shown read-only in
-Design & Build's "Data Collection" column so the engineer can pick or create
+Design & Build's "Site Data" column so the engineer can pick or create
 the matching `caller_id_policy` (a `POLICY_KINDS` entry, deployed via
 `Grant-CsCallingLineIdentity` same as the others in step 3).
 

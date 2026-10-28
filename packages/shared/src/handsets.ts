@@ -1,5 +1,5 @@
 /*
- * Handset tracker (site Overview). The handsets a site needs are counted from Data Collection: a user with a handset model, and a
+ * Handset tracker (site Overview). The handsets a site needs are counted from Site Data: a user with a handset model, and a
  * common area phone's device model. The project manager tracks each model through the stages below.
  */
 
@@ -23,7 +23,7 @@ export function handsetModelKey(model: string | null | undefined): string {
 
 export interface HandsetModelRow {
   key: string;
-  /** the model as most often typed in Data Collection */
+  /** the model as most often typed in Site Data */
   model: string;
   users: number;
   caps: number;

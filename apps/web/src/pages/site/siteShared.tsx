@@ -71,7 +71,7 @@ export const TAB_LABEL: Record<TabKey, string> = {
 };
 
 /**
- * "Link to tenant" — matches every unlinked Data Collection user for this site
+ * "Link to tenant" — matches every unlinked Site Data user for this site
  * to the tenant user with the same UPN (from the last Discovery run).
  */
 export function RelinkUsersButton({

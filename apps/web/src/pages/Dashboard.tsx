@@ -168,7 +168,7 @@ function ProgressView({ data, tenant, can }: { data: CustomerProgress; tenant: M
     ),
   ];
   const shown = showAll ? attention : attention.slice(0, ATTENTION_PREVIEW);
-  // The Data Collection status is already shown as a badge.
+  // The Site Data status is already shown as a badge.
   const info = data.items.filter((i) => !i.attention && i.kind !== 'data_collection');
 
   const term = search.trim().toLowerCase();
@@ -217,7 +217,7 @@ function ProgressView({ data, tenant, can }: { data: CustomerProgress; tenant: M
         )}
         <div className={s.summary}>
           <Text size={200}>
-            Data Collection: <b>{data.dataCollection.accepted} of {data.dataCollection.sites}</b> sites accepted
+            Site Data: <b>{data.dataCollection.accepted} of {data.dataCollection.sites}</b> sites accepted
             {data.dataCollection.submitted > 0 && ` · ${data.dataCollection.submitted} awaiting review`}
             {data.dataCollection.withChanges > 0 && ` · ${data.dataCollection.withChanges} changed since submitted`}
           </Text>

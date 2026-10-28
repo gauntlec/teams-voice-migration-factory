@@ -48,7 +48,7 @@ export function identityFields(policyFields: FieldDef[], numberChoicesFor: (row:
     { key: 'migration_wave', label: 'Migration wave' },
     // The actual Set-CsOnlineVoicemailUserSettings target - separate from
     // voicemail_policy below (a policy grant, a different setting). Populate
-    // prefills this from Data Collection; it deploys from here.
+    // prefills this from Site Data; it deploys from here.
     { key: 'voicemail.enabled', label: 'Voicemail enabled', type: 'boolean' },
     // Culture codes only - Teams rejects a plain name like "English" (see VOICEMAIL_PROMPT_LANGUAGES).
     { key: 'voicemail.language', label: 'Voicemail language', type: 'ref', choices: VOICEMAIL_LANGUAGE_CHOICES },

@@ -55,7 +55,7 @@ function toRow(r: {
 /**
  * General-purpose per-tenant file store: local-disk bytes (via
  * FileStorageBackend), indexed in the tenant's `files` table. First consumer
- * is Deployment's change-recording documents; designed for Data Collection,
+ * is Deployment's change-recording documents; designed for Site Data,
  * Discovery, Design & Build and Service Handover to register files here too.
  * No upload/write HTTP route exists yet - the only writer today is
  * DeploymentService.generateChangeDocument calling store() in-process.

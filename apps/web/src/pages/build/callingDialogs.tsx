@@ -38,7 +38,7 @@ interface CallingPolicyMapRow {
 }
 
 /**
- * Which real tenant Voice Routing Policy each Data Collection generic
+ * Which real tenant Voice Routing Policy each Site Data generic
  * calling policy ("International", "Standard", …) means for THIS site -
  * OnlineVoiceRoutingPolicy is the Teams concept that actually governs
  * local/national/international dialing permission (not TeamsCallingPolicy,
@@ -79,15 +79,15 @@ export function CallingPolicyMapDialog({
           <DialogTitle>Calling policy map</DialogTitle>
           <DialogContent>
             <Text size={200} block className={ls.mb12}>
-              Which real tenant Voice Routing Policy each Data Collection calling policy means for this site -
+              Which real tenant Voice Routing Policy each Site Data calling policy means for this site -
               that's the Teams policy that actually governs local/national/international dialing, not the Teams
               Calling Policy. "International" here might be a different real policy on a US site than on a Belgium
-              one. A policy marked "in use, unmapped" must be mapped before Populate from Data Collection can run.
+              one. A policy marked "in use, unmapped" must be mapped before Populate from Site Data can run.
             </Text>
             {rowsQ.isLoading ? (
               <Spinner size="tiny" label="Loading…" />
             ) : (rowsQ.data ?? []).length === 0 ? (
-              <Text size={200}>No calling policies defined in Data Collection yet.</Text>
+              <Text size={200}>No calling policies defined in Site Data yet.</Text>
             ) : (
               <div className={ls.gridGap8}>
                 {(rowsQ.data ?? []).map((r) => (
