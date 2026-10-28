@@ -760,6 +760,8 @@ export const discoveryVoiceAppSchema = z
     holiday: optStr(1000),
     advanced_features: optStr(4000),
     comments: optStr(2000),
+    /** Add only: a free number of the site. A resource account named like the voice app is made to hold it and answers for the app. */
+    phone_number_id: z.preprocess((v) => (v === '' ? null : v), z.guid().nullable().optional()),
   })
   .strict();
 export type DiscoveryVoiceAppInput = z.infer<typeof discoveryVoiceAppSchema>;

@@ -50,6 +50,7 @@ import {
 } from '@fluentui/react-icons';
 import { compareSorted, isCoordinateText, parseCoordinatePair, type Paginated } from '@tvmf/shared';
 import { api, ApiError } from '../api';
+import { AutoGrowTextarea } from './AutoGrowTextarea';
 import { DataTable } from './DataTable';
 import { DangerText } from './ui';
 
@@ -96,6 +97,10 @@ export interface FieldDef {
   placeholder?: string;
   default?: string;
   full?: boolean;
+  /** Only on the Add form: left out when an existing row is edited (for a value that is acted on once, at creation). */
+  addOnly?: boolean;
+  /** A textarea starts this many rows tall and grows with what is typed (default: the browser's small box). */
+  rows?: number;
   /** A heading shown above this field when the previous field is in a different section (consecutive fields share one). */
   section?: string;
   /** Grey out (and stop editing) this field when the current form values make it inapplicable. */
@@ -490,6 +495,7 @@ export function RecordDialog({
 
   const resolveChoices = (f: FieldDef): Choice[] =>
     typeof f.choices === 'function' ? f.choices(editing) : (f.choices ?? []);
+  const shown = editing ? fields.filter((f) => !f.addOnly) : fields;
 
   return (
     <Dialog open={open} onOpenChange={(_, d) => onOpenChange(d.open)}>
@@ -500,11 +506,11 @@ export function RecordDialog({
           </DialogTitle>
           <DialogContent>
             <div className={s.dialogForm}>
-              {fields.map((f, fi) => {
+              {shown.map((f, fi) => {
                 const disabled = f.disabledWhen?.(values) ?? false;
                 return (
                 <Fragment key={f.key}>
-                {f.section && f.section !== fields[fi - 1]?.section && (
+                {f.section && f.section !== shown[fi - 1]?.section && (
                   <Text weight="semibold" style={{ gridColumn: '1 / -1', paddingTop: 6 }}>
                     {f.section}
                   </Text>
@@ -535,6 +541,13 @@ export function RecordDialog({
                         <Radio key={o} value={o} label={o} />
                       ))}
                     </RadioGroup>
+                  ) : f.type === 'textarea' && f.rows ? (
+                    <AutoGrowTextarea
+                      value={values[f.key] ?? ''}
+                      minRows={f.rows}
+                      disabled={disabled}
+                      onChange={(_, d) => setValues((v) => ({ ...v, [f.key]: d.value }))}
+                    />
                   ) : f.type === 'textarea' || f.type === 'string-array' ? (
                     <Textarea
                       value={values[f.key] ?? ''}
@@ -639,7 +652,7 @@ export function RecordDialog({
             <Button
               appearance="primary"
               disabled={saving || fields.some((f) => f.required && !f.disabledWhen?.(values) && !values[f.key])}
-              onClick={() => onSave(buildPayload(fields, values))}
+              onClick={() => onSave(buildPayload(shown, values))}
             >
               Save
             </Button>

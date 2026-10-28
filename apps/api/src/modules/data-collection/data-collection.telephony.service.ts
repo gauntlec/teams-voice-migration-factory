@@ -1379,6 +1379,20 @@ export class TelephonyService {
       })
       .returningAll()
       .executeTakeFirstOrThrow();
+    if (i.phone_number_id) {
+      // The voice app has no number of its own: a resource account of the same name holds it and answers for the app. If the number
+      // cannot be taken (in use, cooling off, another site's), nothing is left behind.
+      let raId: string | null = null;
+      try {
+        const ra = await this.addResourceAccount(t, u, { site_id: siteId, name: i.name, kind: i.kind, voice_app_id: row.id }, canReview);
+        raId = ra.id;
+        await this.attachRaNumber(t, u, ra.id, i.phone_number_id, canReview);
+      } catch (e) {
+        if (raId) await this.s(t).deleteFrom('discovery_resource_accounts').where('id', '=', raId).execute();
+        await this.s(t).deleteFrom('discovery_voice_apps').where('id', '=', row.id).execute();
+        throw e;
+      }
+    }
     await this.audit.tenant(t.schema, 'discovery.voice_app_added', { actor: actorOf(u), targetType: 'discovery_voice_app', targetId: row.id });
     await this.base.trackChange(t, u, { siteId: row.site_id, entity: 'Voice app', action: 'added', label: row.name });
     return row;
