@@ -56,6 +56,7 @@ function toDesignAaInput(
     resourceAccounts: ownAccounts,
     schedule: (r.schedule as AutoAttendantSchedule | null) ?? null,
     timeZone: (r.time_zone_id as string | null) ?? null,
+    userNameExtension: (r.user_name_extension as string | null) ?? null,
   };
 }
 

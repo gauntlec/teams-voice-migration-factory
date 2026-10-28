@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildAutoAttendantFlowGraphFromDesign, buildAutoAttendantFlowGraphFromLive, formatWeeklyHours } from './call-flow-graph';
+import { buildAutoAttendantFlowGraphFromDesign, buildAutoAttendantFlowGraphFromLive, buildCallQueueFlowGraphFromDesign, buildCallQueueFlowGraphFromLive, formatWeeklyHours } from './call-flow-graph';
 
 const none = { monday: [], tuesday: [], wednesday: [], thursday: [], friday: [], saturday: [], sunday: [] };
 const nineToFive = [{ start: '09:00', end: '17:00' }];
@@ -96,3 +96,84 @@ describe('Design & Build diagram with a transfer to a voice app outside the site
   });
 });
 
+// The PowerShell-only settings that change what a caller meets (call priority, the prompt before a redirect, dial-by-name).
+describe('Call Queue graph: PowerShell-only extras', () => {
+  const cq = (overflow: Record<string, unknown> | null, rest: Record<string, unknown> = {}) =>
+    buildCallQueueFlowGraphFromDesign({ buildId: 'q1', name: 'Support', overflow: overflow as never, timeout: null, noAgentAction: null, ...rest });
+
+  it('draws the plain line, exactly as before, when none are set', () => {
+    const g = cq({ action: 'Forward', target: 'jo@contoso.test' });
+    expect(g.edges.map((e) => [e.label, e.target])).toEqual([['Overflow', 'user:jo@contoso.test']]);
+    expect(g.nodes.some((n) => n.kind === 'announcement')).toBe(false);
+  });
+
+  it('writes the call priority on the line', () => {
+    const g = cq({ action: 'Forward', target: 'jo@contoso.test', priority: 2 });
+    expect(g.edges.map((e) => e.label)).toEqual(['Overflow (priority 2)']);
+  });
+
+  it('puts what the caller hears between the queue and the person', () => {
+    const g = cq({ action: 'Forward', target: 'jo@contoso.test', redirectPrompt: 'Please hold while we find Jo' });
+    const heard = g.nodes.find((n) => n.kind === 'announcement')!;
+    expect(heard.label).toBe('Caller hears');
+    expect(heard.sublabel).toBe('Please hold while we find Jo');
+    expect(g.edges.map((e) => [e.source, e.label, e.target])).toEqual([
+      ['cq:q1', 'Overflow', heard.id],
+      [heard.id, 'then', 'user:jo@contoso.test'],
+    ]);
+  });
+
+  it('shows an audio file by name, and both when there is text and a file', () => {
+    const audio = { fileId: 'f1', filename: 'hold.wav' };
+    expect(cq({ action: 'Forward', target: 'jo@contoso.test', redirectAudio: audio }).nodes.find((n) => n.kind === 'announcement')!.sublabel).toBe('🔊 hold.wav');
+    const both = cq({ action: 'Voicemail', target: 'jo@contoso.test', redirectPrompt: 'Leave a message', redirectAudio: audio }).nodes.find((n) => n.kind === 'announcement')!;
+    expect([both.sublabel, both.details]).toEqual(['Leave a message', ['🔊 hold.wav']]);
+  });
+
+  it('ignores extras on an action they do not belong to', () => {
+    const g = cq({ action: 'SharedVoicemail', target: 'group-id', priority: 3, redirectPrompt: 'Hello' });
+    expect(g.edges.map((e) => e.label)).toEqual(['Overflow']);
+    expect(g.nodes.some((n) => n.kind === 'announcement')).toBe(false);
+  });
+
+  it('reads them from the live queue too', () => {
+    const data = {
+      Identity: 'cq-1',
+      OverflowAction: 'Forward',
+      OverflowActionTarget: { Id: 'tel:+15551234567', Type: 'Phone' },
+      OverflowActionCallPriority: 3,
+      NoAgentAction: 'Voicemail',
+      NoAgentActionTarget: { Id: 'agent-1', Type: 'MailBox' },
+      NoAgentRedirectVoicemailAudioFilePrompt: 'teams-audio-id',
+    };
+    const g = buildCallQueueFlowGraphFromLive({ name: 'Support', data }, new Map([['agent-1', 'agent.one@contoso.test']]));
+    expect(g.edges.find((e) => e.branch === 'overflow')!.label).toBe('Overflow (priority 3)');
+    const heard = g.nodes.find((n) => n.id === 'cq:cq-1:redirect:no_agent')!;
+    expect(heard.sublabel).toBe('🔊 Audio file');
+    expect(g.edges.find((e) => e.source === heard.id)!.target).toBe('voicemail:agent-1');
+  });
+});
+
+describe('Auto Attendant graph: dial-by-name extension', () => {
+  const aa = (userNameExtension: string | null | undefined) => ({ buildId: 'a3', name: 'Directory', operator: null, defaultCallFlow: flow, afterHoursCallFlow: null, holidayCallFlows: [], userNameExtension });
+  const lines = (ext: string | null | undefined) => buildAutoAttendantFlowGraphFromDesign(aa(ext), [aa(ext)], []).nodes.find((n) => n.id === 'aa:a3')!.details;
+
+  it('says what dial-by-name adds when it is Office or Department', () => {
+    expect(lines('Department')).toEqual(['Dial by name also says: Department']);
+    expect(lines('Office')).toEqual(['Dial by name also says: Office']);
+  });
+  it('says nothing for None, not managed, or not set', () => {
+    expect(lines('None')).toEqual([]);
+    expect(lines(null)).toEqual([]);
+    expect(lines(undefined)).toEqual([]);
+  });
+  it('reads it from the live attendant, as a name or the enum number', () => {
+    const live = (v: unknown) => {
+      const data = { Identity: 'aa-9', UserNameExtension: v, DefaultCallFlow: { Id: 'cf0', Greetings: [], Menu: { MenuOptions: [] } } };
+      return buildAutoAttendantFlowGraphFromLive({ name: 'Directory', data }, [{ name: 'Directory', data }], [], []).nodes.find((n) => n.id === 'aa:aa-9')!.details;
+    };
+    expect(live('Office')).toEqual(['Dial by name also says: Office']);
+    expect(live(2)).toEqual(['Dial by name also says: Department']);
+    expect(live(0)).toEqual([]);
+  });
+});
