@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Badge, Button, Spinner, Tab, TabList, Text , makeStyles, shorthands, tokens } from '@fluentui/react-components';
 import { ArrowLeftRegular, ArrowUploadRegular, WarningRegular } from '@fluentui/react-icons';
-import { CALLER_ID_OPTIONS, FLOW_KINDS, NETWORK_LOCATIONS, NETWORK_SCOPES, NETWORK_TYPES, NUMBER_RANGE_KINDS, RESOURCE_ACCOUNT_KINDS, VOICEMAIL_PROMPT_LANGUAGES, type AutoAttendantWizardAnswers, type CallQueueWizardAnswers, type Paginated, type TenantUserSummary } from '@tvmf/shared';
+import { portDue, portStageText, CALLER_ID_OPTIONS, FLOW_KINDS, NETWORK_LOCATIONS, NETWORK_SCOPES, NETWORK_TYPES, NUMBER_RANGE_KINDS, RESOURCE_ACCOUNT_KINDS, VOICEMAIL_PROMPT_LANGUAGES, type AutoAttendantWizardAnswers, type CallQueueWizardAnswers, type Paginated, type TenantUserSummary } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { AutoAttendantWizard } from '../components/AutoAttendantWizard';
@@ -281,16 +281,40 @@ export function SiteWorkspace() {
             },
             { key: 'carrier', label: 'Carrier' },
             {
+              key: 'new_carrier',
+              label: 'Moving to',
+              render: (r) => (r.kind === 'port' ? ((r.new_carrier as string | null) ?? '—') : '—'),
+            },
+            {
               key: 'port_status',
-              label: 'Porting Documentation Status',
-              render: (r) => (r.kind === 'retain' ? 'not applicable' : r.port_status ? String(r.port_status).replace(/_/g, ' ') : '—'),
+              label: 'Port status',
+              sortValue: (r) => portStageText(r as never),
+              render: (r) => {
+                if (r.kind === 'retain') return 'not applicable';
+                if (r.kind !== 'port') return r.port_status ? String(r.port_status).replace(/_/g, ' ') : '—';
+                const due = portDue(r as never, new Date().toISOString().slice(0, 10));
+                return (
+                  <span>
+                    {portStageText(r as never)}
+                    {due && (
+                      <>
+                        {' '}
+                        <Badge appearance="tint" color="warning" size="small" title="The scheduled port date has arrived. Confirm on the Number porting page when the port completes.">
+                          confirm port
+                        </Badge>
+                      </>
+                    )}
+                  </span>
+                );
+              },
             },
           ]}
           fields={[
             { key: 'range_start', label: 'Range start', required: true, placeholder: '19133743250' },
             { key: 'range_end', label: 'Range end', required: true, placeholder: '19133743257' },
             { key: 'kind', label: 'Kind', type: 'select', options: NUMBER_RANGE_KINDS, required: true },
-            { key: 'carrier', label: 'Carrier' },
+            { key: 'carrier', label: 'Carrier (where the numbers are now)' },
+            { key: 'new_carrier', label: 'New carrier (port-in: where they are moving to)', placeholder: 'Required for a port-in', disabledWhen: (v) => v.kind !== 'port' },
             { key: 'comments', label: 'Comments', type: 'textarea', full: true },
           ]}
         />

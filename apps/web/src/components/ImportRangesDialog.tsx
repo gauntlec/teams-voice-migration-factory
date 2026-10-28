@@ -101,6 +101,7 @@ export function ImportRangesDialog({
   const [err, setErr] = useState<string | null>(null);
   const [kind, setKind] = useState<NumberRangeKind>('new');
   const [carrier, setCarrier] = useState('');
+  const [newCarrier, setNewCarrier] = useState('');
   const [result, setResult] = useState<{
     created: number;
     numbers: number;
@@ -227,6 +228,7 @@ export function ImportRangesDialog({
             site_id: siteId,
             kind,
             ...(carrier.trim() ? { carrier: carrier.trim() } : {}),
+            ...(kind === 'port' ? { new_carrier: newCarrier.trim() } : {}),
             rows: validRows.map((p) => ({ range_start: p.start, range_end: p.end })),
           }),
         },
@@ -274,9 +276,14 @@ export function ImportRangesDialog({
                     ))}
                   </Select>
                 </Field>
-                <Field label="Carrier (optional, all rows)">
+                <Field label={kind === 'port' ? 'Current carrier (optional, all rows)' : 'Carrier (optional, all rows)'}>
                   <Input value={carrier} onChange={(_, d) => setCarrier(d.value)} maxLength={160} />
                 </Field>
+                {kind === 'port' && (
+                  <Field label="New carrier (all rows)" required hint="The carrier the numbers are moving to. When the port completes, the range's carrier switches to this one." style={{ gridColumn: '1 / -1' }}>
+                    <Input value={newCarrier} onChange={(_, d) => setNewCarrier(d.value)} maxLength={160} />
+                  </Field>
+                )}
               </div>
 
               <input
@@ -380,7 +387,7 @@ export function ImportRangesDialog({
               <Button
                 appearance="primary"
                 icon={<ArrowUploadRegular />}
-                disabled={validRows.length === 0 || importMut.isPending}
+                disabled={validRows.length === 0 || importMut.isPending || (kind === 'port' && !newCarrier.trim())}
                 onClick={() => {
                   setErr(null);
                   importMut.mutate();

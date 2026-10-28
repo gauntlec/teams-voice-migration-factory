@@ -495,6 +495,15 @@ export interface DiscoveryNumberRangesTable {
   loa_sent: ColumnType<boolean, boolean | undefined, boolean>;
   loa_completed: ColumnType<boolean, boolean | undefined, boolean>;
   comments: string | null;
+  /** Port-in carrier transition (migration 0077): `carrier` is where the numbers are now, `new_carrier` where they are moving. */
+  new_carrier: string | null;
+  previous_carrier: string | null;
+  port_order_ref: string | null;
+  port_submitted_to_carrier_at: string | null;
+  /** YYYY-MM-DD */
+  port_foc_date: string | null;
+  port_completed_at: string | null;
+  port_completed_by: string | null;
   created_at: Ts;
 }
 

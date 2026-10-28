@@ -4,11 +4,15 @@ import {
   numberPortItemRejectSchema,
   numberPortItemWaiveSchema,
   numberPortRequestItemsSchema,
+  portCarrierDetailsSchema,
+  portCompleteSchema,
   portDocumentTypeSchema,
   sitePortDocumentTypeSchema,
   type NumberPortItemRejectInput,
   type NumberPortItemWaiveInput,
   type NumberPortRequestItemsInput,
+  type PortCarrierDetailsInput,
+  type PortCompleteInput,
   type PortDocumentTypeInput,
   type SitePortDocumentTypeInput,
 } from '@tvmf/shared';
@@ -83,6 +87,38 @@ export class NumberPortController {
   @RequirePermission('discovery:read')
   getOrCreateRequest(@TenantCtx() t: TenantContext, @Param('rangeId') rangeId: string) {
     return this.svc.getOrCreateRequest(t, rangeId);
+  }
+
+  /* -------------------- carrier side of a port-in range -------------------- */
+
+  /** The new carrier, the carrier's order reference, submitted-to-carrier and the scheduled port date. */
+  @Patch('number-ranges/:rangeId/port')
+  @RequirePermission('discovery:review')
+  updatePortDetails(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() u: AuthedUser,
+    @Param('rangeId') rangeId: string,
+    @Body(new ZodBody(portCarrierDetailsSchema)) body: PortCarrierDetailsInput,
+  ) {
+    return this.svc.updatePortDetails(t, u, rangeId, body);
+  }
+
+  /** The port finished: the range's carrier switches to the new carrier. */
+  @Post('number-ranges/:rangeId/port/complete')
+  @RequirePermission('discovery:review')
+  completePort(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() u: AuthedUser,
+    @Param('rangeId') rangeId: string,
+    @Body(new ZodBody(portCompleteSchema)) body: PortCompleteInput,
+  ) {
+    return this.svc.completePort(t, u, rangeId, body);
+  }
+
+  @Post('number-ranges/:rangeId/port/reopen')
+  @RequirePermission('discovery:review')
+  reopenPort(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Param('rangeId') rangeId: string) {
+    return this.svc.reopenPort(t, u, rangeId);
   }
 
   @Patch('port-requests/:id/items')

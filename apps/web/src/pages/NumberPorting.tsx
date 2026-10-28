@@ -15,6 +15,8 @@ import {
   DialogTrigger,
   Field,
   Input,
+  MessageBar,
+  MessageBarBody,
   Spinner,
   TableBody,
   TableCell,
@@ -27,8 +29,8 @@ import {
   makeStyles,
   shorthands,
 } from '@fluentui/react-components';
-import { AddRegular, ArrowLeftRegular, ArrowUploadRegular, DeleteRegular } from '@fluentui/react-icons';
-import type { Paginated } from '@tvmf/shared';
+import { AddRegular, ArrowLeftRegular, ArrowRightRegular, ArrowUploadRegular, ArrowUndoRegular, CheckmarkCircleRegular, DeleteRegular } from '@fluentui/react-icons';
+import { PORT_STAGE_LABELS, portDue, portStage, portStageText, type Paginated } from '@tvmf/shared';
 import { api, apiDownload, apiUpload, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
@@ -76,6 +78,13 @@ interface NumberRangeRow {
   kind: 'new' | 'port' | 'retain';
   carrier: string | null;
   port_status: string | null;
+  /** carrier side of a port-in (migration 0077) */
+  new_carrier: string | null;
+  previous_carrier: string | null;
+  port_order_ref: string | null;
+  port_submitted_to_carrier_at: string | null;
+  port_foc_date: string | null;
+  port_completed_at: string | null;
 }
 
 type ItemStatus = 'pending' | 'uploaded' | 'rejected' | 'waived';
@@ -475,6 +484,8 @@ function RangeChecklistCard({
         )}
       </div>
 
+      {range.kind === 'port' && <CarrierPortSection base={base} range={range} canReview={canReview} documentsComplete={request?.status === 'complete'} />}
+
       {data.isLoading ? (
         <Spinner size="tiny" />
       ) : (
@@ -649,5 +660,210 @@ function RangeChecklistCard({
         </DialogSurface>
       </Dialog>
     </Card>
+  );
+}
+
+
+/* --------------------- carrier side of a port-in range --------------------- */
+
+const useCarrierStyles = makeStyles({
+  box: { display: 'grid', rowGap: '14px', padding: '14px 16px', borderRadius: '8px', backgroundColor: 'var(--colorNeutralBackground2)' },
+  route: { display: 'flex', alignItems: 'center', columnGap: '10px', flexWrap: 'wrap' },
+  fields: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', columnGap: '16px', rowGap: '12px' },
+  actions: { display: 'flex', alignItems: 'center', columnGap: '8px', rowGap: '8px', flexWrap: 'wrap' },
+  steps: { display: 'flex', columnGap: '6px', rowGap: '6px', flexWrap: 'wrap' },
+});
+
+/**
+ * Where a port-in range is moving to and where the port has got to at the carrier. The range is with `carrier` now and moving to
+ * `new_carrier`: once the documents are in, the port goes to the new carrier (order reference), gets a scheduled date, and when it
+ * completes "Port completed" switches the range's carrier to the new one.
+ */
+function CarrierPortSection({ base, range, canReview, documentsComplete }: { base: string; range: NumberRangeRow; canReview: boolean; documentsComplete: boolean }) {
+  const cs = useCarrierStyles();
+  const s = useRecordStyles();
+  const qc = useQueryClient();
+  const today = new Date().toISOString().slice(0, 10);
+  const ported = !!range.port_completed_at;
+  const stage = portStage(range)!;
+  const due = portDue(range, today);
+
+  const [newCarrier, setNewCarrier] = useState(range.new_carrier ?? '');
+  const [orderRef, setOrderRef] = useState(range.port_order_ref ?? '');
+  const [foc, setFoc] = useState(range.port_foc_date?.slice(0, 10) ?? '');
+  const [completing, setCompleting] = useState(false);
+  const [completedOn, setCompletedOn] = useState(today);
+  const [error, setError] = useState<string | null>(null);
+  // follow the saved values when the range reloads
+  const saved = `${range.new_carrier}|${range.port_order_ref}|${range.port_foc_date}`;
+  const [seen, setSeen] = useState(saved);
+  if (seen !== saved) {
+    setSeen(saved);
+    setNewCarrier(range.new_carrier ?? '');
+    setOrderRef(range.port_order_ref ?? '');
+    setFoc(range.port_foc_date?.slice(0, 10) ?? '');
+  }
+  const dirty = newCarrier !== (range.new_carrier ?? '') || orderRef !== (range.port_order_ref ?? '') || foc !== (range.port_foc_date?.slice(0, 10) ?? '');
+
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: ['port-ranges'] });
+    void qc.invalidateQueries({ queryKey: ['ranges'] });
+  };
+  const onError = (e: unknown) => setError(e instanceof ApiError ? e.message : 'That did not save');
+  const call = (path: string, method: string, body?: unknown) => api(`${base}/number-ranges/${range.id}/${path}`, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
+
+  const save = useMutation({
+    mutationFn: () => call('port', 'PATCH', { newCarrier, portOrderRef: orderRef, focDate: foc }),
+    onSuccess: () => {
+      setError(null);
+      refresh();
+    },
+    onError,
+  });
+  const submitted = useMutation({
+    mutationFn: (on: boolean) => call('port', 'PATCH', { submittedToCarrier: on, ...(dirty ? { newCarrier, portOrderRef: orderRef, focDate: foc } : {}) }),
+    onSuccess: () => {
+      setError(null);
+      refresh();
+    },
+    onError,
+  });
+  const complete = useMutation({
+    mutationFn: () => call('port/complete', 'POST', { completedOn }),
+    onSuccess: () => {
+      setCompleting(false);
+      setError(null);
+      refresh();
+    },
+    onError,
+  });
+  const reopen = useMutation({
+    mutationFn: () => call('port/reopen', 'POST'),
+    onSuccess: () => {
+      setError(null);
+      refresh();
+    },
+    onError,
+  });
+
+  const stepOrder = ['awaiting_documents', 'documents_complete', 'with_carrier', 'scheduled', 'ported'] as const;
+  const dateText = (v: string | null) => (v ? new Date(`${v.slice(0, 10)}T00:00:00Z`).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) : '');
+
+  return (
+    <div className={cs.box}>
+      <div className={cs.route}>
+        <Text weight="semibold">Carrier</Text>
+        <Text>{ported ? (range.previous_carrier ?? 'Previous carrier') : (range.carrier ?? 'Not set')}</Text>
+        <ArrowRightRegular aria-hidden />
+        <Text weight="semibold">{(ported ? range.carrier : range.new_carrier) ?? 'New carrier not set'}</Text>
+        <Badge appearance="tint" color={ported ? 'success' : due ? 'warning' : 'informative'}>
+          {portStageText(range)}
+        </Badge>
+      </div>
+
+      {!ported && (
+        <div className={cs.steps} aria-label="Port progress">
+          {stepOrder.map((st) => {
+            const reached = stepOrder.indexOf(stage as (typeof stepOrder)[number]) >= stepOrder.indexOf(st) || (st === 'documents_complete' && documentsComplete);
+            return (
+              <Badge key={st} appearance={st === stage ? 'filled' : reached ? 'tint' : 'outline'} color={reached ? 'brand' : 'informative'} size="small">
+                {PORT_STAGE_LABELS[st]}
+              </Badge>
+            );
+          })}
+        </div>
+      )}
+
+      {due && (
+        <MessageBar intent="warning">
+          <MessageBarBody>The scheduled port date ({dateText(range.port_foc_date)}) has arrived. When the carrier confirms the port, choose Port completed.</MessageBarBody>
+        </MessageBar>
+      )}
+
+      {ported ? (
+        <div className={cs.actions}>
+          <Text size={200} className={s.muted}>
+            Completed {dateText(range.port_completed_at)}. {range.previous_carrier ? `Was with ${range.previous_carrier}.` : ''}
+          </Text>
+          {canReview && (
+            <Button size="small" appearance="subtle" icon={<ArrowUndoRegular />} disabled={reopen.isPending} onClick={() => reopen.mutate()}>
+              Reopen
+            </Button>
+          )}
+        </div>
+      ) : canReview ? (
+        <>
+          <div className={cs.fields}>
+            <Field label="New carrier" required hint="The carrier the numbers are moving to.">
+              <Input value={newCarrier} onChange={(_, d) => setNewCarrier(d.value)} maxLength={160} />
+            </Field>
+            <Field label="Port order reference" hint="The new carrier's order or ticket number.">
+              <Input value={orderRef} onChange={(_, d) => setOrderRef(d.value)} maxLength={120} />
+            </Field>
+            <Field label="Scheduled port date" hint="The date the carrier committed to (FOC).">
+              <Input type="date" value={foc} onChange={(_, d) => setFoc(d.value)} />
+            </Field>
+          </div>
+          <div className={cs.actions}>
+            <Button size="medium" appearance="secondary" disabled={!dirty || save.isPending} onClick={() => save.mutate()}>
+              {save.isPending ? <Spinner size="tiny" /> : 'Save details'}
+            </Button>
+            {range.port_submitted_to_carrier_at ? (
+              <Button size="medium" appearance="subtle" disabled={submitted.isPending} onClick={() => submitted.mutate(false)}>
+                Not submitted after all
+              </Button>
+            ) : (
+              <Button size="medium" appearance="secondary" disabled={submitted.isPending || !newCarrier.trim()} onClick={() => submitted.mutate(true)}>
+                Mark submitted to the new carrier
+              </Button>
+            )}
+            <Button size="medium" appearance="primary" icon={<CheckmarkCircleRegular />} disabled={!range.new_carrier || dirty} onClick={() => { setCompletedOn(foc && foc <= today ? foc : today); setCompleting(true); }}>
+              Port completed…
+            </Button>
+          </div>
+          {!documentsComplete && (
+            <Text size={200} className={s.muted}>
+              The documents are not all in yet. You can still record the carrier details.
+            </Text>
+          )}
+        </>
+      ) : (
+        <Text size={200} className={s.muted}>
+          {range.port_order_ref ? `Order ${range.port_order_ref}. ` : ''}
+          {range.port_foc_date ? `Scheduled for ${dateText(range.port_foc_date)}.` : ''}
+        </Text>
+      )}
+
+      {error && <Text className={s.muted} style={{ color: 'var(--colorPaletteRedForeground1)' }}>{error}</Text>}
+
+      {completing && (
+        <Dialog open onOpenChange={(_, d) => !d.open && setCompleting(false)}>
+          <DialogSurface>
+            <DialogBody>
+              <DialogTitle>Port completed</DialogTitle>
+              <DialogContent>
+                <div style={{ display: 'grid', rowGap: 16 }}>
+                  <Text>
+                    The carrier for {range.range_start} – {range.range_end} changes from <b>{range.carrier ?? 'not set'}</b> to <b>{range.new_carrier}</b>. The site contacts are emailed that the numbers have moved.
+                  </Text>
+                  <Field label="Date the port completed" hint="Today or an earlier date.">
+                    <Input type="date" size="large" value={completedOn} max={today} onChange={(_, d) => setCompletedOn(d.value)} />
+                  </Field>
+                  {error && <Text style={{ color: 'var(--colorPaletteRedForeground1)' }}>{error}</Text>}
+                </div>
+              </DialogContent>
+              <DialogActions>
+                <Button appearance="secondary" onClick={() => setCompleting(false)}>
+                  Cancel
+                </Button>
+                <Button appearance="primary" disabled={!completedOn || complete.isPending} onClick={() => complete.mutate()}>
+                  {complete.isPending ? <Spinner size="tiny" /> : 'Switch to the new carrier'}
+                </Button>
+              </DialogActions>
+            </DialogBody>
+          </DialogSurface>
+        </Dialog>
+      )}
+    </div>
   );
 }

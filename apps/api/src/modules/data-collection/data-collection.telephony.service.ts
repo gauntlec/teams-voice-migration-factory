@@ -607,6 +607,7 @@ export class TelephonyService {
 
   async addRange(t: TenantContext, u: AuthedUser, i: DiscoveryNumberRangeInput, canReview: boolean) {
     const e164s = expandRange(i.range_start, i.range_end);
+    if (i.kind === 'port' && !nz(i.new_carrier)) throw new BadRequestException('Say which carrier these numbers are moving to (the new carrier).');
     await this.siteByCode(t, i.sitecode);
     const { range, generated } = await this.insertRange(t, u, i, e164s);
     await this.syncNumbersWithTeams(t);
@@ -636,6 +637,7 @@ export class TelephonyService {
         range_end: i.range_end,
         kind: i.kind,
         carrier: nz(i.carrier),
+        new_carrier: i.kind === 'port' ? nz(i.new_carrier) : null,
         loa_sent: i.loa_sent ?? false,
         loa_completed: i.loa_completed ?? false,
         comments: nz(i.comments),
@@ -688,6 +690,7 @@ export class TelephonyService {
    */
   async importRanges(t: TenantContext, u: AuthedUser, input: NumberRangesImportInput, canReview: boolean) {
     assertSiteInScope(t, input.site_id);
+    if (input.kind === 'port' && !nz(input.new_carrier)) throw new BadRequestException('Say which carrier these numbers are moving to (the new carrier).');
     const site = await this.s(t)
       .selectFrom('discovery_sites')
       .select(['id', 'sitecode'])
@@ -721,7 +724,7 @@ export class TelephonyService {
         const { generated } = await this.insertRange(
           t,
           u,
-          { sitecode: site.sitecode, range_start: row.range_start, range_end: row.range_end, kind: input.kind, carrier: input.carrier },
+          { sitecode: site.sitecode, range_start: row.range_start, range_end: row.range_end, kind: input.kind, carrier: input.carrier, new_carrier: input.new_carrier },
           e164s,
         );
         created += 1;
@@ -752,10 +755,17 @@ export class TelephonyService {
     await this.assertRangeInScope(t, id);
     // Bounds are fixed once numbers are generated - recreate the range to change them.
     const set: Record<string, unknown> = {};
-    for (const k of ['kind', 'carrier', 'loa_sent', 'loa_completed', 'comments', 'sitecode'] as const) {
-      if (k in patch) set[k] = k === 'carrier' || k === 'comments' ? nz(patch[k]) : patch[k];
+    for (const k of ['kind', 'carrier', 'new_carrier', 'loa_sent', 'loa_completed', 'comments', 'sitecode'] as const) {
+      if (k in patch) set[k] = k === 'carrier' || k === 'new_carrier' || k === 'comments' ? nz(patch[k]) : patch[k];
     }
     if (typeof set.sitecode === 'string') await this.siteByCode(t, set.sitecode);
+    // A range that is moving to a new carrier must say which. (A range already ported keeps what it has.)
+    if ('kind' in set || 'new_carrier' in set) {
+      const cur = await this.s(t).selectFrom('discovery_number_ranges').select(['kind', 'new_carrier', 'port_completed_at']).where('id', '=', id).executeTakeFirst();
+      const kind = (set.kind ?? cur?.kind) as string | undefined;
+      const newCarrier = 'new_carrier' in set ? (set.new_carrier as string | null) : cur?.new_carrier;
+      if (kind === 'port' && !newCarrier && !cur?.port_completed_at) throw new BadRequestException('Say which carrier these numbers are moving to (the new carrier).');
+    }
     const row = await this.s(t)
       .updateTable('discovery_number_ranges')
       .set(set)
