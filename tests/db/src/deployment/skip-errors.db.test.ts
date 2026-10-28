@@ -64,7 +64,7 @@ describe('leaving out users with a blocking problem', () => {
     const preview = await svc.previewChanges(c.t, { siteId, sheets: ['users'] } as never);
     const buf = await new DeploymentDocumentService().build({ tenantName: 'Contoso', siteName: 'New York', sitecode: 'NYC01', mode: 'dry_run', generatedBy: 'Eng', generatedAt: new Date(), rows: preview });
     const xml = await (await JSZip.loadAsync(buf)).file('word/document.xml')!.async('string');
-    const text = xml.replace(/<[^>]+>/g, '');
+    const text = xml.split('<').map((piece) => piece.slice(piece.indexOf('>') + 1)).join(''); // the text between the tags
     const notDeployedAt = text.indexOf('Not deployed', text.indexOf('Change Recording'));
     expect(notDeployedAt).toBeGreaterThan(-1);
     const after = text.slice(text.lastIndexOf('Not deployed'));
