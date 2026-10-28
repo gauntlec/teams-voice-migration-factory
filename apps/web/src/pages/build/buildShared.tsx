@@ -44,7 +44,7 @@ export function ValidationBadge({ v }: { v: BuildRowValidation | null }) {
     );
   }
   const list = validationIssues(v);
-  const issues = list.filter((i) => i.code !== 'policy_renamed').length;
+  const issues = list.length;
   // Renames aren't a real issue - deployment always resolves the live name
   // via policy_ids regardless - but still worth surfacing so the stale
   // display text next to it isn't mistaken for what will actually deploy.

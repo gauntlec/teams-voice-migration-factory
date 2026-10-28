@@ -8,7 +8,10 @@ import type { BuildRowValidation } from './index';
  * - `blocking`: a deployment cannot apply this row correctly, so it is left out of the run
  *   (and listed in the change document under "Not deployed") until it is fixed in Design & Build.
  * - `warning`: the row still deploys, but something about the account is likely to cause trouble.
- * - `info`: nothing is wrong; deployment will change a setting, or a name is stale.
+ * - `info`: nothing is wrong; only a record of an engineer's accept or reject of a number change (kept so it can be undone).
+ *
+ * What deployment will change (a policy that differs from live, a renamed policy) is not a validation issue: the Deployment module
+ * shows it in its preview.
  */
 export type ValidationSeverity = 'blocking' | 'warning' | 'info';
 
@@ -21,9 +24,7 @@ export type ValidationIssueCode =
   | 'account_disabled'
   | 'no_phone_licence'
   | 'usage_location'
-  | 'number_type_missing'
-  | 'policy_mismatch'
-  | 'policy_renamed';
+  | 'number_type_missing';
 
 export interface ValidationIssue {
   code: ValidationIssueCode;
@@ -125,22 +126,6 @@ export function validationIssues(v: BuildRowValidation | null | undefined): Vali
       detail: "A phone number is set but no number type: the number won't be assigned (and Enterprise Voice won't be enabled) on deployment.",
     });
   }
-  for (const p of v.policyMismatches) {
-    out.push({
-      code: 'policy_mismatch',
-      severity: 'info',
-      label: 'Policy will change',
-      detail: `${p.label}: live is ${p.live ?? '(none)'}, target is ${p.target}.`,
-    });
-  }
-  for (const p of v.renamedPolicies) {
-    out.push({
-      code: 'policy_renamed',
-      severity: 'info',
-      label: 'Policy renamed',
-      detail: `${p.label}: policy was renamed to "${p.liveName}". Refresh to sync the name.`,
-    });
-  }
   return out;
 }
 
@@ -149,9 +134,9 @@ export function blockingIssues(v: BuildRowValidation | null | undefined): Valida
   return validationIssues(v).filter((i) => i.severity === 'blocking');
 }
 
-/** True when the row needs an engineer's attention (a blocking issue, a warning or a policy that will change). Renames alone do not count. */
+/** True when the row needs an engineer's attention: a blocking issue or a warning. A number change that has been decided does not. */
 export function hasValidationIssue(v: BuildRowValidation | null | undefined): boolean {
-  return validationIssues(v).some((i) => i.code !== 'policy_renamed' && !(i.code === 'number_change' && i.decision !== 'pending'));
+  return validationIssues(v).some((i) => !(i.code === 'number_change' && i.decision !== 'pending'));
 }
 
 /** One line of the Validation issues tab: an issue and the row it is on. */
@@ -165,3 +150,37 @@ export interface BuildIssueRow {
 
 /** Issues a resource account that has not been created yet can have: it can't exist in the tenant or match live policy yet. */
 export const DESIGN_ONLY_ISSUE_CODES: readonly ValidationIssueCode[] = ['number_conflict', 'number_type_missing', 'unknown_policy'];
+
+/* ------------------------------- exports ------------------------------- */
+
+const SEVERITY_EXPORT_LABEL: Record<ValidationSeverity, string> = { blocking: 'Blocks deployment', warning: 'Warning', info: 'Decided' };
+const SHEET_EXPORT_LABEL: Record<BuildIssueRow['sheet'], string> = { users: 'Users', caps: 'Common area phones', 'resource-accounts': 'Resource accounts' };
+
+/** The one column the Microsoft 365 / Entra bulk member upload reads: UPNs under this exact title. */
+export const LICENCE_REQUEST_HEADER = 'Member object ID or user principal name [memberObjectIdOrUpn] Required';
+
+/** One CSV cell: quoted when it needs to be, and a leading = + - @ is neutralised so a spreadsheet never runs it as a formula. */
+function csvCell(v: string): string {
+  const safe = /^[=+\-@\t\r]/.test(v) ? `'${v}` : v;
+  return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+}
+const csvLine = (cells: string[]) => cells.map(csvCell).join(',');
+
+/** Every UPN with a "No phone licence" issue, once each (any case), in order: the people who need a Teams Phone licence. */
+export function licenceRequestUpns(issues: readonly BuildIssueRow[]): string[] {
+  const seen = new Map<string, string>();
+  for (const i of issues) if (i.issue.code === 'no_phone_licence' && i.upn.trim() && !seen.has(i.upn.trim().toLowerCase())) seen.set(i.upn.trim().toLowerCase(), i.upn.trim());
+  return [...seen.values()].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+}
+
+/** The licence request file: the title, then one UPN per line. */
+export function licenceRequestCsv(issues: readonly BuildIssueRow[]): string {
+  return [LICENCE_REQUEST_HEADER, ...licenceRequestUpns(issues).map(csvCell)].join('\r\n') + '\r\n';
+}
+
+/** Every issue on the site as a spreadsheet: one line per issue. */
+export function issuesCsv(issues: readonly BuildIssueRow[]): string {
+  const lines = [csvLine(['Severity', 'Sheet', 'Name', 'UPN', 'Issue', 'Detail'])];
+  for (const i of issues) lines.push(csvLine([SEVERITY_EXPORT_LABEL[i.issue.severity], SHEET_EXPORT_LABEL[i.sheet], i.displayName ?? '', i.upn, i.issue.label, i.issue.detail]));
+  return lines.join('\r\n') + '\r\n';
+}

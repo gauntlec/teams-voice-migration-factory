@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
 import { Badge, Button, Text, makeStyles, tokens } from '@fluentui/react-components';
-import { ArrowClockwiseRegular, ErrorCircleRegular, InfoRegular, WarningRegular } from '@fluentui/react-icons';
-import type { BuildIssueRow, ValidationSeverity } from '@tvmf/shared';
+import { ArrowClockwiseRegular, ArrowDownloadRegular, ErrorCircleRegular, InfoRegular, WarningRegular } from '@fluentui/react-icons';
+import { issuesCsv, licenceRequestCsv, licenceRequestUpns, type BuildIssueRow, type ValidationSeverity } from '@tvmf/shared';
 import { DataTable } from '../../components/DataTable';
 import { LoadError } from '../../components/records';
+import { downloadText } from '../../lib/download';
 import { EmptyState } from '../../components/states';
 import { TableBody, TableCell, TableHeader, TableHeaderCell, TableRow } from '@fluentui/react-components';
 import type { BuildTab } from './buildShared';
@@ -25,8 +26,11 @@ const SEVERITY: Record<ValidationSeverity, { label: string; plural: string; colo
     hint: 'A deployment skips this row until it is fixed, and lists it under "Not deployed" in the change document.',
   },
   warning: { label: 'Warning', plural: 'Warnings', color: 'warning', icon: <WarningRegular />, hint: 'The row still deploys, but is likely to cause trouble.' },
-  info: { label: 'Will change', plural: 'Will change', color: 'informative', icon: <InfoRegular />, hint: 'Nothing is wrong: deployment will change a setting, or a name is stale.' },
+  // Only a decided number change is "info": a record of the accept or reject, kept so it can be undone. It is not a category to filter by.
+  info: { label: 'Decided', plural: 'Decided', color: 'informative', icon: <InfoRegular />, hint: 'You accepted or rejected this number change. Undo to be asked again.' },
 };
+/** The categories the filter buttons offer. What deployment will change is not a validation issue; the Deployment module shows it. */
+const FILTERS: ValidationSeverity[] = ['blocking', 'warning'];
 
 const SHEET_LABEL: Record<BuildIssueRow['sheet'], string> = { users: 'Users', caps: 'Common area phones', 'resource-accounts': 'Resource accounts' };
 
@@ -40,7 +44,10 @@ export function ValidationIssuesTab({
   canDecide,
   onDecide,
   deciding,
+  fileBase,
 }: {
+  /** the site, for the names of the exported files, e.g. its site code */
+  fileBase: string;
   issues: BuildIssueRow[] | undefined;
   loading: boolean;
   error: unknown;
@@ -59,6 +66,9 @@ export function ValidationIssuesTab({
     return c;
   }, [issues]);
   const shown = (issues ?? []).filter((i) => filter === 'all' || i.issue.severity === filter);
+  const needLicence = licenceRequestUpns(issues ?? []).length;
+  const stamp = new Date().toISOString().slice(0, 10);
+  const safeBase = fileBase.replace(/[^A-Za-z0-9._-]+/g, '-') || 'site';
   const people = new Set((issues ?? []).map((i) => `${i.sheet}:${i.rowId}`)).size;
 
   if (error) return <LoadError message={(error as Error).message} />;
@@ -68,7 +78,7 @@ export function ValidationIssuesTab({
         <Button size="small" appearance={filter === 'all' ? 'primary' : 'secondary'} onClick={() => setFilter('all')}>
           All ({issues?.length ?? 0})
         </Button>
-        {(Object.keys(SEVERITY) as ValidationSeverity[]).map((k) => (
+        {FILTERS.map((k) => (
           <Button key={k} size="small" appearance={filter === k ? 'primary' : 'secondary'} icon={SEVERITY[k].icon} title={SEVERITY[k].hint} onClick={() => setFilter(k)}>
             {SEVERITY[k].plural} ({counts[k]})
           </Button>
@@ -77,6 +87,24 @@ export function ValidationIssuesTab({
         <Text size={200} className={s.muted}>
           {people} row{people === 1 ? '' : 's'} affected
         </Text>
+        <Button
+          size="small"
+          icon={<ArrowDownloadRegular />}
+          disabled={!issues || issues.length === 0}
+          title="Every issue on this site as a spreadsheet (CSV), whatever the filter."
+          onClick={() => downloadText(`validation-issues-${safeBase}-${stamp}.csv`, issuesCsv(issues ?? []), { bom: true })}
+        >
+          Export all issues
+        </Button>
+        <Button
+          size="small"
+          icon={<ArrowDownloadRegular />}
+          disabled={needLicence === 0}
+          title={needLicence === 0 ? 'No account on this site is missing a Teams Phone licence.' : `${needLicence} account${needLicence === 1 ? '' : 's'} with no phone licence: a CSV of their UPNs under the title "Member object ID or user principal name [memberObjectIdOrUpn] Required".`}
+          onClick={() => downloadText(`licence-request-${safeBase}-${stamp}.csv`, licenceRequestCsv(issues ?? []))}
+        >
+          Export licence request{needLicence ? ` (${needLicence})` : ''}
+        </Button>
         <Button size="small" icon={<ArrowClockwiseRegular />} disabled={loading} onClick={onRefresh}>
           {loading ? 'Checking…' : 'Refresh'}
         </Button>
