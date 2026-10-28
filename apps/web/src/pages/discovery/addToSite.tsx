@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Dropdown, Field, Option, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, makeStyles, tokens } from '@fluentui/react-components';
 import type { AddFromDiscoveryInput, AddFromDiscoveryItemResult } from '@tvmf/shared';
 import { api, ApiError } from '../../api';
 import { useAuth } from '../../auth';
 import { DataTable } from '../../components/DataTable';
 import { LoadError } from '../../components/records';
+import { SITE_SUGGESTIONS_KEY } from './siteSuggestions';
 
 /** One discovered object picked on a Discovery tab. `kind` says which list it came from; an account is a user or a common area phone. */
 export interface AddItem {
@@ -73,6 +74,7 @@ function describe(r: AddFromDiscoveryItemResult): { dc: string; build: string } 
 export function AddToSiteDialog({ items, onClose, onDone }: { items: AddItem[]; onClose: () => void; onDone: () => void }) {
   const s = useStyles();
   const { activeTenantId: tid } = useAuth();
+  const qc = useQueryClient();
   const [siteId, setSiteId] = useState('');
   const [alsoBuild, setAlsoBuild] = useState(true);
   const [as, setAs] = useState<Record<string, 'user' | 'cap'>>({});
@@ -108,6 +110,7 @@ export function AddToSiteDialog({ items, onClose, onDone }: { items: AddItem[]; 
     onSuccess: (r) => {
       setResults(r);
       setError(null);
+      void qc.invalidateQueries({ queryKey: SITE_SUGGESTIONS_KEY });
       onDone();
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Adding to the site failed'),

@@ -12,6 +12,7 @@ import { useDebounced } from '../../hooks/useDebounced';
 import { useStyles, fmt, Pager, JsonDialog, str, fetchAllPages } from './discoveryShared';
 import { HistoryButton } from './history';
 import { AddToSiteDialog, useRowSelection, type AddItem } from './addToSite';
+import { SuggestedSiteCell, useSiteSuggestions } from './siteSuggestions';
 import { CompareUsersDialog } from './compareUsers';
 import { TableSkeleton } from '../../components/states';
 
@@ -170,6 +171,7 @@ export function ObjectsTable({
   const [view, setView] = useState<TenantObject | null>(null);
   const [flowFor, setFlowFor] = useState<TenantObject | null>(null);
   const sel = useRowSelection();
+  const sug = useSiteSuggestions();
   const [addItems, setAddItems] = useState<AddItem[] | null>(null);
   const toItem = (o: TenantObject): AddItem => ({ id: o.id, label: o.display_name ?? o.object_key, kind: addToSite!.kind, detail: o.object_key });
   const limit = 50;
@@ -232,6 +234,7 @@ export function ObjectsTable({
                 {cols.map((c) => (
                   <TableHeaderCell key={c.label}>{c.label}</TableHeaderCell>
                 ))}
+                {addToSite && <TableHeaderCell>Site (from number)</TableHeaderCell>}
                 <TableHeaderCell>Last seen</TableHeaderCell>
                 <TableHeaderCell />
               </TableRow>
@@ -247,6 +250,11 @@ export function ObjectsTable({
                   {cols.map((c) => (
                     <TableCell key={c.label}>{c.render(o)}</TableCell>
                   ))}
+                  {addToSite && (
+                    <TableCell>
+                      <SuggestedSiteCell id={o.id} byId={sug.byId} mixedById={sug.mixedById} />
+                    </TableCell>
+                  )}
                   <TableCell>{fmt(o.discovered_at)}</TableCell>
                   <TableCell>
                     <div className={s.row}>
@@ -418,6 +426,7 @@ export function UsersTable({ base, canImport, canAdd, onImported }: { base: stri
   const [view, setView] = useState<TenantUserSummary | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const sel = useRowSelection();
+  const sug = useSiteSuggestions();
   const [addItems, setAddItems] = useState<AddItem[] | null>(null);
   const [compare, setCompare] = useState<[string, string] | null>(null);
   // A common area phone is an account like any other here; its licence plan says which it is, and the dialog lets you change it.
@@ -518,6 +527,7 @@ export function UsersTable({ base, canImport, canAdd, onImported }: { base: stri
                 <TableHeaderCell>Calling policy</TableHeaderCell>
                 <TableHeaderCell>Department</TableHeaderCell>
                 <TableHeaderCell>Data Collection</TableHeaderCell>
+                <TableHeaderCell>Site (from number)</TableHeaderCell>
                 <TableHeaderCell />
               </TableRow>
             </TableHeader>
@@ -569,6 +579,9 @@ export function UsersTable({ base, canImport, canAdd, onImported }: { base: stri
                     ) : (
                       <span className={s.muted}>—</span>
                     )}
+                  </TableCell>
+                  <TableCell>
+                    <SuggestedSiteCell id={u.id} byId={sug.byId} mixedById={sug.mixedById} />
                   </TableCell>
                   <TableCell>
                     <div className={s.row}>
@@ -959,6 +972,7 @@ export function EndpointsTable({ base, canAdd, onAdded }: { base: string; canAdd
   });
   const items = list.data?.items ?? [];
   const sel = useRowSelection();
+  const sug = useSiteSuggestions();
   const [addItems, setAddItems] = useState<AddItem[] | null>(null);
   // A common area phone is added as a common area phone; a phone-enabled resource account as a resource account.
   const toItem = (e: TenantEndpoint): AddItem =>
@@ -1006,6 +1020,7 @@ export function EndpointsTable({ base, canAdd, onAdded }: { base: string; canAdd
               <TableHeaderCell>Calling policy</TableHeaderCell>
               <TableHeaderCell>IP phone policy</TableHeaderCell>
               <TableHeaderCell>Enabled</TableHeaderCell>
+              <TableHeaderCell>Site (from number)</TableHeaderCell>
               {canAdd && <TableHeaderCell />}
             </TableRow>
           </TableHeader>
@@ -1028,6 +1043,9 @@ export function EndpointsTable({ base, canAdd, onAdded }: { base: string; canAdd
                 <TableCell>{e.callingPolicy ?? '—'}</TableCell>
                 <TableCell>{e.ipPhonePolicy ?? '—'}</TableCell>
                 <TableCell>{e.enabled == null ? '—' : e.enabled ? 'Yes' : 'No'}</TableCell>
+                <TableCell>
+                  <SuggestedSiteCell id={e.id} byId={sug.byId} mixedById={sug.mixedById} />
+                </TableCell>
                 {canAdd && (
                   <TableCell>
                     <Button size="small" appearance="subtle" onClick={() => setAddItems([toItem(e)])}>

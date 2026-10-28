@@ -15,6 +15,7 @@ import { WizardTiles, useTeamChoices } from '../components/WizardTiles';
 import { BulkEditDialog, LoadError, NoTenant, PagedSection, useRecordStyles, type Choice, type FieldDef, type Row } from '../components/records';
 import { RelinkUsersButton, TAB_LABEL, isFlowStale, TABS, numKey, type SiteSummary, type TabKey } from './site/siteShared';
 import { OverviewTab, NetworkDiagramCard } from './site/siteOverview';
+import { SiteSuggestionsCard } from './discovery/siteSuggestions';
 import { SiteChangesCard, SiteReviewBar } from './site/siteReview';
 import { NumberInventory, FlowImportButton, RaNumbersButton } from './site/siteNumbers';
 
@@ -231,6 +232,8 @@ export function SiteWorkspace() {
           bulkSave.mutate({ kind: bulkOpen, ids, patch });
         }}
       />
+
+      <SiteSuggestionsCard siteId={siteId} sitecode={site.sitecode} locked={locked} onAdded={refreshSummary} />
 
       <TabList selectedValue={tab} onTabSelect={(_, d) => setTab(d.value as TabKey)}>
         {TABS.map((t) => (

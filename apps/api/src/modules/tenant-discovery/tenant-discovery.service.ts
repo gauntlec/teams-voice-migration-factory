@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { sql, type Kysely } from 'kysely';
-import { platformDb, tenantDb, type DB } from '@tvmf/db';
+import { platformDb, siteSuggestions, tenantDb, type DB } from '@tvmf/db';
 import {
   matchSitecodeFromName,
   RESOURCE_ACCOUNT_APPLICATION_IDS,
@@ -52,6 +52,20 @@ import { DeploymentService } from '../deployment/deployment.service';
 
 type Scoped = ReturnType<typeof tenantDb>;
 const actorOf = (u: AuthedUser) => ({ id: u.id, email: u.email });
+
+function settingsOf(
+  row: { filter_users: boolean; notify_on_complete: boolean; auto_add_by_number_range: boolean; auto_add_last_at: string | null; auto_add_last_summary: Record<string, unknown> | null } | undefined,
+): TenantDiscoverySummary['settings'] {
+  const last = row?.auto_add_last_at ? row.auto_add_last_summary : null;
+  return {
+    filterUsers: row?.filter_users ?? true,
+    notifyOnComplete: row?.notify_on_complete ?? true,
+    autoAddByNumberRange: row?.auto_add_by_number_range ?? false,
+    autoAddLast: row?.auto_add_last_at
+      ? { at: new Date(row.auto_add_last_at).toISOString(), added: Number(last?.added ?? 0), skipped: Number(last?.skipped ?? 0), bySite: (last?.bySite ?? {}) as Record<string, number> }
+      : null,
+  };
+}
 const stripTel = (v: string | null | undefined): string | null => {
   const raw = String(v ?? '').replace(/^tel:/i, '').trim();
   return raw || null;
@@ -312,25 +326,23 @@ export class TenantDiscoveryService {
   /* ============================== settings ============================== */
 
   /** Per-customer Discovery settings (row seeded by tenant migration 0012). */
-  async getSettings(t: TenantContext): Promise<{ filterUsers: boolean; notifyOnComplete: boolean }> {
+  async getSettings(t: TenantContext): Promise<TenantDiscoverySummary['settings']> {
     const row = await this.s(t)
       .selectFrom('tenant_discovery_config')
-      .select(['filter_users', 'notify_on_complete'])
+      .select(['filter_users', 'notify_on_complete', 'auto_add_by_number_range', 'auto_add_last_at', 'auto_add_last_summary'])
       .executeTakeFirst();
-    return {
-      filterUsers: row?.filter_users ?? true,
-      notifyOnComplete: row?.notify_on_complete ?? true,
-    };
+    return settingsOf(row);
   }
 
   async updateSettings(
     t: TenantContext,
     user: AuthedUser,
-    patch: { filterUsers?: boolean; notifyOnComplete?: boolean },
-  ): Promise<{ filterUsers: boolean; notifyOnComplete: boolean }> {
+    patch: { filterUsers?: boolean; notifyOnComplete?: boolean; autoAddByNumberRange?: boolean },
+  ): Promise<TenantDiscoverySummary['settings']> {
     const set: Record<string, unknown> = { updated_by: user.id, updated_at: new Date().toISOString() };
     if (patch.filterUsers !== undefined) set.filter_users = patch.filterUsers;
     if (patch.notifyOnComplete !== undefined) set.notify_on_complete = patch.notifyOnComplete;
+    if (patch.autoAddByNumberRange !== undefined) set.auto_add_by_number_range = patch.autoAddByNumberRange;
     await this.s(t).updateTable('tenant_discovery_config').set(set).execute();
     await this.audit.tenant(t.schema, 'tenant_discovery.settings_updated', {
       actor: actorOf(user),
@@ -338,6 +350,20 @@ export class TenantDiscoveryService {
       detail: patch,
     });
     return this.getSettings(t);
+  }
+
+  /**
+   * Discovered objects whose number is in a site's range (see site-suggestions.ts): ones on no site (state suggest), ones on a
+   * different site (other_site, never moved) and ones whose numbers span two sites (mixed). `siteId` narrows to one site.
+   */
+  async getSiteSuggestions(t: TenantContext, siteId?: string) {
+    const all = await siteSuggestions(this.s(t));
+    const inScope = (id: string) => !t.siteScope || t.siteScope.includes(id);
+    const code = siteId ? (await this.siteLookup(t)).byId.get(siteId) : undefined;
+    return {
+      items: all.items.filter((i) => inScope(i.siteId) && (!siteId || i.siteId === siteId)),
+      mixed: t.siteScope ? [] : all.mixed.filter((m) => !code || m.sitecodes.includes(code)),
+    };
   }
 
   /* ================================ runs ================================ */
@@ -734,7 +760,7 @@ export class TenantDiscoveryService {
       .executeTakeFirst();
     const cfg = await s
       .selectFrom('tenant_discovery_config')
-      .select(['filter_users', 'notify_on_complete'])
+      .select(['filter_users', 'notify_on_complete', 'auto_add_by_number_range', 'auto_add_last_at', 'auto_add_last_summary'])
       .executeTakeFirst();
 
     const counts: Partial<Record<TenantObjectType, number>> = {};
@@ -759,10 +785,7 @@ export class TenantDiscoveryService {
       counts,
       linkedDiscoveryUsers: Number(linked?.n ?? 0),
       groupsCount: Number(groupsCount?.n ?? 0),
-      settings: {
-        filterUsers: cfg?.filter_users ?? true,
-        notifyOnComplete: cfg?.notify_on_complete ?? true,
-      },
+      settings: settingsOf(cfg),
     };
   }
 

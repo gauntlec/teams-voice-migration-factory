@@ -234,6 +234,13 @@ export class TenantDiscoveryController {
     return this.svc.listPolicies(t, q);
   }
 
+  /** Discovered objects whose number is in a site's range, for the site card and the Discovery tabs. `siteId` narrows to one site. */
+  @Get('site-suggestions')
+  @RequirePermission('tenantdiscovery:read', 'discovery:write')
+  siteSuggestions(@TenantCtx() t: TenantContext, @Query('siteId') siteId?: string) {
+    return this.svc.getSiteSuggestions(t, siteId || undefined);
+  }
+
   /* import into Data Collection */
 
   @Get('import-users/preview')
