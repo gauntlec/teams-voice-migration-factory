@@ -384,7 +384,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           </Button>
         )}
         {canWrite && (
-          <Button size="small" appearance="subtle" onClick={() => setMapOpen(true)}>
+          <Button size="small" onClick={() => setMapOpen(true)}>
             Calling policy map
           </Button>
         )}
@@ -626,7 +626,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
                 <Button size="small" disabled={usersSelected.size === 0} onClick={() => setBulkOpen('users')}>
                   Bulk edit ({usersSelected.size} selected)
                 </Button>
-                <Button size="small" appearance="subtle" onClick={() => setTemplatesOpen('user')}>
+                <Button size="small" onClick={() => setTemplatesOpen('user')}>
                   Templates
                 </Button>
               </>
@@ -702,7 +702,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
                 <Button size="small" disabled={capsSelected.size === 0} onClick={() => setBulkOpen('caps')}>
                   Bulk edit ({capsSelected.size} selected)
                 </Button>
-                <Button size="small" appearance="subtle" onClick={() => setTemplatesOpen('cap')}>
+                <Button size="small" onClick={() => setTemplatesOpen('cap')}>
                   Templates
                 </Button>
               </>
