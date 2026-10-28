@@ -18,6 +18,7 @@ import {
   type PortDocumentItemSummary,
   type PortCompletedContext,
   type PortDocumentsCompletedContext,
+  type ValidationIssuesAlertContext,
   type PortDocumentsReminderContext,
   type PortDocumentsRequestedContext,
   type ServiceRequestCreatedContext,
@@ -59,6 +60,8 @@ export function renderEmail(template: string, context: Record<string, unknown>, 
       return portDocumentsReminder(context as unknown as PortDocumentsReminderContext, branding);
     case 'port_completed':
       return portCompleted(context as unknown as PortCompletedContext, branding);
+    case 'validation_issues_alert':
+      return validationIssuesAlert(context as unknown as ValidationIssuesAlertContext, branding);
     case 'port_documents_completed':
       return portDocumentsCompleted(context as unknown as PortDocumentsCompletedContext, branding);
     case 'feature_request_status_changed':
@@ -382,6 +385,25 @@ function portCompleted(c: PortCompletedContext, branding?: EmailBranding): Rende
     ],
     cta: { label: 'View number porting', url: c.portalUrl },
     outro: ['You are receiving this because you are a contact for this site.'],
+  };
+  return { subject, html: renderHtml(layout, branding), text: renderText(layout) };
+}
+
+function validationIssuesAlert(c: ValidationIssuesAlertContext, branding?: EmailBranding): RenderedEmail {
+  const n = c.issues.length;
+  const subject = `${n} item${n === 1 ? '' : 's'} to resolve — ${c.siteName}`;
+  const lines = c.issues.map((i) => `${i.name ? `${i.name} (${i.upn})` : i.upn}: ${i.label}. ${i.detail}`);
+  const layout: LayoutInput = {
+    previewText: `${n} item${n === 1 ? '' : 's'} at ${c.siteName} need${n === 1 ? 's' : ''} your attention before the migration can go ahead.`,
+    eyebrow: 'Migration · action needed',
+    heading: `${n} item${n === 1 ? '' : 's'} to resolve — ${c.siteName}`,
+    intro: [
+      c.recipientName ? `Hello ${c.recipientName},` : 'Hello,',
+      `${c.senderName} has found ${n === 1 ? 'something' : 'some things'} at ${c.siteName} that need${n === 1 ? 's' : ''} to be resolved before the migration for ${c.customerName} can go ahead.`,
+      ...(c.message ? [c.message] : []),
+      ...lines,
+    ],
+    outro: ['Reply to this email if you have any questions, or let us know once these have been dealt with.'],
   };
   return { subject, html: renderHtml(layout, branding), text: renderText(layout) };
 }

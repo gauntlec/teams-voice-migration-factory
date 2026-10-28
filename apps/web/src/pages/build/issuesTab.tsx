@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
-import { Badge, Button, Text, makeStyles, tokens } from '@fluentui/react-components';
-import { ArrowClockwiseRegular, ArrowDownloadRegular, ErrorCircleRegular, InfoRegular, WarningRegular } from '@fluentui/react-icons';
+import { Badge, Button, Checkbox, Text, makeStyles, tokens } from '@fluentui/react-components';
+import { ArrowClockwiseRegular, ArrowDownloadRegular, ErrorCircleRegular, InfoRegular, MailRegular, WarningRegular } from '@fluentui/react-icons';
 import { issuesCsv, licenceRequestCsv, licenceRequestUpns, type BuildIssueRow, type ValidationSeverity } from '@tvmf/shared';
 import { DataTable } from '../../components/DataTable';
 import { LoadError } from '../../components/records';
 import { downloadText } from '../../lib/download';
+import { EmailIssuesDialog } from './emailIssuesDialog';
 import { EmptyState } from '../../components/states';
 import { TableBody, TableCell, TableHeader, TableHeaderCell, TableRow } from '@fluentui/react-components';
 import type { BuildTab } from './buildShared';
@@ -45,7 +46,15 @@ export function ValidationIssuesTab({
   onDecide,
   deciding,
   fileBase,
+  base,
+  siteId,
+  canEmail,
 }: {
+  /** the Design & Build API base, and the site, for emailing issues to its contacts */
+  base: string;
+  siteId: string;
+  /** may email issues to the site contacts */
+  canEmail: boolean;
   /** the site, for the names of the exported files, e.g. its site code */
   fileBase: string;
   issues: BuildIssueRow[] | undefined;
@@ -66,6 +75,22 @@ export function ValidationIssuesTab({
     return c;
   }, [issues]);
   const shown = (issues ?? []).filter((i) => filter === 'all' || i.issue.severity === filter);
+  // Ticked issues, by what identifies them. A decided number change is a record, not something to resolve, so it can't be ticked.
+  const idOf = (i: BuildIssueRow) => `${i.sheet}|${i.rowId}|${i.issue.code}|${i.issue.detail}`;
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [emailing, setEmailing] = useState(false);
+  const pickable = shown.filter((i) => i.issue.severity !== 'info');
+  const pickedIssues = (issues ?? []).filter((i) => picked.has(idOf(i)) && i.issue.severity !== 'info');
+  const allShownPicked = pickable.length > 0 && pickable.every((i) => picked.has(idOf(i)));
+  const setMany = (list: BuildIssueRow[], on: boolean) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      for (const i of list) {
+        if (on) next.add(idOf(i));
+        else next.delete(idOf(i));
+      }
+      return next;
+    });
   const needLicence = licenceRequestUpns(issues ?? []).length;
   const stamp = new Date().toISOString().slice(0, 10);
   const safeBase = fileBase.replace(/[^A-Za-z0-9._-]+/g, '-') || 'site';
@@ -87,6 +112,18 @@ export function ValidationIssuesTab({
         <Text size={200} className={s.muted}>
           {people} row{people === 1 ? '' : 's'} affected
         </Text>
+        {canEmail && (
+          <Button
+            size="small"
+            appearance="primary"
+            icon={<MailRegular />}
+            disabled={pickedIssues.length === 0}
+            title={pickedIssues.length === 0 ? 'Tick the issues to send, then email them to the site contacts.' : 'Email the ticked issues to the site contacts'}
+            onClick={() => setEmailing(true)}
+          >
+            Email site contacts{pickedIssues.length ? ` (${pickedIssues.length})` : ''}
+          </Button>
+        )}
         <Button
           size="small"
           icon={<ArrowDownloadRegular />}
@@ -115,6 +152,11 @@ export function ValidationIssuesTab({
         <DataTable size="small" minWidth={900} fitScreen>
           <TableHeader>
             <TableRow>
+              {canEmail && (
+                <TableHeaderCell style={{ width: 40 }}>
+                  <Checkbox aria-label="Tick every issue shown" checked={allShownPicked} disabled={pickable.length === 0} onChange={(_, d) => setMany(pickable, !!d.checked)} />
+                </TableHeaderCell>
+              )}
               <TableHeaderCell>Severity</TableHeaderCell>
               <TableHeaderCell>Sheet</TableHeaderCell>
               <TableHeaderCell>Name / UPN</TableHeaderCell>
@@ -128,6 +170,16 @@ export function ValidationIssuesTab({
               const sev = SEVERITY[i.issue.severity];
               return (
                 <TableRow key={`${i.sheet}:${i.rowId}:${i.issue.code}:${n}`}>
+                  {canEmail && (
+                    <TableCell>
+                      <Checkbox
+                        aria-label={`Tick ${i.displayName ?? i.upn}: ${i.issue.label}`}
+                        checked={picked.has(idOf(i))}
+                        disabled={i.issue.severity === 'info'}
+                        onChange={(_, d) => setMany([i], !!d.checked)}
+                      />
+                    </TableCell>
+                  )}
                   <TableCell>
                     <Badge appearance="tint" color={sev.color} icon={sev.icon} title={sev.hint}>
                       {sev.label}
@@ -170,6 +222,16 @@ export function ValidationIssuesTab({
             })}
           </TableBody>
         </DataTable>
+      )}
+      {emailing && (
+        <EmailIssuesDialog
+          base={base}
+          siteId={siteId}
+          sitecode={fileBase}
+          issues={pickedIssues}
+          onClose={() => setEmailing(false)}
+          onSent={() => setPicked(new Set())}
+        />
       )}
     </>
   );

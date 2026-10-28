@@ -1769,3 +1769,35 @@ export const portCompleteSchema = z
   .object({ completedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'use a date').optional() })
   .strict();
 export type PortCompleteInput = z.infer<typeof portCompleteSchema>;
+
+/**
+ * Email the picked validation issues to a site's contacts (`POST build/issues/email`). Each issue is named by what the Validation
+ * issues tab showed (sheet, row, code and its wording); the server checks every one against the site's current issues and only
+ * sends what is still an issue, in its own words. `recipients` narrows to some of the site contacts.
+ */
+export const emailBuildIssuesSchema = z
+  .object({
+    site_id: z.guid(),
+    issues: z
+      .array(z.object({ sheet: z.enum(['users', 'caps', 'resource-accounts']), row_id: z.guid(), code: str(60), detail: str(2000) }).strict())
+      .min(1)
+      .max(200),
+    message: optStr(2000),
+    recipients: z.array(z.email()).min(1).max(50).optional(),
+  })
+  .strict();
+export type EmailBuildIssuesInput = z.infer<typeof emailBuildIssuesSchema>;
+
+/** A person a site's issues email would go to. */
+export interface BuildIssueRecipient {
+  email: string;
+  name: string | null;
+  /** a user of the system, or a contact typed on the site's Overview */
+  kind: 'user' | 'typed';
+}
+export interface EmailBuildIssuesResult {
+  sent: number;
+  issues: number;
+  /** picked issues that are no longer issues, so were left out */
+  skipped: number;
+}
