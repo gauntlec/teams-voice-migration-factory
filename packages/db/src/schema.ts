@@ -556,6 +556,16 @@ export interface PhoneNumbersTable {
   /** Released in Teams: not to be reassigned before this (migration 0066, number-cooloff.ts); null = free to use. */
   cooling_until: string | null;
   cooling_reason: string | null;
+  /** What Teams says (migration 0074, number-reconcile.ts): set by the Discovery sync while the number is assigned in Teams, null otherwise. */
+  live_status: string | null;
+  live_holder_kind: 'user' | 'resource_account' | 'other' | null;
+  live_holder_upn: string | null;
+  live_holder_name: string | null;
+  live_seen_at: string | null;
+  /** Assigned only because Teams has it: no Data Collection holder claims it. A claim by a holder takes it over. */
+  live_only: ColumnType<boolean, boolean | undefined, boolean>;
+  /** Plain-words clash between Teams and the Data Collection holder; null = none. */
+  conflict: string | null;
   created_at: Ts;
 }
 

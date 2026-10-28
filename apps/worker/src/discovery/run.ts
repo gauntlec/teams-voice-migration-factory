@@ -1,6 +1,6 @@
 import type { Job } from 'bullmq';
 import { sql, type Kysely } from 'kysely';
-import { computeSiteDrift, markNumbersReleased, platformDb, sitesWithLiveRuns, tenantDb, type DB, webOrigin as resolveWebOrigin } from '@tvmf/db';
+import { computeSiteDrift, markNumbersReleased, reconcileNumbersWithTeams, type NumberReconcileResult, platformDb, sitesWithLiveRuns, tenantDb, type DB, webOrigin as resolveWebOrigin } from '@tvmf/db';
 import {
   RESOURCE_ACCOUNT_APPLICATION_IDS,
   numberReleasedInTeams,
@@ -361,6 +361,17 @@ async function runDiscovery(
 
   progress.step = null;
   progress.note = null;
+  // Numbers follow Teams: whatever Teams has assigned is shown as assigned to its real holder, and a clash with Data Collection is flagged.
+  // Numbers Teams no longer lists are only released when this run read every number cleanly. Best-effort.
+  let numbers: NumberReconcileResult | null = null;
+  if (!signInLost) {
+    try {
+      numbers = await reconcileNumbersWithTeams(s, { releaseMissing: wantType('phone_number') && !progress.errors.some((e) => e.step === 'numbers') });
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn(`[discovery ${runId}] number reconcile failed: ${(e as Error).message}`);
+    }
+  }
   const total = Object.values(progress.counts).reduce((a, b) => a + (b ?? 0), 0);
   await s
     .updateTable('tenant_discovery_runs')
@@ -375,6 +386,7 @@ async function runDiscovery(
         skipped: progress.skipped,
         filterDisabledReason: progress.filterDisabledReason ?? null,
         errors: progress.errors.length,
+        numbers,
       },
       error: signInLost ? 'Lost the tenant sign-in part-way through - sign in again and re-run.' : null,
     })

@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { sql, type Kysely } from 'kysely';
-import { cooloffDays, coolingUntil, tenantDb, type DB } from '@tvmf/db';
+import { cooloffDays, coolingUntil, refreshNumberConflict, tenantDb, type DB } from '@tvmf/db';
 import {
   MAX_RANGE_SIZE,
   type CallingPolicyInput,
@@ -475,6 +475,12 @@ export class TelephonyService {
           'n.holder_id as holder_id',
           'n.cooling_until as cooling_until',
           'n.cooling_reason as cooling_reason',
+          'n.live_status as live_status',
+          'n.live_holder_kind as live_holder_kind',
+          'n.live_holder_upn as live_holder_upn',
+          'n.live_holder_name as live_holder_name',
+          'n.live_only as live_only',
+          'n.conflict as conflict',
           'n.range_id as range_id',
           'r.range_start as range_start',
           'r.range_end as range_end',
@@ -813,22 +819,24 @@ export class TelephonyService {
     if (cooling) throw new ConflictException(coolingMessage(cooling));
     const res = await this.s(t)
       .updateTable('phone_numbers')
-      .set({ holder_type: holderType, holder_id: holderId, status: 'assigned' })
+      .set({ holder_type: holderType, holder_id: holderId, status: 'assigned', live_only: false })
       .where('id', '=', numberId)
       .where('holder_id', 'is', null)
-      .where('status', '=', 'available')
+      // free, or assigned only because Teams has it (number-reconcile.ts): a holder in Data Collection takes it over, and any clash with Teams is flagged
+      .where((eb) => eb.or([eb.and([eb('status', '=', 'available'), eb('live_status', 'is', null)]), eb('live_only', '=', true)]))
       .executeTakeFirst();
     if (!Number(res.numUpdatedRows)) {
       const n = await this.s(t)
         .selectFrom('phone_numbers')
-        .select('status')
+        .select(['status', 'live_status', 'live_holder_name', 'live_holder_upn'])
         .where('id', '=', numberId)
         .executeTakeFirst();
       if (!n) throw new NotFoundException('phone number not found');
       throw new ConflictException(
-        n.status === 'reserved' ? 'That number is reserved.' : 'That number is already assigned.',
+        n.status === 'reserved' ? 'That number is reserved.' : n.live_status ? `That number is in use in Teams (${n.live_holder_name ?? n.live_holder_upn ?? 'another object'}).` : 'That number is already assigned.',
       );
     }
+    await refreshNumberConflict(this.s(t), numberId);
   }
 
   private async releaseHolder(t: TenantContext, holderType: NumberHolderType, holderId: string) {
