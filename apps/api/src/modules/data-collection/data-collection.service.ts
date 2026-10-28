@@ -5,8 +5,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { sql } from 'kysely';
-import { platformDb, tenantDb } from '@tvmf/db';
-import { asSiteRegion, contactUserIds, type SiteContact, type SiteContacts } from '@tvmf/shared';
+import { platformDb, setHandsetStage, siteHandsets, tenantDb } from '@tvmf/db';
+import { asSiteRegion, contactUserIds, handsetModelKey, type SiteContact, type SiteContacts, type SiteHandsetStatusInput } from '@tvmf/shared';
 import type {
   DiscoveryFlowInput,
   DiscoveryListQuery,
@@ -178,6 +178,31 @@ export class DataCollectionService {
       }
     }
     return out;
+  }
+
+  /** The handset models a site's users and common area phones need, how many of each, and the stage the project manager has recorded for each. */
+  async siteHandsets(t: TenantContext, siteId: string) {
+    assertSiteInScope(t, siteId);
+    const s = this.scoped(t);
+    const site = await s.selectFrom('discovery_sites').select('id').where('id', '=', siteId).executeTakeFirst();
+    if (!site) throw new NotFoundException('site not found');
+    return siteHandsets(s, siteId);
+  }
+
+  /** Records the stage a handset model has reached on a site. Not a design change, so it is allowed after the site is submitted. */
+  async setSiteHandsetStatus(t: TenantContext, user: AuthedUser, siteId: string, input: SiteHandsetStatusInput) {
+    const current = await this.siteHandsets(t, siteId);
+    const key = handsetModelKey(input.model);
+    const row = current.models.find((m) => m.key === key);
+    if (!row) throw new NotFoundException('no user or common area phone on this site has that handset model');
+    await setHandsetStage(this.scoped(t), siteId, row.model, input.status, user.displayName);
+    await this.audit.tenant(t.schema, 'discovery.handset_stage_set', {
+      actor: actorOf(user),
+      targetType: 'discovery_site',
+      targetId: siteId,
+      detail: { model: row.model, status: input.status },
+    });
+    return this.siteHandsets(t, siteId);
   }
 
   /** Header payload for a single site's workspace. */

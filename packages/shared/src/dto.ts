@@ -1805,3 +1805,11 @@ export interface EmailBuildIssuesResult {
   /** picked issues that are no longer issues, so were left out */
   skipped: number;
 }
+
+/* ------------------------- Handset tracker (site Overview) ------------------------- */
+
+/** PUT sites/:siteId/handsets - the stage one handset model has reached; "not_ordered" clears it. */
+export const siteHandsetStatusSchema = z
+  .object({ model: z.string().trim().min(1).max(120), status: z.enum(['not_ordered', 'ordered', 'in_tooling', 'installed']) })
+  .strict();
+export type SiteHandsetStatusInput = z.infer<typeof siteHandsetStatusSchema>;

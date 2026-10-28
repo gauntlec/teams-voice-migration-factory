@@ -22,6 +22,7 @@ export * from './drift';
 export * from './number-cooloff';
 export * from './number-reconcile';
 export * from './site-suggestions';
+export * from './site-handsets';
 export * from './voice-audio';
 export { migratePlatform, provisionTenant, migrateAllTenants, dropTenantSchema } from './migrate';
 

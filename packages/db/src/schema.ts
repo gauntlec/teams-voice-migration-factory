@@ -467,6 +467,15 @@ export interface DiscoverySiteAddressesTable {
   created_at: Ts;
 }
 
+/** The stage a handset model has reached on a site (migration 0078); the quantities are counted from Data Collection, not stored. */
+export interface SiteHandsetTrackingTable {
+  site_id: string;
+  model_key: string;
+  status: 'ordered' | 'in_tooling' | 'installed';
+  updated_by: string | null;
+  updated_at: ColumnType<string, string | undefined, string>;
+}
+
 /** A change made to a site after it was submitted, for the engineer to see and acknowledge. */
 export interface DiscoverySiteChangesTable {
   id: Generated<string>;
@@ -1818,6 +1827,7 @@ export interface DB {
   discovery: DiscoveryTable;
   discovery_sites: DiscoverySitesTable;
   discovery_site_addresses: DiscoverySiteAddressesTable;
+  site_handset_tracking: SiteHandsetTrackingTable;
   discovery_site_changes: DiscoverySiteChangesTable;
   discovery_number_ranges: DiscoveryNumberRangesTable;
   port_document_types: PortDocumentTypesTable;
