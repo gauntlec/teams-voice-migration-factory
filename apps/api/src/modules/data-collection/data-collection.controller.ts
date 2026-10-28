@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
 import {
   can,
   discoveryFlowSchema,
@@ -6,11 +6,13 @@ import {
   discoveryNetworkSchema,
   discoverySiteOverviewSchema,
   discoverySiteSchema,
+  siteHandsetStatusSchema,
   type DiscoveryFlowInput,
   type DiscoveryListQuery,
   type DiscoveryNetworkInput,
   type DiscoverySiteInput,
   type DiscoverySiteOverviewInput,
+  type SiteHandsetStatusInput,
 } from '@tvmf/shared';
 import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
 import type { AuthedUser, TenantContext } from '../../common/request';
@@ -53,6 +55,25 @@ export class DataCollectionController {
   @RequirePermission('discovery:read')
   siteSummary(@TenantCtx() t: TenantContext, @Param('siteId') siteId: string) {
     return this.svc.siteSummary(t, siteId);
+  }
+
+  /** The handset models the site's users and common area phones need, with the project manager's stage for each. */
+  @Get('sites/:siteId/handsets')
+  @RequirePermission('discovery:read')
+  siteHandsets(@TenantCtx() t: TenantContext, @Param('siteId') siteId: string) {
+    return this.svc.siteHandsets(t, siteId);
+  }
+
+  /** Records how far one handset model has got (ordered, added to tooling & updated, installed & working). Admin / PM / engineer only. */
+  @Put('sites/:siteId/handsets')
+  @RequirePermission('discovery:sites:manage')
+  setSiteHandsetStatus(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() u: AuthedUser,
+    @Param('siteId') siteId: string,
+    @Body(new ZodBody(siteHandsetStatusSchema)) body: SiteHandsetStatusInput,
+  ) {
+    return this.svc.setSiteHandsetStatus(t, u, siteId, body);
   }
 
   /** Active users that can be picked for a site's roles (Site contact(s), Provider PM, ...). */

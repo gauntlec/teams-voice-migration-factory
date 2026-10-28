@@ -566,6 +566,7 @@ export * from './voice-compare';
 export * from './licence-report';
 export * from './number-cooloff';
 export * from './number-port-carrier';
+export * from './handsets';
 export * from './device-status';
 export * from './device-inventory';
 export * from './device-alerts';

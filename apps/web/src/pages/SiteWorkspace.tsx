@@ -15,6 +15,7 @@ import { WizardTiles, useTeamChoices } from '../components/WizardTiles';
 import { BulkEditDialog, LoadError, NoTenant, PagedSection, useRecordStyles, type Choice, type FieldDef, type Row } from '../components/records';
 import { RelinkUsersButton, TAB_LABEL, isFlowStale, TABS, numKey, type SiteSummary, type TabKey } from './site/siteShared';
 import { OverviewTab, NetworkDiagramCard } from './site/siteOverview';
+import { HandsetTrackerCard } from './site/siteHandsets';
 import { SiteSuggestionsCard } from './discovery/siteSuggestions';
 import { SiteChangesCard, SiteReviewBar } from './site/siteReview';
 import { NumberInventory, FlowImportButton, RaNumbersButton } from './site/siteNumbers';
@@ -234,15 +235,18 @@ export function SiteWorkspace() {
       </TabList>
 
       {tab === 'overview' && (
-        <OverviewTab
-          base={base}
-          siteId={siteId}
-          overview={overview}
-          contactUsers={contactUsers}
-          canEdit={canManageOverview}
-          locked={locked}
-          onSaved={refreshSummary}
-        />
+        <>
+          <OverviewTab
+            base={base}
+            siteId={siteId}
+            overview={overview}
+            contactUsers={contactUsers}
+            canEdit={canManageOverview}
+            locked={locked}
+            onSaved={refreshSummary}
+          />
+          <HandsetTrackerCard base={base} siteId={siteId} canEdit={canManageOverview} />
+        </>
       )}
 
       {tab === 'ranges' && (
