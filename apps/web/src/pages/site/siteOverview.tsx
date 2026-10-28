@@ -7,10 +7,16 @@ import { NetworkDiagram, type NetworkRow } from '../../components/NetworkDiagram
 import { LoadError, PagedSection, useRecordStyles, type FieldDef } from '../../components/records';
 import { SiteContactsEditor, type ContactUser } from './siteContacts';
 
+/** The go-live date is saved as YYYY-MM-DD. Older sites may hold free text ("Q3 2026"), which is shown as it is until a date replaces it. */
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const isIsoDate = (v: string | undefined): v is string => !!v && ISO_DATE.test(v);
+const showDate = (v: string | undefined) =>
+  isIsoDate(v) ? new Date(`${v}T00:00:00Z`).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) : v || '—';
+
 const OVERVIEW_FIELDS: FieldDef[] = [
   { key: 'region', label: 'Region', type: 'select', options: SITE_REGIONS },
   { key: 'licensingModel', label: 'PSTN / licensing model', type: 'select', options: LICENSING_MODELS },
-  { key: 'targetGoLive', label: 'Target go-live', placeholder: 'e.g. Q3 2026' },
+  { key: 'targetGoLive', label: 'Target go-live', type: 'date' },
   {
     key: 'portDocReminderDays',
     label: 'Porting documentation reminder interval (days)',
@@ -122,7 +128,16 @@ export function OverviewTab({
         {OVERVIEW_FIELDS.map((f) => (
           <Field key={f.key} label={f.label} style={f.full ? { gridColumn: '1 / -1' } : undefined}>
             {!editable ? (
-              <Text>{draft[f.key] || '—'}</Text>
+              <Text>{f.type === 'date' ? showDate(draft[f.key]) : draft[f.key] || '—'}</Text>
+            ) : f.type === 'date' ? (
+              <div style={{ display: 'grid', gap: 4 }}>
+                <Input type="date" value={isIsoDate(draft[f.key]) ? draft[f.key] : ''} onChange={(_, d) => setDraft((v) => ({ ...v, [f.key]: d.value }))} />
+                {draft[f.key] && !isIsoDate(draft[f.key]) && (
+                  <Text size={200} className={s.muted}>
+                    Currently “{draft[f.key]}”. Pick a date to replace it.
+                  </Text>
+                )}
+              </div>
             ) : f.type === 'textarea' ? (
               <Textarea
                 value={draft[f.key] ?? ''}

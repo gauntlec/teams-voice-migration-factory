@@ -444,7 +444,8 @@ export class HandoverService {
             s.address ?? '—',
             [s.country, s.region].filter(Boolean).join(' / ') || '—',
             people.join(', ') || '—',
-            ov.targetGoLive ?? '—',
+            // saved as YYYY-MM-DD from the date picker; older sites may hold free text, shown as it is
+            ov.targetGoLive && /^\d{4}-\d{2}-\d{2}$/.test(ov.targetGoLive) ? new Date(`${ov.targetGoLive}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : (ov.targetGoLive ?? '—'),
           ];
         }),
       },
