@@ -82,6 +82,8 @@ export function validationIssues(v: BuildRowValidation | null | undefined): Vali
     const bits: string[] = [];
     if (nc.live) bits.push(`the user already has ${nc.live} in the tenant`);
     if (nc.dataCollection) bits.push(`Site Data has ${nc.dataCollection} assigned`);
+    // what Reject means: the designed number is not deployed
+    const keepText = nc.live ? `deployment leaves the user's number as it is in Teams (${nc.live}).` : `deployment does not assign ${nc.designed}.`;
     out.push({
       code: 'number_change',
       // an undecided change needs the engineer; once decided it is just a record
@@ -89,8 +91,10 @@ export function validationIssues(v: BuildRowValidation | null | undefined): Vali
       label: nc.decision === 'pending' ? 'Number will change' : nc.decision === 'accepted' ? 'Number change accepted' : 'Number change rejected',
       detail:
         nc.decision === 'pending'
-          ? `The design assigns ${nc.designed}, but ${bits.join(' and ')}. Accept the change or reject it.`
-          : `The design assigns ${nc.designed}; ${bits.join(' and ')}. The engineer ${nc.decision} this change.`,
+          ? `The design assigns ${nc.designed}, but ${bits.join(' and ')}. Accept: deployment changes the user's number to ${nc.designed}. Reject: ${keepText}`
+          : nc.decision === 'accepted'
+            ? `The design assigns ${nc.designed}; ${bits.join(' and ')}. Accepted: deployment will change the user's number to ${nc.designed}.`
+            : `The design assigns ${nc.designed}; ${bits.join(' and ')}. Rejected: ${keepText} The design still says ${nc.designed}: edit the number on the row if the design should match.`,
       decision: nc.decision,
     });
   }

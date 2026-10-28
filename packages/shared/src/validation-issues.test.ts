@@ -74,6 +74,16 @@ describe('validationIssues', () => {
     expect(hasValidationIssue(accepted)).toBe(false);
     expect(blockingIssues({ ...clean, numberChange: { ...change, decision: 'pending' } })).toEqual([]);
   });
+
+  it('says what Accept and Reject do', () => {
+    const change = { designed: '+12125550299', live: '+12125550200', dataCollection: null };
+    const text = (decision: 'pending' | 'accepted' | 'rejected', c = change) => validationIssues({ ...clean, numberChange: { ...c, decision } })[0]!.detail;
+    expect(text('pending')).toContain("Accept: deployment changes the user's number to +12125550299. Reject: deployment leaves the user's number as it is in Teams (+12125550200).");
+    expect(text('accepted')).toContain("Accepted: deployment will change the user's number to +12125550299.");
+    expect(text('rejected')).toContain("Rejected: deployment leaves the user's number as it is in Teams (+12125550200).");
+    // nothing live to keep: Reject means the number is not assigned
+    expect(text('pending', { designed: '+12125550299', live: null, dataCollection: '+12125550301' })).toContain('Reject: deployment does not assign +12125550299.');
+  });
 });
 
 describe('exports', () => {

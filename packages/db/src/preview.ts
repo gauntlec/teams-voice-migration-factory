@@ -38,7 +38,7 @@ import {
   resolveLiveSharedCallingPolicyState,
   type Scoped,
 } from './live-state';
-import { identitySkipReasons } from './validate-rows';
+import { identitySkipReasons, rejectedNumberChanges } from './validate-rows';
 import { audioImportMap } from './voice-audio';
 
 export type DeploymentSheetName = 'users' | 'caps' | 'resource_accounts' | 'shared_calling_policies' | 'call_queues' | 'auto_attendants';
@@ -130,6 +130,7 @@ export async function previewSiteChanges(s: Scoped, query: DeploymentPreviewQuer
       const rows = await q.execute();
       // Errors are triaged in Design & Build: a row with a blocking problem is shown as not deployed, not refused.
       const skipReasons = await identitySkipReasons(s, rows);
+      const keepNumber = await rejectedNumberChanges(s, rows);
       const [liveNames, liveState] = await Promise.all([
         resolveLivePolicyNames(
           s,
@@ -149,7 +150,7 @@ export async function previewSiteChanges(s: Scoped, query: DeploymentPreviewQuer
           {
             id: row.id,
             upn: row.upn,
-            e164: row.e164,
+            e164: keepNumber.has(row.id) ? null : row.e164,
             number_type: row.number_type,
             revoke_ev: row.revoke_ev,
             policies,
@@ -162,6 +163,8 @@ export async function previewSiteChanges(s: Scoped, query: DeploymentPreviewQuer
           liveState.get(row.upn.toLowerCase()),
         );
         const warnings = identityRowWarnings({ e164: row.e164, number_type: row.number_type, policies });
+        const kept = keepNumber.get(row.id);
+        if (kept) warnings.push(kept.live ? `The change to ${kept.designed} was rejected: the number stays as it is in Teams (${kept.live}).` : `The change to ${kept.designed} was rejected: no number is assigned.`);
         const skipped = skipReasons.get(row.id) ?? [];
         if (calls.length === 0 && warnings.length === 0 && skipped.length === 0) continue;
         out.push({
