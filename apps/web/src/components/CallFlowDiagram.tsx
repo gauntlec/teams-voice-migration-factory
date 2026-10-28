@@ -7,6 +7,8 @@ import { jsPDF } from 'jspdf';
 import { Button, Text, Tooltip, tokens , makeStyles, shorthands } from '@fluentui/react-components';
 import { ArrowDownloadRegular, ArrowDownRegular, ArrowRightRegular } from '@fluentui/react-icons';
 import type { CallFlowBranch, CallFlowGraph, CallFlowNode, CallFlowNodeKind } from '@tvmf/shared';
+import { useAuth } from '../auth';
+import { useGroupNames } from '../hooks/useGroupNames';
 import { MutedText } from './ui';
 
 const useLocalStyles = makeStyles({
@@ -259,9 +261,16 @@ function DirectionControls({ direction, onChange }: { direction: Direction; onCh
  * hand-rolled tree layout won't fit every real Auto Attendant/Call Queue
  * chain.
  */
-export function CallFlowDiagram({ graph, exportFilename }: { graph: CallFlowGraph; exportFilename?: string }) {
+export function CallFlowDiagram({ graph: drawn, exportFilename }: { graph: CallFlowGraph; exportFilename?: string }) {
   const ls = useLocalStyles();
   const [direction, setDirection] = useState<Direction>('LR');
+  // A "Shared voicemail (group)" box carries the group's Object ID; show the group's name when this customer's group list has it.
+  const { activeTenantId } = useAuth();
+  const groupNames = useGroupNames(activeTenantId, drawn.nodes.filter((n) => n.id.startsWith('group:')).map((n) => n.id.slice('group:'.length)));
+  const graph = useMemo(
+    () => ({ ...drawn, nodes: drawn.nodes.map((n) => (n.id.startsWith('group:') && groupNames[n.id.slice('group:'.length).toLowerCase()] ? { ...n, sublabel: groupNames[n.id.slice('group:'.length).toLowerCase()] } : n)) }),
+    [drawn, groupNames],
+  );
 
   const { nodes, edges } = useMemo(() => {
     const { nodes: positions, labels } = layout(graph, direction);
