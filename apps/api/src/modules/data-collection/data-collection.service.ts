@@ -12,6 +12,7 @@ import type {
   DiscoveryListQuery,
   DiscoveryNetworkInput,
   DiscoverySiteInput,
+  SiteAddressInput,
   DiscoverySiteOverview,
   DiscoverySiteOverviewInput,
 } from '@tvmf/shared';
@@ -106,10 +107,15 @@ export class DataCollectionService {
           .execute()
       : [];
     const pendingBySite = new Map(pending.map((r) => [r.site_id, Number(r.n)]));
+    const extra = sites.length
+      ? await s.selectFrom('discovery_site_addresses').select(['id', 'site_id', 'label', 'address', 'latitude', 'longitude']).where('site_id', 'in', sites.map((x) => x.id)).orderBy('sort_order').execute()
+      : [];
+    const addressesBySite = new Map<string, { id: string; label: string | null; address: string; latitude: number | null; longitude: number | null }[]>();
+    for (const { site_id, ...a } of extra) addressesBySite.set(site_id, [...(addressesBySite.get(site_id) ?? []), a]);
     return {
       callingPolicies,
       siteScope: scope,
-      sites: sites.map((x) => ({ ...x, counts: counts[x.id] ?? empty, pendingChanges: pendingBySite.get(x.id) ?? 0 })),
+      sites: sites.map((x) => ({ ...x, counts: counts[x.id] ?? empty, pendingChanges: pendingBySite.get(x.id) ?? 0, additionalAddresses: addressesBySite.get(x.id) ?? [] })),
     };
   }
 
@@ -529,12 +535,32 @@ export class DataCollectionService {
       }
       throw e;
     }
+    const additionalAddresses = await this.saveAddresses(t, row.id, input.additionalAddresses ?? []);
     await this.audit.tenant(t.schema, 'discovery.site_added', {
       actor: actorOf(user),
       targetType: 'discovery_site',
       targetId: row.id,
     });
-    return row;
+    return { ...row, additionalAddresses };
+  }
+
+  private addressesOf(t: TenantContext, siteId: string) {
+    return this.scoped(t).selectFrom('discovery_site_addresses').select(['id', 'label', 'address', 'latitude', 'longitude']).where('site_id', '=', siteId).orderBy('sort_order').execute();
+  }
+
+  /** Replaces a site's additional addresses with this list (blank ones dropped), in the order given. Returns what is saved. */
+  private async saveAddresses(t: TenantContext, siteId: string, list: SiteAddressInput[]) {
+    const s = this.scoped(t);
+    const clean = list
+      .map((a) => ({ label: a.label?.trim() || null, address: a.address.trim(), latitude: a.latitude ?? null, longitude: a.longitude ?? null }))
+      .filter((a) => a.address);
+    await s.deleteFrom('discovery_site_addresses').where('site_id', '=', siteId).execute();
+    if (!clean.length) return [];
+    return s
+      .insertInto('discovery_site_addresses')
+      .values(clean.map((a, i) => ({ site_id: siteId, ...a, sort_order: i })))
+      .returning(['id', 'label', 'address', 'latitude', 'longitude'])
+      .execute();
   }
 
   async updateSite(
@@ -545,18 +571,16 @@ export class DataCollectionService {
     canReview: boolean,
   ) {
     assertCustomerWide(t, 'Sites');
-    const set = cleanPatch(patch);
+    const { additionalAddresses: sentAddresses, ...sitePatch } = patch;
+    const set = cleanPatch(sitePatch);
     if ('sitecode' in set && set.sitecode == null) {
       throw new ConflictException('A site must have a site code.');
     }
     let row;
     try {
-      row = await this.scoped(t)
-        .updateTable('discovery_sites')
-        .set(set)
-        .where('id', '=', id)
-        .returningAll()
-        .executeTakeFirst();
+      row = Object.keys(set).length
+        ? await this.scoped(t).updateTable('discovery_sites').set(set).where('id', '=', id).returningAll().executeTakeFirst()
+        : await this.scoped(t).selectFrom('discovery_sites').selectAll().where('id', '=', id).executeTakeFirst();
     } catch (e) {
       if (/duplicate key|unique/i.test((e as Error).message)) {
         throw new ConflictException(`A site with code "${patch.sitecode}" already exists.`);
@@ -564,13 +588,14 @@ export class DataCollectionService {
       throw e;
     }
     if (!row) throw new NotFoundException('site not found');
+    const additionalAddresses = sentAddresses ? await this.saveAddresses(t, id, sentAddresses) : await this.addressesOf(t, id);
     await this.audit.tenant(t.schema, 'discovery.site_updated', {
       actor: actorOf(user),
       targetType: 'discovery_site',
       targetId: id,
     });
-    await this.trackChange(t, user, { siteId: id, entity: 'Site details', action: 'changed', label: row.sitecode, detail: Object.keys(set).join(', ') });
-    return row;
+    await this.trackChange(t, user, { siteId: id, entity: 'Site details', action: 'changed', label: row.sitecode, detail: [...Object.keys(set), ...(sentAddresses ? ['additionalAddresses'] : [])].join(', ') });
+    return { ...row, additionalAddresses };
   }
 
   async deleteSite(t: TenantContext, user: AuthedUser, id: string, canReview: boolean) {

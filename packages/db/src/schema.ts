@@ -455,6 +455,18 @@ export interface DiscoverySitesTable {
   accepted_at: string | null;
 }
 
+/** An address on a site besides its primary one (migration 0076): another building on a campus. Pinned on the map under the site's code. */
+export interface DiscoverySiteAddressesTable {
+  id: Generated<string>;
+  site_id: string;
+  label: string | null;
+  address: string;
+  latitude: number | null;
+  longitude: number | null;
+  sort_order: ColumnType<number, number | undefined, number>;
+  created_at: Ts;
+}
+
 /** A change made to a site after it was submitted, for the engineer to see and acknowledge. */
 export interface DiscoverySiteChangesTable {
   id: Generated<string>;
@@ -1781,6 +1793,7 @@ export interface DB {
   // tenant
   discovery: DiscoveryTable;
   discovery_sites: DiscoverySitesTable;
+  discovery_site_addresses: DiscoverySiteAddressesTable;
   discovery_site_changes: DiscoverySiteChangesTable;
   discovery_number_ranges: DiscoveryNumberRangesTable;
   port_document_types: PortDocumentTypesTable;

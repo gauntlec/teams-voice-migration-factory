@@ -420,6 +420,18 @@ const longitude = z.preprocess(
   z.coerce.number().min(-180).max(180).nullable().optional(),
 );
 
+/** Another address on a site (a second building on a campus): shown on the map under the site's code. */
+export const siteAddressSchema = z
+  .object({
+    label: optStr(120),
+    address: z.string().trim().min(1, 'enter the address').max(500),
+    latitude,
+    longitude,
+  })
+  .strict();
+export type SiteAddressInput = z.infer<typeof siteAddressSchema>;
+export const MAX_SITE_ADDRESSES = 50;
+
 export const discoverySiteSchema = z
   .object({
     sitecode: sitecodeSchema,
@@ -429,6 +441,8 @@ export const discoverySiteSchema = z
     region: siteRegionSchema.optional(),
     latitude,
     longitude,
+    /** the site's other addresses; when sent, this list replaces the saved one */
+    additionalAddresses: z.array(siteAddressSchema).max(MAX_SITE_ADDRESSES).optional(),
     paging: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();

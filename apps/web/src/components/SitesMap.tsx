@@ -22,6 +22,8 @@ export interface MapSite {
   name: string | null;
   latitude: number | null;
   longitude: number | null;
+  /** other buildings on the site; each is pinned under the same site code */
+  additionalAddresses?: { id: string; label: string | null; address: string; latitude: number | null; longitude: number | null }[];
   counts?: { users: number; numbers: number; numbersAssigned: number };
 }
 
@@ -57,10 +59,13 @@ export function SitesMap({
 }) {
   const ls = useLocalStyles();
   const s = useStyles();
-  const placed = sites.filter(
-    (x) => typeof x.latitude === 'number' && typeof x.longitude === 'number',
-  );
-  const points = placed.map((x) => [x.latitude as number, x.longitude as number] as [number, number]);
+  // One pin per address: the site's own, then each additional address - all under the site's code.
+  const pins = sites.flatMap((site) => [
+    { key: site.id, site, lat: site.latitude, lon: site.longitude, label: null as string | null, address: null as string | null },
+    ...(site.additionalAddresses ?? []).map((a) => ({ key: `${site.id}:${a.id}`, site, lat: a.latitude, lon: a.longitude, label: a.label || 'Additional address', address: a.address })),
+  ]);
+  const placed = pins.filter((x) => typeof x.lat === 'number' && typeof x.lon === 'number');
+  const points = placed.map((x) => [x.lat as number, x.lon as number] as [number, number]);
 
   return (
     <div className={s.wrap}>
@@ -75,17 +80,23 @@ export function SitesMap({
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         <FitBounds points={points} />
-        {placed.map((site) => (
-          <Marker key={site.id} position={[site.latitude as number, site.longitude as number]}>
+        {placed.map(({ key, site, lat, lon, label, address }) => (
+          <Marker key={key} position={[lat as number, lon as number]}>
             <Popup>
               <div className={s.popup}>
                 <Text weight="semibold">{site.name || site.sitecode}</Text>
                 <Text size={200} className={s.muted}>
                   {site.sitecode}
-                  {site.counts
+                  {label ? ` · ${label}` : ''}
+                  {!label && site.counts
                     ? ` · ${site.counts.users} users · ${site.counts.numbersAssigned}/${site.counts.numbers} numbers`
                     : ''}
                 </Text>
+                {address && (
+                  <Text size={200} className={s.muted}>
+                    {address}
+                  </Text>
+                )}
                 <Button size="small" appearance="primary" onClick={() => onOpen(site.id)}>
                   Open site
                 </Button>

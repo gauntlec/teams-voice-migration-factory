@@ -10,6 +10,7 @@ interface SiteRollup extends Row {
   sitecode: string;
   name: string | null;
   counts?: { users: number; caps: number; resourceAccounts: number };
+  additionalAddresses?: { id: string; label: string | null; address: string; latitude: number | null; longitude: number | null }[];
 }
 interface DiscoveryLanding {
   sites: SiteRollup[];
@@ -41,7 +42,7 @@ export function AdminSites() {
       ) : (
         <CrudSection
           title="Site"
-          hint="The Sitecode is the site's unique key. Enter the address, then use the button to look up latitude / longitude for the map."
+          hint="The Sitecode is the site's unique key. Enter the address, then use the button to look up latitude / longitude for the map. A campus with several buildings is one site: add each other civic address under Additional addresses and every one is pinned on the map under the same site code."
           basePath={`${base}/sites`}
           readOnly={false}
           onChanged={() => qc.invalidateQueries({ queryKey: ['discovery', activeTenantId] })}
@@ -63,7 +64,17 @@ export function AdminSites() {
             {
               key: 'placed',
               label: 'On map',
-              render: (r) => (r.latitude != null && r.longitude != null ? 'Yes' : '—'),
+              render: (r) => {
+                const extra = (r as SiteRollup).additionalAddresses ?? [];
+                const pins = (r.latitude != null && r.longitude != null ? 1 : 0) + extra.filter((a) => a.latitude != null && a.longitude != null).length;
+                return pins ? `${pins} ${pins === 1 ? 'pin' : 'pins'}` : '—';
+              },
+            },
+            {
+              key: 'additionalAddresses',
+              label: 'Addresses',
+              sortValue: (r) => 1 + ((r as SiteRollup).additionalAddresses?.length ?? 0),
+              render: (r) => String(1 + ((r as SiteRollup).additionalAddresses?.length ?? 0)),
             },
             {
               key: 'users',
@@ -79,6 +90,7 @@ export function AdminSites() {
             { key: 'region', label: 'Region', type: 'select', options: SITE_REGIONS },
             { key: 'latitude', label: 'Latitude', type: 'number', placeholder: '38.9201' },
             { key: 'longitude', label: 'Longitude', type: 'number', placeholder: '-94.6559' },
+            { key: 'additionalAddresses', label: 'Additional addresses', type: 'addresses', full: true },
           ]}
         />
       )}

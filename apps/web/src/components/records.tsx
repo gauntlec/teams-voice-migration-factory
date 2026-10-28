@@ -1,3 +1,4 @@
+import { AddressListEditor, addressesToPayload, addressesToText } from './AddressListEditor';
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDebounced } from '../hooks/useDebounced';
@@ -87,7 +88,8 @@ export type Choice = { value: string; label: string };
 export interface FieldDef {
   key: string;
   label: string;
-  type?: 'text' | 'textarea' | 'number' | 'select' | 'boolean' | 'ref' | 'radio' | 'string-array';
+  /** 'addresses' is a site's list of extra addresses (AddressListEditor); its value is that list as JSON text. */
+  type?: 'text' | 'textarea' | 'number' | 'select' | 'boolean' | 'ref' | 'radio' | 'string-array' | 'addresses';
   options?: readonly string[];
   choices?: Choice[] | ((row: Row | null) => Choice[]);
   required?: boolean;
@@ -163,6 +165,8 @@ export function buildPayload(fields: FieldDef[], values: Record<string, string>)
           ? v === 'true'
           : f.type === 'ref'
             ? v || null
+            : f.type === 'addresses'
+              ? addressesToPayload(v)
             : f.type === 'string-array'
               ? v
                   .split('\n')
@@ -469,6 +473,7 @@ export function RecordDialog({
           if (f.type === 'boolean')
             return [f.key, v === true ? 'true' : v === false ? 'false' : (f.default ?? 'false')];
           if (f.type === 'string-array') return [f.key, Array.isArray(v) ? v.join('\n') : ''];
+          if (f.type === 'addresses') return [f.key, addressesToText(v)];
           return [f.key, v == null ? '' : String(v)];
         }),
       ),
@@ -517,6 +522,8 @@ export function RecordDialog({
                         setValues((v) => ({ ...v, [f.key]: d.checked ? 'true' : 'false' }))
                       }
                     />
+                  ) : f.type === 'addresses' ? (
+                    <AddressListEditor value={values[f.key] ?? '[]'} onChange={(text) => setValues((v) => ({ ...v, [f.key]: text }))} geocode={geocode} />
                   ) : f.type === 'radio' ? (
                     <RadioGroup
                       layout="horizontal"
