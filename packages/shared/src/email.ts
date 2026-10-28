@@ -12,6 +12,7 @@ export const EMAIL_TEMPLATES = [
   'port_documents_requested',
   'port_documents_reminder',
   'port_documents_completed',
+  'port_completed',
   'feature_request_status_changed',
   'bug_report_status_changed',
   'service_request_created',
@@ -164,6 +165,20 @@ export type PortDocumentsRequestedContext = PortDocumentsBaseContext;
 
 /** Context for `port_documents_reminder` - periodic nudge while items are still outstanding. */
 export type PortDocumentsReminderContext = PortDocumentsBaseContext;
+
+/** Context for `port_completed` - sent to the people who were asked for the documents, once the numbers have moved to the new carrier. */
+export interface PortCompletedContext {
+  recipientName: string | null;
+  customerName: string;
+  siteName: string;
+  sitecode: string;
+  rangeLabel: string;
+  fromCarrier: string | null;
+  toCarrier: string;
+  /** the day the port completed, written out */
+  completedOn: string;
+  portalUrl: string;
+}
 
 /** Context for `port_documents_completed` - sent to whoever submitted the request, once every item clears. */
 export interface PortDocumentsCompletedContext {

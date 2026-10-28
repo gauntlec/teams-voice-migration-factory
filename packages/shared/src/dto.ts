@@ -451,6 +451,8 @@ export const discoveryNumberRangeSchema = z
     loa_sent: z.coerce.boolean().optional(),
     loa_completed: z.coerce.boolean().optional(),
     comments: optStr(2000),
+    /** a port-in range: the carrier the numbers are moving to (`carrier` is where they are now) */
+    new_carrier: optStr(160),
   })
   .strict();
 export type DiscoveryNumberRangeInput = z.infer<typeof discoveryNumberRangeSchema>;
@@ -461,6 +463,8 @@ export const numberRangesImportSchema = z
     site_id: z.guid(),
     kind: z.enum(NUMBER_RANGE_KINDS),
     carrier: optStr(160),
+    /** for a port-in: the carrier the numbers are moving to */
+    new_carrier: optStr(160),
     rows: z
       .array(z.object({ range_start: e164ish, range_end: e164ish }).strict())
       .min(1)
@@ -1733,3 +1737,21 @@ export const mspServiceRequestsQuerySchema = z.object({
   mine: z.enum(['true', 'false']).optional(),
 });
 export type MspServiceRequestsQuery = z.infer<typeof mspServiceRequestsQuerySchema>;
+
+/** Carrier side of a port-in range (`PATCH .../number-ranges/:id/port`): send only what changed. An empty date clears it. */
+export const portCarrierDetailsSchema = z
+  .object({
+    newCarrier: optStr(160),
+    portOrderRef: optStr(120),
+    focDate: z.union([z.literal(''), z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'use a date')]).nullable().optional(),
+    /** true records that the port was submitted to the new carrier (now); false takes it back */
+    submittedToCarrier: z.boolean().optional(),
+  })
+  .strict();
+export type PortCarrierDetailsInput = z.infer<typeof portCarrierDetailsSchema>;
+
+/** The port finished at the carrier (`POST .../number-ranges/:id/port/complete`): the carrier switches to the new one. */
+export const portCompleteSchema = z
+  .object({ completedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'use a date').optional() })
+  .strict();
+export type PortCompleteInput = z.infer<typeof portCompleteSchema>;

@@ -1,11 +1,13 @@
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { sql } from 'kysely';
 import { platformDb, tenantDb } from '@tvmf/db';
-import { siteContactTargets } from '@tvmf/shared';
+import { portStatusFor, siteContactTargets } from '@tvmf/shared';
 import type {
   DiscoverySiteOverview,
   NumberPortItemRejectInput,
   NumberPortRequestItemsInput,
+  PortCarrierDetailsInput,
+  PortCompleteInput,
   PortDocumentItemSummary,
   PortDocumentTypeInput,
   SitePortDocumentTypeInput,
@@ -119,6 +121,144 @@ export class NumberPortService {
       detail: input,
     });
     return { ok: true };
+  }
+
+  /* ======================= carrier side of a port ======================= */
+
+  /** A port-in range with its site, checked for scope. */
+  private async portRange(t: TenantContext, rangeId: string) {
+    const row = await this.s(t)
+      .selectFrom('discovery_number_ranges as r')
+      .innerJoin('discovery_sites as s', 's.sitecode', 'r.sitecode')
+      .select([
+        's.id as site_id', 's.name as site_name', 's.sitecode', 's.overview',
+        'r.id', 'r.range_start', 'r.range_end', 'r.kind', 'r.carrier', 'r.new_carrier', 'r.previous_carrier', 'r.port_status',
+        'r.port_order_ref', 'r.port_submitted_to_carrier_at', 'r.port_foc_date', 'r.port_completed_at',
+      ])
+      .where('r.id', '=', rangeId)
+      .executeTakeFirst();
+    if (!row) throw new NotFoundException('number range not found (or has no site)');
+    assertSiteInScope(t, row.site_id);
+    if (row.kind !== 'port') throw new BadRequestException('Only a port-in range moves to a new carrier.');
+    return row;
+  }
+
+  /**
+   * The document side changed (submitted, all in, one rejected): mirror it on the range, unless the port has moved on to the carrier
+   * stages (with the carrier, scheduled, ported), which then stay as they are.
+   */
+  private async setDocumentsStatus(t: TenantContext, rangeId: string, docs: 'awaiting_documents' | 'complete') {
+    const r = await this.s(t)
+      .selectFrom('discovery_number_ranges')
+      .select(['kind', 'port_submitted_to_carrier_at', 'port_foc_date', 'port_completed_at'])
+      .where('id', '=', rangeId)
+      .executeTakeFirst();
+    const status = r ? portStatusFor({ ...r, port_status: docs }, docs) : docs;
+    await this.s(t).updateTable('discovery_number_ranges').set({ port_status: status }).where('id', '=', rangeId).execute();
+  }
+
+  /** What the document side says, as the range mirrors it. */
+  private async documentsStatus(t: TenantContext, rangeId: string): Promise<string | null> {
+    const req = await this.s(t).selectFrom('number_port_requests').select('status').where('range_id', '=', rangeId).executeTakeFirst();
+    return req?.status === 'complete' ? 'complete' : req?.status === 'awaiting_documents' ? 'awaiting_documents' : null;
+  }
+
+  /**
+   * The carrier details of a port: the new carrier, the carrier's order reference, that it was submitted to the carrier, and the
+   * scheduled port date. The range's port status follows (with the carrier / scheduled). Not changeable once the port is complete.
+   */
+  async updatePortDetails(t: TenantContext, u: AuthedUser, rangeId: string, input: PortCarrierDetailsInput) {
+    const range = await this.portRange(t, rangeId);
+    if (range.port_completed_at) throw new ConflictException('This port is already complete. Reopen it to change the details.');
+    const set: Record<string, unknown> = {};
+    if (input.newCarrier !== undefined) set.new_carrier = input.newCarrier?.trim() || null;
+    if (input.portOrderRef !== undefined) set.port_order_ref = input.portOrderRef?.trim() || null;
+    if (input.focDate !== undefined) set.port_foc_date = input.focDate || null;
+    if (input.submittedToCarrier === true) set.port_submitted_to_carrier_at = range.port_submitted_to_carrier_at ?? new Date().toISOString();
+    if (input.submittedToCarrier === false) {
+      set.port_submitted_to_carrier_at = null;
+      set.port_foc_date = null; // no scheduled date without the order
+    }
+    // A scheduled date means the order is with the carrier.
+    if (set.port_foc_date && !range.port_submitted_to_carrier_at && set.port_submitted_to_carrier_at === undefined) set.port_submitted_to_carrier_at = new Date().toISOString();
+    const merged = { ...range, ...set } as typeof range;
+    if ((merged.port_submitted_to_carrier_at || merged.port_foc_date) && !merged.new_carrier) {
+      throw new BadRequestException('Say which carrier the numbers are moving to first.');
+    }
+    set.port_status = portStatusFor(merged, await this.documentsStatus(t, rangeId));
+    await this.s(t).updateTable('discovery_number_ranges').set(set).where('id', '=', rangeId).execute();
+    await this.audit.tenant(t.schema, 'number_port.carrier_details_saved', {
+      actor: actorOf(u),
+      targetType: 'discovery_number_range',
+      targetId: rangeId,
+      detail: { ...input, status: set.port_status },
+    });
+    return { ok: true, port_status: set.port_status };
+  }
+
+  /**
+   * The port has finished at the carrier: the range's carrier becomes the new carrier (the old one is kept as the previous carrier),
+   * and the site's contacts are told. `completedOn` is the day it happened (default today, never in the future).
+   */
+  async completePort(t: TenantContext, u: AuthedUser, rangeId: string, input: PortCompleteInput) {
+    const range = await this.portRange(t, rangeId);
+    if (range.port_completed_at) throw new ConflictException('This port is already marked complete.');
+    if (!range.new_carrier) throw new BadRequestException('Say which carrier the numbers moved to first.');
+    const today = new Date().toISOString().slice(0, 10);
+    const completedOn = input.completedOn ?? today;
+    if (completedOn > today) throw new BadRequestException("A port can't be completed on a future date.");
+    await this.s(t)
+      .updateTable('discovery_number_ranges')
+      .set({
+        previous_carrier: range.carrier,
+        carrier: range.new_carrier,
+        port_completed_at: `${completedOn}T12:00:00Z`,
+        port_completed_by: u.id,
+        port_status: 'ported',
+      })
+      .where('id', '=', rangeId)
+      .execute();
+    await this.audit.tenant(t.schema, 'number_port.completed', {
+      actor: actorOf(u),
+      targetType: 'discovery_number_range',
+      targetId: rangeId,
+      detail: { from: range.carrier, to: range.new_carrier, completedOn },
+    });
+
+    const recipients = await this.resolveRecipients(t, range.site_id, (range.overview ?? {}) as DiscoverySiteOverview);
+    const when = new Date(`${completedOn}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+    for (const to of recipients) {
+      await this.mail.enqueue({
+        template: 'port_completed',
+        to: { email: to.email, name: to.name },
+        context: {
+          recipientName: to.name,
+          customerName: t.name,
+          siteName: range.site_name ?? range.sitecode,
+          sitecode: range.sitecode,
+          rangeLabel: `${range.range_start} - ${range.range_end}`,
+          fromCarrier: range.carrier,
+          toCarrier: range.new_carrier,
+          completedOn: when,
+          portalUrl: this.portalUrl(range.site_id),
+        },
+        related: { type: 'discovery_number_range', id: rangeId },
+        createdBy: u.id,
+        tenantId: t.id,
+      });
+    }
+    return { ok: true, carrier: range.new_carrier, recipients: recipients.length };
+  }
+
+  /** Undo a completion marked by mistake: the carrier goes back to what it was before. */
+  async reopenPort(t: TenantContext, u: AuthedUser, rangeId: string) {
+    const range = await this.portRange(t, rangeId);
+    if (!range.port_completed_at) throw new ConflictException('This port is not marked complete.');
+    const set = { carrier: range.previous_carrier, previous_carrier: null, port_completed_at: null, port_completed_by: null };
+    const status = portStatusFor({ ...range, ...set }, await this.documentsStatus(t, rangeId));
+    await this.s(t).updateTable('discovery_number_ranges').set({ ...set, port_status: status }).where('id', '=', rangeId).execute();
+    await this.audit.tenant(t.schema, 'number_port.reopened', { actor: actorOf(u), targetType: 'discovery_number_range', targetId: rangeId, detail: { carrier: range.previous_carrier } });
+    return { ok: true, port_status: status };
   }
 
   /* ============================ requests ============================ */
@@ -309,11 +449,7 @@ export class NumberPortService {
       .set({ status: 'awaiting_documents', submitted_by: u.id, submitted_at: new Date().toISOString() })
       .where('id', '=', requestId)
       .execute();
-    await this.s(t)
-      .updateTable('discovery_number_ranges')
-      .set({ port_status: 'awaiting_documents' })
-      .where('id', '=', req.range_id)
-      .execute();
+    await this.setDocumentsStatus(t, req.range_id, 'awaiting_documents');
 
     const overview = (req.overview ?? {}) as DiscoverySiteOverview;
     const recipients = await this.resolveRecipients(t, req.site_id, overview);
@@ -357,11 +493,7 @@ export class NumberPortService {
       .set({ status: 'complete' })
       .where('id', '=', req.request_id)
       .execute();
-    await this.s(t)
-      .updateTable('discovery_number_ranges')
-      .set({ port_status: 'complete' })
-      .where('id', '=', req.range_id)
-      .execute();
+    await this.setDocumentsStatus(t, req.range_id, 'complete');
 
     if (!req.submitted_by) return;
     const submitter = await platformDb(this.db)
@@ -447,11 +579,7 @@ export class NumberPortService {
         .set({ status: 'awaiting_documents' })
         .where('id', '=', requestId)
         .execute();
-      await this.s(t)
-        .updateTable('discovery_number_ranges')
-        .set({ port_status: 'awaiting_documents' })
-        .where('id', '=', req.range_id)
-        .execute();
+      await this.setDocumentsStatus(t, req.range_id, 'awaiting_documents');
     }
 
     await this.audit.tenant(t.schema, 'number_port.item_rejected', {

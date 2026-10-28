@@ -16,6 +16,7 @@ import {
   type IncidentStatusChangedContext,
   type FeatureRequestStatusChangedContext,
   type PortDocumentItemSummary,
+  type PortCompletedContext,
   type PortDocumentsCompletedContext,
   type PortDocumentsReminderContext,
   type PortDocumentsRequestedContext,
@@ -56,6 +57,8 @@ export function renderEmail(template: string, context: Record<string, unknown>, 
       return portDocumentsRequested(context as unknown as PortDocumentsRequestedContext, branding);
     case 'port_documents_reminder':
       return portDocumentsReminder(context as unknown as PortDocumentsReminderContext, branding);
+    case 'port_completed':
+      return portCompleted(context as unknown as PortCompletedContext, branding);
     case 'port_documents_completed':
       return portDocumentsCompleted(context as unknown as PortDocumentsCompletedContext, branding);
     case 'feature_request_status_changed':
@@ -363,6 +366,22 @@ function portDocumentsReminder(c: PortDocumentsReminderContext, branding?: Email
     ],
     cta: { label: 'Upload documents', url: c.portalUrl },
     outro: ['If you have already sent these another way, let your project contact know and we will update this request.'],
+  };
+  return { subject, html: renderHtml(layout, branding), text: renderText(layout) };
+}
+
+function portCompleted(c: PortCompletedContext, branding?: EmailBranding): RenderedEmail {
+  const subject = `Numbers ported — ${c.siteName}`;
+  const layout: LayoutInput = {
+    previewText: `${c.rangeLabel} is now with ${c.toCarrier}.`,
+    eyebrow: 'Number porting',
+    heading: `Numbers ported — ${c.siteName}`,
+    intro: [
+      `${c.rangeLabel} at ${c.siteName} moved ${c.fromCarrier ? `from ${c.fromCarrier} ` : ''}to ${c.toCarrier} on ${c.completedOn}.`,
+      'Calls to these numbers now go through the new carrier.',
+    ],
+    cta: { label: 'View number porting', url: c.portalUrl },
+    outro: ['You are receiving this because you are a contact for this site.'],
   };
   return { subject, html: renderHtml(layout, branding), text: renderText(layout) };
 }
