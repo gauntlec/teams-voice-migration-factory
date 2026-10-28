@@ -924,9 +924,11 @@ export const tenantDiscoverySettingsSchema = z
     filterUsers: z.boolean().optional(),
     /** when true (default), email the person who started a run when it finishes */
     notifyOnComplete: z.boolean().optional(),
+    /** when true (default false), after each full run add objects whose number is in a site's range to that site's Data Collection */
+    autoAddByNumberRange: z.boolean().optional(),
   })
   .strict()
-  .refine((v) => v.filterUsers !== undefined || v.notifyOnComplete !== undefined, {
+  .refine((v) => v.filterUsers !== undefined || v.notifyOnComplete !== undefined || v.autoAddByNumberRange !== undefined, {
     message: 'provide at least one setting to update',
   });
 export type TenantDiscoverySettingsInput = z.infer<typeof tenantDiscoverySettingsSchema>;

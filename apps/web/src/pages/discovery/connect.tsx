@@ -517,8 +517,10 @@ export function RunCard({ base, summary }: { base: string; summary: TenantDiscov
   const qc = useQueryClient();
   const filterUsers = summary?.settings?.filterUsers ?? true;
   const notifyOnComplete = summary?.settings?.notifyOnComplete ?? true;
+  const autoAdd = summary?.settings?.autoAddByNumberRange ?? false;
+  const autoAddLast = summary?.settings?.autoAddLast ?? null;
   const patchSettings = useMutation({
-    mutationFn: (body: { filterUsers?: boolean; notifyOnComplete?: boolean }) =>
+    mutationFn: (body: { filterUsers?: boolean; notifyOnComplete?: boolean; autoAddByNumberRange?: boolean }) =>
       api(`${base}/settings`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tdisc', 'summary', base] }),
   });
@@ -714,6 +716,21 @@ export function RunCard({ base, summary }: { base: string; summary: TenantDiscov
         {notifyOnComplete
           ? 'When a discovery run completes or fails, its starter gets an email with the change counts and a link back here.'
           : 'No completion emails are sent for this customer.'}
+      </Text>
+      <div className={mergeClasses(s.row, ls.mt8)}>
+        <Checkbox
+          label="Add to a site automatically when its number is in the site's range"
+          checked={autoAdd}
+          disabled={patchSettings.isPending}
+          onChange={(_, d) => patchSettings.mutate({ autoAddByNumberRange: !!d.checked })}
+        />
+      </div>
+      <Text size={200} className={s.muted}>
+        {autoAdd
+          ? `After each full run, users, common area phones, resource accounts, auto attendants and call queues that are on no site and have a number in a site's range are added to that site's Data Collection. Nothing already on a site is moved, and Design & Build is not touched.${
+              autoAddLast ? ` Last time (${new Date(autoAddLast.at).toLocaleString()}): ${autoAddLast.added} added${autoAddLast.skipped ? `, ${autoAddLast.skipped} not added` : ''}.` : ''
+            }`
+          : 'Off: Discovery suggests a site for each object, and a person adds it from the site or the Discovery list.'}
       </Text>
     </Card>
   );

@@ -1204,6 +1204,11 @@ export interface TenantDiscoveryConfigTable {
   id: Generated<string>;
   filter_users: ColumnType<boolean, boolean | undefined, boolean>;
   notify_on_complete: ColumnType<boolean, boolean | undefined, boolean>;
+  /** after each full run, add objects whose number is in a site's range to that site (migration 0075) */
+  auto_add_by_number_range: ColumnType<boolean, boolean | undefined, boolean>;
+  auto_add_last_run_id: string | null;
+  auto_add_last_at: string | null;
+  auto_add_last_summary: Json<Record<string, unknown>> | null;
   updated_by: string | null;
   updated_at: Ts;
   created_at: Ts;
