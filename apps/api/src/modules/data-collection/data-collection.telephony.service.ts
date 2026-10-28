@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { sql, type Kysely } from 'kysely';
-import { cooloffDays, coolingUntil, tenantDb, type DB } from '@tvmf/db';
+import { cooloffDays, coolingUntil, reconcileNumbersWithTeams, refreshNumberConflict, tenantDb, type DB } from '@tvmf/db';
 import {
   MAX_RANGE_SIZE,
   type CallingPolicyInput,
@@ -475,6 +475,12 @@ export class TelephonyService {
           'n.holder_id as holder_id',
           'n.cooling_until as cooling_until',
           'n.cooling_reason as cooling_reason',
+          'n.live_status as live_status',
+          'n.live_holder_kind as live_holder_kind',
+          'n.live_holder_upn as live_holder_upn',
+          'n.live_holder_name as live_holder_name',
+          'n.live_only as live_only',
+          'n.conflict as conflict',
           'n.range_id as range_id',
           'r.range_start as range_start',
           'r.range_end as range_end',
@@ -603,8 +609,21 @@ export class TelephonyService {
     const e164s = expandRange(i.range_start, i.range_end);
     await this.siteByCode(t, i.sitecode);
     const { range, generated } = await this.insertRange(t, u, i, e164s);
+    await this.syncNumbersWithTeams(t);
     await this.base.trackChange(t, u, { sitecode: i.sitecode, entity: 'Number range', action: 'added', label: `${i.range_start} – ${i.range_end}` });
     return { range, generated, skipped: e164s.length - generated };
+  }
+
+  /**
+   * Numbers follow Teams (number-reconcile.ts): after the ranges change, bring the inventory in line with what the last Discovery
+   * sync stored, so a new range's numbers that are live in Teams show as assigned now, not at the next sync. Best-effort.
+   */
+  private async syncNumbersWithTeams(t: TenantContext) {
+    try {
+      await reconcileNumbersWithTeams(this.s(t), { releaseMissing: false });
+    } catch {
+      // the next Discovery sync does it
+    }
   }
 
   /** Insert one range row plus its generated numbers (numbers already in the inventory are left alone). */
@@ -634,7 +653,24 @@ export class TelephonyService {
         .returning('id')
         .execute();
       generated += inserted.length;
+      // A number Discovery found in Teams before anyone owned it sits in a range with no site; the new range now owns it.
+      const moved = await this.s(t)
+        .updateTable('phone_numbers')
+        .set({ range_id: range.id })
+        .where('e164', 'in', chunk.map((c) => c.e164))
+        .where('live_status', 'is not', null)
+        .where('range_id', 'in', (eb) => eb.selectFrom('discovery_number_ranges').select('id').where('sitecode', 'is', null).where('id', '<>', range.id))
+        .returning('id')
+        .execute();
+      generated += moved.length;
     }
+    // ...and a "Found in Teams" range left with no numbers is removed.
+    await this.s(t)
+      .deleteFrom('discovery_number_ranges')
+      .where('sitecode', 'is', null)
+      .where('comments', 'like', 'Found in Teams by Discovery%')
+      .where((eb) => eb.not(eb.exists(eb.selectFrom('phone_numbers').select('id').whereRef('phone_numbers.range_id', '=', 'discovery_number_ranges.id'))))
+      .execute();
 
     await this.audit.tenant(t.schema, 'discovery.range_added', {
       actor: actorOf(u),
@@ -670,11 +706,13 @@ export class TelephonyService {
         const existing = new Set<string>();
         for (let k = 0; k < e164s.length; k += 1000) {
           const found = await this.s(t)
-            .selectFrom('phone_numbers')
-            .select('e164')
-            .where('e164', 'in', e164s.slice(k, k + 1000))
+            .selectFrom('phone_numbers as n')
+            .innerJoin('discovery_number_ranges as r', 'r.id', 'n.range_id')
+            .select(['n.e164 as e164', 'n.live_status as live_status', 'r.sitecode as sitecode'])
+            .where('n.e164', 'in', e164s.slice(k, k + 1000))
             .execute();
-          for (const f of found) existing.add(f.e164);
+          // a number only found in Teams (no site) is not "already in the inventory": the new range takes it over
+          for (const f of found) if (f.sitecode || !f.live_status) existing.add(f.e164);
         }
         if (existing.size === e164s.length) {
           skipped += 1;
@@ -699,6 +737,7 @@ export class TelephonyService {
       targetId: site.id,
       detail: { created, numbers, skipped, failed: errors.length },
     });
+    if (created > 0) await this.syncNumbersWithTeams(t);
     if (created > 0) await this.base.trackChange(t, u, { siteId: site.id, entity: 'Number range', action: 'added', label: `${created} range${created === 1 ? '' : 's'} imported`, detail: `${numbers} numbers` });
     return { created, numbers, skipped, errors };
   }
@@ -755,6 +794,7 @@ export class TelephonyService {
       targetType: 'discovery_number_range',
       targetId: id,
     });
+    await this.syncNumbersWithTeams(t);
     if (prevRange) await this.base.trackChange(t, u, { sitecode: prevRange.sitecode, entity: 'Number range', action: 'removed', label: `${prevRange.range_start} – ${prevRange.range_end}` });
     return { ok: true };
   }
@@ -813,22 +853,24 @@ export class TelephonyService {
     if (cooling) throw new ConflictException(coolingMessage(cooling));
     const res = await this.s(t)
       .updateTable('phone_numbers')
-      .set({ holder_type: holderType, holder_id: holderId, status: 'assigned' })
+      .set({ holder_type: holderType, holder_id: holderId, status: 'assigned', live_only: false })
       .where('id', '=', numberId)
       .where('holder_id', 'is', null)
-      .where('status', '=', 'available')
+      // free, or assigned only because Teams has it (number-reconcile.ts): a holder in Data Collection takes it over, and any clash with Teams is flagged
+      .where((eb) => eb.or([eb.and([eb('status', '=', 'available'), eb('live_status', 'is', null)]), eb('live_only', '=', true)]))
       .executeTakeFirst();
     if (!Number(res.numUpdatedRows)) {
       const n = await this.s(t)
         .selectFrom('phone_numbers')
-        .select('status')
+        .select(['status', 'live_status', 'live_holder_name', 'live_holder_upn'])
         .where('id', '=', numberId)
         .executeTakeFirst();
       if (!n) throw new NotFoundException('phone number not found');
       throw new ConflictException(
-        n.status === 'reserved' ? 'That number is reserved.' : 'That number is already assigned.',
+        n.status === 'reserved' ? 'That number is reserved.' : n.live_status ? `That number is in use in Teams (${n.live_holder_name ?? n.live_holder_upn ?? 'another object'}).` : 'That number is already assigned.',
       );
     }
+    await refreshNumberConflict(this.s(t), numberId);
   }
 
   private async releaseHolder(t: TenantContext, holderType: NumberHolderType, holderId: string) {

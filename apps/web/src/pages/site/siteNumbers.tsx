@@ -29,6 +29,12 @@ interface PhoneNumber {
   /** released in Teams: not to be reassigned before this (number cool-off) */
   cooling_until: string | null;
   cooling_reason: string | null;
+  /** what Teams says (set by the Discovery sync): the live holder, and any clash with the Data Collection holder */
+  live_status: string | null;
+  live_holder_name: string | null;
+  live_holder_upn: string | null;
+  live_only: boolean;
+  conflict: string | null;
   range_start: string | null;
   range_end: string | null;
 }
@@ -217,7 +223,13 @@ export function NumberInventory({
                       )}
                     </TableCell>
                     <TableCell>
-                      {n.holder_name ? `${n.holder_name} (${n.holder_type})` : '—'}
+                      {n.holder_name ? `${n.holder_name} (${n.holder_type})` : n.live_status ? `${n.live_holder_name ?? n.live_holder_upn ?? 'Another object'} (live in Teams)` : '—'}
+                      {n.conflict && (
+                        <Badge appearance="tint" color="danger" title={n.conflict}>
+                          Conflict with Teams
+                        </Badge>
+                      )}
+                      {n.conflict && <Text size={200} className={s.muted} block>{n.conflict}</Text>}
                     </TableCell>
                     {!locked && (
                       <TableCell>

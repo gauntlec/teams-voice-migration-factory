@@ -20,6 +20,7 @@ export * from './device-sync';
 export * from './monitoring-admin';
 export * from './drift';
 export * from './number-cooloff';
+export * from './number-reconcile';
 export * from './voice-audio';
 export { migratePlatform, provisionTenant, migrateAllTenants, dropTenantSchema } from './migrate';
 
