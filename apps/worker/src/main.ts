@@ -1285,7 +1285,16 @@ const worker = new Worker(
         throw new Error(`unknown job: ${job.name}`);
     }
   },
-  { connection, concurrency: 4 },
+  {
+    connection,
+    concurrency: 4,
+    // A job whose lock could not be renewed in time (a host so short of disk or memory that the worker stalls) must never be started a
+    // second time while the first is still running: a discovery run ran twice at once on the dev host (2026-10-29). The lock is held for
+    // 5 minutes (renewed every 2.5), and a job seen as stalled is failed, not re-run; the run's own row is finished by the handler still
+    // running, or by the startup sweep if the worker really died.
+    lockDuration: 5 * 60_000,
+    maxStalledCount: 0,
+  },
 );
 
 const mailWorker = new Worker(MAIL_QUEUE_NAME, handleMail, { connection, concurrency: 4 });

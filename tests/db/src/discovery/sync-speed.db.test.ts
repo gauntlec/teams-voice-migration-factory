@@ -3,9 +3,11 @@
 // are read after the run has finished.
 import type { Job } from 'bullmq';
 import { describe, expect, it } from 'vitest';
+import { AuditService } from '../../../../apps/api/src/common/audit.service';
+import { TenantDiscoveryService } from '../../../../apps/api/src/modules/tenant-discovery/tenant-discovery.service';
 import { handleTenantDiscoveryRun } from '../../../../apps/worker/src/discovery/run';
 import type { TeamsExecutor } from '../../../../apps/worker/src/teams/executor';
-import { seedConnection, seedCustomer, seedSite, seedUser, useDb, type TestCustomer } from '../helpers';
+import { seedConnection, seedCustomer, seedSite, seedUser, unused, useDb, type TestCustomer } from '../helpers';
 
 type Rec = Record<string, unknown>;
 
@@ -76,16 +78,28 @@ describe('a sync stores only what changed', () => {
     const second = await run(env, exec);
     expect(second.status).toBe('completed');
     expect(changes(second)).toMatchObject({ added: 0, updated: 1, removed: 1 });
+    // where the time went, per step
+    expect((second.summary as Rec).timings).toMatchObject({
+      totalSeconds: expect.any(Number),
+      steps: { users: { seconds: expect.any(Number), waitingOnTeams: expect.any(Number), storing: expect.any(Number) }, reconcile: expect.any(Object) },
+    });
     expect(await versionCount(c, second.id)).toBe(2);
 
     const changed = await c.s.selectFrom('tenant_object_versions').select(['change_kind', 'changed_fields']).where('run_id', '=', second.id).where('object_key', '=', 'id-5').executeTakeFirstOrThrow();
     expect(changed).toEqual({ change_kind: 'updated', changed_fields: ['Department'] });
     expect((await c.s.selectFrom('tenant_users').select('department').where('upn', '=', 'a0005@contoso.test').executeTakeFirstOrThrow()).department).toBe('Finance');
 
-    // an unchanged user is seen again but its content is not touched
-    const after = await c.s.selectFrom('tenant_objects').select(['last_seen_run_id', 'content_changed_at', 'removed_at']).where('object_key', '=', 'id-7').executeTakeFirstOrThrow();
-    expect(after).toEqual({ last_seen_run_id: second.id, content_changed_at: before.content_changed_at, removed_at: null });
-    expect((await c.s.selectFrom('tenant_users').select('last_seen_run_id').where('upn', '=', 'a0007@contoso.test').executeTakeFirstOrThrow()).last_seen_run_id).toBe(second.id);
+    // an unchanged user is not written at all: its rows still say the first run; the sweep says it was seen by the second
+    const after = await c.s.selectFrom('tenant_objects').select(['id', 'last_seen_run_id', 'content_changed_at', 'removed_at']).where('object_key', '=', 'id-7').executeTakeFirstOrThrow();
+    expect(after).toMatchObject({ last_seen_run_id: first.id, content_changed_at: before.content_changed_at, removed_at: null });
+    expect((await c.s.selectFrom('tenant_users').select('last_seen_run_id').where('upn', '=', 'a0007@contoso.test').executeTakeFirstOrThrow()).last_seen_run_id).toBe(first.id);
+    expect(await c.s.selectFrom('tenant_object_sweeps').select(['object_type', 'run_id']).execute()).toEqual([{ object_type: 'user', run_id: second.id }]);
+    // so Discovery shows it as last seen by the second run
+    const discovery = new TenantDiscoveryService(handle.db, unused('queue'), new AuditService(handle.db), unused('deployments'), unused('dataCollection'), unused('telephony'));
+    const shown = await discovery.getObject({ id: c.t.id, schema: c.t.schema } as never, after.id);
+    expect(shown.last_seen_run_id).toBe(second.id);
+    // the changed user was written by the second run
+    expect((await c.s.selectFrom('tenant_users').select('last_seen_run_id').where('upn', '=', 'a0005@contoso.test').executeTakeFirstOrThrow()).last_seen_run_id).toBe(second.id);
 
     // the user Teams no longer has
     expect((await c.s.selectFrom('tenant_objects').select('removed_at').where('object_key', '=', 'id-9').executeTakeFirstOrThrow()).removed_at).not.toBeNull();
@@ -112,6 +126,42 @@ describe('a sync stores only what changed', () => {
     expect(await versionCount(c, again.id)).toBe(0);
     const empty = await c.s.selectFrom('tenant_objects').select('id').where('content_hash', 'is', null).execute();
     expect(empty).toEqual([]);
+  });
+});
+
+describe('a sync is never run twice at once', () => {
+  it('a second delivery of the same job leaves the run to the first', async () => {
+    const env = await setup();
+    const { c, engineer, connectionId } = env;
+    const asked: string[] = [];
+    const exec = teams(() => {
+      asked.push('users');
+      return [user(1)];
+    });
+    const row = await c.s
+      .insertInto('tenant_discovery_runs')
+      .values({ connection_id: connectionId, status: 'running', started_by: engineer.id, kind: 'sync', scope_types: ['user'] } as never)
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    const job = { data: { kind: 'tenant_discovery.run', tenantId: c.t.id, schema: c.t.schema, runId: row.id, connectionId, scopeTypes: ['user'] } } as unknown as Job;
+    await handleTenantDiscoveryRun(job, handle.db, () => exec, async () => undefined);
+    expect(asked).toEqual([]); // Teams was never asked
+    expect((await c.s.selectFrom('tenant_discovery_runs').select('status').where('id', '=', row.id).executeTakeFirstOrThrow()).status).toBe('running');
+  });
+
+  it('rewrites every user once when what a user row is built from changes', async () => {
+    const env = await setup();
+    const { c } = env;
+    const exec = teams(() => [user(1), user(2)]);
+    await run(env, exec);
+    // as if the projection gained a column: every stored hash is now different from what the code computes
+    await c.s.updateTable('tenant_users').set({ projection_hash: 'old', department: 'stale' }).execute();
+    const again = await run(env, exec);
+    const rows = await c.s.selectFrom('tenant_users').select(['department', 'last_seen_run_id']).orderBy('upn').execute();
+    expect(rows).toEqual([
+      { department: 'Sales', last_seen_run_id: again.id },
+      { department: 'Sales', last_seen_run_id: again.id },
+    ]);
   });
 });
 
