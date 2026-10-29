@@ -434,3 +434,57 @@ describe('a designed call flow imported to Design & Build, then the voice app po
     expect((await c.s.selectFrom('build_auto_attendants').select('discovery_voice_app_id').where('id', '=', row.id).executeTakeFirstOrThrow()).discovery_voice_app_id).toBe(flow.voice_app_id);
   });
 });
+
+describe('an auto attendant brings the voice apps it sends calls to', () => {
+  it('adds its call queues to the same site, leaves one already on another site where it is, and fills them in on a second add', async () => {
+    // Mineral Wells on the dev host: the menu's options go straight to call queues that have no resource account of their own
+    const hr = await object('call_queue', 'cq-mw-hr', 'MW Human Resources', { Identity: 'cq-mw-hr', LanguageId: 'en-US', ApplicationInstances: [] });
+    const ship = await object('call_queue', 'cq-mw-ship', 'MW Shipping', { Identity: 'cq-mw-ship', LanguageId: 'en-US', ApplicationInstances: ['ra-mw-ship'] });
+    await object('resource_account', 'ra-mw-ship', 'MW Shipping RA', { Identity: 'ra-mw-ship', UserPrincipalName: 'mw.ship@contoso.test', ApplicationId: CQ_APP });
+    const sub = await object('auto_attendant', 'aa-mw-sub', 'MW Sub Menu', { Identity: 'aa-mw-sub', LanguageId: 'en-US', DefaultCallFlow: { Menu: { MenuOptions: [{ DtmfResponse: 1, Action: 2, CallTarget: { Id: 'cq-mw-dock', Type: 6 } }] } } });
+    const dock = await object('call_queue', 'cq-mw-dock', 'MW Dock', { Identity: 'cq-mw-dock', LanguageId: 'en-US' });
+    const elsewhere = await object('call_queue', 'cq-mw-ny', 'MW Shared With NYC', { Identity: 'cq-mw-ny', LanguageId: 'en-US' });
+    await build.addFromDiscovery(c.t, engineer, { kind: 'call_queue', items: [{ id: elsewhere, siteId: nyc }], alsoBuild: false });
+    const options = [
+      { DtmfResponse: 1, Action: 2, CallTarget: { Id: 'cq-mw-hr', Type: 6 } }, // the queue itself
+      { DtmfResponse: 2, Action: 2, CallTarget: { Id: 'ra-mw-ship', Type: 3 } }, // through its resource account
+      { DtmfResponse: 3, Action: 2, CallTarget: { Id: 'aa-mw-sub', Type: 6 } }, // another menu, which has a queue of its own
+      { DtmfResponse: 4, Action: 2, CallTarget: { Id: 'cq-mw-ny', Type: 6 } },
+    ];
+    const aa = await object('auto_attendant', 'aa-mw', 'AA MW HQ', { Identity: 'aa-mw', LanguageId: 'en-US', CallFlows: [{ Menu: { MenuOptions: options } }] });
+
+    const res = await build.addFromDiscovery(c.t, engineer, { kind: 'auto_attendant', items: [{ id: aa, siteId: luton }], alsoBuild: true });
+    const by = Object.fromEntries(res.map((r) => [r.id, r]));
+    expect(by[aa]).toMatchObject({ dataCollection: 'added', designAndBuild: 'added' });
+    for (const id of [hr, ship, sub, dock]) expect(by[id]).toMatchObject({ dataCollection: 'added', designAndBuild: 'added' });
+    expect(by[hr].note).toMatch(/Call queue\. Reached from AA MW HQ\./);
+    expect(by[dock].note).toMatch(/Reached from MW Sub Menu\./);
+    expect(by[elsewhere]).toMatchObject({ dataCollection: 'on_other_site', otherSite: 'NYC01', designAndBuild: 'not_added' });
+    expect(res).toHaveLength(6);
+
+    const onLuton = await c.s.selectFrom('discovery_voice_apps').select(['tenant_object_id']).where('site_id', '=', luton).where('name', 'like', 'MW %').execute();
+    expect(onLuton.map((r) => r.tenant_object_id).sort()).toEqual([hr, ship, sub, dock].sort());
+    expect((await c.s.selectFrom('discovery_voice_apps').select('site_id').where('tenant_object_id', '=', elsewhere).executeTakeFirstOrThrow()).site_id).toBe(nyc);
+    expect(await c.s.selectFrom('build_call_queues').select('name').where('site_id', '=', luton).where('name', 'like', 'MW %').orderBy('name').execute()).toEqual([{ name: 'MW Dock' }, { name: 'MW Human Resources' }, { name: 'MW Shipping' }]);
+    // the shipping queue came with its own resource account
+    expect(await c.s.selectFrom('discovery_resource_accounts').select('upn').where('site_id', '=', luton).where('upn', '=', 'mw.ship@contoso.test').execute()).toHaveLength(1);
+
+    // the tenant gains a queue on the menu: adding the auto attendant again (already on the site) brings it
+    const newer = await object('call_queue', 'cq-mw-new', 'MW Purchasing', { Identity: 'cq-mw-new', LanguageId: 'en-US' });
+    await c.s.updateTable('tenant_objects').set({ data: JSON.stringify({ Identity: 'aa-mw', LanguageId: 'en-US', CallFlows: [{ Menu: { MenuOptions: [...options, { DtmfResponse: 5, Action: 2, CallTarget: { Id: 'cq-mw-new', Type: 6 } }] } }] }) } as never).where('id', '=', aa).execute();
+    const again = await build.addFromDiscovery(c.t, engineer, { kind: 'auto_attendant', items: [{ id: aa, siteId: luton }], alsoBuild: true });
+    const by2 = Object.fromEntries(again.map((r) => [r.id, r]));
+    expect(by2[aa]).toMatchObject({ dataCollection: 'already_on_site' });
+    expect(by2[hr]).toMatchObject({ dataCollection: 'already_on_site' });
+    expect(by2[newer]).toMatchObject({ dataCollection: 'added', designAndBuild: 'added' });
+  });
+
+  it('does not add twice a call queue the auto attendant already brought', async () => {
+    const q = await object('call_queue', 'cq-once', 'Once Queue', { Identity: 'cq-once', LanguageId: 'en-GB' });
+    const a = await object('auto_attendant', 'aa-once', 'Once Menu', { Identity: 'aa-once', LanguageId: 'en-GB', DefaultCallFlow: { Menu: { MenuOptions: [{ DtmfResponse: 1, Action: 2, CallTarget: { Id: 'cq-once', Type: 6 } }] } } });
+    const res = await build.addFromDiscovery(c.t, engineer, { kind: 'auto_attendant', items: [{ id: a, siteId: luton }], alsoBuild: false });
+    expect(res.map((r) => r.id)).toEqual([a, q]);
+    const queueRes = await build.addFromDiscovery(c.t, engineer, { kind: 'call_queue', items: [{ id: q, siteId: luton }], alsoBuild: false });
+    expect(queueRes).toEqual([expect.objectContaining({ id: q, dataCollection: 'already_on_site' })]);
+  });
+});

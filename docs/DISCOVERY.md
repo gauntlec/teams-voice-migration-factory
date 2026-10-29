@@ -308,6 +308,7 @@ Teams keeps these apart, and so do Site Data and Design & Build:
 | You add | You get |
 |---|---|
 | A voice app | the Voice apps record named as in Teams, its Call flow, a Design & Build attendant/queue with the same name, and one resource account row (Site Data and Design & Build) for each resource account it lists. None listed, none made |
+| A voice app that sends calls to others | the same for every auto attendant and call queue it routes to (menu options, operator, a queue's overflow, timeout or no-agent target, named directly or through a resource account), and what those route to, each with its own line in the result ("Reached from ..."). One already on another site stays there and is reported. Adding the voice app again, when it is already on the site, brings any it routes to that are still missing (2026.10.79) |
 | A resource account on its own | only the resource account (never a voice app named after it). If the voice app it answers for is already on the site it joins it; if not, the result says which voice app to add. Adding that voice app later links the resource account that is already there |
 
 Everything is matched on the Teams Id / UPN (`tenant_object_id`), never on a name, so two voice apps or two resource accounts with the same name stay
