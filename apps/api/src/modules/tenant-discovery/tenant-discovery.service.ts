@@ -1275,6 +1275,31 @@ export class TenantDiscoveryService {
     return ctx.instancesOf(app.data).map((k) => ctx.raByKey.get(k)).filter((r): r is NonNullable<typeof r> => !!r);
   }
 
+  /**
+   * The other voice apps a discovered voice app sends calls to: any call target in its settings (menu options, operator, a queue's
+   * overflow, timeout or no-agent target) that is an auto attendant or call queue, named directly or through one of its resource
+   * accounts. Matched on the Teams GUID only.
+   */
+  private routedVoiceApps(ctx: Awaited<ReturnType<TenantDiscoveryService['liveVoiceContext']>>, app: { id: string; data: unknown }) {
+    const out = new Map<string, NonNullable<ReturnType<typeof ctx.appByIdentity.get>>>();
+    const walk = (v: unknown, depth: number) => {
+      if (depth > 16 || v == null || typeof v !== 'object') return;
+      if (Array.isArray(v)) {
+        for (const x of v) walk(x, depth + 1);
+        return;
+      }
+      const ref = parseLiveCallTarget(v);
+      if (ref?.liveId && (ref.kind === 'voice_app' || ref.kind === 'resource_account')) {
+        const key = ref.liveId.toLowerCase();
+        const hit = ref.kind === 'voice_app' ? (ctx.appByIdentity.get(key) ?? ctx.ownerOfRa.get(key)) : ctx.ownerOfRa.get(key);
+        if (hit && hit.id !== app.id) out.set(hit.id, hit);
+      }
+      for (const x of Object.values(v)) walk(x, depth + 1);
+    };
+    walk(app.data, 0);
+    return [...out.values()];
+  }
+
   /** What Teams holds about a discovered voice app, as the Voice apps record's text fields and the Call flow's wizard answers. */
   private voiceAppDetails(ctx: Awaited<ReturnType<TenantDiscoveryService['liveVoiceContext']>>, app: { id: string; object_type: string; object_key: string; display_name: string | null; data: unknown }) {
     const appData = (app.data ?? {}) as Record<string, unknown>;
@@ -1466,17 +1491,19 @@ export class TenantDiscoveryService {
   /**
    * The Site Data half of "add to site" for objects picked on a Discovery tab. Every object is matched on its own key and
    * never on a display name, which can repeat: an account on its UPN, a resource account, auto attendant or call queue on its tenant
-   * object id (the exact discovered object, which carries the Teams GUID). A voice app brings its own resource accounts; a resource
-   * account brings only itself and joins the voice app that lists it when that voice app is already on the site. An object already on
-   * the chosen site is left alone; one on another site is reported and not moved.
-   * Returns each item's result, the Site Data row it ended up on, and the resource account rows Design & Build should follow.
+   * object id (the exact discovered object, which carries the Teams GUID). A voice app brings its own resource accounts, and the voice
+   * apps it sends calls to (an auto attendant's call queues), each with its own result row; a resource account brings only itself and
+   * joins the voice app that lists it when that voice app is already on the site. An object already on the chosen site is left alone
+   * (what it routes to is still brought); one on another site is reported and not moved.
+   * Returns each item's result, the Site Data row it ended up on, the resource account rows Design & Build should follow, and the site
+   * of every result (a routed voice app was not in the request).
    */
   async captureSelected(
     t: TenantContext,
     user: AuthedUser,
     kind: 'account' | 'resource_account' | 'call_queue' | 'auto_attendant',
     items: { id: string; siteId: string; as?: 'user' | 'cap' }[],
-  ): Promise<{ results: AddFromDiscoveryItemResult[]; dcIds: Map<string, string>; raIds: Map<string, string[]> }> {
+  ): Promise<{ results: AddFromDiscoveryItemResult[]; dcIds: Map<string, string>; raIds: Map<string, string[]>; siteOf: Map<string, string> }> {
     const s = this.s(t);
     await this.assertSitesUsable(t, new Set(items.map((i) => i.siteId)));
     const sites = await this.siteLookup(t);
@@ -1545,7 +1572,9 @@ export class TenantDiscoveryService {
       const ctx = await this.liveVoiceContext(t);
       const objectType = kind;
       const found = await s.selectFrom('tenant_objects').select(['id', 'object_type', 'object_key', 'display_name', 'data']).where('removed_at', 'is', null).where('object_type', '=', objectType).where('id', 'in', ids).execute();
+      const done = new Set<string>(); // voice apps already given a result row, picked or routed to
       for (const id of ids) {
+        if (done.has(id)) continue;
         const f = found.find((x) => x.id === id);
         if (!f) {
           results.push(missing(id));
@@ -1576,22 +1605,42 @@ export class TenantDiscoveryService {
           results.push({ id, label, key: f.object_key, dataCollection: isNew ? 'added' : 'already_on_site', designAndBuild: off, ...(notes ? { note: notes } : {}) });
           continue;
         }
-        const v = await this.ensureVoiceApp(t, user, ctx, siteId, f);
-        if (v.status === 'other_site') {
-          if (v.id) dcIds.set(id, v.id);
-          results.push({ id, label, key: f.object_key, dataCollection: 'on_other_site', designAndBuild: off, otherSite: siteCode(v.siteId) });
-          continue;
+        // the picked voice app, then every voice app it sends calls to (and those they send calls to), all on the same site
+        const queue: { app: typeof f; from: string | null }[] = [{ app: f, from: null }];
+        done.add(f.id);
+        while (queue.length) {
+          const { app, from } = queue.shift()!;
+          const appLabel = app.display_name ?? app.object_key;
+          const reached = from ? `Reached from ${from}.` : null;
+          const what = app.object_type === 'call_queue' ? 'Call queue' : 'Auto attendant';
+          siteOf.set(app.id, siteId);
+          const v = await this.ensureVoiceApp(t, user, ctx, siteId, app);
+          if (v.status === 'other_site') {
+            if (v.id) dcIds.set(app.id, v.id);
+            results.push({ id: app.id, label: appLabel, key: app.object_key, dataCollection: 'on_other_site', designAndBuild: off, otherSite: siteCode(v.siteId), ...(from ? { note: `${what}. ${reached}` } : {}) });
+            continue;
+          }
+          if (v.status === 'ambiguous') {
+            results.push({ id: app.id, label: appLabel, key: app.object_key, dataCollection: 'ambiguous', designAndBuild: off, note: [from ? `${what}. ${reached}` : null, `More than one voice app on this site is designed with the name "${appLabel}". Rename or remove the extras, then add it again, so it links to the right one.`].filter(Boolean).join(' ') });
+            continue;
+          }
+          dcIds.set(app.id, v.id!);
+          raIds.set(app.id, v.raIds);
+          const isNew = v.status === 'created' || v.status === 'matched' || v.newRas > 0;
+          if (isNew) added.set(`voice:${siteId}`, (added.get(`voice:${siteId}`) ?? 0) + 1);
+          const notes = [
+            from ? `${what}. ${reached}` : null,
+            v.status === 'matched' ? `Matched to your design "${appLabel}" and linked to the live voice app.` : null,
+            v.status === 'existing' && v.newRas > 0 ? 'Added its resource accounts.' : null,
+            ...v.problems,
+          ].filter(Boolean).join(' ');
+          results.push({ id: app.id, label: appLabel, key: app.object_key, dataCollection: isNew ? 'added' : 'already_on_site', designAndBuild: off, ...(notes ? { note: notes } : {}) });
+          for (const next of this.routedVoiceApps(ctx, app)) {
+            if (done.has(next.id)) continue;
+            done.add(next.id);
+            queue.push({ app: next, from: appLabel });
+          }
         }
-        if (v.status === 'ambiguous') {
-          results.push({ id, label, key: f.object_key, dataCollection: 'ambiguous', designAndBuild: off, note: `More than one voice app on this site is designed with the name "${label}". Rename or remove the extras, then add it again, so it links to the right one.` });
-          continue;
-        }
-        dcIds.set(id, v.id!);
-        raIds.set(id, v.raIds);
-        const isNew = v.status === 'created' || v.status === 'matched' || v.newRas > 0;
-        if (isNew) added.set(`voice:${siteId}`, (added.get(`voice:${siteId}`) ?? 0) + 1);
-        const notes = [v.status === 'matched' ? `Matched to your design "${label}" and linked to the live voice app.` : null, v.status === 'existing' && v.newRas > 0 ? 'Added its resource accounts.' : null, ...v.problems].filter(Boolean).join(' ');
-        results.push({ id, label, key: f.object_key, dataCollection: isNew ? 'added' : 'already_on_site', designAndBuild: off, ...(notes ? { note: notes } : {}) });
       }
     }
 
@@ -1605,7 +1654,7 @@ export class TenantDiscoveryService {
       const [k, siteId] = key.split(':') as [string, string];
       await this.dataCollection.trackChange(t, user, { siteId, entity: entityOf(k), action: 'added', label: `${n} added from Discovery` });
     }
-    return { results, dcIds, raIds };
+    return { results, dcIds, raIds, siteOf };
   }
 
   /**

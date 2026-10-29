@@ -470,9 +470,9 @@ export class BuildService {
    */
   async addFromDiscovery(t: TenantContext, u: AuthedUser, input: AddFromDiscoveryInput): Promise<AddFromDiscoveryItemResult[]> {
     const s = this.s(t);
-    const { results, dcIds, raIds } = await this.discovery.captureSelected(t, u, input.kind, input.items);
+    // siteOf covers every result, including the voice apps a picked one routes to (they were not in the request)
+    const { results, dcIds, raIds, siteOf } = await this.discovery.captureSelected(t, u, input.kind, input.items);
     if (!input.alsoBuild) return results;
-    const siteOf = new Map(input.items.map((i) => [i.id, i.siteId]));
     // dcIds only holds items that really are on this site's record; a note (say, a number that could not be attached) does not stop the Design & Build row
     const eligible = results.filter((r) => dcIds.has(r.id) && (r.dataCollection === 'added' || r.dataCollection === 'already_on_site'));
     for (const r of results) if (!eligible.includes(r)) r.designAndBuild = 'not_added';
