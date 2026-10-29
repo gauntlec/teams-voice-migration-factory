@@ -52,6 +52,8 @@ exit 0
 EOF
 printf '#!/bin/sh\n[ "$1" = "-u" ] && echo 0 || /usr/bin/id "$@"\n' > "$STUB/id"
 printf '#!/bin/sh\n[ "$1" = "-s" ] && echo Linux || /usr/bin/uname "$@"\n' > "$STUB/uname"
+# df: the real one, unless STUB_DF_FREE_KB is set (then every path is on one disk with that much free)
+printf '#!/bin/sh\n[ -n "${STUB_DF_FREE_KB:-}" ] || exec /bin/df "$@"\necho "Filesystem 1024-blocks Used Available Capacity Mounted on"\necho "/dev/fake 20000000 1 $STUB_DF_FREE_KB 1%% /"\n' > "$STUB/df"
 chmod +x "$STUB"/*
 ln -s "$AGE_BIN" "$STUB/age"; ln -s "$AGE_KEYGEN_BIN" "$STUB/age-keygen"
 BASEPATH="$STUB:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -134,11 +136,70 @@ for i in $(seq 1 16); do n="$(printf '2021%02d01-000000' "$i")"; if [ $((i % 2))
 for i in 1 2 3 4 5; do n="$(printf 'pre-restore-2021%02d01-000000' "$i")"; : > "$BK/$n.tar.age"; : > "$BK/$n.tar.age.sha256"; done
 sleep 1; vx backup >"$T/b4.log" 2>&1 || bad "backup for rotation failed: $(tail -3 "$T/b4.log")"
 count="$(ls -1 "$BK" | sed -nE 's/^([0-9]{8}-[0-9]{6})(\.tar\.age)?$/\1/p' | sort -u | wc -l | tr -d ' ')"
-[ "$count" = 14 ] && good "14 backups kept (folders and encrypted files count together)" || bad "kept $count backups, expected 14"
+[ "$count" = 7 ] && good "7 backups kept by default (folders and encrypted files count together)" || bad "kept $count backups, expected 7"
 pcount="$(ls -1 "$BK" | sed -nE 's/^(pre-restore-[0-9]{8}-[0-9]{6})(\.tar\.age)?$/\1/p' | sort -u | wc -l | tr -d ' ')"
 [ "$pcount" = 3 ] && good "3 pre-restore backups kept" || bad "kept $pcount pre-restore backups, expected 3"
 [ -d "$BK/keep-me" ] && good "an unrelated folder was left alone" || bad "an unrelated folder was removed"
 ls "$BK" | grep -q '2021010[1-9]-000000.sha256\|20210101-000000.tar.age.sha256' && bad "an old .sha256 was left behind" || good "old .sha256 files go with their backup"
+
+# ---------------------------------------------------------------- 5b. how many are kept, other folders, disk space
+echo "Keep count (voxshift backup-keep), other folders and disk space:"
+D3="$T/vx3"; bash "$HERE/install.sh" --generate-only -y --admin-email admin@example.com --dir "$D3" --base-url http://10.0.0.20 >/dev/null 2>&1
+vx3() { PATH="$BASEPATH" bash "$D3/voxshift" "$@"; }
+B3="$D3/backups"; mkdir -p "$B3"
+olds() { for i in $(seq 1 "$1"); do mkdir -p "$2/$(printf '2021%02d01-000000' "$i")"; done; }
+kept() { ls -1 "$1" | sed -nE 's/^([0-9]{8}-[0-9]{6})(\.tar\.age)?$/\1/p' | sort -u | wc -l | tr -d ' '; }
+grep -qx 'BACKUP_KEEP=7' "$D3/.env" && good "a new install writes BACKUP_KEEP=7 in .env" || bad ".env has no BACKUP_KEEP=7"
+vx3 backup-keep >"$T/k1.log" 2>&1 && grep -q 'the newest 7' "$T/k1.log" && good "backup-keep shows the setting" || bad "backup-keep output: $(cat "$T/k1.log")"
+for v in 0 366 abc -3 ''; do
+  [ -z "$v" ] && continue
+  cp "$D3/.env" "$T/env.before"
+  vx3 backup-keep "$v" >/dev/null 2>&1 && bad "backup-keep $v was accepted" || { cmp -s "$T/env.before" "$D3/.env" && good "backup-keep $v refused, .env unchanged" || bad "backup-keep $v changed .env"; }
+done
+vx3 backup-keep 4 >"$T/k2.log" 2>&1 || bad "backup-keep 4 failed: $(cat "$T/k2.log")"
+[ "$(grep -c '^BACKUP_KEEP=' "$D3/.env")" = 1 ] && grep -qx 'BACKUP_KEEP=4' "$D3/.env" && good "backup-keep 4 rewrote the one BACKUP_KEEP line" || bad ".env BACKUP_KEEP lines: $(grep BACKUP_KEEP "$D3/.env")"
+perm="$(ls -l "$D3/.env" | cut -c1-10)"; [ "$perm" = "-rw-------" ] && good ".env is still mode 600" || bad ".env mode is $perm"
+grep -q "^JWT_ACCESS_SECRET=" "$D3/.env" && good "the rest of .env is intact" || bad ".env lost its other lines"
+olds 9 "$B3"
+vx3 backup-keep >"$T/k3.log" 2>&1; grep -q 'Backups there now: 9' "$T/k3.log" && good "backup-keep counts the backups there" || bad "count: $(cat "$T/k3.log")"
+sleep 1; vx3 backup >"$T/k4.log" 2>&1 || bad "backup failed: $(tail -3 "$T/k4.log")"
+[ "$(kept "$B3")" = 4 ] && good "4 kept after backup-keep 4" || bad "kept $(kept "$B3"), expected 4"
+newest="$(ls -1 "$B3" | grep -E '^20[0-9]{6}-[0-9]{6}$' | sort | tail -n 1)"; [ -f "$B3/$newest/manifest.txt" ] && good "the new backup is one of them" || bad "the new backup is missing"
+vx3 backup-keep 2 >"$T/k4b.log" 2>&1 || bad "backup-keep 2 failed"
+[ "$(kept "$B3")" = 2 ] && [ -d "$B3/$newest" ] && good "lowering it deletes the oldest at once, newest kept" || bad "after backup-keep 2: $(kept "$B3") left"
+grep -q 'Deleted the older ones' "$T/k4b.log" && grep -q '20210[0-9]01-000000' "$T/k4b.log" && good "and says which it deleted" || bad "no list of deleted backups: $(cat "$T/k4b.log")"
+vx3 backup-keep 9 >"$T/k4c.log" 2>&1; [ "$(kept "$B3")" = 2 ] && ! grep -q Deleted "$T/k4c.log" && good "raising it deletes nothing" || bad "raising it changed something"
+# the line missing (an install made earlier): the default
+grep -v '^BACKUP_KEEP=' "$D3/.env" > "$T/env.nokeep"; cat "$T/env.nokeep" > "$D3/.env"
+vx3 backup-keep >"$T/k5.log" 2>&1; grep -q 'the newest 7' "$T/k5.log" && good "no BACKUP_KEEP line: 7" || bad "default without the line: $(cat "$T/k5.log")"
+vx3 backup-keep 5 >/dev/null 2>&1; grep -qx 'BACKUP_KEEP=5' "$D3/.env" && good "backup-keep adds the line when it is missing" || bad "line not added"
+printf "BACKUP_KEEP='lots'\n" >> "$D3/.env"
+vx3 backup-keep >"$T/k6.log" 2>&1; grep -q 'not a whole number' "$T/k6.log" && grep -q 'the newest 7' "$T/k6.log" && good "a bad value is reported and 7 are kept" || bad "bad value: $(cat "$T/k6.log")"
+vx3 backup-keep 2 >/dev/null 2>&1
+# the clock has gone backwards: backups dated later than now must not push out the one just written
+mkdir -p "$B3/20990101-000000" "$B3/20990201-000000"
+sleep 1; vx3 backup >"$T/k7.log" 2>&1 || bad "backup failed: $(tail -3 "$T/k7.log")"
+just="$(sed -n 's|^Backup written to [^ ]*/\([0-9]\{8\}-[0-9]\{6\}\).*|\1|p' "$T/k7.log")"
+[ -n "$just" ] && [ -d "$B3/$just" ] && good "the backup just written is kept even when others look newer" || bad "the backup just written was deleted ($just)"
+[ "$(kept "$B3")" = 2 ] && good "and the count is still 2" || bad "kept $(kept "$B3"), expected 2"
+rm -rf "$B3"/2099*
+# a folder named on the command line is never cleaned up
+E="$T/elsewhere"; olds 12 "$E"; mkdir -p "$E/keep-me"
+sleep 1; vx3 backup "$E" >"$T/k8.log" 2>&1 || bad "backup to another folder failed: $(tail -3 "$T/k8.log")"
+[ "$(kept "$E")" = 13 ] && [ -d "$E/keep-me" ] && good "a folder you name is not cleaned up (12 old + the new one)" || bad "the named folder was pruned: $(kept "$E") left"
+# not enough disk space: update and the nightly job stop before pulling or backing up
+before="$(ls -1 "$B3" | wc -l | tr -d ' ')"; : > "$STUB_LOG"
+export STUB_DF_FREE_KB=100   # under 1 MB: not even room for these tiny stub backups
+vx3 backup >"$T/s1.log" 2>&1 && bad "a backup was made with too little space" || { grep -q 'Not enough free disk space' "$T/s1.log" && grep -q 'backup-keep' "$T/s1.log" && good "backup: stops with a clear message" || bad "backup message: $(cat "$T/s1.log")"; }
+vx3 update >"$T/s2.log" 2>&1 && bad "update went ahead with too little space" || { grep -q 'new images' "$T/s2.log" && good "update: stops, naming the backup and the images" || bad "update message: $(cat "$T/s2.log")"; }
+vx3 update --auto >"$T/s3.log" 2>&1 && bad "the nightly job went ahead with too little space" || { grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T.*Not enough free disk space' "$T/s3.log" && good "nightly job: one dated line in the log" || bad "nightly message: $(cat "$T/s3.log")"; }
+grep -q 'pull' "$STUB_LOG" && bad "images were pulled with too little space" || good "nothing was pulled"
+[ "$(ls -1 "$B3" | wc -l | tr -d ' ')" = "$before" ] && good "nothing was written to backups/" || bad "files appeared in backups/"
+export STUB_DF_FREE_KB=$((1000 * 1024))   # room for a (tiny stub) backup, not for a backup and 1.5 GB of images
+vx3 backup >/dev/null 2>&1 && good "backup: enough room for a backup alone" || bad "backup refused with room for it"
+vx3 update >"$T/s4.log" 2>&1 && bad "update went ahead without room for the images" || good "update: a backup fits but the images do not, so it stops"
+unset STUB_DF_FREE_KB
+vx3 update >"$T/s5.log" 2>&1 && good "update goes ahead with enough room" || bad "update with enough room failed: $(tail -3 "$T/s5.log")"
 
 # ---------------------------------------------------------------- 6. restore
 echo "Restore of an encrypted backup:"
