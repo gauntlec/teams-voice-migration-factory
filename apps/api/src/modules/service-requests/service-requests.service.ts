@@ -1,12 +1,13 @@
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { sql } from 'kysely';
-import { platformDb, tenantDb } from '@tvmf/db';
+import { platformDb, setNumbersParked, tenantDb } from '@tvmf/db';
 import type { ZodType } from 'zod';
 import {
   AGENT_CUSTOMER_LABEL,
   agentLabel,
   NUMBER_NEED_KEEP,
   NUMBER_NEED_NEW,
+  NUMBER_PARK,
   SITE_MODE_LABELS,
   SR_BUILD_DRAFT_STATUSES,
   SR_BUILD_KIND,
@@ -537,14 +538,27 @@ export class ServiceRequestsService {
 
   /* ------------------------------ sites ------------------------------ */
 
-  /** Sites with their mode. A site contact only sees their own sites. */
+  /**
+   * Sites with their mode, and how many spare numbers each has that are not parked: they are parked before the site moves to
+   * operations (number-parking.ts), so the Site modes dialog asks first. A site contact only sees their own sites.
+   */
   async sites(t: TenantContext) {
     this.assertEnabled(t);
-    let q = tenantDb(this.db, t.schema)
-      .selectFrom('discovery_sites')
-      .select(['id', 'sitecode', 'name', 'mode', 'mode_changed_at', 'mode_changed_by'])
-      .orderBy('sitecode');
-    if (isSiteScoped(t)) q = q.where('id', 'in', t.siteScope);
+    const s = tenantDb(this.db, t.schema);
+    let q = s
+      .selectFrom('discovery_sites as st')
+      .select(['st.id as id', 'st.sitecode as sitecode', 'st.name as name', 'st.mode as mode', 'st.mode_changed_at as mode_changed_at', 'st.mode_changed_by as mode_changed_by'])
+      .select((eb) =>
+        eb
+          .selectFrom('phone_numbers as pn')
+          .innerJoin('discovery_number_ranges as r', 'r.id', 'pn.range_id')
+          .select(sql<number>`count(*)::int`.as('n'))
+          .whereRef('r.sitecode', '=', 'st.sitecode')
+          .where('pn.status', '=', 'available')
+          .as('spare_unparked'),
+      )
+      .orderBy('st.sitecode');
+    if (isSiteScoped(t)) q = q.where('st.id', 'in', t.siteScope);
     const rows = await q.execute();
     const names = await this.names(rows.map((r) => r.mode_changed_by));
     return rows.map((r) => ({ ...r, mode_changed_by_name: r.mode_changed_by ? (names.get(r.mode_changed_by) ?? null) : null }));
@@ -582,10 +596,9 @@ export class ServiceRequestsService {
 
   /* ----------------------------- form data ----------------------------- */
 
-  /** Numbers already promised to an open request, so two requests never take the same free number. */
-  /** Numbers promised to open requests: a single new number, or the set aside for several new users. */
+  /** Numbers promised to open requests: a single new number, the set aside for several new users, or numbers to park or unpark. */
   private async claimedNumbers(s: ReturnType<typeof tenantDb>) {
-    const [single, multi] = await Promise.all([
+    const [single, multi, parking] = await Promise.all([
       s
         .selectFrom('service_requests')
         .select(sql<string>`details->>${SR_NEW_NUMBER_KEY}`.as('n'))
@@ -598,8 +611,14 @@ export class ServiceRequestsService {
         .where('status', 'in', [...SR_OPEN_STATUSES])
         .where(sql<boolean>`details ? ${SR_NEW_NUMBERS_KEY}`)
         .execute(),
+      s
+        .selectFrom('service_requests')
+        .select(sql<string[] | null>`coalesce(details->'park_numbers', details->'unpark_numbers')`.as('p'))
+        .where('status', 'in', [...SR_OPEN_STATUSES])
+        .where('type', '=', 'change_number_state')
+        .execute(),
     ]);
-    return new Set([...single.map((r) => r.n), ...multi.flatMap((r) => Object.values(r.m ?? {}))].filter(Boolean));
+    return new Set([...single.map((r) => r.n), ...multi.flatMap((r) => Object.values(r.m ?? {})), ...parking.flatMap((r) => r.p ?? [])].filter(Boolean));
   }
 
   /**
@@ -617,7 +636,7 @@ export class ServiceRequestsService {
       .union(s.selectFrom('build_caps').select('phone_model as m').where('phone_model', 'is not', null))
       .execute();
     const models = [...new Set(deviceModels.map((r) => (r.m ?? '').trim()).filter(Boolean))].sort();
-    if (!siteId) return { deviceModels: models, availableNumbers: [], siteNumbers: [], ranges: [], callQueues: [], autoAttendants: [], caps: [] };
+    if (!siteId) return { deviceModels: models, availableNumbers: [], siteNumbers: [], parkedNumbers: [], ranges: [], callQueues: [], autoAttendants: [], caps: [] };
 
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(siteId)) throw new BadRequestException('Unknown site.');
     const site = await this.loadSite(t, siteId);
@@ -640,7 +659,9 @@ export class ServiceRequestsService {
     return {
       deviceModels: models,
       availableNumbers: unclaimed.filter((n) => n.status === 'available').map((n) => n.e164),
-      siteNumbers: unclaimed.map((n) => n.e164),
+      // A parked number is not anyone's to keep: bring it back into use first.
+      siteNumbers: unclaimed.filter((n) => n.status !== 'parked').map((n) => n.e164),
+      parkedNumbers: unclaimed.filter((n) => n.status === 'parked').map((n) => n.e164),
       ranges: ranges.map((r) => ({ id: r.id, label: `${r.range_start} – ${r.range_end}${r.carrier ? ` (${r.carrier})` : ''}` })),
       callQueues,
       autoAttendants,
@@ -968,7 +989,24 @@ export class ServiceRequestsService {
       if ((await this.claimedNumbers(s)).has(e164)) throw new ConflictException(`${e164} has just been taken by another request. Choose another.`);
     }
     if (details.number === NUMBER_NEED_KEEP && typeof details.existing_number === 'string') {
-      if (!(await siteNumber(details.existing_number))) throw new BadRequestException(`${details.existing_number} isn't one of this site's numbers.`);
+      const n = await siteNumber(details.existing_number);
+      if (!n) throw new BadRequestException(`${details.existing_number} isn't one of this site's numbers.`);
+      if (n.status === 'parked') throw new BadRequestException(`${details.existing_number} is parked. Bring it back into use first, or choose another number.`);
+    }
+    // Park or unpark: each number must be at the site, in the right state, and not on another open request.
+    if (type === 'change_number_state') {
+      const park = details.park_action === NUMBER_PARK;
+      const picked = ((park ? details.park_numbers : details.unpark_numbers) as string[] | undefined) ?? [];
+      const claimed = await this.claimedNumbers(s);
+      const problems: string[] = [];
+      for (const e164 of picked) {
+        const n = await siteNumber(e164);
+        if (!n) problems.push(`${e164} isn't one of this site's numbers.`);
+        else if (park && n.status !== 'available') problems.push(`${e164} isn't a spare number.`);
+        else if (!park && n.status !== 'parked') problems.push(`${e164} isn't parked.`);
+        else if (claimed.has(e164)) problems.push(`${e164} is already on another open request.`);
+      }
+      if (problems.length) throw new BadRequestException(problems.join(' '));
     }
     if (type === 'new_site' && typeof details.sitecode === 'string') {
       const clash = await s.selectFrom('discovery_sites').select('id').where(sql<boolean>`lower(sitecode) = lower(${details.sitecode})`).executeTakeFirst();
@@ -1113,20 +1151,36 @@ export class ServiceRequestsService {
       Object.assign(set, { reopened_at: now, deployed_at: null, built_at: null, sla_notified: JSON.stringify(notified) });
     }
     if (canManage && !row.first_response_at) set.first_response_at = now;
-    const updated = await tenantDb(this.db, t.schema)
-      .updateTable('service_requests')
-      .set(set)
-      .where('id', '=', id)
-      .where('status', '=', from) // someone else moving it at the same moment loses, not both
-      .returningAll()
-      .executeTakeFirst();
-    if (!updated) throw new ConflictException('This request was just updated by someone else. Refresh and try again.');
+    // Completing a "Park or unpark phone numbers" request changes the numbers in the same transaction, so the two always agree.
+    const applyParking = kind === 'forward' && to === 'deployed' && row.type === 'change_number_state';
+    const { updated, parked } = await this.db.transaction().execute(async (trx) => {
+      const x = tenantDb(trx, t.schema);
+      const done = await x
+        .updateTable('service_requests')
+        .set(set)
+        .where('id', '=', id)
+        .where('status', '=', from) // someone else moving it at the same moment loses, not both
+        .returningAll()
+        .executeTakeFirst();
+      if (!done) throw new ConflictException('This request was just updated by someone else. Refresh and try again.');
+      return { updated: done, parked: applyParking ? await this.applyNumberState(x, row, user) : null };
+    });
 
     await tenantDb(this.db, t.schema)
       .insertInto('service_request_events')
       .values({ request_id: id, kind: 'status_changed', from_status: from, to_status: to, body: note, author_id: user.id, actor_type: user.agent ? 'agent' : 'user' })
       .execute();
     const reference = srReference(row.number);
+    if (parked) {
+      for (const n of parked.changed) {
+        await this.audit.tenant(t.schema, parked.park ? 'discovery.number_parked' : 'discovery.number_unparked', {
+          actor: { id: user.id, email: user.email },
+          targetType: 'phone_number',
+          targetId: n.id,
+          detail: { e164: n.e164, reference },
+        });
+      }
+    }
     await this.audit.tenant(t.schema, 'service_request.status_changed', {
       actor: { id: user.id, email: user.email },
       targetType: 'service_request',
@@ -1145,6 +1199,31 @@ export class ServiceRequestsService {
     }
     await this.agentEvents.emitRequest(t.id, updated, 'sr.updated', { change: 'status', from, to, by: user.agent ? 'agent' : 'person' });
     return { ...updated, reference };
+  }
+
+  /**
+   * Parks or unparks the numbers on a completed "Park or unpark phone numbers" request (number-parking.ts). All or nothing:
+   * if any number has changed since the request was raised (given to someone, say), nothing changes and the request stays put.
+   */
+  private async applyNumberState(s: ReturnType<typeof tenantDb>, row: { details: unknown; site_id: string | null }, user: AuthedUser) {
+    const details = (row.details ?? {}) as Record<string, unknown>;
+    const park = details.park_action === NUMBER_PARK;
+    const e164s = ((park ? details.park_numbers : details.unpark_numbers) as string[] | undefined) ?? [];
+    const site = row.site_id ? await s.selectFrom('discovery_sites').select('sitecode').where('id', '=', row.site_id).executeTakeFirst() : undefined;
+    const found = e164s.length
+      ? await s
+          .selectFrom('phone_numbers as pn')
+          .innerJoin('discovery_number_ranges as r', 'r.id', 'pn.range_id')
+          .select(['pn.id as id', 'pn.e164 as e164'])
+          .where('pn.e164', 'in', e164s)
+          .where('r.sitecode', '=', site?.sitecode ?? '')
+          .execute()
+      : [];
+    const missing = e164s.filter((e) => !found.some((f) => f.e164 === e));
+    if (missing.length) throw new BadRequestException(`Not completed: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} no longer at this site.`);
+    const r = await setNumbersParked(s, found.map((f) => f.id), park, user.id);
+    if (r.blocked.length) throw new BadRequestException(`Not completed, and no number has changed: ${r.blocked.join(' ')}`);
+    return { park, changed: r.changed };
   }
 
   /** Assistants that can be given requests on this customer (for the assign picker). */

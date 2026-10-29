@@ -455,7 +455,7 @@ export class HandoverService {
         columns: ['Number', 'Status', 'Assigned to (in Teams)', 'Site', 'Carrier'],
         rows: phoneNumbers.map((p) => {
           const holder = holderOf.get(p.e164);
-          const status = holder ? 'In use' : p.status === 'reserved' ? 'Reserved' : 'Spare';
+          const status = holder ? 'In use' : p.status === 'reserved' ? 'Reserved' : p.status === 'parked' ? 'Parked' : 'Spare';
           return [p.e164, status, holder ?? '—', p.sitecode ?? '—', p.carrier ?? '—'];
         }),
       },

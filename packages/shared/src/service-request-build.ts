@@ -47,6 +47,8 @@ export const SR_BUILD_KIND: Record<SrType, SrBuildKind | null> = {
   change_user: 'user',
   change_call_queue: 'call_queue',
   change_auto_attendant: 'auto_attendant',
+  // Parking changes the number inventory only, when the request is completed - see ServiceRequestsService.applyNumberState.
+  change_number_state: null,
   remove_user: 'user',
   remove_common_area_phone: 'cap',
   other: null,

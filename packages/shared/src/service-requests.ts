@@ -9,6 +9,8 @@
  * only ever defined in one place.
  */
 
+import { NUMBER_PARK, NUMBER_UNPARK } from './number-parking';
+
 export const SR_TYPES = [
   'new_site',
   'new_user',
@@ -20,6 +22,7 @@ export const SR_TYPES = [
   'change_user',
   'change_call_queue',
   'change_auto_attendant',
+  'change_number_state',
   'remove_user',
   'remove_common_area_phone',
   'other',
@@ -130,6 +133,8 @@ export const SITE_MODE_LABELS: Record<SiteMode, string> = { project: 'Project', 
  * - phone_number: a number at the request's site - `numberSource` 'available'
  *   offers free numbers (and one is picked automatically), 'site' offers any of
  *   the site's numbers (keeping an existing one)
+ * - phone_numbers: several of the site's numbers - `numberSource` 'available'
+ *   offers spare numbers, 'parked' the parked ones (number-parking.ts)
  * - target: where a call goes - a call queue or auto attendant at the site, a
  *   person, voicemail, or disconnect
  * - menu: auto attendant key presses, each to a target
@@ -149,6 +154,7 @@ export type SrFieldKind =
   | 'person'
   | 'people'
   | 'phone_number'
+  | 'phone_numbers'
   | 'target'
   | 'menu'
   | 'number_range'
@@ -175,11 +181,11 @@ export interface SrFieldSpec {
   options?: readonly string[];
   /** number: min value */
   min?: number;
-  /** text/textarea: max length; number: max value; people/menu: max items */
+  /** text/textarea: max length; number: max value; people/menu/phone_numbers: max items */
   max?: number;
   hint?: string;
-  /** phone_number only: which of the site's numbers to offer. */
-  numberSource?: 'available' | 'site';
+  /** phone_number / phone_numbers only: which of the site's numbers to offer. */
+  numberSource?: 'available' | 'site' | 'parked';
   /** site_object only: what to pick. */
   objectKind?: SrSiteObjectKind;
   /**
@@ -423,6 +429,36 @@ export const SR_TYPE_DEFS: Record<SrType, SrTypeDef> = {
       { key: 'holiday_greeting', label: 'What callers hear while closed', kind: 'textarea', max: 1000, showWhen: { key: 'changes', equals: 'Holiday closure' } },
       { key: 'menu', label: 'New menu options', kind: 'menu', max: 10, showWhen: { key: 'changes', equals: 'Menu options' } },
       { key: 'greeting', label: 'New greeting', kind: 'textarea', required: true, max: 1000, showWhen: { key: 'changes', equals: 'Greeting' } },
+      NOTES,
+    ],
+  },
+  change_number_state: {
+    label: 'Park or unpark phone numbers',
+    description: 'Keep spare numbers with the carrier for a small fee, or bring parked numbers back into use.',
+    group: 'change',
+    needsSite: true,
+    fields: [
+      { key: 'park_action', label: 'What should happen', kind: 'select', required: true, options: [NUMBER_PARK, NUMBER_UNPARK] },
+      {
+        key: 'park_numbers',
+        label: 'Numbers to park',
+        kind: 'phone_numbers',
+        numberSource: 'available',
+        required: true,
+        max: 200,
+        showWhen: { key: 'park_action', equals: NUMBER_PARK },
+        hint: 'Spare numbers at this site. A parked number cannot be given to anyone until it is brought back into use.',
+      },
+      {
+        key: 'unpark_numbers',
+        label: 'Numbers to bring back into use',
+        kind: 'phone_numbers',
+        numberSource: 'parked',
+        required: true,
+        max: 200,
+        showWhen: { key: 'park_action', equals: NUMBER_UNPARK },
+      },
+      { key: 'when', label: 'When should it change', kind: 'date' },
       NOTES,
     ],
   },

@@ -3,7 +3,7 @@ import { Link } from 'react-router';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Badge, Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Dropdown, Field, Input, Option, SearchBox, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text , makeStyles, shorthands } from '@fluentui/react-components';
 import { DeleteRegular } from '@fluentui/react-icons';
-import { type Paginated } from '@tvmf/shared';
+import { parkingInOperationsMessage, type Paginated } from '@tvmf/shared';
 import { api, ApiError } from '../../api';
 import { DataTable } from '../../components/DataTable';
 import { Page } from '../../components/Page';
@@ -23,7 +23,7 @@ const useLocalStyles = makeStyles({
 interface PhoneNumber {
   id: string;
   e164: string;
-  status: 'available' | 'reserved' | 'assigned';
+  status: 'available' | 'reserved' | 'assigned' | 'parked';
   holder_type: string | null;
   holder_name: string | null;
   /** released in Teams: not to be reassigned before this (number cool-off) */
@@ -35,6 +35,8 @@ interface PhoneNumber {
   live_holder_upn: string | null;
   live_only: boolean;
   conflict: string | null;
+  /** kept with the carrier for a retention fee; not assignable until brought back into use */
+  parked_at: string | null;
   range_start: string | null;
   range_end: string | null;
 }
@@ -42,17 +44,25 @@ interface PhoneNumber {
 export function NumberInventory({
   base,
   siteId,
+  sitecode,
+  operations,
+  canPark,
   locked,
   onChanged,
 }: {
   base: string;
   siteId: string;
+  sitecode: string;
+  /** The site is in operations: numbers are parked only through a service request. */
+  operations: boolean;
+  /** Project managers and engineers park spare numbers before the site moves to operations. */
+  canPark: boolean;
   locked: boolean;
   onChanged: () => void;
 }) {
   const ls = useLocalStyles();
   const s = useRecordStyles();
-  const [statusFilter, setStatusFilter] = useState<'all' | 'available' | 'reserved' | 'assigned'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'available' | 'reserved' | 'assigned' | 'parked'>('all');
   const [qInput, setQInput] = useState('');
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
@@ -83,6 +93,18 @@ export function NumberInventory({
       onChanged();
     },
   });
+
+  const [parkError, setParkError] = useState<string | null>(null);
+  const park = useMutation({
+    mutationFn: ({ id, parked }: { id: string; parked: boolean }) => api(`${base}/numbers/${id}/park`, { method: 'PATCH', body: JSON.stringify({ parked }) }),
+    onSuccess: () => {
+      setParkError(null);
+      list.refetch();
+      onChanged();
+    },
+    onError: (e) => setParkError(e instanceof ApiError ? e.message : 'Could not change the number.'),
+  });
+  const parking = canPark && !operations;
 
   // Number cool-off: released numbers wait this long before they can be given to someone else (0 = off).
   const policy = useQuery({ queryKey: ['number-policy', base], queryFn: () => api<{ cooloff_days: number }>(`${base}/number-policy`) });
@@ -119,6 +141,11 @@ export function NumberInventory({
           </Text>
           <Text size={200} className={s.muted} block>
             Generated from this site's ranges. Assign numbers to users, CAPs or resource accounts.
+          </Text>
+          <Text size={200} className={s.muted} block>
+            {operations
+              ? parkingInOperationsMessage(sitecode)
+              : 'Park the spare numbers the customer is keeping before the site moves to operations: a parked number costs only the carrier\'s retention fee and cannot be given to anyone until it is brought back into use.'}
           </Text>
           {policy.data && (
             <Text size={200} className={s.muted} block>
@@ -164,7 +191,7 @@ export function NumberInventory({
             }}
             className={ls.minW130}
           >
-            {['all', 'available', 'reserved', 'assigned'].map((o) => (
+            {['all', 'available', 'reserved', 'assigned', 'parked'].map((o) => (
               <Option key={o} value={o}>
                 {o}
               </Option>
@@ -174,6 +201,7 @@ export function NumberInventory({
       </div>
 
       {list.isError && <LoadError message={(list.error as Error).message} />}
+      {parkError && <LoadError message={parkError} />}
       {list.isLoading ? (
         <Spinner size="tiny" />
       ) : items.length === 0 ? (
@@ -189,7 +217,7 @@ export function NumberInventory({
                   <TableHeaderCell>Range</TableHeaderCell>
                   <TableHeaderCell>Status</TableHeaderCell>
                   <TableHeaderCell>Holder</TableHeaderCell>
-                  {!locked && <TableHeaderCell />}
+                  {(!locked || parking) && <TableHeaderCell />}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -211,8 +239,11 @@ export function NumberInventory({
                             ? 'success'
                             : n.status === 'reserved'
                               ? 'warning'
-                              : 'informative'
+                              : n.status === 'parked'
+                                ? 'subtle'
+                                : 'informative'
                         }
+                        title={n.status === 'parked' && n.parked_at ? `Parked on ${new Date(n.parked_at).toLocaleDateString()}` : undefined}
                       >
                         {n.status}
                       </Badge>
@@ -231,14 +262,24 @@ export function NumberInventory({
                       )}
                       {n.conflict && <Text size={200} className={s.muted} block>{n.conflict}</Text>}
                     </TableCell>
-                    {!locked && (
+                    {(!locked || parking) && (
                       <TableCell>
-                        {cooling(n) && (
+                        {!locked && cooling(n) && (
                           <Button size="small" appearance="subtle" onClick={() => setEnding(n)}>
                             End cool-off
                           </Button>
                         )}
-                        {n.status !== 'assigned' && (
+                        {parking && (n.status === 'available' || n.status === 'parked') && !n.live_status && (
+                          <Button
+                            size="small"
+                            appearance="subtle"
+                            disabled={park.isPending}
+                            onClick={() => park.mutate({ id: n.id, parked: n.status !== 'parked' })}
+                          >
+                            {n.status === 'parked' ? 'Unpark' : 'Park'}
+                          </Button>
+                        )}
+                        {!locked && (n.status === 'available' || n.status === 'reserved') && (
                           <Button
                             size="small"
                             appearance="subtle"

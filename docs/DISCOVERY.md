@@ -426,6 +426,25 @@ Build `claimNumber`) is refused with the date. **End cool-off** on the Numbers t
 `discovery.number_cooloff_ended`. Design-time moves (taking a number from one design row to another) do not start a cool-off:
 nothing was released in Teams.
 
+## Parked numbers
+
+A **parked** number is a spare the customer keeps with the carrier for a small retention fee instead of the full fee of a working
+number (`phone_numbers.status = 'parked'`, `parked_at`, `parked_by`; tenant migration `0082`; rules in
+`packages/shared/src/number-parking.ts` and `packages/db/src/number-parking.ts`). A parked number cannot be given to a user,
+common area phone or resource account (Site Data and Design & Build `claimNumber` refuse it), is not offered as a number to keep
+on a service request, and a range holding one cannot be deleted. Only a spare number can be parked: not one in use here or in
+Teams, and not a reserved one (release the reservation first). Bringing it back into use makes it available again.
+
+- **Project mode:** project managers and engineers (`discovery:review`) park and unpark on the site's Numbers tab
+  (`PATCH .../numbers/:id/park` `{parked}`), audited as `discovery.number_parked` / `discovery.number_unparked`. Park the spares
+  the customer is keeping before the site is handed over: **Service Requests → Site modes** asks first when a site moving to
+  operations still has spare numbers that are not parked.
+- **Operations mode:** the Numbers tab refuses, and a **Park or unpark phone numbers** service request does it when an engineer
+  marks it Deployed ([SERVICE-REQUESTS.md](SERVICE-REQUESTS.md)).
+
+A Discovery sync that finds a parked number assigned in Teams keeps it parked and flags a conflict (the customer may be paying
+only the retention fee for a number in use), as it does for a reserved one. The handover pack lists parked numbers as Parked.
+
 ## Monitoring (Devices, Watch list, Alerts)
 
 **Monitoring** shows whether each site's phones, paging units and gateways are answering, by **reading** an Uptime

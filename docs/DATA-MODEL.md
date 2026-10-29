@@ -48,7 +48,7 @@ Aligned to `Overland Park - ATTC MS Teams Telephony Discovery Template`.
 | `discovery_sites` | **`sitecode`** (unique key), **`review_status`** (`draft`/`submitted`/`accepted`) with submitted_by/at and accepted_by/at, name, address, country, region, `latitude`/`longitude` (nullable; for the site map — geocoded from the address via OpenStreetMap Nominatim), **`overview` jsonb** (the 7 overview fields + `assignedUserIds` = ENGINEER/PROJECT_MANAGER `platform.users.id`s watching the site; staff-managed via `discovery:sites:manage`), paging info |
 | `discovery_calling_policies` | customer-defined outbound dialling restrictions: name, description, allow_local/national/international/service/premium. Seeded with Unrestricted / International / National / Local |
 | `discovery_number_ranges` | **`sitecode`** FK -> `discovery_sites.sitecode` (ON UPDATE CASCADE / ON DELETE SET NULL), range_start, range_end, kind (`new`/`port`/`retain`), carrier, loa_sent, loa_completed, comments. Adding a range generates the `phone_numbers` inventory |
-| `phone_numbers` | one row per E.164 (`e164` unique). status (`available`/`reserved`/`assigned`), holder_type (`user`/`cap`/`resource_account`/`analogue`) + holder_id — **at most one holder**; unique per holder except resource accounts (which may hold several). Assignment is atomic |
+| `phone_numbers` | one row per E.164 (`e164` unique). status (`available`/`reserved`/`assigned`/`parked`; parked_at, parked_by - tenant `0082`), holder_type (`user`/`cap`/`resource_account`/`analogue`) + holder_id — **at most one holder**; unique per holder except resource accounts (which may hold several). Assignment is atomic |
 | `discovery_users` | **`site_id`** FK -> `discovery_sites.id` (ON DELETE SET NULL), upn (unique), display_name, calling_policy_id, caller_id (`user`/`anonymous`/`main_number`), voicemail_enabled + language, requires_handset + model, access_port_id, comments, `requested_number` (free text — the number the customer asked for via the Excel import; reconciled against inventory in Design & Build, flagged on the Users tab when it differs from the assigned one). Assigned number tracked on `phone_numbers` |
 | `discovery_caps` | **`site_id`**, display_name, upn, device_model, calling_policy_id, caller_id, access_port_id, comments |
 | `discovery_voice_apps` | **`site_id`**, name (the voice app's own name), kind (`auto_attendant`/`call_queue`), `tenant_object_id` (the exact discovered voice app, GUID), directory_entry, business_hours, who_answers, ooh_action, exception_conditions/action, holiday, advanced_features, comments. Its Call flow and Design & Build row point at it |
@@ -157,7 +157,7 @@ targeted check has read, so an unread value isn't treated as a difference
 (shown as "designed, not checked live"). Auto attendants and call queues count
 as live when Teams has one by that name; queues list their agents. Phone
 Numbers say who holds each number in Teams (`tenant_users.line_uri`): In use /
-Spare / Reserved. The cover says when Discovery last read Teams ("Checked
+Spare / Reserved / Parked. The cover says when Discovery last read Teams ("Checked
 against Teams", also saved as `source.liveAsOf`), so re-run Discovery - or
 rely on a deployment's automatic re-check - before generating.
 

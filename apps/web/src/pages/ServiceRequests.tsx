@@ -20,6 +20,7 @@ import {
   DialogContent,
   DialogSurface,
   DialogTitle,
+  Dropdown,
   Field,
   Input,
   Link,
@@ -167,6 +168,8 @@ interface SiteOption {
   mode: SiteMode;
   mode_changed_at: string | null;
   mode_changed_by_name: string | null;
+  /** Spare numbers at the site that are not parked: parked before the site moves to operations. */
+  spare_unparked: number | null;
 }
 
 /** What the form can offer for the chosen site - see ServiceRequestsService.options. */
@@ -174,6 +177,8 @@ interface FormOptions {
   deviceModels: string[];
   availableNumbers: string[];
   siteNumbers: string[];
+  /** Parked numbers at the site, for a "Park or unpark phone numbers" request. */
+  parkedNumbers: string[];
   ranges: { id: string; label: string }[];
   callQueues: { id: string; name: string }[];
   autoAttendants: { id: string; name: string }[];
@@ -692,6 +697,29 @@ function FieldInput({
         </Select>
       );
     }
+    case 'phone_numbers': {
+      if (!siteChosen) return <Text size={200}>Choose the site first.</Text>;
+      const list = spec.numberSource === 'parked' ? (options?.parkedNumbers ?? []) : (options?.availableNumbers ?? []);
+      if (options && list.length === 0) {
+        return <Text size={200}>{spec.numberSource === 'parked' ? 'There are no parked numbers at this site.' : 'There are no spare numbers at this site.'}</Text>;
+      }
+      const picked = (value as string[] | undefined) ?? [];
+      return (
+        <Dropdown
+          multiselect
+          placeholder="Choose numbers…"
+          selectedOptions={picked}
+          value={picked.length === 0 ? '' : picked.length <= 3 ? picked.join(', ') : `${picked.length} numbers`}
+          onOptionSelect={(_, d) => onChange(d.selectedOptions.length ? list.filter((n) => d.selectedOptions.includes(n)) : undefined)}
+        >
+          {list.map((n) => (
+            <Option key={n} value={n}>
+              {n}
+            </Option>
+          ))}
+        </Dropdown>
+      );
+    }
     case 'target':
       return <TargetPicker base={base} options={options} value={value as SrTarget | undefined} onChange={onChange} />;
     case 'menu':
@@ -1009,8 +1037,17 @@ function SiteModesDialog({ base, sites, onClose }: { base: string; sites: SiteOp
   const qc = useQueryClient();
   const set = useMutation({
     mutationFn: ({ id, mode }: { id: string; mode: SiteMode }) => api(`${base}/sites/${id}/mode`, { method: 'PATCH', body: JSON.stringify({ mode }) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['service-request-sites'] }),
+    onSuccess: () => {
+      setConfirm(null);
+      qc.invalidateQueries({ queryKey: ['service-request-sites'] });
+    },
   });
+  // Spare numbers are parked before the site goes into operations; after that only a service request parks them.
+  const [confirm, setConfirm] = useState<SiteOption | null>(null);
+  const choose = (site: SiteOption, mode: SiteMode) => {
+    if (mode === 'operations' && (site.spare_unparked ?? 0) > 0) setConfirm(site);
+    else set.mutate({ id: site.id, mode });
+  };
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
       <DialogSurface className={ls.maxW720}>
@@ -1029,6 +1066,7 @@ function SiteModesDialog({ base, sites, onClose }: { base: string; sites: SiteOp
                   <TableRow>
                     <TableHeaderCell>Site</TableHeaderCell>
                     <TableHeaderCell>Mode</TableHeaderCell>
+                    <TableHeaderCell>Spare, not parked</TableHeaderCell>
                     <TableHeaderCell>Last changed</TableHeaderCell>
                   </TableRow>
                 </TableHeader>
@@ -1037,7 +1075,7 @@ function SiteModesDialog({ base, sites, onClose }: { base: string; sites: SiteOp
                     <TableRow key={s.id}>
                       <TableCell>{s.name ? `${s.sitecode} — ${s.name}` : s.sitecode}</TableCell>
                       <TableCell>
-                        <Select size="small" value={s.mode} disabled={set.isPending} onChange={(_, d) => set.mutate({ id: s.id, mode: d.value as SiteMode })}>
+                        <Select size="small" value={s.mode} disabled={set.isPending} onChange={(_, d) => choose(s, d.value as SiteMode)}>
                           {SITE_MODES.map((m) => (
                             <option key={m} value={m}>
                               {SITE_MODE_LABELS[m]}
@@ -1045,11 +1083,29 @@ function SiteModesDialog({ base, sites, onClose }: { base: string; sites: SiteOp
                           ))}
                         </Select>
                       </TableCell>
+                      <TableCell>{s.spare_unparked ?? 0}</TableCell>
                       <TableCell>{s.mode_changed_at ? `${when(s.mode_changed_at)}${s.mode_changed_by_name ? ` · ${s.mode_changed_by_name}` : ''}` : '—'}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </DataTable>
+            )}
+            {confirm && (
+              <Card className={ls.mb12}>
+                <Text weight="semibold" block>
+                  {confirm.sitecode} still has {confirm.spare_unparked} spare number{confirm.spare_unparked === 1 ? '' : 's'} that {confirm.spare_unparked === 1 ? 'is' : 'are'} not parked
+                </Text>
+                <Text size={200} block>
+                  Park the spares the customer is keeping on the site's Numbers tab first, so they pay only the retention fee. Once the site is in
+                  operations, numbers are parked only through a "Park or unpark phone numbers" service request.
+                </Text>
+                <div className={ls.flexItemsCenterGap8}>
+                  <Button appearance="primary" disabled={set.isPending} onClick={() => set.mutate({ id: confirm.id, mode: 'operations' })}>
+                    Move to operations anyway
+                  </Button>
+                  <Button onClick={() => setConfirm(null)}>Keep in project mode</Button>
+                </div>
+              </Card>
             )}
             {set.isError && <DangerText>{errorText(set.error, 'Could not change the mode')}</DangerText>}
           </DialogContent>

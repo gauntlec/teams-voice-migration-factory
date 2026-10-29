@@ -21,6 +21,7 @@ export * from './monitoring-admin';
 export * from './drift';
 export * from './number-cooloff';
 export * from './number-reconcile';
+export * from './number-parking';
 export * from './site-suggestions';
 export * from './site-handsets';
 export * from './voice-audio';

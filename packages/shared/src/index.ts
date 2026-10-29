@@ -565,6 +565,7 @@ export * from './drift';
 export * from './voice-compare';
 export * from './licence-report';
 export * from './number-cooloff';
+export * from './number-parking';
 export * from './number-port-carrier';
 export * from './handsets';
 export * from './device-status';
