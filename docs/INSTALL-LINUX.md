@@ -278,6 +278,8 @@ If the browser shows a warning, see "If something goes wrong" below.
 
 - **Email.** In **Administration > Platform settings > Email**, choose how Voxshift sends mail, then click **Send test**. No email is sent until this is done.
 - **Backups.** Run `sudo voxshift backup`, then copy the folder it names to another computer. Do this regularly. A backup holds the private key and passwords, so keep it safe.
+  Every update also makes a backup. The newest 7 are kept in `/opt/voxshift/backups` and older ones are deleted, so the disk does not fill up.
+  To keep a different number, run `sudo voxshift backup-keep 10` (any number from 1 to 365). A lower number deletes the oldest backups straight away.
   To encrypt backups, see [INSTALL-LINUX-REFERENCE.md](INSTALL-LINUX-REFERENCE.md#encrypting-backups-optional).
 - **Updates.** Run `sudo voxshift update` when a new version is out, or switch on automatic updates with `sudo voxshift auto-update on`.
 
@@ -412,6 +414,7 @@ An installation made before this command existed does not have it yet. Run `sudo
 sudo voxshift status          # is everything running?
 sudo voxshift update          # back up, then install the newest version
 sudo voxshift backup          # make a backup
+sudo voxshift backup-keep     # how many backups are kept (7 unless you change it), and the space they use
 sudo voxshift certificate status   # which certificate is in use and when it runs out
 sudo voxshift kuma status     # device status (Uptime Kuma): on or off, and its state
 sudo voxshift logs            # watch the logs (Ctrl+C to stop)
@@ -439,6 +442,10 @@ expired, or it is for a different name. Nothing is changed when it refuses. Fix 
 starts with your own certificate, not the CA's. Then run `sudo voxshift logs caddy` to see the exact message.
 
 **The certificate request keeps getting refused.** Ask the CA administrator or your provider to check that the name in the request is the one you typed in Step 1.
+
+**`voxshift update` says "Not enough free disk space".** The update stopped before it changed anything. It needs room for one more backup and for
+the new version (about 1.5 GB). Copy old backups from `/opt/voxshift/backups` to another computer and delete them, or keep fewer with
+`sudo voxshift backup-keep 3`, then run the update again. `df -h` shows how much space is free.
 
 **Public name (Install A) will not get a certificate.** The name must already point at this server and ports 80 and 443 must be reachable from the internet.
 Fix the DNS record or the firewall, then run `sudo voxshift restart`.

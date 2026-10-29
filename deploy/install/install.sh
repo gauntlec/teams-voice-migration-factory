@@ -490,6 +490,7 @@ auto_run() {
   fi
   tag="$(sed -n 's/^IMAGE_TAG=//p' .env | tail -n 1)"
   if [ -n "$tag" ] && [ "$tag" != latest ]; then echo "$(stamp) IMAGE_TAG is '$tag' (pinned); skipping"; return 0; fi
+  if ! msg="$(space_check "$DIR/backups" "$UPDATE_PULL_MB" 2>&1)"; then echo "$(stamp) $msg"; return 1; fi
   before="$(image_ids)"
   if ! dc pull -q >/dev/null 2>&1; then echo "$(stamp) could not pull the images (registry unreachable?); nothing changed"; return 1; fi
   if [ "$before" = "$(image_ids)" ]; then echo "$(stamp) already up to date"; return 0; fi
@@ -634,17 +635,88 @@ backup_encryption() {
   esac
 }
 
-# Keep the last 14 backups made by 'voxshift backup' and the last 3 safety backups made by 'voxshift restore' (pre-restore-...) in PARENT, whether
-# they are plain folders or encrypted files (with their .sha256). Only names of exactly that shape are touched, so anything else the person keeps
-# in the same folder is left alone.
+# ----- how many backups are kept, and room on the disk
+# BACKUP_KEEP in .env: how many backups are kept in $DIR/backups, the folder 'voxshift backup', 'voxshift update' and the nightly job write to.
+# After each new backup there the oldest beyond that number are deleted. A folder named on the command line ('voxshift backup DIR',
+# uninstall.sh --backup-to) is never cleaned up. Change it with: voxshift backup-keep N
+BACKUP_KEEP_DEFAULT=7
+UPDATE_PULL_MB=1536   # room an update leaves for the new images (about 400 MB to download, unpacked beside the old ones until those are removed)
+
+# The BACKUP_KEEP setting, or the default when it is missing or not a whole number from 1 to 365 (which it says).
+backup_keep() {
+  local raw v
+  raw="$(sed -n 's/^BACKUP_KEEP=//p' .env 2>/dev/null | tail -n 1 | tr -d "'\" \t\r" || true)"
+  v="${raw#"${raw%%[!0]*}"}"
+  if [[ "$v" =~ ^[0-9]{1,3}$ ]] && [ "$v" -le 365 ]; then echo "$v"; return 0; fi
+  [ -z "$raw" ] || echo "BACKUP_KEEP=$raw in $DIR/.env is not a whole number from 1 to 365, so $BACKUP_KEEP_DEFAULT are kept. Set it with: voxshift backup-keep N" >&2
+  echo "$BACKUP_KEEP_DEFAULT"
+}
+
+# Whether two paths are the same folder, however they were written.
+same_dir() { [ -d "$1" ] && [ -d "$2" ] && [ "$(cd "$1" && pwd -P)" = "$(cd "$2" && pwd -P)" ]; }
+
+# prune_backups PARENT PATTERN COUNT JUST: of the backups in PARENT whose name (without .tar.age) matches PATTERN, keep the newest COUNT and delete
+# the rest, plain folders and encrypted files (with their .sha256) alike. JUST, the backup this run wrote, is always one of those kept, even if
+# the clock has gone backwards. Only names of exactly that shape are touched, so anything else the person keeps in the folder is left alone.
+prune_backups() {
+  local parent="$1" re="$2" count="$3" just="$4" n
+  for n in $( { if [[ "$just" =~ ^($re)$ ]]; then echo "$just"; fi
+               ls -1 "$parent" 2>/dev/null | sed -nE "s/^($re)(\\.tar\\.age)?\$/\\1/p" | sort -ur | grep -vxF "$just"; } | tail -n +$((count + 1)) || true ); do
+    rm -rf -- "${parent:?}/$n" "${parent:?}/$n.tar.age" "${parent:?}/$n.tar.age.sha256"
+  done
+}
+
+# rotate_backups PARENT JUST: keep the newest BACKUP_KEEP backups and the newest 3 safety backups made by 'voxshift restore' (pre-restore-...).
 rotate_backups() {
-  local parent="$1" n
-  for n in $(ls -1 "$parent" 2>/dev/null | sed -nE 's/^([0-9]{8}-[0-9]{6})(\.tar\.age)?$/\1/p' | sort -ur | tail -n +15); do
-    rm -rf -- "${parent:?}/$n" "${parent:?}/$n.tar.age" "${parent:?}/$n.tar.age.sha256"
-  done
-  for n in $(ls -1 "$parent" 2>/dev/null | sed -nE 's/^(pre-restore-[0-9]{8}-[0-9]{6})(\.tar\.age)?$/\1/p' | sort -ur | tail -n +4); do
-    rm -rf -- "${parent:?}/$n" "${parent:?}/$n.tar.age" "${parent:?}/$n.tar.age.sha256"
-  done
+  local just="${2##*/}"
+  just="${just%.tar.age}"
+  prune_backups "$1" '[0-9]{8}-[0-9]{6}' "$(backup_keep)" "$just"
+  prune_backups "$1" 'pre-restore-[0-9]{8}-[0-9]{6}' 3 "$just"
+}
+
+# About how much room one more backup needs, in MB: the newest backup in $DIR/backups plus a tenth, twice that with encryption on (the plain
+# working folder and the encrypted file exist together for a moment). 500 MB when there is no backup yet to go by.
+backup_estimate_mb() {
+  local newest kb="" mb
+  newest="$(ls -1t "$DIR/backups" 2>/dev/null | grep -E '^(pre-restore-)?[0-9]{8}-[0-9]{6}(\.tar\.age)?$' | head -n 1 || true)"
+  [ -z "$newest" ] || kb="$(du -sk "$DIR/backups/$newest" 2>/dev/null | awk '{print $1}' || true)"
+  [[ "$kb" =~ ^[0-9]+$ ]] || kb=$((500 * 1024))
+  mb=$(( (kb + 1023) / 1024 )); mb=$(( mb + mb / 10 ))
+  if enc_enabled; then mb=$((mb * 2)); fi
+  echo "$mb"
+}
+
+# disk_free PATH: "<filesystem> <free MB>" for the disk that holds PATH (or the nearest folder above it that exists); nothing if df cannot tell.
+disk_free() {
+  local p="$1"
+  while [ ! -d "$p" ] && [ "$p" != / ] && [ "$p" != . ]; do p="$(dirname "$p")"; done
+  df -Pk "$p" 2>/dev/null | awk 'NR==2 && $4 ~ /^[0-9]+$/ {print $1, int($4/1024)}' || true
+}
+
+space_short() { # FOLDER FREE_MB WHAT-IS-NEEDED
+  echo "Not enough free disk space: the disk that holds $1 has $2 MB free, and $3. Nothing was changed." >&2
+  echo "Free some space first: copy old backups from $DIR/backups off this host and delete them there, or keep fewer (the oldest go at once): voxshift backup-keep N (now $(backup_keep))." >&2
+  echo "See what uses the space: df -h; du -sh $DIR/backups/*; docker system df   (unused images: docker image prune)" >&2
+}
+
+# space_check FOLDER PULL_MB: is there room for one more backup in FOLDER and, when PULL_MB is not 0, for PULL_MB of new images on Docker's
+# disk (usually the same disk, and then both must fit together)? If not it says what to do and returns 1. When df cannot tell, it lets it go.
+space_check() {
+  local folder="$1" pull="$2" need ddir bfs="" bfree="" dfs="" dfree=""
+  need="$(backup_estimate_mb)"
+  read -r bfs bfree <<<"$(disk_free "$folder")" || true
+  [ -n "$bfree" ] || return 0
+  if [ "$pull" -gt 0 ]; then
+    ddir="$(docker info -f '{{.DockerRootDir}}' 2>/dev/null || true)"; [ -n "$ddir" ] || ddir=/var/lib/docker
+    read -r dfs dfree <<<"$(disk_free "$ddir")" || true
+    if [ -n "$dfree" ] && [ "$dfs" = "$bfs" ]; then
+      [ "$bfree" -lt $((need + pull)) ] || return 0
+      space_short "$folder" "$bfree" "a backup (about $need MB) and the new images (up to $pull MB) need about $((need + pull)) MB"; return 1
+    fi
+    if [ -n "$dfree" ] && [ "$dfree" -lt "$pull" ]; then space_short "$ddir" "$dfree" "the new images need up to $pull MB"; return 1; fi
+  fi
+  [ "$bfree" -lt "$need" ] || return 0
+  space_short "$folder" "$bfree" "a backup needs about $need MB"; return 1
 }
 
 # do_backup PARENT [PREFIX]: writes PARENT/<PREFIX><timestamp> (a folder) or, when backup encryption is on, PARENT/<PREFIX><timestamp>.tar.age
@@ -656,6 +728,7 @@ do_backup() {
   if enc_enabled; then enc=1; check_encryption_ready || return 1; fi
   umask 077
   mkdir -p "$parent"
+  space_check "$parent" 0 || return 1
   BACKUP_DEST="$parent/${prefix}$(date -u +%Y%m%d-%H%M%S)"
   while [ -e "$BACKUP_DEST" ] || [ -e "$BACKUP_DEST.tar.age" ]; do sleep 1; BACKUP_DEST="$parent/${prefix}$(date -u +%Y%m%d-%H%M%S)"; done
   part="$BACKUP_DEST.partial"
@@ -713,7 +786,8 @@ do_backup() {
     forget_tmp "$part"
     BACKUP_NOTE=""
   fi
-  rotate_backups "$parent"
+  # Only the usual folder is cleaned up; a folder named on the command line is left exactly as it is.
+  if same_dir "$parent" "$DIR/backups"; then rotate_backups "$parent" "$BACKUP_DEST"; fi
 }
 
 # ----- self-update: fetch the installer from the latest RELEASE, check it, and let it rewrite this command (nothing else)
@@ -1183,6 +1257,7 @@ case "${1:-help}" in
   update)
     need_root "$@"
     if [ "${2:-}" = "--auto" ]; then auto_run; exit $?; fi
+    space_check "$DIR/backups" "$UPDATE_PULL_MB" || exit 1
     echo "Taking a backup first..."; "$0" backup
     dc pull
     dc up -d
@@ -1197,6 +1272,29 @@ case "${1:-help}" in
     if [ -n "$BACKUP_NOTE" ]; then echo "  It is encrypted: only the private key that goes with this host's public key can open it."
     else echo "  It is NOT encrypted and holds secrets and private keys. Switch encryption on: voxshift backup-encryption on <public-key>"; fi
     ;;
+  backup-keep)
+    need_root "$@"
+    names="$(ls -1 "$DIR/backups" 2>/dev/null | sed -nE 's/^([0-9]{8}-[0-9]{6})(\.tar\.age)?$/\1/p' | sort -ur || true)"
+    if [ -z "${2:-}" ]; then
+      echo "Backups kept in $DIR/backups: the newest $(backup_keep) (and the newest 3 safety backups that 'voxshift restore' makes)."
+      echo "Backups there now: $(printf '%s' "$names" | grep -c . || true); the folder uses $(du -sh "$DIR/backups" 2>/dev/null | cut -f1 || true)."
+      echo "Change it with: voxshift backup-keep N   (1 to 365; it is BACKUP_KEEP in $DIR/.env; N below the number there now deletes the oldest at once)"
+      exit 0
+    fi
+    v="${2#"${2%%[!0]*}"}"
+    [[ "$v" =~ ^[0-9]{1,3}$ ]] && [ "$v" -le 365 ] || { echo "Use: voxshift backup-keep N   (a whole number from 1 to 365)" >&2; exit 1; }
+    tmp="$(mktemp "$DIR/.env.XXXXXX")"; track_tmp "$tmp"
+    awk -v v="$v" '/^BACKUP_KEEP=/ { if (!done) print "BACKUP_KEEP=" v; done = 1; next } { print }
+      END { if (!done) { print ""; print "# How many backups are kept in the backups folder. Change it with: voxshift backup-keep N"; print "BACKUP_KEEP=" v } }' .env > "$tmp"
+    chmod 600 "$tmp"; mv "$tmp" .env; forget_tmp "$tmp"
+    echo "Now keeping the newest $v backups in $DIR/backups."
+    # Applied at once, so lowering it frees space even when the disk is too full for the next backup.
+    gone="$(printf '%s\n' "$names" | grep . | tail -n +$((v + 1)) || true)"
+    if [ -n "$gone" ]; then
+      prune_backups "$DIR/backups" '[0-9]{8}-[0-9]{6}' "$v" ""
+      echo "Deleted the older ones:"; printf '%s\n' "$gone" | sed 's/^/  /'
+    fi
+    ;;
   backup-encryption) need_root "$@"; shift; backup_encryption "$@" ;;
   restore) need_root "$@"; restore_cmd "$@" ;;
   certificate) need_root "$@"; shift; cert_cmd "$@" ;;
@@ -1206,7 +1304,8 @@ voxshift <command>
   status            what is running
   start | stop      start or stop everything
   restart           re-apply .env and recreate the containers
-  update            back up, pull the newest images, restart, wait until it answers
+  update            back up, pull the newest images, restart, wait until it answers (stops first, changing nothing, if the disk is
+                    too full for a backup and the new images)
   auto-update on [daily|weekly] | off | status
                     a cron job that does 'update' by itself (quiet unless a new version is out)
   self-update       fetch the installer from the latest release, check its checksum (and signature, if cosign is installed) and refresh
@@ -1214,6 +1313,8 @@ voxshift <command>
   backup [DIR]      database, stored files, .env, compose.yaml, Caddyfile, certificates and Caddy's data (and, with device status on, Kuma's data
                     and compose.override.yaml) into DIR/<timestamp> (default $DIR/backups);
                     one encrypted DIR/<timestamp>.tar.age file instead when backup encryption is on
+  backup-keep [N]   how many backups are kept in $DIR/backups (default 7; after each new backup there the oldest beyond that
+                    are deleted; a DIR you name yourself is never cleaned up). With N, keep N from now on (a lower N deletes the oldest at once)
   backup-encryption on <public-key | file> | off | status | remove-unencrypted
                     encrypt every backup so that only the owner of a private key (kept OFF this host) can read it
   restore FOLDER|FILE.tar.age [--identity KEYFILE] [--with-config] [--yes] [--force]
@@ -1618,6 +1719,10 @@ MAIL_FROM='$MAIL_FROM_ADDR'
 HTTP_PORT=$HTTP_PORT
 HTTPS_PORT=$HTTPS_PORT
 IMAGE_TAG=$TAG
+
+# Used by the voxshift command (not read by the application). How many backups are kept in $DIR/backups: after each new
+# backup there the oldest beyond this number are deleted. Change it with: voxshift backup-keep N  (no restart needed)
+BACKUP_KEEP=7
 EOF
 chmod 600 "$DIR/.env"
 # MAIL_FROM='' would override the application's default sender with an empty one; drop empty optional lines.

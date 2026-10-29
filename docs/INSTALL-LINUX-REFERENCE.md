@@ -141,10 +141,11 @@ Everything restarts on its own after a reboot (`restart: unless-stopped`, Docker
 ## Day to day: the `voxshift` command
 
 - **`voxshift status`**: what is running
-- **`voxshift update`**: takes a backup, pulls the newest images, restarts, waits until it answers. Database migrations run on start.
+- **`voxshift update`**: takes a backup, pulls the newest images, restarts, waits until it answers. Database migrations run on start. It first checks the free disk space and stops, changing nothing, if there is not enough (see [Disk space](#disk-space)).
 - **`voxshift auto-update on [daily|weekly]` / `off` / `status`**: turns the automatic update job on or off, or shows its schedule and the last lines of its log
 - **`voxshift self-update`**: fetches the installer from the newest release, checks its checksum (and signature, with `cosign`) and rewrites the `voxshift` command only (see Automatic updates)
-- **`voxshift backup [DIR]`**: everything needed to rebuild this installation, into `DIR/<timestamp>` (default `/opt/voxshift/backups`, last 14 kept): the database, the stored files, `.env`, `compose.yaml`, the `Caddyfile`, `certs/` (if you use your own certificate) and Caddy's data (its certificates and, for `--tls internal`, its own certificate authority), plus a `manifest.txt` with the date, the Voxshift release and a checksum of each file. Copy it off the host. It holds secrets and private keys. See Backups.
+- **`voxshift backup [DIR]`**: everything needed to rebuild this installation, into `DIR/<timestamp>` (default `/opt/voxshift/backups`, where the newest 7 are kept; a `DIR` you name is never cleaned up): the database, the stored files, `.env`, `compose.yaml`, the `Caddyfile`, `certs/` (if you use your own certificate) and Caddy's data (its certificates and, for `--tls internal`, its own certificate authority), plus a `manifest.txt` with the date, the Voxshift release and a checksum of each file. Copy it off the host. It holds secrets and private keys. See Backups.
+- **`voxshift backup-keep [N]`**: shows how many backups are kept in `/opt/voxshift/backups`, how many there are and the space they use; with `N` (1 to 365) keeps that many from now on. See [How many backups are kept](#how-many-backups-are-kept).
 - **`voxshift backup-encryption on KEY | off | status | remove-unencrypted`**: optional: makes every backup an encrypted `.tar.age` file that only the owner of a private key (kept off this host) can open. See [Encrypting backups](#encrypting-backups-optional).
 - **`voxshift restore FOLDER|FILE.tar.age [--identity KEYFILE] [--with-config] [--yes] [--force]`**: puts a backup back: checks it, takes a safety backup of today's state, asks you to type `RESTORE`, then restores the database, the stored files and `.env`, and starts everything. An encrypted backup also needs `--identity`. See Restoring.
 - **`voxshift certificate status | selfsigned [--name N] [--days D] | install --cert FILE --key FILE [--force] | export [FILE]`**: `status` shows which certificate is in use and when it runs out (and says if it expires within 30 days). `selfsigned` makes a self-signed certificate on this server and uses it (also the way to renew one). `install` puts in your own certificate (full chain, PEM) and key after checking them: readable, key matches, not expired, valid for the address (wildcards understood), with a note when the chain is missing; it refuses otherwise and changes nothing. Both rewrite the `Caddyfile` site block and the certificate mount in `compose.yaml` for you, restart the front door, and put the previous `Caddyfile`, `compose.yaml` and `certs/` back (kept as `*.before-cert`) if the front door does not stay up. They work from any HTTPS mode, not from `--tls none`. `export` saves the public certificate (Voxshift's root certificate in `internal` mode) so computers can be told to trust it; a public (`acme`) certificate needs nothing. An installation made earlier needs `voxshift self-update` first.
@@ -162,7 +163,8 @@ The installer asks "Install updates automatically every night?" (default **no**;
 pull at once. The job:
 
 - pulls the newest images and **does nothing** if there is nothing new (it logs "already up to date");
-- when there is a new version: takes a backup (`voxshift backup`, last 14 kept; the same full backup as by hand), restarts on the new images, waits until the
+- checks the free disk space before it downloads anything, and stops if there is not enough (the log says so; see [Disk space](#disk-space));
+- when there is a new version: takes a backup (`voxshift backup`, the newest 7 kept unless you change it; the same full backup as by hand), restarts on the new images, waits until the
   application answers, then removes the old images. If the backup fails it does **not** update; if the application does not answer
   afterwards it says so in the log and leaves the backup from just before for you to restore;
 - never runs twice at once, and skips itself when `IMAGE_TAG` in `.env` is an exact release (`2026.10.3` or `sha-...`), because there is
@@ -234,11 +236,39 @@ installation made long ago keeps its old container settings; a fresh install is 
 - `manifest.txt`: the date, the Voxshift release (for example `2026.10.19`), and a `sha256` checksum of every other file
 
 The folder and everything in it can only be read by root (700 / 600). **It contains the database, the passwords and keys and the private key
-of your certificate: keep it somewhere safe and off this host** (a copy on the same disk does not survive the disk). The newest 14 backups
-are kept in a folder; the safety backups that `voxshift restore` makes (`pre-restore-...`) are kept separately, the newest 3. Nothing else in
-the folder is deleted. A backup is built in a `.partial` folder and renamed when it is complete, so a failed backup leaves nothing that
+of your certificate: keep it somewhere safe and off this host** (a copy on the same disk does not survive the disk). How many are kept is
+below. A backup is built in a `.partial` folder and renamed when it is complete, so a failed backup leaves nothing that
 looks finished; `voxshift update` and the nightly job still stop when the backup fails. Backups made before this version have no
 `compose.yaml`, Caddy data or manifest; they can still be restored (see below).
+
+### How many backups are kept
+
+Each backup is a few hundred MB, and every update (by hand or the nightly job) makes one, so old ones are deleted:
+
+- After each new backup in `/opt/voxshift/backups`, the newest **7** are kept and older ones are deleted. The safety backups that
+  `voxshift restore` makes (`pre-restore-...`) are counted separately: the newest 3 are kept. The backup just made is never deleted, even if
+  the host's clock has gone backwards. Plain folders and encrypted `.tar.age` files count together, and a `.tar.age` goes with its `.sha256`.
+- Only names of exactly that shape (`20261029-020512`, `20261029-020512.tar.age`) are touched; anything else you keep in the folder is left alone.
+- A folder you name yourself (`voxshift backup /mnt/nas/voxshift`, `uninstall.sh --backup-to`) is **never** cleaned up. Look after it yourself.
+- See the setting, how many backups there are and the space they use: `sudo voxshift backup-keep`. Change it: `sudo voxshift backup-keep 10`
+  (1 to 365). A lower number deletes the oldest backups at once (they are listed); a higher one deletes nothing.
+- The setting is the line `BACKUP_KEEP=7` in `/opt/voxshift/.env`. You can edit it there instead; no restart is needed. A value that is not a
+  whole number from 1 to 365 is reported and 7 is used. An installation made before this existed has no such line, keeps the newest 14 until its
+  command is refreshed (`voxshift self-update`), and from then on keeps 7 unless you set `BACKUP_KEEP`: so set it **before** the next backup if you
+  want to keep more.
+
+### Disk space
+
+`voxshift update` and the nightly job check the free space before they change anything. They need room for one more backup (the size of the
+newest backup in `/opt/voxshift/backups` plus a tenth, twice that with backup encryption on, or 500 MB when there is none yet) **and** about
+1.5 GB for the new images (they are unpacked next to the old ones, which are removed once the new version answers). When Docker keeps its
+images on another disk (`docker info` shows the `Docker Root Dir`), each disk is checked for its own part. If there is not enough, they stop with
+"Not enough free disk space", say how much is free and how much is needed, and change nothing; the nightly job writes that line to its log.
+`voxshift backup` (and the safety backup before a restore) checks the room for the backup alone. If the check cannot read the free space
+(`df` fails), it does not stop anything.
+
+To make room: copy old backups off the host and delete them, keep fewer (`voxshift backup-keep N`), or remove unused Docker images
+(`docker image prune`; `docker system df` shows what Docker uses).
 
 ### Encrypting backups (optional)
 
@@ -280,13 +310,13 @@ with one key per line; any one of the matching private keys can open a backup. `
 
 - `voxshift backup`, the nightly update's backup, the safety backup that `voxshift restore` takes and `uninstall.sh --backup-to` all write a
   `<timestamp>.tar.age` file plus `<timestamp>.tar.age.sha256` beside it (the size and checksum, for checking a copy you moved). The files inside
-  are the same as before (see the table above). The 14-backup and 3-safety-backup rotation works as before.
+  are the same as before (see the table above). How many are kept works the same way ([How many backups are kept](#how-many-backups-are-kept)).
 - While a backup is being built a plain working folder (`<timestamp>.partial`) exists in the backups folder, readable only by root; it is removed
   as soon as the encrypted file is written and checked. Voxshift cannot read the result back (it has no private key), so the check is that the file
   exists, is not empty, starts with the age header and is a plausible size.
 - **It never falls back to a plain backup.** If encryption is on and `age` is missing or the key file is empty, `voxshift backup` stops with a
   message and writes nothing. The nightly update then does not update (the log says why), and `uninstall.sh --backup-to` stops before removing anything.
-- Backups made *before* you switched it on stay plain folders until newer ones push them out of the 14. Remove them at once with
+- Backups made *before* you switched it on stay plain folders until newer ones push them out (see [How many backups are kept](#how-many-backups-are-kept)). Remove them at once with
   `voxshift backup-encryption remove-unencrypted` (it lists them and asks you to type `DELETE`; copy anything you need first).
 - The host's disk holds only the encrypted file, but the *database password and secrets on the running host* are of course still in `/opt/voxshift/.env`.
   Encryption protects the **backups** (the copies that travel), not the live host.
