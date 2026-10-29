@@ -328,6 +328,30 @@ Neither cmdlet has a bulk form, so users are read 20 at a time in one session ro
 hours are skipped; the oldest are read first, and a pass stops after 90 minutes on a huge tenant and carries on at the next sync. A targeted
 check ("Validate against tenant") reads the same for the UPNs it checks.
 
+Since 2026.10.76 a sync reads only the users in **Site Data or Design & Build** (users and common area phones, matched on UPN) during the
+Users step: drift and the completion email depend on theirs. Every other voice-enabled user is read **after the run has finished** (status,
+summary and email already done), and `summary.voiceSettings` (`due`, `read`, `failed`, `unfinished`, the first errors) records how far it got.
+A new sync of the same customer stops that pass between batches. On a big tenant this used to add up to 90 minutes to every run.
+
+## How a sync stores what it reads (2026.10.76)
+
+A sync used to rewrite every object it read, every time: for a 50,000-user tenant that was 100,000+ single-row writes per run, each one
+recomputing the full-text `search` column and updating every index on `tenant_objects`, which also slowed the web app on the same Postgres.
+Now (`runSpec` in `apps/worker/src/discovery/run.ts`, migration 0080):
+
+- What is stored for the type is loaded once as ids and `content_hash` (sha1 of the canonical JSON of `data`), not the data itself.
+- Records are stored 500 at a time. Only new, re-added and changed objects are written; an unchanged one only has `last_seen_run_id`,
+  `discovered_at` (and its hash) moved on in one bulk update. Stored data is read back only for a change's history row, or to compare an
+  object stored before hashes existed (the first sync after the upgrade fills them in).
+- `tenant_users` is projected in one statement per batch that rewrites a row only when a column differs. If the batch is refused (two
+  accounts with one UPN), each user is tried on its own so the others are kept, and the step is not counted complete.
+- The next `Get-CsOnlineUser` slice is asked for before the current one is stored, so Teams and the database work at the same time.
+- The worker reads a query's JSON (one very long line) without re-searching the whole buffer for every 64 KB chunk.
+- The unused `jsonb_path_ops` index on `tenant_objects.data` is dropped, M365 groups are stored 500 at a time, and `tenant_objects` and
+  `tenant_users` keep 15% free space per page so the "seen again" update can stay on its page.
+
+What is unchanged: what Teams is asked for, and how long Microsoft takes to answer, which is now most of a big run.
+
 **Design & Build** starts from this: Quick add, Populate and the **Import voice settings** button (Users and Common area phones tabs) fill a row's
 call forwarding, delegates, call group and voicemail from what the tenant has, but only where the row is still empty - a designed setting is never
 replaced. **Deployment** compares a designed setting with what Teams has and plans a command only when it differs; a user whose settings have

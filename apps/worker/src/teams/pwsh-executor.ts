@@ -56,7 +56,8 @@ function settlesWithin(p: Promise<void>, ms: number): Promise<boolean> {
  */
 export class PwshTeamsExecutor implements TeamsExecutor {
   private child: ChildProcessWithoutNullStreams | null = null;
-  private buf = '';
+  /** the stdout line still waiting for its newline, in the pieces it arrived in */
+  private partial: string[] = [];
   private errBuf = '';
   private queue: Promise<unknown> = Promise.resolve();
   private pending: Map<string, { out: string[]; resolve: (v: string) => void; reject: (e: Error) => void }> =
@@ -147,18 +148,26 @@ export class PwshTeamsExecutor implements TeamsExecutor {
     return child;
   }
 
+  /**
+   * A query's JSON arrives as one line that can be tens of MB on a big tenant, in 64 KB chunks. Only each new chunk is searched for a
+   * newline and the unfinished line is kept in pieces, joined once when it ends: searching (and so copying) the whole growing buffer for
+   * every chunk took time that grew with the square of the line's length.
+   */
   private onStdout(chunk: string) {
-    this.buf += chunk;
+    let start = 0;
     let nl: number;
-    while ((nl = this.buf.indexOf('\n')) >= 0) {
-      const line = this.buf.slice(0, nl).replace(/\r$/, '');
-      this.buf = this.buf.slice(nl + 1);
+    while ((nl = chunk.indexOf('\n', start)) >= 0) {
+      const head = chunk.slice(start, nl);
+      const line = (this.partial.length ? this.partial.join('') + head : head).replace(/\r$/, '');
+      this.partial = [];
+      start = nl + 1;
       this.onLine(line);
     }
+    if (start < chunk.length) this.partial.push(chunk.slice(start));
     // The module prints the device-code message WITHOUT a trailing newline
     // (the cursor parks there until sign-in completes), so also look at the
-    // partial line still sitting in the buffer.
-    if (this.buf) this.matchDevicePrompt(this.buf);
+    // partial line still waiting for its end - only while a sign-in is waiting.
+    if (this.partial.length && (this.devicePrompt || this.graphPrompt)) this.matchDevicePrompt(this.partial.join(''));
   }
 
   /**
