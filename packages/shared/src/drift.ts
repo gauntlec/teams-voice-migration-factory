@@ -34,12 +34,21 @@ export function classifyDrift(i: DriftInputs): DriftState | null {
   return 'drift';
 }
 
+/**
+ * What a row on the Drift view is: `drift` and `awaiting_sync` as above, or `kept`: the engineer rejected a number change, so the design has
+ * one number and Teams another on purpose and deployments leave it (see rejectedNumberChanges). A kept row is a known difference, not a
+ * change someone made in Teams, so it is not counted as drift.
+ */
+export type DriftRowState = DriftState | 'kept';
+
 /** A drifted row as stored after a sync and shown on the Drift view. */
 export interface DriftRow {
   rowId: string;
   objectType: 'user' | 'cap' | 'resource_account' | 'call_queue' | 'auto_attendant' | 'shared_calling_policy';
   name: string;
-  state: DriftState;
+  state: DriftRowState;
+  /** `kept` rows: what differs, in words. */
+  note?: string;
   /** The cmdlets that would put it back, e.g. Set-CsCallQueue - what differs, in Teams' own words. */
   cmdlets: string[];
   lastDeployedAt: string;
@@ -49,6 +58,8 @@ export interface SiteDriftSummary {
   siteId: string;
   drifted: number;
   awaitingSync: number;
+  /** number changes the engineer rejected: design and Teams differ on purpose */
+  kept: number;
   computedAt: string;
   rows: DriftRow[];
 }

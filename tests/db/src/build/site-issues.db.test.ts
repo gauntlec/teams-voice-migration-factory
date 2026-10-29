@@ -1,6 +1,6 @@
 // The Validation issues tab: every issue on a site in one list, with how serious each is.
 import { beforeAll, describe, expect, it } from 'vitest';
-import { planIdentityRows } from '@tvmf/db';
+import { computeSiteDrift, planIdentityRows } from '@tvmf/db';
 import { AuditService } from '../../../../apps/api/src/common/audit.service';
 import { BuildService } from '../../../../apps/api/src/modules/build/build.service';
 import { BuildValidationService } from '../../../../apps/api/src/modules/build/build-validation.service';
@@ -108,6 +108,24 @@ describe('number changes', () => {
     await c.s.updateTable('build_users').set({ e164: '+12125550297' }).where('id', '=', id).execute();
     expect(await assigns()).toBe(1);
     await build.decideNumberChange(c.t, engineer, 'build_users', id, 'reset');
+  });
+
+  it('a rejected number change is listed on the drift report as kept, not counted as drift; undoing it takes it off', async () => {
+    const [{ id }] = await c.s.selectFrom('build_users').select('id').where('upn', '=', 'moved@contoso.test').execute();
+    const kept = async () => (await computeSiteDrift(c.s, siteId)).rows.filter((r) => r.state === 'kept');
+
+    expect(await kept()).toEqual([]); // undecided
+    await build.decideNumberChange(c.t, engineer, 'build_users', id, 'accepted');
+    expect(await kept()).toEqual([]); // accepted: the design will win, nothing differs on purpose
+
+    await build.decideNumberChange(c.t, engineer, 'build_users', id, 'rejected');
+    const summary = await computeSiteDrift(c.s, siteId);
+    expect(summary).toMatchObject({ drifted: 0, kept: 1 });
+    expect(summary.rows.find((r) => r.state === 'kept')).toMatchObject({ rowId: id, objectType: 'user', name: 'moved@contoso.test', cmdlets: [] });
+    expect(summary.rows.find((r) => r.state === 'kept')!.note).toMatch(/design has \+12125550297; Teams has \+12125550200.*rejected/);
+
+    await build.decideNumberChange(c.t, engineer, 'build_users', id, 'reset');
+    expect(await kept()).toEqual([]);
   });
 
   it('flags a number that differs from Site Data only once the site has been submitted', async () => {

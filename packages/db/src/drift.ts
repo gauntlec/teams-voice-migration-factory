@@ -10,6 +10,7 @@ import {
 } from '@tvmf/shared';
 import { resolveLiveIdentityState, type Scoped } from './live-state';
 import { previewSiteChanges } from './preview';
+import { rejectedNumberChanges } from './validate-rows';
 
 /*
  * Drift for a site: the deployment preview (the exact plan a live run would make) narrowed to rows that were deployed,
@@ -124,10 +125,30 @@ export async function computeSiteDrift(s: Scoped, siteId: string, runId: string 
       cmdlets: evidence.get(r.rowId) ?? [],
       lastDeployedAt: history.get(r.rowId)?.lastCleanAt ?? '',
     }));
+  // Number changes the engineer rejected: design and Teams differ on purpose, so they are listed here (not counted as drift).
+  for (const [table, objectType] of [['build_users', 'user'], ['build_caps', 'cap']] as const) {
+    const built = await s.selectFrom(table).selectAll().where('site_id', '=', siteId).where('hidden', '=', false).execute();
+    const kept = await rejectedNumberChanges(s, built);
+    for (const row of built) {
+      const k = kept.get(row.id);
+      if (!k) continue;
+      const other = k.live ? `Teams has ${k.live}` : k.dataCollection ? `Site Data has ${k.dataCollection}` : 'Teams has a different number';
+      rows.push({
+        rowId: row.id,
+        objectType,
+        name: row.upn,
+        state: 'kept',
+        cmdlets: [],
+        note: `The design has ${k.designed}; ${other}. The number change was rejected, so a deployment leaves it as it is.`,
+        lastDeployedAt: '',
+      });
+    }
+  }
   const summary: SiteDriftSummary = {
     siteId,
     drifted: rows.filter((r) => r.state === 'drift').length,
     awaitingSync: rows.filter((r) => r.state === 'awaiting_sync').length,
+    kept: rows.filter((r) => r.state === 'kept').length,
     computedAt: new Date().toISOString(),
     rows,
   };

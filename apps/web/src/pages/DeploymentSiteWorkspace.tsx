@@ -364,6 +364,16 @@ export function DeploymentSiteWorkspace() {
     },
     onError: (e) => setDriftMessage(e instanceof ApiError ? e.message : 'Could not take the change into the design.'),
   });
+  /** Take back a rejected number change: it asks again on Validation issues, and a deployment applies the designed number unless it is rejected again. */
+  const undoKept = useMutation({
+    mutationFn: (r: DriftRow) => api(`/t/${tid}/build/${r.objectType === 'cap' ? 'caps' : 'users'}/${r.rowId}/number-decision`, { method: 'POST', body: JSON.stringify({ decision: 'reset' }) }),
+    onSuccess: (_, r) => {
+      setDriftMessage(`${r.name}: the number change will be asked about again on Validation issues in Design & Build.`);
+      qc.invalidateQueries({ queryKey: ['deployment-drift', tid, siteId] });
+      qc.invalidateQueries({ queryKey: ['deployment-preview', tid, siteId] });
+    },
+    onError: (e) => setDriftMessage(e instanceof ApiError ? e.message : 'Could not undo the rejection.'),
+  });
   /** Put back: tick the rows on Planned changes, where they deploy through the normal What-If and Deploy. */
   const putBack = (ids: string[]) => {
     setSelectedRowIds(new Set(ids));
@@ -776,7 +786,8 @@ export function DeploymentSiteWorkspace() {
             Rows that were deployed and have not been edited since, but no longer match Teams - someone changed them in Teams Admin
             Center or PowerShell. This is worked out from the last Discovery sync, so run one first for an up-to-date answer.
             Accept into design keeps the change: the design takes what Teams has now. Put back selects the row on Planned changes,
-            where What-If and Deploy apply the design again.
+            where What-If and Deploy apply the design again. A number change that was rejected on Validation issues is listed here as
+            kept as in Teams: the design has one number and Teams another on purpose, and a deployment leaves it.
           </Text>
           {driftMessage && <Text size={200}>{driftMessage}</Text>}
           {drift.isLoading ? (
@@ -789,14 +800,16 @@ export function DeploymentSiteWorkspace() {
             </Text>
           ) : (
             <>
-              <div className={cs.row}>
-                <Button
-                  disabled={!canDryRun}
-                  onClick={() => putBack(drift.data!.rows.filter((r) => r.state === 'drift').map((r) => r.rowId))}
-                >
-                  Put back all ({drift.data.drifted})
-                </Button>
-              </div>
+              {drift.data.drifted > 0 && (
+                <div className={cs.row}>
+                  <Button
+                    disabled={!canDryRun}
+                    onClick={() => putBack(drift.data!.rows.filter((r) => r.state === 'drift').map((r) => r.rowId))}
+                  >
+                    Put back all ({drift.data.drifted})
+                  </Button>
+                </div>
+              )}
               <DataTable size="small" minWidth={820}>
                 <TableHeader>
                   <TableRow>
@@ -812,6 +825,11 @@ export function DeploymentSiteWorkspace() {
                     <TableRow key={r.rowId}>
                       <TableCell>
                         {r.name}
+                        {r.state === 'kept' && (
+                          <Badge className={cs.autoIncludedTag} appearance="tint" color="informative" title="The number change was rejected on Validation issues: a deployment leaves this number as it is in Teams.">
+                            kept as in Teams
+                          </Badge>
+                        )}
                         {r.state === 'awaiting_sync' && (
                           <Badge className={cs.autoIncludedTag} appearance="tint" color="informative" title="Deployed since the last Discovery sync - run a sync to see whether it still differs.">
                             awaiting sync
@@ -819,9 +837,16 @@ export function DeploymentSiteWorkspace() {
                         )}
                       </TableCell>
                       <TableCell>{OBJECT_TYPE_LABEL[r.objectType]}</TableCell>
-                      <TableCell>{r.cmdlets.join(', ')}</TableCell>
+                      <TableCell style={r.state === 'kept' ? { whiteSpace: 'normal', overflow: 'visible', textOverflow: 'clip', maxWidth: 'none', minWidth: 320 } : undefined}>
+                        {r.state === 'kept' ? r.note : r.cmdlets.join(', ')}
+                      </TableCell>
                       <TableCell>{r.lastDeployedAt ? new Date(r.lastDeployedAt).toLocaleString() : '—'}</TableCell>
                       <TableCell>
+                        {r.state === 'kept' && can('build:write') && (
+                          <Button size="small" disabled={undoKept.isPending} onClick={() => undoKept.mutate(r)} title="Ask about this number change again">
+                            Undo rejection
+                          </Button>
+                        )}
                         {r.state === 'drift' && (
                           <div className={cs.row}>
                             {DRIFT_ACCEPTABLE[r.objectType] && can('build:write') && (
