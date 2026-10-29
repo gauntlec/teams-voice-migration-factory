@@ -352,6 +352,23 @@ Now (`runSpec` in `apps/worker/src/discovery/run.ts`, migration 0080):
 
 What is unchanged: what Teams is asked for, and how long Microsoft takes to answer, which is now most of a big run.
 
+**Since 2026.10.77 nothing at all is written for what has not changed** (migration 0081). On a slow disk (the dev host's virtual HDD,
+~250 ms per I/O) even the small "seen again" update of 50,000 rows was the main cost, and it locked the web app out of Postgres.
+
+- The run keeps the ids it saw per type in memory; a successful step tombstones what is live of its type and not in that list.
+  `tenant_objects.last_seen_run_id` / `discovered_at` now say which run last *wrote* the row.
+- `tenant_object_sweeps` records when each type was last read in full. Discovery's **Last seen** (objects list and object view,
+  `withLastSeen` in the API) is the later of the row's `discovered_at` and that.
+- `tenant_users.projection_hash` is the hash of the columns a user row is built from; a user whose hash is unchanged is not rewritten,
+  and a change to the projection itself changes every hash, so it still reaches every user. A targeted check always writes (deployment
+  verification reads `tenant_users.last_seen_run_id`).
+- **Timings**: each cmdlet logs how long it took, how much of that was waiting for Teams and how much storing, and the run's summary has
+  `timings` (`totalSeconds`, and per step `seconds`, `waitingOnTeams`, `storing`; `voice_settings` and `reconcile` too).
+- **A run is never run twice at once**: it only starts while still `queued` (a second delivery of the job leaves it alone), the worker
+  holds a job's lock for 5 minutes and fails a stalled job instead of re-running it (`maxStalledCount: 0`). On the dev host a stall made
+  BullMQ start the same run a second time, which doubled the load, wrote history twice and broke the number reconcile.
+- A database restart no longer crashes the worker (the pool's `error` event is handled in `createDb`).
+
 **Design & Build** starts from this: Quick add, Populate and the **Import voice settings** button (Users and Common area phones tabs) fill a row's
 call forwarding, delegates, call group and voicemail from what the tenant has, but only where the row is still empty - a designed setting is never
 replaced. **Deployment** compares a designed setting with what Teams has and plans a command only when it differs; a user whose settings have

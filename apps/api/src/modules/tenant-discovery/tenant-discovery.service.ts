@@ -687,6 +687,7 @@ export class TenantDiscoveryService {
     await s.deleteFrom('tenant_object_versions').execute();
     await s.deleteFrom('tenant_users').execute();
     await s.deleteFrom('tenant_policies').execute();
+    await s.deleteFrom('tenant_object_sweeps').execute();
     await s.deleteFrom('tenant_discovery_runs').execute();
     // The M365 group cache is discovered data too (Graph sign-in / each run).
     await s.deleteFrom('tenant_groups').execute();
@@ -824,7 +825,7 @@ export class TenantDiscoveryService {
       .limit(q.limit)
       .offset((q.page - 1) * q.limit)
       .execute();
-    return { items, total: Number(n), page: q.page, limit: q.limit };
+    return { items: await this.withLastSeen(t, items), total: Number(n), page: q.page, limit: q.limit };
   }
 
   async getObject(t: TenantContext, id: string) {
@@ -834,7 +835,26 @@ export class TenantDiscoveryService {
       .where('id', '=', id)
       .executeTakeFirst();
     if (!row) throw new NotFoundException('object not found');
-    return row;
+    return (await this.withLastSeen(t, [row]))[0]!;
+  }
+
+  /**
+   * A sync no longer writes an object that has not changed, so its own discovered_at / last_seen_run_id say when it last changed or came
+   * back. A live object was seen by the latest full read of its type (tenant_object_sweeps), so that is its "Last seen" when later.
+   */
+  private async withLastSeen<R extends { object_type: string; discovered_at: string | Date; last_seen_run_id: string | null; removed_at: string | Date | null }>(
+    t: TenantContext,
+    rows: R[],
+  ): Promise<R[]> {
+    if (!rows.length) return rows;
+    const sweeps = new Map(
+      (await this.s(t).selectFrom('tenant_object_sweeps').select(['object_type', 'run_id', 'swept_at']).execute()).map((w) => [w.object_type, w]),
+    );
+    return rows.map((r) => {
+      const w = sweeps.get(r.object_type);
+      if (r.removed_at || !w || new Date(w.swept_at) <= new Date(r.discovered_at)) return r;
+      return { ...r, discovered_at: w.swept_at, last_seen_run_id: w.run_id } as R;
+    });
   }
 
   /* ================================ users ================================ */

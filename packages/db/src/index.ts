@@ -40,6 +40,13 @@ export function createDb(connectionString = process.env.DATABASE_URL): DbHandle 
   // starve request handling. `PG_POOL_MAX` overrides if ever needed.
   const max = Math.max(2, Number(process.env.PG_POOL_MAX) || 20);
   const pool = new Pool({ connectionString, max });
+  // An idle pooled connection that Postgres closes (a restart, say) emits 'error' on the pool. With no listener Node treats that as an
+  // unhandled error and the whole process exits - the worker did on the dev host (2026-10-29). The pool drops the connection and opens a
+  // new one when next needed, so a note is enough.
+  pool.on('error', (e) => {
+    // eslint-disable-next-line no-console
+    console.warn(`[db] an idle database connection was closed: ${e.message}`);
+  });
   const db = new Kysely<DB>({ dialect: new PostgresDialect({ pool }) });
   return { db, pool, close: async () => { await db.destroy(); } };
 }

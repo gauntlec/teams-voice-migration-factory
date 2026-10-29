@@ -1148,6 +1148,8 @@ export interface TenantObjectsTable {
   content_changed_at: string | null;
   /** sha1 of the canonical JSON of `data` (migration 0080); null until a sync has written it */
   content_hash: string | null;
+  // last_seen_run_id / discovered_at: the run that last wrote this row. A sync no longer writes an unchanged object (migration 0081);
+  // the time it was last seen is the later of discovered_at and tenant_object_sweeps.swept_at for its type.
   removed_at: string | null;
 }
 
@@ -1195,8 +1197,18 @@ export interface TenantUsersTable {
   policies: JsonOpt<Record<string, string | null>>;
   effective_policy_assignments: JsonOpt<unknown[]>;
   when_changed: string | null;
+  /** the run that last wrote this row (a sync leaves an unchanged user alone, migration 0081); a targeted check always writes */
   last_seen_run_id: string | null;
+  /** sha1 of what the row was projected from (migration 0081): equal = nothing to rewrite */
+  projection_hash: string | null;
   removed_at: string | null;
+}
+
+/** When each object type was last read in full by a sync (migration 0081): "Last seen" for an object that has not changed. */
+export interface TenantObjectSweepsTable {
+  object_type: string;
+  run_id: string | null;
+  swept_at: string;
 }
 
 export interface TenantPoliciesTable {
@@ -1860,6 +1872,7 @@ export interface DB {
   tenant_objects: TenantObjectsTable;
   tenant_object_versions: TenantObjectVersionsTable;
   tenant_users: TenantUsersTable;
+  tenant_object_sweeps: TenantObjectSweepsTable;
   tenant_policies: TenantPoliciesTable;
   tenant_discovery_config: TenantDiscoveryConfigTable;
   deployments: DeploymentsTable;

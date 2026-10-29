@@ -212,11 +212,20 @@ async function runDiscovery(
     return;
   }
 
-  await s
+  // Only a queued run starts: a second delivery of the same job (a queue that thought the first had stalled) finds it running, or
+  // finished, and leaves it to the first.
+  const claimed = await s
     .updateTable('tenant_discovery_runs')
     .set({ status: 'running', started_at: new Date().toISOString(), progress })
     .where('id', '=', runId)
-    .execute();
+    .where('status', '=', 'queued')
+    .returning('id')
+    .executeTakeFirst();
+  if (!claimed) {
+    // eslint-disable-next-line no-console
+    console.warn(`[discovery ${runId}] already started (or finished) - not running it a second time`);
+    return;
+  }
 
   // A targeted check never runs the full step loop below - critically, it
   // must never reach the "tombstone every object this run's successful step
@@ -241,7 +250,7 @@ async function runDiscovery(
   let signInLost = false;
   /** the users step came back whole, so the other voice users' settings are read once the run has finished */
   let readOtherVoiceUsers = false;
-  const ctx: RunContext = { schema, assignees: null };
+  const ctx: RunContext = { schema, assignees: null, seen: new Map(), timings: {} };
   // A new sync takes over from an earlier run's background voice settings pass (it would read the same users).
   backgroundVoice.get(schema)?.stop();
 
@@ -280,16 +289,22 @@ async function runDiscovery(
     if (step === 'users' && wantType('user') && stepComplete) {
       // Everything Teams voice keeps per voice-enabled user, so Design & Build can start from what the tenant has. Only the users in
       // Site Data or Design & Build are read here (drift and the completion email need theirs); the rest follow after the run.
+      const t0 = Date.now();
       try {
         const due = await usersNeedingVoiceSettings(s, schema, 12 * 3600_000, 'in_sites');
         await syncUserVoiceSettings(s, exec, runId, due.map((u) => ({ objectId: u.object_id, upn: u.upn })), progress, { budgetMs: 90 * 60_000 });
         progress.note = null;
         readOtherVoiceUsers = true;
+        // eslint-disable-next-line no-console
+        console.log(`[discovery ${runId}] voice settings for ${due.length.toLocaleString()} Site Data / Design & Build users in ${minsSecs(Date.now() - t0)}`);
       } catch (e) {
         const message = (e as Error).message ?? String(e);
         progress.errors.push({ step, message: `voice settings: ${message}` });
         if (!exec.alive || SESSION_GONE.test(message)) signInLost = true;
       }
+      const vt = timingFor(ctx, 'voice_settings');
+      vt.ms += Date.now() - t0;
+      vt.teamsMs += Date.now() - t0;
       if (signInLost) break;
     }
     progress.completed.push(step);
@@ -298,6 +313,7 @@ async function runDiscovery(
     await saveProgress(s, runId, progress);
   }
 
+  const afterSteps = Date.now();
   // Tombstone objects that a *successful* step no longer returned.
   if (succeededTypes.size) {
     progress.step = null;
@@ -305,13 +321,16 @@ async function runDiscovery(
     await saveProgress(s, runId, progress);
     const types = Array.from(succeededTypes);
     const sweptAt = new Date().toISOString();
+    // What this run saw: an unchanged object is not written, so "seen" is the run's own list, not last_seen_run_id.
+    const seenIds = (ts: TenantObjectType[]) => ts.flatMap((t) => [...(ctx.seen.get(t) ?? [])]);
+    const notSeen = (column: 'id' | 'object_id', ts: TenantObjectType[]) => sql<boolean>`NOT (${sql.ref(column)} = ANY(${seenIds(ts)}::uuid[]))`;
     // Record a 'removed' version for each object about to be tombstoned.
     const doomed = await s
       .selectFrom('tenant_objects')
       .select(['id', 'object_type', 'object_key', 'display_name', 'data'])
       .where('object_type', 'in', types)
       .where('removed_at', 'is', null)
-      .where((eb) => eb.or([eb('last_seen_run_id', '<>', runId), eb('last_seen_run_id', 'is', null)]))
+      .where(notSeen('id', types))
       .execute();
     if (doomed.length) {
       const rows = doomed.map((d) => ({
@@ -331,21 +350,22 @@ async function runDiscovery(
       }
       progress.changed.removed += doomed.length;
     }
-    await s
-      .updateTable('tenant_objects')
-      .set({ removed_at: sweptAt })
-      .where('object_type', 'in', types)
-      .where('removed_at', 'is', null)
-      .where((eb) => eb.or([eb('last_seen_run_id', '<>', runId), eb('last_seen_run_id', 'is', null)]))
-      .execute();
-    if (succeededTypes.has('user')) {
+    for (let i = 0; i < doomed.length; i += 500) {
       await s
-        .updateTable('tenant_users')
-        .set({ removed_at: new Date().toISOString() })
-        .where('removed_at', 'is', null)
-        .where((eb) => eb.or([eb('last_seen_run_id', '<>', runId), eb('last_seen_run_id', 'is', null)]))
+        .updateTable('tenant_objects')
+        .set({ removed_at: sweptAt })
+        .where('id', 'in', doomed.slice(i, i + 500).map((d) => d.id))
         .execute();
     }
+    if (succeededTypes.has('user')) {
+      await s.updateTable('tenant_users').set({ removed_at: sweptAt }).where('removed_at', 'is', null).where(notSeen('object_id', ['user'])).execute();
+    }
+    // Everything still live of these types was seen now: "Last seen" for the objects this run did not need to write.
+    await s
+      .insertInto('tenant_object_sweeps')
+      .values(types.map((t) => ({ object_type: t, run_id: runId, swept_at: sweptAt })))
+      .onConflict((oc) => oc.column('object_type').doUpdateSet((eb) => ({ run_id: eb.ref('excluded.run_id'), swept_at: eb.ref('excluded.swept_at') })))
+      .execute();
     if (succeededTypes.has('policy')) {
       await s
         .updateTable('tenant_policies')
@@ -382,6 +402,8 @@ async function runDiscovery(
       console.warn(`[discovery ${runId}] number reconcile failed: ${(e as Error).message}`);
     }
   }
+  // removed objects, M365 groups and the number inventory, after the steps
+  timingFor(ctx, 'reconcile').ms += Date.now() - afterSteps;
   const total = Object.values(progress.counts).reduce((a, b) => a + (b ?? 0), 0);
   await s
     .updateTable('tenant_discovery_runs')
@@ -397,6 +419,13 @@ async function runDiscovery(
         filterDisabledReason: progress.filterDisabledReason ?? null,
         errors: progress.errors.length,
         numbers,
+        // seconds per step: in all, waiting for Teams to answer, and storing (the rest is reading what was stored and bookkeeping)
+        timings: {
+          totalSeconds: secs(Date.now() - startedAt),
+          steps: Object.fromEntries(
+            Object.entries(ctx.timings).map(([k, v]) => [k, { seconds: secs(v.ms), waitingOnTeams: secs(v.teamsMs), storing: secs(v.storeMs) }]),
+          ),
+        },
       },
       error: signInLost ? 'Lost the tenant sign-in part-way through - sign in again and re-run.' : null,
     })
@@ -596,6 +625,10 @@ interface Assignee {
 interface RunContext {
   /** the customer's schema, for the raw SQL bulk updates */
   schema: string;
+  /** ids of the objects this run saw, per type: what a successful step tombstones is everything live of its type not in here */
+  seen: Map<TenantObjectType, Set<string>>;
+  /** where the time went, per step, for the summary and the log (`summary.timings`, seconds) */
+  timings: Record<string, StepTiming>;
   /** Entra object id -> who holds it; built once, after the users + resource-account steps */
   assignees: Map<string, Assignee> | null;
 }
@@ -649,6 +682,16 @@ interface PrevObject {
   display_name: string | null;
   removed_at: string | null;
 }
+
+/** Milliseconds a step spent in all, waiting for Teams to answer, and storing; written to the summary in seconds. */
+interface StepTiming {
+  ms: number;
+  teamsMs: number;
+  storeMs: number;
+}
+const timingFor = (ctx: RunContext, step: string): StepTiming => (ctx.timings[step] ??= { ms: 0, teamsMs: 0, storeMs: 0 });
+const secs = (ms: number) => Math.round(ms / 100) / 10;
+const minsSecs = (ms: number) => (ms < 90_000 ? `${secs(ms)} s` : `${Math.floor(ms / 60_000)} min ${Math.round((ms % 60_000) / 1000)} s`);
 
 /** What a step already has stored for one object: enough to tell whether it changed, without its data. */
 interface StoredObject {
@@ -719,6 +762,25 @@ async function runSpec(
       removed_at: row.removed_at,
     });
   }
+  // What each user's tenant_users row was projected from: an unchanged one is not rewritten.
+  const projected = new Map<string, Projected>();
+  if (spec.objectType === 'user') {
+    for (const u of await s.selectFrom('tenant_users').select(['object_id', 'projection_hash', 'removed_at']).execute()) {
+      projected.set(u.object_id, { hash: u.projection_hash, removed: !!u.removed_at });
+    }
+  }
+  const seenIds = ctx.seen.get(spec.objectType) ?? new Set<string>();
+  ctx.seen.set(spec.objectType, seenIds);
+  const timing = timingFor(ctx, progress.step ?? spec.objectType);
+  /** Waits for Teams, counting the time as waiting on Teams. */
+  const fromTeams = async <T>(p: Promise<T>): Promise<T> => {
+    const t0 = Date.now();
+    try {
+      return await p;
+    } finally {
+      timing.teamsMs += Date.now() - t0;
+    }
+  };
 
   const versions: NewVersion[] = [];
   // Numbers Teams has released since the last sync (assigned -> unassigned): they start the number cool-off.
@@ -773,8 +835,10 @@ async function runSpec(
     if (!queued.length) return;
     const batch = queued;
     queued = [];
+    const t0 = Date.now();
     await storeBatch(batch);
     if (versions.length >= 500) await flushVersions();
+    timing.storeMs += Date.now() - t0;
     // heartbeat the run row so the UI shows the count climbing on a big step
     if (stored - lastSaved >= 250) {
       lastSaved = stored;
@@ -785,7 +849,7 @@ async function runSpec(
     }
   };
 
-  /** Stores one batch: new, re-added and changed objects are written; unchanged ones only get their "seen" fields moved on. */
+  /** Stores one batch: new, re-added and changed objects are written; unchanged ones are not written at all (the run remembers it saw them). */
   const storeBatch = async (items: { key: string; name: string | null; data: Rec }[]) => {
     const now = new Date().toISOString();
     // one row per key (a key twice in one statement is an error); the later record wins
@@ -843,18 +907,19 @@ async function runSpec(
       for (const w of written) ids.set(w.object_key, w.id);
     }
     const same = judged.filter((x) => !x.change);
-    if (same.length) {
-      // content_hash too: it is still empty on objects stored before migration 0080
-      await sql`UPDATE ${sql.table(`${ctx.schema}.tenant_objects`)} AS t
-        SET last_seen_run_id = ${runId}::uuid, discovered_at = ${now}::timestamptz, content_hash = v.h
-        FROM unnest(${same.map((x) => x.p!.id)}::uuid[], ${same.map((x) => x.hash)}::text[]) AS v(id, h)
+    for (const x of same) ids.set(x.key, x.p!.id);
+    // An unchanged object is left alone. Only one stored before migration 0080 is written once, to give it its content hash.
+    const unhashed = same.filter((x) => x.p!.hash === null);
+    if (unhashed.length) {
+      await sql`UPDATE ${sql.table(`${ctx.schema}.tenant_objects`)} AS t SET content_hash = v.h
+        FROM unnest(${unhashed.map((x) => x.p!.id)}::uuid[], ${unhashed.map((x) => x.hash)}::text[]) AS v(id, h)
         WHERE t.id = v.id`.execute(s);
-      for (const x of same) ids.set(x.key, x.p!.id);
     }
 
     const users: { objectId: string; r: Rec }[] = [];
     for (const x of judged) {
       const objectId = ids.get(x.key)!;
+      seenIds.add(objectId);
       prev.set(x.key, { id: objectId, hash: x.hash, display_name: x.name, removed_at: null });
       if (spec.objectType === 'phone_number' && numberReleasedInTeams(x.old, x.data)) released.push(x.key);
       if (x.change) {
@@ -874,7 +939,7 @@ async function runSpec(
       }
       if (spec.objectType === 'user') users.push({ objectId, r: x.data });
     }
-    if (users.length) await projectUsers(s, runId, users);
+    if (users.length) await projectUsers(s, runId, users, projected);
     if (spec.objectType === 'policy' && spec.policyType) {
       for (const x of judged) await projectPolicy(s, runId, ids.get(x.key)!, spec.policyType, x.data);
     }
@@ -888,6 +953,9 @@ async function runSpec(
   // history rows must be written too even if the step fails part-way -
   // otherwise the next run diffs against the new data and the change is
   // never recorded anywhere.
+  const started = Date.now();
+  const teamsBefore = timing.teamsMs;
+  const storeBefore = timing.storeMs;
   try {
     return await fetchAndStore();
   } finally {
@@ -895,6 +963,13 @@ async function runSpec(
       // eslint-disable-next-line no-console
       console.warn(`[discovery ${runId}] could not save change history: ${(e as Error).message}`);
     });
+    const took = Date.now() - started;
+    timing.ms += took;
+    // eslint-disable-next-line no-console
+    console.log(
+      `[discovery ${runId}] ${spec.command}: ${stored.toLocaleString()} ${noun} in ${minsSecs(took)}` +
+        ` (waiting on Teams ${minsSecs(timing.teamsMs - teamsBefore)}, storing ${minsSecs(timing.storeMs - storeBefore)})`,
+    );
   }
 
   async function fetchAndStore(): Promise<{ stored: number; complete: boolean }> {
@@ -924,7 +999,7 @@ async function runSpec(
       nextSlice = i + 1 < buckets.length ? ask(i + 1) : null;
       let recs: unknown[];
       try {
-        recs = await thisSlice;
+        recs = await fromTeams(thisSlice);
       } catch (e) {
         const message = (e as Error).message ?? String(e);
         if (!exec.alive || /pwsh exited|could not start pwsh|executor disposed|not connected|session is disconnected/i.test(message)) {
@@ -984,11 +1059,7 @@ async function runSpec(
   if (!spec.page) {
     progress.note = `Fetching ${noun} from the tenant (this can take a few minutes on a large tenant)…`;
     await saveProgress(s, runId, progress);
-    const records = await exec.query(
-      spec.command,
-      spec.resultSize ? { ResultSize: spec.resultSize } : {},
-      qopts,
-    );
+    const records = await fromTeams(exec.query(spec.command, spec.resultSize ? { ResultSize: spec.resultSize } : {}, qopts));
     expected = records.length;
     progress.note = `Fetched ${records.length.toLocaleString()} ${noun}, storing…`;
     await saveProgress(s, runId, progress);
@@ -1003,7 +1074,7 @@ async function runSpec(
     progress.note = `Fetching ${noun}${skip ? ` (from ${skip.toLocaleString()})` : ''}…`;
     await saveProgress(s, runId, progress);
     const params = spec.page.style === 'first-skip' ? { First: size, Skip: skip } : { Top: size, Skip: skip };
-    const batch = await exec.query(spec.command, params, qopts);
+    const batch = await fromTeams(exec.query(spec.command, params, qopts));
     await handle(batch);
     if (batch.length < size) break;
     // Safety valve. Stopping here means objects past this point weren't
@@ -1127,7 +1198,7 @@ async function projectUser(s: Scoped, runId: string, objectId: string, r: Rec) {
   await projectUsers(s, runId, [{ objectId, r }]);
 }
 
-/** The `tenant_users` columns a sync sets from the record (`last_seen_run_id` is moved on separately). */
+/** The `tenant_users` columns a sync sets from the record; `projection_hash` is the hash of exactly these. */
 const USER_COLUMNS = [
   'upn',
   'entra_id',
@@ -1149,14 +1220,27 @@ const USER_COLUMNS = [
   'removed_at',
 ] as const;
 
+/** What a user's `tenant_users` row was last projected from, as `runSpec` loads it. */
+interface Projected {
+  hash: string | null;
+  removed: boolean;
+}
+
 /**
- * Projects users into `tenant_users` in one statement. A row is rewritten only when one of its columns differs (so an unchanged user
- * costs no rewrite, and a change to what is projected still reaches every user); every row then has `last_seen_run_id` moved on.
- * If the batch is refused (two accounts with one UPN, say), each user is tried on its own so the others are kept, and the first
- * error is thrown so the step is not counted complete.
+ * Projects users into `tenant_users` in one statement. With `known` (a sync), a user whose row was projected from exactly the same
+ * values and is live is skipped: nothing is written for it. A change to what is projected changes the hash, so it still reaches every
+ * user. Without `known` (a targeted check) every row is written, which also moves `last_seen_run_id` on (deployment-verify reads it).
+ * If the batch is refused (two accounts with one UPN, say), each user is tried on its own so the others are kept, and the first error
+ * is thrown so the step is not counted complete.
  */
-async function projectUsers(s: Scoped, runId: string, users: { objectId: string; r: Rec }[]) {
-  const rows = [...new Map(users.map((u) => [u.objectId, userValues(runId, u.objectId, u.r)])).values()].filter((v) => !!v);
+async function projectUsers(s: Scoped, runId: string, users: { objectId: string; r: Rec }[], known?: Map<string, Projected>) {
+  const rows = [...new Map(users.map((u) => [u.objectId, userValues(runId, u.objectId, u.r)])).values()]
+    .filter((v) => !!v)
+    .map((v) => ({ ...v, projection_hash: hashOf(Object.fromEntries(USER_COLUMNS.map((c) => [c, v[c]]))) }))
+    .filter((v) => {
+      const k = known?.get(v.object_id);
+      return !k || k.removed || k.hash !== v.projection_hash;
+    });
   if (!rows.length) return;
   const upsert = (values: typeof rows) =>
     s
@@ -1165,9 +1249,13 @@ async function projectUsers(s: Scoped, runId: string, users: { objectId: string;
       .onConflict((oc) =>
         oc
           .column('object_id')
-          .doUpdateSet((eb) => ({ ...Object.fromEntries(USER_COLUMNS.map((c) => [c, eb.ref(`excluded.${c}`)])), last_seen_run_id: runId }) as never)
-          .where(
-            sql<boolean>`(${sql.join(USER_COLUMNS.map((c) => sql.ref(`tenant_users.${c}`)))}) IS DISTINCT FROM (${sql.join(USER_COLUMNS.map((c) => sql.ref(`excluded.${c}`)))})`,
+          .doUpdateSet(
+            (eb) =>
+              ({
+                ...Object.fromEntries(USER_COLUMNS.map((c) => [c, eb.ref(`excluded.${c}`)])),
+                projection_hash: eb.ref('excluded.projection_hash'),
+                last_seen_run_id: runId,
+              }) as never,
           ),
       )
       .execute();
@@ -1183,17 +1271,9 @@ async function projectUsers(s: Scoped, runId: string, users: { objectId: string;
       }
     }
   }
-  await touchUsers(s, runId, rows.map((r) => r.object_id));
+  for (const r of rows) known?.set(r.object_id, { hash: r.projection_hash, removed: false });
   if (first) throw first;
 }
-
-const touchUsers = (s: Scoped, runId: string, objectIds: string[]) =>
-  s
-    .updateTable('tenant_users')
-    .set({ last_seen_run_id: runId })
-    .where('object_id', 'in', objectIds)
-    .where((eb) => eb.or([eb('last_seen_run_id', '<>', runId), eb('last_seen_run_id', 'is', null)]))
-    .execute();
 
 function userValues(runId: string, objectId: string, r: Rec) {
   const upn = str(r.UserPrincipalName);
