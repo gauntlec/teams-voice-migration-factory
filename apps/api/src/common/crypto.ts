@@ -5,6 +5,9 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:
  * token, single sign-on client secrets, assistant webhook secrets, MSP Teams webhook URLs, and a queued invitation's one-time
  * password. Customer tenant tokens are never passed through here - they are never persisted at all.
  */
+const IV_BYTES = 12;
+const TAG_BYTES = 16;
+
 function keyFromEnv(): Buffer {
   const raw = process.env.DATA_ENCRYPTION_KEY ?? '';
   const buf = Buffer.from(raw, 'base64');
@@ -14,7 +17,7 @@ function keyFromEnv(): Buffer {
 }
 
 export function encryptSecret(plaintext: string): string {
-  const iv = randomBytes(12);
+  const iv = randomBytes(IV_BYTES);
   const cipher = createCipheriv('aes-256-gcm', keyFromEnv(), iv);
   const enc = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
   const tag = cipher.getAuthTag();
@@ -24,8 +27,12 @@ export function encryptSecret(plaintext: string): string {
 export function decryptSecret(payload: string): string {
   const [ivB64, tagB64, dataB64] = payload.split('.');
   if (!ivB64 || !tagB64 || !dataB64) throw new Error('malformed ciphertext');
-  const decipher = createDecipheriv('aes-256-gcm', keyFromEnv(), Buffer.from(ivB64, 'base64'));
-  decipher.setAuthTag(Buffer.from(tagB64, 'base64'));
+  const iv = Buffer.from(ivB64, 'base64');
+  const tag = Buffer.from(tagB64, 'base64');
+  // Only the lengths encryptSecret writes (Node's defaults): GCM would otherwise accept a shortened tag, which is easier to forge.
+  if (iv.length !== IV_BYTES || tag.length !== TAG_BYTES) throw new Error('malformed ciphertext');
+  const decipher = createDecipheriv('aes-256-gcm', keyFromEnv(), iv, { authTagLength: TAG_BYTES });
+  decipher.setAuthTag(tag);
   return Buffer.concat([decipher.update(Buffer.from(dataB64, 'base64')), decipher.final()]).toString('utf8');
 }
 
