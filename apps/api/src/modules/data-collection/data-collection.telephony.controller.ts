@@ -14,6 +14,7 @@ import {
   discoveryUserBulkPatchSchema,
   discoveryUserSchema,
   numberReserveSchema,
+  numberParkSchema,
   numberEndCooloffSchema,
   numberPolicyPatchSchema,
   type NumberEndCooloffInput,
@@ -222,6 +223,18 @@ export class TelephonyController {
     @Body(new ZodBody(numberReserveSchema)) body: { reserved: boolean },
   ) {
     return this.svc.reserveNumber(t, u, id, body.reserved, this.review(u));
+  }
+
+  /** Park or unpark: project managers and engineers only, and only while the site is in project mode (number-parking.ts). */
+  @Patch('numbers/:id/park')
+  @RequirePermission('discovery:review')
+  parkNumber(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() u: AuthedUser,
+    @Param('id') id: string,
+    @Body(new ZodBody(numberParkSchema)) body: { parked: boolean },
+  ) {
+    return this.svc.parkNumber(t, u, id, body.parked);
   }
 
   /* ----------------------------- users ----------------------------- */

@@ -194,6 +194,9 @@ export function SiteWorkspace() {
           Reserved: <b>{numberSummary.reserved}</b>
         </Text>
         <Text size={200}>
+          Parked: <b>{numberSummary.parked}</b>
+        </Text>
+        <Text size={200}>
           Assigned: <b>{numberSummary.assigned}</b>
         </Text>
       </div>
@@ -328,7 +331,7 @@ export function SiteWorkspace() {
       )}
 
       {tab === 'numbers' && (
-        <NumberInventory base={base} siteId={siteId} locked={locked} onChanged={refreshSummary} />
+        <NumberInventory base={base} siteId={siteId} sitecode={site.sitecode} operations={site.mode === 'operations'} canPark={canReview} locked={locked} onChanged={refreshSummary} />
       )}
 
       {tab === 'users' && (

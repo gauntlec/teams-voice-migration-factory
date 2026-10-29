@@ -18,12 +18,14 @@ export interface SiteSummary {
     address: string | null;
     country: string | null;
     region: string | null;
+    /** project | operations: in operations, numbers are parked only through a service request */
+    mode: 'project' | 'operations';
   };
   review: import('./siteReview').SiteReview;
   /** changes made after the site was submitted that nobody has acknowledged yet */
   pendingChanges: number;
   callingPolicies: (Row & { name: string })[];
-  numberSummary: { total: number; available: number; reserved: number; assigned: number };
+  numberSummary: { total: number; available: number; reserved: number; assigned: number; parked: number };
   overview: DiscoverySiteOverview;
   /** the users picked in the site's roles, so they show by name */
   contactUsers: import('./siteContacts').ContactUser[];

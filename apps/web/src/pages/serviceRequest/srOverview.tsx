@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RequestAssistantCard } from '../../components/RequestAssistant';
 import { agentLabel } from '@tvmf/shared';
 import { Badge, Button, Card, Field, Radio, RadioGroup, Link, Select, Text, Textarea, tokens , makeStyles, shorthands, mergeClasses } from '@fluentui/react-components';
-import { SR_NOTE_REQUIRED, SR_REOPEN_DAYS, canMoveSr, nextSrStatus, srCanReopen, srMoveKind, srStatusLabel, srDetailLines, type FileRow, type SrDesignSummary, type SrStatus } from '@tvmf/shared';
+import { NUMBER_PARK, SR_NOTE_REQUIRED, SR_REOPEN_DAYS, canMoveSr, nextSrStatus, srCanReopen, srMoveKind, srStatusLabel, srDetailLines, type FileRow, type SrDesignSummary, type SrStatus } from '@tvmf/shared';
 import { api, apiDownload, apiUpload } from '../../api';
 import { useAuth } from '../../auth';
 import { SlaBadge } from '../../components/SrTarget';
@@ -280,6 +280,12 @@ export function Overview({
               onChange={(_, d) => setNote(d.value)}
             />
           </Field>
+          {canManage && r.type === 'change_number_state' && next === 'deployed' && (
+            <Text size={200} block>
+              Marking it as {label(next).toLowerCase()} {r.details?.park_action === NUMBER_PARK ? 'parks' : 'brings back into use'} the numbers on this request in
+              Voxshift. Do it once the carrier has made the change.
+            </Text>
+          )}
           <div className={cs.actions}>
             {canManage && next && (
               <Button

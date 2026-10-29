@@ -228,7 +228,7 @@ export class DataCollectionService {
         .where('acknowledged_at', 'is', null)
         .executeTakeFirst(),
     ]);
-    const numberSummary = { total: 0, available: 0, reserved: 0, assigned: 0 };
+    const numberSummary = { total: 0, available: 0, reserved: 0, assigned: 0, parked: 0 };
     for (const r of statusRows) {
       const k = r.status as keyof typeof numberSummary;
       numberSummary[k] = Number(r.n);

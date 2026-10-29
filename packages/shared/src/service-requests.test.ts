@@ -42,10 +42,30 @@ const VALID: Record<SrType, Record<string, unknown>> = {
     holiday_from: '2026-12-24',
     holiday_to: '2026-12-27',
   },
+  change_number_state: { park_action: 'Park them', park_numbers: ['+442079460010', '+442079460011'], when: '2026-11-30' },
   remove_user: { user: jo, leaving_date: '2026-11-30', number_after: 'Release it so it can be reused' },
   remove_common_area_phone: { phone: { id: CQ, label: 'Lobby phone' }, number_after: 'Keep it for a replacement' },
   other: { description: 'Change our caller ID' },
 };
+
+describe('park or unpark numbers', () => {
+  it('keeps only the list for the chosen action', () => {
+    const r = srDetailsSchema('change_number_state').safeParse({ park_action: 'Bring them back into use', unpark_numbers: ['+442079460010'], park_numbers: ['+442079460011'] });
+    expect(r.success && r.data).toEqual({ park_action: 'Bring them back into use', unpark_numbers: ['+442079460010'] });
+  });
+  it('needs at least one number', () => {
+    expect(srDetailsSchema('change_number_state').safeParse({ park_action: 'Park them', park_numbers: [] }).success).toBe(false);
+  });
+  it('rejects the same number twice', () => {
+    expect(srDetailsSchema('change_number_state').safeParse({ park_action: 'Park them', park_numbers: ['+442079460010', '+442079460010'] }).success).toBe(false);
+  });
+  it('lists the numbers', () => {
+    expect(srDetailLines('change_number_state', { park_action: 'Park them', park_numbers: ['+442079460010', '+442079460011'] })).toEqual([
+      { label: 'What should happen', value: 'Park them' },
+      { label: 'Numbers to park', value: '+442079460010, +442079460011' },
+    ]);
+  });
+});
 
 describe('change requests', () => {
   it('only asks for what is ticked', () => {

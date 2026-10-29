@@ -66,7 +66,8 @@ export type FlowKind = (typeof FLOW_KINDS)[number];
 export const NUMBER_HOLDER_TYPES = ['user', 'cap', 'resource_account', 'analogue'] as const;
 export type NumberHolderType = (typeof NUMBER_HOLDER_TYPES)[number];
 
-export const NUMBER_STATUSES = ['available', 'reserved', 'assigned'] as const;
+/** parked: kept with the carrier for a retention fee and not assignable until unparked - number-parking.ts. */
+export const NUMBER_STATUSES = ['available', 'reserved', 'assigned', 'parked'] as const;
 export type NumberStatus = (typeof NUMBER_STATUSES)[number];
 
 /** Users / CAPs / analogue devices: how outbound caller ID is presented. */

@@ -177,6 +177,16 @@ The Design tab asks for the carrier's range (first / last number, carrier).
 by a locked Site Data) and links it to the request (`number_range` item).
 There's nothing to deploy.
 
+### Park or unpark phone numbers
+
+Spare numbers the customer keeps with the carrier for a retention fee are **parked** (see Parked numbers in
+[DISCOVERY.md](DISCOVERY.md)). Once a site is in operations its Numbers tab no longer parks them; this request does. The form
+picks spare numbers to park, or parked numbers to bring back into use (`phone_numbers` field, up to 200); each must be at the
+site, in that state, and not on another open request (they count as claimed until the request closes). There is nothing to
+design or deploy: the engineer confirms the change with the carrier, then moves the request on to **Deployed**, which parks or
+unparks every number in the same transaction (`applyNumberState`). If any number has changed since the request was raised
+(given to someone, reserved), nothing changes, the request stays where it was, and the message says which number and why.
+
 ### Deploy
 
 What-If and Deploy for **just this request's rows** on the engineer's own
@@ -389,11 +399,12 @@ specs and the API builds its validation from the same specs (`srDetailsSchema` i
 | Change a user | Yes | Person, what should change (number, forwarding, voicemail, permissions, other) and the matching answers, when |
 | Change a call queue | Yes | The queue (from the site), people to add / remove, routing, when nobody answers |
 | Change an auto attendant | Yes | The auto attendant, opening hours, holiday closure (name, dates, message), menu, greeting |
+| Park or unpark phone numbers | Yes | Park or bring back into use, the numbers (spare or parked ones at the site), when |
 | Remove a user | Yes | Person, last working day, release or keep their number |
 | Remove a common area phone | Yes | The phone (from the site), release or keep its number |
 | Something else | Optional | Description |
 
-Field kinds include `choices` (tick boxes - "what should change") and
+Field kinds include `phone_numbers` (several of the site's spare or parked numbers), `choices` (tick boxes - "what should change") and
 `site_object` (an existing queue / auto attendant / phone at the site). A field
 can depend on a tick (`showWhen`), and anything depending on a hidden field is
 hidden too.

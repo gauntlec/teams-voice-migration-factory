@@ -575,11 +575,14 @@ export interface DiscoveryCallingPoliciesTable {
   updated_at: Ts;
 }
 
+/** phone_numbers.status - NUMBER_STATUSES in @tvmf/shared. */
+type NumberStatusValue = 'available' | 'reserved' | 'assigned' | 'parked';
+
 export interface PhoneNumbersTable {
   id: Generated<string>;
   range_id: string;
   e164: string;
-  status: ColumnType<'available' | 'reserved' | 'assigned', 'available' | 'reserved' | 'assigned' | undefined, 'available' | 'reserved' | 'assigned'>;
+  status: ColumnType<NumberStatusValue, NumberStatusValue | undefined, NumberStatusValue>;
   holder_type: 'user' | 'cap' | 'resource_account' | 'analogue' | null;
   holder_id: string | null;
   note: string | null;
@@ -596,6 +599,9 @@ export interface PhoneNumbersTable {
   live_only: ColumnType<boolean, boolean | undefined, boolean>;
   /** Plain-words clash between Teams and the Site Data holder; null = none. */
   conflict: string | null;
+  /** Parked (migration 0082): kept with the carrier for a retention fee, not assignable until unparked. */
+  parked_at: string | null;
+  parked_by: string | null;
   created_at: Ts;
 }
 

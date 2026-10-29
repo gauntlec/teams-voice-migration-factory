@@ -72,6 +72,15 @@ describe('reconcileNumbersWithTeams', () => {
     expect(n.conflict).toMatch(/reserved/);
   });
 
+  it('flags a parked number that Teams has live, and keeps it parked', async () => {
+    await c.s.updateTable('phone_numbers').set({ status: 'parked', parked_at: new Date().toISOString() }).where('e164', '=', '+12125550105').execute();
+    await liveNumber('+12125550105', 'PhoneNumberAssigned', { kind: 'user', upn: 'gus@contoso.test', displayName: 'Gus' });
+    await reconcileNumbersWithTeams(c.s, { releaseMissing: true });
+    const n = await row('+12125550105');
+    expect(n).toMatchObject({ status: 'parked', live_only: false });
+    expect(n.conflict).toMatch(/parked here/);
+  });
+
   it('frees a number only Teams was holding once Teams releases it, but only when the sync read every number', async () => {
     await liveNumber('+12125550101', 'Unassigned');
     await reconcileNumbersWithTeams(c.s, { releaseMissing: false });

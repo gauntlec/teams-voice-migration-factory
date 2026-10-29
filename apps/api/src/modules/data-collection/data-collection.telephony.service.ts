@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { sql, type Kysely } from 'kysely';
-import { cooloffDays, coolingUntil, reconcileNumbersWithTeams, refreshNumberConflict, tenantDb, type DB } from '@tvmf/db';
+import { cooloffDays, coolingUntil, reconcileNumbersWithTeams, refreshNumberConflict, setNumbersParked, tenantDb, type DB } from '@tvmf/db';
 import {
   MAX_RANGE_SIZE,
   type CallingPolicyInput,
@@ -22,6 +22,8 @@ import {
   type NumberHolderType,
   type DiscoveryBulkDeleteInput,
   coolingMessage,
+  PARKED_NUMBER_MESSAGE,
+  parkingInOperationsMessage,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
 import { applyBulkPatch, auditBulkPatch } from '../../common/bulk-patch';
@@ -423,6 +425,7 @@ export class TelephonyService {
           .select(sql<string>`count(*)`.as('total'))
           .select(sql<string>`count(*) filter (where status = 'assigned')`.as('assigned'))
           .select(sql<string>`count(*) filter (where status = 'reserved')`.as('reserved'))
+          .select(sql<string>`count(*) filter (where status = 'parked')`.as('parked'))
           .where('range_id', 'in', ids)
           .groupBy('range_id')
           .execute()
@@ -430,13 +433,13 @@ export class TelephonyService {
     const byRange = new Map(
       grp.map((g) => [
         g.range_id,
-        { total: Number(g.total), assigned: Number(g.assigned), reserved: Number(g.reserved) },
+        { total: Number(g.total), assigned: Number(g.assigned), reserved: Number(g.reserved), parked: Number(g.parked) },
       ]),
     );
     return {
       items: items.map((r) => ({
         ...r,
-        counts: byRange.get(r.id) ?? { total: 0, assigned: 0, reserved: 0 },
+        counts: byRange.get(r.id) ?? { total: 0, assigned: 0, reserved: 0, parked: 0 },
       })),
       total: Number(cnt?.n ?? 0),
       page,
@@ -481,6 +484,7 @@ export class TelephonyService {
           'n.live_holder_name as live_holder_name',
           'n.live_only as live_only',
           'n.conflict as conflict',
+          'n.parked_at as parked_at',
           'n.range_id as range_id',
           'r.range_start as range_start',
           'r.range_end as range_end',
@@ -793,7 +797,7 @@ export class TelephonyService {
       .executeTakeFirstOrThrow();
     if (Number(inUse.n) > 0) {
       throw new ConflictException(
-        `${inUse.n} number(s) from this range are assigned or reserved. Release them first.`,
+        `${inUse.n} number(s) from this range are assigned, reserved or parked. Release them first.`,
       );
     }
     await this.s(t).deleteFrom('phone_numbers').where('range_id', '=', id).execute();
@@ -856,6 +860,34 @@ export class TelephonyService {
     return row;
   }
 
+  /**
+   * Parks a spare number, or brings a parked one back into use (number-parking.ts). Only while the site is in project mode:
+   * once it is in operations a "Park or unpark phone numbers" service request does it.
+   */
+  async parkNumber(t: TenantContext, u: AuthedUser, id: string, parked: boolean) {
+    await this.assertNumberInScope(t, id);
+    const site = await this.s(t)
+      .selectFrom('phone_numbers as n')
+      .innerJoin('discovery_number_ranges as r', 'r.id', 'n.range_id')
+      .leftJoin('discovery_sites as st', 'st.sitecode', 'r.sitecode')
+      .select(['r.sitecode as sitecode', 'st.mode as mode'])
+      .where('n.id', '=', id)
+      .executeTakeFirst();
+    if (!site) throw new NotFoundException('phone number not found');
+    if (site.mode === 'operations') throw new ConflictException(parkingInOperationsMessage(site.sitecode ?? 'This site'));
+    const r = await this.db.transaction().execute((trx) => setNumbersParked(tenantDb(trx as unknown as Kysely<DB>, t.schema), [id], parked, u.id));
+    if (r.blocked.length) throw new ConflictException(r.blocked.join(' '));
+    const e164 = r.changed[0]!.e164;
+    await this.audit.tenant(t.schema, parked ? 'discovery.number_parked' : 'discovery.number_unparked', {
+      actor: actorOf(u),
+      targetType: 'phone_number',
+      targetId: id,
+      detail: { e164 },
+    });
+    await this.base.trackChange(t, u, { sitecode: site.sitecode ?? undefined, entity: 'Number', action: 'changed', label: e164, detail: parked ? 'parked' : 'back in use' });
+    return this.s(t).selectFrom('phone_numbers').selectAll().where('id', '=', id).executeTakeFirstOrThrow();
+  }
+
   /* ==================== atomic assignment core ==================== */
 
   private async claimNumber(t: TenantContext, numberId: string, holderType: NumberHolderType, holderId: string) {
@@ -877,7 +909,7 @@ export class TelephonyService {
         .executeTakeFirst();
       if (!n) throw new NotFoundException('phone number not found');
       throw new ConflictException(
-        n.status === 'reserved' ? 'That number is reserved.' : n.live_status ? `That number is in use in Teams (${n.live_holder_name ?? n.live_holder_upn ?? 'another object'}).` : 'That number is already assigned.',
+        n.status === 'reserved' ? 'That number is reserved.' : n.status === 'parked' ? PARKED_NUMBER_MESSAGE : n.live_status ? `That number is in use in Teams (${n.live_holder_name ?? n.live_holder_upn ?? 'another object'}).` : 'That number is already assigned.',
       );
     }
     await refreshNumberConflict(this.s(t), numberId);

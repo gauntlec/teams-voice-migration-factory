@@ -786,6 +786,8 @@ export const resourceAccountNumberSchema = z
 
 /** Manually flip a free number to/from 'reserved' (e.g. held for porting). */
 export const numberReserveSchema = z.object({ reserved: z.boolean() }).strict();
+/** PATCH numbers/:id/park - park a spare number, or bring a parked one back into use (project mode only; see number-parking.ts). */
+export const numberParkSchema = z.object({ parked: z.boolean() }).strict();
 /** POST numbers/:id/end-cooloff - reuse a released number before its cool-off ends; the reason is audited. */
 export const numberEndCooloffSchema = z.object({ reason: z.string().trim().min(3, 'Say why the number must be reused now').max(500) }).strict();
 export type NumberEndCooloffInput = z.infer<typeof numberEndCooloffSchema>;
@@ -1614,6 +1616,11 @@ function srFieldSchema(f: SrFieldSpec): z.ZodTypeAny {
       return z.array(srPersonSchema).max(f.max ?? 100);
     case 'phone_number':
       return z.string().trim().regex(/^\+\d{6,15}$/, `${f.label} must be a phone number`);
+    case 'phone_numbers':
+      return z
+        .array(z.string().trim().regex(/^\+\d{6,15}$/, `${f.label} must be phone numbers`))
+        .max(f.max ?? 200)
+        .refine((v) => new Set(v).size === v.length, 'Pick each number once');
     case 'target':
       return srTargetSchema;
     case 'menu':

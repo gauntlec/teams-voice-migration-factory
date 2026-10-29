@@ -7,6 +7,7 @@ import {
   VOICE_AUDIO_MAX_BYTES,
   VOICE_AUDIO_TYPES,
   coolingMessage,
+  PARKED_NUMBER_MESSAGE,
   type BuildDriftAcceptInput,
   CALL_QUEUE_NO_AGENT_ACTIONS,
   CALL_QUEUE_NO_AGENT_APPLY_TO,
@@ -2119,7 +2120,7 @@ export class BuildService {
     if (!Number(res.numUpdatedRows)) {
       const n = await this.s(t).selectFrom('phone_numbers').select(['status', 'live_status', 'live_holder_name', 'live_holder_upn']).where('id', '=', numberId).executeTakeFirst();
       if (!n) throw new NotFoundException('phone number not found');
-      throw new ConflictException(n.status === 'reserved' ? 'That number is reserved.' : n.live_status ? `That number is in use in Teams (${n.live_holder_name ?? n.live_holder_upn ?? 'another object'}).` : 'That number is already assigned.');
+      throw new ConflictException(n.status === 'reserved' ? 'That number is reserved.' : n.status === 'parked' ? PARKED_NUMBER_MESSAGE : n.live_status ? `That number is in use in Teams (${n.live_holder_name ?? n.live_holder_upn ?? 'another object'}).` : 'That number is already assigned.');
     }
     await refreshNumberConflict(this.s(t), numberId);
   }

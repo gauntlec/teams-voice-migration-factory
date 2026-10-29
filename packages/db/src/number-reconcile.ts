@@ -88,6 +88,9 @@ async function designHolders(s: Scoped, rows: HolderRow[]): Promise<Map<string, 
   return out;
 }
 
+/** Free numbers Site Data deliberately holds back: Teams having one live is a conflict, not a takeover. */
+const HELD_HERE: readonly string[] = ['reserved', 'parked'];
+
 const liveLabel = (l: Pick<LiveNumber, 'name' | 'upn'>) => l.name ?? l.upn ?? 'another object';
 
 /**
@@ -97,7 +100,9 @@ const liveLabel = (l: Pick<LiveNumber, 'name' | 'upn'>) => l.name ?? l.upn ?? 'a
 export function numberConflict(row: { status: string; holder_type: string | null; holder_id: string | null }, design: Holder | undefined, live: LiveNumber | null): string | null {
   if (!live) return null;
   const on = liveLabel(live);
-  if (!row.holder_id) return row.status === 'reserved' ? `Live in Teams on ${on}, but reserved here. Nothing has been changed: release the reservation here, or free the number in Teams.` : null;
+  if (!row.holder_id && row.status === 'reserved') return `Live in Teams on ${on}, but reserved here. Nothing has been changed: release the reservation here, or free the number in Teams.`;
+  if (!row.holder_id && row.status === 'parked') return `Live in Teams on ${on}, but parked here, so the customer may be paying only the retention fee. Nothing has been changed: free the number in Teams, or bring it back into use here.`;
+  if (!row.holder_id) return null;
   if (row.holder_type === 'analogue') return `Live in Teams on ${on}, but Site Data has it as an analogue line. Nothing has been changed: correct the entry here to match Teams, or free the number in Teams.`;
   if (!design?.upn || !live.upn) return null;
   return design.upn === live.upn ? null : `Live in Teams on ${on}, but Site Data has it for ${design.name ?? design.upn}. Nothing has been changed: change the entry here to match Teams, or move the number in Teams.`;
@@ -142,7 +147,7 @@ export async function reconcileNumbersWithTeams(s: Scoped, opts: { releaseMissin
   const design = await designHolders(s, [...byE164.values()]);
   for (const [e164, l] of live) {
     const row = byE164.get(e164)!;
-    const liveOnly = !row.holder_id && row.status !== 'reserved';
+    const liveOnly = !row.holder_id && !HELD_HERE.includes(row.status);
     if (liveOnly && row.status === 'available') result.taken += 1;
     const conflict = numberConflict({ status: row.status, holder_type: row.holder_type, holder_id: row.holder_id }, row.holder_id ? design.get(row.holder_id) : undefined, l);
     if (conflict) result.conflicts += 1;
@@ -204,7 +209,7 @@ export async function refreshNumberConflict(s: Scoped, numberId: string): Promis
   const design = row.holder_id ? (await designHolders(s, [row])).get(row.holder_id) : undefined;
   const liveRow: LiveNumber = { status: row.live_status, kind: 'other', upn: row.live_holder_upn, name: row.live_holder_name };
   const conflict = numberConflict(row, design, liveRow);
-  const liveOnly = !row.holder_id && row.status !== 'reserved';
+  const liveOnly = !row.holder_id && !HELD_HERE.includes(row.status);
   await s
     .updateTable('phone_numbers')
     .set({ live_only: liveOnly, conflict, status: liveOnly ? 'assigned' : row.status })
