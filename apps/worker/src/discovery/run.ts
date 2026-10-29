@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { Job } from 'bullmq';
 import { sql, type Kysely } from 'kysely';
 import { computeSiteDrift, markNumbersReleased, reconcileNumbersWithTeams, type NumberReconcileResult, platformDb, sitesWithLiveRuns, tenantDb, type DB, webOrigin as resolveWebOrigin } from '@tvmf/db';
@@ -64,6 +65,9 @@ const canon = (v: unknown): string => {
         : x;
   return JSON.stringify(sort(v));
 };
+
+/** What `tenant_objects.content_hash` holds: equal hashes mean equal data, whatever the key order. */
+const hashOf = (data: Rec): string => createHash('sha1').update(canon(data)).digest('hex');
 
 /** Top-level keys whose value differs between two records (added, removed or changed). */
 function diffKeys(before: Rec | null, after: Rec | null): string[] {
@@ -235,7 +239,11 @@ async function runDiscovery(
 
   const succeededTypes = new Set<TenantObjectType>();
   let signInLost = false;
-  const ctx: RunContext = { assignees: null };
+  /** the users step came back whole, so the other voice users' settings are read once the run has finished */
+  let readOtherVoiceUsers = false;
+  const ctx: RunContext = { schema, assignees: null };
+  // A new sync takes over from an earlier run's background voice settings pass (it would read the same users).
+  backgroundVoice.get(schema)?.stop();
 
   for (const step of TENANT_DISCOVERY_STEPS) {
     const specs = STEP_CMDLETS[step].filter((sp) => wantType(sp.objectType));
@@ -270,11 +278,13 @@ async function runDiscovery(
     }
     if (signInLost) break;
     if (step === 'users' && wantType('user') && stepComplete) {
-      // Everything Teams voice keeps per voice-enabled user, so Design & Build can start from what the tenant has.
+      // Everything Teams voice keeps per voice-enabled user, so Design & Build can start from what the tenant has. Only the users in
+      // Site Data or Design & Build are read here (drift and the completion email need theirs); the rest follow after the run.
       try {
-        const due = await usersNeedingVoiceSettings(s, 12 * 3600_000);
+        const due = await usersNeedingVoiceSettings(s, schema, 12 * 3600_000, 'in_sites');
         await syncUserVoiceSettings(s, exec, runId, due.map((u) => ({ objectId: u.object_id, upn: u.upn })), progress, { budgetMs: 90 * 60_000 });
         progress.note = null;
+        readOtherVoiceUsers = true;
       } catch (e) {
         const message = (e as Error).message ?? String(e);
         progress.errors.push({ step, message: `voice settings: ${message}` });
@@ -435,6 +445,45 @@ async function runDiscovery(
     progress,
     scopeTypes,
   });
+
+  if (!signInLost && readOtherVoiceUsers) await readOtherVoiceSettings(s, schema, exec, runId);
+}
+
+/** The background voice settings pass in flight per customer schema; a new sync stops it. */
+const backgroundVoice = new Map<string, { stop: () => void }>();
+
+/**
+ * After the run has finished (status, summary and email are done), reads the voice settings of the voice-enabled users who are not in
+ * Site Data or Design & Build. Nothing waits on these, so the run no longer takes up to 90 minutes longer on a big tenant. The run row
+ * is not touched until the end, when `summary.voiceSettings` says how far it got. Best-effort: the users not read are read next sync.
+ */
+async function readOtherVoiceSettings(s: Scoped, schema: string, exec: TeamsExecutor, runId: string) {
+  let stopped = false;
+  const token = { stop: () => void (stopped = true) };
+  backgroundVoice.set(schema, token);
+  const progress = emptyProgress(); // collects errors; never saved over the finished run's own progress
+  try {
+    const due = await usersNeedingVoiceSettings(s, schema, 12 * 3600_000, 'others');
+    if (!due.length) return;
+    const r = await syncUserVoiceSettings(s, exec, runId, due.map((u) => ({ objectId: u.object_id, upn: u.upn })), progress, {
+      budgetMs: 90 * 60_000,
+      shouldStop: () => stopped,
+      saveNotes: false,
+    });
+    const voiceSettings = { due: due.length, read: r.read, failed: r.failed, unfinished: r.stoppedEarly, errors: progress.errors.slice(0, 20).map((e) => e.message) };
+    await s
+      .updateTable('tenant_discovery_runs')
+      .set({ summary: sql`summary || ${JSON.stringify({ voiceSettings })}::jsonb` as never })
+      .where('id', '=', runId)
+      .execute();
+    // eslint-disable-next-line no-console
+    console.log(`[discovery ${runId}] voice settings after the run: read ${r.read} of ${due.length}${r.stoppedEarly ? ' (the rest follow next sync)' : ''}, ${r.failed} failed`);
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn(`[discovery ${runId}] voice settings after the run stopped: ${(e as Error).message}`);
+  } finally {
+    if (backgroundVoice.get(schema) === token) backgroundVoice.delete(schema);
+  }
 }
 
 /**
@@ -545,6 +594,8 @@ interface Assignee {
   kind: 'user' | 'resource_account';
 }
 interface RunContext {
+  /** the customer's schema, for the raw SQL bulk updates */
+  schema: string;
   /** Entra object id -> who holds it; built once, after the users + resource-account steps */
   assignees: Map<string, Assignee> | null;
 }
@@ -598,6 +649,17 @@ interface PrevObject {
   display_name: string | null;
   removed_at: string | null;
 }
+
+/** What a step already has stored for one object: enough to tell whether it changed, without its data. */
+interface StoredObject {
+  id: string;
+  hash: string | null;
+  display_name: string | null;
+  removed_at: string | null;
+}
+
+/** Objects are stored this many at a time: one statement per batch instead of two or three per object. */
+const STORE_BATCH = 500;
 type NewVersion = {
   object_id: string;
   run_id: string;
@@ -613,8 +675,12 @@ type NewVersion = {
 
 /**
  * Fetch one cmdlet (paging when supported) and upsert every record. To keep the
- * query load flat on large tenants we read the whole current snapshot for this
- * object type once (not once per row) and batch the version-history inserts.
+ * query load flat on large tenants we read what is stored for this object type
+ * once (ids and content hashes, not the data), store records 500 at a time, and
+ * rewrite only the objects that changed: an unchanged one just has its "seen"
+ * fields moved on. Rewriting every object's data on every sync was most of the
+ * database load a big sync put on Postgres (the full-text column is recomputed
+ * and every index updated for each rewrite), which also slowed the web app.
  */
 async function runSpec(
   s: Scoped,
@@ -640,14 +706,15 @@ async function runSpec(
   // Current snapshot for this type, keyed by object_key - one read for the step.
   progress.note = `Loading existing ${noun}…`;
   await saveProgress(s, runId, progress);
-  const prev = new Map<string, PrevObject>();
+  const prev = new Map<string, StoredObject>();
   for (const row of await s
     .selectFrom('tenant_objects')
-    .select(['object_key', 'data', 'display_name', 'removed_at'])
+    .select(['id', 'object_key', 'content_hash', 'display_name', 'removed_at'])
     .where('object_type', '=', spec.objectType)
     .execute()) {
     prev.set(row.object_key, {
-      data: row.data as Rec,
+      id: row.id,
+      hash: row.content_hash,
       display_name: row.display_name,
       removed_at: row.removed_at,
     });
@@ -694,42 +761,125 @@ async function runSpec(
           skippedUnlicensed += 1;
           continue;
         }
-        const name = spec.name(r);
-        const p = prev.get(key);
-        if (spec.objectType === 'phone_number' && numberReleasedInTeams(p?.data, r)) released.push(key);
-        const { id: objectId, change } = await upsertObject(s, runId, spec.objectType, key, name, r, p);
-        if (change) {
-          progress.changed[change] += 1;
-          versions.push({
-            object_id: objectId,
-            run_id: runId,
-            object_type: spec.objectType,
-            object_key: key,
-            display_name: name,
-            change_kind: change,
-            changed_fields: change === 'updated' ? diffKeys(p?.data ?? null, r) : [],
-            before: p?.data ?? null,
-            after: r,
-            changed_at: new Date().toISOString(),
-          });
-        }
-        if (spec.objectType === 'user') await projectUser(s, runId, objectId, r);
-        if (spec.objectType === 'policy' && spec.policyType) {
-          await projectPolicy(s, runId, objectId, spec.policyType, r);
-        }
-        stored += 1;
-        progress.counts[spec.objectType] = base + stored;
-      }
-      if (versions.length >= 500) await flushVersions();
-      // heartbeat the run row so the UI shows the count climbing on a big step
-      if (stored - lastSaved >= 250) {
-        lastSaved = stored;
-        progress.note = expected
-          ? `Storing ${noun}: ${stored.toLocaleString()} / ${expected.toLocaleString()}…`
-          : `Storing ${stored.toLocaleString()} ${noun}…`;
-        await saveProgress(s, runId, progress);
+        queued.push({ key, name: spec.name(r), data: r });
+        if (queued.length >= STORE_BATCH) await storeQueued();
       }
     }
+    await storeQueued();
+  };
+
+  let queued: { key: string; name: string | null; data: Rec }[] = [];
+  const storeQueued = async () => {
+    if (!queued.length) return;
+    const batch = queued;
+    queued = [];
+    await storeBatch(batch);
+    if (versions.length >= 500) await flushVersions();
+    // heartbeat the run row so the UI shows the count climbing on a big step
+    if (stored - lastSaved >= 250) {
+      lastSaved = stored;
+      progress.note = expected
+        ? `Storing ${noun}: ${stored.toLocaleString()} / ${expected.toLocaleString()}…`
+        : `Storing ${stored.toLocaleString()} ${noun}…`;
+      await saveProgress(s, runId, progress);
+    }
+  };
+
+  /** Stores one batch: new, re-added and changed objects are written; unchanged ones only get their "seen" fields moved on. */
+  const storeBatch = async (items: { key: string; name: string | null; data: Rec }[]) => {
+    const now = new Date().toISOString();
+    // one row per key (a key twice in one statement is an error); the later record wins
+    const rows = [...new Map(items.map((i) => [i.key, i])).values()].map((i) => ({ ...i, hash: hashOf(i.data), p: prev.get(i.key) }));
+    // The stored data is read back only where it is needed: for the history row of a change, or to compare an object stored before
+    // content hashes existed (the first sync after migration 0080).
+    const needData = rows.filter((x) => x.p && (x.p.removed_at || x.p.hash !== x.hash || (x.p.display_name ?? null) !== (x.name ?? null)));
+    const before = new Map<string, Rec>();
+    if (needData.length) {
+      for (const row of await s.selectFrom('tenant_objects').select(['id', 'data']).where('id', 'in', needData.map((x) => x.p!.id)).execute()) {
+        before.set(row.id, row.data as Rec);
+      }
+    }
+    const judged = rows.map((x) => {
+      const old = x.p ? (before.get(x.p.id) ?? null) : null;
+      let change: TenantObjectChangeKind | null = null;
+      if (!x.p) change = 'added';
+      else if (x.p.removed_at) change = 'readded';
+      else if ((x.p.display_name ?? null) !== (x.name ?? null)) change = 'updated';
+      else if (x.p.hash !== x.hash && (x.p.hash !== null || canon(old) !== canon(x.data))) change = 'updated';
+      return { ...x, old, change };
+    });
+
+    const ids = new Map<string, string>();
+    const write = judged.filter((x) => x.change);
+    if (write.length) {
+      const written = await s
+        .insertInto('tenant_objects')
+        .values(
+          write.map((x) => ({
+            object_type: spec.objectType,
+            object_key: x.key,
+            display_name: x.name,
+            data: x.data,
+            content_hash: x.hash,
+            first_seen_run_id: runId,
+            last_seen_run_id: runId,
+            discovered_at: now,
+            content_changed_at: now,
+          })),
+        )
+        .onConflict((oc) =>
+          oc.columns(['object_type', 'object_key']).doUpdateSet((eb) => ({
+            display_name: eb.ref('excluded.display_name'),
+            data: eb.ref('excluded.data'),
+            content_hash: eb.ref('excluded.content_hash'),
+            last_seen_run_id: runId,
+            discovered_at: now,
+            removed_at: null,
+            content_changed_at: now,
+          })),
+        )
+        .returning(['id', 'object_key'])
+        .execute();
+      for (const w of written) ids.set(w.object_key, w.id);
+    }
+    const same = judged.filter((x) => !x.change);
+    if (same.length) {
+      // content_hash too: it is still empty on objects stored before migration 0080
+      await sql`UPDATE ${sql.table(`${ctx.schema}.tenant_objects`)} AS t
+        SET last_seen_run_id = ${runId}::uuid, discovered_at = ${now}::timestamptz, content_hash = v.h
+        FROM unnest(${same.map((x) => x.p!.id)}::uuid[], ${same.map((x) => x.hash)}::text[]) AS v(id, h)
+        WHERE t.id = v.id`.execute(s);
+      for (const x of same) ids.set(x.key, x.p!.id);
+    }
+
+    const users: { objectId: string; r: Rec }[] = [];
+    for (const x of judged) {
+      const objectId = ids.get(x.key)!;
+      prev.set(x.key, { id: objectId, hash: x.hash, display_name: x.name, removed_at: null });
+      if (spec.objectType === 'phone_number' && numberReleasedInTeams(x.old, x.data)) released.push(x.key);
+      if (x.change) {
+        progress.changed[x.change] += 1;
+        versions.push({
+          object_id: objectId,
+          run_id: runId,
+          object_type: spec.objectType,
+          object_key: x.key,
+          display_name: x.name,
+          change_kind: x.change,
+          changed_fields: x.change === 'updated' ? diffKeys(x.old, x.data) : [],
+          before: x.old,
+          after: x.data,
+          changed_at: now,
+        });
+      }
+      if (spec.objectType === 'user') users.push({ objectId, r: x.data });
+    }
+    if (users.length) await projectUsers(s, runId, users);
+    if (spec.objectType === 'policy' && spec.policyType) {
+      for (const x of judged) await projectPolicy(s, runId, ids.get(x.key)!, spec.policyType, x.data);
+    }
+    stored += items.length;
+    progress.counts[spec.objectType] = base + stored;
   };
 
   const qopts = { select: spec.select, depth: spec.depth, timeoutMs: spec.timeoutMs };
@@ -758,17 +908,23 @@ async function runSpec(
     // A slice that failed means part of the type was never seen this run, so
     // it must not be reconciled (that would mark every user in it removed).
     let failedBuckets = 0;
+    // The next slice is asked for before this one is stored, so Teams works on it while the database stores this one (the session
+    // runs one command at a time, so the order is unchanged).
+    const ask = (i: number) => {
+      const p = exec.query(spec.command, { Filter: buckets[i].filter, ...(spec.resultSize ? { ResultSize: spec.resultSize } : {}) }, qopts);
+      p.catch(() => undefined); // handled when it is awaited; this only stops an unhandled rejection if the step ends first
+      return p;
+    };
+    let nextSlice = buckets.length ? ask(0) : null;
     for (let i = 0; i < buckets.length; i++) {
       const bk = buckets[i];
       progress.note = `Fetching ${noun}: ${fetched.toLocaleString()} so far (${bk.label}, ${i + 1}/${buckets.length})…`;
       await saveProgress(s, runId, progress);
+      const thisSlice = nextSlice!;
+      nextSlice = i + 1 < buckets.length ? ask(i + 1) : null;
       let recs: unknown[];
       try {
-        recs = await exec.query(
-          spec.command,
-          { Filter: bk.filter, ...(spec.resultSize ? { ResultSize: spec.resultSize } : {}) },
-          qopts,
-        );
+        recs = await thisSlice;
       } catch (e) {
         const message = (e as Error).message ?? String(e);
         if (!exec.alive || /pwsh exited|could not start pwsh|executor disposed|not connected|session is disconnected/i.test(message)) {
@@ -870,6 +1026,7 @@ function fallbackKey(r: Rec): string {
  * Upsert one object into the current snapshot and classify how it changed
  * against `prev` (the row already loaded for this type, or undefined if new).
  * The caller records the version row; this only writes `tenant_objects`.
+ * Used by the targeted check, which reads a handful of users; a sync stores in batches (runSpec).
  */
 async function upsertObject(
   s: Scoped,
@@ -898,6 +1055,7 @@ async function upsertObject(
       object_key: objectKey,
       display_name: displayName,
       data,
+      content_hash: hashOf(data),
       first_seen_run_id: runId,
       last_seen_run_id: runId,
       discovered_at: now,
@@ -907,6 +1065,7 @@ async function upsertObject(
       oc.columns(['object_type', 'object_key']).doUpdateSet({
         display_name: displayName,
         data,
+        content_hash: hashOf(data),
         last_seen_run_id: runId,
         discovered_at: now,
         removed_at: null,
@@ -965,8 +1124,80 @@ function isTeamsCandidate(r: Rec): boolean {
 }
 
 async function projectUser(s: Scoped, runId: string, objectId: string, r: Rec) {
+  await projectUsers(s, runId, [{ objectId, r }]);
+}
+
+/** The `tenant_users` columns a sync sets from the record (`last_seen_run_id` is moved on separately). */
+const USER_COLUMNS = [
+  'upn',
+  'entra_id',
+  'display_name',
+  'account_type',
+  'account_enabled',
+  'enterprise_voice_enabled',
+  'line_uri',
+  'telephone_numbers',
+  'feature_types',
+  'assigned_plans',
+  'usage_location',
+  'department',
+  'job_title',
+  'interpreted_user_type',
+  'policies',
+  'effective_policy_assignments',
+  'when_changed',
+  'removed_at',
+] as const;
+
+/**
+ * Projects users into `tenant_users` in one statement. A row is rewritten only when one of its columns differs (so an unchanged user
+ * costs no rewrite, and a change to what is projected still reaches every user); every row then has `last_seen_run_id` moved on.
+ * If the batch is refused (two accounts with one UPN, say), each user is tried on its own so the others are kept, and the first
+ * error is thrown so the step is not counted complete.
+ */
+async function projectUsers(s: Scoped, runId: string, users: { objectId: string; r: Rec }[]) {
+  const rows = [...new Map(users.map((u) => [u.objectId, userValues(runId, u.objectId, u.r)])).values()].filter((v) => !!v);
+  if (!rows.length) return;
+  const upsert = (values: typeof rows) =>
+    s
+      .insertInto('tenant_users')
+      .values(values)
+      .onConflict((oc) =>
+        oc
+          .column('object_id')
+          .doUpdateSet((eb) => ({ ...Object.fromEntries(USER_COLUMNS.map((c) => [c, eb.ref(`excluded.${c}`)])), last_seen_run_id: runId }) as never)
+          .where(
+            sql<boolean>`(${sql.join(USER_COLUMNS.map((c) => sql.ref(`tenant_users.${c}`)))}) IS DISTINCT FROM (${sql.join(USER_COLUMNS.map((c) => sql.ref(`excluded.${c}`)))})`,
+          ),
+      )
+      .execute();
+  let first: unknown = null;
+  try {
+    await upsert(rows);
+  } catch {
+    for (const row of rows) {
+      try {
+        await upsert([row]);
+      } catch (e) {
+        first ??= e;
+      }
+    }
+  }
+  await touchUsers(s, runId, rows.map((r) => r.object_id));
+  if (first) throw first;
+}
+
+const touchUsers = (s: Scoped, runId: string, objectIds: string[]) =>
+  s
+    .updateTable('tenant_users')
+    .set({ last_seen_run_id: runId })
+    .where('object_id', 'in', objectIds)
+    .where((eb) => eb.or([eb('last_seen_run_id', '<>', runId), eb('last_seen_run_id', 'is', null)]))
+    .execute();
+
+function userValues(runId: string, objectId: string, r: Rec) {
   const upn = str(r.UserPrincipalName);
-  if (!upn) return;
+  if (!upn) return null;
   const policies: Record<string, string | null> = {};
   for (const t of TENANT_POLICY_TYPES) policies[t] = policyValue(r[t]);
   const numbers = Array.isArray(r.TelephoneNumbers)
@@ -999,11 +1230,7 @@ async function projectUser(s: Scoped, runId: string, objectId: string, r: Rec) {
     last_seen_run_id: runId,
     removed_at: null,
   };
-  await s
-    .insertInto('tenant_users')
-    .values(values)
-    .onConflict((oc) => oc.column('object_id').doUpdateSet(values))
-    .execute();
+  return values;
 }
 
 /**
@@ -1107,20 +1334,22 @@ export async function syncUserVoiceSettings(
   runId: string,
   users: { objectId: string; upn: string }[],
   progress: TenantDiscoveryProgress,
-  opts: { budgetMs?: number } = {},
+  /** `shouldStop`: checked between batches (a newer sync took over). `saveNotes: false`: never write the run row (it has finished). */
+  opts: { budgetMs?: number; shouldStop?: () => boolean; saveNotes?: boolean } = {},
 ): Promise<{ read: number; failed: number; stoppedEarly: boolean }> {
   const started = Date.now();
+  const saveNotes = opts.saveNotes !== false;
   let read = 0;
   let failed = 0;
   for (let i = 0; i < users.length; i += VOICE_SETTINGS_BATCH) {
-    if (opts.budgetMs && Date.now() - started > opts.budgetMs) {
+    if ((opts.budgetMs && Date.now() - started > opts.budgetMs) || opts.shouldStop?.()) {
       progress.note = `Read voice settings for ${read.toLocaleString()} of ${users.length.toLocaleString()} voice users; the rest follow on the next sync.`;
-      await saveProgress(s, runId, progress);
+      if (saveNotes) await saveProgress(s, runId, progress);
       return { read, failed, stoppedEarly: true };
     }
     const batch = users.slice(i, i + VOICE_SETTINGS_BATCH);
     progress.note = `Reading voice settings: ${Math.min(i + batch.length, users.length).toLocaleString()} / ${users.length.toLocaleString()} voice-enabled users…`;
-    await saveProgress(s, runId, progress);
+    if (saveNotes) await saveProgress(s, runId, progress);
     let results: Awaited<ReturnType<TeamsExecutor['queryMany']>>;
     try {
       results = await exec.queryMany(
@@ -1163,15 +1392,24 @@ export async function syncUserVoiceSettings(
   return { read, failed, stoppedEarly: false };
 }
 
-/** The voice-enabled users whose settings are oldest (never read first), up to `limit`, skipping any read within `freshMs`. */
-async function usersNeedingVoiceSettings(s: Scoped, freshMs: number) {
+/**
+ * The voice-enabled users whose settings are oldest (never read first), skipping any read within `freshMs`. `in_sites`: only those in
+ * Site Data or Design & Build (as a user or a common area phone, matched on UPN); `others`: everyone else.
+ */
+async function usersNeedingVoiceSettings(s: Scoped, schema: string, freshMs: number, which: 'in_sites' | 'others') {
   const cutoff = new Date(Date.now() - freshMs).toISOString();
+  const inSites = sql<boolean>`lower(upn) IN (
+    SELECT lower(upn) FROM ${sql.table(`${schema}.discovery_users`)} WHERE upn IS NOT NULL
+    UNION SELECT lower(upn) FROM ${sql.table(`${schema}.discovery_caps`)} WHERE upn IS NOT NULL
+    UNION SELECT lower(upn) FROM ${sql.table(`${schema}.build_users`)} WHERE upn IS NOT NULL
+    UNION SELECT lower(upn) FROM ${sql.table(`${schema}.build_caps`)} WHERE upn IS NOT NULL)`;
   return s
     .selectFrom('tenant_users')
     .select(['object_id', 'upn'])
     .where('removed_at', 'is', null)
     .where((eb) => eb.or([eb('enterprise_voice_enabled', '=', true), eb('line_uri', 'is not', null)]))
     .where((eb) => eb.or([eb('voice_settings_at', 'is', null), eb('voice_settings_at', '<', cutoff)]))
+    .where(which === 'in_sites' ? inSites : sql<boolean>`NOT (${inSites})`)
     .orderBy('voice_settings_at', (o) => o.asc().nullsFirst())
     .execute();
 }
@@ -1187,23 +1425,24 @@ async function usersNeedingVoiceSettings(s: Scoped, freshMs: number) {
 export async function syncTenantGroups(s: Scoped, exec: TeamsExecutor): Promise<number> {
   const syncStart = new Date().toISOString();
   const groups = await exec.graphList('/groups?$select=id,displayName,mail');
-  let synced = 0;
-  for (const g of groups) {
-    const group = g as { id?: string; displayName?: string; mail?: string | null };
-    if (!group.id || !group.displayName) continue;
-    const values = {
-      object_id: group.id,
-      display_name: group.displayName,
-      mail: group.mail ?? null,
-      synced_at: new Date().toISOString(),
-    };
+  const rows = [
+    ...new Map(
+      (groups as { id?: string; displayName?: string; mail?: string | null }[])
+        .filter((g) => g.id && g.displayName)
+        .map((g) => [g.id!, { object_id: g.id!, display_name: g.displayName!, mail: g.mail ?? null, synced_at: new Date().toISOString() }]),
+    ).values(),
+  ];
+  // 500 at a time: a big tenant has thousands of groups
+  for (let i = 0; i < rows.length; i += 500) {
     await s
       .insertInto('tenant_groups')
-      .values(values)
-      .onConflict((oc) => oc.column('object_id').doUpdateSet(values))
+      .values(rows.slice(i, i + 500))
+      .onConflict((oc) =>
+        oc.column('object_id').doUpdateSet((eb) => ({ display_name: eb.ref('excluded.display_name'), mail: eb.ref('excluded.mail'), synced_at: eb.ref('excluded.synced_at') })),
+      )
       .execute();
-    synced++;
   }
+  const synced = rows.length;
   // Groups deleted from the tenant drop out of the cache, so they can't be
   // picked as a Shared Voicemail target any more. Only after a full list that
   // returned something - an empty answer is more likely a hiccup than a tenant

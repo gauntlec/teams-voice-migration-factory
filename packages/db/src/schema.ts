@@ -1146,6 +1146,8 @@ export interface TenantObjectsTable {
   discovered_at: Ts;
   /** when `data` last actually changed (vs `discovered_at` = last seen) */
   content_changed_at: string | null;
+  /** sha1 of the canonical JSON of `data` (migration 0080); null until a sync has written it */
+  content_hash: string | null;
   removed_at: string | null;
 }
 
