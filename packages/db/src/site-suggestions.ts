@@ -1,3 +1,4 @@
+import { sql } from 'kysely';
 import { isCommonAreaPhone, type MixedSuggestion, type SiteSuggestion, type SiteSuggestions, type SuggestionKind } from '@tvmf/shared';
 import { normalizeTeamsNumber } from './number-reconcile';
 import type { Scoped } from './live-state';
@@ -62,12 +63,14 @@ export async function siteSuggestions(s: Scoped): Promise<SiteSuggestions> {
     return true;
   };
 
-  // Accounts: users and common area phones.
+  // Accounts: users and common area phones. Only those with a number can be judged; on a big tenant that is a small share, and
+  // sending every user with their licences took seconds (3,592 of 49,303 on the dev host).
   const users = await s
     .selectFrom('tenant_users')
     .select(['id', 'upn', 'display_name', 'line_uri', 'telephone_numbers', 'assigned_plans'])
     .where('removed_at', 'is', null)
     .where((eb) => eb.or([eb('account_type', '=', 'User'), eb('account_type', 'is', null)]))
+    .where((eb) => eb.or([eb('line_uri', 'is not', null), eb('telephone_numbers', '!=', sql<never>`'[]'::jsonb`)]))
     .execute();
   const [dcUsers, dcCaps] = await Promise.all([s.selectFrom('discovery_users').select(['upn', 'site_id']).execute(), s.selectFrom('discovery_caps').select(['upn', 'site_id']).execute()]);
   const userByUpn = new Map(dcUsers.map((d) => [lower(d.upn), d]));

@@ -229,7 +229,8 @@ with the deleted row counts (including `callingPolicyMappingsRemoved`).
   batches the `tenant_object_versions` inserts; `summary` runs its queries
   sequentially (never holds >1 pooled connection); the Discovery page polls
   `summary` every 12 s while a run is going (the live progress bar uses the cheap
-  `GET runs/:id` instead); pool size is `PG_POOL_MAX` (default 20) per process.
+  `GET runs/:id` instead); the API's pool is `PG_POOL_MAX` (default 20), the worker's `WORKER_PG_POOL_MAX` (5) and a sync's own
+  `DISCOVERY_PG_POOL_MAX` (3), so the website keeps most of Postgres.
   On a worker restart the startup sweep fails any run left `queued`/`running`.
 - **`Get-CsOnlineUser` on a big tenant.** It has no `-Skip`, so instead of one
   opaque multi-minute call the worker fetches it in **disjoint `-Filter`
@@ -368,6 +369,15 @@ What is unchanged: what Teams is asked for, and how long Microsoft takes to answ
   holds a job's lock for 5 minutes and fails a stalled job instead of re-running it (`maxStalledCount: 0`). On the dev host a stall made
   BullMQ start the same run a second time, which doubled the load, wrote history twice and broke the number reconcile.
 - A database restart no longer crashes the worker (the pool's `error` event is handled in `createDb`).
+
+**The website comes first while a sync runs (2026.10.78).** Postgres has no per-client priority, so:
+
+- A sync writes through its own small pool (`DISCOVERY_PG_POOL_MAX`, default 3) with `synchronous_commit = off`: its commits do not
+  wait for the disk, so pages are not queued behind every flush on a slow disk. If Postgres or the host crashes mid-sync the last fraction
+  of a second of its writes can be lost (never half-written); the startup sweep fails the run and it is run again. Deployments, mail and
+  everything else the worker does keep full durability on the worker's main pool (`WORKER_PG_POOL_MAX`, default 5).
+- Site suggestions (Discovery's "Site (from number)" column, the site page's suggestions and auto-add by number range) read only the
+  users that have a number, not every user with their licences: 3-10 s on the dev host's 50,000 users during a sync.
 
 **Design & Build** starts from this: Quick add, Populate and the **Import voice settings** button (Users and Common area phones tabs) fill a row's
 call forwarding, delegates, call group and voicemail from what the tenant has, but only where the row is still empty - a designed setting is never

@@ -65,7 +65,13 @@ const MAIL_QUEUE_NAME = 'mail';
 const connection = new IORedis(process.env.REDIS_URL ?? 'redis://redis:6379', {
   maxRetriesPerRequest: null,
 });
-const { db } = createDb();
+// The website comes first. The worker keeps a small pool (it runs one query at a time per job), and a discovery sync gets its own
+// pool whose commits do not wait for the disk, so a big sync does not queue pages behind every flush on a slow disk. Only the sync:
+// a crash can lose its last fraction of a second of writes, and the run is marked failed and run again. Deployments, mail and the
+// rest keep full durability on `db`. Pool sizes: WORKER_PG_POOL_MAX (default 5) and DISCOVERY_PG_POOL_MAX (default 3) in .env.
+const poolSize = (name: string, fallback: number) => Math.max(2, Math.floor(Number(process.env[name])) || fallback);
+const { db } = createDb(undefined, { max: poolSize('WORKER_PG_POOL_MAX', 5) });
+const { db: discoveryDb } = createDb(undefined, { max: poolSize('DISCOVERY_PG_POOL_MAX', 3), synchronousCommit: false });
 /** Producer for the `mail` queue — used by jobs the worker originates. */
 const enqueueMail = makeMailEnqueuer(db, connection);
 
@@ -1280,7 +1286,7 @@ const worker = new Worker(
       case 'deployment.run':
         return handleDeploymentRun(job);
       case 'tenant_discovery.run':
-        return handleTenantDiscoveryRun(job, db, (id) => executors.get(id), enqueueMail);
+        return handleTenantDiscoveryRun(job, discoveryDb, (id) => executors.get(id), enqueueMail);
       default:
         throw new Error(`unknown job: ${job.name}`);
     }
