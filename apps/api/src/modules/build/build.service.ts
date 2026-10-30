@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { sql, type Kysely } from 'kysely';
-import { computeSiteDrift, coolingUntil, makeAutoAttendantTargetResolver, refreshNumberConflict, resolveLiveNumberTypes, tenantDb, type DB } from '@tvmf/db';
+import { computeSiteDrift, coolingUntil, makeAutoAttendantTargetResolver, refreshNumberConflict, releasedNumber, resolveLiveNumberTypes, tenantDb, type DB } from '@tvmf/db';
 import {
   identityDriftNotAccepted,
   VOICE_AUDIO_MAX_BYTES,
@@ -2114,8 +2114,9 @@ export class BuildService {
       .set({ holder_type: holderType, holder_id: holderId, status: 'assigned', live_only: false })
       .where('id', '=', numberId)
       .where('holder_id', 'is', null)
-      // free, or assigned only because Teams has it (number-reconcile.ts): a holder in Site Data takes it over, and any clash with Teams is flagged
-      .where((eb) => eb.or([eb.and([eb('status', '=', 'available'), eb('live_status', 'is', null)]), eb('live_only', '=', true)]))
+      // free (a free number Teams still has included), or assigned only because Teams has it (number-reconcile.ts): a holder in Site Data
+      // takes it over, and any clash with Teams is flagged
+      .where((eb) => eb.or([eb('status', '=', 'available'), eb('live_only', '=', true)]))
       .executeTakeFirst();
     if (!Number(res.numUpdatedRows)) {
       const n = await this.s(t).selectFrom('phone_numbers').select(['status', 'live_status', 'live_holder_name', 'live_holder_upn']).where('id', '=', numberId).executeTakeFirst();
@@ -2169,7 +2170,7 @@ export class BuildService {
   private async releaseHolder(t: TenantContext, holderType: NumberHolderType, holderId: string) {
     await this.s(t)
       .updateTable('phone_numbers')
-      .set({ holder_type: null, holder_id: null, status: 'available' })
+      .set(releasedNumber())
       .where('holder_type', '=', holderType)
       .where('holder_id', '=', holderId)
       .execute();
@@ -2191,7 +2192,7 @@ export class BuildService {
     if (current) {
       await this.s(t)
         .updateTable('phone_numbers')
-        .set({ holder_type: null, holder_id: null, status: 'available' })
+        .set(releasedNumber())
         .where('id', '=', current.id)
         .execute();
     }
@@ -2671,7 +2672,7 @@ export class BuildService {
       if (ids.length === 0) return;
       await x
         .updateTable('phone_numbers')
-        .set({ holder_type: null, holder_id: null, status: 'available' })
+        .set(releasedNumber())
         .where('holder_type', '=', holderType)
         .where(
           'holder_id',
