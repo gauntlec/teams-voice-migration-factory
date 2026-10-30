@@ -19,6 +19,8 @@ export interface IdentityRow {
   number_decision?: unknown;
   /** false for a resource account with no number: it needs no phone licence (default true) */
   needsPhoneLicence?: boolean;
+  /** a resource account: its account is disabled by design (Teams creates it that way; it never signs in), so that is not flagged */
+  resourceAccount?: boolean;
 }
 
 /** Last 10 digits, the loose number match used everywhere else. */
@@ -211,7 +213,8 @@ export async function validateIdentityRows(s: Scoped, rows: IdentityRow[]): Prom
       out.set(row.id, {
         existsInTenant: !!live,
         usageLocationMismatch: live ? usageLocationMismatch(live.usage_location, row.site_id ? siteCountry.get(row.site_id) : null) : null,
-        accountDisabled: account.accountDisabled,
+        // A resource account is always disabled for sign-in: only a person's (or a common area phone's) disabled account is a problem.
+        accountDisabled: row.resourceAccount ? false : account.accountDisabled,
         noPhoneLicence: account.noPhoneLicence,
         enterpriseVoiceEnabled: live?.enterprise_voice_enabled ?? null,
         liveLineUri: live?.line_uri ?? null,
