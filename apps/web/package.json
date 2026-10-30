@@ -10,11 +10,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@fluentui/react-components": "9.68.1",
-    "@fluentui/react-icons": "2.0.339",
-    "@tanstack/react-query": "5.51.23",
+    "@fluentui/react-components": "9.74.11",
+    "@fluentui/react-icons": "2.0.344",
+    "@tanstack/react-query": "5.105.0",
     "@tvmf/shared": "0.1.0",
-    "@xyflow/react": "^12.11.6",
+    "@xyflow/react": "^12.12.0",
     "dagre": "^0.8.5",
     "html-to-image": "^1.11.13",
     "jspdf": "^4.2.1",
@@ -27,7 +27,7 @@
   },
   "devDependencies": {
     "@types/dagre": "^0.7.54",
-    "@types/leaflet": "1.9.12",
+    "@types/leaflet": "1.9.22",
     "@types/react": "18.3.3",
     "@types/react-dom": "18.3.0",
     "@vitejs/plugin-react": "4.3.1",
