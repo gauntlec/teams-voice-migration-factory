@@ -62,10 +62,14 @@ export interface CallFlowNode {
   badge?: string;
   /** Extra lines under the label: a front door's resource account and number, a business-hours box's opening times. */
   details?: string[];
+  /** A call queue's agents (name or sign-in address), listed in one box drawn directly under the queue. */
+  agents?: string[];
+  /** Things the design should look at again (a long menu, a loop, a queue with its own number): drawn in the box, and listed on the PDF's cover. */
+  warnings?: string[];
 }
 
-/** Which schedule branch an edge belongs to - 'operator' is the AA-level -Operator link, not schedule-tied; 'agent' isn't a routing branch at all, it's a Call Queue's membership edge (an agent -> the queue they can be offered calls from). */
-export type CallFlowBranch = 'business_hours' | 'after_hours' | 'holiday' | 'operator' | 'overflow' | 'timeout' | 'no_agent' | 'agent';
+/** Which schedule branch an edge belongs to - 'operator' is the AA-level -Operator link, not schedule-tied. */
+export type CallFlowBranch = 'business_hours' | 'after_hours' | 'holiday' | 'operator' | 'overflow' | 'timeout' | 'no_agent';
 
 export interface CallFlowEdge {
   id: string;
@@ -116,6 +120,8 @@ class GraphBuilder {
     if (node.badge && !existing.badge) existing.badge = node.badge;
     if (node.sublabel && !existing.sublabel) existing.sublabel = node.sublabel;
     if (node.details?.length && !existing.details?.length) existing.details = node.details;
+    if (node.agents?.length && !existing.agents?.length) existing.agents = node.agents;
+    for (const w of node.warnings ?? []) if (!existing.warnings?.includes(w)) existing.warnings = [...(existing.warnings ?? []), w];
     return node.id;
   }
 
@@ -138,9 +144,105 @@ class GraphBuilder {
   }
 
   build(): CallFlowGraph {
-    return { nodes: [...this.nodes.values()], edges: this.edges };
+    const graph = { nodes: [...this.nodes.values()], edges: this.edges };
+    addRouteWarnings(graph);
+    return graph;
   }
 }
+
+/** Teams disconnects a call after this many moves between auto attendants and call queues (Microsoft Learn, "Design call flows"). */
+export const MAX_VOICE_APP_TRANSITIONS = 25;
+/** A route this many moves deep is flagged: well before the limit, but deep enough that a loop or a mistake there is easy to miss. */
+const DEEP_ROUTE_WARN = 10;
+/** Microsoft recommends five menu options or fewer: callers struggle to remember more (use a nested auto attendant instead). */
+export const MAX_RECOMMENDED_MENU_OPTIONS = 5;
+
+/** An auto attendant or call queue itself (not one of an auto attendant's Business hours / After hours / Holiday boxes). */
+const isVoiceApp = (n: CallFlowNode) => (n.kind === 'auto_attendant' || n.kind === 'call_queue') && /^(aa|cq|app):[^:]+$/.test(n.id);
+
+/**
+ * Flags, on the graph's own boxes, a route that can come back to an auto attendant or queue it already passed (a loop: each pass counts towards the
+ * limit of MAX_VOICE_APP_TRANSITIONS moves, after which Teams disconnects the call) and a route that is unusually deep.
+ */
+function addRouteWarnings(graph: CallFlowGraph): void {
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+  const out = new Map<string, string[]>();
+  for (const e of graph.edges) out.set(e.source, [...(out.get(e.source) ?? []), e.target]);
+  const warn = (id: string, w: string) => {
+    const n = byId.get(id);
+    if (n && !n.warnings?.includes(w)) n.warnings = [...(n.warnings ?? []), w];
+  };
+  const root = graph.nodes[0];
+  if (!root) return;
+  const onPath = new Set<string>();
+  const done = new Set<string>();
+  let deepest = { id: '', depth: 0 };
+  const walk = (id: string, depth: number) => {
+    onPath.add(id);
+    const node = byId.get(id)!;
+    const here = depth + (isVoiceApp(node) && id !== root.id ? 1 : 0);
+    if (here > deepest.depth) deepest = { id, depth: here };
+    for (const next of out.get(id) ?? []) {
+      if (onPath.has(next)) {
+        const back = byId.get(next);
+        const from = isVoiceApp(node) ? node.label : (graph.nodes.find((n) => isVoiceApp(n) && id.startsWith(`${n.id}:`))?.label ?? node.label);
+        if (back) warn(next, `⚠ Calls can loop back here from ${from}. Each pass counts: Teams disconnects a call after ${MAX_VOICE_APP_TRANSITIONS} moves between auto attendants and queues.`);
+        continue;
+      }
+      if (!done.has(next)) walk(next, here);
+    }
+    onPath.delete(id);
+    done.add(id);
+  };
+  walk(root.id, 0);
+  if (deepest.depth >= DEEP_ROUTE_WARN) warn(deepest.id, `⚠ A call reaches this after ${deepest.depth} moves between auto attendants and queues (Teams disconnects after ${MAX_VOICE_APP_TRANSITIONS}).`);
+}
+
+/** The warning on a menu with more options than callers can remember. */
+function longMenuWarning(options: { dtmf: string }[]): string | undefined {
+  const keys = options.filter((o) => o.dtmf !== 'Automatic').length;
+  return keys > MAX_RECOMMENDED_MENU_OPTIONS ? `⚠ ${keys} menu options: Microsoft recommends ${MAX_RECOMMENDED_MENU_OPTIONS} or fewer. Move some into a nested auto attendant.` : undefined;
+}
+
+const QUEUE_NUMBER_WARNING =
+  '⚠ Has its own phone number: a queue cannot route out-of-hours or holiday calls. Unless it is open 24/7, give the number to an auto attendant that redirects here.';
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/**
+ * A holiday's dates as people read them: "Fri 25 Dec 2026", "Fri 25 Dec 2026 – Mon 28 Dec 2026", or with times when it does not cover whole days.
+ * Teams' ranges end at the start of the day AFTER the last one, so an end at midnight shows the day before. Wall-clock values, never converted.
+ */
+export function formatHolidayDates(ranges: { start: string; end: string }[] | undefined): string[] {
+  const parse = (v: string) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/.exec(v);
+    return m ? { ms: Date.UTC(+m[1]!, +m[2]! - 1, +m[3]!, +(m[4] ?? 0), +(m[5] ?? 0)), midnight: !m[4] || (m[4] === '00' && m[5] === '00') } : null;
+  };
+  const day = (ms: number) => {
+    const d = new Date(ms);
+    return `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+  };
+  const time = (ms: number) => new Date(ms).toISOString().slice(11, 16);
+  const lines: string[] = [];
+  for (const r of ranges ?? []) {
+    const a = parse(r.start);
+    const b = parse(r.end);
+    if (!a) continue;
+    if (a.midnight && (!b || b.midnight)) {
+      const last = b ? b.ms - 86_400_000 : a.ms;
+      lines.push(last <= a.ms ? day(a.ms) : `${day(a.ms)} – ${day(last)}`);
+    } else {
+      lines.push(b ? `${day(a.ms)} ${time(a.ms)} – ${b.ms - a.ms < 86_400_000 && new Date(a.ms).getUTCDate() === new Date(b.ms).getUTCDate() ? '' : `${day(b.ms)} `}${time(b.ms)}` : `${day(a.ms)} ${time(a.ms)}`);
+    }
+  }
+  return lines.length > 6 ? [...lines.slice(0, 5), `and ${lines.length - 5} more dates`] : lines;
+}
+
+/** The label on the line from an auto attendant to one of its schedule boxes: Teams checks holidays first, then business hours, and otherwise it is after hours. */
+const SCHEDULE_ORDER = { holiday: 1, business_hours: 2, after_hours: 3 } as const;
+const scheduleEdgeLabel = (branch: 'holiday' | 'business_hours' | 'after_hours') =>
+  `${SCHEDULE_ORDER[branch]}. ${branch === 'holiday' ? 'Holiday' : branch === 'business_hours' ? 'Business hours' : 'After hours'}`;
 
 function dtmfLabel(dtmf: string): string {
   return dtmf === 'Automatic' ? 'No input' : `Press ${dtmf.replace(/^Tone/, '')}`;
@@ -249,7 +351,7 @@ export interface DesignAutoAttendantInput {
   operator: AutoAttendantCallableEntity | null;
   defaultCallFlow: AutoAttendantCallFlow | null;
   afterHoursCallFlow: AutoAttendantCallFlow | null;
-  holidayCallFlows: { name: string; callFlow: AutoAttendantCallFlow }[];
+  holidayCallFlows: { name: string; callFlow: AutoAttendantCallFlow; schedule?: AutoAttendantSchedule | null }[];
   /** Set when this AA's resource account has a phone number attached - the real front door a caller dials, vs. an AA only reachable via another AA's menu. */
   hasPhoneNumber?: boolean;
   /** This AA's resource accounts, with the numbers a caller dials. */
@@ -270,8 +372,10 @@ export interface DesignCallQueueInput {
   routingMethod?: string | null;
   agentAlertTime?: number;
   agentCount?: number;
-  /** Agent UPNs - drawn as their own nodes feeding into the queue, not just counted in the sublabel. */
+  /** Agent UPNs - listed in one box under the queue (the queue offers its calls to them), not just counted in the sublabel. */
   agents?: string[];
+  /** The queue's own resource accounts, with any number that rings it directly. */
+  resourceAccounts?: CallFlowResourceAccount[];
 }
 
 function designGreeting(cf: AutoAttendantCallFlow | null): string | undefined {
@@ -333,13 +437,17 @@ function designCqActionEdges(b: GraphBuilder, cq: DesignCallQueueInput): void {
   action(cq.noAgentAction, 'no_agent', 'No agents');
 }
 
-/** One node + edge per agent, feeding into the queue - "28 agents" as a sublabel count isn't the same as seeing who they are. */
-function designCqAgentEdges(b: GraphBuilder, cq: DesignCallQueueInput): void {
-  const sourceId = `cq:${cq.buildId}`;
-  for (const upn of cq.agents ?? []) {
-    if (!upn) continue;
-    const nodeId = b.ensureNode({ id: `user:${upn.toLowerCase()}`, kind: 'person', label: upn });
-    b.addEdge(nodeId, sourceId, 'Agent', 'agent');
+/**
+ * What the queue's own box carries: its agents (drawn as one box under it - "28 agents" as a count isn't the same as seeing who they are), its
+ * resource accounts and numbers, and a warning when a number rings the queue directly.
+ */
+function designCqAgents(b: GraphBuilder, cq: DesignCallQueueInput): void {
+  const agents = (cq.agents ?? []).filter((upn): upn is string => !!upn);
+  const accounts = cq.resourceAccounts ?? [];
+  const details = resourceAccountDetails(accounts);
+  const numbered = accounts.some((ra) => !!ra.number);
+  if (agents.length || details.length) {
+    b.ensureNode({ id: `cq:${cq.buildId}`, kind: 'call_queue', label: '(unresolved)', agents: agents.length ? agents : undefined, details: details.length ? details : undefined, warnings: numbered ? [QUEUE_NUMBER_WARNING] : undefined });
   }
 }
 
@@ -347,7 +455,7 @@ function designCqAgentEdges(b: GraphBuilder, cq: DesignCallQueueInput): void {
 export function buildCallQueueFlowGraphFromDesign(cq: DesignCallQueueInput): CallFlowGraph {
   const b = new GraphBuilder();
   b.ensureNode({ id: `cq:${cq.buildId}`, kind: 'call_queue', label: cq.name, sublabel: designCqSublabel(cq) });
-  designCqAgentEdges(b, cq);
+  designCqAgents(b, cq);
   designCqActionEdges(b, cq);
   return b.build();
 }
@@ -446,7 +554,7 @@ export function buildAutoAttendantFlowGraphFromDesign(
         visitedCq.add(opt.target.buildId);
         const cq = cqById.get(opt.target.buildId);
         if (cq) {
-          designCqAgentEdges(b, cq);
+          designCqAgents(b, cq);
           designCqActionEdges(b, cq);
         }
       } else if (opt.target?.kind === 'auto_attendant' && opt.target.buildId) {
@@ -467,21 +575,24 @@ export function buildAutoAttendantFlowGraphFromDesign(
       details: [...resourceAccountDetails(a.resourceAccounts), ...dialByNameDetails(a.userNameExtension)],
     });
     const hoursDetails = [...(a.schedule?.weekly ? formatWeeklyHours(a.schedule.weekly) : []), ...(a.timeZone ? [`Time zone: ${a.timeZone}`] : [])];
-    const addBranch = (cf: AutoAttendantCallFlow | null, key: string, branchLabel: string, branch: CallFlowBranch) => {
+    const addBranch = (cf: AutoAttendantCallFlow | null, key: string, branchLabel: string, branch: 'business_hours' | 'after_hours' | 'holiday', details?: string[]) => {
       if (!cf) return;
+      const tooLong = longMenuWarning(cf.menu.options);
       const branchId = b.ensureNode({
         id: `${rootId}:${key}`,
         kind: 'auto_attendant',
         label: branchLabel,
         sublabel: designGreeting(cf),
-        details: key === 'business_hours' ? hoursDetails : undefined,
+        details: key === 'business_hours' ? hoursDetails : details?.length ? details : undefined,
+        warnings: tooLong ? [tooLong] : undefined,
       });
-      b.addEdge(rootId, branchId, branchLabel, branch);
+      b.addEdge(rootId, branchId, scheduleEdgeLabel(branch), branch);
       for (const opt of cf.menu.options) walkMenuOption(branchId, opt, a, branch);
     };
+    // In the order Teams checks them: a holiday first, then business hours; any other time is after hours.
+    a.holidayCallFlows.forEach((h, i) => addBranch(h.callFlow, `holiday${i}`, `Holiday: ${h.name}`, 'holiday', formatHolidayDates(h.schedule?.fixed?.ranges)));
     addBranch(a.defaultCallFlow, 'business_hours', 'Business hours', 'business_hours');
     addBranch(a.afterHoursCallFlow, 'after_hours', 'After hours', 'after_hours');
-    a.holidayCallFlows.forEach((h, i) => addBranch(h.callFlow, `holiday${i}`, `Holiday: ${h.name}`, 'holiday'));
     if (a.operator) {
       const targetId = resolveTarget(a.operator);
       if (targetId) b.addEdge(rootId, targetId, 'Operator', 'operator');
@@ -543,21 +654,16 @@ const CQ_PREFIX = { overflow: 'Overflow', timeout: 'Timeout', no_agent: 'NoAgent
 /** The call priority Teams uses when none is set (1 highest to 5 lowest). */
 const DEFAULT_CALL_PRIORITY = 3;
 
-/** One node + edge per agent, feeding into the queue - "28 agents" as a sublabel count isn't the same as seeing who they are. Get-CsCallQueue's Agents entries carry `.ObjectId`, the same tenant_users.entra_id key as every other live person reference. */
-function liveCqAgentEdges(b: GraphBuilder, cq: LiveCallQueueInput, usersByEntraId?: Map<string, string>): void {
+/** The queue's agents, listed on the queue itself (drawn as one box under it). Get-CsCallQueue's Agents entries carry `.ObjectId`, the same tenant_users.entra_id key as every other live person reference. */
+function liveCqAgents(b: GraphBuilder, cq: LiveCallQueueInput, usersByEntraId?: Map<string, string>): void {
   const identity = typeof cq.data.Identity === 'string' ? cq.data.Identity : cq.name;
-  const sourceId = `cq:${identity}`;
-  const agents = Array.isArray(cq.data.Agents) ? (cq.data.Agents as Record<string, unknown>[]) : [];
-  for (const agent of agents) {
-    const objectId = typeof agent.ObjectId === 'string' ? agent.ObjectId : undefined;
-    if (!objectId) continue;
-    const nodeId = b.ensureNode({
-      id: `user:${objectId}`,
-      kind: 'person',
-      label: usersByEntraId?.get(objectId.toLowerCase()) ?? `User (${objectId.slice(0, 8)}…)`,
-    });
-    b.addEdge(nodeId, sourceId, 'Agent', 'agent');
-  }
+  const raw = Array.isArray(cq.data.Agents) ? (cq.data.Agents as Record<string, unknown>[]) : [];
+  const agents = raw
+    .map((agent) => (typeof agent.ObjectId === 'string' ? agent.ObjectId : undefined))
+    .filter((id): id is string => !!id)
+    .map((objectId) => usersByEntraId?.get(objectId.toLowerCase()) ?? `User (${objectId.slice(0, 8)}…)`);
+  const numbered = liveHasPhoneNumber(cq.data);
+  if (agents.length || numbered) b.ensureNode({ id: `cq:${identity}`, kind: 'call_queue', label: '(unresolved)', agents: agents.length ? agents : undefined, warnings: numbered ? [QUEUE_NUMBER_WARNING] : undefined });
 }
 
 /**
@@ -666,7 +772,7 @@ export function buildCallQueueFlowGraphFromLive(
   const b = new GraphBuilder();
   const identity = typeof cq.data.Identity === 'string' ? cq.data.Identity : cq.name;
   b.ensureNode({ id: `cq:${identity}`, kind: 'call_queue', label: cq.name, sublabel: liveCqSublabel(cq.data) });
-  liveCqAgentEdges(b, cq, usersByEntraId);
+  liveCqAgents(b, cq, usersByEntraId);
   liveCqActionEdges(b, cq, usersByEntraId, siblings ? liveVoiceAppResolver(b, siblings.autoAttendants, siblings.callQueues) : undefined);
   return b.build();
 }
@@ -785,7 +891,7 @@ export function buildAutoAttendantFlowGraphFromLive(
     const cq = cqByIdentity.get(key);
     if (cq && !visitedCq.has(key)) {
       visitedCq.add(key);
-      liveCqAgentEdges(b, cq, usersByEntraId);
+      liveCqAgents(b, cq, usersByEntraId);
       liveCqActionEdges(b, cq, usersByEntraId, resolveVoiceAppNode);
       return;
     }
@@ -815,36 +921,38 @@ export function buildAutoAttendantFlowGraphFromLive(
       ...(hoursSchedule?.weekly ? formatWeeklyHours(hoursSchedule.weekly) : []),
       ...(typeof a.data.TimeZoneId === 'string' && a.data.TimeZoneId ? [`Time zone: ${a.data.TimeZoneId}`] : []),
     ];
-    const addBranch = (cf: LiveCallFlow | undefined, branchKey: string, branchLabel: string, branch: CallFlowBranch) => {
+    const addBranch = (cf: LiveCallFlow | undefined, branchKey: string, branchLabel: string, branch: 'business_hours' | 'after_hours' | 'holiday', details?: string[]) => {
       if (!cf) return;
+      const tooLong = longMenuWarning(cf.menu.options);
       const branchId = b.ensureNode({
         id: `${rootId}:${branchKey}`,
         kind: 'auto_attendant',
         label: branchLabel,
         sublabel: liveGreeting(cf),
-        details: branchKey === 'business_hours' ? hoursDetails : undefined,
+        details: branchKey === 'business_hours' ? hoursDetails : details?.length ? details : undefined,
+        warnings: tooLong ? [tooLong] : undefined,
       });
-      b.addEdge(rootId, branchId, branchLabel, branch);
+      b.addEdge(rootId, branchId, scheduleEdgeLabel(branch), branch);
       for (const opt of cf.menu.options) walkMenuOption(branchId, opt, a, branch);
     };
 
-    addBranch(parseLiveCallFlow(a.data.DefaultCallFlow), 'business_hours', 'Business hours', 'business_hours');
-
+    // In the order Teams checks them: holidays first, then business hours; any other time is after hours.
     const callFlowsById = new Map((Array.isArray(a.data.CallFlows) ? (a.data.CallFlows as Record<string, unknown>[]) : []).map((cf) => [cf.Id as string, cf]));
-    let holidayIdx = 0;
-    for (const cha of Array.isArray(a.data.CallHandlingAssociations) ? (a.data.CallHandlingAssociations as Record<string, unknown>[]) : []) {
+    const handled = (Array.isArray(a.data.CallHandlingAssociations) ? (a.data.CallHandlingAssociations as Record<string, unknown>[]) : []).flatMap((cha) => {
       const cfRaw = typeof cha.CallFlowId === 'string' ? callFlowsById.get(cha.CallFlowId) : undefined;
       const parsedCf = cfRaw ? parseLiveCallFlow(cfRaw) : undefined;
-      if (!parsedCf) continue;
-      if (cha.Type === 0) {
-        addBranch(parsedCf, 'after_hours', 'After hours', 'after_hours');
-      } else if (cha.Type === 1) {
-        const scheduleRaw = typeof cha.ScheduleId === 'string' ? scheduleByKey.get(cha.ScheduleId) : undefined;
-        const scheduleName = typeof scheduleRaw?.Name === 'string' ? scheduleRaw.Name : typeof cfRaw?.Name === 'string' ? (cfRaw.Name as string) : 'Holiday';
-        addBranch(parsedCf, `holiday${holidayIdx}`, `Holiday: ${scheduleName}`, 'holiday');
-        holidayIdx++;
-      }
+      return parsedCf ? [{ cha, cfRaw, parsedCf }] : [];
+    });
+    let holidayIdx = 0;
+    for (const { cha, cfRaw, parsedCf } of handled) {
+      if (cha.Type !== 1) continue;
+      const scheduleRaw = typeof cha.ScheduleId === 'string' ? scheduleByKey.get(cha.ScheduleId) : undefined;
+      const scheduleName = typeof scheduleRaw?.Name === 'string' ? scheduleRaw.Name : typeof cfRaw?.Name === 'string' ? (cfRaw.Name as string) : 'Holiday';
+      addBranch(parsedCf, `holiday${holidayIdx}`, `Holiday: ${scheduleName}`, 'holiday', formatHolidayDates(parseLiveSchedule(scheduleRaw)?.fixed?.ranges));
+      holidayIdx++;
     }
+    addBranch(parseLiveCallFlow(a.data.DefaultCallFlow), 'business_hours', 'Business hours', 'business_hours');
+    for (const { cha, parsedCf } of handled) if (cha.Type === 0) addBranch(parsedCf, 'after_hours', 'After hours', 'after_hours');
 
     const operatorRef = parseLiveCallTarget(a.data.Operator);
     if (operatorRef) {
@@ -855,4 +963,43 @@ export function buildAutoAttendantFlowGraphFromLive(
 
   expandAa(aa);
   return b.build();
+}
+
+/* ============================== PDF cover ============================== */
+
+/** What the PDF's cover page lists, read off a built graph: the key facts Microsoft's design guidance says a call flow should record. */
+export interface CallFlowSummary {
+  /** The numbers callers dial and the resource account behind each (front doors, and any queue with its own number). */
+  numbers: { name: string; resourceAccount: string; number: string }[];
+  /** Each auto attendant's business hours. */
+  hours: { name: string; lines: string[] }[];
+  holidays: { name: string; owner: string; dates: string[] }[];
+  queues: { name: string; agents: number; routing: string }[];
+  warnings: { where: string; text: string }[];
+}
+
+export function callFlowSummary(graph: CallFlowGraph): CallFlowSummary {
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+  const ownerOf = (n: CallFlowNode) => {
+    const i = n.id.lastIndexOf(':');
+    return byId.get(n.id.slice(0, i))?.label ?? '';
+  };
+  const out: CallFlowSummary = { numbers: [], hours: [], holidays: [], queues: [], warnings: [] };
+  for (const n of graph.nodes) {
+    if (isVoiceApp(n)) {
+      let current: { name: string; resourceAccount: string; number: string } | undefined;
+      for (const d of n.details ?? []) {
+        if (d.startsWith('Resource account: ')) out.numbers.push((current = { name: n.label, resourceAccount: d.slice(18), number: '' }));
+        else if (d.startsWith('Number: ')) {
+          if (current && !current.number) current.number = d.slice(8);
+          else out.numbers.push({ name: n.label, resourceAccount: '', number: d.slice(8) });
+        }
+      }
+    }
+    if (n.id.endsWith(':business_hours') && n.details?.length) out.hours.push({ name: ownerOf(n), lines: n.details });
+    if (/:holiday\d+$/.test(n.id)) out.holidays.push({ name: n.label.replace(/^Holiday: /, ''), owner: ownerOf(n), dates: n.details ?? [] });
+    if (n.kind === 'call_queue' && isVoiceApp(n)) out.queues.push({ name: n.label, agents: n.agents?.length ?? 0, routing: n.sublabel ?? '' });
+    for (const w of n.warnings ?? []) out.warnings.push({ where: n.label, text: w.replace(/^⚠\s*/, '') });
+  }
+  return out;
 }

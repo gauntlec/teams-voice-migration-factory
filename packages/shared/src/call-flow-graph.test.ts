@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildAutoAttendantFlowGraphFromDesign, buildAutoAttendantFlowGraphFromLive, buildCallQueueFlowGraphFromDesign, buildCallQueueFlowGraphFromLive, formatWeeklyHours } from './call-flow-graph';
+import { buildAutoAttendantFlowGraphFromDesign, buildAutoAttendantFlowGraphFromLive, buildCallQueueFlowGraphFromDesign, buildCallQueueFlowGraphFromLive, callFlowSummary, formatHolidayDates, formatWeeklyHours } from './call-flow-graph';
 
 const none = { monday: [], tuesday: [], wednesday: [], thursday: [], friday: [], saturday: [], sunday: [] };
 const nineToFive = [{ start: '09:00', end: '17:00' }];
@@ -91,7 +91,10 @@ describe('Design & Build diagram with a transfer to a voice app outside the site
     const without = buildAutoAttendantFlowGraphFromDesign(aa, [aa], []);
     expect(without.nodes.some((n) => n.label === 'Support Queue')).toBe(false);
     const g = buildAutoAttendantFlowGraphFromDesign(aa, [aa], [], live);
-    expect(g.nodes.map((n) => n.label)).toEqual(expect.arrayContaining(['Support Queue', 'agent.one@contoso.test']));
+    const queue = g.nodes.find((n) => n.label === 'Support Queue')!;
+    // the agents are listed on the queue (one box under it), not drawn as a box each
+    expect(queue.agents).toEqual(['agent.one@contoso.test']);
+    expect(g.nodes.some((n) => n.label === 'agent.one@contoso.test')).toBe(false);
     expect(g.edges.some((e) => e.label === 'No input' && e.target === 'cq:23fa0565-93af-4c1f-802b-d21c8aa19291')).toBe(true);
   });
 });
@@ -181,5 +184,61 @@ describe('Auto Attendant graph: dial-by-name extension', () => {
     expect(live('Office')).toEqual(['Dial by name also says: Office']);
     expect(live(2)).toEqual(['Dial by name also says: Department']);
     expect(live(0)).toEqual([]);
+  });
+});
+
+describe('Call Queue agents', () => {
+  it('are listed on the queue, in order, with no box or line of their own', () => {
+    const g = buildCallQueueFlowGraphFromDesign({ buildId: 'cq-1', name: 'Sales', agents: ['amy@contoso.test', 'ben@contoso.test', ''] } as never);
+    expect(g.nodes).toHaveLength(1);
+    expect(g.nodes[0]).toMatchObject({ id: 'cq:cq-1', label: 'Sales', agents: ['amy@contoso.test', 'ben@contoso.test'] });
+    expect(g.edges).toEqual([]);
+  });
+});
+
+describe('call flow recommendations', () => {
+  const holiday = (name: string, start: string, end: string) => ({ name, callFlow: { greetings: [], menu: { options: [{ dtmf: 'Automatic' as const, action: 'DisconnectCall' as const }] } }, schedule: { type: 'fixed' as const, fixed: { ranges: [{ start, end }] } } });
+  const keys = (n: number) => Array.from({ length: n }, (_, i) => ({ dtmf: `Tone${i + 1}` as never, action: 'DisconnectCall' as const }));
+  const aa = (over: Record<string, unknown> = {}) =>
+    ({ buildId: 'main', name: 'Main', operator: null, afterHoursCallFlow: { greetings: [], menu: { options: [] } }, holidayCallFlows: [holiday('Christmas', '2026-12-25T00:00:00', '2026-12-29T00:00:00')], defaultCallFlow: { greetings: [], menu: { options: keys(2) } }, ...over }) as never;
+
+  it('labels the schedule lines in the order Teams checks them, holidays first', () => {
+    const g = buildAutoAttendantFlowGraphFromDesign(aa(), [aa()], []);
+    expect(g.edges.filter((e) => e.source === 'aa:main').map((e) => e.label)).toEqual(['1. Holiday', '2. Business hours', '3. After hours']);
+  });
+
+  it("shows a holiday's dates, with a range ending at midnight shown up to the day before", () => {
+    expect(formatHolidayDates([{ start: '2026-12-25T00:00:00', end: '2026-12-29T00:00:00' }])).toEqual(['Fri 25 Dec 2026 – Mon 28 Dec 2026']);
+    expect(formatHolidayDates([{ start: '2026-12-25T00:00:00', end: '2026-12-26T00:00:00' }])).toEqual(['Fri 25 Dec 2026']);
+    expect(formatHolidayDates([{ start: '2026-12-24T12:00:00', end: '2026-12-24T17:00:00' }])).toEqual(['Thu 24 Dec 2026 12:00 – 17:00']);
+    const g = buildAutoAttendantFlowGraphFromDesign(aa(), [aa()], []);
+    expect(g.nodes.find((n) => n.id === 'aa:main:holiday0')!.details).toEqual(['Fri 25 Dec 2026 – Mon 28 Dec 2026']);
+  });
+
+  it('flags a menu with more than five options', () => {
+    const long = aa({ defaultCallFlow: { greetings: [], menu: { options: keys(7) } } });
+    const g = buildAutoAttendantFlowGraphFromDesign(long, [long], []);
+    expect(g.nodes.find((n) => n.id === 'aa:main:business_hours')!.warnings).toEqual([expect.stringMatching(/^⚠ 7 menu options: Microsoft recommends 5 or fewer/)]);
+    const short = buildAutoAttendantFlowGraphFromDesign(aa(), [aa()], []);
+    expect(short.nodes.find((n) => n.id === 'aa:main:business_hours')!.warnings).toBeUndefined();
+  });
+
+  it('flags a route that loops back to an auto attendant', () => {
+    const main = aa({ defaultCallFlow: { greetings: [], menu: { options: [{ dtmf: 'Tone9', action: 'TransferCallToTarget', target: { kind: 'auto_attendant', buildId: 'dir' } }] } } });
+    const dir = { buildId: 'dir', name: 'Directory', operator: null, afterHoursCallFlow: null, holidayCallFlows: [], defaultCallFlow: { greetings: [], menu: { options: [{ dtmf: 'Tone0', action: 'TransferCallToTarget', target: { kind: 'auto_attendant', buildId: 'main' } }] } } } as never;
+    const g = buildAutoAttendantFlowGraphFromDesign(main, [main, dir], []);
+    expect(g.nodes.find((n) => n.id === 'aa:main')!.warnings).toEqual([expect.stringMatching(/^⚠ Calls can loop back here from Directory\. .*25 moves/)]);
+  });
+
+  it('flags a queue that a number rings directly, and lists it on the cover', () => {
+    const main = aa({ defaultCallFlow: { greetings: [], menu: { options: [{ dtmf: 'Automatic', action: 'TransferCallToTarget', target: { kind: 'call_queue', buildId: 'q' } }] } } });
+    const q = { buildId: 'q', name: 'Sales', overflow: null, timeout: null, noAgentAction: null, agents: ['amy@x.test'], resourceAccounts: [{ name: 'ra-sales', number: 'tel:+441632960100' }] };
+    const g = buildAutoAttendantFlowGraphFromDesign(main, [main], [q]);
+    expect(g.nodes.find((n) => n.id === 'cq:q')!.warnings).toEqual([expect.stringMatching(/^⚠ Has its own phone number/)]);
+    const cover = callFlowSummary(g);
+    expect(cover.numbers).toEqual([{ name: 'Sales', resourceAccount: 'ra-sales', number: '+441632960100' }]);
+    expect(cover.queues).toEqual([{ name: 'Sales', agents: 1, routing: '' }]);
+    expect(cover.holidays).toEqual([{ name: 'Christmas', owner: 'Main', dates: ['Fri 25 Dec 2026 – Mon 28 Dec 2026'] }]);
+    expect(cover.warnings.map((w) => w.where)).toEqual(['Sales']);
   });
 });
