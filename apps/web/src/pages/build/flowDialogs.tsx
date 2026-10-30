@@ -14,7 +14,7 @@ const useLocalStyles = makeStyles({
 
 
 /** Maps a Design & Build Call Queue row to the shape buildCallQueueFlowGraphFromDesign/buildAutoAttendantFlowGraphFromDesign need. */
-function toDesignCqInput(r: Row): DesignCallQueueInput {
+function toDesignCqInput(r: Row, resourceAccountById?: Map<string, CallFlowResourceAccount>): DesignCallQueueInput {
   return {
     buildId: String(r.id),
     name: String(r.name),
@@ -25,6 +25,8 @@ function toDesignCqInput(r: Row): DesignCallQueueInput {
     agentAlertTime: typeof r.agent_alert_time === 'number' ? r.agent_alert_time : undefined,
     agentCount: Array.isArray(r.agents) ? (r.agents as string[]).length : undefined,
     agents: Array.isArray(r.agents) ? (r.agents as string[]) : undefined,
+    // a number that rings the queue directly is flagged on the diagram
+    resourceAccounts: (Array.isArray(r.resource_accounts) ? (r.resource_accounts as string[]) : []).map((id) => resourceAccountById?.get(id)).filter((x): x is CallFlowResourceAccount => !!x),
   };
 }
 
@@ -168,7 +170,7 @@ export function AutoAttendantFlowDialog({ tid, base, siteId, row, onClose }: { t
     return buildAutoAttendantFlowGraphFromDesign(
       toDesignAaInput(row, hasPhoneNumberById, resourceAccountById),
       aaQ.data.items.map((r) => toDesignAaInput(r, hasPhoneNumberById, resourceAccountById)),
-      cqQ.data.items.map(toDesignCqInput),
+      cqQ.data.items.map((r) => toDesignCqInput(r, resourceAccountById)),
       live,
     );
   }, [aaQ.data, cqQ.data, row, hasPhoneNumberById, resourceAccountById, live]);

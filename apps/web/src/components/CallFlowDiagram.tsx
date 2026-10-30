@@ -6,7 +6,7 @@ import { toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
 import { Button, Text, Tooltip, tokens , makeStyles, shorthands } from '@fluentui/react-components';
 import { ArrowDownloadRegular, ArrowDownRegular, ArrowRightRegular } from '@fluentui/react-icons';
-import type { CallFlowBranch, CallFlowGraph, CallFlowNodeKind } from '@tvmf/shared';
+import { callFlowSummary, type CallFlowBranch, type CallFlowGraph, type CallFlowNodeKind, type CallFlowSummary } from '@tvmf/shared';
 import { useAuth } from '../auth';
 import { useGroupNames } from '../hooks/useGroupNames';
 import { MutedText } from './ui';
@@ -18,6 +18,7 @@ const useLocalStyles = makeStyles({
   mt2: { fontSize: '10px', opacity: 0.7, marginTop: '2px' },
   inlineblockMt4ColoredFilledPad1px7: { display: "inline-block", marginTop: '4px', fontSize: '9px', fontWeight: 600, letterSpacing: '0.3px', textTransform: "uppercase", color: "#166534", backgroundColor: "#DCFCE7", ...shorthands.border("1px", "solid", "#86EFAC"), ...shorthands.borderRadius("999px"), ...shorthands.padding("1px", "7px") },
   agentsTitle: { fontSize: '11px', fontWeight: 700, color: '#047857', marginBottom: '2px' },
+  warning: { marginTop: '6px', fontSize: '10px', lineHeight: '13px', textAlign: 'left', color: '#7C2D12', backgroundColor: '#FEF3C7', ...shorthands.border('1px', 'solid', '#F59E0B'), ...shorthands.borderRadius('4px'), ...shorthands.padding('3px', '6px') },
   gridGap8: { display: "grid", ...shorthands.gap('8px') },
   w120H80: { width: '120px', height: '80px' },
   flexWrapItemsCenterGap14: { display: "flex", ...shorthands.gap('14px'), flexWrap: "wrap", alignItems: "center" },
@@ -60,11 +61,7 @@ const AGENTS_COLOR = '#059669';
 const agentsBoxId = (queueId: string) => `${queueId}::agents`;
 
 /** What an edge's label says (kept in one place so layout reserves exactly the room the drawn label needs). */
-const edgeLabelText = (e: { label: string; branch: CallFlowBranch; branchLabel?: string }) => {
-  // The line into a holiday's box says just "Holiday": the box itself carries the holiday's (often long) name, and a long label would widen the whole diagram.
-  const label = e.branch === 'holiday' && e.label.startsWith('Holiday:') ? 'Holiday' : e.label;
-  return e.branchLabel ? `${label} · ${e.branchLabel}` : label;
-};
+const edgeLabelText = (e: { label: string; branchLabel?: string }) => (e.branchLabel ? `${e.label} · ${e.branchLabel}` : e.label);
 
 /** Rough size of an edge label as drawn (11px bold text plus its padding), so dagre can keep a clear gap for it between two boxes. */
 const edgeLabelSize = (text: string) => ({ width: Math.ceil(text.length * 6.6) + 20, height: 24 });
@@ -89,7 +86,10 @@ function arrange(graph: CallFlowGraph, direction: Direction, size: (id: string) 
     g.setNode(n.id, agents ? { width: Math.max(own.w, agents.w), height: own.h + AGENTS_GAP + agents.h } : { width: own.w, height: own.h });
   }
   // The label's size is passed in so the layout keeps that space free: without it a label is drawn wherever the line's middle falls, often behind a box.
-  for (const e of graph.edges) g.setEdge(e.source, e.target, { ...edgeLabelSize(edgeLabelText(e)), labelpos: 'c' });
+  // An auto attendant's holiday, business hours and after hours boxes are kept on the row straight after it (a heavy line is kept short), not
+  // pulled further down towards where their calls end up.
+  const scheduleLine = (e: { source: string; branch: CallFlowBranch }) => (e.branch === 'holiday' || e.branch === 'business_hours' || e.branch === 'after_hours') && /^(aa|app):[^:]+$/.test(e.source);
+  for (const e of graph.edges) g.setEdge(e.source, e.target, { ...edgeLabelSize(edgeLabelText(e)), labelpos: 'c', weight: scheduleLine(e) ? 20 : 1 });
   dagre.layout(g);
 
   // dagre centres each box on its row; in portrait a row is then ragged (a queue with its agents is tall), so every box in a row starts at the
@@ -287,7 +287,9 @@ const EXPORT_PIXEL_RATIO = 3;
  * before layout, so `getViewportForBounds` gets 0 - no second, mis-scaled
  * padding pass.
  */
-async function captureDiagramPng(nodes: Node[]): Promise<{ dataUrl: string; width: number; height: number } | null> {
+type Shot = { dataUrl: string; width: number; height: number; boxes: { x: number; y: number; w: number; h: number }[] };
+
+async function captureDiagramPng(nodes: Node[]): Promise<Shot | null> {
   if (nodes.length === 0) return null;
   const viewportEl = document.querySelector('.react-flow__viewport') as HTMLElement | null;
   if (!viewportEl) return null;
@@ -318,17 +320,140 @@ async function captureDiagramPng(nodes: Node[]): Promise<{ dataUrl: string; widt
   // built from these keeps the same physical page size while the image data
   // embedded in it carries the extra resolution, so zooming into the PDF
   // reveals real detail instead of just enlarging blur.
-  return { dataUrl, width, height };
+  // Where each box landed in the image (same units as width/height), so a split PDF can cut between boxes rather than through them.
+  const boxes = nodes.map((n) => ({
+    x: n.position.x * viewport.zoom + viewport.x,
+    y: n.position.y * viewport.zoom + viewport.y,
+    w: (n.measured?.width ?? NODE_WIDTH) * viewport.zoom,
+    h: (n.measured?.height ?? NODE_HEIGHT) * viewport.zoom,
+  }));
+  return { dataUrl, width, height, boxes };
 }
 
-/** A4 in millimetres, and the margin left round the diagram on the page. */
-const A4 = { short: 210, long: 297, margin: 10 };
+/** A4 in millimetres, the margin left round everything on a page, and the line kept at the top of a diagram page for its part number. */
+const A4 = { short: 210, long: 297, margin: 10, header: 6 };
+/** The smallest scale a diagram is printed at (mm per screen pixel): its 12px text then prints at about 7pt. Smaller than this, it is split across pages. */
+const MIN_MM_PER_PX = 0.2;
+
+/** The standard PDF fonts cannot draw the warning sign or emoji: they are left out of text written on the cover. */
+const pdfText = (t: string) => t.replace(/[\u2600-\u27BF\u{1F000}-\u{1FAFF}\uFE0F]/gu, '').replace(/\s+/g, ' ').trim();
 
 /**
- * Export-to-PNG/PDF buttons - a child of ReactFlow so useReactFlow can read the laid-out node positions/sizes. The PDF is one A4 page, portrait for
- * the portrait (top to bottom) layout and landscape for the landscape one, with the diagram scaled to fit inside the margins: it prints as it is.
+ * Page 1: the cover - the numbers callers dial and their resource accounts, the business hours, the holidays with their dates, each queue and how
+ * many agents it has, and everything the diagram flags to review (the record Microsoft's call flow design guidance asks for).
  */
-function ExportControls({ filename, direction }: { filename: string; direction: Direction }) {
+function addCover(pdf: jsPDF, title: string, summary: CallFlowSummary): void {
+  const left = A4.margin + 2;
+  const width = A4.short - 2 * left;
+  let y = A4.margin + 8;
+  const ensure = (h: number) => {
+    if (y + h <= A4.long - A4.margin) return;
+    pdf.addPage('a4', 'portrait');
+    y = A4.margin + 6;
+  };
+  const write = (text: string, size: number, bold = false, gap = 1.5) => {
+    pdf.setFont('helvetica', bold ? 'bold' : 'normal');
+    pdf.setFontSize(size);
+    const lines = pdf.splitTextToSize(pdfText(text), width) as string[];
+    const h = lines.length * size * 0.42;
+    ensure(h);
+    pdf.text(lines, left, y);
+    y += h + gap;
+  };
+  const section = (heading: string, rows: string[], empty: string) => {
+    y += 3;
+    write(heading, 12, true, 2);
+    if (rows.length === 0) write(empty, 9);
+    for (const r of rows) write(r, 9, false, 1);
+  };
+  write(`Call flow: ${title}`, 16, true, 2);
+  write(`Exported from Voxshift on ${new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}. The diagram follows on the next page.`, 9);
+  section('Phone numbers', summary.numbers.map((n) => `${n.name}: ${n.number || 'no number'}${n.resourceAccount ? `  (resource account ${n.resourceAccount})` : ''}`), 'No resource account with a phone number is recorded for this call flow.');
+  section('Business hours', summary.hours.map((h) => `${h.name}: ${h.lines.join('; ')}`), 'No business hours are recorded.');
+  section('Holidays', summary.holidays.map((h) => `${h.name} (${h.owner}): ${h.dates.length ? h.dates.join('; ') : 'no dates recorded'}`), 'No holidays.');
+  section('Call queues', summary.queues.map((q) => `${q.name}: ${q.agents} agent${q.agents === 1 ? '' : 's'}${q.routing ? `  (${q.routing})` : ''}`), 'No call queues.');
+  section('To review', summary.warnings.map((w) => `${w.where}: ${w.text}`), 'Nothing flagged.');
+  y += 3;
+  write('How to read the diagram: Teams checks an auto attendant\'s holidays first (1), then its business hours (2); any other time is after hours (3). Each call queue offers its calls to the agents listed in the green box under it.', 8);
+}
+
+/**
+ * Where to cut a diagram `total` long into pieces at most `tile` long: in a gap between boxes when there is one in the second half of the piece,
+ * so a box is not split across two pages; otherwise at the full length.
+ */
+function cutPoints(total: number, tile: number, spans: [number, number][]): number[] {
+  const out = [0];
+  let start = 0;
+  while (total - start > tile) {
+    let cut = start + tile;
+    for (let guard = 0; guard < spans.length; guard++) {
+      const hit = spans.find(([a, b]) => cut > a && cut < b);
+      if (!hit) break;
+      cut = hit[0] - 6;
+    }
+    if (cut <= start + tile / 2) cut = start + tile;
+    out.push(cut);
+    start = cut;
+  }
+  out.push(total);
+  return out;
+}
+
+/**
+ * The diagram on A4 pages, portrait for the portrait layout and landscape for landscape. It fits on one page when its text can still be read there;
+ * a bigger diagram is printed at a readable size and split across pages, each marked with its row and column.
+ */
+async function addDiagramPages(pdf: jsPDF, shot: Shot, portrait: boolean, title: string): Promise<void> {
+  const pageW = portrait ? A4.short : A4.long;
+  const pageH = portrait ? A4.long : A4.short;
+  const availW = pageW - 2 * A4.margin;
+  const availH = pageH - 2 * A4.margin - A4.header;
+  const fit = Math.min(availW / shot.width, availH / shot.height);
+  const header = (text: string) => {
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(8);
+    pdf.text(pdfText(text), A4.margin, A4.margin + 3);
+  };
+  if (fit >= MIN_MM_PER_PX) {
+    pdf.addPage('a4', portrait ? 'portrait' : 'landscape');
+    header(`Call flow: ${title}`);
+    const w = shot.width * fit;
+    pdf.addImage(shot.dataUrl, 'PNG', (pageW - w) / 2, A4.margin + A4.header, w, shot.height * fit, undefined, 'FAST');
+    return;
+  }
+  // Split: as large as the page allows, but never below the readable scale.
+  const scale = Math.max(MIN_MM_PER_PX, Math.min(availW / shot.width, availH / shot.height));
+  const xs = cutPoints(shot.width, availW / scale, shot.boxes.map((b) => [b.x, b.x + b.w]));
+  const ys = cutPoints(shot.height, availH / scale, shot.boxes.map((b) => [b.y, b.y + b.h]));
+  const cols = xs.length - 1;
+  const rows = ys.length - 1;
+  const img = new Image();
+  img.src = shot.dataUrl;
+  await img.decode();
+  const ratio = img.naturalWidth / shot.width; // the capture's pixel ratio
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d')!;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const sw = xs[c + 1]! - xs[c]!;
+      const sh = ys[r + 1]! - ys[r]!;
+      canvas.width = Math.ceil(sw * ratio);
+      canvas.height = Math.ceil(sh * ratio);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, xs[c]! * ratio, ys[r]! * ratio, sw * ratio, sh * ratio, 0, 0, canvas.width, canvas.height);
+      pdf.addPage('a4', portrait ? 'portrait' : 'landscape');
+      header(`Call flow: ${title}  -  part ${r * cols + c + 1} of ${rows * cols} (row ${r + 1} of ${rows}, column ${c + 1} of ${cols})`);
+      pdf.addImage(canvas.toDataURL('image/png'), 'PNG', A4.margin, A4.margin + A4.header, sw * scale, sh * scale, undefined, 'FAST');
+    }
+  }
+}
+
+/**
+ * Export-to-PNG/PDF buttons - a child of ReactFlow so useReactFlow can read the laid-out node positions/sizes. The PDF is A4: a cover page with
+ * the key facts, then the diagram (see addDiagramPages).
+ */
+function ExportControls({ filename, title, direction, graph }: { filename: string; title: string; direction: Direction; graph: CallFlowGraph }) {
   const ls = useLocalStyles();
   const { getNodes } = useReactFlow();
   const [busy, setBusy] = useState(false);
@@ -343,14 +468,9 @@ function ExportControls({ filename, direction }: { filename: string; direction: 
       if (kind === 'png') {
         downloadDataUrl(shot.dataUrl, `${filename}.png`);
       } else {
-        const portrait = direction === 'TB';
-        const pdf = new jsPDF({ orientation: portrait ? 'portrait' : 'landscape', unit: 'mm', format: 'a4' });
-        const pageW = portrait ? A4.short : A4.long;
-        const pageH = portrait ? A4.long : A4.short;
-        const scale = Math.min((pageW - 2 * A4.margin) / shot.width, (pageH - 2 * A4.margin) / shot.height);
-        const w = shot.width * scale;
-        const h = shot.height * scale;
-        pdf.addImage(shot.dataUrl, 'PNG', (pageW - w) / 2, A4.margin, w, h);
+        const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+        addCover(pdf, title, callFlowSummary(graph));
+        await addDiagramPages(pdf, shot, direction === 'TB', title);
         pdf.save(`${filename}.pdf`);
       }
     } catch (e) {
@@ -369,7 +489,7 @@ function ExportControls({ filename, direction }: { filename: string; direction: 
               PNG
             </Button>
           </Tooltip>
-          <Tooltip content={`Export this diagram as an A4 ${direction === 'TB' ? 'portrait' : 'landscape'} PDF`} relationship="label">
+          <Tooltip content={`Export as an A4 PDF: a cover page with the numbers, hours, holidays, queues and what to review, then the diagram (${direction === 'TB' ? 'portrait' : 'landscape'})`} relationship="label">
             <Button size="small" icon={<ArrowDownloadRegular />} disabled={busy} onClick={() => runExport('pdf')}>
               PDF
             </Button>
@@ -435,6 +555,11 @@ function buildElements(graph: CallFlowGraph, direction: Direction, ls: ReturnTyp
               </div>
             ))}
             {n.badge && <div className={ls.inlineblockMt4ColoredFilledPad1px7}>{n.badge}</div>}
+            {n.warnings?.map((w, i) => (
+              <div key={`w${i}`} className={ls.warning}>
+                {w}
+              </div>
+            ))}
           </div>
         ),
       } satisfies BoxData,
@@ -500,7 +625,7 @@ function buildElements(graph: CallFlowGraph, direction: Direction, ls: ReturnTyp
  * Draws the boxes hidden, measures them once xyflow has, then places them (arrange) and shows them. Placing from the real sizes is what keeps
  * every word inside its box and no box on top of another: a size guessed from the length of the text was wrong as often as not.
  */
-function FlowCanvas({ graph, direction, onDirection, filename }: { graph: CallFlowGraph; direction: Direction; onDirection: (d: Direction) => void; filename: string }) {
+function FlowCanvas({ graph, direction, onDirection, filename, title }: { graph: CallFlowGraph; direction: Direction; onDirection: (d: Direction) => void; filename: string; title: string }) {
   const ls = useLocalStyles();
   const base = useMemo(() => buildElements(graph, direction, ls), [graph, direction, ls]);
   const [nodes, setNodes] = useState<Node[]>(base.nodes);
@@ -546,7 +671,7 @@ function FlowCanvas({ graph, direction, onDirection, filename }: { graph: CallFl
       <Controls showInteractive={false} />
       <MiniMap pannable zoomable className={ls.w120H80} nodeColor={(n) => String((n.data as BoxData).border ?? '#999')} />
       <DirectionControls direction={direction} onChange={onDirection} />
-      <ExportControls filename={filename} direction={direction} />
+      <ExportControls filename={filename} title={title} direction={direction} graph={graph} />
     </ReactFlow>
   );
 }
@@ -558,7 +683,7 @@ function FlowCanvas({ graph, direction, onDirection, filename }: { graph: CallFl
  * hand-rolled tree layout won't fit every real Auto Attendant/Call Queue
  * chain. Portrait (top to bottom) by default: it fits an A4 page.
  */
-export function CallFlowDiagram({ graph: drawn, exportFilename }: { graph: CallFlowGraph; exportFilename?: string }) {
+export function CallFlowDiagram({ graph: drawn, exportFilename, title }: { graph: CallFlowGraph; exportFilename?: string; title?: string }) {
   const ls = useLocalStyles();
   const [direction, setDirection] = useState<Direction>('TB');
   // A "Shared voicemail (group)" box carries the group's Object ID; show the group's name when this customer's group list has it.
@@ -582,7 +707,7 @@ export function CallFlowDiagram({ graph: drawn, exportFilename }: { graph: CallF
       {/* A diagram is a page of paper: it stays light (and its text dark) in the dark theme, like the PNG and PDF exports. */}
       <div style={{ height: '75vh', minHeight: 480, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: 8, background: '#ffffff', color: '#242424' }}>
         <ReactFlowProvider>
-          <FlowCanvas graph={graph} direction={direction} onDirection={setDirection} filename={exportFilename ?? 'call-flow'} />
+          <FlowCanvas graph={graph} direction={direction} onDirection={setDirection} filename={exportFilename ?? 'call-flow'} title={title ?? drawn.nodes[0]?.label ?? 'Call flow'} />
         </ReactFlowProvider>
       </div>
       <div className={ls.flexWrapItemsCenterGap14}>
