@@ -2512,6 +2512,7 @@ export class BuildService {
       policy_ids: { voice_routing_policy: r.voice_routing_policy_id },
       site_id: siteId,
       needsPhoneLicence: !!r.phone_number,
+      resourceAccount: true,
     }));
     const [userV, capV, raV, userNames, capNames] = await Promise.all([
       this.validation.validateRows(t, users),
@@ -2588,6 +2589,7 @@ export class BuildService {
       created: !!r.application_id,
       site_id: siteId,
       needsPhoneLicence: !!r.phone_number,
+      resourceAccount: true,
     }));
     const raValidated = raRows.length ? await this.validation.validateRows(t, raRows) : new Map<string, BuildRowValidation>();
     for (const row of raRows) {
