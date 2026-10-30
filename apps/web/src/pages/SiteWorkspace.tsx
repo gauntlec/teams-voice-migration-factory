@@ -642,7 +642,7 @@ export function SiteWorkspace() {
                     {nums.length ? nums.map((n) => n.e164).join(', ') : '—'}
                     {found && !r.discovered_number_attached && (
                       <Text size={200} className={ls.mutedText} block>
-                        {found} in Teams is not in this site's number ranges, so not attached here
+                        {found} is on this account in Teams but not attached here. Add the account to the site from Discovery again to bring the number into this site's ranges.
                       </Text>
                     )}
                   </div>

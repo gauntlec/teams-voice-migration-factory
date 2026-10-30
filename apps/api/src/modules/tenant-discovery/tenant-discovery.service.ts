@@ -1336,9 +1336,51 @@ export class TenantDiscoveryService {
   }
 
   /**
+   * Moves a number out of a "Found in Teams" range (one a Discovery sync made, with no site, for numbers live in Teams but in none of
+   * our ranges) into a single-number range on this site. What is left of the old range is split into runs of consecutive numbers, so
+   * each range's start and end still match the numbers in it (an emptied range is deleted).
+   */
+  private async adoptFoundInTeamsNumber(t: TenantContext, user: AuthedUser, phoneId: string, e164: string, sitecode: string): Promise<void> {
+    await this.db.transaction().execute(async (trx) => {
+      const s = tenantDb(trx as unknown as Kysely<DB>, t.schema);
+      const n = await s.selectFrom('phone_numbers').select(['range_id']).where('id', '=', phoneId).executeTakeFirstOrThrow();
+      const oldRangeId = n.range_id;
+      const mine = await s
+        .insertInto('discovery_number_ranges')
+        .values({ sitecode, range_start: e164, range_end: e164, kind: 'retain', comments: 'Added from Discovery: the number is live in Teams on a resource account at this site.' } as never)
+        .returning('id')
+        .executeTakeFirstOrThrow();
+      await s.updateTable('phone_numbers').set({ range_id: mine.id }).where('id', '=', phoneId).execute();
+      const rest = (await s.selectFrom('phone_numbers').select(['id', 'e164']).where('range_id', '=', oldRangeId).execute()).sort((a, b) => (BigInt(a.e164.slice(1)) < BigInt(b.e164.slice(1)) ? -1 : 1));
+      if (!rest.length) {
+        await s.deleteFrom('discovery_number_ranges').where('id', '=', oldRangeId).execute();
+        return;
+      }
+      const runs: (typeof rest)[] = [];
+      for (const r of rest) {
+        const last = runs[runs.length - 1];
+        if (last && BigInt(r.e164.slice(1)) === BigInt(last[last.length - 1]!.e164.slice(1)) + 1n) last.push(r);
+        else runs.push([r]);
+      }
+      const old = await s.selectFrom('discovery_number_ranges').select(['kind', 'comments']).where('id', '=', oldRangeId).executeTakeFirstOrThrow();
+      await s.updateTable('discovery_number_ranges').set({ range_start: runs[0]![0]!.e164, range_end: runs[0]![runs[0]!.length - 1]!.e164 }).where('id', '=', oldRangeId).execute();
+      for (const run of runs.slice(1)) {
+        const split = await s
+          .insertInto('discovery_number_ranges')
+          .values({ sitecode: null, range_start: run[0]!.e164, range_end: run[run.length - 1]!.e164, kind: old.kind, comments: old.comments } as never)
+          .returning('id')
+          .executeTakeFirstOrThrow();
+        await s.updateTable('phone_numbers').set({ range_id: split.id }).where('id', 'in', run.map((r) => r.id)).execute();
+      }
+    });
+    await this.audit.tenant(t.schema, 'discovery.number_moved_to_site', { actor: actorOf(user), targetType: 'phone_number', targetId: phoneId, detail: { e164, sitecode, from: 'found_in_teams' } });
+  }
+
+  /**
    * Attaches the discovered numbers to a Site Data resource account. A number in none of the ranges is first added to this
-   * site's ranges (as a single-number "re-point" range, since it already exists live); one in another site's range, or already
-   * assigned, is left alone. Returns what could not be attached, in words, for the result screen.
+   * site's ranges (as a single-number "re-point" range, since it already exists live), and so is one a Discovery sync put in a
+   * "Found in Teams" range with no site; one in another site's range, or already assigned, is left alone. Returns what could not
+   * be attached, in words, for the result screen.
    */
   private async attachDiscoveredNumbers(t: TenantContext, user: AuthedUser, raId: string, siteId: string, numbers: string[]): Promise<string[]> {
     const s = this.s(t);
@@ -1358,6 +1400,11 @@ export class TenantDiscoveryService {
         await this.telephony.addRange(t, user, { sitecode, range_start: e164, range_end: e164, kind: 'retain', comments: 'Added from Discovery: the number is already live in the tenant.' } as never, false);
         row = await find(e164);
       }
+      // A Discovery sync keeps a number that is live in Teams but in none of our ranges in a range with no site: it belongs to this site now.
+      if (row && !row.sitecode && sitecode) {
+        await this.adoptFoundInTeamsNumber(t, user, row.id, e164, sitecode);
+        row = await find(e164);
+      }
       if (!row) problems.push(`${e164} could not be added to a number range, so it was not attached.`);
       else if (row.sitecode !== sitecode) problems.push(row.sitecode ? `${e164} is in the number range of site ${row.sitecode}, so it was not attached.` : `${e164} is in a number range that has no site, so it was not attached.`);
       else if (row.holder_id === raId) continue;
@@ -1365,6 +1412,36 @@ export class TenantDiscoveryService {
       else await this.telephony.attachRaNumber(t, user, raId, row.id, false);
     }
     return problems;
+  }
+
+  /**
+   * Every number Teams has on a discovered resource account: its own PhoneNumber, and each phone number whose assignment points at it
+   * (Get-CsPhoneNumberAssignment's AssignedPstnTargetId is the account's object id). An unassigned number is left out.
+   */
+  private async resourceAccountNumbers(t: TenantContext, ra: { object_key: string; data: unknown }): Promise<string[]> {
+    const d = (ra.data ?? {}) as Record<string, unknown>;
+    const out = new Map<string, string>();
+    const add = (raw: unknown) => {
+      if (typeof raw !== 'string') return;
+      const n = raw.replace(/^tel:/i, '').split(';')[0]!.trim();
+      const digits = n.replace(/\D/g, '');
+      if (digits) out.set(digits, n);
+    };
+    add(d.PhoneNumber);
+    const objectId = (typeof d.ObjectId === 'string' && d.ObjectId ? d.ObjectId : ra.object_key).toLowerCase();
+    const assigned = await this.s(t)
+      .selectFrom('tenant_objects')
+      .select('data')
+      .where('object_type', '=', 'phone_number')
+      .where('removed_at', 'is', null)
+      .where(sql<string>`lower(data->>'AssignedPstnTargetId')`, '=', objectId)
+      .execute();
+    for (const r of assigned) {
+      const n = (r.data ?? {}) as Record<string, unknown>;
+      if (typeof n.PstnAssignmentStatus === 'string' && /^unassigned$/i.test(n.PstnAssignmentStatus)) continue;
+      add(n.TelephoneNumber);
+    }
+    return [...out.values()];
   }
 
   /**
@@ -1383,7 +1460,8 @@ export class TenantDiscoveryService {
     const s = this.s(t);
     const d = (ra.data ?? {}) as Record<string, unknown>;
     const upn = typeof d.UserPrincipalName === 'string' ? d.UserPrincipalName.toLowerCase() : null;
-    const number = typeof d.PhoneNumber === 'string' ? d.PhoneNumber.replace(/^tel:/i, '').split(';')[0]!.trim() : null;
+    // Its numbers go into this site's number ranges and are attached to it, whether the account is new here or already on the site.
+    const numbers = await this.resourceAccountNumbers(t, ra);
     const kindByAppId = new Map(Object.entries(RESOURCE_ACCOUNT_APPLICATION_IDS).map(([k, v]) => [v, k]));
     const kind = ((typeof d.ApplicationId === 'string' ? kindByAppId.get(d.ApplicationId) : undefined) ?? voiceApp?.kind ?? (ctx.ownerOfRa.get(ctx.lower(ra.object_key))?.object_type as 'auto_attendant' | 'call_queue' | undefined) ?? 'auto_attendant') as 'auto_attendant' | 'call_queue';
 
@@ -1392,13 +1470,14 @@ export class TenantDiscoveryService {
       if (existing.site_id !== siteId) return { status: 'other_site', id: existing.id, joined: false, problems: [], siteId: existing.site_id };
       const joined = !!voiceApp && !existing.voice_app_id;
       if (joined) await s.updateTable('discovery_resource_accounts').set({ voice_app_id: voiceApp!.id, updated_at: new Date().toISOString() }).where('id', '=', existing.id).execute();
-      return { status: 'existing', id: existing.id, joined, problems: [] };
+      const problems = await this.attachDiscoveredNumbers(t, user, existing.id, siteId, numbers);
+      return { status: 'existing', id: existing.id, joined, problems };
     }
     if (upn) {
       const design = await s.selectFrom('discovery_resource_accounts').select(['id', 'voice_app_id']).where('site_id', '=', siteId).where('tenant_object_id', 'is', null).where(sql`lower(upn)`, '=', upn).executeTakeFirst();
       if (design) {
         await s.updateTable('discovery_resource_accounts').set({ tenant_object_id: ra.id, voice_app_id: design.voice_app_id ?? voiceApp?.id ?? null, updated_at: new Date().toISOString() }).where('id', '=', design.id).execute();
-        const problems = await this.attachDiscoveredNumbers(t, user, design.id, siteId, number ? [number] : []);
+        const problems = await this.attachDiscoveredNumbers(t, user, design.id, siteId, numbers);
         return { status: 'matched', id: design.id, joined: false, problems };
       }
     }
@@ -1407,7 +1486,7 @@ export class TenantDiscoveryService {
       .values({ site_id: siteId, voice_app_id: voiceApp?.id ?? null, name: ra.display_name ?? upn ?? ra.object_key, kind, upn, tenant_object_id: ra.id, comments: 'Added from Discovery.' })
       .returning('id')
       .executeTakeFirstOrThrow();
-    const problems = await this.attachDiscoveredNumbers(t, user, row.id, siteId, number ? [number] : []);
+    const problems = await this.attachDiscoveredNumbers(t, user, row.id, siteId, numbers);
     return { status: 'created', id: row.id, joined: false, problems };
   }
 
