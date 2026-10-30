@@ -1409,7 +1409,14 @@ export class TenantDiscoveryService {
       else if (row.sitecode !== sitecode) problems.push(row.sitecode ? `${e164} is in the number range of site ${row.sitecode}, so it was not attached.` : `${e164} is in a number range that has no site, so it was not attached.`);
       else if (row.holder_id === raId) continue;
       else if (row.holder_id) problems.push(`${e164} is already assigned in Site Data, so it was not attached.`);
-      else await this.telephony.attachRaNumber(t, user, raId, row.id, false);
+      else {
+        // One number that cannot be attached is reported for the result screen; it does not stop the account (or the rest) being added.
+        try {
+          await this.telephony.attachRaNumber(t, user, raId, row.id, false);
+        } catch (e) {
+          problems.push(`${e164} was not attached: ${(e as Error).message}`);
+        }
+      }
     }
     return problems;
   }

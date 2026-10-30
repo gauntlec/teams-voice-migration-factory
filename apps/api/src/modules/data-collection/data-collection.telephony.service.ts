@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { sql, type Kysely } from 'kysely';
-import { cooloffDays, coolingUntil, reconcileNumbersWithTeams, refreshNumberConflict, setNumbersParked, tenantDb, type DB } from '@tvmf/db';
+import { cooloffDays, coolingUntil, reconcileNumbersWithTeams, refreshNumberConflict, releasedNumber, setNumbersParked, tenantDb, type DB } from '@tvmf/db';
 import {
   MAX_RANGE_SIZE,
   type CallingPolicyInput,
@@ -162,7 +162,7 @@ export class TelephonyService {
         if (kind !== 'voice_app') {
           await x
             .updateTable('phone_numbers')
-            .set({ holder_type: null, holder_id: null, status: 'available' })
+            .set(releasedNumber())
             .where('holder_type', '=', kind)
             .where('holder_id', 'in', chunk)
             .execute();
@@ -898,8 +898,9 @@ export class TelephonyService {
       .set({ holder_type: holderType, holder_id: holderId, status: 'assigned', live_only: false })
       .where('id', '=', numberId)
       .where('holder_id', 'is', null)
-      // free, or assigned only because Teams has it (number-reconcile.ts): a holder in Site Data takes it over, and any clash with Teams is flagged
-      .where((eb) => eb.or([eb.and([eb('status', '=', 'available'), eb('live_status', 'is', null)]), eb('live_only', '=', true)]))
+      // free (a free number Teams still has included), or assigned only because Teams has it (number-reconcile.ts): a holder in Site Data
+      // takes it over, and any clash with Teams is flagged
+      .where((eb) => eb.or([eb('status', '=', 'available'), eb('live_only', '=', true)]))
       .executeTakeFirst();
     if (!Number(res.numUpdatedRows)) {
       const n = await this.s(t)
@@ -918,7 +919,7 @@ export class TelephonyService {
   private async releaseHolder(t: TenantContext, holderType: NumberHolderType, holderId: string) {
     await this.s(t)
       .updateTable('phone_numbers')
-      .set({ holder_type: null, holder_id: null, status: 'available' })
+      .set(releasedNumber())
       .where('holder_type', '=', holderType)
       .where('holder_id', '=', holderId)
       .execute();
@@ -1533,7 +1534,7 @@ export class TelephonyService {
     await this.assertHolderInScope(t, 'discovery_resource_accounts', raId, 'resource account not found');
     const res = await this.s(t)
       .updateTable('phone_numbers')
-      .set({ holder_type: null, holder_id: null, status: 'available' })
+      .set(releasedNumber())
       .where('id', '=', numberId)
       .where('holder_type', '=', 'resource_account')
       .where('holder_id', '=', raId)

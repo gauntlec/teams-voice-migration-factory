@@ -1,3 +1,4 @@
+import { sql } from 'kysely';
 import { lineUriToNumber } from '@tvmf/shared';
 import type { Scoped } from './live-state';
 
@@ -106,6 +107,21 @@ export function numberConflict(row: { status: string; holder_type: string | null
   if (row.holder_type === 'analogue') return `Live in Teams on ${on}, but Site Data has it as an analogue line. Nothing has been changed: correct the entry here to match Teams, or free the number in Teams.`;
   if (!design?.upn || !live.upn) return null;
   return design.upn === live.upn ? null : `Live in Teams on ${on}, but Site Data has it for ${design.name ?? design.upn}. Nothing has been changed: change the entry here to match Teams, or move the number in Teams.`;
+}
+
+/**
+ * What a number becomes when its Site Data or Design & Build holder lets it go. One that Teams still has (live_status, from the last
+ * Discovery sync) stays assigned because Teams has it (live_only), exactly as the sync would leave it, so the next holder can take it over
+ * (a free number marked as live in Teams was refused as "in use in Teams" before). Any other goes back to the free pool.
+ */
+export function releasedNumber() {
+  return {
+    holder_type: null,
+    holder_id: null,
+    status: sql<'available' | 'assigned'>`case when live_status is not null then 'assigned' else 'available' end`,
+    live_only: sql<boolean>`live_status is not null`,
+    conflict: null,
+  };
 }
 
 /** Brings the inventory in line with Teams. `releaseMissing`: also stop treating numbers Teams no longer lists as live (only when the sync read every number). */

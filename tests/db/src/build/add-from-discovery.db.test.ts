@@ -542,3 +542,40 @@ describe('resource accounts: a number a Discovery sync found in Teams', () => {
     expect(left.range_id).not.toBe(right.range_id);
   });
 });
+
+describe('resource accounts: removed from Site Data and added again', () => {
+  it("takes its number back although Teams still has it on the account (it was refused as \"in use in Teams\")", async () => {
+    const site = (await seedSite(c.s, { sitecode: 'MWX01' })).id;
+    const upn = 'ipf.hq.mw@contoso.test';
+    const ra = await object('resource_account', 'ra-guid-mwx', 'IPF HQ Mineral Wells TX', { UserPrincipalName: upn, ApplicationId: AA_APP, ObjectId: 'ra-guid-mwx', PhoneNumber: 'tel:+18664650001' });
+    await object('phone_number', '+18664650001', '+18664650001', { TelephoneNumber: '+18664650001', AssignedPstnTargetId: 'ra-guid-mwx', PstnAssignmentStatus: 'VoiceApplicationAssigned', AssignedTo: { kind: 'resource_account', upn, displayName: 'IPF HQ Mineral Wells TX' } });
+    const number = () => c.s.selectFrom('phone_numbers').select(['status', 'holder_id', 'live_only', 'live_status', 'conflict']).where('e164', '=', '+18664650001').executeTakeFirstOrThrow();
+    const dcRa = () => c.s.selectFrom('discovery_resource_accounts').select('id').where('tenant_object_id', '=', ra).executeTakeFirst();
+
+    await build.addFromDiscovery(c.t, engineer, { kind: 'resource_account', items: [{ id: ra, siteId: site }], alsoBuild: false });
+    await reconcileNumbersWithTeams(c.s, { releaseMissing: false }); // a Discovery sync: Teams has the number on this account
+    expect(await number()).toMatchObject({ holder_id: (await dcRa())!.id, live_status: 'VoiceApplicationAssigned', conflict: null });
+
+    // removed from Site Data: the number is let go, but Teams still has it, so it is held because Teams has it - not "free"
+    await tel.deleteResourceAccount(c.t, engineer, (await dcRa())!.id, false);
+    expect(await number()).toMatchObject({ status: 'assigned', holder_id: null, live_only: true });
+
+    // added again: the number comes back to it, and the add does not fail
+    const again = await build.addFromDiscovery(c.t, engineer, { kind: 'resource_account', items: [{ id: ra, siteId: site }], alsoBuild: false });
+    expect(again[0]).toMatchObject({ dataCollection: 'added' });
+    expect(again[0]!.note ?? '').not.toMatch(/not attached/);
+    expect(await number()).toMatchObject({ status: 'assigned', holder_id: (await dcRa())!.id, live_only: false, conflict: null });
+  });
+
+  it('also takes over a number left free-but-live by an earlier release (before this fix)', async () => {
+    const id = (await dcRaFor('ra-guid-mwx'))!;
+    await c.s.updateTable('phone_numbers').set({ holder_type: null, holder_id: null, status: 'available', live_only: false }).where('e164', '=', '+18664650001').execute();
+    await tel.attachRaNumber(c.t, engineer, id, (await c.s.selectFrom('phone_numbers').select('id').where('e164', '=', '+18664650001').executeTakeFirstOrThrow()).id, false);
+    expect(await c.s.selectFrom('phone_numbers').select(['holder_id', 'status']).where('e164', '=', '+18664650001').executeTakeFirstOrThrow()).toMatchObject({ holder_id: id, status: 'assigned' });
+  });
+});
+
+async function dcRaFor(objectKey: string) {
+  const obj = await c.s.selectFrom('tenant_objects').select('id').where('object_key', '=', objectKey).executeTakeFirstOrThrow();
+  return (await c.s.selectFrom('discovery_resource_accounts').select('id').where('tenant_object_id', '=', obj.id).executeTakeFirst())?.id;
+}

@@ -72,9 +72,12 @@ describe('Design & Build and numbers live in Teams', () => {
     expect(n.conflict).toMatch(/Someone Else.*pat@contoso\.test/);
   });
 
-  it('refuses a free number that Teams has live but the inventory still shows as available', async () => {
+  it('takes over a free number that Teams has live (a holder let it go since the last sync), and flags the clash with Teams', async () => {
     const [live] = await seedNumbers(c.s, 'LON01', ['+442070000091']);
-    await c.s.updateTable('phone_numbers').set({ live_status: 'PhoneNumberAssigned', live_holder_name: 'Lee' }).where('id', '=', live!.id).execute();
-    await expect(build.createUser(c.t, engineer, { site_id: siteId, upn: 'robin@contoso.test', phone_number_id: live!.id } as never)).rejects.toThrow(/in use in Teams \(Lee\)/);
+    await c.s.updateTable('phone_numbers').set({ live_status: 'PhoneNumberAssigned', live_holder_name: 'Lee', live_holder_upn: 'lee@contoso.test' }).where('id', '=', live!.id).execute();
+    const row = await build.createUser(c.t, engineer, { site_id: siteId, upn: 'robin@contoso.test', phone_number_id: live!.id } as never);
+    const n = await c.s.selectFrom('phone_numbers').select(['holder_id', 'status', 'conflict']).where('id', '=', live!.id).executeTakeFirstOrThrow();
+    expect(n).toMatchObject({ holder_id: (row as { id: string }).id, status: 'assigned' });
+    expect(n.conflict).toMatch(/Lee.*robin@contoso\.test/);
   });
 });
