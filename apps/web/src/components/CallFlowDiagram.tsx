@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { applyNodeChanges, Background, BaseEdge, Controls, type Edge, getBezierPath, getNodesBounds, getViewportForBounds, Handle, MarkerType, MiniMap, type EdgeProps, type Node, type NodeProps, Panel, Position, ReactFlow, ReactFlowProvider, useNodesInitialized, useReactFlow } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
@@ -340,7 +340,7 @@ const pdfText = (t: string) => t.replace(/[\u2600-\u27BF\u{1F000}-\u{1FAFF}\uFE0
 
 /**
  * Page 1: the cover - the numbers callers dial and their resource accounts, the business hours, the holidays with their dates, each queue and how
- * many agents it has, and everything the diagram flags to review (the record Microsoft's call flow design guidance asks for).
+ * many agents it has (the record Microsoft's call flow design guidance asks for). The review warnings are left out: an export is for the customer.
  */
 function addCover(pdf: jsPDF, title: string, summary: CallFlowSummary): void {
   const left = A4.margin + 2;
@@ -372,7 +372,6 @@ function addCover(pdf: jsPDF, title: string, summary: CallFlowSummary): void {
   section('Business hours', summary.hours.map((h) => `${h.name}: ${h.lines.join('; ')}`), 'No business hours are recorded.');
   section('Holidays', summary.holidays.map((h) => `${h.name} (${h.owner}): ${h.dates.length ? h.dates.join('; ') : 'no dates recorded'}`), 'No holidays.');
   section('Call queues', summary.queues.map((q) => `${q.name}: ${q.agents} agent${q.agents === 1 ? '' : 's'}${q.routing ? `  (${q.routing})` : ''}`), 'No call queues.');
-  section('To review', summary.warnings.map((w) => `${w.where}: ${w.text}`), 'Nothing flagged.');
   y += 3;
   write('How to read the diagram: Teams checks an auto attendant\'s holidays first (1), then its business hours (2); any other time is after hours (3). Each call queue offers its calls to the agents listed in the green box under it.', 8);
 }
@@ -451,9 +450,10 @@ async function addDiagramPages(pdf: jsPDF, shot: Shot, portrait: boolean, title:
 
 /**
  * Export-to-PNG/PDF buttons - a child of ReactFlow so useReactFlow can read the laid-out node positions/sizes. The PDF is A4: a cover page with
- * the key facts, then the diagram (see addDiagramPages).
+ * the key facts, then the diagram (see addDiagramPages). An export never carries the review warnings: `prepare` lays the diagram out without
+ * them first, and the returned function puts them back.
  */
-function ExportControls({ filename, title, direction, graph }: { filename: string; title: string; direction: Direction; graph: CallFlowGraph }) {
+function ExportControls({ filename, title, direction, graph, prepare }: { filename: string; title: string; direction: Direction; graph: CallFlowGraph; prepare: () => Promise<() => void> }) {
   const ls = useLocalStyles();
   const { getNodes } = useReactFlow();
   const [busy, setBusy] = useState(false);
@@ -462,7 +462,9 @@ function ExportControls({ filename, title, direction, graph }: { filename: strin
   const runExport = async (kind: 'png' | 'pdf') => {
     setBusy(true);
     setError(null);
+    let restore = () => {};
     try {
+      restore = await prepare();
       const shot = await captureDiagramPng(getNodes());
       if (!shot) return;
       if (kind === 'png') {
@@ -476,6 +478,7 @@ function ExportControls({ filename, title, direction, graph }: { filename: strin
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Export failed.');
     } finally {
+      restore();
       setBusy(false);
     }
   };
@@ -489,7 +492,7 @@ function ExportControls({ filename, title, direction, graph }: { filename: strin
               PNG
             </Button>
           </Tooltip>
-          <Tooltip content={`Export as an A4 PDF: a cover page with the numbers, hours, holidays, queues and what to review, then the diagram (${direction === 'TB' ? 'portrait' : 'landscape'})`} relationship="label">
+          <Tooltip content={`Export as an A4 PDF: a cover page with the numbers, hours, holidays and queues, then the diagram (${direction === 'TB' ? 'portrait' : 'landscape'})`} relationship="label">
             <Button size="small" icon={<ArrowDownloadRegular />} disabled={busy} onClick={() => runExport('pdf')}>
               PDF
             </Button>
@@ -523,7 +526,7 @@ function DirectionControls({ direction, onChange }: { direction: Direction; onCh
 }
 
 /** The boxes and lines, not yet placed: each box is drawn (hidden) first so its real size can be measured. */
-function buildElements(graph: CallFlowGraph, direction: Direction, ls: ReturnType<typeof useLocalStyles>): { nodes: Node[]; edges: Edge[] } {
+function buildElements(graph: CallFlowGraph, direction: Direction, ls: ReturnType<typeof useLocalStyles>, withWarnings: boolean): { nodes: Node[]; edges: Edge[] } {
   const inPos = direction === 'LR' ? Position.Left : Position.Top;
   const outPos = direction === 'LR' ? Position.Right : Position.Bottom;
   const nodes: Node[] = [];
@@ -555,7 +558,7 @@ function buildElements(graph: CallFlowGraph, direction: Direction, ls: ReturnTyp
               </div>
             ))}
             {n.badge && <div className={ls.inlineblockMt4ColoredFilledPad1px7}>{n.badge}</div>}
-            {n.warnings?.map((w, i) => (
+            {withWarnings && n.warnings?.map((w, i) => (
               <div key={`w${i}`} className={ls.warning}>
                 {w}
               </div>
@@ -625,9 +628,14 @@ function buildElements(graph: CallFlowGraph, direction: Direction, ls: ReturnTyp
  * Draws the boxes hidden, measures them once xyflow has, then places them (arrange) and shows them. Placing from the real sizes is what keeps
  * every word inside its box and no box on top of another: a size guessed from the length of the text was wrong as often as not.
  */
-function FlowCanvas({ graph, direction, onDirection, filename, title }: { graph: CallFlowGraph; direction: Direction; onDirection: (d: Direction) => void; filename: string; title: string }) {
+function FlowCanvas({ graph, direction, onDirection, filename, title, showWarnings }: { graph: CallFlowGraph; direction: Direction; onDirection: (d: Direction) => void; filename: string; title: string; showWarnings: boolean }) {
   const ls = useLocalStyles();
-  const base = useMemo(() => buildElements(graph, direction, ls), [graph, direction, ls]);
+  // While an export is being captured the warnings are left out (exports are for customers); the diagram is laid out again without them.
+  const [exporting, setExporting] = useState(false);
+  const withWarnings = showWarnings && !exporting;
+  const base = useMemo(() => buildElements(graph, direction, ls, withWarnings), [graph, direction, ls, withWarnings]);
+  const onPlaced = useRef<(() => void) | null>(null);
+  const paneRef = useRef<HTMLDivElement>(null);
   const [nodes, setNodes] = useState<Node[]>(base.nodes);
   const [edges, setEdges] = useState<Edge[]>(base.edges);
   const [placedFor, setPlacedFor] = useState<typeof base | null>(null);
@@ -642,19 +650,44 @@ function FlowCanvas({ graph, direction, onDirection, filename, title }: { graph:
 
   useEffect(() => {
     if (!initialized || placedFor === base) return;
-    const size = (id: string): Size => {
-      const m = getInternalNode(id)?.measured;
-      return { w: m?.width ?? NODE_WIDTH, h: m?.height ?? NODE_HEIGHT };
+    // Measured from the drawn boxes themselves, two frames after they were (re)drawn: xyflow's own record of a box's size can still be the one
+    // from before its content changed (the warnings left out for an export, or put back), which would leave gaps or overlaps.
+    let cancelled = false;
+    const place = () => {
+      if (cancelled) return;
+      const size = (id: string): Size => {
+        const el = paneRef.current?.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(id)}"]`);
+        if (el && el.offsetWidth > 0) return { w: el.offsetWidth, h: el.offsetHeight };
+        const m = getInternalNode(id)?.measured;
+        return { w: m?.width ?? NODE_WIDTH, h: m?.height ?? NODE_HEIGHT };
+      };
+      const { positions, routes } = arrange(graph, direction, size);
+      setNodes((ns) => ns.map((n) => ({ ...n, position: positions.get(n.id) ?? n.position, style: { ...n.style, visibility: 'visible' } })));
+      setEdges((es) => es.map((e) => ({ ...e, hidden: false, data: { ...e.data, route: routes.get(e.id) } })));
+      setPlacedFor(base);
+      requestAnimationFrame(() => void fitView({ padding: 0.06 }));
+      // An export waiting for this layout goes once the placed boxes have been drawn.
+      const done = onPlaced.current;
+      onPlaced.current = null;
+      if (done) requestAnimationFrame(() => requestAnimationFrame(done));
     };
-    const { positions, routes } = arrange(graph, direction, size);
-    setNodes((ns) => ns.map((n) => ({ ...n, position: positions.get(n.id) ?? n.position, style: { ...n.style, visibility: 'visible' } })));
-    setEdges((es) => es.map((e) => ({ ...e, hidden: false, data: { ...e.data, route: routes.get(e.id) } })));
-    setPlacedFor(base);
-    requestAnimationFrame(() => void fitView({ padding: 0.06 }));
+    requestAnimationFrame(() => requestAnimationFrame(place));
+    return () => {
+      cancelled = true;
+    };
   }, [initialized, placedFor, base, graph, direction, getInternalNode, fitView]);
+
+  const prepareExport = (): Promise<() => void> => {
+    if (!showWarnings) return Promise.resolve(() => {});
+    return new Promise((resolve) => {
+      onPlaced.current = () => resolve(() => setExporting(false));
+      setExporting(true);
+    });
+  };
 
   return (
     <ReactFlow
+      ref={paneRef}
       nodes={nodes}
       edges={edges}
       nodeTypes={NODE_TYPES}
@@ -671,7 +704,7 @@ function FlowCanvas({ graph, direction, onDirection, filename, title }: { graph:
       <Controls showInteractive={false} />
       <MiniMap pannable zoomable className={ls.w120H80} nodeColor={(n) => String((n.data as BoxData).border ?? '#999')} />
       <DirectionControls direction={direction} onChange={onDirection} />
-      <ExportControls filename={filename} title={title} direction={direction} graph={graph} />
+      <ExportControls filename={filename} title={title} direction={direction} graph={graph} prepare={prepareExport} />
     </ReactFlow>
   );
 }
@@ -687,7 +720,9 @@ export function CallFlowDiagram({ graph: drawn, exportFilename, title }: { graph
   const ls = useLocalStyles();
   const [direction, setDirection] = useState<Direction>('TB');
   // A "Shared voicemail (group)" box carries the group's Object ID; show the group's name when this customer's group list has it.
-  const { activeTenantId } = useAuth();
+  const { activeTenantId, me } = useAuth();
+  // The review warnings (a long menu, a loop, a queue with its own number) are for the people who design and build: administrators and engineers.
+  const showWarnings = me?.role === 'SUPER_ADMIN' || me?.role === 'ENGINEER';
   const groupNames = useGroupNames(activeTenantId, drawn.nodes.filter((n) => n.id.startsWith('group:')).map((n) => n.id.slice('group:'.length)));
   const graph = useMemo(
     () => ({ ...drawn, nodes: drawn.nodes.map((n) => (n.id.startsWith('group:') && groupNames[n.id.slice('group:'.length).toLowerCase()] ? { ...n, sublabel: groupNames[n.id.slice('group:'.length).toLowerCase()] } : n)) }),
@@ -707,7 +742,7 @@ export function CallFlowDiagram({ graph: drawn, exportFilename, title }: { graph
       {/* A diagram is a page of paper: it stays light (and its text dark) in the dark theme, like the PNG and PDF exports. */}
       <div style={{ height: '75vh', minHeight: 480, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: 8, background: '#ffffff', color: '#242424' }}>
         <ReactFlowProvider>
-          <FlowCanvas graph={graph} direction={direction} onDirection={setDirection} filename={exportFilename ?? 'call-flow'} title={title ?? drawn.nodes[0]?.label ?? 'Call flow'} />
+          <FlowCanvas graph={graph} direction={direction} onDirection={setDirection} filename={exportFilename ?? 'call-flow'} title={title ?? drawn.nodes[0]?.label ?? 'Call flow'} showWarnings={showWarnings} />
         </ReactFlowProvider>
       </div>
       <div className={ls.flexWrapItemsCenterGap14}>
