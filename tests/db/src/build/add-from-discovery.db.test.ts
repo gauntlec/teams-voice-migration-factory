@@ -6,6 +6,7 @@ import { BuildValidationService } from '../../../../apps/api/src/modules/build/b
 import { DataCollectionService } from '../../../../apps/api/src/modules/data-collection/data-collection.service';
 import { TelephonyService } from '../../../../apps/api/src/modules/data-collection/data-collection.telephony.service';
 import { TenantDiscoveryService } from '../../../../apps/api/src/modules/tenant-discovery/tenant-discovery.service';
+import { reconcileNumbersWithTeams } from '@tvmf/db';
 import { seedCustomer, seedNumbers, seedSite, seedUser, unused, useDb, type TestCustomer } from '../helpers';
 
 const handle = useDb();
@@ -512,5 +513,32 @@ describe('resource accounts: their numbers come with them', () => {
     expect(again[0]).toMatchObject({ dataCollection: 'already_on_site' });
     expect(await held('+441610000002')).toMatchObject({ holder_type: 'resource_account', holder_id: dcRa.id, sitecode: 'MAN01' });
     expect(await held('+441610000001')).toMatchObject({ holder_id: dcRa.id });
+  });
+});
+
+describe('resource accounts: a number a Discovery sync found in Teams', () => {
+  it('moves it from the "Found in Teams" range (no site) into this site and attaches it, leaving the rest of that range in order', async () => {
+    const site = (await seedSite(c.s, { sitecode: 'MWT01' })).id;
+    const ra = await object('resource_account', 'ra-guid-mw', 'Mineral Wells RA', { UserPrincipalName: 'mw.ra@contoso.test', ApplicationId: AA_APP, ObjectId: 'ra-guid-mw', PhoneNumber: 'tel:+18664657926' });
+    const live = (n: string, target: string) => object('phone_number', n, n, { TelephoneNumber: n, AssignedPstnTargetId: target, PstnAssignmentStatus: 'VoiceApplicationAssigned', AssignedTo: { kind: 'resource_account', upn: 'mw.ra@contoso.test', displayName: 'Mineral Wells RA' } });
+    // the number and its neighbours are live in Teams; a sync puts the run of three in one range with no site
+    await live('+18664657925', 'someone-else');
+    await live('+18664657926', 'ra-guid-mw');
+    await live('+18664657927', 'someone-else');
+    await reconcileNumbersWithTeams(c.s, { releaseMissing: false });
+    const rangeOf = (e164: string) =>
+      c.s.selectFrom('phone_numbers as n').innerJoin('discovery_number_ranges as r', 'r.id', 'n.range_id').select(['n.holder_id', 'r.id as range_id', 'r.sitecode', 'r.range_start', 'r.range_end']).where('n.e164', '=', e164).executeTakeFirstOrThrow();
+    expect(await rangeOf('+18664657926')).toMatchObject({ sitecode: null, range_start: '+18664657925', range_end: '+18664657927' });
+
+    const res = await build.addFromDiscovery(c.t, engineer, { kind: 'resource_account', items: [{ id: ra, siteId: site }], alsoBuild: false });
+    expect(res[0]!.note ?? '').not.toMatch(/not attached/);
+    const dcRa = await c.s.selectFrom('discovery_resource_accounts').select('id').where('tenant_object_id', '=', ra).executeTakeFirstOrThrow();
+    expect(await rangeOf('+18664657926')).toMatchObject({ holder_id: dcRa.id, sitecode: 'MWT01', range_start: '+18664657926', range_end: '+18664657926' });
+    // the neighbours stay in Found-in-Teams ranges with no site, each range's start and end matching its numbers
+    const left = await rangeOf('+18664657925');
+    const right = await rangeOf('+18664657927');
+    expect(left).toMatchObject({ sitecode: null, range_start: '+18664657925', range_end: '+18664657925' });
+    expect(right).toMatchObject({ sitecode: null, range_start: '+18664657927', range_end: '+18664657927' });
+    expect(left.range_id).not.toBe(right.range_id);
   });
 });

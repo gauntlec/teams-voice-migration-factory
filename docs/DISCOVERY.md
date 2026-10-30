@@ -316,8 +316,9 @@ two. A voice app designed first (same kind and exact name, exactly one on the si
 with that name are reported as ambiguous and left alone. Numbers belong to the resource account: every number Teams has on it (its own
 PhoneNumber, and each phone number assignment whose AssignedPstnTargetId is the account's object id; unassigned ones are left out) is attached
 to it, also when the account is already on the site (so adding it again brings in a number assigned since). A number in none of the site's ranges
-is added to the site's ranges first, as a single-number range; one in another site's range, or already held in Site Data, is left alone and
-reported.
+is added to the site's ranges first, as a single-number range, and so is one a Discovery sync had put in a "Found in Teams" range with no site
+(it is moved out, and what is left of that range is split so each range's start and end match its numbers); one in another site's range, or
+already held in Site Data, is left alone and reported.
 
 ## Teams voice settings per user (2026.10.44)
 
