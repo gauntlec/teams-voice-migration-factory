@@ -91,7 +91,10 @@ describe('Design & Build diagram with a transfer to a voice app outside the site
     const without = buildAutoAttendantFlowGraphFromDesign(aa, [aa], []);
     expect(without.nodes.some((n) => n.label === 'Support Queue')).toBe(false);
     const g = buildAutoAttendantFlowGraphFromDesign(aa, [aa], [], live);
-    expect(g.nodes.map((n) => n.label)).toEqual(expect.arrayContaining(['Support Queue', 'agent.one@contoso.test']));
+    const queue = g.nodes.find((n) => n.label === 'Support Queue')!;
+    // the agents are listed on the queue (one box under it), not drawn as a box each
+    expect(queue.agents).toEqual(['agent.one@contoso.test']);
+    expect(g.nodes.some((n) => n.label === 'agent.one@contoso.test')).toBe(false);
     expect(g.edges.some((e) => e.label === 'No input' && e.target === 'cq:23fa0565-93af-4c1f-802b-d21c8aa19291')).toBe(true);
   });
 });
@@ -181,5 +184,14 @@ describe('Auto Attendant graph: dial-by-name extension', () => {
     expect(live('Office')).toEqual(['Dial by name also says: Office']);
     expect(live(2)).toEqual(['Dial by name also says: Department']);
     expect(live(0)).toEqual([]);
+  });
+});
+
+describe('Call Queue agents', () => {
+  it('are listed on the queue, in order, with no box or line of their own', () => {
+    const g = buildCallQueueFlowGraphFromDesign({ buildId: 'cq-1', name: 'Sales', agents: ['amy@contoso.test', 'ben@contoso.test', ''] } as never);
+    expect(g.nodes).toHaveLength(1);
+    expect(g.nodes[0]).toMatchObject({ id: 'cq:cq-1', label: 'Sales', agents: ['amy@contoso.test', 'ben@contoso.test'] });
+    expect(g.edges).toEqual([]);
   });
 });

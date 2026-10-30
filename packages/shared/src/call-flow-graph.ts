@@ -62,10 +62,12 @@ export interface CallFlowNode {
   badge?: string;
   /** Extra lines under the label: a front door's resource account and number, a business-hours box's opening times. */
   details?: string[];
+  /** A call queue's agents (name or sign-in address), listed in one box drawn directly under the queue. */
+  agents?: string[];
 }
 
-/** Which schedule branch an edge belongs to - 'operator' is the AA-level -Operator link, not schedule-tied; 'agent' isn't a routing branch at all, it's a Call Queue's membership edge (an agent -> the queue they can be offered calls from). */
-export type CallFlowBranch = 'business_hours' | 'after_hours' | 'holiday' | 'operator' | 'overflow' | 'timeout' | 'no_agent' | 'agent';
+/** Which schedule branch an edge belongs to - 'operator' is the AA-level -Operator link, not schedule-tied. */
+export type CallFlowBranch = 'business_hours' | 'after_hours' | 'holiday' | 'operator' | 'overflow' | 'timeout' | 'no_agent';
 
 export interface CallFlowEdge {
   id: string;
@@ -116,6 +118,7 @@ class GraphBuilder {
     if (node.badge && !existing.badge) existing.badge = node.badge;
     if (node.sublabel && !existing.sublabel) existing.sublabel = node.sublabel;
     if (node.details?.length && !existing.details?.length) existing.details = node.details;
+    if (node.agents?.length && !existing.agents?.length) existing.agents = node.agents;
     return node.id;
   }
 
@@ -270,7 +273,7 @@ export interface DesignCallQueueInput {
   routingMethod?: string | null;
   agentAlertTime?: number;
   agentCount?: number;
-  /** Agent UPNs - drawn as their own nodes feeding into the queue, not just counted in the sublabel. */
+  /** Agent UPNs - listed in one box under the queue (the queue offers its calls to them), not just counted in the sublabel. */
   agents?: string[];
 }
 
@@ -333,21 +336,17 @@ function designCqActionEdges(b: GraphBuilder, cq: DesignCallQueueInput): void {
   action(cq.noAgentAction, 'no_agent', 'No agents');
 }
 
-/** One node + edge per agent, feeding into the queue - "28 agents" as a sublabel count isn't the same as seeing who they are. */
-function designCqAgentEdges(b: GraphBuilder, cq: DesignCallQueueInput): void {
-  const sourceId = `cq:${cq.buildId}`;
-  for (const upn of cq.agents ?? []) {
-    if (!upn) continue;
-    const nodeId = b.ensureNode({ id: `user:${upn.toLowerCase()}`, kind: 'person', label: upn });
-    b.addEdge(nodeId, sourceId, 'Agent', 'agent');
-  }
+/** The queue's agents, listed on the queue itself (drawn as one box under it) - "28 agents" as a sublabel count isn't the same as seeing who they are. */
+function designCqAgents(b: GraphBuilder, cq: DesignCallQueueInput): void {
+  const agents = (cq.agents ?? []).filter((upn): upn is string => !!upn);
+  if (agents.length) b.ensureNode({ id: `cq:${cq.buildId}`, kind: 'call_queue', label: '(unresolved)', agents });
 }
 
 /** The "as-designed" graph for one Call Queue, from Design & Build's structured columns. */
 export function buildCallQueueFlowGraphFromDesign(cq: DesignCallQueueInput): CallFlowGraph {
   const b = new GraphBuilder();
   b.ensureNode({ id: `cq:${cq.buildId}`, kind: 'call_queue', label: cq.name, sublabel: designCqSublabel(cq) });
-  designCqAgentEdges(b, cq);
+  designCqAgents(b, cq);
   designCqActionEdges(b, cq);
   return b.build();
 }
@@ -446,7 +445,7 @@ export function buildAutoAttendantFlowGraphFromDesign(
         visitedCq.add(opt.target.buildId);
         const cq = cqById.get(opt.target.buildId);
         if (cq) {
-          designCqAgentEdges(b, cq);
+          designCqAgents(b, cq);
           designCqActionEdges(b, cq);
         }
       } else if (opt.target?.kind === 'auto_attendant' && opt.target.buildId) {
@@ -543,21 +542,15 @@ const CQ_PREFIX = { overflow: 'Overflow', timeout: 'Timeout', no_agent: 'NoAgent
 /** The call priority Teams uses when none is set (1 highest to 5 lowest). */
 const DEFAULT_CALL_PRIORITY = 3;
 
-/** One node + edge per agent, feeding into the queue - "28 agents" as a sublabel count isn't the same as seeing who they are. Get-CsCallQueue's Agents entries carry `.ObjectId`, the same tenant_users.entra_id key as every other live person reference. */
-function liveCqAgentEdges(b: GraphBuilder, cq: LiveCallQueueInput, usersByEntraId?: Map<string, string>): void {
+/** The queue's agents, listed on the queue itself (drawn as one box under it). Get-CsCallQueue's Agents entries carry `.ObjectId`, the same tenant_users.entra_id key as every other live person reference. */
+function liveCqAgents(b: GraphBuilder, cq: LiveCallQueueInput, usersByEntraId?: Map<string, string>): void {
   const identity = typeof cq.data.Identity === 'string' ? cq.data.Identity : cq.name;
-  const sourceId = `cq:${identity}`;
-  const agents = Array.isArray(cq.data.Agents) ? (cq.data.Agents as Record<string, unknown>[]) : [];
-  for (const agent of agents) {
-    const objectId = typeof agent.ObjectId === 'string' ? agent.ObjectId : undefined;
-    if (!objectId) continue;
-    const nodeId = b.ensureNode({
-      id: `user:${objectId}`,
-      kind: 'person',
-      label: usersByEntraId?.get(objectId.toLowerCase()) ?? `User (${objectId.slice(0, 8)}…)`,
-    });
-    b.addEdge(nodeId, sourceId, 'Agent', 'agent');
-  }
+  const raw = Array.isArray(cq.data.Agents) ? (cq.data.Agents as Record<string, unknown>[]) : [];
+  const agents = raw
+    .map((agent) => (typeof agent.ObjectId === 'string' ? agent.ObjectId : undefined))
+    .filter((id): id is string => !!id)
+    .map((objectId) => usersByEntraId?.get(objectId.toLowerCase()) ?? `User (${objectId.slice(0, 8)}…)`);
+  if (agents.length) b.ensureNode({ id: `cq:${identity}`, kind: 'call_queue', label: '(unresolved)', agents });
 }
 
 /**
@@ -666,7 +659,7 @@ export function buildCallQueueFlowGraphFromLive(
   const b = new GraphBuilder();
   const identity = typeof cq.data.Identity === 'string' ? cq.data.Identity : cq.name;
   b.ensureNode({ id: `cq:${identity}`, kind: 'call_queue', label: cq.name, sublabel: liveCqSublabel(cq.data) });
-  liveCqAgentEdges(b, cq, usersByEntraId);
+  liveCqAgents(b, cq, usersByEntraId);
   liveCqActionEdges(b, cq, usersByEntraId, siblings ? liveVoiceAppResolver(b, siblings.autoAttendants, siblings.callQueues) : undefined);
   return b.build();
 }
@@ -785,7 +778,7 @@ export function buildAutoAttendantFlowGraphFromLive(
     const cq = cqByIdentity.get(key);
     if (cq && !visitedCq.has(key)) {
       visitedCq.add(key);
-      liveCqAgentEdges(b, cq, usersByEntraId);
+      liveCqAgents(b, cq, usersByEntraId);
       liveCqActionEdges(b, cq, usersByEntraId, resolveVoiceAppNode);
       return;
     }
