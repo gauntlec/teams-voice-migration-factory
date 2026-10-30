@@ -1368,6 +1368,36 @@ export class TenantDiscoveryService {
   }
 
   /**
+   * Every number Teams has on a discovered resource account: its own PhoneNumber, and each phone number whose assignment points at it
+   * (Get-CsPhoneNumberAssignment's AssignedPstnTargetId is the account's object id). An unassigned number is left out.
+   */
+  private async resourceAccountNumbers(t: TenantContext, ra: { object_key: string; data: unknown }): Promise<string[]> {
+    const d = (ra.data ?? {}) as Record<string, unknown>;
+    const out = new Map<string, string>();
+    const add = (raw: unknown) => {
+      if (typeof raw !== 'string') return;
+      const n = raw.replace(/^tel:/i, '').split(';')[0]!.trim();
+      const digits = n.replace(/\D/g, '');
+      if (digits) out.set(digits, n);
+    };
+    add(d.PhoneNumber);
+    const objectId = (typeof d.ObjectId === 'string' && d.ObjectId ? d.ObjectId : ra.object_key).toLowerCase();
+    const assigned = await this.s(t)
+      .selectFrom('tenant_objects')
+      .select('data')
+      .where('object_type', '=', 'phone_number')
+      .where('removed_at', 'is', null)
+      .where(sql<string>`lower(data->>'AssignedPstnTargetId')`, '=', objectId)
+      .execute();
+    for (const r of assigned) {
+      const n = (r.data ?? {}) as Record<string, unknown>;
+      if (typeof n.PstnAssignmentStatus === 'string' && /^unassigned$/i.test(n.PstnAssignmentStatus)) continue;
+      add(n.TelephoneNumber);
+    }
+    return [...out.values()];
+  }
+
+  /**
    * One resource account on a site, from a discovered resource account. Found by the exact object; else a design row on this site
    * with the same UPN is linked to it (the design and the live account are the same thing); else a new row is made, with its number.
    * `voiceApp` is the Site Data voice app it answers for, when that is on this site.
@@ -1383,7 +1413,8 @@ export class TenantDiscoveryService {
     const s = this.s(t);
     const d = (ra.data ?? {}) as Record<string, unknown>;
     const upn = typeof d.UserPrincipalName === 'string' ? d.UserPrincipalName.toLowerCase() : null;
-    const number = typeof d.PhoneNumber === 'string' ? d.PhoneNumber.replace(/^tel:/i, '').split(';')[0]!.trim() : null;
+    // Its numbers go into this site's number ranges and are attached to it, whether the account is new here or already on the site.
+    const numbers = await this.resourceAccountNumbers(t, ra);
     const kindByAppId = new Map(Object.entries(RESOURCE_ACCOUNT_APPLICATION_IDS).map(([k, v]) => [v, k]));
     const kind = ((typeof d.ApplicationId === 'string' ? kindByAppId.get(d.ApplicationId) : undefined) ?? voiceApp?.kind ?? (ctx.ownerOfRa.get(ctx.lower(ra.object_key))?.object_type as 'auto_attendant' | 'call_queue' | undefined) ?? 'auto_attendant') as 'auto_attendant' | 'call_queue';
 
@@ -1392,13 +1423,14 @@ export class TenantDiscoveryService {
       if (existing.site_id !== siteId) return { status: 'other_site', id: existing.id, joined: false, problems: [], siteId: existing.site_id };
       const joined = !!voiceApp && !existing.voice_app_id;
       if (joined) await s.updateTable('discovery_resource_accounts').set({ voice_app_id: voiceApp!.id, updated_at: new Date().toISOString() }).where('id', '=', existing.id).execute();
-      return { status: 'existing', id: existing.id, joined, problems: [] };
+      const problems = await this.attachDiscoveredNumbers(t, user, existing.id, siteId, numbers);
+      return { status: 'existing', id: existing.id, joined, problems };
     }
     if (upn) {
       const design = await s.selectFrom('discovery_resource_accounts').select(['id', 'voice_app_id']).where('site_id', '=', siteId).where('tenant_object_id', 'is', null).where(sql`lower(upn)`, '=', upn).executeTakeFirst();
       if (design) {
         await s.updateTable('discovery_resource_accounts').set({ tenant_object_id: ra.id, voice_app_id: design.voice_app_id ?? voiceApp?.id ?? null, updated_at: new Date().toISOString() }).where('id', '=', design.id).execute();
-        const problems = await this.attachDiscoveredNumbers(t, user, design.id, siteId, number ? [number] : []);
+        const problems = await this.attachDiscoveredNumbers(t, user, design.id, siteId, numbers);
         return { status: 'matched', id: design.id, joined: false, problems };
       }
     }
@@ -1407,7 +1439,7 @@ export class TenantDiscoveryService {
       .values({ site_id: siteId, voice_app_id: voiceApp?.id ?? null, name: ra.display_name ?? upn ?? ra.object_key, kind, upn, tenant_object_id: ra.id, comments: 'Added from Discovery.' })
       .returning('id')
       .executeTakeFirstOrThrow();
-    const problems = await this.attachDiscoveredNumbers(t, user, row.id, siteId, number ? [number] : []);
+    const problems = await this.attachDiscoveredNumbers(t, user, row.id, siteId, numbers);
     return { status: 'created', id: row.id, joined: false, problems };
   }
 

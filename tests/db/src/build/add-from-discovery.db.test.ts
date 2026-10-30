@@ -488,3 +488,29 @@ describe('an auto attendant brings the voice apps it sends calls to', () => {
     expect(queueRes).toEqual([expect.objectContaining({ id: q, dataCollection: 'already_on_site' })]);
   });
 });
+
+describe('resource accounts: their numbers come with them', () => {
+  it("puts every number Teams assigns to the account into the site's number ranges and attaches it, also when the account is already on the site", async () => {
+    const site = (await seedSite(c.s, { sitecode: 'MAN01' })).id;
+    // No PhoneNumber on the account itself: the number is only in Teams' phone number assignments, which name the account by its object id.
+    const ra = await object('resource_account', 'ra-guid-man', 'Manchester RA', { UserPrincipalName: 'man.ra@contoso.test', ApplicationId: AA_APP, ObjectId: 'ra-guid-man' });
+    const assignment = (n: string, target: string, status: string) => object('phone_number', n, n, { TelephoneNumber: n, AssignedPstnTargetId: target, PstnAssignmentStatus: status, NumberType: 'DirectRouting' });
+    await assignment('+441610000001', 'RA-GUID-MAN', 'VoiceApplicationAssigned');
+    await assignment('+441610000009', 'ra-guid-man', 'Unassigned');
+    const held = (e164: string) =>
+      c.s.selectFrom('phone_numbers as n').innerJoin('discovery_number_ranges as r', 'r.id', 'n.range_id').select(['n.holder_type', 'n.holder_id', 'r.sitecode', 'r.kind']).where('n.e164', '=', e164).executeTakeFirst();
+
+    const res = await build.addFromDiscovery(c.t, engineer, { kind: 'resource_account', items: [{ id: ra, siteId: site }], alsoBuild: false });
+    expect(res[0]).toMatchObject({ dataCollection: 'added' });
+    const dcRa = await c.s.selectFrom('discovery_resource_accounts').select('id').where('tenant_object_id', '=', ra).executeTakeFirstOrThrow();
+    expect(await held('+441610000001')).toMatchObject({ holder_type: 'resource_account', holder_id: dcRa.id, sitecode: 'MAN01', kind: 'retain' });
+    expect(await held('+441610000009')).toBeUndefined(); // an unassigned number is not brought in
+
+    // a number Teams has assigned to it since comes in when the account is added again
+    await assignment('+441610000002', 'ra-guid-man', 'VoiceApplicationAssigned');
+    const again = await build.addFromDiscovery(c.t, engineer, { kind: 'resource_account', items: [{ id: ra, siteId: site }], alsoBuild: false });
+    expect(again[0]).toMatchObject({ dataCollection: 'already_on_site' });
+    expect(await held('+441610000002')).toMatchObject({ holder_type: 'resource_account', holder_id: dcRa.id, sitecode: 'MAN01' });
+    expect(await held('+441610000001')).toMatchObject({ holder_id: dcRa.id });
+  });
+});

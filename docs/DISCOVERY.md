@@ -313,8 +313,11 @@ Teams keeps these apart, and so do Site Data and Design & Build:
 
 Everything is matched on the Teams Id / UPN (`tenant_object_id`), never on a name, so two voice apps or two resource accounts with the same name stay
 two. A voice app designed first (same kind and exact name, exactly one on the site) is linked to the live one instead of copied; several
-with that name are reported as ambiguous and left alone. Numbers belong to the resource account; one that is in none of the site's ranges is added to
-the site's ranges first.
+with that name are reported as ambiguous and left alone. Numbers belong to the resource account: every number Teams has on it (its own
+PhoneNumber, and each phone number assignment whose AssignedPstnTargetId is the account's object id; unassigned ones are left out) is attached
+to it, also when the account is already on the site (so adding it again brings in a number assigned since). A number in none of the site's ranges
+is added to the site's ranges first, as a single-number range; one in another site's range, or already held in Site Data, is left alone and
+reported.
 
 ## Teams voice settings per user (2026.10.44)
 
