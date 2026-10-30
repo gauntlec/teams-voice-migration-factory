@@ -17,6 +17,6 @@
     "embedded-postgres": "16.14.0-beta.17",
     "jose": "5.10.0",
     "net-snmp": "^3.26.3",
-    "smtp-server": "^3.19.22"
+    "smtp-server": "^3.21.1"
   }
 }
