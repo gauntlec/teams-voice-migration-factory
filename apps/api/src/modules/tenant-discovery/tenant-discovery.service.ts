@@ -96,6 +96,9 @@ const USER_COLS = [
   'u.removed_at',
 ] as const;
 
+/** A whole Entra Object ID; Graph returns them lower-case, which is how `tenant_groups.object_id` is stored. */
+const GROUP_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * Discovery: a point-in-time inventory of the customer's live Teams tenant.
  * The API only orchestrates (connection -> run -> queue) and serves the stored
@@ -904,7 +907,12 @@ export class TenantDiscoveryService {
    */
   async listGroups(t: TenantContext, q: TenantGroupsQuery): Promise<Paginated<TenantGroupSummary>> {
     let base = this.s(t).selectFrom('tenant_groups');
-    if (q.q) {
+    const term = q.q?.trim();
+    if (term && GROUP_ID.test(term)) {
+      // A whole Object ID (how Shared Voicemail targets are stored, see the web's useGroupNames): an exact index lookup, not a substring
+      // scan of every cached group (186k on a big tenant, ~0.5 s each).
+      base = base.where('object_id', '=', term.toLowerCase());
+    } else if (q.q) {
       const like = `%${q.q}%`;
       base = base.where((eb) =>
         eb.or([eb('display_name', 'ilike', like), eb('mail', 'ilike', like), eb('object_id', 'ilike', like)]),
