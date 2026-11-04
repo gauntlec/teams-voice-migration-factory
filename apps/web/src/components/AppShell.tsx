@@ -57,11 +57,11 @@ import {
   Navigation24Regular,
   Dismiss24Regular,
 } from '@fluentui/react-icons';
-import type { MaintenanceNoticeView, Permission, StaffAccessOverview } from '@tvmf/shared';
+import { SSO_PUBLIC_ERRORS, type MaintenanceNoticeView, type Permission, type StaffAccessOverview } from '@tvmf/shared';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { TOASTER_ID } from '../hooks/useNotify';
-import { forgetSsoError, readSsoError } from '../lib/ssoError';
+import { forgetSsoError, readSsoErrorCode } from '../lib/ssoError';
 import { useThemeMode } from '../ThemeMode';
 import { ErrorBoundary } from './ErrorBoundary';
 import { Wordmark } from './Logo';
@@ -250,7 +250,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const [navOpen, setNavOpen] = useState(false);
   // A refused or failed single sign-on lands here (not on the sign-in page) when this browser already has a session: say so, once.
-  const [ssoError, setSsoError] = useState(readSsoError);
+  const [ssoError, setSsoError] = useState(readSsoErrorCode);
   useEffect(forgetSsoError, []);
   const { mode, setMode } = useThemeMode();
 
@@ -499,10 +499,15 @@ export function AppShell({ children }: { children: ReactNode }) {
         </nav>
         <main id="main" tabIndex={-1} className={mergeClasses(s.content, ls.styled)}>
           {ssoError && (
-            <MessageBar layout="multiline" intent="error" className={ls.mb16}>
+            // The person is signed in already (this page needs a session), so the refused sign-in did not lock them out: say that
+            // first. The usual case is email_exists - opened from the hub before an administrator linked the hub identity to the
+            // account (bug report "Single Sign On Error").
+            <MessageBar layout="multiline" intent="warning" className={ls.mb16}>
               <MessageBarBody>
-                <MessageBarTitle>Single sign-on did not complete</MessageBarTitle>
-                {ssoError}
+                <MessageBarTitle>You are signed in, but single sign-on did not work</MessageBarTitle>
+                {ssoError === 'email_exists'
+                  ? 'You are still signed in to your account here, so you can carry on. Signing in through the hub did not work because your hub sign-in is not linked to this account yet. To open Voxshift from the hub without signing in again, ask an administrator to link them (Users > Link to provider identity).'
+                  : `You are still signed in to your account here, so you can carry on. ${SSO_PUBLIC_ERRORS[ssoError]}`}
               </MessageBarBody>
               <MessageBarActions>
                 <Button size="small" onClick={() => setSsoError(null)}>
