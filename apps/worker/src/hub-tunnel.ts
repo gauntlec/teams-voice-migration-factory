@@ -19,6 +19,12 @@ import { hubVersion } from './hub-heartbeat';
 const CHUNK_BYTES = 64 * 1024;
 const RECONCILE_MS = 10_000;
 const MAX_BACKOFF_MS = 60_000;
+/**
+ * The hub pings every 30 s. Hearing nothing (no ping, no frame) for this long means the connection is gone even though no close arrived:
+ * a proxy or router in between restarted and dropped it silently. The connector itself only ever answers, so without this it would wait on
+ * the dead connection for ever and never dial again.
+ */
+const SILENCE_MS = 75_000;
 /** Stop reading the instance's response while this much is waiting to be sent to the hub. */
 const HIGH_WATER_BYTES = 8 * 1024 * 1024;
 const ALLOWED_METHODS = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
@@ -30,6 +36,8 @@ export interface TunnelOptions {
   target?: string;
   /** For tests: when to retry after a drop, in ms. */
   backoffStartMs?: number;
+  /** For tests: how long without a word from the hub before the connection counts as dead, in ms. */
+  silenceMs?: number;
 }
 
 export class HubTunnel {
@@ -39,6 +47,7 @@ export class HubTunnel {
   private retry: NodeJS.Timeout | null = null;
   private backoff: number;
   private readonly backoffStart: number;
+  private readonly silenceMs: number;
   /** State writes go one after another, so a slow 'connected' can never land after the 'error' that followed it. */
   private writes: Promise<void> = Promise.resolve();
   private state: HubTunnelState | null = null;
@@ -50,6 +59,7 @@ export class HubTunnel {
     this.target = new URL(opts.target ?? process.env.HUB_TUNNEL_TARGET ?? 'http://web:80');
     this.backoffStart = opts.backoffStartMs ?? 2_000;
     this.backoff = this.backoffStart;
+    this.silenceMs = opts.silenceMs ?? SILENCE_MS;
   }
 
   start(): void {
@@ -104,14 +114,24 @@ export class HubTunnel {
     this.socket = socket;
     const live = new Map<string, http.ClientRequest>();
     let opened = false;
+    let heardAt = Date.now();
+    const heard = () => void (heardAt = Date.now());
+    socket.on('ping', heard);
+    const watchdog = setInterval(() => {
+      if (socket.readyState === WebSocket.CLOSED) clearInterval(watchdog); // switched off or replaced on purpose
+      else if (Date.now() - heardAt > this.silenceMs) socket.terminate(); // emits 'close', which reconnects
+    }, Math.min(15_000, this.silenceMs / 3));
+    watchdog.unref();
 
     socket.on('open', () => {
       opened = true;
+      heard();
       this.backoff = this.backoffStart;
       socket.send(JSON.stringify({ t: 'hello', version: hubVersion() }));
       void this.setState('connected', null);
     });
     socket.on('message', (raw) => {
+      heard();
       let f: Frame;
       try {
         f = JSON.parse(raw.toString());
@@ -130,6 +150,7 @@ export class HubTunnel {
       }
     });
     const lost = (message: string) => {
+      clearInterval(watchdog);
       for (const r of live.values()) r.destroy();
       live.clear();
       if (this.socket !== socket) return; // already replaced or switched off on purpose
