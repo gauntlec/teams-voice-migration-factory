@@ -68,6 +68,7 @@ import {
   upnSchema,
   validationIssues,
   type LiveCallingSettings,
+  type DiscoveryBulkDeleteInput,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
 import { applyBulkPatch, auditBulkPatch } from '../../common/bulk-patch';
@@ -76,10 +77,22 @@ import { InjectDb, type Db } from '../../db/db.module';
 import { DeploymentDocumentService } from '../deployment/deployment-document.service';
 import { FilesService } from '../files/files.service';
 import { TenantDiscoveryService } from '../tenant-discovery/tenant-discovery.service';
+import { assertSiteInScope } from '../data-collection/site-scope';
 import { BuildValidationService } from './build-validation.service';
 
 type Scoped = ReturnType<typeof tenantDb>;
 const actorOf = (u: AuthedUser) => ({ id: u.id, email: u.email });
+
+/** The Design & Build lists that have bulk delete, by their route name, and the table each deletes from. */
+export const BUILD_BULK_DELETE_TABLES = {
+  users: 'build_users',
+  caps: 'build_caps',
+  'resource-accounts': 'build_resource_accounts',
+  'shared-calling-policies': 'build_shared_calling_policies',
+  'call-queues': 'build_call_queues',
+  'auto-attendants': 'build_auto_attendants',
+} as const;
+export type BuildBulkDeleteKind = keyof typeof BUILD_BULK_DELETE_TABLES;
 
 @Injectable()
 export class BuildService {
@@ -642,6 +655,39 @@ export class BuildService {
   async bulkUpdateCaps(t: TenantContext, u: AuthedUser, body: BuildBulkPatchInput) {
     return this.bulkUpdateIdentity(t, u, 'build_caps', 'cap', body.ids, body.patch);
   }
+  /**
+   * Design & Build bulk delete (bug report "No Bulk delete in Design and Build"): the ticked rows, or every row of a kind on one
+   * site. Each row goes exactly as a single delete would (numbers freed, resource accounts taken off their AA / CQ, a row locked
+   * by a service request refused) and all of them in one transaction: one refused row leaves every row in place.
+   */
+  async bulkDelete(t: TenantContext, u: AuthedUser, kind: BuildBulkDeleteKind, body: DiscoveryBulkDeleteInput) {
+    const table = BUILD_BULK_DELETE_TABLES[kind];
+    let ids: string[];
+    if ('ids' in body) {
+      ids = [...new Set(body.ids)];
+      const rows = await this.s(t).selectFrom(table).select(['id', 'site_id']).where('id', 'in', ids).execute();
+      if (rows.length !== ids.length) throw new NotFoundException(`${ids.length - rows.length} row(s) not found - refresh and try again.`);
+      for (const row of rows) assertSiteInScope(t, row.site_id);
+    } else {
+      assertSiteInScope(t, body.site_id);
+      ids = (await this.s(t).selectFrom(table).select('id').where('site_id', '=', body.site_id).execute()).map((r) => r.id);
+    }
+    if (ids.length === 0) return { deleted: 0 };
+    await this.assertNotSrLocked(t, ids);
+    const one = {
+      users: (id: string) => this.deleteUser(t, u, id),
+      caps: (id: string) => this.deleteCap(t, u, id),
+      'resource-accounts': (id: string) => this.deleteResourceAccount(t, u, id),
+      'shared-calling-policies': (id: string) => this.deleteSharedCallingPolicy(t, u, id),
+      'call-queues': (id: string) => this.deleteCallQueue(t, u, id),
+      'auto-attendants': (id: string) => this.deleteAutoAttendant(t, u, id),
+    }[kind];
+    await this.inTx(t, async () => {
+      for (const id of ids) await one(id);
+    });
+    return { deleted: ids.length };
+  }
+
   async deleteCap(t: TenantContext, u: AuthedUser, id: string) {
     return this.deleteIdentity(t, u, 'build_caps', id);
   }

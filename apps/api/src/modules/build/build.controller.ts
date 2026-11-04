@@ -61,6 +61,8 @@ import {
   type BuildQuickAddInput,
   type CallingPolicyMapListQuery,
   type CallingPolicySiteMapSetInput,
+  discoveryBulkDeleteSchema,
+  type DiscoveryBulkDeleteInput,
 } from '@tvmf/shared';
 import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
 import type { AuthedUser, TenantContext } from '../../common/request';
@@ -68,7 +70,7 @@ import { ZodBody } from '../../common/zod.pipe';
 import { RequirePermission } from '../../rbac/require-permission.decorator';
 import { TenantGuard } from '../../rbac/tenant.guard';
 import { BuildIssuesEmailService } from './build-issues-email.service';
-import { BuildService } from './build.service';
+import { BUILD_BULK_DELETE_TABLES, BuildService, type BuildBulkDeleteKind } from './build.service';
 import { ServiceRequestLinkInterceptor } from './service-request-link.interceptor';
 
 /**
@@ -88,6 +90,19 @@ export class BuildController {
     private readonly svc: BuildService,
     private readonly issuesEmail: BuildIssuesEmailService,
   ) {}
+
+  /** Delete the ticked rows of one Design & Build list, or every one on a site - see BuildService.bulkDelete. */
+  @Post(':kind/bulk-delete')
+  @RequirePermission('build:write')
+  bulkDelete(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Param('kind') kind: string,
+    @Body(new ZodBody(discoveryBulkDeleteSchema)) body: DiscoveryBulkDeleteInput,
+  ) {
+    if (!Object.hasOwn(BUILD_BULK_DELETE_TABLES, kind)) throw new NotFoundException('Nothing to delete here.');
+    return this.svc.bulkDelete(t, user, kind as BuildBulkDeleteKind, body);
+  }
 
   @Get('summary')
   @RequirePermission('build:read')
