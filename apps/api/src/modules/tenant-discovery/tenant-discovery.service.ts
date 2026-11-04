@@ -112,7 +112,8 @@ export class TenantDiscoveryService {
     @InjectDeployQueue() private readonly queue: Queue,
     private readonly audit: AuditService,
     private readonly deployments: DeploymentService,
-    private readonly dataCollection: DataCollectionService,
+    /** Site Data, also used by Design & Build's "Copy to Site Data" (BuildService.copyToSiteData). */
+    readonly dataCollection: DataCollectionService,
     private readonly telephony: TelephonyService,
   ) {}
 

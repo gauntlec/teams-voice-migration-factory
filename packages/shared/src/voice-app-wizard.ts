@@ -186,3 +186,89 @@ export function callQueueToWizard(data: Record<string, unknown>, ctx: VoiceAppWi
   if (!parsed.success) return { answers: null, notes: [...notes, 'The settings could not be shown in the wizard.'] };
   return { answers: parsed.data, notes };
 }
+
+/* --------------------- Design & Build -> Site Data ---------------------- */
+
+/** The Design & Build auto attendant columns the wizard can show (build_auto_attendants). */
+export interface BuildAutoAttendantForWizard {
+  language_id?: string | null;
+  time_zone_id?: string | null;
+  operator?: unknown;
+  default_call_flow?: unknown;
+  after_hours_call_flow?: unknown;
+  holiday_call_flows?: unknown;
+  schedule?: unknown;
+}
+
+/**
+ * A Design & Build auto attendant as wizard answers, for "Copy to Site Data" (bug report "Site Data Sync Back for Auto Attendants
+ * and Call Queues"). Design & Build keeps the same structured form Discovery makes of a live attendant, so this is the same
+ * reverse; a transfer to another Design & Build attendant or queue is named through `ctx.appOf(buildId)`.
+ */
+export function buildAutoAttendantToWizard(row: BuildAutoAttendantForWizard, ctx: VoiceAppWizardContext = {}): { answers: AutoAttendantWizardAnswers | null; notes: string[] } {
+  return autoAttendantToWizard(
+    {
+      languageId: row.language_id ?? undefined,
+      timeZoneId: row.time_zone_id ?? undefined,
+      operator: (row.operator as AutoAttendantCallableEntity | null | undefined) ?? null,
+      defaultCallFlow: (row.default_call_flow as AutoAttendantCallFlow | null | undefined) ?? null,
+      afterHoursCallFlow: (row.after_hours_call_flow as AutoAttendantCallFlow | null | undefined) ?? null,
+      holidayCallFlows: Array.isArray(row.holiday_call_flows) ? (row.holiday_call_flows as LiveAutoAttendantStructured['holidayCallFlows']) : [],
+      schedule: (row.schedule as LiveAutoAttendantStructured['schedule'] | undefined) ?? null,
+    },
+    ctx,
+  );
+}
+
+/** The Design & Build call queue columns the wizard can show (build_call_queues). */
+export interface BuildCallQueueForWizard {
+  language_id?: string | null;
+  routing_method?: string | null;
+  presence_based_routing?: boolean | null;
+  agent_alert_time?: number | null;
+  agents?: unknown;
+  overflow?: unknown;
+  timeout?: unknown;
+  no_agent_action?: unknown;
+  no_agent_apply_to?: string | null;
+}
+
+/** A Design & Build call queue as wizard answers, for "Copy to Site Data" - the reverse of convertCallQueueWizard. */
+export function buildCallQueueToWizard(row: BuildCallQueueForWizard, ctx: VoiceAppWizardContext = {}): { answers: CallQueueWizardAnswers | null; notes: string[] } {
+  const notes: string[] = [];
+  const pick = <T extends readonly string[]>(values: T, raw: unknown, fallback: T[number]): T[number] =>
+    typeof raw === 'string' && (values as readonly string[]).includes(raw) ? raw : fallback;
+  const action = <T extends readonly [string, ...string[]]>(values: T, raw: unknown, fallback: T[number], where: string) => {
+    const s = (raw ?? {}) as { action?: string; threshold?: number; target?: string | null; redirectPrompt?: string; redirectAudio?: unknown };
+    const act = pick(values, s.action, fallback);
+    const target = typeof s.target === 'string' ? s.target.trim() : '';
+    let forwardTo: string | undefined;
+    if (target && act !== 'Queue' && act !== 'Disconnect' && act !== 'DisconnectWithBusy') {
+      forwardTo = target.toLowerCase().startsWith('tel:') ? stripTel(target) : (ctx.appOf?.(target)?.name ?? target);
+    }
+    const disconnect = act === 'Disconnect' || act === 'DisconnectWithBusy';
+    const message = disconnect && s.redirectPrompt?.trim() ? s.redirectPrompt.trim().slice(0, 1000) : undefined;
+    if (s.redirectAudio) notes.push(`${where}: an audio file prompt was not carried over.`);
+    if (!disconnect && s.redirectPrompt?.trim()) notes.push(`${where}: the prompt before the redirect was not carried over.`);
+    return { action: act, ...(forwardTo ? { forwardTo: forwardTo.slice(0, 200) } : {}), ...(message ? { message } : {}) };
+  };
+  const threshold = (raw: unknown, hi: number, fallback: number) => clamp((raw as { threshold?: unknown } | null)?.threshold, 0, hi, fallback);
+  const agents = (Array.isArray(row.agents) ? row.agents : []).filter((a): a is string => typeof a === 'string' && !!a.trim()).slice(0, 50);
+  if (Array.isArray(row.agents) && row.agents.length > 50) notes.push('Only the first 50 agents were carried over.');
+  const answers = {
+    languageId: row.language_id || 'en-US',
+    agents,
+    routingMethod: pick(CALL_QUEUE_ROUTING_METHODS, row.routing_method, 'Attendant'),
+    presenceBasedRouting: row.presence_based_routing ?? true,
+    agentAlertTime: clamp(row.agent_alert_time, 15, 180, 30),
+    overflowThreshold: threshold(row.overflow, 200, 50),
+    overflow: action(CALL_QUEUE_OVERFLOW_ACTIONS, row.overflow, 'DisconnectWithBusy', 'Too many calls'),
+    timeoutThreshold: threshold(row.timeout, 2700, 1200),
+    timeout: action(CALL_QUEUE_TIMEOUT_ACTIONS, row.timeout, 'Disconnect', 'Waiting too long'),
+    noAgents: action(CALL_QUEUE_NO_AGENT_ACTIONS, row.no_agent_action, 'Queue', 'Nobody available'),
+    noAgentsApplyTo: pick(CALL_QUEUE_NO_AGENT_APPLY_TO, row.no_agent_apply_to, 'AllCalls'),
+  };
+  const parsed = callQueueWizardAnswersSchema.safeParse(answers);
+  if (!parsed.success) return { answers: null, notes: [...notes, 'The settings could not be shown in the wizard.'] };
+  return { answers: parsed.data, notes };
+}

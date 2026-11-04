@@ -91,6 +91,19 @@ export class BuildController {
     private readonly issuesEmail: BuildIssuesEmailService,
   ) {}
 
+  /** Copy the ticked auto attendants or call queues (or every one on a site) back to Site Data's Call flows - see BuildService.copyToSiteData. */
+  @Post(':kind/copy-to-site-data')
+  @RequirePermission('build:write')
+  copyToSiteData(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Param('kind') kind: string,
+    @Body(new ZodBody(discoveryBulkDeleteSchema)) body: DiscoveryBulkDeleteInput,
+  ) {
+    if (kind !== 'auto-attendants' && kind !== 'call-queues') throw new NotFoundException('Only auto attendants and call queues can be copied to Site Data.');
+    return this.svc.copyToSiteData(t, user, kind, body);
+  }
+
   /** Delete the ticked rows of one Design & Build list, or every one on a site - see BuildService.bulkDelete. */
   @Post(':kind/bulk-delete')
   @RequirePermission('build:write')
