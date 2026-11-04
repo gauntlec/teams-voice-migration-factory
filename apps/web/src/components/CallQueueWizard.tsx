@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { AddRegular, DeleteRegular } from '@fluentui/react-icons';
-import { Button, Checkbox, Dropdown, Field, Input, Option, RadioGroup, Radio, Text , makeStyles, shorthands } from '@fluentui/react-components';
+import { Button, Checkbox, Dropdown, Field, Input, Option, RadioGroup, Radio, Text, Textarea, makeStyles, shorthands } from '@fluentui/react-components';
 import {
   AA_SUPPORTED_LANGUAGES,
   CALL_QUEUE_NO_AGENT_ACTIONS,
@@ -20,6 +20,7 @@ import { WizardShell, type WizardStep } from './WizardShell';
 const useLocalStyles = makeStyles({
   flexWrapItemsEndGap8: { display: "flex", ...shorthands.gap('8px'), alignItems: "end", flexWrap: "wrap" },
   minW260: { minWidth: '260px' },
+  minW320: { minWidth: '320px', flexGrow: 1 },
   minW220: { minWidth: '220px' },
   gridGap6: { display: "grid", ...shorthands.gap('6px') },
   flexGap6: { display: "flex", ...shorthands.gap('6px') },
@@ -86,8 +87,8 @@ function ActionAnswerEditor({
 }: {
   actions: readonly string[];
   labels: Record<string, string>;
-  value: { action: string; forwardTo?: string };
-  onChange: (v: { action: string; forwardTo?: string }) => void;
+  value: { action: string; forwardTo?: string; message?: string };
+  onChange: (v: { action: string; forwardTo?: string; message?: string }) => void;
   tenantId: string;
   siteId: string;
 }) {
@@ -97,7 +98,7 @@ function ActionAnswerEditor({
       <Dropdown
         value={labels[value.action]}
         selectedOptions={[value.action]}
-        onOptionSelect={(_, d) => onChange({ action: d.optionValue ?? value.action, forwardTo: undefined })}
+        onOptionSelect={(_, d) => onChange({ action: d.optionValue ?? value.action, forwardTo: undefined, message: value.message })}
         className={ls.minW260}
       >
         {actions.map((a) => (
@@ -134,9 +135,24 @@ function ActionAnswerEditor({
           <Input value={value.forwardTo ?? ''} onChange={(_, d) => onChange({ ...value, forwardTo: d.value })} placeholder="Support team" className={ls.minW220} />
         </Field>
       )}
+      {(value.action === 'Disconnect' || value.action === 'DisconnectWithBusy') && (
+        <Field label="Message to play before hanging up (optional)" hint="Read out to the caller by Teams, then the call ends." className={ls.minW320}>
+          <Textarea
+            value={value.message ?? ''}
+            onChange={(_, d) => onChange({ ...value, message: d.value })}
+            maxLength={1000}
+            resize="vertical"
+            placeholder="Sorry, we can't take your call right now. Please call back later."
+          />
+        </Field>
+      )}
     </div>
   );
 }
+
+/** The review line's note of a message played before hanging up. */
+const said = (a: { action: string; message?: string }) =>
+  (a.action === 'Disconnect' || a.action === 'DisconnectWithBusy') && a.message?.trim() ? `, after saying "${a.message.trim().length > 60 ? `${a.message.trim().slice(0, 60)}…` : a.message.trim()}"` : '';
 
 const DEFAULT_ANSWERS: CallQueueWizardAnswers = {
   languageId: 'en-US',
@@ -391,13 +407,13 @@ export function CallQueueWizard({
             {answers.agents.filter(Boolean).length} agent(s) · {ROUTING_LABELS[answers.routingMethod]}
           </Text>
           <Text size={200} block>
-            Too many calls waiting ({answers.overflowThreshold}+): {OVERFLOW_LABELS[answers.overflow.action]}
+            Too many calls waiting ({answers.overflowThreshold}+): {OVERFLOW_LABELS[answers.overflow.action]}{said(answers.overflow)}
           </Text>
           <Text size={200} block>
-            Waiting too long ({answers.timeoutThreshold}s+): {TIMEOUT_LABELS[answers.timeout.action]}
+            Waiting too long ({answers.timeoutThreshold}s+): {TIMEOUT_LABELS[answers.timeout.action]}{said(answers.timeout)}
           </Text>
           <Text size={200} block>
-            Nobody available: {NO_AGENT_LABELS[answers.noAgents.action]} ({APPLY_TO_LABELS[answers.noAgentsApplyTo]})
+            Nobody available: {NO_AGENT_LABELS[answers.noAgents.action]}{said(answers.noAgents)} ({APPLY_TO_LABELS[answers.noAgentsApplyTo]})
           </Text>
           <Text size={200} block className={ls.mt8}>
             Note: Call queues don't have their own after-hours/holiday handling in Teams - put an Auto Attendant in front of

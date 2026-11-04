@@ -31,6 +31,11 @@ const useLocalStyles = makeStyles({
  * as CallingSettingsDialog above; the scalar fields (name, routing method,
  * agent alert time, ...) go through the normal PagedSection edit dialog.
  */
+/** A disconnect can play a message first (-<X>DisconnectTextToSpeechPrompt / AudioFilePrompt). */
+const isDisconnect = (action: string) => action === 'Disconnect' || action === 'DisconnectWithBusy';
+/** The actions with a prompt of their own: a forward or personal voicemail (redirect prompt) or a disconnect. */
+const hasPrompt = (action: string) => action === 'Forward' || action === 'Voicemail' || isDisconnect(action);
+
 export function CallQueueSettingsDialog({
   tenantId,
   base,
@@ -87,8 +92,8 @@ export function CallQueueSettingsDialog({
   type ExtrasKey = keyof typeof extras;
   const extrasOf = (k: ExtrasKey, action: string): Pick<CallQueueActionSettings, 'priority' | 'redirectPrompt' | 'redirectAudio'> => ({
     ...(action === 'Forward' && extras[k].priority != null ? { priority: extras[k].priority } : {}),
-    ...((action === 'Forward' || action === 'Voicemail') && extras[k].redirectPrompt.trim() ? { redirectPrompt: extras[k].redirectPrompt.trim() } : {}),
-    ...((action === 'Forward' || action === 'Voicemail') && extras[k].redirectAudio ? { redirectAudio: extras[k].redirectAudio } : {}),
+    ...(hasPrompt(action) && extras[k].redirectPrompt.trim() ? { redirectPrompt: extras[k].redirectPrompt.trim() } : {}),
+    ...(hasPrompt(action) && extras[k].redirectAudio ? { redirectAudio: extras[k].redirectAudio } : {}),
   });
   const [resourceAccounts, setResourceAccounts] = useState<string[]>(
     Array.isArray(row.resource_accounts) ? (row.resource_accounts as string[]).slice() : [],
@@ -169,9 +174,9 @@ export function CallQueueSettingsDialog({
     </Field>
   );
 
-  /** Call priority (forward only) and the prompt the caller hears first (forward or personal voicemail). */
+  /** Call priority (forward only) and the prompt the caller hears first (forward, personal voicemail, or before the call is ended). */
   const extrasFields = (k: ExtrasKey, action: string) =>
-    action === 'Forward' || action === 'Voicemail' ? (
+    hasPrompt(action) ? (
       <>
         {action === 'Forward' && (
           <Field label="Call priority" hint="When forwarding to another queue or auto attendant. PowerShell only - not shown in Teams Admin Center.">
@@ -190,7 +195,10 @@ export function CallQueueSettingsDialog({
             </Dropdown>
           </Field>
         )}
-        <Field label="Prompt before the redirect" hint="Text to speech the caller hears first. PowerShell only - not shown in Teams Admin Center.">
+        <Field
+          label={isDisconnect(action) ? 'Message before the call is ended' : 'Prompt before the redirect'}
+          hint={isDisconnect(action) ? 'Text to speech the caller hears before Teams hangs up. Optional.' : 'Text to speech the caller hears first. PowerShell only - not shown in Teams Admin Center.'}
+        >
           <Input
             value={extras[k].redirectPrompt}
             onChange={(_, d) => setExtras((e) => ({ ...e, [k]: { ...e[k], redirectPrompt: d.value } }))}
@@ -198,7 +206,7 @@ export function CallQueueSettingsDialog({
             className={ls.minW320}
           />
         </Field>
-        <Field label="Or play an audio file instead" hint="WAV, MP3 or WMA, up to 5 MB. Imported to Teams when it is deployed. PowerShell only.">
+        <Field label="Or play an audio file instead" hint={`WAV, MP3 or WMA, up to 5 MB. Imported to Teams when it is deployed.${isDisconnect(action) ? '' : ' PowerShell only.'}`}>
           {extras[k].redirectAudio ? (
             <div className={ls.flexItemsCenterGap8Mt6}>
               <Text size={200}>{extras[k].redirectAudio!.filename}</Text>

@@ -247,7 +247,7 @@ export function convertCallQueueWizard(
   // person or a phone number, Voicemail = whose personal voicemail,
   // SharedVoicemail = a Microsoft 365 group. People are matched to a synced
   // user exactly like agents; a group can't be searched from the wizard.
-  const actionSettings = (a: { action: string; forwardTo?: string }, label: string, threshold?: number) => {
+  const actionSettings = (a: { action: string; forwardTo?: string; message?: string }, label: string, threshold?: number) => {
     const typed = a.forwardTo?.trim() || undefined;
     let target: string | undefined;
     if (a.action === 'Forward' || a.action === 'Voicemail') {
@@ -266,7 +266,9 @@ export function convertCallQueueWizard(
       if (typed && GUID_RE.test(typed)) target = typed;
       else warnings.push(`${label}: shared voicemail${typed ? ` ("${typed}")` : ''} needs its Microsoft 365 group chosen in Design & Build after import.`);
     }
-    return { action: a.action, ...(threshold !== undefined ? { threshold } : {}), target };
+    // a message before a disconnect is the action's prompt in Design & Build (redirectPrompt -> -<X>DisconnectTextToSpeechPrompt)
+    const message = a.action === 'Disconnect' || a.action === 'DisconnectWithBusy' ? a.message?.trim() || undefined : undefined;
+    return { action: a.action, ...(threshold !== undefined ? { threshold } : {}), target, ...(message ? { redirectPrompt: message } : {}) };
   };
 
   return {

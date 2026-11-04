@@ -106,6 +106,8 @@ const callQueueActionAnswerSchema = (actions: readonly [string, ...string[]]) =>
       action: z.enum(actions),
       /** Plain text, resolved at import: Forward = a person or phone number; Voicemail = whose personal voicemail; SharedVoicemail = the Microsoft 365 group/shared mailbox name. */
       forwardTo: str(200).optional(),
+      /** Disconnect / DisconnectWithBusy only: what the caller hears before Teams hangs up (text to speech) - -<X>DisconnectTextToSpeechPrompt. */
+      message: str(1000).optional(),
     })
     .strict();
 

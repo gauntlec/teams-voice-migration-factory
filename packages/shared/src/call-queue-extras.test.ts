@@ -38,7 +38,26 @@ describe('call queue PowerShell-only extras', () => {
   it('sends priority only for a forward, and the prompt that matches the action', () => {
     expect(callQueueActionExtras('Overflow', row.overflow)).toEqual({ OverflowActionCallPriority: 2, OverflowRedirectPersonTextToSpeechPrompt: 'Transferring you to support' });
     expect(callQueueActionExtras('Timeout', row.timeout)).toEqual({ TimeoutRedirectVoicemailTextToSpeechPrompt: 'Please leave a message' });
-    expect(callQueueActionExtras('NoAgent', { action: 'Disconnect', priority: 1, redirectPrompt: 'x' })).toEqual({});
+    expect(callQueueActionExtras('NoAgent', { action: 'Queue', priority: 1, redirectPrompt: 'x' })).toEqual({});
+  });
+
+  it('plays a message before a disconnect (bug report "Call Queue Wizard")', () => {
+    expect(callQueueActionExtras('NoAgent', { action: 'Disconnect', priority: 1, redirectPrompt: 'Nobody is available, please call back' })).toEqual({
+      NoAgentDisconnectTextToSpeechPrompt: 'Nobody is available, please call back',
+    });
+    expect(callQueueActionExtras('Overflow', { action: 'DisconnectWithBusy', redirectAudio: { fileId: SUPPORT, filename: 'busy.wav' } }, new Map([[SUPPORT, 'teams-audio-1']]))).toEqual({
+      OverflowDisconnectAudioFilePrompt: 'teams-audio-1',
+    });
+    expect(liveCallQueueActionExtras('Timeout', { TimeoutDisconnectTextToSpeechPrompt: 'Goodbye' }, 'Disconnect')).toEqual({ redirectPrompt: 'Goodbye' });
+  });
+
+  it('redeploys when only the disconnect message changed', () => {
+    const r: BuildCallQueueRow = { ...row, overflow: { action: 'DisconnectWithBusy', threshold: 10, redirectPrompt: 'We are busy' }, timeout: null };
+    const l: CallQueueLiveState = { ...live, overflowAction: 'DisconnectWithBusy', overflowActionTarget: undefined, overflowExtras: { redirectPrompt: 'Old message' }, timeoutAction: undefined, timeoutThreshold: undefined, timeoutActionTarget: undefined, timeoutExtras: undefined };
+    const calls = planCallQueueRow(r, ann, new Map(), l);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.parameters).toMatchObject({ OverflowDisconnectTextToSpeechPrompt: 'We are busy' });
+    expect(planCallQueueRow(r, ann, new Map(), { ...l, overflowExtras: { redirectPrompt: 'We are busy' } })).toEqual([]);
   });
 
   it('reads them back from Get-CsCallQueue output for the live action', () => {

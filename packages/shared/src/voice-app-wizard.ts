@@ -154,7 +154,9 @@ export function callQueueToWizard(data: Record<string, unknown>, ctx: VoiceAppWi
     const v = decodeCallQueueEnum(raw, values);
     return v && (values as readonly string[]).includes(v) ? v : fallback;
   };
-  const action = <T extends readonly [string, ...string[]]>(values: T, actionKey: string, targetKey: string, fallback: T[number]) => {
+  const action = <T extends readonly [string, ...string[]]>(values: T, prefix: 'Overflow' | 'Timeout' | 'NoAgent', fallback: T[number]) => {
+    const actionKey = `${prefix}Action`;
+    const targetKey = `${prefix}ActionTarget`;
     const act = pick(values, data[actionKey], fallback);
     const t = data[targetKey] as { Id?: unknown } | null | undefined;
     const id = typeof t?.Id === 'string' ? t.Id : undefined;
@@ -162,7 +164,10 @@ export function callQueueToWizard(data: Record<string, unknown>, ctx: VoiceAppWi
     if (id && act !== 'Queue' && act !== 'Disconnect' && act !== 'DisconnectWithBusy') {
       forwardTo = id.toLowerCase().startsWith('tel:') ? stripTel(id) : (ctx.personOf?.(id) ?? ctx.appOf?.(id)?.name ?? id);
     }
-    return { action: act, ...(forwardTo ? { forwardTo: forwardTo.slice(0, 200) } : {}) };
+    const said = act === 'Disconnect' || act === 'DisconnectWithBusy' ? data[`${prefix}DisconnectTextToSpeechPrompt`] : undefined;
+    const message = typeof said === 'string' && said.trim() ? said.trim().slice(0, 1000) : undefined;
+    if (data[`${prefix}DisconnectAudioFilePrompt`] && (act === 'Disconnect' || act === 'DisconnectWithBusy')) notes.push(`${prefix === 'NoAgent' ? 'No agents' : prefix}: Teams plays an audio file before hanging up, which the wizard cannot show.`);
+    return { action: act, ...(forwardTo ? { forwardTo: forwardTo.slice(0, 200) } : {}), ...(message ? { message } : {}) };
   };
   const answers = {
     languageId: typeof data.LanguageId === 'string' && data.LanguageId ? data.LanguageId : 'en-US',
@@ -171,10 +176,10 @@ export function callQueueToWizard(data: Record<string, unknown>, ctx: VoiceAppWi
     presenceBasedRouting: typeof data.PresenceBasedRouting === 'boolean' ? data.PresenceBasedRouting : true,
     agentAlertTime: clamp(data.AgentAlertTime, 15, 180, 30),
     overflowThreshold: clamp(data.OverflowThreshold, 0, 200, 50),
-    overflow: action(CALL_QUEUE_OVERFLOW_ACTIONS, 'OverflowAction', 'OverflowActionTarget', 'DisconnectWithBusy'),
+    overflow: action(CALL_QUEUE_OVERFLOW_ACTIONS, 'Overflow', 'DisconnectWithBusy'),
     timeoutThreshold: clamp(data.TimeoutThreshold, 0, 2700, 1200),
-    timeout: action(CALL_QUEUE_TIMEOUT_ACTIONS, 'TimeoutAction', 'TimeoutActionTarget', 'Disconnect'),
-    noAgents: action(CALL_QUEUE_NO_AGENT_ACTIONS, 'NoAgentAction', 'NoAgentActionTarget', 'Queue'),
+    timeout: action(CALL_QUEUE_TIMEOUT_ACTIONS, 'Timeout', 'Disconnect'),
+    noAgents: action(CALL_QUEUE_NO_AGENT_ACTIONS, 'NoAgent', 'Queue'),
     noAgentsApplyTo: pick(CALL_QUEUE_NO_AGENT_APPLY_TO, data.NoAgentApplyTo, 'AllCalls'),
   };
   const parsed = callQueueWizardAnswersSchema.safeParse(answers);
