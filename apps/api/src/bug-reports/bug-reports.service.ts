@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { platformDb } from '@tvmf/db';
 import type { BugReportCreateInput, BugReportUpdateInput } from '@tvmf/shared';
 import { APP_CONFIG, type AppConfig } from '../common/config';
@@ -8,6 +8,8 @@ import { MailService } from '../mail/mail.service';
 
 /** Optional free-text columns — a cleared form field ('') is stored as NULL. */
 const TEXT_COLS = ['affected_customer', 'environment', 'resolution_note'] as const;
+/** What the person who reported a bug may change on it, while it is still New: its description, not where it is in triage. */
+export const REPORTER_EDITABLE = ['title', 'area', 'severity', 'steps_to_reproduce', 'expected_behavior', 'actual_behavior', 'affected_customer', 'environment'] as const;
 const nullifyBlank = (v: string | undefined | null) => (v == null || v === '' ? null : v);
 
 @Injectable()
@@ -76,13 +78,24 @@ export class BugReportsService {
     return row;
   }
 
-  async update(id: string, input: BugReportUpdateInput, actor: AuditActor) {
+  /**
+   * `canManage` (bug:manage, Super Admin) may change anything. Anyone else may change only the description of a bug they reported
+   * themselves, and only while it is New - once an administrator has started triage the report is theirs to keep in step (bug
+   * report "Bug Report Edit").
+   */
+  async update(id: string, input: BugReportUpdateInput, actor: AuditActor, canManage = true) {
     const existing = await platformDb(this.db)
       .selectFrom('bug_reports')
       .select(['id', 'status', 'reported_by'])
       .where('id', '=', id)
       .executeTakeFirst();
     if (!existing) throw new NotFoundException('Bug report not found');
+    if (!canManage) {
+      if (!actor.id || existing.reported_by !== actor.id) throw new ForbiddenException('Only the person who reported this bug, or an administrator, can edit it.');
+      if (existing.status !== 'new') throw new ForbiddenException('This bug is already being worked on, so only an administrator can change it now. Add what you know in a new report, or ask an administrator.');
+      const other = Object.keys(input).filter((k) => input[k as keyof BugReportUpdateInput] !== undefined && !(REPORTER_EDITABLE as readonly string[]).includes(k));
+      if (other.length) throw new ForbiddenException(`Only an administrator can change ${other.join(', ')}.`);
+    }
 
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     for (const [k, v] of Object.entries(input)) {

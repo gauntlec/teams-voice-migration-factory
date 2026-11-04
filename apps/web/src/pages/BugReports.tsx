@@ -340,11 +340,14 @@ function toForm(b: BugReport): FormState {
 
 function BugForm({
   mode,
+  admin = false,
   initial,
   onClose,
   onSaved,
 }: {
   mode: 'create' | 'edit';
+  /** an administrator also sets the resolution note; a reporter editing their own report does not */
+  admin?: boolean;
   initial?: BugReport;
   onClose: () => void;
   onSaved: () => void;
@@ -370,7 +373,7 @@ function BugForm({
         ? api('/bug-reports', { method: 'POST', body: JSON.stringify(base) })
         : api(`/bug-reports/${initial!.id}`, {
             method: 'PATCH',
-            body: JSON.stringify({ ...base, resolution_note: v.resolution_note.trim() }),
+            body: JSON.stringify(admin ? { ...base, resolution_note: v.resolution_note.trim() } : base),
           });
     },
     onSuccess: () => {
@@ -481,7 +484,7 @@ function BugForm({
                 </Field>
               </div>
 
-              {mode === 'edit' && (
+              {mode === 'edit' && admin && (
                 <Field
                   label="Resolution note"
                   hint="Root cause, fix summary, or why it won't be fixed. Shown on the card."
@@ -531,12 +534,13 @@ function DetailRow({ label, value }: { label: string; value: ReactNode }) {
 
 function DetailDialog({
   b,
-  canManage,
+  canEdit,
   onEdit,
   onClose,
 }: {
   b: BugReport;
-  canManage: boolean;
+  /** an administrator, or the reporter while the bug is New */
+  canEdit: boolean;
   onEdit: () => void;
   onClose: () => void;
 }) {
@@ -591,7 +595,7 @@ function DetailDialog({
             >
               {copied ? 'Copied' : 'Copy prompt'}
             </Button>
-            {canManage && (
+            {canEdit && (
               <Button
                 appearance="secondary"
                 icon={<EditRegular />}
@@ -733,8 +737,10 @@ export function BugReports() {
   const ls = useLocalStyles();
   const s = useStyles();
   const qc = useQueryClient();
-  const { can } = useAuth();
+  const { can, me } = useAuth();
   const canManage = can('bug:manage');
+  /** An administrator edits any report; the person who reported a bug edits its description while it is still New. */
+  const canEdit = (b: BugReport) => canManage || (!!me?.id && b.reported_by === me.id && b.status === 'new');
   const canCreate = can('bug:create');
 
   const [dialog, setDialog] = useState<{ mode: 'create' } | { mode: 'edit'; b: BugReport } | null>(null);
@@ -859,7 +865,7 @@ export function BugReports() {
       {detail && (
         <DetailDialog
           b={(list.data ?? []).find((x) => x.id === detail.id) ?? detail}
-          canManage={canManage}
+          canEdit={canEdit((list.data ?? []).find((x) => x.id === detail.id) ?? detail)}
           onEdit={() => setDialog({ mode: 'edit', b: detail })}
           onClose={() => setDetail(null)}
         />
@@ -869,7 +875,7 @@ export function BugReports() {
         <BugForm mode="create" onClose={() => setDialog(null)} onSaved={invalidate} />
       )}
       {dialog?.mode === 'edit' && (
-        <BugForm mode="edit" initial={dialog.b} onClose={() => setDialog(null)} onSaved={invalidate} />
+        <BugForm mode="edit" admin={canManage} initial={dialog.b} onClose={() => setDialog(null)} onSaved={invalidate} />
       )}
 
       {confirmDelete && (
