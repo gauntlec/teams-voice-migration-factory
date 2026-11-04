@@ -68,6 +68,9 @@ import {
   upnSchema,
   validationIssues,
   type LiveCallingSettings,
+  type DiscoveryBulkDeleteInput,
+  buildAutoAttendantToWizard,
+  buildCallQueueToWizard,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
 import { applyBulkPatch, auditBulkPatch } from '../../common/bulk-patch';
@@ -76,10 +79,22 @@ import { InjectDb, type Db } from '../../db/db.module';
 import { DeploymentDocumentService } from '../deployment/deployment-document.service';
 import { FilesService } from '../files/files.service';
 import { TenantDiscoveryService } from '../tenant-discovery/tenant-discovery.service';
+import { assertSiteInScope } from '../data-collection/site-scope';
 import { BuildValidationService } from './build-validation.service';
 
 type Scoped = ReturnType<typeof tenantDb>;
 const actorOf = (u: AuthedUser) => ({ id: u.id, email: u.email });
+
+/** The Design & Build lists that have bulk delete, by their route name, and the table each deletes from. */
+export const BUILD_BULK_DELETE_TABLES = {
+  users: 'build_users',
+  caps: 'build_caps',
+  'resource-accounts': 'build_resource_accounts',
+  'shared-calling-policies': 'build_shared_calling_policies',
+  'call-queues': 'build_call_queues',
+  'auto-attendants': 'build_auto_attendants',
+} as const;
+export type BuildBulkDeleteKind = keyof typeof BUILD_BULK_DELETE_TABLES;
 
 @Injectable()
 export class BuildService {
@@ -642,6 +657,114 @@ export class BuildService {
   async bulkUpdateCaps(t: TenantContext, u: AuthedUser, body: BuildBulkPatchInput) {
     return this.bulkUpdateIdentity(t, u, 'build_caps', 'cap', body.ids, body.patch);
   }
+  /**
+   * Design & Build bulk delete (bug report "No Bulk delete in Design and Build"): the ticked rows, or every row of a kind on one
+   * site. Each row goes exactly as a single delete would (numbers freed, resource accounts taken off their AA / CQ, a row locked
+   * by a service request refused) and all of them in one transaction: one refused row leaves every row in place.
+   */
+  async bulkDelete(t: TenantContext, u: AuthedUser, kind: BuildBulkDeleteKind, body: DiscoveryBulkDeleteInput) {
+    const table = BUILD_BULK_DELETE_TABLES[kind];
+    let ids: string[];
+    if ('ids' in body) {
+      ids = [...new Set(body.ids)];
+      const rows = await this.s(t).selectFrom(table).select(['id', 'site_id']).where('id', 'in', ids).execute();
+      if (rows.length !== ids.length) throw new NotFoundException(`${ids.length - rows.length} row(s) not found - refresh and try again.`);
+      for (const row of rows) assertSiteInScope(t, row.site_id);
+    } else {
+      assertSiteInScope(t, body.site_id);
+      ids = (await this.s(t).selectFrom(table).select('id').where('site_id', '=', body.site_id).execute()).map((r) => r.id);
+    }
+    if (ids.length === 0) return { deleted: 0 };
+    await this.assertNotSrLocked(t, ids);
+    const one = {
+      users: (id: string) => this.deleteUser(t, u, id),
+      caps: (id: string) => this.deleteCap(t, u, id),
+      'resource-accounts': (id: string) => this.deleteResourceAccount(t, u, id),
+      'shared-calling-policies': (id: string) => this.deleteSharedCallingPolicy(t, u, id),
+      'call-queues': (id: string) => this.deleteCallQueue(t, u, id),
+      'auto-attendants': (id: string) => this.deleteAutoAttendant(t, u, id),
+    }[kind];
+    await this.inTx(t, async () => {
+      for (const id of ids) await one(id);
+    });
+    return { deleted: ids.length };
+  }
+
+  /**
+   * "Copy to Site Data" (bug report "Site Data Sync Back for Auto Attendants and Call Queues"): the ticked Design & Build auto
+   * attendants or call queues, or every one on a site, written back to Site Data's Call flows as the wizard's answers, so Site
+   * Data shows what is being built. The call flow it came from (or its voice app's) is updated; one is made when there is none.
+   * Anything the wizard cannot show (audio prompts, some menu shapes) stays only in Design & Build and is listed in `notes`.
+   */
+  async copyToSiteData(t: TenantContext, u: AuthedUser, kind: 'auto-attendants' | 'call-queues', body: DiscoveryBulkDeleteInput) {
+    const s = this.s(t);
+    const flowKind = kind === 'auto-attendants' ? 'auto_attendant' : 'call_queue';
+    const table = kind === 'auto-attendants' ? 'build_auto_attendants' : 'build_call_queues';
+    const linkCol = kind === 'auto-attendants' ? 'build_auto_attendant_id' : 'build_call_queue_id';
+    let rows = await (('ids' in body)
+      ? s.selectFrom(table).selectAll().where('id', 'in', [...new Set(body.ids)]).execute()
+      : s.selectFrom(table).selectAll().where('site_id', '=', body.site_id).execute());
+    if ('ids' in body && rows.length !== new Set(body.ids).size) throw new NotFoundException('Some rows were not found - refresh and try again.');
+    if (!('ids' in body)) assertSiteInScope(t, body.site_id);
+    for (const r of rows) assertSiteInScope(t, r.site_id);
+    rows = rows.sort((a, b) => a.name.localeCompare(b.name));
+    const dc = this.discovery.dataCollection;
+
+    // names for transfers to other attendants and queues on the same sites, and their Call flows rows
+    const siteIds = [...new Set(rows.map((r) => r.site_id))];
+    const [aas, cqs, flows] = siteIds.length
+      ? await Promise.all([
+          s.selectFrom('build_auto_attendants').select(['id', 'name']).where('site_id', 'in', siteIds).execute(),
+          s.selectFrom('build_call_queues').select(['id', 'name']).where('site_id', 'in', siteIds).execute(),
+          s.selectFrom('discovery_flows').select(['id', 'kind', 'voice_app_id', 'build_auto_attendant_id', 'build_call_queue_id']).where('site_id', 'in', siteIds).execute(),
+        ])
+      : [[], [], []];
+    const flowOfBuild = new Map<string, string>();
+    for (const f of flows) {
+      if (f.build_auto_attendant_id) flowOfBuild.set(f.build_auto_attendant_id, f.id);
+      if (f.build_call_queue_id) flowOfBuild.set(f.build_call_queue_id, f.id);
+    }
+    const names = new Map([...aas, ...cqs].map((r) => [r.id, r.name]));
+    const ctx = { appOf: (id: string) => (names.has(id) ? { name: names.get(id)!, ...(flowOfBuild.has(id) ? { flowId: flowOfBuild.get(id)! } : {}) } : undefined) };
+
+    const result: { copied: { name: string; flowId: string; added: boolean }[]; skipped: { name: string; reason: string }[]; notes: string[] } = { copied: [], skipped: [], notes: [] };
+    for (const row of rows) {
+      const { answers, notes } = kind === 'auto-attendants' ? buildAutoAttendantToWizard(row, ctx) : buildCallQueueToWizard(row, ctx);
+      if (!answers) {
+        result.skipped.push({ name: row.name, reason: notes[notes.length - 1] ?? 'It could not be shown in the wizard.' });
+        continue;
+      }
+      result.notes.push(...notes.map((n) => `${row.name}: ${n}`));
+      const existing =
+        flows.find((f) => (f as Record<string, unknown>)[linkCol] === row.id) ??
+        (row.discovery_voice_app_id ? flows.find((f) => f.kind === flowKind && f.voice_app_id === row.discovery_voice_app_id && !(f as Record<string, unknown>)[linkCol]) : undefined);
+      let flowId: string;
+      let voiceAppId: string | null;
+      if (existing) {
+        const updated = await dc.updateFlow(t, u, existing.id, { name: row.name, wizard_answers: answers, wizard_version: 1 }, true);
+        flowId = existing.id;
+        voiceAppId = updated.voice_app_id;
+      } else {
+        const made = await dc.addFlow(t, u, { site_id: row.site_id, kind: flowKind, name: row.name, wizard_answers: answers, wizard_version: 1, voice_app_id: row.discovery_voice_app_id ?? null } as never, true);
+        flowId = made.id;
+        voiceAppId = made.voice_app_id;
+        flows.push({ id: made.id, kind: flowKind, voice_app_id: made.voice_app_id, build_auto_attendant_id: null, build_call_queue_id: null });
+      }
+      // linked both ways, so a later Import updates this row instead of making a second one
+      await s.updateTable('discovery_flows').set({ [linkCol]: row.id, imported_at: new Date().toISOString() } as never).where('id', '=', flowId).execute();
+      // the Voice apps tab shows the same name
+      if (voiceAppId) await s.updateTable('discovery_voice_apps').set({ name: row.name, updated_at: new Date().toISOString() }).where('id', '=', voiceAppId).execute();
+      result.copied.push({ name: row.name, flowId, added: !existing });
+    }
+    await this.audit.tenant(t.schema, `build.${flowKind}s_copied_to_site_data`, {
+      actor: actorOf(u),
+      targetType: 'discovery_site',
+      targetId: siteIds.length === 1 ? siteIds[0] : undefined,
+      detail: { copied: result.copied.length, skipped: result.skipped.length },
+    });
+    return result;
+  }
+
   async deleteCap(t: TenantContext, u: AuthedUser, id: string) {
     return this.deleteIdentity(t, u, 'build_caps', id);
   }

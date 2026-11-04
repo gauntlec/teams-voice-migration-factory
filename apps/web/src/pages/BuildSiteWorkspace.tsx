@@ -19,6 +19,7 @@ import { TemplatesDialog } from './build/templatesDialog';
 import { CallQueueSettingsDialog } from './build/callQueueSettingsDialog';
 import { AutoAttendantSettingsDialog } from './build/autoAttendantDialogs';
 import { DangerText } from '../components/ui';
+import { CopyToSiteDataButton } from './build/copyToSiteData';
 import { RefreshFromTeamsButton } from './build/refreshFromTeams';
 import { AccessDialog } from './build/accessDialog';
 
@@ -610,6 +611,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
+          bulkDelete={siteTools ? { noun: "user", plural: "users", note: "Their numbers go back to this site's free pool. Nothing is changed in Teams or in Site Data." } : undefined}
           onChanged={embedded?.onChanged}
           pageSize={500}
           selectable={siteTools}
@@ -686,6 +688,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
+          bulkDelete={siteTools ? { noun: "common area phone", plural: "common area phones", note: "Their numbers go back to this site's free pool. Nothing is changed in Teams or in Site Data." } : undefined}
           onChanged={embedded?.onChanged}
           pageSize={500}
           selectable={siteTools}
@@ -762,6 +765,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
+          bulkDelete={siteTools ? { noun: "resource account", plural: "resource accounts", note: "Their numbers go back to this site's free pool and they are taken off their auto attendants and call queues here. Nothing is changed in Teams." } : undefined}
           onChanged={embedded?.onChanged}
           headerActions={
             siteTools && (
@@ -872,6 +876,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
+          bulkDelete={siteTools ? { noun: "shared calling policy", plural: "shared calling policies", note: "Nothing is changed in Teams." } : undefined}
           onChanged={embedded?.onChanged}
           emptyText="No Shared Calling policies yet."
           columns={[
@@ -918,6 +923,8 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
+          headerActions={siteTools ? <CopyToSiteDataButton base={base} kind="call-queues" siteId={siteId} onDone={() => qc.invalidateQueries({ queryKey: ['flows', tid, siteId] })} /> : undefined}
+          bulkDelete={siteTools ? { noun: "call queue", plural: "call queues", note: "Their resource accounts stay. Nothing is changed in Teams." } : undefined}
           onChanged={embedded?.onChanged}
           emptyText="No call queues yet - Populate from Site Data on the Resource accounts tab first."
           columns={[
@@ -995,6 +1002,22 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
                   '—'
                 ),
             },
+            {
+              key: 'site_data',
+              label: 'Site Data',
+              render: (r) =>
+                siteTools ? (
+                  <CopyToSiteDataButton
+                    base={base}
+                    kind="call-queues"
+                    siteId={siteId}
+                    row={r as { id: string; name: string }}
+                    onDone={() => qc.invalidateQueries({ queryKey: ['flows', tid, siteId] })}
+                  />
+                ) : (
+                  '—'
+                ),
+            },
           ]}
           fields={[
             { key: 'name', label: 'Name', required: true },
@@ -1017,6 +1040,8 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
+          headerActions={siteTools ? <CopyToSiteDataButton base={base} kind="auto-attendants" siteId={siteId} onDone={() => qc.invalidateQueries({ queryKey: ['flows', tid, siteId] })} /> : undefined}
+          bulkDelete={siteTools ? { noun: "auto attendant", plural: "auto attendants", note: "Their resource accounts stay. Nothing is changed in Teams." } : undefined}
           onChanged={embedded?.onChanged}
           emptyText="No auto attendants yet - add one, or Populate from Site Data on the Resource accounts tab."
           columns={[
@@ -1088,6 +1113,22 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
                       qc.invalidateQueries({ queryKey: ['auto-attendants', tid, siteId] });
                       qc.invalidateQueries({ queryKey: ['build-issues', tid, siteId] });
                     }}
+                  />
+                ) : (
+                  '—'
+                ),
+            },
+            {
+              key: 'site_data',
+              label: 'Site Data',
+              render: (r) =>
+                siteTools ? (
+                  <CopyToSiteDataButton
+                    base={base}
+                    kind="auto-attendants"
+                    siteId={siteId}
+                    row={r as { id: string; name: string }}
+                    onDone={() => qc.invalidateQueries({ queryKey: ['flows', tid, siteId] })}
                   />
                 ) : (
                   '—'

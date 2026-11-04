@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { autoAttendantToWizard, callQueueToWizard } from './voice-app-wizard';
+import { convertCallQueueWizard } from './wizard-convert';
 import { autoAttendantWizardAnswersSchema, callQueueWizardAnswersSchema } from './wizard';
 
 const weekdays = { monday: [{ start: '09:00', end: '17:00' }], tuesday: [{ start: '09:00', end: '17:00' }], wednesday: [{ start: '09:00', end: '17:00' }], thursday: [{ start: '09:00', end: '17:00' }], friday: [{ start: '09:00', end: '17:00' }], saturday: [], sunday: [] };
@@ -73,6 +74,24 @@ describe('a discovered call queue as wizard answers', () => {
       noAgentsApplyTo: 'NewCalls',
     });
     expect(notes[0]).toContain('unknown');
+  });
+
+  it('reads the message Teams plays before hanging up, and turns it back into the Design & Build prompt', () => {
+    const { answers } = callQueueToWizard({ OverflowAction: 'DisconnectWithBusy', OverflowDisconnectTextToSpeechPrompt: 'We are busy', TimeoutAction: 'Disconnect', NoAgentAction: 'Disconnect', NoAgentDisconnectTextToSpeechPrompt: 'Nobody is here' }, {});
+    expect(answers).toMatchObject({ overflow: { action: 'DisconnectWithBusy', message: 'We are busy' }, timeout: { action: 'Disconnect' }, noAgents: { action: 'Disconnect', message: 'Nobody is here' } });
+    expect(answers!.timeout).not.toHaveProperty('message');
+    const { value } = convertCallQueueWizard(answers!, { siteId: 'site-1', name: 'Sales' });
+    expect(value.overflow).toMatchObject({ action: 'DisconnectWithBusy', redirectPrompt: 'We are busy' });
+    expect(value.timeout).not.toHaveProperty('redirectPrompt');
+    expect(value.no_agent_action).toMatchObject({ action: 'Disconnect', redirectPrompt: 'Nobody is here' });
+  });
+
+  it('keeps a message only for a disconnect', () => {
+    const { value } = convertCallQueueWizard(
+      { ...callQueueToWizard({}, {}).answers!, overflow: { action: 'Forward', forwardTo: '+442070000000', message: 'stale text' } },
+      { siteId: 'site-1', name: 'Sales' },
+    );
+    expect(value.overflow).not.toHaveProperty('redirectPrompt');
   });
 
   it('falls back to safe defaults for a queue with little set', () => {

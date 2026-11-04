@@ -760,12 +760,24 @@ export interface CallQueueActionSettings {
    */
   priority?: number;
   /**
-   * PowerShell only: what the caller hears (text to speech) before being forwarded to a person or sent to a person's voicemail -
-   * -<Overflow|Timeout|NoAgent>Redirect<Person|Voicemail>TextToSpeechPrompt.
+   * What the caller hears (text to speech) before the action: before being forwarded to a person or sent to a person's voicemail
+   * (PowerShell only: -<Overflow|Timeout|NoAgent>Redirect<Person|Voicemail>TextToSpeechPrompt), or before the call is ended
+   * (Disconnect / DisconnectWithBusy: -<Overflow|Timeout|NoAgent>DisconnectTextToSpeechPrompt).
    */
   redirectPrompt?: string;
-  /** PowerShell only: an uploaded audio prompt (voice_audio_files) played instead - -<X>Redirect<Person|Voicemail>AudioFilePrompt. */
+  /** An uploaded audio prompt (voice_audio_files) played instead - -<X>Redirect<Person|Voicemail>AudioFilePrompt or -<X>DisconnectAudioFilePrompt. */
   redirectAudio?: { fileId: string; filename: string };
+}
+
+/**
+ * The Set-CsCallQueue parameter stem for an exception action's prompt: `<X>RedirectPerson`, `<X>RedirectVoicemail` or
+ * `<X>Disconnect` (append TextToSpeechPrompt / AudioFilePrompt), or null for an action that plays no prompt of its own.
+ */
+export function callQueuePromptStem(prefix: 'Overflow' | 'Timeout' | 'NoAgent', action: string | undefined): string | null {
+  if (action === 'Forward') return `${prefix}RedirectPerson`;
+  if (action === 'Voicemail') return `${prefix}RedirectVoicemail`;
+  if (action === 'Disconnect' || action === 'DisconnectWithBusy') return `${prefix}Disconnect`;
+  return null;
 }
 
 /**
@@ -782,19 +794,19 @@ export const audioPlaceholder = (fileId: string) => `<audio:${fileId}>`;
 export function callQueueActionExtras(prefix: 'Overflow' | 'Timeout' | 'NoAgent', settings: CallQueueActionSettings | null | undefined, audio: Map<string, string> = new Map()): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (settings?.action === 'Forward' && settings.priority != null) out[`${prefix}ActionCallPriority`] = settings.priority;
-  const who = settings?.action === 'Forward' ? 'Person' : settings?.action === 'Voicemail' ? 'Voicemail' : null;
+  const stem = callQueuePromptStem(prefix, settings?.action);
   const prompt = settings?.redirectPrompt?.trim();
-  if (who && prompt) out[`${prefix}Redirect${who}TextToSpeechPrompt`] = prompt;
-  if (who && settings?.redirectAudio) out[`${prefix}Redirect${who}AudioFilePrompt`] = audio.get(settings.redirectAudio.fileId) ?? audioPlaceholder(settings.redirectAudio.fileId);
+  if (stem && prompt) out[`${stem}TextToSpeechPrompt`] = prompt;
+  if (stem && settings?.redirectAudio) out[`${stem}AudioFilePrompt`] = audio.get(settings.redirectAudio.fileId) ?? audioPlaceholder(settings.redirectAudio.fileId);
   return out;
 }
 
 /** The live counterparts of callQueueActionExtras, from Get-CsCallQueue's output, for the action the queue has live. */
 export function liveCallQueueActionExtras(prefix: 'Overflow' | 'Timeout' | 'NoAgent', data: Record<string, unknown>, action: string | undefined): { priority?: number; redirectPrompt?: string; redirectAudioId?: string } {
   const priority = data[`${prefix}ActionCallPriority`];
-  const who = action === 'Voicemail' ? 'Voicemail' : action === 'Forward' ? 'Person' : null;
-  const prompt = who ? data[`${prefix}Redirect${who}TextToSpeechPrompt`] : undefined;
-  const audio = who ? data[`${prefix}Redirect${who}AudioFilePrompt`] : undefined;
+  const stem = callQueuePromptStem(prefix, action);
+  const prompt = stem ? data[`${stem}TextToSpeechPrompt`] : undefined;
+  const audio = stem ? data[`${stem}AudioFilePrompt`] : undefined;
   return {
     ...(action === 'Forward' && typeof priority === 'number' ? { priority } : {}),
     ...(typeof prompt === 'string' && prompt.trim() ? { redirectPrompt: prompt.trim() } : {}),
@@ -1086,8 +1098,8 @@ export function planCallQueueRow(
   // A design that leaves an extra unset keeps whatever Teams has: only a set one is compared.
   const extrasDiffer = (want: CallQueueActionSettings | null | undefined, have: { priority?: number; redirectPrompt?: string; redirectAudioId?: string } | undefined) => {
     const w = callQueueActionExtras('Overflow', want, audio);
-    const tts = w.OverflowRedirectPersonTextToSpeechPrompt ?? w.OverflowRedirectVoicemailTextToSpeechPrompt;
-    const file = (w.OverflowRedirectPersonAudioFilePrompt ?? w.OverflowRedirectVoicemailAudioFilePrompt) as string | undefined;
+    const tts = w.OverflowRedirectPersonTextToSpeechPrompt ?? w.OverflowRedirectVoicemailTextToSpeechPrompt ?? w.OverflowDisconnectTextToSpeechPrompt;
+    const file = (w.OverflowRedirectPersonAudioFilePrompt ?? w.OverflowRedirectVoicemailAudioFilePrompt ?? w.OverflowDisconnectAudioFilePrompt) as string | undefined;
     return (
       (w.OverflowActionCallPriority !== undefined && w.OverflowActionCallPriority !== have?.priority) ||
       (tts !== undefined && tts !== have?.redirectPrompt) ||

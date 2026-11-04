@@ -1,4 +1,14 @@
-import { SSO_PUBLIC_ERRORS, isSsoPublicError } from '@tvmf/shared';
+import { SSO_PUBLIC_ERRORS, isSsoPublicError, type SsoPublicError } from '@tvmf/shared';
+
+/** The refused sign-in's code (`/?sso_error=<code>`), one of the fixed list; an unknown code reads as 'failed'. */
+export function readSsoErrorCode(): SsoPublicError | null {
+  try {
+    const code = new URLSearchParams(window.location.search).get('sso_error');
+    return code === null ? null : isSsoPublicError(code) ? code : 'failed';
+  } catch {
+    return null;
+  }
+}
 
 /** Why single sign-on did not work, if the page was reached from a refused sign-in (`/?sso_error=<code>`). The code is looked up in a fixed list; nothing from the address is shown as it is. */
 export function readSsoError(): string | null {

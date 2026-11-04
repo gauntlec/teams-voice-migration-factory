@@ -394,11 +394,12 @@ function designCqSublabel(cq: DesignCallQueueInput): string | undefined {
 
 function designActionExtras(s: CallQueueActionSettings): ActionExtras {
   const toPerson = s.action === 'Forward';
-  const toVoicemail = s.action === 'Voicemail';
+  // a forward or personal voicemail plays a redirect prompt; a disconnect can play a message before hanging up
+  const prompted = toPerson || s.action === 'Voicemail' || s.action === 'Disconnect' || s.action === 'DisconnectWithBusy';
   return {
     priority: toPerson ? s.priority : undefined,
-    prompt: toPerson || toVoicemail ? s.redirectPrompt?.trim() || undefined : undefined,
-    audio: toPerson || toVoicemail ? s.redirectAudio?.filename : undefined,
+    prompt: prompted ? s.redirectPrompt?.trim() || undefined : undefined,
+    audio: prompted ? s.redirectAudio?.filename : undefined,
   };
 }
 
@@ -429,7 +430,7 @@ function designCqActionEdges(b: GraphBuilder, cq: DesignCallQueueInput): void {
         : b.ensureNode({ id: 'voicemail', kind: 'voicemail', label: 'Voicemail (no person set)' });
       addActionEdge(b, sourceId, targetId, label, branch, designActionExtras(settings));
     } else if (settings.action === 'Disconnect' || settings.action === 'DisconnectWithBusy') {
-      b.addEdge(sourceId, b.ensureNode({ id: 'disconnect', kind: 'disconnect', label: 'Disconnect' }), label, branch);
+      addActionEdge(b, sourceId, b.ensureNode({ id: 'disconnect', kind: 'disconnect', label: 'Disconnect' }), label, branch, designActionExtras(settings));
     }
   };
   action(cq.overflow, 'overflow', 'Overflow');

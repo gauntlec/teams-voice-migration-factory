@@ -1466,6 +1466,41 @@ export class TelephonyService {
     if (siteId && app.site_id !== siteId) throw new BadRequestException('That voice app is on a different site.');
   }
 
+  /**
+   * A resource account's link to an auto attendant or call queue lives on the account (voice_app_id); the Call flow keeps a copy
+   * (resource_account_id) that the AA / CQ wizard shows. Linking from the Resource accounts tab must update that copy too, or the
+   * wizard shows no account (bug report "Associated Resource Account to AA & CQ"). An account linked to a voice app fills a flow
+   * of that app that has none; an account unlinked (or deleted) hands its flows to another account still on the old app, or none.
+   */
+  private async syncFlowResourceAccount(t: TenantContext, raId: string, oldAppId: string | null, newAppId: string | null) {
+    const s = this.s(t);
+    const now = new Date().toISOString();
+    if (oldAppId && oldAppId !== newAppId) {
+      const other = await s
+        .selectFrom('discovery_resource_accounts')
+        .select('id')
+        .where('voice_app_id', '=', oldAppId)
+        .where('id', '!=', raId)
+        .orderBy('created_at')
+        .orderBy('id')
+        .executeTakeFirst();
+      await s
+        .updateTable('discovery_flows')
+        .set({ resource_account_id: other?.id ?? null, updated_at: now })
+        .where('voice_app_id', '=', oldAppId)
+        .where((eb) => eb.or([eb('resource_account_id', '=', raId), eb('resource_account_id', 'is', null)]))
+        .execute();
+    }
+    if (newAppId) {
+      await s
+        .updateTable('discovery_flows')
+        .set({ resource_account_id: raId, updated_at: now })
+        .where('voice_app_id', '=', newAppId)
+        .where('resource_account_id', 'is', null)
+        .execute();
+    }
+  }
+
   async addResourceAccount(t: TenantContext, u: AuthedUser, i: DiscoveryResourceAccountInput, canReview: boolean) {
     const siteId = await this.resolveHolderSite(t, i.site_id);
     await this.assertVoiceAppOnSite(t, i.voice_app_id, siteId);
@@ -1474,6 +1509,7 @@ export class TelephonyService {
       .values({ site_id: siteId, name: i.name, kind: i.kind, upn: nz(i.upn)?.toLowerCase() ?? null, voice_app_id: i.voice_app_id ?? null, comments: nz(i.comments) })
       .returningAll()
       .executeTakeFirstOrThrow();
+    await this.syncFlowResourceAccount(t, row.id, null, row.voice_app_id);
     await this.audit.tenant(t.schema, 'discovery.resource_account_added', { actor: actorOf(u), targetType: 'discovery_resource_account', targetId: row.id });
     await this.base.trackChange(t, u, { siteId: row.site_id, entity: 'Resource account', action: 'added', label: row.name });
     return row;
@@ -1487,13 +1523,15 @@ export class TelephonyService {
     if ('upn' in patch) set.upn = nz(patch.upn)?.toLowerCase() ?? null;
     if ('comments' in patch) set.comments = nz(patch.comments);
     if ('site_id' in patch) set.site_id = await this.resolveHolderSite(t, patch.site_id);
+    const before = await this.s(t).selectFrom('discovery_resource_accounts').select(['site_id', 'voice_app_id']).where('id', '=', id).executeTakeFirst();
     if ('voice_app_id' in patch) {
-      const current = await this.s(t).selectFrom('discovery_resource_accounts').select('site_id').where('id', '=', id).executeTakeFirst();
+      const current = before;
       await this.assertVoiceAppOnSite(t, patch.voice_app_id, (set.site_id as string | null | undefined) ?? current?.site_id ?? null);
       set.voice_app_id = patch.voice_app_id ?? null;
     }
     const row = await this.s(t).updateTable('discovery_resource_accounts').set(set).where('id', '=', id).returningAll().executeTakeFirst();
     if (!row) throw new NotFoundException('resource account not found');
+    if ('voice_app_id' in patch) await this.syncFlowResourceAccount(t, id, before?.voice_app_id ?? null, row.voice_app_id);
     await this.audit.tenant(t.schema, 'discovery.resource_account_updated', { actor: actorOf(u), targetType: 'discovery_resource_account', targetId: id });
     await this.base.trackChange(t, u, { siteId: row.site_id, entity: 'Resource account', action: 'changed', label: row.name, detail: Object.keys(patch).join(', ') });
     return row;
@@ -1502,9 +1540,12 @@ export class TelephonyService {
   async deleteResourceAccount(t: TenantContext, u: AuthedUser, id: string, canReview: boolean) {
     await this.assertHolderInScope(t, 'discovery_resource_accounts', id, 'resource account not found');
     const tracked = await this.holderRows(t, 'discovery_resource_accounts', [id]);
+    const before = await this.s(t).selectFrom('discovery_resource_accounts').select('voice_app_id').where('id', '=', id).executeTakeFirst();
     await this.releaseHolder(t, 'resource_account', id);
     const res = await this.s(t).deleteFrom('discovery_resource_accounts').where('id', '=', id).executeTakeFirst();
     if (!Number(res.numDeletedRows)) throw new NotFoundException('resource account not found');
+    // the flow's link was cleared by ON DELETE SET NULL; another account still linked to the voice app takes its place
+    await this.syncFlowResourceAccount(t, id, before?.voice_app_id ?? null, null);
     await this.audit.tenant(t.schema, 'discovery.resource_account_deleted', { actor: actorOf(u), targetType: 'discovery_resource_account', targetId: id });
     await this.trackRows(t, u, tracked, 'Resource account', 'removed');
     return { ok: true };
