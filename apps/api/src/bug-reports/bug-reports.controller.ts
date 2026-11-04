@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
 import {
   bugReportCreateSchema,
+  can,
   bugReportUpdateSchema,
   type BugReportCreateInput,
   type BugReportUpdateInput,
@@ -41,14 +42,15 @@ export class BugReportsController {
     return this.bugs.create(body, this.actor(user));
   }
 
+  /** An administrator edits anything; the person who reported a bug edits its description while it is still New (see BugReportsService.update). */
   @Patch(':id')
-  @RequirePermission('bug:manage')
+  @RequirePermission('bug:create')
   update(
     @Param('id') id: string,
     @Body(new ZodBody(bugReportUpdateSchema)) body: BugReportUpdateInput,
     @CurrentUser() user: AuthedUser,
   ) {
-    return this.bugs.update(id, body, this.actor(user));
+    return this.bugs.update(id, body, this.actor(user), can(user.role, 'bug:manage'));
   }
 
   @Delete(':id')
