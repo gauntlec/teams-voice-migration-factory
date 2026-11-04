@@ -796,6 +796,7 @@ export class DataCollectionService {
   ) {
     await this.assertRowSiteInScope(t, 'discovery_flows', id, 'flow not found');
     if ('site_id' in patch) assertSiteInScope(t, patch.site_id ?? null);
+    const before = await this.scoped(t).selectFrom('discovery_flows').select('resource_account_id').where('id', '=', id).executeTakeFirst();
     const row = await this.scoped(t)
       .updateTable('discovery_flows')
       .set({ ...cleanPatch(patch), updated_at: new Date().toISOString() })
@@ -809,7 +810,19 @@ export class DataCollectionService {
       voiceAppId = await this.voiceAppForFlow(t, row);
       if (voiceAppId) await this.scoped(t).updateTable('discovery_flows').set({ voice_app_id: voiceAppId }).where('id', '=', id).execute();
     }
-    if ('resource_account_id' in patch) await this.joinVoiceApp(t, voiceAppId, patch.resource_account_id);
+    if ('resource_account_id' in patch) {
+      // the account the wizard no longer names leaves the voice app, so the Resource accounts tab agrees with the wizard
+      const previous = before?.resource_account_id ?? null;
+      if (previous && previous !== (patch.resource_account_id ?? null) && voiceAppId) {
+        await this.scoped(t)
+          .updateTable('discovery_resource_accounts')
+          .set({ voice_app_id: null, updated_at: new Date().toISOString() })
+          .where('id', '=', previous)
+          .where('voice_app_id', '=', voiceAppId)
+          .execute();
+      }
+      await this.joinVoiceApp(t, voiceAppId, patch.resource_account_id);
+    }
     await this.audit.tenant(t.schema, 'discovery.flow_updated', {
       actor: actorOf(user),
       targetType: 'discovery_flow',
