@@ -108,7 +108,7 @@ export function renderReportPdf(doc: ReportDocument, customer: string, preparedA
   // ---- title
   pdf.y = M + 40;
   pdf.font('Helvetica-Bold').fontSize(20).fillColor(INK).text(pdfText(doc.title), M, pdf.y, { width: W });
-  const sub = `${reportPeriodLabel(doc.period)}${doc.comparedWith ? `  ·  compared with ${reportPeriodLabel(doc.comparedWith)}` : ''}`;
+  const sub = `${doc.site ? `${doc.site}  ·  ` : ''}${reportPeriodLabel(doc.period)}${doc.comparedWith ? `  ·  compared with ${reportPeriodLabel(doc.comparedWith)}` : ''}`;
   pdf.moveDown(0.15).font('Helvetica-Bold').fontSize(10).fillColor(BRAND).text(pdfText(sub), { width: W });
   pdf.moveDown(0.9);
 

@@ -46,6 +46,8 @@ beforeAll(async () => {
       { incident_id: i1.id, agent_id: triage, started_at: inOct(3), expires_at: inOct(3, 11), released_at: inOct(3, 12), release_reason: 'handed_off' },
       { incident_id: i2.id, agent_id: triage, started_at: inOct(5), expires_at: inOct(5, 11), released_at: inOct(5, 11), release_reason: 'released' },
       { incident_id: i3.id, agent_id: triage, started_at: inOct(7), expires_at: inOct(7, 11), released_at: inOct(7, 11), release_reason: 'revoked' },
+      // the same incident claimed again in the period: still one incident for the assistant
+      { incident_id: i2.id, agent_id: triage, started_at: inOct(6), expires_at: inOct(6, 11), released_at: inOct(6, 11), release_reason: 'expired' },
       // before the period: not counted
       { incident_id: i1.id, agent_id: triage, started_at: '2026-09-20T10:00:00.000Z', expires_at: '2026-09-20T11:00:00.000Z', released_at: '2026-09-20T11:00:00.000Z', release_reason: 'expired' },
     ] as never)

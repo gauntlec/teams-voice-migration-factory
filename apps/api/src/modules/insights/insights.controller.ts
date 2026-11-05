@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Post, Put, Query, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, ForbiddenException, Get, HttpCode, Param, ParseUUIDPipe, Post, Put, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import {
   insightsPeriod,
@@ -18,6 +18,7 @@ import { ZodBody } from '../../common/zod.pipe';
 import { RequirePermission } from '../../rbac/require-permission.decorator';
 import { TenantGuard } from '../../rbac/tenant.guard';
 import { DocumentBrandingService } from '../branding/document-branding.service';
+import { narrowToSite } from '../data-collection/site-scope';
 import { InsightsAssistantsService } from './insights-assistants.service';
 import { InsightsReportsService } from './insights-reports.service';
 import { InsightsScheduleService } from './insights-schedule.service';
@@ -42,27 +43,35 @@ export class InsightsController {
   @Get('metrics')
   @RequirePermission('tenant:read')
   metrics(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Query(new ZodBody(insightsPeriodQuerySchema)) q: InsightsPeriodQuery) {
-    return this.svc.metrics(t, user.role, q);
+    return this.svc.metrics(narrowToSite(t, q.site), user.role, q);
   }
 
   @Get('history')
   @RequirePermission('tenant:read')
   history(@TenantCtx() t: TenantContext, @Query(new ZodBody(insightsHistoryQuerySchema)) q: InsightsHistoryQuery) {
-    return this.svc.history(t, q);
+    return this.svc.history(narrowToSite(t, q.site), q);
   }
 
   /** The Change log report: changes live runs made in the customer's Teams tenant (deployments or tenant audit readers). */
   @Get('changes')
   @RequirePermission('tenant:read')
   changes(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Query(new ZodBody(insightsPeriodQuerySchema)) q: InsightsPeriodQuery) {
-    return this.svc.changeLog(t, user.role, q);
+    return this.svc.changeLog(narrowToSite(t, q.site), user.role, q);
   }
 
   /** The Assistant activity report: what the AI assistants did in the period (Managed Services, inc:read or sr:read). */
   @Get('assistants')
   @RequirePermission('tenant:read')
   assistantActivity(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Query(new ZodBody(insightsPeriodQuerySchema)) q: InsightsPeriodQuery) {
-    return this.assistants.activity(t, user.role, insightsPeriod(q));
+    return this.assistants.activity(narrowToSite(t, q.site), user.role, insightsPeriod(q));
+  }
+
+  /** The Device status report's period figures (step 6d): each device's availability, from the daily readings. */
+  @Get('devices/availability')
+  @RequirePermission('monitoring:read')
+  deviceAvailability(@TenantCtx() t: TenantContext, @Query(new ZodBody(insightsHistoryQuerySchema)) q: InsightsHistoryQuery) {
+    if (!t.monitoringEnabled) throw new ForbiddenException('Monitoring is not switched on for this customer.');
+    return this.svc.deviceAvailability(narrowToSite(t, q.site), q);
   }
 
   /** The site's go-live date (its overview's Target go-live) and the date first agreed. */

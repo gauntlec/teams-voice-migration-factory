@@ -195,3 +195,12 @@ describe('the Assistant activity report', () => {
     expect(figures?.kind === 'figures' && figures.figures.find((f) => f.label === 'Approved by a person')?.value).toBe(66.7);
   });
 });
+
+describe('a report cut to one site (step 6c)', () => {
+  it('names the site on the Summary sheet and in the file name', () => {
+    const doc = { ...buildChangeLogReport({ from: '', to: '', rows: [], truncated: false }, { from: '2026-10-01', to: '2026-10-31' }), site: 'LON01 London' };
+    const summary = reportSheets(doc, 'Contoso')[0]!.rows;
+    expect(summary.slice(0, 4)).toEqual([[doc.title], ['Customer', 'Contoso'], ['Site', 'LON01 London'], ['Period', reportPeriodLabel(doc.period)]]);
+    expect(reportFileName(doc, 'Contoso')).toBe('voxshift-changes-contoso-lon01-2026-10-01-to-2026-10-31');
+  });
+});

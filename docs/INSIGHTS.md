@@ -19,10 +19,10 @@ promised, are:
 | 4a | Executive summary report, and a PDF of every report | **Live** (2026.11.7) |
 | 4b | Scheduled reports by email, with the PDF attached | **Live** (2026.11.8) |
 | 5 | All-customers view, Portfolio report, Present mode | **Live** (2026.11.10) |
-| 6a | Assistant activity report (promised in step 5) | **Built** (section below) |
-| 6b | Reports › Sent: every scheduled report sent, kept to look back on (promised in step 4) | **Built** (section below) |
-| 6c | A site filter on the reports that can be cut by site (promised in step 3) | To do |
-| 6d | Device availability over the report's period, not just the last 24 hours (promised in step 3) | To do |
+| 6a | Assistant activity report (promised in step 5) | **Live** (2026.11.12) |
+| 6b | Reports › Sent: every scheduled report sent, kept to look back on (promised in step 4) | **Live** (2026.11.12) |
+| 6c | A site filter on the reports (promised in step 3) | **Built** (section below) |
+| 6d | Device availability over the report's period, not just the last 24 hours (promised in step 3) | **Built** (section below) |
 
 The charts use Fluent UI's chart library (`@fluentui/react-charts`, pinned), so they follow the app theme, the customer's
 brand colour and dark mode. It came in with step 2, the first chart, rather than shipping unused in step 1.
@@ -176,7 +176,7 @@ customer (`reportAvailable`), with the same rules as the data behind each one:
 | Incidents and service levels | yes | `/incidents/report` | Managed Services on, `inc:read` |
 | Service requests | yes | `/service-requests/report` | Managed Services on, `sr:read` |
 | Assistant activity | yes | `/insights/assistants` (step 6a) | Managed Services on, `inc:read` or `sr:read` |
-| Device status | no (now) | `/device-status` | Monitoring on, `monitoring:read` |
+| Device status | yes (step 6d) | `/device-status` now, and `/insights/devices/availability` for the period | Monitoring on, `monitoring:read` |
 | Licences and costs | – | links to Discovery › Licences & costs (`/discovery?tab=licences`) | `tenantdiscovery:read` |
 
 **Periods.** Each report page (`/reports/:key`) takes a period:
@@ -323,6 +323,35 @@ report emailed for the customer, newest first (at most 500), from the email log 
 - **PDF sent** downloads the copy that went, built as its recipient, while it is kept: 90 days, the same as the email
   attachment (`GET /insights/schedules/sent/:messageId/pdf`). Only this customer's scheduled reports can be read this way.
 
+## Site filter (step 6c)
+
+Every customer report has a **Site** choice next to the period when the person can see more than one site (the sites
+come from the Overview figures, so a site contact sees only theirs). It is kept in the page address (`?site=`), so a
+report for one site can be bookmarked or shared, and the PDF takes the same query.
+
+- **How it works:** every report route takes `?site=` and narrows its reads to that site, exactly as a site contact's are
+  narrowed (`narrowToSite`, `apps/api/src/modules/data-collection/site-scope.ts`): the figures, history, change log,
+  assistant activity, device status and availability, and the incident and service request reports. A site outside what
+  the person may already see is refused, so it never widens anyone's reach.
+- **What it means for the figures:** incidents and service requests with no site, and customer-wide counts in the daily
+  history, are left out of a one-site report, as they are for a site contact.
+- **Saying so:** the page subtitle, the PDF's period line, the Excel Summary sheet (a Site row) and the file name
+  (`voxshift-<report>-<customer>-<sitecode>-<period>`) all name the site.
+- Scheduled reports go out for the whole customer (or a site contact's own sites), as before.
+
+## Device availability over a period (step 6d)
+
+Monitoring tells Voxshift each device's availability over the last 24 hours, not further back. So the daily snapshot now
+also keeps each device's reading (`MetricSnapshot.deviceUptime`: its monitor id, name, site and last-24-hours
+availability), and `GET /insights/devices/availability?from=&to=` (`InsightsService.deviceAvailability`) averages them.
+
+- **The Device status report** now has a period (last 30 days by default) and compares with the period before. It
+  keeps **Now** and the devices table, and adds **Over the period**: availability across every device and day, the
+  devices below 99%, and each device's availability with the days recorded, worst first.
+- **A device's name and site** are its newest in the period. A day without a reading for a device isn't counted for it.
+- **History starts the day this ships**, so early periods have few days; the report says how many days are recorded and
+  since when.
+
 ## Tests
 
 - `packages/shared/src/insights.test.ts`: the go-live rules, the customer status, periods and snapshot totals.
@@ -347,6 +376,8 @@ report emailed for the customer, newest first (at most 500), from the email log 
 - `tests/db/src/platform/mail-settings.db.test.ts`: attachments over SMTP and to the hub as base64.
 - `tests/db/src/insights/portfolio.db.test.ts`: who sees which customers (Super Admin, a member engineer, an engineer
   with none), each customer's own figures, and a customer whose figures fail shown as unavailable.
+- `tests/db/src/insights/device-availability.db.test.ts`: averaging each device's daily readings, its newest name, days
+  recorded, a site contact's devices only, and no readings yet.
 - `tests/db/src/insights/assistants.db.test.ts`: each assistant's counts in a period (claims, proposals by state, hand-offs,
   take-backs, resolved, completed, time to a decision), a site contact's sites only, the areas each role can read, and the
   comparison with the period before.
@@ -354,4 +385,6 @@ report emailed for the customer, newest first (at most 500), from the email log 
   - the figures, history and a site's go-live date answer, and a bad period is refused;
   - a PDF of the Executive summary and of the Change log (a real `%PDF` file, with its name);
   - the refusals: Monitoring off, an unknown report, a backwards period;
-  - the All customers view and its PDF for staff, refused for a customer user.
+  - the All customers view and its PDF for staff, refused for a customer user;
+  - a report cut to one site: the figures, the PDF's file name, a bad or unknown site refused, and a site contact unable
+    to widen their reach.

@@ -40,6 +40,7 @@ import { ZodBody } from '../../common/zod.pipe';
 import { RequirePermission } from '../../rbac/require-permission.decorator';
 import { TenantGuard } from '../../rbac/tenant.guard';
 import { ServiceRequestsService } from './service-requests.service';
+import { narrowToSite } from '../data-collection/site-scope';
 
 /**
  * Managed Services - service requests for one customer. sr:read to see them,
@@ -118,7 +119,7 @@ export class ServiceRequestsController {
   @Get('report')
   @RequirePermission('sr:read')
   report(@TenantCtx() t: TenantContext, @Query(new ZodBody(serviceRequestReportQuerySchema)) q: ServiceRequestReportQuery) {
-    return this.svc.report(t, q.from, q.to);
+    return this.svc.report(narrowToSite(t, q.site), q.from, q.to);
   }
 
   @Get('options')

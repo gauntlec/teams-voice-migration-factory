@@ -57,6 +57,15 @@ export class InsightsAssistantsService {
       }
     };
     const worked = { incidents: new Set<string>(), requests: new Set<string>() };
+    // each assistant counts an item once, however many times it claimed it (a bot that re-claims on every pass)
+    const mine = new Map<string, Set<string>>();
+    const once = (agentId: string, key: string) => {
+      const set = mine.get(agentId) ?? new Set<string>();
+      mine.set(agentId, set);
+      if (set.has(key)) return false;
+      set.add(key);
+      return true;
+    };
 
     if (incidents) {
       const siteIds = scoped ? t.siteScope : null;
@@ -69,7 +78,7 @@ export class InsightsAssistantsService {
         const r = row(c.agent_id);
         const started = new Date(c.started_at).toISOString();
         if (started >= from && started < to) {
-          r.incidentsWorked++;
+          if (once(c.agent_id, `i:${c.incident_id}`)) r.incidentsWorked++;
           worked.incidents.add(c.incident_id);
         }
         const released = c.released_at ? new Date(c.released_at).toISOString() : null;
@@ -105,7 +114,7 @@ export class InsightsAssistantsService {
         const r = row(c.agent_id);
         const started = new Date(c.started_at).toISOString();
         if (started >= from && started < to) {
-          r.requestsWorked++;
+          if (once(c.agent_id, `r:${c.request_id}`)) r.requestsWorked++;
           worked.requests.add(c.request_id);
         }
         const released = c.released_at ? new Date(c.released_at).toISOString() : null;

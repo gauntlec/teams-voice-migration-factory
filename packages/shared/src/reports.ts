@@ -92,7 +92,7 @@ const ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'use YYYY-MM-DD');
 
 /** ?period=last_month, or ?from=&to= (custom dates, both included); ?compare=0 turns the comparison off. The Reports page keeps these in its address. */
 export const reportQuerySchema = z
-  .object({ period: z.enum(REPORT_PERIOD_PRESETS).optional(), from: ymd.optional(), to: ymd.optional(), compare: z.enum(['0', '1']).optional() })
+  .object({ period: z.enum(REPORT_PERIOD_PRESETS).optional(), from: ymd.optional(), to: ymd.optional(), compare: z.enum(['0', '1']).optional(), site: z.guid().optional() })
   .strict()
   .refine((q) => !q.from || !q.to || q.from <= q.to, { message: 'from must not be after to' });
 export type ReportQuery = z.infer<typeof reportQuerySchema>;
@@ -138,6 +138,8 @@ export interface ReportDocument {
   summary: string;
   period: ReportPeriod;
   comparedWith?: ReportPeriod;
+  /** cut to one site (the Reports page's site filter, step 6c): "LON01 London" */
+  site?: string;
   sections: ReportSection[];
 }
 
@@ -163,7 +165,7 @@ export const REPORT_CATALOGUE: Record<ReportKey, { title: string; group: (typeof
     description: 'What the AI assistants did: incidents and service requests worked, the steps they proposed and how people decided them, and what they finished on their own.',
     period: true,
   },
-  devices: { title: 'Device status', group: 'Service', description: 'Every monitored phone, gateway and paging unit: whether it is up now and its availability over the last 24 hours.', period: false },
+  devices: { title: 'Device status', group: 'Service', description: 'Every monitored phone, gateway and paging unit: whether it is up now, and its availability over the period.', period: true },
 };
 
 /**
@@ -282,6 +284,19 @@ export interface AssistantActivityData {
   proposals: { area: 'incident' | 'service_request'; kind: string; label: string; proposed: number; approved: number; rejected: number; expired: number; waiting: number }[];
   /** from a step being proposed to a person deciding it */
   medianMinutesToDecide: number | null;
+}
+
+/** GET /t/:tenantId/insights/devices/availability: each device's availability over a period, from the daily snapshots. */
+export interface DeviceAvailabilityData {
+  from: string;
+  to: string;
+  /** days in the period with a reading */
+  days: number;
+  /** the first day Voxshift kept device readings for this customer, if any */
+  firstDay: string | null;
+  devices: { name: string; sitecode: string | null; availabilityPct: number | null; days: number }[];
+  /** the mean over every device and day */
+  availabilityPct: number | null;
 }
 
 /** GET /t/:tenantId/insights/changes: changes made in the customer's Teams tenant by live runs. */
@@ -619,17 +634,47 @@ export function buildChangeLogReport(c: ChangeLogData, period: ReportPeriod): Re
 
 const DEVICE_STATE_LABELS: Record<DeviceRow['state'], string> = { up: 'Up', down: 'Down', pending: 'Pending', maintenance: 'Maintenance', unknown: 'Unknown' };
 
-export function buildDeviceReport(devices: DeviceRow[], today: string): ReportDocument {
+/** The Device status report: now, and (step 6d) each device's availability over the period, from the daily readings. */
+export function buildDeviceReport(devices: DeviceRow[], today: string, history?: { period: ReportPeriod; data: DeviceAvailabilityData; before?: DeviceAvailabilityData | null; comparedWith?: ReportPeriod }): ReportDocument {
   const up = devices.filter((d) => d.state === 'up').length;
   const down = devices.filter((d) => d.state === 'down').length;
   const uptimes = devices.map((d) => d.uptime24h).filter((u): u is number => u !== null);
   const avg = uptimes.length ? Math.round((uptimes.reduce((a, b) => a + b, 0) / uptimes.length) * 10000) / 100 : null;
+  const over: ReportSection[] = [];
+  if (history) {
+    const h = history.data;
+    const below = h.devices.filter((d) => d.availabilityPct !== null && d.availabilityPct < 99).length;
+    over.push(
+      {
+        kind: 'figures',
+        title: 'Over the period',
+        figures: [
+          { label: 'Available', value: h.availabilityPct, previous: history.before ? history.before.availabilityPct : undefined, unit: '%', better: 'up', note: `${h.days} day${h.days === 1 ? '' : 's'} recorded` },
+          { label: 'Devices below 99%', value: below, previous: history.before ? history.before.devices.filter((d) => d.availabilityPct !== null && d.availabilityPct < 99).length : undefined, better: 'down' },
+        ],
+      },
+      {
+        kind: 'table',
+        title: 'Availability over the period',
+        columns: ['Device', 'Site', 'Available (%)', 'Days recorded'],
+        numeric: [2, 3],
+        rows: [...h.devices].sort((a, b) => (a.availabilityPct ?? 101) - (b.availabilityPct ?? 101) || a.name.localeCompare(b.name)).map((d) => [d.name, d.sitecode, d.availabilityPct, d.days]),
+        empty: h.firstDay ? 'No device readings in this period.' : 'No device readings yet: Voxshift records them once a day from now on.',
+      },
+      {
+        kind: 'note',
+        text: `Worked out from Voxshift's daily reading of each device's last 24 hours${h.firstDay ? `, kept since ${h.firstDay}` : ''}.`,
+      },
+    );
+  }
   return {
     key: 'devices',
     title: REPORT_CATALOGUE.devices.title,
-    summary: `${devices.length} devices · ${down} down now`,
-    period: { from: today, to: today },
+    summary: `${devices.length} devices · ${down} down now${history?.data.availabilityPct != null ? ` · ${history.data.availabilityPct}% available over the period` : ''}`,
+    period: history ? history.period : { from: today, to: today },
+    comparedWith: history?.before ? history.comparedWith : undefined,
     sections: [
+      ...over,
       {
         kind: 'figures',
         title: 'Now',
@@ -979,6 +1024,7 @@ export function reportSheets(doc: ReportDocument, customer: string): ExportSheet
   const summary: ReportCell[][] = [
     [doc.title],
     ['Customer', customer],
+    ...(doc.site ? [['Site', doc.site] as ReportCell[]] : []),
     ['Period', reportPeriodLabel(doc.period)],
     ...(doc.comparedWith ? [['Compared with', reportPeriodLabel(doc.comparedWith)] as ReportCell[]] : []),
     [],
@@ -992,7 +1038,7 @@ export function reportSheets(doc: ReportDocument, customer: string): ExportSheet
     }
   }
   const headline = doc.sections.find((s): s is Extract<ReportSection, { kind: 'headline' }> => s.kind === 'headline');
-  if (headline) summary.splice(doc.comparedWith ? 4 : 3, 0, [], [headline.title], ...headline.sentences.map((x) => [x] as ReportCell[]));
+  if (headline) summary.splice((doc.comparedWith ? 4 : 3) + (doc.site ? 1 : 0), 0, [], [headline.title], ...headline.sentences.map((x) => [x] as ReportCell[]));
   const notes = doc.sections.filter((s): s is Extract<ReportSection, { kind: 'note' }> => s.kind === 'note');
   if (notes.length) summary.push([], ...notes.map((n) => [n.text] as ReportCell[]));
   const sheets: ExportSheet[] = [{ name: sheetName('Summary', used), rows: summary }];
@@ -1015,5 +1061,7 @@ export function toCsv(rows: ReportCell[][]): string {
 export function reportFileName(doc: ReportDocument, customer: string): string {
   const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   const when = doc.period.from === doc.period.to ? doc.period.from : `${doc.period.from}-to-${doc.period.to}`;
-  return `voxshift-${doc.key}-${slug(customer) || 'customer'}-${when}`;
+  // a report cut to one site names it by its sitecode (the label's first word)
+  const site = doc.site ? `-${slug(doc.site.split(' ')[0]!)}` : '';
+  return `voxshift-${doc.key}-${slug(customer) || 'customer'}${site}-${when}`;
 }

@@ -243,6 +243,11 @@ export interface MetricSnapshot {
   incidents?: { open: number; openP1: number; openP2: number };
   serviceRequests?: { open: number };
   devices?: { monitored: number; down: number; availability24hPct: number | null };
+  /**
+   * Each monitored device's availability over the 24 hours before the snapshot (0..1), so a report can average a device
+   * over any period (step 6d). Absent before 2026.11 and while Monitoring isn't set up.
+   */
+  deviceUptime?: { id: number; name: string; sitecode: string | null; uptime24h: number | null }[];
 }
 
 export const MAX_SNAPSHOT_DAYS = 730;
@@ -292,7 +297,8 @@ const ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'use YYYY-MM-DD');
 
 /** ?from=&to= for the period figures; both optional (the last 30 days), at most 400 days apart. */
 export const insightsPeriodQuerySchema = z
-  .object({ from: ymd.optional(), to: ymd.optional() })
+  /** site: a report's site filter (step 6c) - one site, inside what the person may see */
+  .object({ from: ymd.optional(), to: ymd.optional(), site: z.guid().optional() })
   .strict()
   .refine((q) => !q.from || !q.to || q.from <= q.to, { message: 'from must not be after to' })
   .refine((q) => !q.from || !q.to || daysBetween(q.from, q.to) <= 400, { message: 'choose a period of 400 days or less' });
@@ -300,7 +306,7 @@ export type InsightsPeriodQuery = z.infer<typeof insightsPeriodQuerySchema>;
 
 /** ?from=&to= for history; both optional (the last 90 days), at most MAX_SNAPSHOT_DAYS apart. */
 export const insightsHistoryQuerySchema = z
-  .object({ from: ymd.optional(), to: ymd.optional() })
+  .object({ from: ymd.optional(), to: ymd.optional(), site: z.guid().optional() })
   .strict()
   .refine((q) => !q.from || !q.to || q.from <= q.to, { message: 'from must not be after to' });
 export type InsightsHistoryQuery = z.infer<typeof insightsHistoryQuerySchema>;

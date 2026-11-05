@@ -1,6 +1,7 @@
 // The Insights routes over real HTTP with the real module wiring and guards: the figures, history and a site's go-live date
 // answer, and a bad period is refused. Only Redis is replaced.
 import 'reflect-metadata';
+import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { Global, Module } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
@@ -21,6 +22,7 @@ import { RbacModule } from '../../../../apps/api/src/rbac/rbac.module';
 import { TokenService } from '../../../../apps/api/src/auth/token.service';
 import { seedLocalUser, TEST_CONFIG } from '../sso/helpers';
 import { seedCustomer, seedSite, useDb, type TestCustomer } from '../helpers';
+import { narrowToSite } from '../../../../apps/api/src/modules/data-collection/site-scope';
 
 const handle = useDb();
 
@@ -129,4 +131,21 @@ describe('Insights over HTTP', () => {
     expect(pdf.headers.get('content-type')).toBe('application/pdf');
     expect((await fetch(`${base}/api/insights/portfolio`, { headers: { authorization: `Bearer ${customerToken}` } })).status).toBe(403);
   });
+
+  it('cuts a report to one site (?site=), and says which on the PDF and in the file name', async () => {
+    const man = (await seedSite(c.s, { sitecode: 'MAN01', name: 'Manchester' })).id;
+    const all = (await (await call(adminToken, '/metrics')).json()) as { migration: { sites: number } };
+    expect(all.migration.sites).toBe(2);
+    const one = (await (await call(adminToken, `/metrics?site=${man}`)).json()) as { migration: { sites: number; siteList: { sitecode: string }[] } };
+    expect(one.migration).toMatchObject({ sites: 1, siteList: [{ sitecode: 'MAN01' }] });
+    const pdf = await call(adminToken, `/reports/migration/pdf?period=last_month&site=${man}`);
+    expect(pdf.status).toBe(200);
+    expect(pdf.headers.get('content-disposition')).toMatch(/voxshift-migration-.+-man01-/);
+    expect((await call(adminToken, '/metrics?site=not-a-site')).status).toBe(400);
+    expect((await call(adminToken, `/reports/migration/pdf?site=${randomUUID()}`)).status).toBe(404);
+    // a site contact can't widen their reach with it
+    expect(() => narrowToSite({ ...c.t, siteScope: [siteId] }, man)).toThrow('outside your access');
+    expect(narrowToSite({ ...c.t, siteScope: [siteId, man] }, man).siteScope).toEqual([man]);
+  });
 });
+
