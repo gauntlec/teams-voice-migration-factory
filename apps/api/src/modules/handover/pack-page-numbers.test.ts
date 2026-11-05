@@ -23,6 +23,13 @@ describe('pack page numbers', () => {
     expect(headingPages('11.  Call Queues\f1.  Call Queues', [h('1.', 'Call Queues')])!.get('a1.')).toBe(2);
   });
 
+  it('finds a heading whose number touches its title, as 10 and up do', () => {
+    const pages = headingPages('10.  Auto Attendants ........ 0\f9. Paging\n10.Auto Attendants\n10.1 Call Flow Diagram\n11.Call Queues', [h('10.', 'Auto Attendants'), h('10.1', 'Call Flow Diagram', 2), h('11.', 'Call Queues')]);
+    expect(Object.fromEntries(pages!)).toEqual({ 'a10.': 2, 'a10.1': 2, 'a11.': 2 });
+    // and "1." still isn't "1.1"
+    expect(headingPages('1.1 Call Queues\f1. Call Queues', [h('1.', 'Call Queues')])!.get('a1.')).toBe(2);
+  });
+
   it('keeps going on the same page, for two headings on one page', () => {
     const pages = headingPages('8.  Analogue\n9.  Paging\n10.  Auto\f', [h('8.', 'Analogue'), h('9.', 'Paging'), h('10.', 'Auto')]);
     expect([...pages!.values()]).toEqual([1, 1, 1]);

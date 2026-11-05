@@ -48,7 +48,8 @@ export function headingPages(pdfText: string, headings: readonly PackHeading[]):
   let page = 0;
   let line = 0;
   for (const h of headings) {
-    const start = new RegExp(`^\\s*${literal(h.number)}\\s+${literal(h.title.trim().slice(0, 40)).replace(/\s+/g, '\\s+')}`);
+    // no space is required after the number: a large one fills its indent and touches the title ("10.Auto Attendants")
+    const start = new RegExp(`^\\s*${literal(h.number)}\\s*${literal(h.title.trim().slice(0, 40)).replace(/\s+/g, '\\s+')}`);
     let hit = false;
     while (!hit && page < pages.length) {
       const lines = pages[page]!.split('\n');

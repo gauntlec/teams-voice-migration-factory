@@ -137,10 +137,10 @@ export function issuedHandoverVersionLabel(label: string | null, packs: readonly
 }
 
 /** A pack's file name: packs for different sites can have the same version, so it says which sites. */
-export function handoverFileName(prefix: string | null, siteCodes: readonly string[] | null | undefined, versionLabel: string): string {
+export function handoverFileName(siteCodes: readonly string[] | null | undefined, versionLabel: string): string {
   const codes = [...(siteCodes ?? [])].sort();
   const scope = codes.length === 0 ? '' : codes.length <= 3 ? `-${codes.join('-').replace(/[^A-Za-z0-9-]/g, '')}` : `-${codes.length}-sites`;
-  return `${prefix ? `${prefix}-` : ''}service-handover${scope}-v${versionLabel}.docx`;
+  return `service-handover${scope}-v${versionLabel}.docx`;
 }
 
 /** Approvals & Sign-Off, entered when a pack is issued. */

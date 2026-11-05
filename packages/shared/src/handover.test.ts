@@ -133,9 +133,8 @@ describe('handover pack versions (major.minor)', () => {
     expect(sameHandoverScope(undefined, [])).toBe(true);
   });
   it('names the sites in the file name', () => {
-    expect(handoverFileName('acme', ['FSD02D'], '0.1')).toBe('acme-service-handover-FSD02D-v0.1.docx');
-    expect(handoverFileName('acme', [], '1.0')).toBe('acme-service-handover-v1.0.docx');
-    expect(handoverFileName(null, ['FSD02D'], '1.0')).toBe('service-handover-FSD02D-v1.0.docx');
-    expect(handoverFileName('acme', ['A', 'B', 'C', 'D'], '0.2')).toBe('acme-service-handover-4-sites-v0.2.docx');
+    expect(handoverFileName(['FSD02D'], '0.1')).toBe('service-handover-FSD02D-v0.1.docx');
+    expect(handoverFileName([], '1.0')).toBe('service-handover-v1.0.docx');
+    expect(handoverFileName(['A', 'B', 'C', 'D'], '0.2')).toBe('service-handover-4-sites-v0.2.docx');
   });
 });

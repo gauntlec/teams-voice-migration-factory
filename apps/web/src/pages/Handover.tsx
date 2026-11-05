@@ -150,7 +150,7 @@ export function Handover() {
   const download = async (p: Pack) => {
     setActionError(null);
     try {
-      await apiDownload(`/t/${activeTenantId}/files/${p.file_id}/download`, handoverFileName(null, p.source?.siteCodes, packVersion(p)));
+      await apiDownload(`/t/${activeTenantId}/files/${p.file_id}/download`, handoverFileName(p.source?.siteCodes, packVersion(p)));
     } catch (e) {
       setActionError(errorMessage(e, 'Could not download the file'));
     }
