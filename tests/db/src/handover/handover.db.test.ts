@@ -183,4 +183,25 @@ describe('Service Handover', () => {
     await c.s.updateTable('discovery_sites').set({ country: 'GB' } as never).execute();
     expect(await src((await svc.generate(c.t, engineer, {})).id)).toMatchObject({ pageSize: 'a4' });
   });
+
+  it('numbers versions major.minor, prints sign-off and the version history', async () => {
+    const c2 = await seedCustomer(handle);
+    await seedSite(c2.s, { sitecode: 'HAU01' });
+    const svc2 = svc;
+    const a = await svc2.generate(c2.t, engineer, { changeNote: 'Draft issued for comment' });
+    const b = await svc2.generate(c2.t, engineer, { changeNote: 'Section 7 added for call queues' });
+    const label = (id: string) => c2.s.selectFrom('handover_packs').select(['version_label', 'source']).where('id', '=', id).executeTakeFirstOrThrow();
+    expect((await label(a.id)).version_label).toBe('0.1');
+    expect((await label(b.id)).version_label).toBe('0.2');
+
+    const issued = await svc2.issue(c2.t, engineer, b.id, { approverCompany: 'AT&T', approverName: 'Leigh Manton, AT&T Consulting, Director EMEA', approvalDate: '2026-10-30' });
+    expect(issued.version_label).toBe('1.0');
+    expect(((await label(b.id)).source as Record<string, unknown>).approval).toEqual({ company: 'AT&T', name: 'Leigh Manton, AT&T Consulting, Director EMEA', date: '2026-10-30' });
+    const doc = await docText((await files.readBytes(c2.t, issued.file_id!)).data);
+    for (const t of ['Approved and signed off by:', 'AT&amp;T', 'Leigh Manton, AT&amp;T Consulting, Director EMEA', '30 October 2026', 'Document Control', '0.1 (draft)', 'Draft issued for comment', 'Section 7 added for call queues', 'Version 1.0']) expect(doc).toContain(t);
+
+    // after the first issue, the next pack is 1.1
+    const c = await svc2.generate(c2.t, engineer, {});
+    expect((await label(c.id)).version_label).toBe('1.1');
+  });
 });

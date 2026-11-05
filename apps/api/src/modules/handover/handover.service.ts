@@ -12,7 +12,11 @@ import {
   verificationRowDifferences,
   type LiveIdentityState,
   noteSectionContent,
+  nextHandoverVersionLabel,
+  issuedHandoverVersionLabel,
   outstandingActionsContent,
+  type HandoverApproval,
+  type HandoverHistoryRow,
   selectSections,
   type HandoverBlock,
   type DiscoverySiteOverview,
@@ -30,6 +34,8 @@ import { HandoverDocumentService, type HandoverSectionContent, type HandoverSect
 /** What a pack covers: the sites chosen (empty = every site) and the section keys chosen (empty = every section). */
 export interface HandoverGenerateInput {
   notes?: string;
+  /** what changed in this version (Document Control's Comments) */
+  changeNote?: string;
   /** the cover's project line; the last pack's when not given */
   projectName?: string;
   siteIds?: string[];
@@ -47,6 +53,9 @@ interface SiteScope {
   ids: string[];
   codes: string[];
 }
+
+/** "5 November 2026" - the pack's dates. */
+const handoverDate = (d: Date) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
 
 /** US Letter when every site in the pack is in the US or Canada, A4 otherwise (the template is Letter for US sites). */
 const LETTER_COUNTRIES = /^(us|usa|united states( of america)?|ca|can|canada)$/i;
@@ -169,11 +178,19 @@ export class HandoverService {
     // The version read and the pack + section inserts share one transaction under
     // an advisory lock, so two concurrent Generate requests can't both take the
     // same max(version) + 1, and a failed insert can't leave a half-written pack.
-    const { pack, version, data } = await this.db.transaction().execute(async (trx) => {
+    const { pack, version, versionLabel, data } = await this.db.transaction().execute(async (trx) => {
       await sql`select pg_advisory_xact_lock(hashtext(${t.schema} || ':handover_pack'))`.execute(trx);
       const s = tenantDb(trx, t.schema);
       const last = await s.selectFrom('handover_packs').select((eb) => eb.fn.max('version').as('v')).executeTakeFirst();
       const version = Number(last?.v ?? 0) + 1;
+      const earlier = await s.selectFrom('handover_packs').select(['status', 'version_label']).execute();
+      const versionLabel = nextHandoverVersionLabel(earlier);
+      const history = await this.historyRows(s, scope?.ids ?? [], version, {
+        author: user.displayName,
+        version: `${versionLabel} (draft)`,
+        date: handoverDate(generatedAt),
+        comments: body.changeNote?.trim() || 'Draft for review',
+      });
 
       const data = await this.documentBuilder.build({
         brand,
@@ -181,6 +198,8 @@ export class HandoverService {
         ...layout,
         tenantName: t.name,
         version,
+        versionLabel,
+        history,
         generatedBy: user.displayName,
         generatedAt,
         scope: scopeLabel,
@@ -194,11 +213,13 @@ export class HandoverService {
         .values({
           id: packId,
           version,
+          version_label: versionLabel,
           status: 'draft',
           generated_by: user.id,
           generated_at: generatedAt.toISOString(),
           source: {
             notes: body.notes ?? null,
+            changeNote: body.changeNote?.trim() || null,
             // the cover's project and site lines and the paper size, so issuing draws the same front page
             ...layout,
             snapshotAt: generatedAt.toISOString(),
@@ -217,7 +238,7 @@ export class HandoverService {
         .values(sections.map((sec, i) => ({ pack_id: pack.id, key: sec.key, title: sec.title, ordinal: i, content: sec.content })))
         .execute();
 
-      return { pack, version, data };
+      return { pack, version, versionLabel, data };
     });
 
     let file;
@@ -227,7 +248,7 @@ export class HandoverService {
         sourceType: 'handover_pack',
         sourceId: pack.id,
         siteId: null,
-        filename: `${t.schema}-service-handover-v${version}.docx`,
+        filename: `${t.schema}-service-handover-v${versionLabel}.docx`,
         contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         data,
         uploadedBy: user.id,
@@ -260,7 +281,7 @@ export class HandoverService {
    * Locks a draft pack as final. The pack's .docx was generated when the draft was
    * created, so this records who issued it and when rather than regenerating.
    */
-  async issue(t: TenantContext, user: AuthedUser, id: string) {
+  async issue(t: TenantContext, user: AuthedUser, id: string, body: { approverCompany?: string; approverName?: string; approvalDate?: string } = {}) {
     assertCustomerWide(t, 'The Service Handover pack');
     const scoped = tenantDb(this.db, t.schema);
     const pack = await scoped.selectFrom('handover_packs').select(['id', 'version', 'status', 'file_id']).where('id', '=', id).executeTakeFirst();
@@ -276,9 +297,26 @@ export class HandoverService {
     const savedSections = await scoped.selectFrom('handover_sections').selectAll().where('pack_id', '=', id).orderBy('ordinal').execute();
     const author = await platformDb(this.db).selectFrom('users').select('display_name').where('id', '=', full.generated_by).executeTakeFirst();
     const issuedAt = new Date();
-    const source = (full.source ?? {}) as { siteCodes?: string[]; liveAsOf?: string | null } & Partial<PackLayout>;
+    const source = (full.source ?? {}) as { siteCodes?: string[]; siteIds?: string[]; liveAsOf?: string | null; changeNote?: string | null } & Partial<PackLayout>;
+    const brand = await this.branding?.forDocuments(t.id);
+    const versionLabel = issuedHandoverVersionLabel(full.version_label, full.version);
+    // Approvals & Sign-Off: who approved it, as entered when issuing (the company defaults to the pack's brand)
+    const approval: HandoverApproval = {
+      company: body.approverCompany?.trim() || brand?.name || 'Voxshift',
+      name: body.approverName?.trim() || '',
+      date: body.approvalDate ?? issuedAt.toISOString().slice(0, 10),
+    };
+    const history = await this.historyRows(scoped, source.siteIds ?? [], full.version, {
+      author: author?.display_name ?? 'Voxshift',
+      version: versionLabel,
+      date: handoverDate(issuedAt),
+      comments: source.changeNote || 'Issued',
+    });
     const data = await this.documentBuilder.build({
-      brand: await this.branding?.forDocuments(t.id),
+      brand,
+      versionLabel,
+      approval,
+      history,
       customerLogo: (await this.branding?.customerLogo(t.id)) ?? null,
       projectName: source.projectName ?? null,
       siteLabel: source.siteLabel ?? handoverScopeLabel(source.siteCodes),
@@ -297,17 +335,17 @@ export class HandoverService {
       sourceType: 'handover_pack',
       sourceId: id,
       siteId: null,
-      filename: `${t.schema}-service-handover-v${full.version}.docx`,
+      filename: `${t.schema}-service-handover-v${versionLabel}.docx`,
       contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       data,
       uploadedBy: user.id,
-      metadata: { version: full.version, issued: true },
+      metadata: { version: full.version, versionLabel, issued: true },
     });
 
     // Guarded on status so two people issuing at once cannot both succeed.
     const updated = await scoped
       .updateTable('handover_packs')
-      .set({ status: 'issued', issued_by: user.id, issued_at: issuedAt.toISOString(), file_id: file.id })
+      .set({ status: 'issued', issued_by: user.id, issued_at: issuedAt.toISOString(), file_id: file.id, version_label: versionLabel, source: JSON.stringify({ ...source, approval }) as never })
       .where('id', '=', id)
       .where('status', '=', 'draft')
       .returningAll()
@@ -318,9 +356,35 @@ export class HandoverService {
       actor: { id: user.id, email: user.email },
       targetType: 'handover_pack',
       targetId: id,
-      detail: { version: pack.version },
+      detail: { version: pack.version, versionLabel, approval },
     });
     return updated;
+  }
+
+  /**
+   * Document Control: the customer's earlier packs covering the same sites, oldest first, then this one. Each row is who
+   * generated it, its version (a draft says so), when, and what changed (the note given when generating).
+   */
+  private async historyRows(s: ReturnType<typeof tenantDb>, siteIds: string[], version: number, current: HandoverHistoryRow): Promise<HandoverHistoryRow[]> {
+    const same = (ids: unknown) => [...((Array.isArray(ids) ? ids : []) as string[])].sort().join(',') === [...siteIds].sort().join(',');
+    const rows = (await s.selectFrom('handover_packs').select(['version', 'version_label', 'status', 'generated_by', 'generated_at', 'issued_at', 'created_at', 'source']).where('version', '<', version).orderBy('version').execute()).filter((r) =>
+      same(((r.source ?? {}) as { siteIds?: string[] }).siteIds),
+    );
+    const ids = [...new Set(rows.map((r) => r.generated_by))];
+    const names = new Map(ids.length ? (await platformDb(this.db).selectFrom('users').select(['id', 'display_name']).where('id', 'in', ids).execute()).map((u) => [u.id, u.display_name] as [string, string]) : []);
+    return [
+      ...rows.map((r) => {
+        const src = (r.source ?? {}) as { changeNote?: string | null };
+        const issued = r.status === 'issued';
+        return {
+          author: names.get(r.generated_by) ?? 'Voxshift',
+          version: `${r.version_label ?? r.version}${issued ? '' : ' (draft)'}`,
+          date: handoverDate(new Date(r.issued_at ?? r.generated_at ?? r.created_at)),
+          comments: src.changeNote || (issued ? 'Issued' : 'Draft for review'),
+        };
+      }),
+      current,
+    ];
   }
 
   /* ------------------------------- notes ------------------------------- */

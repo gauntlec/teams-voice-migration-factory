@@ -26,7 +26,7 @@ import {
   VerticalPositionRelativeFrom,
   WidthType,
 } from 'docx';
-import { noteLine, type HandoverBlock, type HandoverSectionContent } from '@tvmf/shared';
+import { noteLine, type HandoverApproval, type HandoverBlock, type HandoverHistoryRow, type HandoverSectionContent } from '@tvmf/shared';
 import { VOX_TILE_PNG_BASE64 } from '../deployment/assets/vox-tile';
 import { bannerPng } from '../branding/banner-png';
 import { VOXSHIFT_DOCUMENT_BRAND, type DocumentBrand } from '../branding/document-branding.service';
@@ -77,6 +77,12 @@ export interface HandoverDocumentInput {
   /** US Letter for a pack whose sites are all in the US or Canada, A4 otherwise */
   pageSize?: 'letter' | 'a4';
   version: number;
+  /** the major.minor version printed in the pack ("0.2", "1.0"); the plain number when not given */
+  versionLabel?: string;
+  /** Approvals & Sign-Off - set when the pack is issued */
+  approval?: HandoverApproval | null;
+  /** Document Control: this pack's versions so far, oldest first, this one last */
+  history?: HandoverHistoryRow[];
   generatedBy: string;
   generatedAt: Date;
   /** Which sites the pack covers, e.g. "All sites" or "DAL01, LON02". */
@@ -141,6 +147,10 @@ const COLUMN_WEIGHT: Record<string, number> = {
   Note: 3,
   Item: 2.4,
   'What differs from the design': 3.6,
+  'Author/s': 2.6,
+  Version: 1.4,
+  Date: 2.2,
+  Comments: 3.6,
 };
 
 /** What an empty section says - a sentence, as the template does, not a bare "nothing". */
@@ -380,7 +390,7 @@ export class HandoverDocumentService {
     const total = page.width - 2 * MARGIN;
     const draft = input.status.kind === 'draft';
     const author = brand.name;
-    const versionLabel = `${input.version}`;
+    const versionLabel = input.versionLabel ?? `${input.version}`;
     const year = (input.status.kind === 'issued' ? input.status.issuedAt : input.generatedAt).getUTCFullYear();
 
     // Running header (every page but the first): brand logo | brand / title | customer logo, over a rule.
@@ -486,7 +496,25 @@ export class HandoverDocumentService {
     // An issued pack leaves out the engineers' checklist of what isn't live yet (drafts only).
     const sections = input.sections.filter((s) => !(input.status.kind === 'issued' && s.key === 'not_yet_live'));
     let tables = 0;
-    const content = sections.flatMap((s, i) => sectionBody(s, total, () => ++tables, i + 1));
+    const nextTable = () => ++tables;
+
+    // 1. Approvals & Sign-Off, and 1.1 Document Control (the template's first section, before the Introduction).
+    const signed = (label: string, value: string | null) =>
+      new Paragraph({ spacing: { after: 60 }, children: [text(`${label}: `), text(value || '________________________', { bold: !!value })] });
+    const approval = input.approval ?? null;
+    const history = input.history?.length ? input.history : [{ author: input.generatedBy, version: versionLabel, date: longDate(input.generatedAt), comments: draft ? 'Draft for review' : 'Issued' }];
+    const approvals: (Paragraph | Table)[] = [
+      h1('Approvals & Sign-Off'),
+      new Paragraph({ spacing: { after: 80 }, children: [text(approval ? 'Approved and signed off by:' : 'To be approved and signed off by:', { bold: true })] }),
+      signed('Company', approval?.company ?? null),
+      signed('Name', approval?.name ?? null),
+      signed('Date', approval ? longDate(new Date(`${approval.date}T00:00:00Z`)) : null),
+      h2('Document Control'),
+      dataTable(['Author/s', 'Version', 'Date', 'Comments'], history.map((h) => [h.author, h.version, h.date, h.comments]), total),
+      caption(nextTable(), 'Document Control Table'),
+    ];
+    // the data sections follow from 2.
+    const content = [...approvals, ...sections.flatMap((s, i) => sectionBody(s, total, nextTable, i + 2))];
 
     const doc = new Document({
       creator: author,

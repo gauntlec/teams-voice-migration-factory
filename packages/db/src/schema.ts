@@ -1343,6 +1343,8 @@ export interface DeploymentScriptsTable {
 export interface HandoverPacksTable {
   id: Generated<string>;
   version: number;
+  /** 0089 - the major.minor version printed in the pack ("0.2", "1.0", "1.3"); see handoverVersionLabel */
+  version_label: ColumnType<string | null, string | null | undefined, string | null>;
   status: ColumnType<'draft' | 'issued', 'draft' | 'issued' | undefined, 'draft' | 'issued'>;
   generated_by: string;
   generated_at: string | null;

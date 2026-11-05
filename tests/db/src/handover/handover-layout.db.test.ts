@@ -44,14 +44,16 @@ describe('the handover pack layout', () => {
     expect(p.styles).toContain('2F5496');
     expect(p.doc).toContain('TOC \\h \\o');
     expect(p.settings).toContain('updateFields');
-    // numbered headings: every section heading carries the heading numbering
-    expect(p.doc.match(/<w:pStyle w:val="Heading1"\/><w:numPr>/g)?.length).toBe(3);
+    // numbered headings: Approvals & Sign-Off first, then every section heading
+    expect(p.doc.match(/<w:pStyle w:val="Heading1"\/><w:numPr>/g)?.length).toBe(4);
+    expect(p.doc).toContain('Approvals &amp; Sign-Off');
+    expect(p.doc).toContain('Document Control Table');
     // tables: navy header row that repeats, fixed widths, numbered captions in order
     expect(p.doc).toContain('w:fill="002060"');
     expect(p.doc).toContain('<w:tblHeader/>');
     expect(p.doc).toContain('w:type="fixed"');
     expect(p.doc).toContain('Table ');
-    expect(p.doc.match(/SEQ Table/g)?.length).toBe(2);
+    expect(p.doc.match(/SEQ Table/g)?.length).toBe(3);
     expect(p.doc).toContain('Auto Attendants Information Table');
     // an empty section is a sentence; an issued pack leaves out the not-yet-live checklist; it ends with End of Document
     expect(p.doc).toContain('No analogue phones were deployed.');
@@ -86,8 +88,8 @@ describe('the handover pack layout', () => {
         ],
       }),
     );
-    // sub-headings are numbered at the second level; bullets use the bullet list, two levels
-    expect(p.doc.match(/<w:pStyle w:val="Heading2"\/><w:numPr><w:ilvl w:val="1"\/>/g)?.length).toBe(1);
+    // sub-headings are numbered at the second level (Document Control, and the note's); bullets use the bullet list, two levels
+    expect(p.doc.match(/<w:pStyle w:val="Heading2"\/><w:numPr><w:ilvl w:val="1"\/>/g)?.length).toBe(2);
     expect(p.doc).toContain('Welcome Document');
     expect(p.doc.match(/<w:ilvl w:val="1"\/><w:numId/g)?.length).toBeGreaterThanOrEqual(1);
     // a label value on several lines is a paragraph per line
@@ -96,11 +98,11 @@ describe('the handover pack layout', () => {
     // three queues: two across, then one with an empty half
     expect(p.doc).toContain('Overflow');
     expect(p.doc).toContain('Third');
-    // actions are numbered <section>.<n>: Outstanding Actions is section 5 here
-    expect(p.doc).toContain('>5.1<');
-    expect(p.doc).toContain('>5.2<');
+    // actions are numbered <section>.<n>: after Approvals & Sign-Off, Outstanding Actions is section 6 here
+    expect(p.doc).toContain('>6.1<');
+    expect(p.doc).toContain('>6.2<');
     expect(p.doc).toContain('w:fill="D9D9D9"');
     // captions run in order across every kind of table
-    expect([...p.doc.matchAll(/SEQ Table[^>]*>(?:<[^>]+>)*([0-9]+)</g)].map((m) => m[1])).toEqual(['1', '2', '3']);
+    expect([...p.doc.matchAll(/SEQ Table[^>]*>(?:<[^>]+>)*([0-9]+)</g)].map((m) => m[1])).toEqual(['1', '2', '3', '4']);
   });
 });
