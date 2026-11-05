@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Optional, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { planIdentityRows, planResourceAccountRows, platformDb, tenantDb, type PlannedIdentityRow } from '@tvmf/db';
@@ -19,6 +19,7 @@ import {
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
 import type { AuthedUser, TenantContext } from '../../common/request';
+import { DocumentBrandingService } from '../branding/document-branding.service';
 import { InjectDb, type Db } from '../../db/db.module';
 import { assertCustomerWide } from '../data-collection/site-scope';
 import { FilesService } from '../files/files.service';
@@ -74,6 +75,8 @@ export class HandoverService {
     private readonly files: FilesService,
     private readonly documentBuilder: HandoverDocumentService,
     private readonly audit: AuditService,
+    /** whose branding packs carry (docs/BRANDING.md); optional so tests can leave it out (Voxshift's) */
+    @Optional() private readonly branding?: DocumentBrandingService,
   ) {}
 
   /**
@@ -137,6 +140,7 @@ export class HandoverService {
       const version = Number(last?.v ?? 0) + 1;
 
       const data = await this.documentBuilder.build({
+        brand: await this.branding?.forDocuments(t.id),
         tenantName: t.name,
         version,
         generatedBy: user.displayName,
@@ -234,6 +238,7 @@ export class HandoverService {
     const issuedAt = new Date();
     const source = (full.source ?? {}) as { siteCodes?: string[]; liveAsOf?: string | null };
     const data = await this.documentBuilder.build({
+        brand: await this.branding?.forDocuments(t.id),
       tenantName: t.name,
       version: full.version,
       generatedBy: author?.display_name ?? 'Voxshift',

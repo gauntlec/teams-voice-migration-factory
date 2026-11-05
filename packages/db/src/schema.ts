@@ -30,6 +30,8 @@ export interface TenantsTable {
   agents_enabled: ColumnType<boolean, boolean | undefined, boolean>;
   /** The MSP that looks after this customer - see 0013_tenant_msp.sql. */
   msp_id: string | null;
+  /** Whose branding generated documents carry when the customer has an MSP: 'msp' (default) or 'customer' - see 0041_document_branding.sql. */
+  document_branding: ColumnType<'msp' | 'customer', 'msp' | 'customer' | undefined, 'msp' | 'customer'>;
   /** A test customer: its emails go to whoever triggered them - see 0015_release_safety.sql. */
   sandbox: ColumnType<boolean, boolean | undefined, boolean>;
   /** Test customer's fallback address for emails nobody triggered; null = those are skipped. */

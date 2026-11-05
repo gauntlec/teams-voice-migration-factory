@@ -6,7 +6,8 @@ import { toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
 import { Button, Text, Tooltip, tokens , makeStyles, shorthands } from '@fluentui/react-components';
 import { ArrowDownloadRegular, ArrowDownRegular, ArrowRightRegular } from '@fluentui/react-icons';
-import { callFlowSummary, type CallFlowBranch, type CallFlowGraph, type CallFlowNodeKind, type CallFlowSummary } from '@tvmf/shared';
+import { callFlowSummary, type DocumentBrandingView, type CallFlowBranch, type CallFlowGraph, type CallFlowNodeKind, type CallFlowSummary } from '@tvmf/shared';
+import { api } from '../api';
 import { useAuth } from '../auth';
 import { useGroupNames } from '../hooks/useGroupNames';
 import { MutedText } from './ui';
@@ -342,7 +343,41 @@ const pdfText = (t: string) => t.replace(/[\u2600-\u27BF\u{1F000}-\u{1FAFF}\uFE0
  * Page 1: the cover - the numbers callers dial and their resource accounts, the business hours, the holidays with their dates, each queue and how
  * many agents it has (the record Microsoft's call flow design guidance asks for). The review warnings are left out: an export is for the customer.
  */
-function addCover(pdf: jsPDF, title: string, summary: CallFlowSummary): void {
+/** The branding a diagram PDF carries (docs/BRANDING.md): the customer's document branding, with its logo ready to draw. */
+interface PdfBrand {
+  name: string;
+  voxshift: boolean;
+  /** [r, g, b] */
+  rgb: [number, number, number];
+  logo: { dataUrl: string; format: 'PNG' | 'JPEG'; width: number; height: number } | null;
+}
+const VOXSHIFT_PDF_BRAND: PdfBrand = { name: 'Voxshift', voxshift: true, rgb: [70, 87, 210], logo: null };
+
+/** The customer's document branding for a diagram PDF; Voxshift's when it can't be read. */
+async function loadPdfBrand(tenantId: string | null): Promise<PdfBrand> {
+  if (!tenantId) return VOXSHIFT_PDF_BRAND;
+  try {
+    const b = await api<DocumentBrandingView>(`/t/${tenantId}/document-branding`);
+    const hex = b.accentColor.replace('#', '');
+    const rgb: [number, number, number] = [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
+    let logo: PdfBrand['logo'] = null;
+    if (b.logoUrl && b.logoSize) {
+      const blob = await (await fetch(b.logoUrl)).blob();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result));
+        r.onerror = () => reject(r.error);
+        r.readAsDataURL(blob);
+      });
+      logo = { dataUrl, format: blob.type === 'image/png' ? 'PNG' : 'JPEG', width: b.logoSize.width, height: b.logoSize.height };
+    }
+    return { name: b.name, voxshift: b.source === 'voxshift', rgb, logo };
+  } catch {
+    return VOXSHIFT_PDF_BRAND;
+  }
+}
+
+function addCover(pdf: jsPDF, title: string, summary: CallFlowSummary, brand: PdfBrand = VOXSHIFT_PDF_BRAND): void {
   const left = A4.margin + 2;
   const width = A4.short - 2 * left;
   let y = A4.margin + 8;
@@ -362,12 +397,31 @@ function addCover(pdf: jsPDF, title: string, summary: CallFlowSummary): void {
   };
   const section = (heading: string, rows: string[], empty: string) => {
     y += 3;
+    pdf.setTextColor(...brand.rgb);
     write(heading, 12, true, 2);
+    pdf.setTextColor(36, 36, 36);
     if (rows.length === 0) write(empty, 9);
     for (const r of rows) write(r, 9, false, 1);
   };
+  // The brand's logo (or its name) at the top, unless it is Voxshift's own.
+  if (!brand.voxshift) {
+    if (brand.logo) {
+      const k = Math.min(50 / brand.logo.width, 16 / brand.logo.height);
+      try {
+        pdf.addImage(brand.logo.dataUrl, brand.logo.format, left, y - 4, brand.logo.width * k, brand.logo.height * k);
+        y += brand.logo.height * k + 2;
+      } catch {
+        write(brand.name, 12, true, 2);
+      }
+    } else {
+      pdf.setTextColor(...brand.rgb);
+      write(brand.name, 12, true, 2);
+      pdf.setTextColor(36, 36, 36);
+    }
+  }
+  pdf.setTextColor(36, 36, 36);
   write(`Call flow: ${title}`, 16, true, 2);
-  write(`Exported from Voxshift on ${new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}. The diagram follows on the next page.`, 9);
+  write(`${brand.voxshift ? 'Exported from Voxshift' : `Prepared by ${brand.name}`} on ${new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}. The diagram follows on the next page.`, 9);
   section('Phone numbers', summary.numbers.map((n) => `${n.name}: ${n.number || 'no number'}${n.resourceAccount ? `  (resource account ${n.resourceAccount})` : ''}`), 'No resource account with a phone number is recorded for this call flow.');
   section('Business hours', summary.hours.map((h) => `${h.name}: ${h.lines.join('; ')}`), 'No business hours are recorded.');
   section('Holidays', summary.holidays.map((h) => `${h.name} (${h.owner}): ${h.dates.length ? h.dates.join('; ') : 'no dates recorded'}`), 'No holidays.');
@@ -402,7 +456,7 @@ function cutPoints(total: number, tile: number, spans: [number, number][]): numb
  * The diagram on A4 pages, portrait for the portrait layout and landscape for landscape. It fits on one page when its text can still be read there;
  * a bigger diagram is printed at a readable size and split across pages, each marked with its row and column.
  */
-async function addDiagramPages(pdf: jsPDF, shot: Shot, portrait: boolean, title: string): Promise<void> {
+async function addDiagramPages(pdf: jsPDF, shot: Shot, portrait: boolean, title: string, brand: PdfBrand = VOXSHIFT_PDF_BRAND): Promise<void> {
   const pageW = portrait ? A4.short : A4.long;
   const pageH = portrait ? A4.long : A4.short;
   const availW = pageW - 2 * A4.margin;
@@ -411,7 +465,9 @@ async function addDiagramPages(pdf: jsPDF, shot: Shot, portrait: boolean, title:
   const header = (text: string) => {
     pdf.setFont('helvetica', 'normal');
     pdf.setFontSize(8);
-    pdf.text(pdfText(text), A4.margin, A4.margin + 3);
+    pdf.setTextColor(97, 97, 97);
+    pdf.text(pdfText(brand.voxshift ? text : `${brand.name}  ·  ${text}`), A4.margin, A4.margin + 3);
+    pdf.setTextColor(36, 36, 36);
   };
   if (fit >= MIN_MM_PER_PX) {
     pdf.addPage('a4', portrait ? 'portrait' : 'landscape');
@@ -456,6 +512,7 @@ async function addDiagramPages(pdf: jsPDF, shot: Shot, portrait: boolean, title:
 function ExportControls({ filename, title, direction, graph, prepare }: { filename: string; title: string; direction: Direction; graph: CallFlowGraph; prepare: () => Promise<() => void> }) {
   const ls = useLocalStyles();
   const { getNodes } = useReactFlow();
+  const { activeTenantId } = useAuth();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -471,8 +528,9 @@ function ExportControls({ filename, title, direction, graph, prepare }: { filena
         downloadDataUrl(shot.dataUrl, `${filename}.png`);
       } else {
         const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-        addCover(pdf, title, callFlowSummary(graph));
-        await addDiagramPages(pdf, shot, direction === 'TB', title);
+        const brand = await loadPdfBrand(activeTenantId);
+        addCover(pdf, title, callFlowSummary(graph), brand);
+        await addDiagramPages(pdf, shot, direction === 'TB', title, brand);
         pdf.save(`${filename}.pdf`);
       }
     } catch (e) {

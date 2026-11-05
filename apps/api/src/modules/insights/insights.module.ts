@@ -1,3 +1,4 @@
+import { BrandingModule } from '../branding/branding.module';
 import { Module } from '@nestjs/common';
 import { MailModule } from '../../mail/mail.module';
 import { IncidentsModule } from '../incidents/incidents.module';
@@ -11,7 +12,7 @@ import { InsightsService } from './insights.service';
 
 /** Voxshift Insights: the shared figures, the daily snapshots and site go-live dates (docs/INSIGHTS.md). */
 @Module({
-  imports: [MailModule, ProgressModule, IncidentsModule, ServiceRequestsModule],
+  imports: [BrandingModule, MailModule, ProgressModule, IncidentsModule, ServiceRequestsModule],
   controllers: [InsightsController],
   providers: [InsightsService, InsightsReportsService, InsightsScheduleService, InsightsSnapshotService],
   exports: [InsightsService, InsightsReportsService],

@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Optional, NotFoundException } from '@nestjs/common';
 import { sql } from 'kysely';
 import {
   annotateDrift,
@@ -22,6 +22,7 @@ import {
 import { assertNoMaintenanceFreeze, loadMaintenanceNotice } from '../../platform-ops/maintenance';
 import { AuditService } from '../../common/audit.service';
 import type { AuthedUser, TenantContext } from '../../common/request';
+import { DocumentBrandingService } from '../branding/document-branding.service';
 import { InjectDb, type Db } from '../../db/db.module';
 import { InjectDeployQueue, type Queue } from '../../queue/queue.module';
 import { assertSiteInScope } from '../data-collection/site-scope';
@@ -38,6 +39,8 @@ export class DeploymentService {
     private readonly audit: AuditService,
     private readonly files: FilesService,
     private readonly documentBuilder: DeploymentDocumentService,
+    /** whose branding change recordings carry (docs/BRANDING.md); optional so tests can leave it out (Voxshift's) */
+    @Optional() private readonly branding?: DocumentBrandingService,
   ) {}
 
   /* ============================ site rollup ============================ */
@@ -150,6 +153,7 @@ export class DeploymentService {
 
     const generatedAt = new Date();
     const data = await this.documentBuilder.build({
+      brand: await this.branding?.forDocuments(t.id),
       tenantName: t.name,
       siteName: site.name ?? site.sitecode,
       sitecode: site.sitecode,

@@ -1,3 +1,4 @@
+import { sql } from 'kysely';
 import {
   BadRequestException,
   ForbiddenException,
@@ -7,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { platformDb, provisionTenant, tenantDb, tenantSchemaName } from '@tvmf/db';
-import type { Branding, CreateTenantInput, Role, UpdateTenantBrandingInput } from '@tvmf/shared';
+import type { DocumentBrandingChoice, Branding, CreateTenantInput, Role, UpdateTenantBrandingInput } from '@tvmf/shared';
 import { AuditService, type AuditActor } from '../common/audit.service';
 import { LOGO_CONTENT_TYPES, readImageDimensions } from '../common/logo-image.util';
 import { FILE_STORAGE_BACKEND, type FileStorageBackend } from '../modules/files/file-storage.interface';
@@ -27,7 +28,9 @@ export class TenantsService {
   async list(user: { id: string; role: Role }, search?: string) {
     let q = platformDb(this.db)
       .selectFrom('tenants')
-      .select(['id', 'slug', 'name', 'primary_domain', 'status', 'teams_read_only', 'managed_services_enabled', 'monitoring_enabled', 'msp_id', 'branding', 'sandbox', 'sandbox_email', 'created_at'])
+      .select(['id', 'slug', 'name', 'primary_domain', 'status', 'teams_read_only', 'managed_services_enabled', 'monitoring_enabled', 'msp_id', 'branding', 'sandbox', 'sandbox_email', 'created_at', 'document_branding'])
+      // Whether the customer's MSP has branding of its own, so Customers can say which branding documents really carry.
+      .select((eb) => eb.selectFrom('msps').select(sql<boolean>`branding is not null`.as('b')).whereRef('msps.id', '=', 'tenants.msp_id').as('msp_has_branding'))
       // A customer being deleted is gone as far as every list is concerned (the Customers page shows it in its own notice).
       .where('status', '!=', 'deleting')
       .orderBy('name');
@@ -185,6 +188,22 @@ export class TenantsService {
       .returning(['id', 'slug', 'name', 'msp_id'])
       .executeTakeFirstOrThrow();
     await this.audit.platform('tenant.msp_changed', { actor, targetType: 'tenant', targetId: tenantId, tenantId, detail: { mspId } });
+    return tenant;
+  }
+
+  /**
+   * Whose branding generated documents carry when an MSP looks after this customer: the MSP's or the customer's own
+   * (docs/BRANDING.md). Kept when the MSP is removed, so it applies again if one is chosen later.
+   */
+  async setDocumentBranding(tenantId: string, choice: DocumentBrandingChoice, actor: AuditActor) {
+    await this.getTenantOrThrow(tenantId);
+    const tenant = await platformDb(this.db)
+      .updateTable('tenants')
+      .set({ document_branding: choice })
+      .where('id', '=', tenantId)
+      .returning(['id', 'slug', 'name', 'msp_id', 'document_branding'])
+      .executeTakeFirstOrThrow();
+    await this.audit.platform('tenant.document_branding_changed', { actor, targetType: 'tenant', targetId: tenantId, tenantId, detail: { choice } });
     return tenant;
   }
 

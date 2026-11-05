@@ -21,6 +21,8 @@ import {
   type UpdateTenantManagedServicesInput,
   type UpdateTenantMonitoringInput,
   type UpdateTenantSandboxInput,
+  setDocumentBrandingSchema,
+  type SetDocumentBrandingInput,
 } from '@tvmf/shared';
 import { CurrentUser } from '../auth/auth.decorators';
 import type { AuthedUser } from '../common/request';
@@ -110,6 +112,17 @@ export class TenantsController {
     @CurrentUser() user: AuthedUser,
   ) {
     return this.tenants.setMsp(tenantId, body.mspId, this.actor(user));
+  }
+
+  /** Whose branding this customer's generated documents carry when it has an MSP (docs/BRANDING.md). */
+  @Patch(':tenantId/document-branding')
+  @RequirePermission('tenant:update')
+  setDocumentBranding(
+    @Param('tenantId') tenantId: string,
+    @Body(new ZodBody(setDocumentBrandingSchema)) body: SetDocumentBrandingInput,
+    @CurrentUser() user: AuthedUser,
+  ) {
+    return this.tenants.setDocumentBranding(tenantId, body.choice, this.actor(user));
   }
 
   @Patch(':tenantId/branding')
