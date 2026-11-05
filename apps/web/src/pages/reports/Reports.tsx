@@ -12,6 +12,7 @@ import {
   DocumentTableRegular,
   HistoryRegular,
   PhoneRegular,
+  BotRegular,
   ReceiptRegular,
   TaskListLtrRegular,
   WarningRegular,
@@ -23,6 +24,7 @@ import {
   REPORT_PERIOD_LABELS,
   REPORT_PERIOD_PRESETS,
   SR_TYPE_DEFS,
+  buildAssistantReport,
   buildChangeLogReport,
   buildDeviceReport,
   buildExecutiveSummary,
@@ -35,6 +37,7 @@ import {
   reportPeriodQuery,
   reportQueryPeriod,
   utcDay,
+  type AssistantActivityData,
   type ChangeLogData,
   type CustomerMetrics,
   type DeviceStatusOverview,
@@ -122,6 +125,7 @@ const ICONS: Record<ReportKey, JSX.Element> = {
   changes: <HistoryRegular />,
   incidents: <WarningRegular />,
   'service-requests': <ReceiptRegular />,
+  assistants: <BotRegular />,
   devices: <PhoneRegular />,
 };
 
@@ -356,6 +360,12 @@ function useReport(key: ReportKey | null, tenantId: string, period: ReportPeriod
     enabled: enabled('service-requests') && compare,
     queryFn: () => api<ServiceRequestReportData>(`${t}/service-requests/report?${qs(prevIso)}`),
   });
+  const assistants = useQuery({ queryKey: ['report', 'assistants', tenantId, period.from, period.to], enabled: enabled('assistants'), queryFn: () => api<AssistantActivityData>(`${t}/insights/assistants?from=${period.from}&to=${period.to}`) });
+  const assistantsPrev = useQuery({
+    queryKey: ['report', 'assistants', tenantId, prevPeriod.from, prevPeriod.to],
+    enabled: enabled('assistants') && compare,
+    queryFn: () => api<AssistantActivityData>(`${t}/insights/assistants?from=${prevPeriod.from}&to=${prevPeriod.to}`),
+  });
   const changes = useQuery({ queryKey: ['report', 'changes', tenantId, period.from, period.to], enabled: enabled('changes'), queryFn: () => api<ChangeLogData>(`${t}/insights/changes?from=${period.from}&to=${period.to}`) });
   const devices = useQuery({ queryKey: ['report', 'devices', tenantId], enabled: enabled('devices'), queryFn: () => api<DeviceStatusOverview>(`${t}/device-status`) });
 
@@ -374,6 +384,11 @@ function useReport(key: ReportKey | null, tenantId: string, period: ReportPeriod
       return {
         ...pick(sr, ...(compare ? [srPrev] : [])),
         data: sr.data && (!compare || srPrev.data) ? buildServiceRequestReport(sr.data, compare ? (srPrev.data ?? null) : null, period, (x) => SR_TYPE_DEFS[x].label, prevPeriod) : undefined,
+      };
+    case 'assistants':
+      return {
+        ...pick(assistants, ...(compare ? [assistantsPrev] : [])),
+        data: assistants.data && (!compare || assistantsPrev.data) ? buildAssistantReport(assistants.data, compare ? (assistantsPrev.data ?? null) : null, period, prevPeriod) : undefined,
       };
     case 'changes':
       return { ...pick(changes), data: changes.data ? buildChangeLogReport(changes.data, period) : undefined };

@@ -7,6 +7,7 @@ import { AuditService } from '../../../../apps/api/src/common/audit.service';
 import { BuildService } from '../../../../apps/api/src/modules/build/build.service';
 import { BuildValidationService } from '../../../../apps/api/src/modules/build/build-validation.service';
 import { IncidentReportService } from '../../../../apps/api/src/modules/incidents/incident-report.service';
+import { InsightsAssistantsService } from '../../../../apps/api/src/modules/insights/insights-assistants.service';
 import { InsightsReportsService } from '../../../../apps/api/src/modules/insights/insights-reports.service';
 import { InsightsScheduleService } from '../../../../apps/api/src/modules/insights/insights-schedule.service';
 import { InsightsService } from '../../../../apps/api/src/modules/insights/insights.service';
@@ -48,7 +49,7 @@ beforeAll(async () => {
   const requests = { report: async () => ({ raised: 0, deployed: 0, completedBy: { assistants: 0, people: 0 }, openBacklog: { total: 0, under1d: 0, d1to3: 0, d3to7: 0, over7d: 0 }, medianHoursToDeploy: null, resolutionMetPct: null, responseMetPct: null, responseMeasured: 0, resolutionMeasured: 0, byType: {}, byStatus: {} }) };
   const incidents = new IncidentReportService(handle.db);
   const insights = new InsightsService(handle.db, new ProgressService(handle.db, build), incidents, requests as never);
-  const reports = new InsightsReportsService(handle.db, insights, incidents, requests as never);
+  const reports = new InsightsReportsService(handle.db, insights, incidents, requests as never, new InsightsAssistantsService(handle.db));
   svc = new InsightsScheduleService(handle.db, reports, new MailService(handle.db, { add: async () => undefined } as never), audit);
 });
 

@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Post, Put, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import {
+  insightsPeriod,
   insightsHistoryQuerySchema,
   insightsPeriodQuerySchema,
   reportFileName,
@@ -17,6 +18,7 @@ import { ZodBody } from '../../common/zod.pipe';
 import { RequirePermission } from '../../rbac/require-permission.decorator';
 import { TenantGuard } from '../../rbac/tenant.guard';
 import { DocumentBrandingService } from '../branding/document-branding.service';
+import { InsightsAssistantsService } from './insights-assistants.service';
 import { InsightsReportsService } from './insights-reports.service';
 import { InsightsScheduleService } from './insights-schedule.service';
 import { InsightsService } from './insights.service';
@@ -34,6 +36,7 @@ export class InsightsController {
     private readonly reports: InsightsReportsService,
     private readonly schedules: InsightsScheduleService,
     private readonly branding: DocumentBrandingService,
+    private readonly assistants: InsightsAssistantsService,
   ) {}
 
   @Get('metrics')
@@ -53,6 +56,13 @@ export class InsightsController {
   @RequirePermission('tenant:read')
   changes(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Query(new ZodBody(insightsPeriodQuerySchema)) q: InsightsPeriodQuery) {
     return this.svc.changeLog(t, user.role, q);
+  }
+
+  /** The Assistant activity report: what the AI assistants did in the period (Managed Services, inc:read or sr:read). */
+  @Get('assistants')
+  @RequirePermission('tenant:read')
+  assistantActivity(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Query(new ZodBody(insightsPeriodQuerySchema)) q: InsightsPeriodQuery) {
+    return this.assistants.activity(t, user.role, insightsPeriod(q));
   }
 
   /** The site's go-live date (its overview's Target go-live) and the date first agreed. */

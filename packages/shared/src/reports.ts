@@ -141,7 +141,7 @@ export interface ReportDocument {
   sections: ReportSection[];
 }
 
-export const REPORT_KEYS = ['executive', 'migration', 'incidents', 'service-requests', 'changes', 'devices'] as const;
+export const REPORT_KEYS = ['executive', 'migration', 'incidents', 'service-requests', 'assistants', 'changes', 'devices'] as const;
 export type ReportKey = (typeof REPORT_KEYS)[number];
 
 /** The catalogue: what each report is for, in plain words. */
@@ -157,6 +157,12 @@ export const REPORT_CATALOGUE: Record<ReportKey, { title: string; group: (typeof
   changes: { title: 'Change log', group: 'Migration', description: 'Every change Voxshift made in the customer’s Teams tenant, and whether it applied. For auditors and change boards.', period: true },
   incidents: { title: 'Incidents and service levels', group: 'Service', description: 'Raised and resolved, time to acknowledge and restore, targets met, where incidents come from, and the open backlog.', period: true },
   'service-requests': { title: 'Service requests', group: 'Service', description: 'Requests by type, time to complete, targets met, the open backlog, and how many an assistant completed.', period: true },
+  assistants: {
+    title: 'Assistant activity',
+    group: 'Service',
+    description: 'What the AI assistants did: incidents and service requests worked, the steps they proposed and how people decided them, and what they finished on their own.',
+    period: true,
+  },
   devices: { title: 'Device status', group: 'Service', description: 'Every monitored phone, gateway and paging unit: whether it is up now and its availability over the last 24 hours.', period: false },
 };
 
@@ -175,6 +181,8 @@ export function reportAvailableFor(key: ReportKey, can: (p: Permission) => boole
       return tenant.managedServices && can('inc:read');
     case 'service-requests':
       return tenant.managedServices && can('sr:read');
+    case 'assistants':
+      return tenant.managedServices && (can('inc:read') || can('sr:read'));
     case 'devices':
       return tenant.monitoring && can('monitoring:read');
   }
@@ -235,6 +243,45 @@ export interface ServiceRequestReportData {
   responseMeasured: number;
   resolutionMeasured: number;
   openBacklog: { total: number; under1d: number; d1to3: number; d3to7: number; over7d: number };
+}
+
+/** One assistant's work in a period (AssistantActivityData). */
+export interface AssistantActivityRow {
+  agentId: string;
+  name: string;
+  /** one Voxshift runs itself (Triage, Diagnose, Comms, Changes), not one the MSP connected */
+  builtin: boolean;
+  /** incidents and service requests it took on (claimed) in the period */
+  incidentsWorked: number;
+  requestsWorked: number;
+  /** steps it put to a person in the period, and how they stand now */
+  proposed: number;
+  approved: number;
+  rejected: number;
+  expired: number;
+  waiting: number;
+  /** work it handed to a person, and work a person took back from it (took over or reassigned) */
+  handedOff: number;
+  takenBack: number;
+  /** incidents it resolved itself, and service requests it completed (the verified deployment) */
+  resolved: number;
+  completed: number;
+}
+
+/** GET /t/:tenantId/insights/assistants: what the AI assistants did for the customer in a period. */
+export interface AssistantActivityData {
+  from: string;
+  to: string;
+  /** which parts the person can see (inc:read, sr:read) */
+  incidents: boolean;
+  serviceRequests: boolean;
+  /** distinct items, so two assistants on one incident count it once */
+  incidentsWorked: number;
+  requestsWorked: number;
+  assistants: AssistantActivityRow[];
+  proposals: { area: 'incident' | 'service_request'; kind: string; label: string; proposed: number; approved: number; rejected: number; expired: number; waiting: number }[];
+  /** from a step being proposed to a person deciding it */
+  medianMinutesToDecide: number | null;
 }
 
 /** GET /t/:tenantId/insights/changes: changes made in the customer's Teams tenant by live runs. */
@@ -448,6 +495,76 @@ export function buildServiceRequestReport(
     key: 'service-requests',
     title: REPORT_CATALOGUE['service-requests'].title,
     summary: `${r.raised} raised · ${r.deployed} completed · ${r.openBacklog.total} open now`,
+    period,
+    comparedWith: prev ? comparedWith : undefined,
+    sections,
+  };
+}
+
+export function buildAssistantReport(a: AssistantActivityData, prev: AssistantActivityData | null, period: ReportPeriod, comparedWith?: ReportPeriod): ReportDocument {
+  const sum = (d: AssistantActivityData, f: (r: AssistantActivityRow) => number) => d.assistants.reduce((n, r) => n + f(r), 0);
+  const p = (f: (d: AssistantActivityData) => number | null) => (prev ? f(prev) : undefined);
+  const approvedPct = (d: AssistantActivityData) => {
+    const yes = sum(d, (r) => r.approved);
+    const decided = yes + sum(d, (r) => r.rejected);
+    return decided ? Math.round((yes / decided) * 1000) / 10 : null;
+  };
+  const figures: ReportFigure[] = [];
+  if (a.incidents) figures.push({ label: 'Incidents worked', value: a.incidentsWorked, previous: p((d) => d.incidentsWorked), better: null });
+  if (a.serviceRequests) figures.push({ label: 'Service requests worked', value: a.requestsWorked, previous: p((d) => d.requestsWorked), better: null });
+  figures.push(
+    { label: 'Steps proposed', value: sum(a, (r) => r.proposed), previous: p((d) => sum(d, (r) => r.proposed)), better: null },
+    { label: 'Approved by a person', value: approvedPct(a), previous: p(approvedPct), unit: '%', better: 'up', note: 'of the steps decided' },
+    { label: 'Typical time to a decision', value: a.medianMinutesToDecide, previous: p((d) => d.medianMinutesToDecide), unit: 'min', better: 'down' },
+  );
+  if (a.incidents) figures.push({ label: 'Incidents resolved by an assistant', value: sum(a, (r) => r.resolved), previous: p((d) => sum(d, (r) => r.resolved)), better: 'up' });
+  if (a.serviceRequests) figures.push({ label: 'Requests completed by an assistant', value: sum(a, (r) => r.completed), previous: p((d) => sum(d, (r) => r.completed)), better: 'up' });
+  figures.push({ label: 'Handed to a person', value: sum(a, (r) => r.handedOff), previous: p((d) => sum(d, (r) => r.handedOff)), better: null });
+
+  const cols = ['Assistant', ...(a.incidents ? ['Incidents'] : []), ...(a.serviceRequests ? ['Requests'] : []), 'Proposed', 'Approved', 'Rejected', 'Expired', 'Waiting', 'Handed over', 'Taken back', ...(a.incidents ? ['Resolved'] : []), ...(a.serviceRequests ? ['Completed'] : [])];
+  const active = a.assistants.filter((r) => r.incidentsWorked + r.requestsWorked + r.proposed + r.handedOff + r.takenBack + r.resolved + r.completed > 0);
+  const sections: ReportSection[] = [
+    { kind: 'figures', title: 'In the period', figures },
+    {
+      kind: 'table',
+      title: 'By assistant',
+      columns: cols,
+      numeric: cols.map((_, i) => i).slice(1),
+      rows: active.map((r) => [
+        r.builtin ? `${r.name} (Voxshift)` : r.name,
+        ...(a.incidents ? [r.incidentsWorked] : []),
+        ...(a.serviceRequests ? [r.requestsWorked] : []),
+        r.proposed,
+        r.approved,
+        r.rejected,
+        r.expired,
+        r.waiting,
+        r.handedOff,
+        r.takenBack,
+        ...(a.incidents ? [r.resolved] : []),
+        ...(a.serviceRequests ? [r.completed] : []),
+      ]),
+      empty: 'No assistant worked for this customer in this period.',
+      note: 'Taken back: a person took the work over, or gave it to someone else.',
+    },
+    {
+      kind: 'table',
+      title: 'Steps proposed, by kind',
+      columns: ['Step', 'Where', 'Proposed', 'Approved', 'Rejected', 'Expired', 'Waiting'],
+      numeric: [2, 3, 4, 5, 6],
+      rows: a.proposals.map((x) => [x.label, x.area === 'incident' ? 'Incidents' : 'Service requests', x.proposed, x.approved, x.rejected, x.expired, x.waiting]),
+      empty: 'No steps proposed in this period.',
+    },
+    {
+      kind: 'note',
+      text: 'An assistant does only what this customer’s assistant settings allow. A person approves every deployment, and every customer message about a priority 1 or 2 incident.',
+    },
+  ];
+  const proposed = sum(a, (r) => r.proposed);
+  return {
+    key: 'assistants',
+    title: REPORT_CATALOGUE.assistants.title,
+    summary: [a.incidents ? `${a.incidentsWorked} incidents` : '', a.serviceRequests ? `${a.requestsWorked} service requests` : '', `${proposed} steps proposed`].filter(Boolean).join(' · '),
     period,
     comparedWith: prev ? comparedWith : undefined,
     sections,

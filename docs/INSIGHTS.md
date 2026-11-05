@@ -8,7 +8,8 @@ Insights is the plan to give executives a home page and reports worth looking at
 
 Because the Overview and Reports read the same figures, they never disagree.
 
-The proposal, mock-ups and plan were agreed on 5 November 2026. The five steps are:
+The proposal, mock-ups and plan were agreed on 5 November 2026. The five steps, and a sixth that finishes what the proposal
+promised, are:
 
 | Step | What | State |
 | --- | --- | --- |
@@ -17,7 +18,11 @@ The proposal, mock-ups and plan were agreed on 5 November 2026. The five steps a
 | 3 | Reports area: catalogue, periods, comparison, Excel and CSV | **Live** (2026.11.6) |
 | 4a | Executive summary report, and a PDF of every report | **Live** (2026.11.7) |
 | 4b | Scheduled reports by email, with the PDF attached | **Live** (2026.11.8) |
-| 5 | All-customers view, Portfolio report, Present mode | **Built** (section below) |
+| 5 | All-customers view, Portfolio report, Present mode | **Live** (2026.11.10) |
+| 6a | Assistant activity report (promised in step 5) | **Built** (section below) |
+| 6b | Reports › Sent: every scheduled report sent, kept to look back on (promised in step 4) | To do |
+| 6c | A site filter on the reports that can be cut by site (promised in step 3) | To do |
+| 6d | Device availability over the report's period, not just the last 24 hours (promised in step 3) | To do |
 
 The charts use Fluent UI's chart library (`@fluentui/react-charts`, pinned), so they follow the app theme, the customer's
 brand colour and dark mode. It came in with step 2, the first chart, rather than shipping unused in step 1.
@@ -170,6 +175,7 @@ customer (`reportAvailable`), with the same rules as the data behind each one:
 | Change log | yes | `/insights/changes` (new): changes by live runs, newest first, at most 5,000 | people who can see deployments or the customer's audit log |
 | Incidents and service levels | yes | `/incidents/report` | Managed Services on, `inc:read` |
 | Service requests | yes | `/service-requests/report` | Managed Services on, `sr:read` |
+| Assistant activity | yes | `/insights/assistants` (step 6a) | Managed Services on, `inc:read` or `sr:read` |
 | Device status | no (now) | `/device-status` | Monitoring on, `monitoring:read` |
 | Licences and costs | – | links to Discovery › Licences & costs (`/discovery?tab=licences`) | `tenantdiscovery:read` |
 
@@ -284,6 +290,26 @@ figures, worked out as that person (`InsightsPortfolioService`, `GET /insights/p
 - The arrow keys move between slides, space pauses and Esc leaves. Each slide is the live page, so its figures are
   current. Leaving full screen ends Present mode.
 
+## Assistant activity (step 6a)
+
+**Assistant activity** (Reports, Service group) says what the AI assistants did for the customer in the period
+(`GET /insights/assistants?from=&to=`, `InsightsAssistantsService`, `buildAssistantReport`). It compares with the period before,
+like every report with a period, and has its PDF, Excel and CSV like the rest.
+
+- **Who:** Managed Services on, and `inc:read` or `sr:read`. The incident figures need `inc:read` and the service request
+  figures `sr:read`; a person with only one sees only that part. A site contact sees only their own sites' incidents and
+  requests.
+- **Worked:** the incidents and service requests an assistant claimed in the period. The headline counts each item once,
+  however many assistants worked it.
+- **Steps proposed:** proposals made in the period, by how they stand now. Approved covers approved, running, done and failed
+  (a person said yes). **Approved by a person** is approved out of approved and rejected; expired and waiting ones aren't
+  decided. **Typical time to a decision** is the median from proposal to decision.
+- **Handed over** is a claim the assistant ended by handing the work to a person. **Taken back** is one a person ended:
+  taking over, or giving the work to someone else.
+- **Resolved / completed:** incidents the assistant moved to Resolved itself, and service requests whose verified deployment
+  it ran (the same rule as "fixed by" and "completed by an assistant" in the incident and service request reports).
+- **Tables:** one row per assistant that did anything (Voxshift's own are marked "(Voxshift)"), and the steps by kind.
+
 ## Tests
 
 - `packages/shared/src/insights.test.ts`: the go-live rules, the customer status, periods and snapshot totals.
@@ -307,6 +333,9 @@ figures, worked out as that person (`InsightsPortfolioService`, `GET /insights/p
 - `tests/db/src/platform/mail-settings.db.test.ts`: attachments over SMTP and to the hub as base64.
 - `tests/db/src/insights/portfolio.db.test.ts`: who sees which customers (Super Admin, a member engineer, an engineer
   with none), each customer's own figures, and a customer whose figures fail shown as unavailable.
+- `tests/db/src/insights/assistants.db.test.ts`: each assistant's counts in a period (claims, proposals by state, hand-offs,
+  take-backs, resolved, completed, time to a decision), a site contact's sites only, the areas each role can read, and the
+  comparison with the period before.
 - `tests/db/src/insights/http.db.test.ts`, the real wiring over HTTP:
   - the figures, history and a site's go-live date answer, and a bad period is refused;
   - a PDF of the Executive summary and of the Change log (a real `%PDF` file, with its name);

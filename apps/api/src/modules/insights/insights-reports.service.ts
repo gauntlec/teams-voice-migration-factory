@@ -3,6 +3,7 @@ import { deviceStatusOverview, tenantDb } from '@tvmf/db';
 import {
   REPORT_KEYS,
   SR_TYPE_DEFS,
+  buildAssistantReport,
   buildChangeLogReport,
   buildDeviceReport,
   buildExecutiveSummary,
@@ -27,6 +28,7 @@ import { InjectDb, type Db } from '../../db/db.module';
 import { isSiteScoped } from '../data-collection/site-scope';
 import { IncidentReportService } from '../incidents/incident-report.service';
 import { ServiceRequestsService } from '../service-requests/service-requests.service';
+import { InsightsAssistantsService } from './insights-assistants.service';
 import { InsightsService } from './insights.service';
 
 /**
@@ -40,6 +42,7 @@ export class InsightsReportsService {
     private readonly insights: InsightsService,
     private readonly incidents: IncidentReportService,
     private readonly requests: ServiceRequestsService,
+    private readonly assistants: InsightsAssistantsService,
   ) {}
 
   async build(t: TenantContext, role: Role, key: string, q: ReportQuery, now = new Date()): Promise<ReportDocument> {
@@ -82,6 +85,10 @@ export class InsightsReportsService {
           compare ? (this.requests.report(t, prevIso.from, prevIso.to) as Promise<ServiceRequestReportData>) : Promise.resolve(null),
         ]);
         return buildServiceRequestReport(cur, before, period, (x) => SR_TYPE_DEFS[x].label, prev);
+      }
+      case 'assistants': {
+        const [cur, before] = await Promise.all([this.assistants.activity(t, role, iso), compare ? this.assistants.activity(t, role, prevIso) : Promise.resolve(null)]);
+        return buildAssistantReport(cur, before, period, prev);
       }
       case 'changes':
         return buildChangeLogReport(await this.insights.changeLog(t, role, period, now), period);
