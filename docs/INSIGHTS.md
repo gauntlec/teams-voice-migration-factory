@@ -14,8 +14,9 @@ The proposal, mock-ups and plan were agreed on 5 November 2026. The five steps a
 | --- | --- | --- |
 | 1 | Foundation: shared figures, daily snapshots, site go-live dates | **Live** (2026.11.4) |
 | 2 | Customer Overview home page (today's list moves to a My work tab) | **Live** (2026.11.5) |
-| 3 | Reports area: catalogue, periods, comparison, Excel and CSV | **Built** (section below) |
-| 4 | Executive summary PDF and scheduled emails | Planned |
+| 3 | Reports area: catalogue, periods, comparison, Excel and CSV | **Live** (2026.11.6) |
+| 4a | Executive summary report, and a PDF of every report | **Built** (section below) |
+| 4b | Scheduled reports by email | Planned |
 | 5 | All-customers view, Portfolio report, Present mode | Planned |
 
 The charts use Fluent UI's chart library (`@fluentui/react-charts`, pinned), so they follow the app theme, the customer's
@@ -195,10 +196,55 @@ On screen, long tables show their first 200 rows, with a button to show the rest
 The incident and service request report dialogs on the Incidents and Service Requests pages are gone. Their **Reports**
 menu items open the new pages.
 
+## Executive summary and PDFs (step 4a)
+
+**Executive summary** (`buildExecutiveSummary`) is the first report in the catalogue, opening on last month. It is one
+page for a review meeting:
+
+- **The headline:**
+  - a title line, the Overview's, counting sites as at the end of the period;
+  - fixed sentences about what the period did: users and sites that went live, incident targets met (with the period
+    before), service requests completed;
+  - the next go-live and the worst risk.
+- **Headline figures,** each against the period before: users, sites and numbers live; incident targets met and
+  incidents raised; service requests completed; changes applied first time; device availability.
+- **Risks and decisions:** sites at risk or off track (with the reason), open P1 incidents, and sites with no go-live
+  date.
+- **Next go-lives:** up to eight.
+
+For a period that has ended, the migration figures are as at its last daily snapshot, and the report says so.
+
+**Download PDF** is on every report. `GET /t/:tenantId/insights/reports/:key/pdf` takes the same query as the page
+(`?period=`, `?from=&to=`, `?compare=`, `reportQuerySchema`).
+
+- **Built on the server:** `InsightsReportsService` builds the report from the same shared builders and data as the
+  page, so the PDF says what the page says. `reportAvailableFor` is checked first, the same rule the page uses.
+- **Drawn with pdfkit:** `report-pdf.ts`, with no browser, so the image stays small and no Chromium advisories can
+  block a release. It draws the Voxshift mark and wordmark, a tinted headline panel, figure tiles with the change in
+  green or red, and tables with purple heading rows.
+- **Long tables:** the heading row repeats on each new page. Column widths start from each column's longest word, so
+  words never break. A report with a table of more than six columns prints in landscape, and every page has a footer
+  with its page number.
+- **Fonts:** the PDF uses the standard Helvetica fonts, so no font files ship with the app. They cover Western
+  European text; any other character prints as "?" (`pdfText`).
+- **Very long cells:** a cell over 600 characters is cut with "...". On screen, a cell over 240 characters shows four
+  lines, with the full text in its tooltip. The Excel export always has the whole text.
+
 ## Tests
 
 - `packages/shared/src/insights.test.ts`: the go-live rules, the customer status, periods and snapshot totals.
-- `packages/shared/src/reports.test.ts`: report periods and comparisons, figure changes, the incident report, the Excel
-  sheets, CSV quoting and file names.
-- `tests/db/src/insights/insights.db.test.ts`: the change log (newest first, site and who ran it, site scope), the queries behind the figures, go-live dates (read from the overview, first date kept,
-  free text ignored, site scope), what each role sees, one snapshot a day, history, and removing old snapshots.
+- `packages/shared/src/reports.test.ts`:
+  - the Executive summary: end-of-period figures, its sentences, its risks;
+  - report queries, and which reports each person can open;
+  - report periods and comparisons, and figure changes;
+  - the incident report;
+  - the Excel sheets, CSV quoting and file names.
+- `tests/db/src/insights/insights.db.test.ts`:
+  - the change log: newest first, with the site and who ran it, and site scope;
+  - the queries behind the figures, and what each role sees;
+  - go-live dates: read from the overview, first date kept, free text ignored, site scope;
+  - one snapshot a day, history, and removing old snapshots.
+- `tests/db/src/insights/http.db.test.ts`, the real wiring over HTTP:
+  - the figures, history and a site's go-live date answer, and a bad period is refused;
+  - a PDF of the Executive summary and of the Change log (a real `%PDF` file, with its name);
+  - the refusals: Monitoring off, an unknown report, a backwards period.

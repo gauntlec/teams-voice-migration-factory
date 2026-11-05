@@ -100,4 +100,19 @@ describe('Insights over HTTP', () => {
     expect(await read.json()).toMatchObject({ targetGoLive: '2026-12-03' });
     expect((await call(customerToken, `/sites/${siteId}/go-live`, { method: 'PUT', body: '{}' })).status).toBe(404);
   });
+
+  it('makes any report the person can open as a PDF, and refuses the others', async () => {
+    const pdf = await call(customerToken, '/reports/executive/pdf?period=last_month');
+    expect(pdf.status).toBe(200);
+    expect(pdf.headers.get('content-type')).toBe('application/pdf');
+    expect(pdf.headers.get('content-disposition')).toMatch(/^attachment; filename="voxshift-executive-.+\.pdf"$/);
+    expect(Buffer.from(await pdf.arrayBuffer()).subarray(0, 5).toString()).toBe('%PDF-');
+
+    expect((await call(adminToken, '/reports/changes/pdf?from=2026-10-01&to=2026-10-31')).status).toBe(200);
+    // Monitoring switched off for the customer: no device report. And a report that doesn't exist.
+    await platformDb(handle.db).updateTable('tenants').set({ monitoring_enabled: false }).where('id', '=', c.t.id).execute();
+    expect((await call(adminToken, '/reports/devices/pdf')).status).toBe(403);
+    expect((await call(adminToken, '/reports/nonsense/pdf')).status).toBe(404);
+    expect((await call(adminToken, '/reports/executive/pdf?from=2026-11-02&to=2026-11-01')).status).toBe(400);
+  });
 });

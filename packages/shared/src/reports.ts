@@ -4,7 +4,9 @@
  * sections, and the same sections become the Excel and CSV exports (and, in step 4, the PDF), so what is on screen and
  * what is exported can't drift apart.
  */
-import { goLiveDateLabel, utcDay, GO_LIVE_STATUS_LABELS, type CustomerMetrics, type MetricHistoryPoint } from './insights';
+import { z } from 'zod';
+import { goLiveDateLabel, overviewHeadline, utcDay, GO_LIVE_STATUS_LABELS, type CustomerMetrics, type MetricHistoryPoint } from './insights';
+import type { Permission } from './rbac';
 import { INC_PRIORITY_LABELS, type IncPriority } from './incidents';
 import { PROGRESS_STAGE_LABELS } from './progress';
 import { SR_TYPES, type SrType } from './service-requests';
@@ -86,6 +88,23 @@ export function reportPeriodQuery(p: ReportPeriod): { from: string; to: string }
   return { from: `${p.from}T00:00:00.000Z`, to: `${addDays(p.to, 1)}T00:00:00.000Z` };
 }
 
+const ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'use YYYY-MM-DD');
+
+/** ?period=last_month, or ?from=&to= (custom dates, both included); ?compare=0 turns the comparison off. The Reports page keeps these in its address. */
+export const reportQuerySchema = z
+  .object({ period: z.enum(REPORT_PERIOD_PRESETS).optional(), from: ymd.optional(), to: ymd.optional(), compare: z.enum(['0', '1']).optional() })
+  .strict()
+  .refine((q) => !q.from || !q.to || q.from <= q.to, { message: 'from must not be after to' });
+export type ReportQuery = z.infer<typeof reportQuerySchema>;
+
+/** The period a report query asks for: custom dates when both are given, otherwise the preset (last 30 days by default). */
+export function reportQueryPeriod(q: { period?: string | null; from?: string | null; to?: string | null }, today: string): { period: ReportPeriod; preset: ReportPeriodPreset | 'custom' } {
+  const valid = (d: string | null | undefined): d is string => !!d && /^\d{4}-\d{2}-\d{2}$/.test(d);
+  if (valid(q.from) && valid(q.to) && q.from <= q.to) return { period: { from: q.from, to: q.to }, preset: 'custom' };
+  const preset = (REPORT_PERIOD_PRESETS as readonly string[]).includes(q.period ?? '') ? (q.period as ReportPeriodPreset) : 'last_30_days';
+  return { period: reportPresetPeriod(preset, today), preset };
+}
+
 /* ------------------------------ the section model ------------------------------ */
 
 /** Which way is good for a figure: up, down, or neither (a count that is just a count). */
@@ -105,6 +124,8 @@ export interface ReportFigure {
 export type ReportCell = string | number | null;
 
 export type ReportSection =
+  /** the report's opening: a short title line and plain sentences written from the figures */
+  | { kind: 'headline'; title: string; sentences: string[] }
   | { kind: 'figures'; title: string; figures: ReportFigure[] }
   | { kind: 'table'; title: string; columns: string[]; rows: ReportCell[][]; empty?: string; note?: string; numeric?: number[] }
   | { kind: 'note'; text: string };
@@ -119,17 +140,44 @@ export interface ReportDocument {
   sections: ReportSection[];
 }
 
-export const REPORT_KEYS = ['migration', 'incidents', 'service-requests', 'changes', 'devices'] as const;
+export const REPORT_KEYS = ['executive', 'migration', 'incidents', 'service-requests', 'changes', 'devices'] as const;
 export type ReportKey = (typeof REPORT_KEYS)[number];
 
 /** The catalogue: what each report is for, in plain words. */
-export const REPORT_CATALOGUE: Record<ReportKey, { title: string; group: 'Migration' | 'Service'; description: string; period: boolean }> = {
+export const REPORT_GROUPS = ['Executive', 'Migration', 'Service'] as const;
+export const REPORT_CATALOGUE: Record<ReportKey, { title: string; group: (typeof REPORT_GROUPS)[number]; description: string; period: boolean }> = {
+  executive: {
+    title: 'Executive summary',
+    group: 'Executive',
+    description: 'One page for a monthly or quarterly review: progress against plan, service levels, risks and the next go-lives, in plain sentences.',
+    period: true,
+  },
   migration: { title: 'Migration progress', group: 'Migration', description: 'Sites by stage, users and numbers live, each site’s go-live date and status, and the figures day by day.', period: true },
   changes: { title: 'Change log', group: 'Migration', description: 'Every change Voxshift made in the customer’s Teams tenant, and whether it applied. For auditors and change boards.', period: true },
   incidents: { title: 'Incidents and service levels', group: 'Service', description: 'Raised and resolved, time to acknowledge and restore, targets met, where incidents come from, and the open backlog.', period: true },
   'service-requests': { title: 'Service requests', group: 'Service', description: 'Requests by type, time to complete, targets met, the open backlog, and how many an assistant completed.', period: true },
   devices: { title: 'Device status', group: 'Service', description: 'Every monitored phone, gateway and paging unit: whether it is up now and its availability over the last 24 hours.', period: false },
 };
+
+/**
+ * Whether a report can be opened for a customer by someone with these permissions: the same rules as the data behind it,
+ * so a report is never offered and then refused. The api checks it too before making a PDF.
+ */
+export function reportAvailableFor(key: ReportKey, can: (p: Permission) => boolean, tenant: { managedServices: boolean; monitoring: boolean }): boolean {
+  switch (key) {
+    case 'executive':
+    case 'migration':
+      return true;
+    case 'changes':
+      return can('deployment:read') || can('audit:read:tenant');
+    case 'incidents':
+      return tenant.managedServices && can('inc:read');
+    case 'service-requests':
+      return tenant.managedServices && can('sr:read');
+    case 'devices':
+      return tenant.monitoring && can('monitoring:read');
+  }
+}
 
 /** The change from previous to value, as a figure shows it ("▲ 2.5 pts", "▼ 3"), with whether that is good. */
 export function figureChange(f: ReportFigure): { text: string; good: boolean | null } | null {
@@ -488,6 +536,99 @@ export function buildDeviceReport(devices: DeviceRow[], today: string): ReportDo
   };
 }
 
+/**
+ * The Executive summary: one page for a review meeting. `metrics` covers the period (its incident, request and change
+ * figures) and `previous` the period before; migration figures are as at the end of the period, from the daily
+ * snapshots when the period has ended, and compared with the end of the period before.
+ */
+export function buildExecutiveSummary(input: {
+  metrics: CustomerMetrics;
+  previous: CustomerMetrics | null;
+  history: MetricHistoryPoint[];
+  period: ReportPeriod;
+  comparedWith: ReportPeriod;
+  today: string;
+}): ReportDocument {
+  const { metrics: m, previous, history, period, comparedWith, today } = input;
+  const g = m.migration;
+  const lastUpTo = (day: string) => [...history].reverse().find((p) => p.day <= day) ?? null;
+  const end = period.to >= today ? null : lastUpTo(period.to);
+  const start = lastUpTo(comparedWith.to) ?? history.find((p) => p.day >= period.from && p.day <= period.to) ?? null;
+  const now = {
+    sitesLive: end?.sitesLive ?? g.sitesLive,
+    sites: end?.sites ?? g.sites,
+    usersLive: end?.usersLive ?? g.usersLive,
+    users: end?.users ?? g.users,
+    numbersLive: end?.numbersLive ?? g.numbersLive,
+  };
+  const fmt = (n: number) => n.toLocaleString('en-GB');
+  const inc = m.incidents;
+  const incPrev = previous?.incidents;
+  const sr = m.serviceRequests;
+  const srPrev = previous?.serviceRequests;
+
+  // The headline: where the migration stands now (the Overview's sentences), then what the period did.
+  const head = overviewHeadline(m);
+  const sentences: string[] = [];
+  if (start) {
+    const moved = now.usersLive - start.usersLive;
+    const sitesMoved = now.sitesLive - start.sitesLive;
+    if (moved > 0 || sitesMoved > 0) {
+      sentences.push(`In this period ${fmt(moved)} ${moved === 1 ? 'user' : 'users'} moved to Teams Phone${sitesMoved > 0 ? ` and ${sitesMoved} ${sitesMoved === 1 ? 'site' : 'sites'} went live` : ''}.`);
+    } else sentences.push('No users or sites went live in this period.');
+  }
+  if (inc && inc.targetsMetPct !== null) {
+    const was = incPrev?.targetsMetPct;
+    sentences.push(`${inc.targetsMetPct}% of incident response and restore targets were met${was !== undefined && was !== null ? ` (${was}% the period before)` : ''}, from ${inc.raised} ${inc.raised === 1 ? 'incident' : 'incidents'} raised.`);
+  }
+  if (sr && sr.completed > 0) sentences.push(`${sr.completed} service ${sr.completed === 1 ? 'request was' : 'requests were'} completed${sr.completedByAssistants ? `, ${sr.completedByAssistants} by an assistant` : ''}.`);
+  for (const x of head.sentences.slice(1)) if (sentences.length < 5) sentences.push(x);
+
+  const figures: ReportFigure[] = [
+    { label: 'Users live', value: now.usersLive, previous: start?.usersLive, better: 'up', note: `of ${fmt(now.users)}` },
+    { label: 'Sites live', value: now.sitesLive, previous: start?.sitesLive, better: 'up', note: `of ${now.sites}` },
+    { label: 'Numbers live', value: now.numbersLive, previous: start?.numbersLive, better: 'up' },
+  ];
+  if (inc) {
+    figures.push({ label: 'Incident targets met', value: inc.targetsMetPct, previous: incPrev ? incPrev.targetsMetPct : undefined, unit: '%', better: 'up', note: `${inc.targetsMeasured} targets` });
+    figures.push({ label: 'Incidents raised', value: inc.raised, previous: incPrev?.raised, better: 'down', note: `${inc.open} open now` });
+  }
+  if (sr) figures.push({ label: 'Service requests completed', value: sr.completed, previous: srPrev?.completed, better: 'up', note: sr.medianHoursToComplete === null ? undefined : `typically ${sr.medianHoursToComplete < 48 ? `${sr.medianHoursToComplete} h` : `${Math.round((sr.medianHoursToComplete / 24) * 10) / 10} days`}` });
+  figures.push({ label: 'Changes applied first time', value: m.changes.firstTimePct, previous: previous ? previous.changes.firstTimePct : undefined, unit: '%', better: 'up', note: `${fmt(m.changes.applied + m.changes.failed)} changes` });
+  if (m.devices) figures.push({ label: 'Device availability, 24 h', value: m.devices.availability24hPct, unit: '%', better: 'up', note: `${m.devices.monitored} devices` });
+
+  const risks: ReportCell[][] = g.siteList
+    .filter((x) => x.goLive.status === 'off_track' || x.goLive.status === 'at_risk')
+    .sort((a, b) => (a.goLive.status === b.goLive.status ? 0 : a.goLive.status === 'off_track' ? -1 : 1))
+    .map((x) => [x.sitecode, GO_LIVE_STATUS_LABELS[x.goLive.status], x.goLive.reason]);
+  if (inc && inc.openP1 > 0) risks.unshift(['All sites', 'Priority 1', `${inc.openP1} priority 1 ${inc.openP1 === 1 ? 'incident is' : 'incidents are'} open`]);
+  const undated = g.siteList.filter((x) => x.goLive.status === 'no_date').length;
+  if (undated > 0) risks.push([`${undated} ${undated === 1 ? 'site' : 'sites'}`, 'No go-live date', 'Set a go-live date so progress can be measured against a plan']);
+
+  const next = g.siteList
+    .filter((x) => !x.live && x.targetGoLive)
+    .sort((a, b) => a.targetGoLive!.localeCompare(b.targetGoLive!))
+    .slice(0, 8)
+    .map((x) => [x.sitecode, x.name, PROGRESS_STAGE_LABELS[x.stage], goLiveDateLabel(x.targetGoLive!), GO_LIVE_STATUS_LABELS[x.goLive.status]]);
+
+  // The title line counts sites as at the end of the period, like the figures under it; the risk count is as of now.
+  const title = end ? head.title.replace(/^\d[\d,]* of [\d,]+ sites? live/, `${now.sitesLive} of ${now.sites} ${now.sites === 1 ? 'site' : 'sites'} live`) : head.title;
+  return {
+    key: 'executive',
+    title: REPORT_CATALOGUE.executive.title,
+    summary: title,
+    period,
+    comparedWith,
+    sections: [
+      { kind: 'headline', title, sentences },
+      { kind: 'figures', title: 'Headline figures', figures },
+      { kind: 'table', title: 'Risks and decisions', columns: ['Where', 'What', 'Why'], rows: risks, empty: 'Nothing is at risk.' },
+      { kind: 'table', title: 'Next go-lives', columns: ['Site', 'Name', 'Stage now', 'Go-live', 'Status'], rows: next, empty: 'No go-live dates ahead.' },
+      ...(end ? [{ kind: 'note' as const, text: `Migration figures are as at ${goLiveDateLabel(end.day)}, the last daily record in the period.` }] : []),
+    ],
+  };
+}
+
 /* ------------------------------ exports ------------------------------ */
 
 /** A sheet for Excel, or a table for CSV: a title and rows of cells, the first row the column headings. */
@@ -526,6 +667,8 @@ export function reportSheets(doc: ReportDocument, customer: string): ExportSheet
       summary.push([`${s.title}: ${f.label}`, f.value, ...(doc.comparedWith ? [f.previous ?? null, ch?.text ?? null] : []), f.note ?? null]);
     }
   }
+  const headline = doc.sections.find((s): s is Extract<ReportSection, { kind: 'headline' }> => s.kind === 'headline');
+  if (headline) summary.splice(doc.comparedWith ? 4 : 3, 0, [], [headline.title], ...headline.sentences.map((x) => [x] as ReportCell[]));
   const notes = doc.sections.filter((s): s is Extract<ReportSection, { kind: 'note' }> => s.kind === 'note');
   if (notes.length) summary.push([], ...notes.map((n) => [n.text] as ReportCell[]));
   const sheets: ExportSheet[] = [{ name: sheetName('Summary', used), rows: summary }];
