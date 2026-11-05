@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { emailEnabled, platformDb, tenantDb, webOrigin } from '@tvmf/db';
 import {
   isGlobalRole,
@@ -21,6 +21,7 @@ import { AuditService } from '../../common/audit.service';
 import type { AuthedUser, TenantContext } from '../../common/request';
 import { InjectDb, type Db } from '../../db/db.module';
 import { MailService } from '../../mail/mail.service';
+import { DocumentBrandingService } from '../branding/document-branding.service';
 import { InsightsReportsService } from './insights-reports.service';
 import { renderReportPdf } from './report-pdf';
 
@@ -54,6 +55,8 @@ export class InsightsScheduleService implements OnModuleInit, OnModuleDestroy {
     private readonly reports: InsightsReportsService,
     private readonly mail: MailService,
     private readonly audit: AuditService,
+    /** whose branding the PDFs carry (docs/BRANDING.md); optional so tests can leave it out (Voxshift's) */
+    @Optional() private readonly branding?: DocumentBrandingService,
   ) {}
 
   onModuleInit() {
@@ -223,7 +226,14 @@ export class InsightsScheduleService implements OnModuleInit, OnModuleDestroy {
           monitoringEnabled: !!r.monitoring_enabled,
         };
         const s = tenantDb(this.db, t.schema);
-        const due = await s.selectFrom('report_schedules').selectAll().where('enabled', '=', true).where('next_run_at', '<=', now.toISOString()).execute();
+        // One customer that can't be read (being created or deleted right now) must not stop every other customer's reports.
+        let due: Awaited<ReturnType<typeof this.dueFor>>;
+        try {
+          due = await this.dueFor(t, now);
+        } catch (e) {
+          this.log.warn(`${r.slug}: ${(e as Error).message}`);
+          continue;
+        }
         for (const sched of due) {
           // Move the next send first, so a failure part-way never sends the same report twice.
           await s.updateTable('report_schedules').set({ next_run_at: nextScheduleRun(sched.frequency, now).toISOString() }).where('id', '=', sched.id).execute();
@@ -248,6 +258,10 @@ export class InsightsScheduleService implements OnModuleInit, OnModuleDestroy {
     return ran;
   }
 
+  private dueFor(t: TenantContext, now: Date) {
+    return tenantDb(this.db, t.schema).selectFrom('report_schedules').selectAll().where('enabled', '=', true).where('next_run_at', '<=', now.toISOString()).execute();
+  }
+
   /** Builds and queues one copy per person, as that person. Records the outcome on the schedule. */
   private async run(
     t: TenantContext,
@@ -266,6 +280,7 @@ export class InsightsScheduleService implements OnModuleInit, OnModuleDestroy {
     const people = await this.people(t, sched.recipients as string[]);
     const origin = (await webOrigin(this.db)).replace(/\/+$/, '');
     const period = SCHEDULE_PERIOD[sched.frequency];
+    const brand = await this.branding?.forDocuments(t.id);
     let sent = 0;
     const skipped: string[] = [];
     for (const id of sched.recipients as string[]) {
@@ -276,7 +291,7 @@ export class InsightsScheduleService implements OnModuleInit, OnModuleDestroy {
       }
       try {
         const doc = await this.reports.build({ ...t, siteScope: p.scope }, p.role, key, { period }, now);
-        const pdf = await renderReportPdf(doc, t.name, now);
+        const pdf = await renderReportPdf(doc, t.name, now, brand);
         const filename = `${reportFileName(doc, t.name)}.pdf`;
         const headline = doc.sections.find((x) => x.kind === 'headline');
         const context: ScheduledReportContext = {

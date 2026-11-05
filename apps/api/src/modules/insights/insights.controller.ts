@@ -16,6 +16,7 @@ import type { AuthedUser, TenantContext } from '../../common/request';
 import { ZodBody } from '../../common/zod.pipe';
 import { RequirePermission } from '../../rbac/require-permission.decorator';
 import { TenantGuard } from '../../rbac/tenant.guard';
+import { DocumentBrandingService } from '../branding/document-branding.service';
 import { InsightsReportsService } from './insights-reports.service';
 import { InsightsScheduleService } from './insights-schedule.service';
 import { InsightsService } from './insights.service';
@@ -32,6 +33,7 @@ export class InsightsController {
     private readonly svc: InsightsService,
     private readonly reports: InsightsReportsService,
     private readonly schedules: InsightsScheduleService,
+    private readonly branding: DocumentBrandingService,
   ) {}
 
   @Get('metrics')
@@ -71,7 +73,7 @@ export class InsightsController {
     @Res() res: Response,
   ) {
     const doc = await this.reports.build(t, user.role, key, q);
-    const pdf = await renderReportPdf(doc, t.name);
+    const pdf = await renderReportPdf(doc, t.name, new Date(), await this.branding.forDocuments(t.id));
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${reportFileName(doc, t.name)}.pdf"`);
     res.setHeader('Cache-Control', 'no-store');

@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import { VOXSHIFT_DOCUMENT_BRAND, type DocumentBrand } from '../branding/document-branding.service';
 import { figureChange, figureText, goLiveDateLabel, reportPeriodLabel, utcDay, type ReportCell, type ReportDocument, type ReportSection } from '@tvmf/shared';
 
 /**
@@ -11,10 +12,6 @@ import { figureChange, figureText, goLiveDateLabel, reportPeriodLabel, utcDay, t
  * other character is shown as "?" (`pdfText`).
  */
 
-const BRAND = '#4657D2';
-const ACCENT = '#5B5FC7';
-const LIFT = '#C3C7F6';
-const TINT = '#EEEFFD';
 const ZEBRA = '#F7F7FB';
 const INK = '#242424';
 const MUTED = '#616161';
@@ -46,7 +43,13 @@ const cellText = (v: ReportCell) => (v === null || v === '' ? '-' : typeof v ===
 /** A very long cell (a full PowerShell message) is cut in the PDF; the Excel export keeps it whole. */
 const MAX_CELL = 600;
 
-export function renderReportPdf(doc: ReportDocument, customer: string, preparedAt = new Date()): Promise<Buffer> {
+/** `brand`: whose branding the PDF carries (DocumentBrandingService, docs/BRANDING.md); Voxshift's when not given. */
+export function renderReportPdf(doc: ReportDocument, customer: string, preparedAt = new Date(), brand: DocumentBrand = VOXSHIFT_DOCUMENT_BRAND): Promise<Buffer> {
+  const BRAND = `#${brand.palette.brand}`;
+  const ACCENT = `#${brand.palette.accent}`;
+  const LIFT = `#${brand.palette.tint}`;
+  const TINT = `#${brand.palette.calloutBg}`;
+  const DEEP = `#${brand.palette.deep}`;
   const landscape = doc.sections.some((x) => x.kind === 'table' && x.columns.length > LANDSCAPE_COLUMNS);
   const PAGE = landscape ? { width: A4.height, height: A4.width } : A4;
   const W = PAGE.width - 2 * M;
@@ -81,8 +84,20 @@ export function renderReportPdf(doc: ReportDocument, customer: string, preparedA
     bar(14, 6, 21, BRAND);
     bar(21.5, 1, 16, ACCENT);
   };
-  mark(M, M - 2, 20);
-  pdf.font('Helvetica-Bold').fontSize(13).fillColor(INK).text('vox', M + 26, M + 2, { continued: true }).font('Helvetica').fillColor(ACCENT).text('shift');
+  if (brand.source === 'voxshift') {
+    mark(M, M - 2, 20);
+    pdf.font('Helvetica-Bold').fontSize(13).fillColor(INK).text('vox', M + 26, M + 2, { continued: true }).font('Helvetica').fillColor(ACCENT).text('shift');
+  } else if (brand.logo) {
+    // The brand's logo, fitted to the header band; its name is in the footer.
+    const k = Math.min(160 / (brand.logo.width || 160), 24 / (brand.logo.height || 24), 1);
+    try {
+      pdf.image(brand.logo.data, M, M - 3, { width: (brand.logo.width || 160) * k, height: (brand.logo.height || 24) * k });
+    } catch {
+      pdf.font('Helvetica-Bold').fontSize(13).fillColor(INK).text(pdfText(brand.name), M, M + 2, { width: W * 0.6, lineBreak: false });
+    }
+  } else {
+    pdf.font('Helvetica-Bold').fontSize(13).fillColor(BRAND).text(pdfText(brand.name), M, M + 2, { width: W * 0.6, lineBreak: false });
+  }
   pdf
     .font('Helvetica')
     .fontSize(8)
@@ -106,7 +121,7 @@ export function renderReportPdf(doc: ReportDocument, customer: string, preparedA
     const y = PAGE.height - M - 10;
     pdf.moveTo(M, y - 6).lineTo(M + W, y - 6).lineWidth(0.5).strokeColor(RULE).stroke();
     pdf.font('Helvetica').fontSize(7.5).fillColor(MUTED);
-    pdf.text(pdfText(`Voxshift  ·  www.voxshift.io  ·  ${doc.title}  ·  ${customer}`), M, y, { width: W * 0.75, lineBreak: false });
+    pdf.text(pdfText(`${brand.source === 'voxshift' ? 'Voxshift  ·  www.voxshift.io' : brand.name}  ·  ${doc.title}  ·  ${customer}`), M, y, { width: W * 0.75, lineBreak: false });
     pdf.text(`Page ${i + 1} of ${range.count}`, M, y, { width: W, align: 'right', lineBreak: false });
   }
   pdf.end();
@@ -122,7 +137,7 @@ export function renderReportPdf(doc: ReportDocument, customer: string, preparedA
 
   function heading(title: string) {
     ensure(40);
-    pdf.font('Helvetica-Bold').fontSize(9).fillColor('#354BC0').text(pdfText(title.toUpperCase()), M, pdf.y, { width: W, characterSpacing: 0.6 });
+    pdf.font('Helvetica-Bold').fontSize(9).fillColor(DEEP).text(pdfText(title.toUpperCase()), M, pdf.y, { width: W, characterSpacing: 0.6 });
     pdf.moveDown(0.35);
   }
 

@@ -425,6 +425,7 @@ export class DataCollectionService {
     const { page, limit, offset } = this.pageOf(q);
     let b = s.selectFrom('discovery_flows');
     if (sites) b = b.where('site_id', 'in', sites);
+    if (q.kind) b = b.where('kind', '=', q.kind);
     if (q.q) {
       const like = `%${q.q}%`;
       b = b.where((eb) => eb.or([eb('name', 'ilike', like), eb('description', 'ilike', like)]));
@@ -764,6 +765,33 @@ export class DataCollectionService {
       .execute();
   }
 
+  /**
+   * An auto attendant or call queue Call flow is always the capture of a voice app (voiceAppForFlow). One left without its voice app -
+   * the voice app was deleted before deleting one also deleted its Call flow - gets it back: a voice app with the flow's name and kind,
+   * and the flow's resource account joins it. Populate from Site Data runs this first, so such a flow still reaches Design & Build.
+   * Returns how many were repaired.
+   */
+  async repairFlowVoiceApps(t: TenantContext, siteId?: string): Promise<number> {
+    let q = this.scoped(t)
+      .selectFrom('discovery_flows')
+      .select(['id', 'site_id', 'kind', 'name', 'resource_account_id'])
+      .where('voice_app_id', 'is', null)
+      .where('site_id', 'is not', null)
+      .where('kind', 'in', ['auto_attendant', 'call_queue']);
+    if (siteId) q = q.where('site_id', '=', siteId);
+    const orphans = await q.execute();
+    for (const f of orphans) {
+      const app = await this.scoped(t)
+        .insertInto('discovery_voice_apps')
+        .values({ site_id: f.site_id!, name: f.name, kind: f.kind as 'auto_attendant' | 'call_queue' })
+        .returning('id')
+        .executeTakeFirstOrThrow();
+      await this.scoped(t).updateTable('discovery_flows').set({ voice_app_id: app.id }).where('id', '=', f.id).execute();
+      await this.joinVoiceApp(t, app.id, f.resource_account_id);
+    }
+    return orphans.length;
+  }
+
   async addFlow(t: TenantContext, user: AuthedUser, input: DiscoveryFlowInput, canReview: boolean) {
     assertSiteInScope(t, input.site_id ?? null);
     const voiceAppId = await this.voiceAppForFlow(t, input);
@@ -841,9 +869,18 @@ export class DataCollectionService {
 
   async deleteFlow(t: TenantContext, user: AuthedUser, id: string, canReview: boolean) {
     await this.assertRowSiteInScope(t, 'discovery_flows', id, 'flow not found');
-    const prev = await this.scoped(t).selectFrom('discovery_flows').select(['site_id', 'name']).where('id', '=', id).executeTakeFirst();
+    const prev = await this.scoped(t).selectFrom('discovery_flows').select(['site_id', 'name', 'kind', 'voice_app_id']).where('id', '=', id).executeTakeFirst();
     const res = await this.scoped(t).deleteFrom('discovery_flows').where('id', '=', id).executeTakeFirst();
     if (!res.numDeletedRows) throw new NotFoundException('flow not found');
+    // An auto attendant or call queue and its Call flow are one thing in Site Data: deleting the flow deletes its voice app too,
+    // unless another flow still describes it. Its resource accounts stay, unlinked.
+    if (prev?.voice_app_id && (prev.kind === 'auto_attendant' || prev.kind === 'call_queue')) {
+      const others = await this.scoped(t).selectFrom('discovery_flows').select('id').where('voice_app_id', '=', prev.voice_app_id).executeTakeFirst();
+      if (!others) {
+        await this.scoped(t).deleteFrom('discovery_voice_apps').where('id', '=', prev.voice_app_id).execute();
+        await this.audit.tenant(t.schema, 'discovery.voice_app_deleted', { actor: actorOf(user), targetType: 'discovery_voice_app', targetId: prev.voice_app_id, detail: { withCallFlow: id } });
+      }
+    }
     await this.audit.tenant(t.schema, 'discovery.flow_deleted', {
       actor: actorOf(user),
       targetType: 'discovery_flow',

@@ -21,7 +21,9 @@ import {
   type Table as DocxTable,
 } from 'docx';
 import type { HandoverSectionContent } from '@tvmf/shared';
-import { VOX_TILE_PNG_BASE64 } from '../deployment/assets/vox-tile';
+import { VOXSHIFT_DOCUMENT_PALETTE, type DocumentPalette } from '@tvmf/shared';
+import { docxCover, docxFooter, docxHeader } from '../branding/docx-brand';
+import { VOXSHIFT_DOCUMENT_BRAND, type DocumentBrand } from '../branding/document-branding.service';
 
 /**
  * Reuses the Voxshift brand document design system established by
@@ -52,6 +54,8 @@ export interface HandoverSectionData {
 }
 
 export interface HandoverDocumentInput {
+  /** whose branding the pack carries (DocumentBrandingService); Voxshift's when not given */
+  brand?: DocumentBrand;
   tenantName: string;
   version: number;
   generatedBy: string;
@@ -70,24 +74,24 @@ function readableDate(d: Date): string {
   return `${d.toLocaleString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })} UTC`;
 }
 
-function metaRow(label: string, body: string): Paragraph {
+function metaRow(label: string, body: string, p: DocumentPalette = VOXSHIFT_DOCUMENT_PALETTE): Paragraph {
   return new Paragraph({
     spacing: { after: 80 },
     children: [
-      new TextRun({ text: `${label}   `, bold: true, color: BRAND, size: 20, font: UI_FONT }),
+      new TextRun({ text: `${label}   `, bold: true, color: p.brand, size: 20, font: UI_FONT }),
       new TextRun({ text: body, size: 20, font: UI_FONT, color: INK }),
     ],
   });
 }
 
-function calloutTable(text: string): DocxTable {
+function calloutTable(text: string, p: DocumentPalette = VOXSHIFT_DOCUMENT_PALETTE): DocxTable {
   return new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     borders: {
-      top: { style: BorderStyle.SINGLE, size: 2, color: CALLOUT_BORDER },
-      right: { style: BorderStyle.SINGLE, size: 2, color: CALLOUT_BORDER },
-      bottom: { style: BorderStyle.SINGLE, size: 2, color: CALLOUT_BORDER },
-      left: { style: BorderStyle.SINGLE, size: 24, color: BRAND },
+      top: { style: BorderStyle.SINGLE, size: 2, color: p.calloutBorder },
+      right: { style: BorderStyle.SINGLE, size: 2, color: p.calloutBorder },
+      bottom: { style: BorderStyle.SINGLE, size: 2, color: p.calloutBorder },
+      left: { style: BorderStyle.SINGLE, size: 24, color: p.brand },
       insideHorizontal: { style: BorderStyle.NONE },
       insideVertical: { style: BorderStyle.NONE },
     },
@@ -95,12 +99,12 @@ function calloutTable(text: string): DocxTable {
       new TableRow({
         children: [
           new TableCell({
-            shading: { fill: CALLOUT_BG, type: ShadingType.CLEAR, color: 'auto' },
+            shading: { fill: p.calloutBg, type: ShadingType.CLEAR, color: 'auto' },
             margins: { top: 100, bottom: 100, left: 160, right: 160 },
             children: [
               new Paragraph({
                 spacing: { after: 0 },
-                children: [new TextRun({ text, size: 19, color: CALLOUT_TEXT, font: UI_FONT })],
+                children: [new TextRun({ text, size: 19, color: p.calloutText, font: UI_FONT })],
               }),
             ],
           }),
@@ -119,13 +123,13 @@ function cellBorders() {
   };
 }
 
-function dataTable(columns: string[], rows: string[][]): DocxTable {
+function dataTable(columns: string[], rows: string[][], p: DocumentPalette = VOXSHIFT_DOCUMENT_PALETTE): DocxTable {
   const headerRow = new TableRow({
     tableHeader: true,
     children: columns.map(
       (c) =>
         new TableCell({
-          shading: { fill: HEADER_BG, type: ShadingType.CLEAR, color: 'auto' },
+          shading: { fill: p.brand, type: ShadingType.CLEAR, color: 'auto' },
           margins: { top: 60, bottom: 60, left: 90, right: 90 },
           borders: cellBorders(),
           children: [new Paragraph({ children: [new TextRun({ text: c, bold: true, size: 18, color: 'FFFFFF', font: UI_FONT })] })],
@@ -154,16 +158,16 @@ function dataTable(columns: string[], rows: string[][]): DocxTable {
   });
 }
 
-function sectionBody(section: HandoverSectionData): (Paragraph | Table)[] {
+function sectionBody(section: HandoverSectionData, p: DocumentPalette = VOXSHIFT_DOCUMENT_PALETTE): (Paragraph | Table)[] {
   const heading = new Paragraph({
     spacing: { before: 320, after: 120 },
-    border: { bottom: { style: BorderStyle.SINGLE, size: 8, color: TINT, space: 4 } },
-    children: [new TextRun({ text: section.title, bold: true, size: 26, color: BRAND, font: UI_FONT })],
+    border: { bottom: { style: BorderStyle.SINGLE, size: 8, color: p.tint, space: 4 } },
+    children: [new TextRun({ text: section.title, bold: true, size: 26, color: p.brand, font: UI_FONT })],
   });
 
   const { content } = section;
   if (content.kind === 'placeholder') {
-    return [heading, calloutTable(content.note), new Paragraph({ spacing: { after: 120 } })];
+    return [heading, calloutTable(content.note, p), new Paragraph({ spacing: { after: 120 } })];
   }
   if (content.kind === 'paragraphs') {
     if (content.paragraphs.length === 0) {
@@ -179,96 +183,43 @@ function sectionBody(section: HandoverSectionData): (Paragraph | Table)[] {
   if (content.rows.length === 0) {
     return [heading, new Paragraph({ children: [new TextRun({ text: 'Nothing recorded.', size: 19, color: MUTED, font: UI_FONT })] })];
   }
-  return [heading, dataTable(content.columns, content.rows), new Paragraph({ spacing: { after: 120 } })];
+  return [heading, dataTable(content.columns, content.rows, p), new Paragraph({ spacing: { after: 120 } })];
 }
 
 @Injectable()
 export class HandoverDocumentService {
   async build(input: HandoverDocumentInput): Promise<Buffer> {
-    const header = new Header({
-      children: [
-        new Paragraph({
-          tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
-          border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: GRID, space: 4 } },
-          children: [
-            new TextRun({ text: 'vox', bold: true, size: 20, color: INK, font: UI_FONT }),
-            new TextRun({ text: 'shift', size: 20, color: ACCENT, font: UI_FONT }),
-            new TextRun({
-              text: input.status.kind === 'draft' ? '\tService Handover  ·  DRAFT' : '\tService Handover',
-              size: 18,
-              color: input.status.kind === 'draft' ? BRAND : MUTED,
-              bold: input.status.kind === 'draft',
-              font: UI_FONT,
-            }),
-          ],
-        }),
-      ],
-    });
-
-    const footer = new Footer({
-      children: [
-        new Paragraph({
-          tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
-          border: { top: { style: BorderStyle.SINGLE, size: 6, color: GRID, space: 4 } },
-          children: [
-            new TextRun({
-              text: `Voxshift  ·  ${input.tenantName} service handover v${input.version}${input.status.kind === 'draft' ? '  ·  DRAFT' : ''}`,
-              size: 17,
-              color: MUTED,
-              font: UI_FONT,
-            }),
-            new TextRun({ text: '\t' }),
-            new TextRun({ children: [PageNumber.CURRENT], size: 17, color: MUTED, font: UI_FONT }),
-          ],
-        }),
-      ],
-    });
+    const brand = input.brand ?? VOXSHIFT_DOCUMENT_BRAND;
+    const p = brand.palette;
+    const draft = input.status.kind === 'draft';
+    const header = docxHeader(brand, [
+      new TextRun({ text: draft ? 'Service Handover  ·  DRAFT' : 'Service Handover', size: 18, color: draft ? p.brand : MUTED, bold: draft, font: UI_FONT }),
+    ]);
+    const footer = docxFooter(brand, `${input.tenantName} service handover v${input.version}${draft ? '  ·  DRAFT' : ''}`);
 
     const blankHeader = new Header({ children: [new Paragraph('')] });
     const blankFooter = new Footer({ children: [new Paragraph('')] });
 
     const cover: (Paragraph | Table)[] = [
-      new Paragraph({
-        alignment: AlignmentType.LEFT,
-        spacing: { after: 200 },
-        children: [
-          new ImageRun({
-            type: 'png',
-            data: Buffer.from(VOX_TILE_PNG_BASE64, 'base64'),
-            transformation: { width: 68, height: 68 },
-          }),
-        ],
-      }),
-      new Paragraph({
-        spacing: { after: 40 },
-        children: [
-          new TextRun({ text: 'vox', bold: true, size: 80, color: INK, font: UI_FONT }),
-          new TextRun({ text: 'shift', size: 80, color: ACCENT, font: UI_FONT }),
-        ],
-      }),
-      new Paragraph({
-        spacing: { after: 200 },
-        border: { bottom: { style: BorderStyle.SINGLE, size: 12, color: TINT, space: 6 } },
-        children: [new TextRun({ text: 'Service Handover', size: 34, color: BRAND, font: UI_FONT })],
-      }),
-      metaRow('Tenant', input.tenantName),
-      metaRow('Version', `v${input.version}`),
-      metaRow('Scope', input.scope),
-      metaRow('Generated by', input.generatedBy),
-      metaRow('Generated at', readableDate(input.generatedAt)),
-      metaRow('Sections', String(input.sections.length)),
-      metaRow('Checked against Teams', input.liveAsOf ? readableDate(input.liveAsOf) : 'Never - run Discovery before generating'),
+      ...docxCover(brand, 'Service Handover'),
+      metaRow('Tenant', input.tenantName, p),
+      metaRow('Version', `v${input.version}`, p),
+      metaRow('Scope', input.scope, p),
+      metaRow('Generated by', input.generatedBy, p),
+      metaRow('Generated at', readableDate(input.generatedAt), p),
+      metaRow('Sections', String(input.sections.length), p),
+      metaRow('Checked against Teams', input.liveAsOf ? readableDate(input.liveAsOf) : 'Never - run Discovery before generating', p),
       ...(input.status.kind === 'issued'
-        ? [metaRow('Status', 'Issued'), metaRow('Issued by', input.status.issuedBy), metaRow('Issued at', readableDate(input.status.issuedAt))]
+        ? [metaRow('Status', 'Issued', p), metaRow('Issued by', input.status.issuedBy, p), metaRow('Issued at', readableDate(input.status.issuedAt), p)]
         : [
-            metaRow('Status', 'Draft'),
+            metaRow('Status', 'Draft', p),
             new Paragraph({ spacing: { after: 120 } }),
-            calloutTable('DRAFT - not for distribution. This pack is still being prepared; the issued version replaces it.'),
+            calloutTable('DRAFT - not for distribution. This pack is still being prepared; the issued version replaces it.', p),
           ]),
       new Paragraph({ children: [new PageBreak()] }),
     ];
 
-    const body: (Paragraph | Table)[] = input.sections.flatMap((s) => sectionBody(s));
+    const body: (Paragraph | Table)[] = input.sections.flatMap((s) => sectionBody(s, p));
 
     const doc = new Document({
       sections: [

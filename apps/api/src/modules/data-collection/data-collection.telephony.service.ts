@@ -153,6 +153,7 @@ export class TelephonyService {
     }
     if (ids.length === 0) return { deleted: 0 };
     const tracked = await this.holderRows(t, table, ids);
+    let flowsDeleted = 0;
 
     await this.db.transaction().execute(async (trx) => {
       const x = tenantDb(trx as unknown as Kysely<DB>, t.schema);
@@ -167,6 +168,8 @@ export class TelephonyService {
             .where('holder_id', 'in', chunk)
             .execute();
         }
+        // an auto attendant or call queue's Call flow goes with its voice app
+        if (kind === 'voice_app') flowsDeleted += Number((await x.deleteFrom('discovery_flows').where('voice_app_id', 'in', chunk).executeTakeFirst()).numDeletedRows ?? 0);
         await x.deleteFrom(table).where('id', 'in', chunk).execute();
       }
     });
@@ -174,10 +177,10 @@ export class TelephonyService {
       actor: actorOf(u),
       targetType: siteId ? 'discovery_site' : `discovery_${kind}`,
       targetId: siteId ?? undefined,
-      detail: { count: ids.length, all: !!siteId, ids: ids.slice(0, 500) },
+      detail: { count: ids.length, all: !!siteId, ids: ids.slice(0, 500), ...(kind === 'voice_app' ? { callFlows: flowsDeleted } : {}) },
     });
-    await this.trackRows(t, u, tracked, ({ user: 'User', cap: 'Common area phone', resource_account: 'Resource account', voice_app: 'Voice app' } as const)[kind], 'removed');
-    return { deleted: ids.length };
+    await this.trackRows(t, u, tracked, ({ user: 'User', cap: 'Common area phone', resource_account: 'Resource account', voice_app: 'Auto attendant or call queue' } as const)[kind], 'removed');
+    return { deleted: ids.length, ...(kind === 'voice_app' ? { callFlowsDeleted: flowsDeleted } : {}) };
   }
 
   /* ===================== paginated list reads ===================== */
@@ -350,8 +353,12 @@ export class TelephonyService {
     const numbers = await this.numbersOf(t, ras.map((r) => r.id));
     const byApp = new Map<string, { id: string; name: string; upn: string | null; numbers: string[] }[]>();
     for (const r of ras) byApp.set(r.voice_app_id as string, [...(byApp.get(r.voice_app_id as string) ?? []), { id: r.id, name: r.name, upn: r.upn, numbers: (numbers.get(r.id) ?? []).map((n) => n.e164) }]);
+    // Each voice app's Call flow - its structured capture (wizard answers, Import to Design & Build) - so Site Data shows them as one row.
+    const flows = ids.length ? await s.selectFrom('discovery_flows').selectAll().where('voice_app_id', 'in', ids).orderBy('created_at').execute() : [];
+    const flowOf = new Map<string, (typeof flows)[number]>();
+    for (const f of flows) if (!flowOf.has(f.voice_app_id as string)) flowOf.set(f.voice_app_id as string, f);
     return {
-      items: items.map((r) => ({ ...r, resource_accounts: byApp.get(r.id) ?? [] })),
+      items: items.map((r) => ({ ...r, resource_accounts: byApp.get(r.id) ?? [], call_flow: flowOf.get(r.id) ?? null })),
       total: Number(cnt?.n ?? 0),
       page,
       limit,
@@ -1449,11 +1456,14 @@ export class TelephonyService {
   async deleteVoiceApp(t: TenantContext, u: AuthedUser, id: string, canReview: boolean) {
     await this.assertHolderInScope(t, 'discovery_voice_apps', id, 'voice app not found');
     const tracked = await this.holderRows(t, 'discovery_voice_apps', [id]);
+    // Its Call flow goes with it: they are one auto attendant or call queue, and a flow left without its voice app never reaches
+    // Design & Build.
+    const flows = await this.s(t).deleteFrom('discovery_flows').where('voice_app_id', '=', id).returning(['id', 'name', 'site_id']).execute();
     const res = await this.s(t).deleteFrom('discovery_voice_apps').where('id', '=', id).executeTakeFirst();
     if (!Number(res.numDeletedRows)) throw new NotFoundException('voice app not found');
-    await this.audit.tenant(t.schema, 'discovery.voice_app_deleted', { actor: actorOf(u), targetType: 'discovery_voice_app', targetId: id });
+    await this.audit.tenant(t.schema, 'discovery.voice_app_deleted', { actor: actorOf(u), targetType: 'discovery_voice_app', targetId: id, detail: { callFlows: flows.length } });
     await this.trackRows(t, u, tracked, 'Voice app', 'removed');
-    return { ok: true };
+    return { ok: true, callFlowsDeleted: flows.length };
   }
 
   /* ====================== resource accounts ====================== */

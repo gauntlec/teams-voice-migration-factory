@@ -36,7 +36,8 @@ export function SiteWorkspace() {
   const qc = useQueryClient();
   // ?tab=ranges opens the site on that tab (the Number porting screen's Back button uses it); otherwise Overview.
   const [searchParams] = useSearchParams();
-  const wantedTab = searchParams.get('tab');
+  // The Call flows tab is now part of Auto attendants & call queues: an old ?tab=flows link opens that.
+  const wantedTab = searchParams.get('tab') === 'flows' ? 'voice-apps' : searchParams.get('tab');
   const [tab, setTab] = useState<TabKey>((TABS as readonly string[]).includes(wantedTab ?? '') ? (wantedTab as TabKey) : 'overview');
   const [importOpen, setImportOpen] = useState(false);
   const [importRangesOpen, setImportRangesOpen] = useState(false);
@@ -94,6 +95,7 @@ export function SiteWorkspace() {
   // The wizard-captured Call flows row currently reopened for editing (see
   // onEditRow on the flows PagedSection below) - null when nothing's open.
   const [editingFlow, setEditingFlow] = useState<Row | null>(null);
+  const [designFor, setDesignFor] = useState<{ id: string; name: string; kind: 'auto_attendant' | 'call_queue'; resourceAccountId: string | null } | null>(null);
 
   const numberChoicesFor = (row: Row | null): Choice[] => {
     const cur =
@@ -140,6 +142,13 @@ export function SiteWorkspace() {
   const yesNo = (v: unknown) => (v ? 'Yes' : 'No');
 
   // Anything that changes users or numbers also changes which numbers are free, so the pickers' list is read again too.
+  // An auto attendant or call queue and its call flow are one row: anything that changes either refreshes both lists.
+  const refreshVoiceApps = () => {
+    refreshSummary();
+    void siteVoiceApps.refetch();
+    qc.invalidateQueries({ queryKey: ['voice-apps', tid, siteId] });
+    qc.invalidateQueries({ queryKey: ['flows', tid, siteId] });
+  };
   const refreshSummary = () => {
     qc.invalidateQueries({ queryKey: ['site-avail-numbers', tid, siteId] });
     if (tid) qc.invalidateQueries({ queryKey: goLiveQueryKey(tid, siteId) });
@@ -549,21 +558,48 @@ export function SiteWorkspace() {
       )}
 
       {tab === 'voice-apps' && (
+        <>
+        {!locked && (
+          <WizardTiles base={base} tenantId={tid} siteId={siteId} resourceAccountChoices={resourceAccountChoices} onCreated={refreshVoiceApps} />
+        )}
         <PagedSection
-          title="Voice apps"
-          bulkDelete={{ noun: 'voice app', plural: 'voice apps', note: 'Their resource accounts and numbers stay on the site; they just stop answering for a voice app. Anything already populated into Design & Build stays there, unlinked.' }}
-          hint="Auto attendants & call queues, named as they are in Teams. The resource accounts that answer for each one are listed here and managed under Resource accounts."
+          title="Auto attendants & call queues"
+          bulkDelete={{
+            noun: 'auto attendant or call queue',
+            plural: 'auto attendants and call queues',
+            note: 'Each one’s call flow is deleted with it. Their resource accounts and numbers stay on the site; they just stop answering for it. Anything already in Design & Build stays there, unlinked.',
+          }}
+          hint="One row per auto attendant or call queue, named as it is in Teams: the resource accounts that answer it (managed under Resource accounts) and its call flow - how it behaves - designed with the guided setup above or with Design call flow. Deleting one deletes its call flow too."
           endpoint={`${base}/voice-apps`}
           queryKey={['voice-apps', tid, siteId]}
           params={{ siteId }}
           fixed={{ site_id: siteId }}
           readOnly={locked}
           onChanged={() => {
-            refreshSummary();
-            siteVoiceApps.refetch();
+            refreshVoiceApps();
             // adding one with a number also makes its resource account
             qc.invalidateQueries({ queryKey: ['ras', tid, siteId] });
             qc.invalidateQueries({ queryKey: ['site-ras-lite', tid, siteId] });
+          }}
+          extraRowAction={(r) => {
+            const flow = r.call_flow as Row | null;
+            const ras = (r.resource_accounts as { id: string }[] | undefined) ?? [];
+            if (locked || !tid) return null;
+            if (flow?.wizard_answers) {
+              return (
+                <span className={ls.flexWrapGap4}>
+                  <Button size="small" appearance="subtle" onClick={() => setEditingFlow(flow)}>
+                    Edit call flow
+                  </Button>
+                  {can('build:write') && <FlowImportButton flow={flow} tid={tid} siteId={siteId} onChanged={refreshVoiceApps} />}
+                </span>
+              );
+            }
+            return (
+              <Button size="small" appearance="subtle" onClick={() => setDesignFor({ id: r.id as string, name: r.name as string, kind: r.kind as 'auto_attendant' | 'call_queue', resourceAccountId: ras[0]?.id ?? null })}>
+                Design call flow
+              </Button>
+            );
           }}
           columns={[
             { key: 'name', label: 'Name' },
@@ -586,8 +622,30 @@ export function SiteWorkspace() {
                 );
               },
             },
+            {
+              key: 'call_flow',
+              label: 'Call flow',
+              render: (r) => {
+                const flow = r.call_flow as Row | null;
+                if (!flow) return <Badge appearance="outline">Not designed</Badge>;
+                return (
+                  <div className={ls.flexWrapGap4}>
+                    <Badge appearance="tint" color="brand">{flow.tenant_object_id ? 'Discovery' : flow.wizard_answers ? 'Designed' : 'Notes'}</Badge>
+                    {!!flow.imported_at && !isFlowStale(flow) && (
+                      <Badge appearance="tint" color="success" title="In Design & Build">
+                        Imported
+                      </Badge>
+                    )}
+                    {isFlowStale(flow) && (
+                      <Badge appearance="tint" color="warning" title="Edited since it was last imported into Design & Build">
+                        Edited
+                      </Badge>
+                    )}
+                  </div>
+                );
+              },
+            },
             { key: 'business_hours', label: 'Business hours' },
-            { key: 'who_answers', label: 'Who answers' },
           ]}
           fields={[
             { key: 'name', label: 'Name of service', required: true, placeholder: 'Main Line' },
@@ -604,6 +662,31 @@ export function SiteWorkspace() {
             { key: 'comments', label: 'Comments', type: 'textarea', full: true, rows: 6 },
           ]}
         />
+        <PagedSection
+          title="Other call routing"
+          hint="Free-text notes on routing that isn't an auto attendant or call queue - a hunt group, a fax line, an overflow to a mobile."
+          endpoint={`${base}/flows`}
+          queryKey={['flows', tid, siteId, 'other']}
+          params={{ siteId, kind: 'other' }}
+          fixed={{ site_id: siteId, kind: 'other' }}
+          readOnly={locked}
+          columns={[
+            { key: 'name', label: 'Name' },
+            {
+              key: 'description',
+              label: 'Description',
+              render: (r) => {
+                const v = (r.description as string) ?? '';
+                return v.length > 90 ? `${v.slice(0, 90)}…` : v || '—';
+              },
+            },
+          ]}
+          fields={[
+            { key: 'name', label: 'Name', required: true },
+            { key: 'description', label: 'Description', type: 'textarea', full: true },
+          ]}
+        />
+        </>
       )}
 
       {tab === 'resource-accounts' && (
@@ -695,85 +778,7 @@ export function SiteWorkspace() {
         </>
       )}
 
-      {tab === 'flows' && (
-        <>
-        {!locked && (
-          <WizardTiles
-            base={base}
-            tenantId={tid}
-            siteId={siteId}
-            resourceAccountChoices={resourceAccountChoices}
-            onCreated={() => qc.invalidateQueries({ queryKey: ['flows', tid, siteId] })}
-          />
-        )}
-
-        <PagedSection
-          title="Call flows"
-          hint="Free-text notes on existing routing, or captured via the guided wizards above. Structured AA/CQ config lives under Voice apps and Design & Build."
-          endpoint={`${base}/flows`}
-          queryKey={['flows', tid, siteId]}
-          params={{ siteId }}
-          fixed={{ site_id: siteId }}
-          readOnly={locked}
-          onEditRow={(r) => {
-            // A wizard-captured row reopens the same guided wizard it was
-            // built with (pre-filled), instead of the generic kind/name/
-            // description dialog every other Call flows row still uses -
-            // editing structured wizard_answers through a plain textarea
-            // isn't something a customer should have to do.
-            if (!r.wizard_answers) return false;
-            setEditingFlow(r);
-            return true;
-          }}
-          extraRowAction={(r) =>
-            // "Import to Design & Build" is engineer/admin-only work - the
-            // API already blocks it (RequirePermission('build:write'), which
-            // only SUPER_ADMIN/ENGINEER hold), but the button itself must
-            // not even appear for a PROJECT_MANAGER/CUSTOMER viewing this
-            // same Call flows tab, or it just looks broken when they click it.
-            !locked && tid && can('build:write') ? (
-              <FlowImportButton flow={r} tid={tid} siteId={siteId} onChanged={() => qc.invalidateQueries({ queryKey: ['flows', tid, siteId] })} />
-            ) : null
-          }
-          columns={[
-            { key: 'kind', label: 'Kind' },
-            { key: 'name', label: 'Name' },
-            {
-              key: 'wizard_answers',
-              label: 'Source',
-              render: (r) =>
-                r.wizard_answers || r.tenant_object_id ? (
-                  <div className={ls.flexWrapGap4}>
-                    <Badge appearance="tint" color="brand">{r.tenant_object_id ? 'Discovery' : 'Wizard'}</Badge>
-                    {isFlowStale(r) && (
-                      <Badge appearance="tint" color="warning" title="Edited since it was last imported into Design & Build">
-                        Edited
-                      </Badge>
-                    )}
-                  </div>
-                ) : (
-                  <Badge appearance="outline">Manual</Badge>
-                ),
-            },
-            {
-              key: 'description',
-              label: 'Description',
-              render: (r) => {
-                const v = (r.description as string) ?? '';
-                return v.length > 90 ? `${v.slice(0, 90)}…` : v || '—';
-              },
-            },
-          ]}
-          fields={[
-            { key: 'kind', label: 'Kind', type: 'select', options: FLOW_KINDS, required: true },
-            { key: 'name', label: 'Name', required: true },
-            { key: 'description', label: 'Description', type: 'textarea', full: true },
-          ]}
-        />
-        </>
-      )}
-
-      {/* Reopening a wizard-captured Call flows row for editing (see onEditRow above) - a
+      {/* Reopening a wizard-captured call flow for editing (Edit call flow on its row) - a
           fresh instance per row (key={editingFlow.id}) so each edit starts from that row's
           own saved answers, not whatever an earlier edit left behind. */}
       {tid && editingFlow?.kind === 'auto_attendant' && (
@@ -794,7 +799,7 @@ export function SiteWorkspace() {
           }}
           onCreated={() => {
             setEditingFlow(null);
-            qc.invalidateQueries({ queryKey: ['flows', tid, siteId] });
+            refreshVoiceApps();
           }}
         />
       )}
@@ -815,7 +820,41 @@ export function SiteWorkspace() {
           }}
           onCreated={() => {
             setEditingFlow(null);
-            qc.invalidateQueries({ queryKey: ['flows', tid, siteId] });
+            refreshVoiceApps();
+          }}
+        />
+      )}
+      {/* Design call flow on an auto attendant or call queue that has none yet: the wizard saves the flow as its capture. */}
+      {tid && designFor?.kind === 'auto_attendant' && (
+        <AutoAttendantWizard
+          key={designFor.id}
+          open
+          onOpenChange={(o) => !o && setDesignFor(null)}
+          base={base}
+          tenantId={tid}
+          siteId={siteId}
+          resourceAccountChoices={resourceAccountChoices}
+          teamChoices={teamChoices}
+          forVoiceApp={designFor}
+          onCreated={() => {
+            setDesignFor(null);
+            refreshVoiceApps();
+          }}
+        />
+      )}
+      {tid && designFor?.kind === 'call_queue' && (
+        <CallQueueWizard
+          key={designFor.id}
+          open
+          onOpenChange={(o) => !o && setDesignFor(null)}
+          base={base}
+          tenantId={tid}
+          siteId={siteId}
+          resourceAccountChoices={resourceAccountChoices}
+          forVoiceApp={designFor}
+          onCreated={() => {
+            setDesignFor(null);
+            refreshVoiceApps();
           }}
         />
       )}
