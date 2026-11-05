@@ -52,8 +52,9 @@ function flowOf(cf: AutoAttendantCallFlow | null, operator: AutoAttendantCallabl
       if (t?.kind === 'voicemail') return { mode: 'voicemail', ...greeting };
       if (t) return { mode: 'direct', ...greeting, target: t };
     }
+    if (o.action === 'DisconnectCall') return { mode: 'disconnect', ...greeting };
     notes.push(`${where}: the call is ended after the greeting.`);
-    return { mode: 'menu', ...greeting, options: [] };
+    return { mode: 'disconnect', ...greeting };
   }
 
   const out: WizardMenuOption[] = [];

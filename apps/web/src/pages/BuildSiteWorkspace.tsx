@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router';
-import { Badge, Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Spinner, Tab, TabList, Text, tokens , makeStyles } from '@fluentui/react-components';
+import { Badge, Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Spinner, Tab, TabList, Text, Tooltip, tokens , makeStyles } from '@fluentui/react-components';
 import { ArrowLeftRegular } from '@fluentui/react-icons';
 import { CALL_QUEUE_ROUTING_METHODS, NUMBER_TYPES, POLICY_KIND_GROUPS, POLICY_KIND_TO_TENANT_TYPE, POLICY_KINDS, RESOURCE_ACCOUNT_KINDS, type AutoAttendantCallFlow, type BuildIssueRow, type BuildRowValidation, type BuildSiteRollup, type CallQueueActionSettings, type FileRow, type Paginated, type TenantPolicySummary } from '@tvmf/shared';
 import { api, apiDownload, ApiError } from '../api';
@@ -190,11 +190,23 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
       setPopulateError(e instanceof ApiError ? e.message : 'Import failed');
     },
   });
+  type PopulateResult = { created: number; voiceApps?: { created: number; warnings?: string[] }; resourceAccounts?: { created: number } };
   const populate = useMutation({
     mutationFn: (kind: 'users' | 'caps' | 'resource-accounts') =>
-      api(`${base}/${kind}/populate`, { method: 'POST', body: JSON.stringify({ site_id: siteId }) }),
-    onSuccess: () => {
+      api<PopulateResult>(`${base}/${kind}/populate`, { method: 'POST', body: JSON.stringify({ site_id: siteId }) }),
+    onSuccess: (r, kind) => {
       setPopulateError(null);
+      // Resource accounts, auto attendants and call queues are populated together; say what came across and what needs a look.
+      if (kind === 'resource-accounts' && r?.voiceApps && r.resourceAccounts) {
+        const apps = r.voiceApps.created;
+        const ras = r.resourceAccounts.created;
+        const added =
+          apps + ras === 0
+            ? 'Nothing new to add from Site Data.'
+            : `Added ${apps} auto attendant${apps === 1 ? '' : 's'} and call queue${apps === 1 ? '' : 's'} and ${ras} resource account${ras === 1 ? '' : 's'} from Site Data.`;
+        const w = r.voiceApps.warnings ?? [];
+        setVoiceMessage(w.length ? `${added} To check: ${w.slice(0, 8).join(' ')}${w.length > 8 ? ` (and ${w.length - 8} more)` : ''}` : added);
+      }
       qc.invalidateQueries({ queryKey: ['users', tid, siteId] });
       qc.invalidateQueries({ queryKey: ['caps', tid, siteId] });
       qc.invalidateQueries({ queryKey: ['resource-accounts', tid, siteId] });
@@ -770,9 +782,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           headerActions={
             siteTools && (
               <>
-                <Button size="small" disabled={populate.isPending} onClick={() => populate.mutate('resource-accounts')}>
-                  Populate from Site Data
-                </Button>
+                <PopulateVoiceButton disabled={populate.isPending} onClick={() => populate.mutate('resource-accounts')} />
                 <Button size="small" disabled={requestAccounts.isPending} onClick={() => requestAccounts.mutate()}>
                   {requestAccounts.isPending ? 'Generating…' : 'Request accounts'}
                 </Button>
@@ -917,16 +927,23 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
         <PagedSection
           fitScreen
           title="Call queues"
-          hint="Routing, agents and overflow/timeout behaviour for Call Queue resource accounts. New rows are seeded by Populate from Site Data on the Resource accounts tab."
+          hint="Routing, agents and overflow/timeout behaviour for Call Queue resource accounts. Populate from Site Data brings in the site's call queues, auto attendants and resource accounts together."
           endpoint={`${base}/call-queues`}
           queryKey={['call-queues', tid, siteId]}
           params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
-          headerActions={siteTools ? <CopyToSiteDataButton base={base} kind="call-queues" siteId={siteId} onDone={() => qc.invalidateQueries({ queryKey: ['flows', tid, siteId] })} /> : undefined}
+          headerActions={
+            siteTools ? (
+              <>
+                <PopulateVoiceButton disabled={populate.isPending} onClick={() => populate.mutate('resource-accounts')} />
+                <CopyToSiteDataButton base={base} kind="call-queues" siteId={siteId} onDone={() => qc.invalidateQueries({ queryKey: ['flows', tid, siteId] })} />
+              </>
+            ) : undefined
+          }
           bulkDelete={siteTools ? { noun: "call queue", plural: "call queues", note: "Their resource accounts stay. Nothing is changed in Teams." } : undefined}
           onChanged={embedded?.onChanged}
-          emptyText="No call queues yet - Populate from Site Data on the Resource accounts tab first."
+          emptyText="No call queues yet - add one, or Populate from Site Data."
           columns={[
             withSrTags({ key: 'name', label: 'Name' }),
             { key: 'routing_method', label: 'Routing' },
@@ -1034,16 +1051,23 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
         <PagedSection
           fitScreen
           title="Auto attendants"
-          hint="Language/voice and the real call-flow menu (business hours, after hours, holidays) for Auto Attendant resource accounts. Populate from Site Data pre-fills these from a live tenant; for a greenfield site, add one by hand and link resource accounts to it in Configure… - it just won't get a phone number until that account is created and licensed."
+          hint="Language/voice and the real call-flow menu (business hours, after hours, holidays) for Auto Attendant resource accounts. Populate from Site Data brings in the site's auto attendants, call queues and resource accounts together, from the wizard's answers or the live tenant; for a greenfield site, add one by hand and link resource accounts to it in Configure… - it just won't get a phone number until that account is created and licensed."
           endpoint={`${base}/auto-attendants`}
           queryKey={['auto-attendants', tid, siteId]}
           params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
-          headerActions={siteTools ? <CopyToSiteDataButton base={base} kind="auto-attendants" siteId={siteId} onDone={() => qc.invalidateQueries({ queryKey: ['flows', tid, siteId] })} /> : undefined}
+          headerActions={
+            siteTools ? (
+              <>
+                <PopulateVoiceButton disabled={populate.isPending} onClick={() => populate.mutate('resource-accounts')} />
+                <CopyToSiteDataButton base={base} kind="auto-attendants" siteId={siteId} onDone={() => qc.invalidateQueries({ queryKey: ['flows', tid, siteId] })} />
+              </>
+            ) : undefined
+          }
           bulkDelete={siteTools ? { noun: "auto attendant", plural: "auto attendants", note: "Their resource accounts stay. Nothing is changed in Teams." } : undefined}
           onChanged={embedded?.onChanged}
-          emptyText="No auto attendants yet - add one, or Populate from Site Data on the Resource accounts tab."
+          emptyText="No auto attendants yet - add one, or Populate from Site Data."
           columns={[
             withSrTags({ key: 'name', label: 'Name' }),
             { key: 'language_id', label: 'Language' },
@@ -1151,3 +1175,14 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
 }
 
 export type { BuildEmbedding, BuildTab } from './build/buildShared';
+
+/** The one Populate for voice: the same button on the Resource accounts, Auto attendants and Call queues tabs, filling all three. */
+function PopulateVoiceButton({ disabled, onClick }: { disabled: boolean; onClick: () => void }) {
+  return (
+    <Tooltip relationship="description" content="Brings this site's resource accounts, auto attendants and call queues from Site Data into all three tabs. Rows already here are kept.">
+      <Button size="small" disabled={disabled} onClick={onClick}>
+        Populate from Site Data
+      </Button>
+    </Tooltip>
+  );
+}

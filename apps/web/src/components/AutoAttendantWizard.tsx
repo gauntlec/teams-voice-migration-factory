@@ -156,10 +156,14 @@ function CallFlowEditor({
 
   return (
     <div className={ls.gridGap12}>
-      <Field label="What should we say when they call? (optional)">
+      <Field
+        label={value.mode === 'disconnect' ? 'What should we say before hanging up?' : 'What should we say when they call? (optional)'}
+        hint={value.mode === 'disconnect' && !value.greeting?.trim() ? 'Without a message the call simply ends.' : undefined}
+      >
         <Textarea
           value={value.greeting ?? ''}
-          placeholder="Thanks for calling Contoso..."
+          maxLength={1000}
+          placeholder={value.mode === 'disconnect' ? 'Thanks for calling Contoso. We are closed - our opening hours are 9am to 5pm, Monday to Friday.' : 'Thanks for calling Contoso...'}
           onChange={(_, d) => onChange({ ...value, greeting: d.value })}
         />
       </Field>
@@ -167,6 +171,7 @@ function CallFlowEditor({
         <Radio value="menu" label="Offer callers a menu of choices" />
         <Radio value="direct" label="Send every call straight to one place" />
         {allowVoicemail && <Radio value="voicemail" label="Send every call to voicemail" />}
+        <Radio value="disconnect" label="Play the message, then hang up" />
       </RadioGroup>
       {value.mode === 'menu' && (
         <div className={ls.gridGap8}>
@@ -246,6 +251,8 @@ function flowSummary(cf: WizardCallFlow | undefined, label: string): string[] {
       ? `offers a menu of ${(cf.options ?? []).length} option(s)`
       : cf.mode === 'voicemail'
         ? 'sends every call to voicemail'
+        : cf.mode === 'disconnect'
+          ? 'hangs up'
         : `sends every call to ${targetSummary(cf.target)}`
   }`.trim());
   if (cf.mode === 'menu') {
