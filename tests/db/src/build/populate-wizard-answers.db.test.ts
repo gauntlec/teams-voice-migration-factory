@@ -109,7 +109,8 @@ describe('Populate from Site Data with auto attendants and call queues designed 
     // ...and an engineer has since worked on the call queue by hand
     await c.s.updateTable('build_call_queues').set({ routing_method: 'Serial', updated_at: new Date(Date.now() + 60_000).toISOString() } as never).where('id', '=', cqRow.id).execute();
 
-    await build.populateAll(c.t, engineer, siteId);
+    const r = await build.populateAll(c.t, engineer, siteId);
+    expect(r.voiceApps).toMatchObject({ created: 0, filled: 1 });
     const aa = await c.s.selectFrom('build_auto_attendants').selectAll().where('id', '=', aaRow.id).executeTakeFirstOrThrow();
     expect(aa).toMatchObject({ language_id: 'en-GB', time_zone_id: 'GMT Standard Time' });
     expect(aa.after_hours_call_flow).toMatchObject({ menu: { options: [{ action: 'DisconnectCall' }] } });
