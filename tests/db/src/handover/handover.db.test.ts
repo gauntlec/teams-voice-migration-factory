@@ -3,11 +3,12 @@
 // is listed under "Designed but Not Yet Live" with why. Drafts are for
 // Voxshift staff only; customers see a pack once it's issued, without the
 // internal note, and the issued document must not still say DRAFT.
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import JSZip from 'jszip';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { AuditService } from '../../../../apps/api/src/common/audit.service';
 import { FilesService } from '../../../../apps/api/src/modules/files/files.service';
+import { VOX_TILE_PNG_BASE64 } from '../../../../apps/api/src/modules/deployment/assets/vox-tile';
 import { HandoverDocumentService } from '../../../../apps/api/src/modules/handover/handover-document.service';
 import { HandoverService } from '../../../../apps/api/src/modules/handover/handover.service';
 import { seedCustomer, seedNumbers, seedSite, seedUser, useDb, type TestCustomer } from '../helpers';
@@ -203,5 +204,119 @@ describe('Service Handover', () => {
     // after the first issue, the next pack is 1.1
     const c = await svc2.generate(c2.t, engineer, {});
     expect((await label(c.id)).version_label).toBe('1.1');
+  });
+
+  it('counts versions for each site on its own, never reusing a number, and names the site in the file', async () => {
+    const c4 = await seedCustomer(handle);
+    const rdg = (await seedSite(c4.s, { sitecode: 'RDG01' })).id;
+    const lds = (await seedSite(c4.s, { sitecode: 'LDS01' })).id;
+    const gen = (siteIds?: string[], changeNote?: string) => svc.generate(c4.t, engineer, { ...(siteIds ? { siteIds } : {}), ...(changeNote ? { changeNote } : {}) });
+    const label = (p: { id: string }) => c4.s.selectFrom('handover_packs').select('version_label').where('id', '=', p.id).executeTakeFirstOrThrow().then((r) => r.version_label);
+
+    const rdg1 = await gen([rdg]);
+    const lds1 = await gen([lds]);
+    const rdg2 = await gen([rdg], 'A change at Reading');
+    const all1 = await gen();
+    expect([await label(rdg1), await label(lds1), await label(rdg2), await label(all1)]).toEqual(['0.1', '0.1', '0.2', '0.1']);
+    // the screen's list shows the version as printed
+    expect((await svc.list(c4.t, engineer)).map((p) => p.version_label)).toEqual(['0.1', '0.2', '0.1', '0.1']);
+
+    // the two 0.1s are different files, and each site's Document Control lists only its own packs
+    const name = (p: { file_id: string | null }) => c4.s.selectFrom('files').select('filename').where('id', '=', p.file_id!).executeTakeFirstOrThrow().then((r) => r.filename);
+    expect(await name(rdg1)).toContain('RDG01-v0.1');
+    expect(await name(lds1)).toContain('LDS01-v0.1');
+    const leeds2 = await gen([lds]);
+    expect(await docText((await files.readBytes(c4.t, leeds2.file_id!)).data)).not.toContain('A change at Reading');
+    expect(await label(leeds2)).toBe('0.2');
+
+    // issuing at one site leaves the other in drafts
+    expect((await svc.issue(c4.t, engineer, rdg2.id, {})).version_label).toBe('1.0');
+    expect(await label(await gen([lds]))).toBe('0.3');
+    expect(await label(await gen([rdg]))).toBe('1.1');
+    // an older draft issued afterwards doesn't print a second 1.0
+    expect((await svc.issue(c4.t, engineer, rdg1.id, {})).version_label).toBe('1.2');
+    // a site that carries numbers from before each site counted on its own goes on from its highest
+    await c4.s.updateTable('handover_packs').set({ version_label: '0.9' }).where('id', '=', lds1.id).execute();
+    expect(await label(await gen([lds]))).toBe('0.10');
+  });
+
+  it('builds the diagrams from what is live in Teams: only the site\'s attendants, with people by name', async () => {
+    const c5 = await seedCustomer(handle);
+    const here = (await seedSite(c5.s, { sitecode: 'HERE1' })).id;
+    const there = (await seedSite(c5.s, { sitecode: 'THERE' })).id;
+    const design = (site_id: string, name: string) => ({ site_id, name, resource_accounts: JSON.stringify([]), config: {}, holiday_call_flows: JSON.stringify([]) });
+    await c5.s.insertInto('build_auto_attendants').values([design(here, 'Main Number'), design(here, 'Main Overflow'), design(here, 'Designed Only'), design(there, 'Elsewhere')] as never).execute();
+    const flow = (id: string) => ({ DefaultCallFlow: { Id: 'cf', Greetings: [], Menu: { MenuOptions: [{ DtmfResponse: 100, Action: 'TransferCallToTarget', CallTarget: { Id: id, Type: 'ApplicationEndpoint' } }] } } });
+    const AGENT = 'aaaaaaaa-0000-4000-8000-000000000001';
+    const LEFT = 'aaaaaaaa-0000-4000-8000-000000000002';
+    const UNKNOWN = 'bbbbbbbb-0000-4000-8000-000000000003';
+    await c5.s
+      .insertInto('tenant_objects')
+      .values(
+        [
+          { object_type: 'auto_attendant', object_key: 'aa-over', display_name: 'Main Overflow', data: JSON.stringify({ Identity: 'aa-over', ...flow('ra-q'), ApplicationInstances: ['ra-over'] }) },
+          { object_type: 'auto_attendant', object_key: 'aa-main', display_name: 'Main Number', data: JSON.stringify({ Identity: 'aa-main', ...flow('ra-over'), ApplicationInstances: ['ra-main'] }) },
+          { object_type: 'auto_attendant', object_key: 'aa-else', display_name: 'Elsewhere', data: JSON.stringify({ Identity: 'aa-else', ...flow('ra-q') }) },
+          { object_type: 'call_queue', object_key: 'q', display_name: 'Reception', data: JSON.stringify({ Identity: 'q', ApplicationInstances: ['ra-q'], Agents: [{ ObjectId: AGENT.toUpperCase() }, { ObjectId: LEFT }, { ObjectId: UNKNOWN }] }) },
+          { object_type: 'resource_account', object_key: 'ra-main', display_name: 'Main RA', data: JSON.stringify({ UserPrincipalName: 'main@contoso.test', PhoneNumber: 'tel:+15550001' }) },
+          { object_type: 'resource_account', object_key: 'ra-over', display_name: 'Overflow RA', data: JSON.stringify({ UserPrincipalName: 'over@contoso.test' }) },
+        ] as never,
+      )
+      .execute();
+    const person = async (entra_id: string, upn: string, removed_at?: string) => {
+      const obj = await c5.s.insertInto('tenant_objects').values({ object_type: 'user', object_key: upn, display_name: upn, data: {} } as never).returning('id').executeTakeFirstOrThrow();
+      await c5.s.insertInto('tenant_users').values({ object_id: obj.id, entra_id, upn, display_name: upn, account_type: 'User', ...(removed_at ? { removed_at } : {}) } as never).execute();
+    };
+    await person(AGENT, 'agent@contoso.test');
+    await person(LEFT, 'left@contoso.test', '2026-10-01T00:00:00.000Z');
+
+    const graphs = await svc.callFlowGraphs(c5.t, [here]);
+    // the Main Number has the phone number, and its diagram already shows the Overflow, so there's one diagram; nothing from the other site or only designed
+    expect(graphs.map((g) => g.name)).toEqual(['Main Number']);
+    const nodes = graphs[0]!.graph.nodes;
+    expect(nodes.some((n) => n.label === 'Main Overflow')).toBe(true);
+    expect(nodes.some((n) => n.label === 'Elsewhere' || n.label === 'Designed Only')).toBe(false);
+    // the people show by name, someone since removed from the sync too; only someone Voxshift has never seen is a shortened id
+    expect(nodes.find((n) => n.label === 'Reception')!.agents).toEqual(['agent@contoso.test', 'left@contoso.test', 'User (bbbbbbbb…)']);
+    // and the whole customer has the other site's attendant too
+    expect((await svc.callFlowGraphs(c5.t)).map((g) => g.name)).toContain('Elsewhere');
+  });
+
+  it('keeps the call flow diagrams the browser drew with the pack, and prints them for live auto attendants', async () => {
+    const c3 = await seedCustomer(handle);
+    const site3 = (await seedSite(c3.s, { sitecode: 'HAU02' })).id;
+    await c3.s.insertInto('build_auto_attendants').values([{ site_id: site3, name: 'Main Number', resource_accounts: JSON.stringify([]), config: {}, holiday_call_flows: JSON.stringify([]) }, { site_id: site3, name: 'Not Live', resource_accounts: JSON.stringify([]), config: {}, holiday_call_flows: JSON.stringify([]) }] as never).execute();
+    await c3.s.insertInto('tenant_objects').values({ object_type: 'auto_attendant', object_key: 'aa-1', display_name: 'Main Number', data: JSON.stringify({}) } as never).execute();
+
+    // only a PNG is taken
+    await expect(svc.uploadDiagram(c3.t, engineer, { originalname: 'x.png', buffer: Buffer.from('not a picture') })).rejects.toBeInstanceOf(BadRequestException);
+    const png = Buffer.from(VOX_TILE_PNG_BASE64, 'base64');
+    const up = async (name: string) => (await svc.uploadDiagram(c3.t, engineer, { originalname: `call-flow-${name}.png`, buffer: png })).fileId;
+    const main = await up('Main Number');
+    const notLive = await up('Not Live');
+
+    const pack = await svc.generate(c3.t, engineer, {
+      diagrams: [
+        { name: 'Main Number', fileId: main, width: 1200, height: 500 },
+        { name: 'Not Live', fileId: notLive, width: 1200, height: 500 },
+        // not one of this customer's diagrams: ignored
+        { name: 'Main Number', fileId: '00000000-0000-4000-8000-000000000000', width: 10, height: 10 },
+      ],
+    });
+    const { sections } = await svc.get(c3.t, engineer, pack.id);
+    const blocks = (sections.find((x) => x.key === 'auto_attendants')!.content as { blocks: Block[] }).blocks;
+    expect(blocks.filter((b) => b.kind === 'heading')).toEqual([{ kind: 'heading', title: 'Call Flow Diagram' }]);
+    expect(blocks.filter((b) => b.kind === 'image')).toEqual([{ kind: 'image', fileId: main, title: 'Main Number', width: 1200, height: 500 }]);
+
+    const media = async (fileId: string) => Object.keys((await JSZip.loadAsync((await files.readBytes(c3.t, fileId)).data)).files).filter((f) => f.startsWith('word/media/')).length;
+    const draftMedia = await media(pack.file_id!);
+    // issuing draws it again from the same stored picture
+    const issued = await svc.issue(c3.t, engineer, pack.id, {});
+    expect(await media(issued.file_id!)).toBe(draftMedia);
+    expect(await docText((await files.readBytes(c3.t, issued.file_id!)).data)).toContain('Main Number');
+
+    // they belong to the pack: not in the Files list, and not readable by a customer
+    expect((await files.list(c3.t, {} as never)).some((f) => f.category === 'handover_diagram')).toBe(false);
+    await expect(files.readBytes(c3.t, main, hide)).rejects.toBeInstanceOf(NotFoundException);
   });
 });

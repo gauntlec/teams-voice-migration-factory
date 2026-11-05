@@ -1,5 +1,6 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Put, UseGuards } from '@nestjs/common';
-import { handoverGenerateSchema, handoverIssueSchema, handoverNoteSchema, type HandoverIssueInput } from '@tvmf/shared';
+import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Put, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { handoverCallFlowsSchema, handoverGenerateSchema, handoverIssueSchema, handoverNoteSchema, type HandoverIssueInput } from '@tvmf/shared';
 import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
 import type { AuthedUser, TenantContext } from '../../common/request';
 import { ZodBody } from '../../common/zod.pipe';
@@ -30,6 +31,22 @@ export class HandoverController {
     @Body(new ZodBody(handoverGenerateSchema)) body: HandoverGenerateInput,
   ) {
     return this.handover.generate(t, user, body);
+  }
+
+  /** What Teams has for a pack's auto attendants, as graphs for the browser to draw (a POST: a pack can name many sites). */
+  @Post('call-flows')
+  @HttpCode(200)
+  @RequirePermission('handover:generate')
+  callFlows(@TenantCtx() t: TenantContext, @Body(new ZodBody(handoverCallFlowsSchema)) body: { siteIds?: string[] }) {
+    return this.handover.callFlowGraphs(t, body.siteIds);
+  }
+
+  /** A call flow diagram the browser drew for a pack it is about to generate: a PNG, kept with the pack. */
+  @Post('diagrams')
+  @RequirePermission('handover:generate')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 25 * 1024 * 1024 } }))
+  uploadDiagram(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @UploadedFile() file: Express.Multer.File) {
+    return this.handover.uploadDiagram(t, user, file);
   }
 
   @Get('packs/:id')

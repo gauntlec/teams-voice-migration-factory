@@ -290,9 +290,10 @@ const EXPORT_PIXEL_RATIO = 3;
  */
 type Shot = { dataUrl: string; width: number; height: number; boxes: { x: number; y: number; w: number; h: number }[] };
 
-async function captureDiagramPng(nodes: Node[]): Promise<Shot | null> {
+async function captureDiagramPng(nodes: Node[], root?: HTMLElement | null): Promise<Shot | null> {
   if (nodes.length === 0) return null;
-  const viewportEl = document.querySelector('.react-flow__viewport') as HTMLElement | null;
+  // `root`: the diagram to capture, when the page may hold more than one
+  const viewportEl = (root ?? document).querySelector('.react-flow__viewport') as HTMLElement | null;
   if (!viewportEl) return null;
   const bounds = getNodesBounds(nodes);
   const margin = 48;
@@ -686,7 +687,24 @@ function buildElements(graph: CallFlowGraph, direction: Direction, ls: ReturnTyp
  * Draws the boxes hidden, measures them once xyflow has, then places them (arrange) and shows them. Placing from the real sizes is what keeps
  * every word inside its box and no box on top of another: a size guessed from the length of the text was wrong as often as not.
  */
-function FlowCanvas({ graph, direction, onDirection, filename, title, showWarnings }: { graph: CallFlowGraph; direction: Direction; onDirection: (d: Direction) => void; filename: string; title: string; showWarnings: boolean }) {
+function FlowCanvas({
+  graph,
+  direction,
+  onDirection,
+  filename,
+  title,
+  showWarnings,
+  onCapture,
+}: {
+  graph: CallFlowGraph;
+  direction: Direction;
+  onDirection: (d: Direction) => void;
+  filename: string;
+  title: string;
+  showWarnings: boolean;
+  /** drawn only to be captured (CallFlowCapture): called with the picture once the diagram is placed */
+  onCapture?: (shot: Shot | null, error?: string) => void;
+}) {
   const ls = useLocalStyles();
   // While an export is being captured the warnings are left out (exports are for customers); the diagram is laid out again without them.
   const [exporting, setExporting] = useState(false);
@@ -698,7 +716,7 @@ function FlowCanvas({ graph, direction, onDirection, filename, title, showWarnin
   const [edges, setEdges] = useState<Edge[]>(base.edges);
   const [placedFor, setPlacedFor] = useState<typeof base | null>(null);
   const initialized = useNodesInitialized();
-  const { getInternalNode, fitView } = useReactFlow();
+  const { getInternalNode, fitView, getNodes } = useReactFlow();
 
   useEffect(() => {
     setNodes(base.nodes);
@@ -735,6 +753,19 @@ function FlowCanvas({ graph, direction, onDirection, filename, title, showWarnin
     };
   }, [initialized, placedFor, base, graph, direction, getInternalNode, fitView]);
 
+  // Drawn only to be captured: once the boxes are placed (and have settled, e.g. group names arriving and re-placing them), take the picture.
+  const captureRef = useRef(onCapture);
+  captureRef.current = onCapture;
+  useEffect(() => {
+    if (!captureRef.current || placedFor !== base) return;
+    const timer = setTimeout(() => {
+      captureDiagramPng(getNodes(), paneRef.current)
+        .then((shot) => captureRef.current?.(shot))
+        .catch((e: unknown) => captureRef.current?.(null, e instanceof Error ? e.message : 'The diagram could not be drawn.'));
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [placedFor, base, getNodes]);
+
   const prepareExport = (): Promise<() => void> => {
     if (!showWarnings) return Promise.resolve(() => {});
     return new Promise((resolve) => {
@@ -758,11 +789,15 @@ function FlowCanvas({ graph, direction, onDirection, filename, title, showWarnin
       edgesFocusable={false}
       proOptions={{ hideAttribution: true }}
     >
-      <Background />
-      <Controls showInteractive={false} />
-      <MiniMap pannable zoomable className={ls.w120H80} nodeColor={(n) => String((n.data as BoxData).border ?? '#999')} />
-      <DirectionControls direction={direction} onChange={onDirection} />
-      <ExportControls filename={filename} title={title} direction={direction} graph={graph} prepare={prepareExport} />
+      {!onCapture && (
+        <>
+          <Background />
+          <Controls showInteractive={false} />
+          <MiniMap pannable zoomable className={ls.w120H80} nodeColor={(n) => String((n.data as BoxData).border ?? '#999')} />
+          <DirectionControls direction={direction} onChange={onDirection} />
+          <ExportControls filename={filename} title={title} direction={direction} graph={graph} prepare={prepareExport} />
+        </>
+      )}
     </ReactFlow>
   );
 }
@@ -774,6 +809,43 @@ function FlowCanvas({ graph, direction, onDirection, filename, title, showWarnin
  * hand-rolled tree layout won't fit every real Auto Attendant/Call Queue
  * chain. Portrait (top to bottom) by default: it fits an A4 page.
  */
+export type CapturedDiagram = { blob: Blob; width: number; height: number };
+
+function dataUrlToPngBlob(dataUrl: string): Blob {
+  const bytes = atob(dataUrl.slice(dataUrl.indexOf(',') + 1));
+  const out = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) out[i] = bytes.charCodeAt(i);
+  return new Blob([out], { type: 'image/png' });
+}
+
+/**
+ * Draws a diagram off-screen and hands back its picture, left to right as in the handover pack: used when a pack is generated
+ * (Service Handover), where the server has no browser to draw it with. No review warnings: the picture is for the customer.
+ */
+export function CallFlowCapture({ graph: drawn, onDone }: { graph: CallFlowGraph; onDone: (shot: CapturedDiagram | null, error?: string) => void }) {
+  const { activeTenantId } = useAuth();
+  const groupNames = useGroupNames(activeTenantId, drawn.nodes.filter((n) => n.id.startsWith('group:')).map((n) => n.id.slice('group:'.length)));
+  const graph = useMemo(
+    () => ({ ...drawn, nodes: drawn.nodes.map((n) => (n.id.startsWith('group:') && groupNames[n.id.slice('group:'.length).toLowerCase()] ? { ...n, sublabel: groupNames[n.id.slice('group:'.length).toLowerCase()] } : n)) }),
+    [drawn, groupNames],
+  );
+  return (
+    <div aria-hidden style={{ position: 'fixed', left: -30000, top: 0, width: 1600, height: 1000, background: '#ffffff', color: '#242424' }}>
+      <ReactFlowProvider>
+        <FlowCanvas
+          graph={graph}
+          direction="LR"
+          onDirection={() => {}}
+          filename="call-flow"
+          title={drawn.nodes[0]?.label ?? 'Call flow'}
+          showWarnings={false}
+          onCapture={(shot, error) => onDone(shot ? { blob: dataUrlToPngBlob(shot.dataUrl), width: shot.width, height: shot.height } : null, error)}
+        />
+      </ReactFlowProvider>
+    </div>
+  );
+}
+
 export function CallFlowDiagram({ graph: drawn, exportFilename, title }: { graph: CallFlowGraph; exportFilename?: string; title?: string }) {
   const ls = useLocalStyles();
   const [direction, setDirection] = useState<Direction>('TB');

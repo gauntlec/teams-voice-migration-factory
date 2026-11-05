@@ -42,8 +42,11 @@ describe('the handover pack layout', () => {
     expect(p.styles).toContain('w:ascii="Calibri"');
     expect(p.styles).toContain('Calibri Light');
     expect(p.styles).toContain('2F5496');
+    // a real contents field, already filled in, that doesn't make Word warn on opening
     expect(p.doc).toContain('TOC \\h \\o');
-    expect(p.settings).toContain('updateFields');
+    expect(p.settings).not.toContain('updateFields');
+    expect(p.doc).not.toContain('w:dirty');
+    expect(p.doc).toMatch(/<w:pStyle w:val="TOC1"\/>.*w:anchor="_Toc1".*Approvals &amp; Sign-Off/);
     // numbered headings: Approvals & Sign-Off first, then every section heading
     expect(p.doc.match(/<w:pStyle w:val="Heading1"\/><w:numPr>/g)?.length).toBe(4);
     expect(p.doc).toContain('Approvals &amp; Sign-Off');

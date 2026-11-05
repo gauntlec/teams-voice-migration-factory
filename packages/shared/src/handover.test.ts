@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { HANDOVER_SECTIONS } from './domain';
 import { handoverGenerateSchema, handoverNoteSchema } from './dto';
-import { HANDOVER_NOTE_EMPTY, handoverScopeLabel, issuedHandoverVersionLabel, nextHandoverVersionLabel, noteSectionContent, selectSections, noteLine, outstandingActionsContent } from './handover';
+import { HANDOVER_NOTE_EMPTY, handoverFileName, handoverScopeLabel, issuedHandoverVersionLabel, nextHandoverVersionLabel, sameHandoverScope, noteSectionContent, selectSections, noteLine, outstandingActionsContent } from './handover';
 
 describe('noteSectionContent', () => {
   it('shows the empty-state text when there is no note', () => {
@@ -114,8 +114,27 @@ describe('handover pack versions (major.minor)', () => {
     expect(nextHandoverVersionLabel([d('0.1'), i('1.0'), d('1.1'), i('1.2')])).toBe('1.3');
   });
   it('issues a 0.x draft as 1.0 and keeps a 1.x number', () => {
-    expect(issuedHandoverVersionLabel('0.3', 3)).toBe('1.0');
-    expect(issuedHandoverVersionLabel(null, 1)).toBe('1.0');
-    expect(issuedHandoverVersionLabel('1.2', 5)).toBe('1.2');
+    expect(issuedHandoverVersionLabel('0.3', [d('0.1'), d('0.2'), d('0.3')])).toBe('1.0');
+    expect(issuedHandoverVersionLabel(null, [])).toBe('1.0');
+    expect(issuedHandoverVersionLabel('1.2', [i('1.0'), d('1.2')])).toBe('1.2');
+  });
+  it('never issues a second 1.0: a later 0.x draft for the same sites takes the next number', () => {
+    expect(issuedHandoverVersionLabel('0.2', [i('1.0'), d('0.2')])).toBe('1.1');
+    expect(issuedHandoverVersionLabel('0.2', [i('1.0'), d('0.2'), d('1.1')])).toBe('1.2');
+  });
+  it('carries on from a site\'s highest number, from when packs were numbered across the customer', () => {
+    expect(nextHandoverVersionLabel([d('0.3'), d('0.7')])).toBe('0.8');
+    expect(nextHandoverVersionLabel([d('1.2')])).toBe('1.3');
+  });
+  it('treats the same sites in any order as the same pack, and all sites as its own', () => {
+    expect(sameHandoverScope(['b', 'a'], ['a', 'b'])).toBe(true);
+    expect(sameHandoverScope(['a'], ['a', 'b'])).toBe(false);
+    expect(sameHandoverScope(['a'], [])).toBe(false);
+    expect(sameHandoverScope(undefined, [])).toBe(true);
+  });
+  it('names the sites in the file name', () => {
+    expect(handoverFileName(['FSD02D'], '0.1')).toBe('service-handover-FSD02D-v0.1.docx');
+    expect(handoverFileName([], '1.0')).toBe('service-handover-v1.0.docx');
+    expect(handoverFileName(['A', 'B', 'C', 'D'], '0.2')).toBe('service-handover-4-sites-v0.2.docx');
   });
 });

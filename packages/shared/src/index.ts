@@ -550,7 +550,7 @@ export interface DeploymentPreviewRow {
 /** A row from the general-purpose per-tenant file store (see FilesTable). */
 export interface FileRow {
   id: string;
-  category: 'deployment_change_document' | 'number_port_document' | 'resource_account_request' | 'handover_pack' | 'service_request_attachment' | 'incident_attachment';
+  category: 'deployment_change_document' | 'number_port_document' | 'resource_account_request' | 'handover_pack' | 'handover_diagram' | 'service_request_attachment' | 'incident_attachment';
   sourceType: string;
   sourceId: string;
   siteId: string | null;

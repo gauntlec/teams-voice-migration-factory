@@ -3,8 +3,11 @@ import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { planIdentityRows, planResourceAccountRows, platformDb, tenantDb, type PlannedIdentityRow } from '@tvmf/db';
 import {
+  buildAutoAttendantFlowGraphFromLive,
   can,
   contactLabel,
+  type CallFlowGraph,
+  type CallFlowResourceAccount,
   HANDOVER_NOTE_SECTIONS,
   HANDOVER_SECTIONS,
   handoverScopeLabel,
@@ -14,6 +17,8 @@ import {
   noteSectionContent,
   nextHandoverVersionLabel,
   issuedHandoverVersionLabel,
+  handoverFileName,
+  sameHandoverScope,
   outstandingActionsContent,
   type HandoverApproval,
   type HandoverHistoryRow,
@@ -36,10 +41,19 @@ export interface HandoverGenerateInput {
   notes?: string;
   /** what changed in this version (Document Control's Comments) */
   changeNote?: string;
+  /** call flow diagrams uploaded for this pack, one per auto attendant */
+  diagrams?: PackDiagram[];
   /** the cover's project line; the last pack's when not given */
   projectName?: string;
   siteIds?: string[];
   sectionKeys?: string[];
+}
+
+export interface PackDiagram {
+  name: string;
+  fileId: string;
+  width: number;
+  height: number;
 }
 
 export interface HandoverNoteInput {
@@ -112,7 +126,7 @@ export class HandoverService {
     const staff = isPackAuthor(user);
     const rows = await tenantDb(this.db, t.schema)
       .selectFrom('handover_packs')
-      .select(['id', 'version', 'status', 'generated_by', 'generated_at', 'file_id', 'issued_by', 'issued_at', 'source', 'created_at'])
+      .select(['id', 'version', 'version_label', 'status', 'generated_by', 'generated_at', 'file_id', 'issued_by', 'issued_at', 'source', 'created_at'])
       // A draft is still being prepared - customers only ever see issued packs.
       .$if(!staff, (qb) => qb.where('status', '=', 'issued'))
       .orderBy('version', 'desc')
@@ -142,6 +156,99 @@ export class HandoverService {
   }
 
   /**
+   * The call flows to draw for a pack: what Teams has (Discovery's last read), as this is the as-built document. One graph per auto
+   * attendant the sites have that is live, starting from those with a phone number and leaving out one already inside another's
+   * graph (a Main Number's graph follows its transfers, so its Overflow attendant is on the same picture). Built here because the
+   * names of a queue's agents need the whole user list, which is far too big to send to a browser on a large tenant.
+   */
+  async callFlowGraphs(t: TenantContext, siteIds?: string[]): Promise<{ name: string; graph: CallFlowGraph }[]> {
+    assertCustomerWide(t, 'The Service Handover pack');
+    const s = tenantDb(this.db, t.schema);
+    const scope = await this.resolveScope(t, siteIds);
+    const designed = await s
+      .selectFrom('build_auto_attendants')
+      .select('name')
+      .$if(!!scope, (q) => q.where('site_id', 'in', scope!.ids))
+      .execute();
+    if (designed.length === 0) return [];
+    const wanted = new Set(designed.map((a) => a.name.toLowerCase()));
+    const objects = await s.selectFrom('tenant_objects').select(['object_type', 'object_key', 'display_name', 'data']).where('object_type', 'in', ['auto_attendant', 'call_queue', 'schedule', 'resource_account']).where('removed_at', 'is', null).execute();
+    const live = (type: string) => objects.filter((o) => o.object_type === type).map((o) => ({ name: o.display_name ?? o.object_key, data: (o.data ?? {}) as Record<string, unknown> }));
+    const autoAttendants = live('auto_attendant');
+    const callQueues = live('call_queue');
+    const schedules = objects.filter((o) => o.object_type === 'schedule').map((o) => ({ key: o.object_key, data: (o.data ?? {}) as Record<string, unknown> }));
+    const resourceAccounts = new Map<string, CallFlowResourceAccount>(
+      objects
+        .filter((o) => o.object_type === 'resource_account')
+        .map((o) => {
+          const d = (o.data ?? {}) as Record<string, unknown>;
+          return [o.object_key.toLowerCase(), { name: o.display_name ?? null, upn: typeof d.UserPrincipalName === 'string' ? d.UserPrincipalName : null, number: typeof d.PhoneNumber === 'string' && d.PhoneNumber ? d.PhoneNumber : null }];
+        }),
+    );
+    // Agents and transfer targets are Entra ids. A user since removed from the sync still has a name, better than a shortened id; a current one wins.
+    const users = await s.selectFrom('tenant_users').select(['entra_id', 'upn', 'removed_at']).where('entra_id', 'is not', null).orderBy(sql`removed_at is null`).execute();
+    const usersByEntraId = new Map(users.map((u) => [u.entra_id!.toLowerCase(), u.upn]));
+
+    const hasNumber = (data: Record<string, unknown>) => (Array.isArray(data.ApplicationInstances) ? (data.ApplicationInstances as unknown[]) : []).some((id) => typeof id === 'string' && !!resourceAccounts.get(id.toLowerCase())?.number);
+    const ordered = autoAttendants
+      .filter((a) => wanted.has(a.name.toLowerCase()))
+      .sort((a, b) => Number(hasNumber(b.data)) - Number(hasNumber(a.data)) || a.name.localeCompare(b.name));
+    const drawn = new Set<string>();
+    const out: { name: string; graph: CallFlowGraph }[] = [];
+    for (const aa of ordered) {
+      const identity = typeof aa.data.Identity === 'string' ? aa.data.Identity.toLowerCase() : null;
+      if (identity && drawn.has(identity)) continue;
+      const graph = buildAutoAttendantFlowGraphFromLive(aa, autoAttendants, callQueues, schedules, usersByEntraId, resourceAccounts);
+      for (const n of graph.nodes) if (n.id.startsWith('aa:')) drawn.add(n.id.slice('aa:'.length).toLowerCase());
+      if (graph.nodes.length) out.push({ name: aa.name, graph });
+    }
+    return out;
+  }
+
+  /** Keeps a call flow diagram the browser drew for a pack it is about to generate. Only a PNG is accepted. */
+  async uploadDiagram(t: TenantContext, user: AuthedUser, file: { originalname: string; buffer: Buffer } | undefined) {
+    assertCustomerWide(t, 'The Service Handover pack');
+    if (!file) throw new BadRequestException('Choose a diagram to upload.');
+    if (file.buffer.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') throw new BadRequestException('A call flow diagram must be a PNG picture.');
+    const stored = await this.files.store(t, {
+      category: 'handover_diagram',
+      sourceType: 'handover_diagram',
+      sourceId: randomUUID(),
+      siteId: null,
+      filename: file.originalname || 'call-flow.png',
+      contentType: 'image/png',
+      data: file.buffer,
+      uploadedBy: user.id,
+    });
+    return { fileId: stored.id };
+  }
+
+  /** The diagrams named in a generate request that really are this customer's stored diagrams. */
+  private async knownDiagrams(t: TenantContext, diagrams: PackDiagram[] | undefined): Promise<PackDiagram[]> {
+    if (!diagrams?.length) return [];
+    const rows = await tenantDb(this.db, t.schema).selectFrom('files').select('id').where('category', '=', 'handover_diagram').where('id', 'in', diagrams.map((d) => d.fileId)).execute();
+    const known = new Set(rows.map((r) => r.id));
+    return diagrams.filter((d) => known.has(d.fileId));
+  }
+
+  /** The bytes of the pictures a pack's sections name, for the document. One that can't be read is left out, never failing the pack. */
+  private async packImages(t: TenantContext, sections: { content: HandoverSectionContent }[]): Promise<Map<string, Buffer>> {
+    const out = new Map<string, Buffer>();
+    for (const sec of sections) {
+      if (sec.content.kind !== 'blocks') continue;
+      for (const b of sec.content.blocks) {
+        if (b.kind !== 'image' || out.has(b.fileId)) continue;
+        try {
+          out.set(b.fileId, (await this.files.readBytes(t, b.fileId)).data);
+        } catch {
+          // drawn without it: the document says the diagram isn't available
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
    * The cover's site line (one site's name, else "All sites" or the site codes) and the paper size, from the pack's sites;
    * the project line as given, else the last pack's.
    */
@@ -168,7 +275,7 @@ export class HandoverService {
     const customerLogo = (await this.branding?.customerLogo(t.id)) ?? null;
     // Sections are read before the transaction so the lock is held only for the writes.
     const brand = await this.branding?.forDocuments(t.id);
-    const built = await this.buildSections(t, scope, brand?.name);
+    const built = await this.buildSections(t, scope, brand?.name, await this.knownDiagrams(t, body.diagrams));
     const sections = selectSections(built.sections, body.sectionKeys);
     if (sections.length === 0) throw new BadRequestException('Choose at least one section for the pack.');
     const generatedAt = new Date();
@@ -183,8 +290,7 @@ export class HandoverService {
       const s = tenantDb(trx, t.schema);
       const last = await s.selectFrom('handover_packs').select((eb) => eb.fn.max('version').as('v')).executeTakeFirst();
       const version = Number(last?.v ?? 0) + 1;
-      const earlier = await s.selectFrom('handover_packs').select(['status', 'version_label']).execute();
-      const versionLabel = nextHandoverVersionLabel(earlier);
+      const versionLabel = nextHandoverVersionLabel(await this.packsForSites(s, scope?.ids ?? []));
       const history = await this.historyRows(s, scope?.ids ?? [], version, {
         author: user.displayName,
         version: `${versionLabel} (draft)`,
@@ -194,6 +300,7 @@ export class HandoverService {
 
       const data = await this.documentBuilder.build({
         brand,
+        images: await this.packImages(t, sections),
         customerLogo,
         ...layout,
         tenantName: t.name,
@@ -248,7 +355,7 @@ export class HandoverService {
         sourceType: 'handover_pack',
         sourceId: pack.id,
         siteId: null,
-        filename: `${t.schema}-service-handover-v${versionLabel}.docx`,
+        filename: handoverFileName(scope?.codes, versionLabel),
         contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         data,
         uploadedBy: user.id,
@@ -299,7 +406,7 @@ export class HandoverService {
     const issuedAt = new Date();
     const source = (full.source ?? {}) as { siteCodes?: string[]; siteIds?: string[]; liveAsOf?: string | null; changeNote?: string | null } & Partial<PackLayout>;
     const brand = await this.branding?.forDocuments(t.id);
-    const versionLabel = issuedHandoverVersionLabel(full.version_label, full.version);
+    const versionLabel = issuedHandoverVersionLabel(full.version_label, await this.packsForSites(scoped, source.siteIds ?? []));
     // Approvals & Sign-Off: who approved it, as entered when issuing (the company defaults to the pack's brand)
     const approval: HandoverApproval = {
       company: body.approverCompany?.trim() || brand?.name || 'Voxshift',
@@ -314,6 +421,10 @@ export class HandoverService {
     });
     const data = await this.documentBuilder.build({
       brand,
+      images: await this.packImages(
+        t,
+        savedSections.map((sec) => ({ content: sec.content as HandoverSectionContent })),
+      ),
       versionLabel,
       approval,
       history,
@@ -335,7 +446,7 @@ export class HandoverService {
       sourceType: 'handover_pack',
       sourceId: id,
       siteId: null,
-      filename: `${t.schema}-service-handover-v${versionLabel}.docx`,
+      filename: handoverFileName(source.siteCodes, versionLabel),
       contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       data,
       uploadedBy: user.id,
@@ -365,10 +476,15 @@ export class HandoverService {
    * Document Control: the customer's earlier packs covering the same sites, oldest first, then this one. Each row is who
    * generated it, its version (a draft says so), when, and what changed (the note given when generating).
    */
+  /** The packs for exactly these sites: each site's packs have their own version numbers. */
+  private async packsForSites(s: ReturnType<typeof tenantDb>, siteIds: string[]) {
+    const packs = await s.selectFrom('handover_packs').select(['status', 'version_label', 'source']).execute();
+    return packs.filter((p) => sameHandoverScope(((p.source ?? {}) as { siteIds?: string[] }).siteIds, siteIds));
+  }
+
   private async historyRows(s: ReturnType<typeof tenantDb>, siteIds: string[], version: number, current: HandoverHistoryRow): Promise<HandoverHistoryRow[]> {
-    const same = (ids: unknown) => [...((Array.isArray(ids) ? ids : []) as string[])].sort().join(',') === [...siteIds].sort().join(',');
     const rows = (await s.selectFrom('handover_packs').select(['version', 'version_label', 'status', 'generated_by', 'generated_at', 'issued_at', 'created_at', 'source']).where('version', '<', version).orderBy('version').execute()).filter((r) =>
-      same(((r.source ?? {}) as { siteIds?: string[] }).siteIds),
+      sameHandoverScope(((r.source ?? {}) as { siteIds?: string[] }).siteIds, siteIds),
     );
     const ids = [...new Set(rows.map((r) => r.generated_by))];
     const names = new Map(ids.length ? (await platformDb(this.db).selectFrom('users').select(['id', 'display_name']).where('id', 'in', ids).execute()).map((u) => [u.id, u.display_name] as [string, string]) : []);
@@ -448,7 +564,7 @@ export class HandoverService {
    * isn't there. Auto attendants and call queues count as live when Teams has
    * one by that name. Numbers show who holds them in Teams.
    */
-  private async buildSections(t: TenantContext, scope: SiteScope | null, brandName = 'Voxshift'): Promise<{ sections: HandoverSectionData[]; liveAsOf: string | null }> {
+  private async buildSections(t: TenantContext, scope: SiteScope | null, brandName = 'Voxshift', diagrams: PackDiagram[] = []): Promise<{ sections: HandoverSectionData[]; liveAsOf: string | null }> {
     const scoped = tenantDb(this.db, t.schema);
     const bySite = scope !== null;
     const ids = scope?.ids ?? [];
@@ -709,6 +825,14 @@ export class HandoverService {
           ? [
               { kind: 'text', text: 'The following auto attendants were deployed:' },
               { kind: 'table', columns: ['Name', 'Site', 'Language', 'Time zone', 'Resource accounts'], rows: built.autoAttendants, caption: 'Auto Attendants Information Table' },
+              // the diagram of each auto attendant that is live (a diagram also shows the ones it hands calls to)
+              ...((): HandoverBlock[] => {
+                const live = new Set(built.autoAttendants.map((a) => a[0]!.toLowerCase()));
+                const shown = diagrams.filter((d) => live.has(d.name.toLowerCase()));
+                return shown.length
+                  ? [{ kind: 'heading', title: 'Call Flow Diagram' }, ...shown.map((d): HandoverBlock => ({ kind: 'image', fileId: d.fileId, title: d.name, width: d.width, height: d.height }))]
+                  : [];
+              })(),
             ]
           : [{ kind: 'text', text: 'No auto attendants were deployed.' }],
       ),
