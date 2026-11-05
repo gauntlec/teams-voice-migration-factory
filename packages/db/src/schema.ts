@@ -1659,7 +1659,7 @@ export interface ServiceRequestItemsTable {
 /** One note per (section_key, site_id); site_id NULL applies to every site. */
 export interface HandoverNotesTable {
   id: Generated<string>;
-  section_key: 'service_support_model' | 'paging' | 'teams_configuration' | 'outstanding_actions';
+  section_key: 'introduction' | 'service_support_model' | 'paging' | 'teams_configuration' | 'outstanding_actions';
   site_id: string | null;
   body: string;
   updated_by: string;

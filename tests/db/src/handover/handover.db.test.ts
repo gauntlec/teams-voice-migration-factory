@@ -90,6 +90,7 @@ beforeAll(async () => {
 const docText = async (buf: Buffer) => (await (await JSZip.loadAsync(buf)).file('word/document.xml')!.async('string')).replace(/<[^>]+>/g, ' ');
 const hide = { hideDraftHandover: true };
 type Table = { columns: string[]; rows: string[][] };
+type Block = import('@tvmf/shared').HandoverBlock;
 const asRecords = (t: Table) => t.rows.map((r) => Object.fromEntries(t.columns.map((col, i) => [col, r[i]])));
 
 describe('Service Handover', () => {
@@ -101,18 +102,15 @@ describe('Service Handover', () => {
     packId = pack.id;
     draftFileId = pack.file_id!;
     const { sections } = await svc.get(c.t, engineer, packId);
-    const section = (key: string) => sections.find((s) => s.key === key)!.content as Table;
+    const blocksOf = (key: string) => (sections.find((s) => s.key === key)!.content as { kind: 'blocks'; blocks: Block[] }).blocks;
+    // a section's tables (laid out as the template: lead-in sentences, sub-headings and tables)
+    const tables = (key: string) => blocksOf(key).filter((b): b is Extract<Block, { kind: 'table' }> => b.kind === 'table');
+    const section = (key: string) => tables(key)[0]!;
 
     expect(asRecords(section('teams_users'))).toEqual([
-      expect.objectContaining({
-        UPN: 'jo@contoso.test',
-        'Display name': 'Jo Bloggs',
-        Number: '+442070000201',
-        'Voice routing policy': 'VRP-UK',
-        'Calling policy': 'Global',
-        'Last changed by Voxshift': '1 Oct 2026',
-      }),
+      { 'User Principal Name (UPN)': 'jo@contoso.test', 'DID Number': '+442070000201', 'Physical Phone': 'No', 'Voice Routing Policy': 'VRP-UK' },
     ]);
+    expect(blocksOf('teams_users')[0]).toEqual({ kind: 'text', text: 'The following users were enabled:' });
 
     const notLive = asRecords(section('not_yet_live'));
     expect(notLive).toEqual(
@@ -122,11 +120,23 @@ describe('Service Handover', () => {
         expect.objectContaining({ Item: 'Sales', Type: 'Call queue', 'What differs from the design': 'Not found in Teams' }),
       ]),
     );
-    expect(section('call_queues').rows).toEqual([]);
+    expect(blocksOf('call_queues')).toEqual([{ kind: 'text', text: 'No call queues were created.' }]);
 
-    const numbers = asRecords(section('phone_numbers'));
+    const numberTables = tables('phone_numbers');
+    const numbers = numberTables.filter((t) => t.columns[0] === 'Number').flatMap(asRecords);
     expect(numbers.find((n) => n.Number === '+442070000201')).toMatchObject({ Status: 'In use', 'Assigned to (in Teams)': 'Jo Bloggs (User)' });
     expect(numbers.find((n) => n.Number === '+442070000202')).toMatchObject({ Status: 'Spare' });
+    // the allocation summary under the number lists
+    expect(asRecords(numberTables.find((t) => t.caption === 'Number Allocations Table')!)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ Allocation: 'Assigned to an object', Quantity: '1' }), expect.objectContaining({ Allocation: 'Spare', Quantity: '2' })]),
+    );
+
+    // the policies the live users have, from data rather than a note
+    expect(tables('teams_configuration').find((t) => t.columns[0] === 'Voice Routing Policy')!.rows).toEqual([['VRP-UK']]);
+    // the site as a label table
+    expect(blocksOf('site_information')[0]).toMatchObject({ kind: 'labels', rows: expect.arrayContaining([['Site Code', 'LON01']]) });
+    // the standard introduction until one is written
+    expect(blocksOf('introduction')[0]).toMatchObject({ kind: 'text', text: expect.stringContaining('formal hand-over pack') });
   });
 
   it('keeps a draft away from customers, and marks its document DRAFT', async () => {

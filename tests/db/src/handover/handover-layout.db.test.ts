@@ -66,4 +66,41 @@ describe('the handover pack layout', () => {
     expect(p.headers).toContain('DRAFT');
     expect(p.doc).toMatch(/<w:pgSz w:w="11906" w:h="16838"/);
   });
+
+  it('draws the template sections: sub-headings, bullets, label tables, call queues two across, numbered actions', async () => {
+    const B = (blocks: unknown[]) => ({ kind: 'blocks' as const, blocks: blocks as never });
+    const p = await parts(
+      await new HandoverDocumentService().build({
+        ...base,
+        status: { kind: 'draft' },
+        sections: [
+          { key: 'introduction', title: 'Introduction', content: B([{ kind: 'text', text: 'The purpose of this document…' }, { kind: 'bullets', items: ['Site Information:', '  Site name'] }]) },
+          { key: 'site_information', title: 'Site Information', content: B([{ kind: 'labels', rows: [['Site Name', 'Hauppauge'], ['Site Contacts', 'a@parker.com\nb@parker.com']], caption: 'Site Information Table' }]) },
+          { key: 'service_support_model', title: 'Service Support Model', content: { kind: 'paragraphs', paragraphs: ['## Welcome Document', 'The following document…', '- David Mead'] } },
+          {
+            key: 'call_queues',
+            title: 'Call Queues',
+            content: B([{ kind: 'cards', cards: [[['Name', 'Main'], ['Agents', 'x@p.com\ny@p.com']], [['Name', 'Overflow'], ['Agents', 'z@p.com']], [['Name', 'Third']]], caption: 'Call Queues Information Table' }]),
+          },
+          { key: 'outstanding_actions', title: 'Outstanding Actions', content: B([{ kind: 'actions', items: [{ description: 'Test 933', owner: 'AT&T' }, { description: 'Fix the diagram', owner: 'AT&T' }], caption: 'Outstanding Actions Table' }]) },
+        ],
+      }),
+    );
+    // sub-headings are numbered at the second level; bullets use the bullet list, two levels
+    expect(p.doc.match(/<w:pStyle w:val="Heading2"\/><w:numPr><w:ilvl w:val="1"\/>/g)?.length).toBe(1);
+    expect(p.doc).toContain('Welcome Document');
+    expect(p.doc.match(/<w:ilvl w:val="1"\/><w:numId/g)?.length).toBeGreaterThanOrEqual(1);
+    // a label value on several lines is a paragraph per line
+    expect(p.doc).toContain('a@parker.com');
+    expect(p.doc).toContain('b@parker.com');
+    // three queues: two across, then one with an empty half
+    expect(p.doc).toContain('Overflow');
+    expect(p.doc).toContain('Third');
+    // actions are numbered <section>.<n>: Outstanding Actions is section 5 here
+    expect(p.doc).toContain('>5.1<');
+    expect(p.doc).toContain('>5.2<');
+    expect(p.doc).toContain('w:fill="D9D9D9"');
+    // captions run in order across every kind of table
+    expect([...p.doc.matchAll(/SEQ Table[^>]*>(?:<[^>]+>)*([0-9]+)</g)].map((m) => m[1])).toEqual(['1', '2', '3']);
+  });
 });

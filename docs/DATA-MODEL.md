@@ -138,8 +138,8 @@ single shared claim. |
 | Table | Notes |
 |-------|-------|
 | `handover_packs` | id, version, status (`draft`/`issued`), generated_by, generated_at, source jsonb (notes, snapshotAt, siteIds, siteCodes, sectionKeys — what the pack covers), file_id (FK → `files`, the generated .docx), issued_by, issued_at (set together when issued; a CHECK keeps `status` and `issued_at` consistent) |
-| `handover_sections` | pack_id, key, title, ordinal, content jsonb (`table` / `paragraphs` / `placeholder`) — one per section in the pack; the in-app preview reads these |
-| `handover_notes` | section_key (`service_support_model` / `paging` / `teams_configuration` / `outstanding_actions`), site_id (NULL = every site), body, updated_by, updated_at — hand-written text for the four template sections with no structured source. Unique per (section, site) |
+| `handover_sections` | pack_id, key, title, ordinal, content jsonb (`blocks` - the template's layout: sub-headings, sentences, bullets, tables, label tables, call queue cards, numbered actions; older packs `table` / `paragraphs` / `placeholder`) — one per section in the pack; the in-app preview reads these |
+| `handover_notes` | section_key (`introduction` / `service_support_model` / `paging` / `teams_configuration` / `outstanding_actions`; tenant 0088 added `introduction`), site_id (NULL = every site), body, updated_by, updated_at — hand-written text for the template sections with no structured source (Introduction replaces the standard text; Teams configuration is added after the policies read from data). A line starting `## ` is a numbered sub-heading and `- ` a bullet; an Outstanding Actions line is `<description> | <owner>`, numbered <section>.<n> in the pack. Unique per (section, site) |
 
 Handover is customer-wide: a "site contact" (a customer user pinned to certain sites) cannot read, build or issue a pack, because a pack covers every site's data. A pack can be limited to chosen sites and sections when it is generated.
 

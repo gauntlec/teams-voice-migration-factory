@@ -32,6 +32,8 @@ import {
   HANDOVER_SECTIONS,
   handoverScopeLabel,
   type HandoverNoteSection,
+  noteLine,
+  type HandoverBlock,
   type HandoverSectionContent,
 } from '@tvmf/shared';
 import { api, apiDownload, ApiError } from '../api';
@@ -447,7 +449,16 @@ function NotesDialog({ tenantId, sites, onClose }: { tenantId: string; sites: Si
                 ))}
               </Select>
             </Field>
-            <Field label="Note" hint="One paragraph per line. Leave empty and save to clear it.">
+            <Field
+              label="Note"
+              hint={
+                section === 'outstanding_actions'
+                  ? 'One action per line: the description, then | and who owns it, e.g. “Test 933 on the lobby phone | AT&T”. Numbered in the pack. Leave empty and save to clear it.'
+                  : section === 'introduction'
+                    ? 'Replaces the standard introduction. One paragraph per line; start a line with “- ” for a bullet. Leave empty and save to go back to the standard text.'
+                    : 'One paragraph per line. Start a line with “## ” for a numbered sub-heading (e.g. “## Welcome Document”) or “- ” for a bullet. Leave empty and save to clear it.'
+              }
+            >
               {notesQ.isLoading ? (
                 <Spinner size="tiny" />
               ) : (
@@ -519,25 +530,81 @@ function SectionBody({ content }: { content: HandoverSectionContent }) {
     return (
       <div className={cs.stack}>
         {content.paragraphs.map((p, i) => (
-          <Text key={i} block>
-            {p}
-          </Text>
+          <NoteLineText key={i} line={p} />
         ))}
       </div>
     );
   }
-  if (content.rows.length === 0) return <Text size={200}>Nothing recorded.</Text>;
-  const shown = content.rows.slice(0, PREVIEW_ROWS);
+  if (content.kind === 'blocks') {
+    return (
+      <div className={cs.stack}>
+        {content.blocks.map((b, i) => (
+          <PreviewBlock key={i} block={b} />
+        ))}
+      </div>
+    );
+  }
+  return <PreviewTable columns={content.columns} rows={content.rows} />;
+}
+
+/** A note line as the pack prints it: "## " a sub-heading, "- " a bullet, else a paragraph. */
+function NoteLineText({ line }: { line: string }) {
+  const n = noteLine(line);
+  if (n.kind === 'heading') return <Text weight="semibold" block>{n.text}</Text>;
+  return <Text block>{n.kind === 'bullet' ? `• ${n.text}` : n.text}</Text>;
+}
+
+function PreviewBlock({ block: b }: { block: HandoverBlock }) {
+  const cs = useStyles();
+  switch (b.kind) {
+    case 'heading':
+      return <Text weight="semibold" block>{b.title}</Text>;
+    case 'text':
+      return <NoteLineText line={b.text} />;
+    case 'bullets':
+      return (
+        <div>
+          {b.items.map((it, i) => (
+            <Text key={i} block>
+              {it.startsWith('  ') ? `\u00a0\u00a0\u00a0\u00a0◦ ${it.trim()}` : `• ${it}`}
+            </Text>
+          ))}
+        </div>
+      );
+    case 'table':
+      return <PreviewTable columns={b.columns} rows={b.rows} caption={b.caption} />;
+    case 'labels':
+      return <PreviewTable columns={['', '']} rows={b.rows.map(([k, v]) => [k, v.replace(/\n/g, ', ')])} caption={b.caption} />;
+    case 'cards':
+      return (
+        <div className={cs.stack}>
+          {b.cards.map((c, i) => (
+            <PreviewTable key={i} columns={['', '']} rows={c.map(([k, v]) => [k, v.replace(/\n/g, ', ')])} />
+          ))}
+          {b.caption && <Text size={200} italic>{b.caption}</Text>}
+        </div>
+      );
+    case 'actions':
+      return <PreviewTable columns={['Description', 'Owner and Action']} rows={b.items.map((a) => [a.description, a.owner])} caption={b.caption} />;
+  }
+}
+
+function PreviewTable({ columns, rows, caption }: { columns: string[]; rows: string[][]; caption?: string }) {
+  if (rows.length === 0) return <Text size={200}>Nothing recorded.</Text>;
+  const shown = rows.slice(0, PREVIEW_ROWS);
+  const header = columns.some((c) => c !== '');
   return (
     <>
-      <DataTable size="small" minWidth={Math.max(520, content.columns.length * 140)}>
-        <TableHeader>
-          <TableRow>
-            {content.columns.map((c) => (
-              <TableHeaderCell key={c}>{c}</TableHeaderCell>
-            ))}
-          </TableRow>
-        </TableHeader>
+      <DataTable size="small" minWidth={Math.max(520, columns.length * 140)}>
+        {header && (
+          <TableHeader>
+            <TableRow>
+              {columns.map((c, i) => (
+                <TableHeaderCell key={i}>{c}</TableHeaderCell>
+              ))}
+            </TableRow>
+          </TableHeader>
+        )}
         <TableBody>
           {shown.map((row, i) => (
             <TableRow key={i}>
@@ -548,9 +615,14 @@ function SectionBody({ content }: { content: HandoverSectionContent }) {
           ))}
         </TableBody>
       </DataTable>
-      {content.rows.length > shown.length && (
+      {rows.length > shown.length && (
         <Text size={200}>
-          Showing the first {shown.length} of {content.rows.length} rows. The .docx has all of them.
+          Showing the first {shown.length} of {rows.length} rows. The .docx has all of them.
+        </Text>
+      )}
+      {caption && (
+        <Text size={200} italic>
+          {caption}
         </Text>
       )}
     </>

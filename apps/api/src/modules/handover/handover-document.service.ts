@@ -26,7 +26,7 @@ import {
   VerticalPositionRelativeFrom,
   WidthType,
 } from 'docx';
-import type { HandoverSectionContent } from '@tvmf/shared';
+import { noteLine, type HandoverBlock, type HandoverSectionContent } from '@tvmf/shared';
 import { VOX_TILE_PNG_BASE64 } from '../deployment/assets/vox-tile';
 import { bannerPng } from '../branding/banner-png';
 import { VOXSHIFT_DOCUMENT_BRAND, type DocumentBrand } from '../branding/document-branding.service';
@@ -132,7 +132,7 @@ const COLUMN_WEIGHT: Record<string, number> = {
   Subnet: 1.55,
   Mask: 1,
   VLAN: 1.25,
-  Type: 1.1,
+  Type: 1.6,
   Location: 2,
   Address: 2.6,
   'Country / Region': 1.3,
@@ -229,8 +229,8 @@ function columnWidths(columns: string[], total: number): number[] {
 /** A data table in the template's style: navy header row repeated on every page, thin borders, white rows, fixed widths. */
 function dataTable(columns: string[], rows: string[][], total: number): Table {
   const widths = columnWidths(columns, total);
-  // a wide table (more than six columns) steps down to 8pt so its words don't break mid-word
-  const size = columns.length > 6 ? SMALL : BODY;
+  // a wide table (more than seven columns) steps down to 8pt so its words don't break mid-word
+  const size = columns.length > 7 ? SMALL : BODY;
   return new Table({
     width: { size: total, type: WidthType.DXA },
     columnWidths: widths,
@@ -242,6 +242,9 @@ function dataTable(columns: string[], rows: string[][], total: number): Table {
   });
 }
 
+/** A value cell's lines: a value with line breaks (several contacts, several agents) is one paragraph per line. */
+const valueLines = (v: string) => (v || '—').split('\n').map((l) => cellText(l));
+
 /** A label/value table: navy labels down the left (the cover's document details, the template's Site Information). */
 function labelTable(rows: [string, string][], total: number, labelShare = 0.43): Table {
   const left = Math.round(total * labelShare);
@@ -250,9 +253,58 @@ function labelTable(rows: [string, string][], total: number, labelShare = 0.43):
     width: { size: total, type: WidthType.DXA },
     columnWidths: widths,
     layout: TableLayoutType.FIXED,
-    rows: rows.map(
-      ([k, v]) => new TableRow({ cantSplit: true, children: [cell([cellText(k, { header: true })], { width: widths[0]!, fill: NAVY }), cell([cellText(v || '—')], { width: widths[1]! })] }),
-    ),
+    rows: rows.map(([k, v]) => new TableRow({ cantSplit: true, children: [cell([cellText(k, { header: true })], { width: widths[0]!, fill: NAVY }), cell(valueLines(v), { width: widths[1]! })] })),
+  });
+}
+
+/** Label/value cards two across (the template's Call Queues): label | value | label | value, a card per pair of columns. */
+function cardTables(cards: [string, string][][], total: number): Table[] {
+  const widths = [0.16, 0.335, 0.15, 0.355].map((f) => Math.round(total * f));
+  widths[3]! += total - widths.reduce((a, b) => a + b, 0);
+  const out: Table[] = [];
+  for (let i = 0; i < cards.length; i += 2) {
+    const a = cards[i]!;
+    const b = cards[i + 1];
+    const n = Math.max(a.length, b?.length ?? 0);
+    out.push(
+      new Table({
+        width: { size: total, type: WidthType.DXA },
+        columnWidths: widths,
+        layout: TableLayoutType.FIXED,
+        rows: Array.from({ length: n }, (_, r) => {
+          const half = (c: [string, string][] | undefined, w: number) =>
+            c?.[r]
+              ? [cell([cellText(c[r]![0], { header: true })], { width: widths[w]!, fill: NAVY }), cell(valueLines(c[r]![1]), { width: widths[w + 1]! })]
+              : [cell([cellText('')], { width: widths[w]! }), cell([cellText('')], { width: widths[w + 1]! })];
+          return new TableRow({ cantSplit: true, children: [...half(a, 0), ...half(b, 2)] });
+        }),
+      }),
+    );
+    // a little room between one pair of cards and the next
+    if (i + 2 < cards.length) out.push(new Table({ width: { size: total, type: WidthType.DXA }, borders: noBorders, rows: [new TableRow({ height: { value: 160, rule: 'exact' as never }, children: [new TableCell({ borders: noBorders, children: [new Paragraph('')] })] })] }));
+  }
+  return out;
+}
+
+/** Outstanding Actions: Task Ref (<section>.<n>, grey), Description, Owner and Action - the template's table. */
+function actionsTable(items: { description: string; owner: string }[], section: number, total: number): Table {
+  const widths = [0.107, 0.605].map((f) => Math.round(total * f));
+  widths.push(total - widths[0]! - widths[1]!);
+  const head = ['Task Ref', 'Description', 'Owner and Action'];
+  return new Table({
+    width: { size: total, type: WidthType.DXA },
+    columnWidths: widths,
+    layout: TableLayoutType.FIXED,
+    rows: [
+      new TableRow({ tableHeader: true, cantSplit: true, children: head.map((h, i) => cell([cellText(h, { header: true })], { width: widths[i]!, fill: NAVY })) }),
+      ...items.map(
+        (a, i) =>
+          new TableRow({
+            cantSplit: true,
+            children: [cell([cellText(`${section}.${i + 1}`)], { width: widths[0]!, fill: 'D9D9D9' }), cell([cellText(a.description)], { width: widths[1]! }), cell([cellText(a.owner || '—')], { width: widths[2]! })],
+          }),
+      ),
+    ],
   });
 }
 
@@ -264,19 +316,60 @@ function caption(n: number, label: string): Paragraph {
   return new Paragraph({ style: 'Caption', children: [new TextRun({ text: 'Table ' }), new SimpleField('SEQ Table \\* ARABIC', String(n)), new TextRun({ text: ` – ${label}` })] });
 }
 
-const body = (t: string) => new Paragraph({ spacing: { after: 120 }, children: [text(t)] });
+const body = (t: string, bold = false, keepNext = false) => new Paragraph({ spacing: { after: 120 }, keepNext, children: [text(t, { bold })] });
 const h1 = (t: string) => new Paragraph({ heading: HeadingLevel.HEADING_1, numbering: { reference: 'headings', level: 0 }, children: [new TextRun(t)] });
+const h2 = (t: string) => new Paragraph({ heading: HeadingLevel.HEADING_2, numbering: { reference: 'headings', level: 1 }, children: [new TextRun(t)] });
+/** A bullet; an item starting with two spaces is a second-level bullet (the template's "o" items). */
+const bullet = (t: string) => new Paragraph({ spacing: { after: 0 }, numbering: { reference: 'bullets', level: t.startsWith('  ') ? 1 : 0 }, children: [text(t.trim())] });
 
-function sectionBody(section: HandoverSectionData, total: number, nextTable: () => number): (Paragraph | Table)[] {
+/** Paragraph lines as written in a note: "## " is a numbered sub-heading, "- " a bullet, anything else a paragraph. */
+function noteParagraphs(lines: string[]): Paragraph[] {
+  return lines.map((l) => {
+    const n = noteLine(l);
+    return n.kind === 'heading' ? h2(n.text) : n.kind === 'bullet' ? bullet(n.text) : body(n.text);
+  });
+}
+
+function sectionBody(section: HandoverSectionData, total: number, nextTable: () => number, number: number): (Paragraph | Table)[] {
   const out: (Paragraph | Table)[] = [h1(section.title)];
   const { content } = section;
+  const captionFor = (label?: string) => caption(nextTable(), label ?? CAPTION[section.key] ?? `${section.title} Table`);
   if (content.kind === 'placeholder') return [...out, new Paragraph({ spacing: { after: 120 }, children: [text(content.note, { italics: true, color: CAPTION_GREY })] })];
   if (content.kind === 'paragraphs') {
     if (content.paragraphs.length === 0) return [...out, body(EMPTY_TEXT[section.key] ?? 'Nothing recorded.')];
-    return [...out, ...content.paragraphs.map(body)];
+    return [...out, ...noteParagraphs(content.paragraphs)];
+  }
+  if (content.kind === 'blocks') {
+    for (const b of content.blocks) out.push(...blockBody(b, total, captionFor, number));
+    return out;
   }
   if (content.rows.length === 0) return [...out, body(EMPTY_TEXT[section.key] ?? 'Nothing recorded.')];
-  return [...out, dataTable(content.columns, content.rows, total), caption(nextTable(), CAPTION[section.key] ?? `${section.title} Table`)];
+  return [...out, dataTable(content.columns, content.rows, total), captionFor()];
+}
+
+function blockBody(b: HandoverBlock, total: number, captionFor: (label?: string) => Paragraph, section: number): (Paragraph | Table)[] {
+  switch (b.kind) {
+    case 'heading':
+      return [h2(b.title)];
+    case 'text': {
+      // a lead-in sentence stays on the page with the table or list it introduces
+      const n = noteLine(b.text);
+      return [n.kind === 'text' ? body(n.text, !!b.bold, true) : noteParagraphs([b.text])[0]!];
+    }
+    case 'bullets':
+      return [...b.items.map(bullet), new Paragraph({ spacing: { after: 120 }, children: [] })];
+    case 'table': {
+      if (b.rows.length === 0) return [body('None.')];
+      const width = Math.round(total * Math.min(1, Math.max(0.3, b.share ?? 1)));
+      return [dataTable(b.columns, b.rows, width), captionFor(b.caption)];
+    }
+    case 'labels':
+      return [labelTable(b.rows, Math.round(total * (b.title ? 0.65 : 1)), b.title ? 0.49 : 0.33), captionFor(b.caption)];
+    case 'cards':
+      return [...cardTables(b.cards, total), captionFor(b.caption)];
+    case 'actions':
+      return [actionsTable(b.items, section, total), ...(b.caption ? [captionFor(b.caption)] : [])];
+  }
 }
 
 @Injectable()
@@ -393,7 +486,7 @@ export class HandoverDocumentService {
     // An issued pack leaves out the engineers' checklist of what isn't live yet (drafts only).
     const sections = input.sections.filter((s) => !(input.status.kind === 'issued' && s.key === 'not_yet_live'));
     let tables = 0;
-    const content = sections.flatMap((s) => sectionBody(s, total, () => ++tables));
+    const content = sections.flatMap((s, i) => sectionBody(s, total, () => ++tables, i + 1));
 
     const doc = new Document({
       creator: author,
@@ -420,6 +513,13 @@ export class HandoverDocumentService {
       },
       numbering: {
         config: [
+          {
+            reference: 'bullets',
+            levels: [
+              { level: 0, format: LevelFormat.BULLET, text: '\u2022', alignment: AlignmentType.LEFT, style: { paragraph: { indent: { left: 360, hanging: 360 } } } },
+              { level: 1, format: LevelFormat.BULLET, text: 'o', alignment: AlignmentType.LEFT, style: { paragraph: { indent: { left: 1080, hanging: 360 } }, run: { font: 'Courier New' } } },
+            ],
+          },
           {
             reference: 'headings',
             levels: [
