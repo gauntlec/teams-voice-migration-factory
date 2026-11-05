@@ -1448,6 +1448,8 @@ export class BuildService {
    */
   async populateVoiceApps(t: TenantContext, u: AuthedUser, siteId: string, onlyIds?: string[]) {
     const s = this.s(t);
+    // A Call flow that lost its voice app (deleted before that also deleted the flow) gets it back first, so it is copied too.
+    if (!onlyIds) await this.discovery.dataCollection.repairFlowVoiceApps(t, siteId);
     let sourceQ = s.selectFrom('discovery_voice_apps').selectAll().where('site_id', '=', siteId);
     if (onlyIds) sourceQ = sourceQ.where('id', 'in', onlyIds.length ? onlyIds : ['00000000-0000-0000-0000-000000000000']);
     const source = await sourceQ.execute();

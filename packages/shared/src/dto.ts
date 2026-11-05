@@ -813,6 +813,8 @@ export const discoveryListQuerySchema = z.object({
   siteId: z.guid().optional(),
   q: z.string().trim().max(160).optional(),
   status: z.enum(NUMBER_STATUSES).optional(),
+  /** Call flows only: one kind ('other' = free-text routing notes, listed apart from auto attendants and call queues) */
+  kind: z.enum(FLOW_KINDS).optional(),
   page: z.coerce.number().int().min(1).max(100000).default(1),
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });
