@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, Tab, TabList, Text, mergeClasses } from '@fluentui/react-components';
 import { TENANT_OBJECT_TYPE_LABELS, type TenantDiscoverySummary, type TenantObjectType } from '@tvmf/shared';
@@ -16,7 +17,10 @@ export function Discovery() {
   const s = useStyles();
   const qc = useQueryClient();
   const { activeTenantId: tid, can } = useAuth();
-  const [tab, setTab] = useState<TabKey>('overview');
+  // ?tab=licences opens a tab directly (the Reports page links to the licence report this way).
+  const [searchParams] = useSearchParams();
+  const wanted = searchParams.get('tab');
+  const [tab, setTab] = useState<TabKey>(TABS.some((x) => x.key === wanted) ? (wanted as TabKey) : 'overview');
   const base = `/t/${tid}/tenant-discovery`;
 
   const summary = useQuery({

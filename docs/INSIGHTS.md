@@ -13,8 +13,8 @@ The proposal, mock-ups and plan were agreed on 5 November 2026. The five steps a
 | Step | What | State |
 | --- | --- | --- |
 | 1 | Foundation: shared figures, daily snapshots, site go-live dates | **Live** (2026.11.4) |
-| 2 | Customer Overview home page (today's list moves to a My work tab) | **Built** (section below) |
-| 3 | Reports area: catalogue, periods, comparison, Excel and CSV | Planned |
+| 2 | Customer Overview home page (today's list moves to a My work tab) | **Live** (2026.11.5) |
+| 3 | Reports area: catalogue, periods, comparison, Excel and CSV | **Built** (section below) |
 | 4 | Executive summary PDF and scheduled emails | Planned |
 | 5 | All-customers view, Portfolio report, Present mode | Planned |
 
@@ -158,8 +158,47 @@ The Overview is built only from `/insights/metrics` (the last 30 days, plus the 
 Colours come from Fluent theme tokens: the customer's brand colour, and the palette colours for good, warning and bad.
 That makes both themes and customer branding work. Loading shows a skeleton of the layout.
 
+## Reports (step 3)
+
+**Reports** in the left menu (`/reports`, `apps/web/src/pages/reports`) lists the reports the person can open for the active
+customer (`reportAvailable`), with the same rules as the data behind each one:
+
+| Report | Period | Data | Who |
+| --- | --- | --- | --- |
+| Migration progress | yes | `/insights/metrics` now, and `/insights/history` for the period | everyone on the customer |
+| Change log | yes | `/insights/changes` (new): changes by live runs, newest first, at most 5,000 | people who can see deployments or the customer's audit log |
+| Incidents and service levels | yes | `/incidents/report` | Managed Services on, `inc:read` |
+| Service requests | yes | `/service-requests/report` | Managed Services on, `sr:read` |
+| Device status | no (now) | `/device-status` | Monitoring on, `monitoring:read` |
+| Licences and costs | – | links to Discovery › Licences & costs (`/discovery?tab=licences`) | `tenantdiscovery:read` |
+
+**Periods.** Each report page (`/reports/:key`) takes a period:
+
+- The presets are last 30 days, this month, last month, this quarter, last quarter and last 12 months. Custom dates are
+  also possible.
+- The choice is kept in the page address (`?period=`, or `?from=&to=`), so a report can be bookmarked or shared.
+
+**Comparison.** Incidents and Service requests compare with the period before. A whole month or quarter compares with
+the whole one before it; any other period compares with the same number of days before. Migration progress compares
+with the first daily snapshot in the period.
+
+**One model.** Every report is built in `packages/shared/src/reports.ts` as a list of sections: figures (each with the
+previous value, the change, and whether up is good), tables and notes. One component (`ReportView`) draws any report.
+The same sections become the exports:
+
+- **Excel:** a Summary sheet (customer, period, every figure with the comparison, the notes) and a sheet per table.
+- **CSV:** the largest table.
+
+So the screen and the files can't disagree, and step 4's PDF uses the same sections.
+
+On screen, long tables show their first 200 rows, with a button to show the rest; the exports always hold every row.
+The incident and service request report dialogs on the Incidents and Service Requests pages are gone. Their **Reports**
+menu items open the new pages.
+
 ## Tests
 
 - `packages/shared/src/insights.test.ts`: the go-live rules, the customer status, periods and snapshot totals.
-- `tests/db/src/insights/insights.db.test.ts`: the queries behind the figures, go-live dates (read from the overview, first date kept,
+- `packages/shared/src/reports.test.ts`: report periods and comparisons, figure changes, the incident report, the Excel
+  sheets, CSV quoting and file names.
+- `tests/db/src/insights/insights.db.test.ts`: the change log (newest first, site and who ran it, site scope), the queries behind the figures, go-live dates (read from the overview, first date kept,
   free text ignored, site scope), what each role sees, one snapshot a day, history, and removing old snapshots.

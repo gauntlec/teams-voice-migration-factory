@@ -33,6 +33,13 @@ export class InsightsController {
     return this.svc.history(t, q);
   }
 
+  /** The Change log report: changes live runs made in the customer's Teams tenant (deployments or tenant audit readers). */
+  @Get('changes')
+  @RequirePermission('tenant:read')
+  changes(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Query(new ZodBody(insightsPeriodQuerySchema)) q: InsightsPeriodQuery) {
+    return this.svc.changeLog(t, user.role, q);
+  }
+
   /** The site's go-live date (its overview's Target go-live) and the date first agreed. */
   @Get('sites/:siteId/go-live')
   @RequirePermission('discovery:read')

@@ -1,6 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { sql } from 'kysely';
-import { deviceStatusOverview, tenantDb } from '@tvmf/db';
+import { deviceStatusOverview, platformDb, tenantDb } from '@tvmf/db';
 import {
   can,
   customerGoLiveStatus,
@@ -11,6 +11,7 @@ import {
   siteGoLiveStatus,
   snapshotPoint,
   utcDay,
+  type ChangeLogData,
   type CustomerMetrics,
   type DeviceMetrics,
   type IncidentMetrics,
@@ -31,6 +32,8 @@ import { ServiceRequestsService } from '../service-requests/service-requests.ser
 /** The stages a project manager or customer sees as one "Design & deployment" stage. */
 const DELIVERY_STAGES: readonly ProgressStageViewKey[] = ['designed', 'validated', 'dry_run', 'deployed'];
 const DAY_MS = 86_400_000;
+/** Cap on the changes one Change log report reads, so a very busy period can't make it slow. */
+const CHANGE_LOG_LIMIT = 5000;
 const pct = (part: number, whole: number) => (whole === 0 ? null : Math.round((part / whole) * 1000) / 10);
 
 /**
@@ -207,6 +210,67 @@ export class InsightsService {
     const cutoff = utcDay(new Date(Date.parse(`${day}T00:00:00Z`) - MAX_SNAPSHOT_DAYS * DAY_MS));
     await s.deleteFrom('metric_snapshots').where('day', '<', cutoff).execute();
     return wrote;
+  }
+
+  /* ------------------------------ change log ------------------------------ */
+
+  /**
+   * The Change log report: every change live runs made in the customer's Teams tenant during the period, newest first
+   * (deployment_changes is append-only, so this is the record auditors ask for). People who can see deployments or the
+   * customer's audit log may read it; a site contact gets their own sites' runs.
+   */
+  async changeLog(t: TenantContext, role: Role, q: { from?: string; to?: string }, now = new Date()): Promise<ChangeLogData> {
+    if (!can(role, 'deployment:read') && !can(role, 'audit:read:tenant')) throw new ForbiddenException('The change log is for people who can see deployments or the audit log.');
+    const period = insightsPeriod(q, now);
+    const s = tenantDb(this.db, t.schema);
+    let query = s
+      .selectFrom('deployment_changes as c')
+      .innerJoin('deployments as d', 'd.id', 'c.deployment_id')
+      .select([
+        'c.at as at',
+        'c.object_type as objectType',
+        'c.object_id as objectId',
+        'c.cmdlet as cmdlet',
+        'c.result as result',
+        'c.message as message',
+        'c.operator_user_id as operatorId',
+        'd.created_by as createdBy',
+        'd.id as deploymentId',
+        sql<string | null>`d.scope->>'siteId'`.as('siteId'),
+      ])
+      .where('d.mode', '=', 'execute')
+      .where('c.at', '>=', period.from)
+      .where('c.at', '<', period.to)
+      .orderBy('c.at', 'desc')
+      .orderBy('c.seq', 'desc')
+      .limit(CHANGE_LOG_LIMIT + 1);
+    if (isSiteScoped(t)) query = query.where(sql<string>`d.scope->>'siteId'`, 'in', t.siteScope);
+    const rows = await query.execute();
+    const shown = rows.slice(0, CHANGE_LOG_LIMIT);
+    const siteIds = [...new Set(shown.map((r) => r.siteId).filter((x): x is string => !!x))];
+    const userIds = [...new Set(shown.map((r) => r.operatorId ?? r.createdBy).filter((x): x is string => !!x))];
+    const [sites, users] = await Promise.all([
+      siteIds.length ? s.selectFrom('discovery_sites').select(['id', 'sitecode']).where('id', 'in', siteIds).execute() : [],
+      userIds.length ? platformDb(this.db).selectFrom('users').select(['id', 'display_name']).where('id', 'in', userIds).execute() : [],
+    ]);
+    const sitecode = new Map(sites.map((x) => [x.id, x.sitecode]));
+    const name = new Map(users.map((x) => [x.id, x.display_name]));
+    return {
+      from: period.from,
+      to: period.to,
+      truncated: rows.length > CHANGE_LOG_LIMIT,
+      rows: shown.map((r) => ({
+        at: new Date(r.at).toISOString(),
+        sitecode: r.siteId ? (sitecode.get(r.siteId) ?? null) : null,
+        objectType: r.objectType,
+        objectId: r.objectId,
+        cmdlet: r.cmdlet,
+        result: r.result as ChangeLogData['rows'][number]['result'],
+        message: r.message,
+        operator: name.get((r.operatorId ?? r.createdBy) as string) ?? null,
+        deploymentId: r.deploymentId,
+      })),
+    };
   }
 
   /* ------------------------------ go-live dates ------------------------------ */

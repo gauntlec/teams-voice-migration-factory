@@ -8,7 +8,6 @@ import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
 import { IncidentNotices, PastNoticesDialog } from '../components/IncidentNotices';
 import { KnowledgeDialog } from '../components/IncidentKnowledge';
-import { IncidentReportsDialog } from '../components/IncidentReports';
 import { IncidentSettingsDialog } from '../components/IncidentSettings';
 import { IncQueueTiles, IncSlaBadge, IncStatusBadge, MajorBadge, MajorClockBadge, PriorityBadge, incQueueFilter, type IncQueueFilter, type IncidentRow } from '../components/IncidentBits';
 import { Page } from '../components/Page';
@@ -37,7 +36,6 @@ export function Incidents() {
   const q = useDebounced(qInput);
   const [tile, setTile] = useState<IncQueueFilter>('all');
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [reportsOpen, setReportsOpen] = useState(false);
   const [noticesOpen, setNoticesOpen] = useState(false);
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   const staff = can('inc:manage');
@@ -134,7 +132,7 @@ export function Incidents() {
             </MenuTrigger>
             <MenuPopover>
               <MenuList>
-                <MenuItem onClick={() => setReportsOpen(true)}>Reports</MenuItem>
+                <MenuItem onClick={() => navigate('/reports/incidents')}>Reports</MenuItem>
                 <MenuItem onClick={() => setNoticesOpen(true)}>Past notices</MenuItem>
                 {staff && <MenuItem onClick={() => navigate('/incidents/problems')}>Problems</MenuItem>}
                 {staff && <MenuItem onClick={() => setKnowledgeOpen(true)}>Knowledge</MenuItem>}
@@ -309,7 +307,6 @@ export function Incidents() {
       {noticesOpen && <PastNoticesDialog base={base} enabled={enabled} onClose={() => setNoticesOpen(false)} />}
       {knowledgeOpen && <KnowledgeDialog base={base} onClose={() => setKnowledgeOpen(false)} />}
       {settingsOpen && <IncidentSettingsDialog base={base} onClose={() => setSettingsOpen(false)} />}
-      {reportsOpen && <IncidentReportsDialog base={base} onClose={() => setReportsOpen(false)} />}
     </Page>
   );
 }

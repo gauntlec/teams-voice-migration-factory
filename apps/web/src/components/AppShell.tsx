@@ -35,6 +35,7 @@ import {
   DocumentFolder24Regular,
   Board24Regular,
   CloudArrowUp24Regular,
+  DataBarVertical24Regular,
   Home24Regular,
   People24Regular,
   BuildingMultiple24Regular,
@@ -180,6 +181,7 @@ interface NavDef {
 
 const MIGRATION: NavDef[] = [
   { to: '/', label: 'Home', icon: <Home24Regular /> },
+  { to: '/reports', label: 'Reports', icon: <DataBarVertical24Regular /> },
   { to: '/data-collection', label: 'Site Data', icon: <ClipboardTaskListLtr24Regular />, permission: 'discovery:read' },
   { to: '/discovery', label: 'Discovery', icon: <Search24Regular />, permission: 'tenantdiscovery:read' },
   { to: '/build', label: 'Design & Build', icon: <Board24Regular />, permission: 'build:read' },
