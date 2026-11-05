@@ -64,6 +64,8 @@ export interface HubMailRequest {
   text: string;
   replyTo?: string | null;
   fromName?: string;
+  /** PDF files, base64 - the hub relay accepts these from hub 2026.11 (voxshift-hub PR #15). */
+  attachments?: { filename: string; contentType: 'application/pdf'; contentBase64: string }[];
 }
 
 /** A person-readable reason for a refused or failed relay through the hub. Never includes the token. */

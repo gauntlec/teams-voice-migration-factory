@@ -61,6 +61,8 @@ export interface OutgoingMail {
   html: string;
   text: string;
   replyTo?: string | null;
+  /** files sent with it (a scheduled report's PDF) - platform.email_attachments */
+  attachments?: { filename: string; contentType: string; content: Buffer }[];
 }
 
 /** Send one email by whichever way is set up. Throws on any failure so the caller can retry. */
@@ -73,10 +75,21 @@ export async function sendMail(cfg: Exclude<ResolvedMail, { mode: 'none' }>, m: 
       subject: m.subject,
       text: m.text,
       html: m.html,
+      ...(m.attachments?.length ? { attachments: m.attachments.map((a) => ({ filename: a.filename, contentType: a.contentType, content: a.content })) } : {}),
     });
     return info.messageId;
   }
-  const body: HubMailRequest = { to: m.to, toName: m.toName ?? null, subject: m.subject, html: m.html, text: m.text, replyTo: m.replyTo ?? null, fromName: cfg.fromName };
+  // Through the hub: attachments go as base64 (the hub relay takes PDFs from voxshift-hub PR #15).
+  const body: HubMailRequest = {
+    to: m.to,
+    toName: m.toName ?? null,
+    subject: m.subject,
+    html: m.html,
+    text: m.text,
+    replyTo: m.replyTo ?? null,
+    fromName: cfg.fromName,
+    ...(m.attachments?.length ? { attachments: m.attachments.map((a) => ({ filename: a.filename, contentType: 'application/pdf' as const, contentBase64: a.content.toString('base64') })) } : {}),
+  };
   let res: Response;
   try {
     res = await (opts.fetchFn ?? fetch)(`${cfg.hubUrl}/api/v1/mail`, {

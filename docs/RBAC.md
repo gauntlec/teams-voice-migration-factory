@@ -111,6 +111,7 @@ files:read
 audit:read:tenant   audit:read:platform
 feature:read  feature:create  feature:manage
 bug:read  bug:create  bug:manage
+reports:schedule
 tenantdiscovery:read  tenantdiscovery:run
 monitoring:read  monitoring:manage
 platform:operate
@@ -145,6 +146,7 @@ sso:manage
 | feature:manage (move / edit / delete cards) | ✓ | | | |
 | bug:read / bug:create | ✓ | ✓ | ✓ | |
 | bug:manage (move / edit / delete cards) | ✓ | | | |
+| reports:schedule (set up scheduled report emails, Reports > Scheduled) | ✓ | ✓ | ✓ | |
 | inc:read / inc:create (Incidents: see, raise, comment) | ✓ | ✓ | ✓ | ✓ (own sites if scoped) |
 | inc:manage (triage, assign, move, priority, internal notes, run diagnostic checks, ask an assistant, decide assistants' proposals) | ✓ | | ✓ | |
 | inc:msp (MSP incident queue) | ✓ | ✓ | ✓ | |

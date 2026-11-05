@@ -115,6 +115,11 @@ The auditable comms log. Key columns: `to_email`, `template`, `context` (jsonb),
 `created_by`, `created_at`, `sent_at`, `original_to_email` (test customers -
 see above).
 
+**Attachments** (`platform.email_attachments`, platform migration `0040`): files queued with a message, today a scheduled
+report's PDF (`MailService.enqueue({ attachments })`). The worker sends them over SMTP as attachments, or through the hub
+as base64. The hub relay takes PDFs from voxshift-hub PR #15. They stay with the message, so **Resend** sends the same
+file. Their content is removed after 90 days (`InsightsScheduleService`), and a resend after that goes without them.
+
 **An invitation's one-time password is not kept.** The API stores it encrypted
 (`context.tempPasswordEnc`, `DATA_ENCRYPTION_KEY`) only so the worker can put it in
 the email. When the worker has handled the message for good - sent, skipped
@@ -268,6 +273,13 @@ Sent to every active Super Admin when someone signs in as Administrator through 
 ## `sso_staff_access_request`
 
 Sent when a Voxshift staff sign-in is waiting for approval ([SSO.md](SSO.md) 4.3a): to every active Super Admin who did **not** come in through the Voxshift Hub (a person who signed in through the hub cannot approve, so is not asked). It names who is asking (name and email), the role the sign-in would get, the time and the address it came from, says that the administrator chooses how long to allow (the default is 4 hours, the most is 24) and that an unanswered request lapses after an hour, and links to Platform settings > Single sign-on, where the request is answered. One email per request: asking again while waiting, or straight after a denial, sends no second one. It is only sent when the installation's staff access setting is "Needs approval"; the master email switch also stops it (the request is still shown on the page and as a banner at the top of the application).
+
+## `scheduled_report`
+
+A report sent on its schedule (docs/INSIGHTS.md, step 4b). The subject is `<report>: <customer>, <period>`. The body has
+the report's headline sentences (or its summary line) and a button to open the report in Voxshift. The link carries
+`?customer=` so it opens on the right customer. The report itself is the attached PDF. Each recipient's copy is built
+with what their own role and sites allow.
 
 ## `device_alert`
 

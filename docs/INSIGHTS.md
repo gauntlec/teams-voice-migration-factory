@@ -15,8 +15,8 @@ The proposal, mock-ups and plan were agreed on 5 November 2026. The five steps a
 | 1 | Foundation: shared figures, daily snapshots, site go-live dates | **Live** (2026.11.4) |
 | 2 | Customer Overview home page (today's list moves to a My work tab) | **Live** (2026.11.5) |
 | 3 | Reports area: catalogue, periods, comparison, Excel and CSV | **Live** (2026.11.6) |
-| 4a | Executive summary report, and a PDF of every report | **Built** (section below) |
-| 4b | Scheduled reports by email | Planned |
+| 4a | Executive summary report, and a PDF of every report | **Live** (2026.11.7) |
+| 4b | Scheduled reports by email, with the PDF attached | **Built** (section below) |
 | 5 | All-customers view, Portfolio report, Present mode | Planned |
 
 The charts use Fluent UI's chart library (`@fluentui/react-charts`, pinned), so they follow the app theme, the customer's
@@ -230,6 +230,34 @@ For a period that has ended, the migration figures are as at its last daily snap
 - **Very long cells:** a cell over 600 characters is cut with "...". On screen, a cell over 240 characters shows four
   lines, with the full text in its tooltip. The Excel export always has the whole text.
 
+## Scheduled reports (step 4b)
+
+**Reports › Scheduled** is for staff who can set it up (`reports:schedule`: Super Admins, project managers and
+engineers). A schedule names a report, how often, and who gets it:
+
+- **How often:** **Monthly** sends on the 1st of each month at 07:00 UTC, covering last month. **Quarterly** sends on
+  1 January, April, July and October, covering last quarter (`nextScheduleRun`, `SCHEDULE_PERIOD`). Sending at 07:00
+  leaves room for the daily snapshot of the 1st.
+- **Who:** only people who can open the customer (`candidates`, the same rule as TenantGuard): Super Admins, and the
+  customer's members, staff and its own users, active only. At most 25. Anyone else is refused.
+- **Which reports:** only reports the customer has. The Device status report needs Monitoring, for example.
+- **Schedule button:** a report page's **Schedule** button opens the form with that report chosen.
+
+**Sending.** `InsightsScheduleService` checks every 15 minutes in the api (`REPORT_SCHEDULES=off` switches it off). A
+due schedule first moves its next send, so a failure can never send twice. Then, for each person:
+
+1. It builds the report **as that person**: their role, and a site contact's own sites only (`InsightsReportsService`).
+2. It draws the PDF.
+3. It queues a `scheduled_report` email with the PDF attached (docs/EMAIL.md).
+
+Someone who can no longer open the customer (removed, switched off, or no longer a member) is skipped. The schedule
+records the outcome (sent, partly sent, email off, not sent) with the detail. While email is switched off nothing is
+sent, and the schedule says so. **Send now** sends straight away for the period it would cover now, and leaves the next
+send where it is. Creating, changing, sending now and deleting are recorded in the customer's audit log.
+
+**The hub.** An installation that sends mail through the hub needs hub PR #15 live before attachments go through. Until
+then the hub refuses the message, which the email log shows as failed.
+
 ## Tests
 
 - `packages/shared/src/insights.test.ts`: the go-live rules, the customer status, periods and snapshot totals.
@@ -244,6 +272,13 @@ For a period that has ended, the migration figures are as at its last daily snap
   - the queries behind the figures, and what each role sees;
   - go-live dates: read from the overview, first date kept, free text ignored, site scope;
   - one snapshot a day, history, and removing old snapshots.
+- `tests/db/src/insights/schedules.db.test.ts`:
+  - only people who can open the customer, and only reports it has;
+  - due sends: one copy per person built as them (a site contact's own sites), the PDF attached and kept with the email,
+    the link to the right customer, someone who lost access skipped, the next send moved;
+  - nothing sent while email is off;
+  - changing (a new frequency moves the next send), pausing and deleting, with the audit log.
+- `tests/db/src/platform/mail-settings.db.test.ts`: attachments over SMTP and to the hub as base64.
 - `tests/db/src/insights/http.db.test.ts`, the real wiring over HTTP:
   - the figures, history and a site's go-live date answer, and a bad period is refused;
   - a PDF of the Executive summary and of the Change log (a real `%PDF` file, with its name);

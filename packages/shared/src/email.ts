@@ -31,11 +31,31 @@ export const EMAIL_TEMPLATES = [
   'mail_test',
   'sso_admin_signin',
   'sso_staff_access_request',
+  'scheduled_report',
 ] as const;
 export type EmailTemplate = (typeof EMAIL_TEMPLATES)[number];
 
 export const EMAIL_STATUSES = ['queued', 'sent', 'failed', 'skipped'] as const;
 export type EmailStatus = (typeof EMAIL_STATUSES)[number];
+
+/** Context for the `scheduled_report` template: a report sent on its schedule, with its PDF attached (docs/INSIGHTS.md, step 4b). */
+export interface ScheduledReportContext {
+  reportTitle: string;
+  customerName: string;
+  /** "1 Oct – 31 Oct 2026" */
+  periodLabel: string;
+  /** "Monthly" / "Quarterly" */
+  frequencyLabel: string;
+  /** the report's headline title and sentences, when it has a headline (the Executive summary) */
+  headline: string | null;
+  sentences: string[];
+  /** the report's one-line summary */
+  summary: string;
+  /** the report in Voxshift, for the same period */
+  url: string;
+  /** the attached file's name */
+  filename: string;
+}
 
 /** Context for the `device_alert` template: Monitoring tells people a device went down, came back, or is still down. */
 export interface DeviceAlertContext {
