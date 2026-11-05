@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { emailEnabled, platformDb, tenantDb, webOrigin } from '@tvmf/db';
 import {
   isGlobalRole,
@@ -21,6 +21,7 @@ import { AuditService } from '../../common/audit.service';
 import type { AuthedUser, TenantContext } from '../../common/request';
 import { InjectDb, type Db } from '../../db/db.module';
 import { MailService } from '../../mail/mail.service';
+import { DocumentBrandingService } from '../branding/document-branding.service';
 import { InsightsReportsService } from './insights-reports.service';
 import { renderReportPdf } from './report-pdf';
 
@@ -54,6 +55,8 @@ export class InsightsScheduleService implements OnModuleInit, OnModuleDestroy {
     private readonly reports: InsightsReportsService,
     private readonly mail: MailService,
     private readonly audit: AuditService,
+    /** whose branding the PDFs carry (docs/BRANDING.md); optional so tests can leave it out (Voxshift's) */
+    @Optional() private readonly branding?: DocumentBrandingService,
   ) {}
 
   onModuleInit() {
@@ -277,6 +280,7 @@ export class InsightsScheduleService implements OnModuleInit, OnModuleDestroy {
     const people = await this.people(t, sched.recipients as string[]);
     const origin = (await webOrigin(this.db)).replace(/\/+$/, '');
     const period = SCHEDULE_PERIOD[sched.frequency];
+    const brand = await this.branding?.forDocuments(t.id);
     let sent = 0;
     const skipped: string[] = [];
     for (const id of sched.recipients as string[]) {
@@ -287,7 +291,7 @@ export class InsightsScheduleService implements OnModuleInit, OnModuleDestroy {
       }
       try {
         const doc = await this.reports.build({ ...t, siteScope: p.scope }, p.role, key, { period }, now);
-        const pdf = await renderReportPdf(doc, t.name, now);
+        const pdf = await renderReportPdf(doc, t.name, now, brand);
         const filename = `${reportFileName(doc, t.name)}.pdf`;
         const headline = doc.sections.find((x) => x.kind === 'headline');
         const context: ScheduledReportContext = {

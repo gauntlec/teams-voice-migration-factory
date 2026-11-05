@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Optional, NotFoundException } from '@nestjs/common';
 import { sql, type Kysely } from 'kysely';
 import { computeSiteDrift, coolingUntil, makeAutoAttendantTargetResolver, refreshNumberConflict, releasedNumber, resolveLiveNumberTypes, tenantDb, type DB } from '@tvmf/db';
 import {
@@ -75,6 +75,7 @@ import {
 import { AuditService } from '../../common/audit.service';
 import { applyBulkPatch, auditBulkPatch } from '../../common/bulk-patch';
 import type { AuthedUser, TenantContext } from '../../common/request';
+import { DocumentBrandingService } from '../branding/document-branding.service';
 import { InjectDb, type Db } from '../../db/db.module';
 import { DeploymentDocumentService } from '../deployment/deployment-document.service';
 import { FilesService } from '../files/files.service';
@@ -105,6 +106,8 @@ export class BuildService {
     private readonly discovery: TenantDiscoveryService,
     private readonly documentBuilder: DeploymentDocumentService,
     private readonly files: FilesService,
+    /** whose branding resource account requests carry (docs/BRANDING.md); optional so tests can leave it out (Voxshift's) */
+    @Optional() private readonly branding?: DocumentBrandingService,
   ) {}
   /** The open transaction, while inTx is running - see inTx. */
   private readonly tx = new AsyncLocalStorage<Scoped>();
@@ -2528,6 +2531,7 @@ export class BuildService {
 
     const generatedAt = new Date();
     const data = await this.documentBuilder.buildResourceAccountRequest({
+      brand: await this.branding?.forDocuments(t.id),
       tenantName: t.name,
       siteName: site.name ?? site.sitecode,
       sitecode: site.sitecode,

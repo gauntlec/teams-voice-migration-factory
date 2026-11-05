@@ -21,7 +21,9 @@ import {
   type Table as DocxTable,
 } from 'docx';
 import type { DeploymentPreviewRow } from '@tvmf/shared';
-import { VOX_TILE_PNG_BASE64 } from './assets/vox-tile';
+import { VOXSHIFT_DOCUMENT_PALETTE, type DocumentPalette } from '@tvmf/shared';
+import { docxCover, docxFooter, docxHeader } from '../branding/docx-brand';
+import { VOXSHIFT_DOCUMENT_BRAND, type DocumentBrand } from '../branding/document-branding.service';
 
 /**
  * Ports the Voxshift document design system established in the
@@ -66,6 +68,8 @@ export interface DeploymentDocumentInput {
   generatedBy: string;
   generatedAt: Date;
   rows: DeploymentPreviewRow[];
+  /** whose branding the document carries (DocumentBrandingService); Voxshift's when not given */
+  brand?: DocumentBrand;
 }
 
 const RESOURCE_ACCOUNT_KIND_LABEL: Record<'auto_attendant' | 'call_queue', string> = {
@@ -90,26 +94,28 @@ export interface ResourceAccountRequestInput {
   generatedBy: string;
   generatedAt: Date;
   accounts: ResourceAccountRequestItem[];
+  /** whose branding the document carries (DocumentBrandingService); Voxshift's when not given */
+  brand?: DocumentBrand;
 }
 
-function metaRow(label: string, body: string): Paragraph {
+function metaRow(label: string, body: string, p: DocumentPalette = VOXSHIFT_DOCUMENT_PALETTE): Paragraph {
   return new Paragraph({
     spacing: { after: 80 },
     children: [
-      new TextRun({ text: `${label}   `, bold: true, color: DEEP, size: 20, font: UI_FONT }),
+      new TextRun({ text: `${label}   `, bold: true, color: p.deep, size: 20, font: UI_FONT }),
       new TextRun({ text: body, size: 20, font: UI_FONT, color: INK }),
     ],
   });
 }
 
-function calloutTable(text: string): DocxTable {
+function calloutTable(text: string, p: DocumentPalette = VOXSHIFT_DOCUMENT_PALETTE): DocxTable {
   return new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     borders: {
-      top: { style: BorderStyle.SINGLE, size: 2, color: CALLOUT_BORDER },
-      right: { style: BorderStyle.SINGLE, size: 2, color: CALLOUT_BORDER },
-      bottom: { style: BorderStyle.SINGLE, size: 2, color: CALLOUT_BORDER },
-      left: { style: BorderStyle.SINGLE, size: 24, color: BRAND },
+      top: { style: BorderStyle.SINGLE, size: 2, color: p.calloutBorder },
+      right: { style: BorderStyle.SINGLE, size: 2, color: p.calloutBorder },
+      bottom: { style: BorderStyle.SINGLE, size: 2, color: p.calloutBorder },
+      left: { style: BorderStyle.SINGLE, size: 24, color: p.brand },
       insideHorizontal: { style: BorderStyle.NONE },
       insideVertical: { style: BorderStyle.NONE },
     },
@@ -117,12 +123,12 @@ function calloutTable(text: string): DocxTable {
       new TableRow({
         children: [
           new TableCell({
-            shading: { fill: CALLOUT_BG, type: ShadingType.CLEAR, color: 'auto' },
+            shading: { fill: p.calloutBg, type: ShadingType.CLEAR, color: 'auto' },
             margins: { top: 100, bottom: 100, left: 160, right: 160 },
             children: [
               new Paragraph({
                 spacing: { after: 0 },
-                children: [new TextRun({ text, size: 19, color: CALLOUT_TEXT, font: UI_FONT })],
+                children: [new TextRun({ text, size: 19, color: p.calloutText, font: UI_FONT })],
               }),
             ],
           }),
@@ -163,12 +169,12 @@ function codeBlockTable(lines: string[]): DocxTable {
   });
 }
 
-function rowSection(row: DeploymentPreviewRow, index: number): (Paragraph | Table)[] {
+function rowSection(row: DeploymentPreviewRow, index: number, p: DocumentPalette): (Paragraph | Table)[] {
   return [
     new Paragraph({
       spacing: { before: 280, after: 100 },
       children: [
-        new TextRun({ text: `${index + 1}. ${row.upn}`, bold: true, size: 24, color: BRAND, font: UI_FONT }),
+        new TextRun({ text: `${index + 1}. ${row.upn}`, bold: true, size: 24, color: p.brand, font: UI_FONT }),
         new TextRun({ text: `   ${OBJECT_TYPE_LABEL[row.objectType]}`, size: 18, color: MUTED, font: UI_FONT }),
       ],
     }),
@@ -218,7 +224,7 @@ function notDeployedSection(rows: DeploymentPreviewRow[]): (Paragraph | Table)[]
   return out;
 }
 
-function accountSection(item: ResourceAccountRequestItem, index: number): (Paragraph | Table)[] {
+function accountSection(item: ResourceAccountRequestItem, index: number, p: DocumentPalette): (Paragraph | Table)[] {
   const licenseNote =
     item.numberType === 'CallingPlan'
       ? 'Requires: Microsoft Teams Phone Resource Account license, plus a Microsoft Calling Plan license (Domestic or Domestic & International) to carry the number.'
@@ -227,12 +233,12 @@ function accountSection(item: ResourceAccountRequestItem, index: number): (Parag
     new Paragraph({
       spacing: { before: 280, after: 60 },
       children: [
-        new TextRun({ text: `${index + 1}. ${item.displayName}`, bold: true, size: 24, color: BRAND, font: UI_FONT }),
+        new TextRun({ text: `${index + 1}. ${item.displayName}`, bold: true, size: 24, color: p.brand, font: UI_FONT }),
         new TextRun({ text: `   ${RESOURCE_ACCOUNT_KIND_LABEL[item.kind]}`, size: 18, color: MUTED, font: UI_FONT }),
       ],
     }),
-    metaRow('UPN to create', item.upn),
-    ...(item.phoneNumber ? [metaRow('Phone number', `${item.phoneNumber}${item.numberType ? ` (${item.numberType})` : ''}`)] : []),
+    metaRow('UPN to create', item.upn, p),
+    ...(item.phoneNumber ? [metaRow('Phone number', `${item.phoneNumber}${item.numberType ? ` (${item.numberType})` : ''}`, p)] : []),
     new Paragraph({
       spacing: { before: 60, after: 100 },
       children: [new TextRun({ text: licenseNote, size: 19, color: INK, font: UI_FONT })],
@@ -248,72 +254,28 @@ function accountSection(item: ResourceAccountRequestItem, index: number): (Parag
 @Injectable()
 export class DeploymentDocumentService {
   async buildResourceAccountRequest(input: ResourceAccountRequestInput): Promise<Buffer> {
-    const header = new Header({
-      children: [
-        new Paragraph({
-          tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
-          border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: GRID, space: 4 } },
-          children: [
-            new TextRun({ text: 'vox', bold: true, size: 20, color: INK, font: UI_FONT }),
-            new TextRun({ text: 'shift', size: 20, color: ACCENT, font: UI_FONT }),
-            new TextRun({ text: '\tResource Account Request', size: 18, color: MUTED, font: UI_FONT }),
-          ],
-        }),
-      ],
-    });
-
-    const footer = new Footer({
-      children: [
-        new Paragraph({
-          tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
-          border: { top: { style: BorderStyle.SINGLE, size: 6, color: GRID, space: 4 } },
-          children: [
-            new TextRun({ text: `Voxshift  ·  ${input.sitecode} resource account request`, size: 17, color: MUTED, font: UI_FONT }),
-            new TextRun({ text: '\t' }),
-            new TextRun({ children: [PageNumber.CURRENT], size: 17, color: MUTED, font: UI_FONT }),
-          ],
-        }),
-      ],
-    });
+    const brand = input.brand ?? VOXSHIFT_DOCUMENT_BRAND;
+    const p = brand.palette;
+    const header = docxHeader(brand, [new TextRun({ text: 'Resource Account Request', size: 18, color: MUTED, font: UI_FONT })]);
+    const footer = docxFooter(brand, `${input.sitecode} resource account request`);
 
     const blankHeader = new Header({ children: [new Paragraph('')] });
     const blankFooter = new Footer({ children: [new Paragraph('')] });
 
     const cover: (Paragraph | Table)[] = [
-      new Paragraph({
-        alignment: AlignmentType.LEFT,
-        spacing: { after: 200 },
-        children: [
-          new ImageRun({
-            type: 'png',
-            data: Buffer.from(VOX_TILE_PNG_BASE64, 'base64'),
-            transformation: { width: 68, height: 68 },
-          }),
-        ],
-      }),
-      new Paragraph({
-        spacing: { after: 40 },
-        children: [
-          new TextRun({ text: 'vox', bold: true, size: 80, color: INK, font: UI_FONT }),
-          new TextRun({ text: 'shift', size: 80, color: ACCENT, font: UI_FONT }),
-        ],
-      }),
-      new Paragraph({
-        spacing: { after: 200 },
-        border: { bottom: { style: BorderStyle.SINGLE, size: 12, color: TINT, space: 6 } },
-        children: [new TextRun({ text: 'Resource Account Request', size: 34, color: BRAND, font: UI_FONT })],
-      }),
-      metaRow('Tenant', input.tenantName),
-      metaRow('Site', `${input.siteName} (${input.sitecode})`),
-      metaRow('Requested by', input.generatedBy),
-      metaRow('Requested at', input.generatedAt.toISOString()),
-      metaRow('Accounts', String(input.accounts.length)),
+      ...docxCover(brand, 'Resource Account Request'),
+      metaRow('Tenant', input.tenantName, p),
+      metaRow('Site', `${input.siteName} (${input.sitecode})`, p),
+      metaRow('Requested by', input.generatedBy, p),
+      metaRow('Requested at', input.generatedAt.toISOString(), p),
+      metaRow('Accounts', String(input.accounts.length), p),
       new Paragraph({ children: [new PageBreak()] }),
     ];
 
     const body: (Paragraph | Table)[] = [
       calloutTable(
         'Please create and license the resource accounts below in Microsoft 365/Teams admin center (or ask your Microsoft partner to). Once each account is created and licensed, Voxshift will detect it automatically on the next sync - no need to reply confirming completion.',
+        p,
       ),
       new Paragraph({ spacing: { after: 120 } }),
     ];
@@ -325,7 +287,7 @@ export class DeploymentDocumentService {
         }),
       );
     } else {
-      input.accounts.forEach((item, i) => body.push(...accountSection(item, i)));
+      input.accounts.forEach((item, i) => body.push(...accountSection(item, i, p)));
     }
 
     const doc = new Document({
@@ -346,33 +308,10 @@ export class DeploymentDocumentService {
   }
 
   async build(input: DeploymentDocumentInput): Promise<Buffer> {
-    const header = new Header({
-      children: [
-        new Paragraph({
-          tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
-          border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: GRID, space: 4 } },
-          children: [
-            new TextRun({ text: 'vox', bold: true, size: 20, color: INK, font: UI_FONT }),
-            new TextRun({ text: 'shift', size: 20, color: ACCENT, font: UI_FONT }),
-            new TextRun({ text: '\tChange Recording', size: 18, color: MUTED, font: UI_FONT }),
-          ],
-        }),
-      ],
-    });
-
-    const footer = new Footer({
-      children: [
-        new Paragraph({
-          tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
-          border: { top: { style: BorderStyle.SINGLE, size: 6, color: GRID, space: 4 } },
-          children: [
-            new TextRun({ text: `Voxshift  ·  ${input.sitecode} change recording`, size: 17, color: MUTED, font: UI_FONT }),
-            new TextRun({ text: '\t' }),
-            new TextRun({ children: [PageNumber.CURRENT], size: 17, color: MUTED, font: UI_FONT }),
-          ],
-        }),
-      ],
-    });
+    const brand = input.brand ?? VOXSHIFT_DOCUMENT_BRAND;
+    const p = brand.palette;
+    const header = docxHeader(brand, [new TextRun({ text: 'Change Recording', size: 18, color: MUTED, font: UI_FONT })]);
+    const footer = docxFooter(brand, `${input.sitecode} change recording`);
 
     const blankHeader = new Header({ children: [new Paragraph('')] });
     const blankFooter = new Footer({ children: [new Paragraph('')] });
@@ -387,41 +326,19 @@ export class DeploymentDocumentService {
         : 'Execute mode - this document describes the changes that were sent to Microsoft Teams.';
 
     const cover: (Paragraph | Table)[] = [
-      new Paragraph({
-        alignment: AlignmentType.LEFT,
-        spacing: { after: 200 },
-        children: [
-          new ImageRun({
-            type: 'png',
-            data: Buffer.from(VOX_TILE_PNG_BASE64, 'base64'),
-            transformation: { width: 68, height: 68 },
-          }),
-        ],
-      }),
-      new Paragraph({
-        spacing: { after: 40 },
-        children: [
-          new TextRun({ text: 'vox', bold: true, size: 80, color: INK, font: UI_FONT }),
-          new TextRun({ text: 'shift', size: 80, color: ACCENT, font: UI_FONT }),
-        ],
-      }),
-      new Paragraph({
-        spacing: { after: 200 },
-        border: { bottom: { style: BorderStyle.SINGLE, size: 12, color: TINT, space: 6 } },
-        children: [new TextRun({ text: 'Change Recording', size: 34, color: BRAND, font: UI_FONT })],
-      }),
-      metaRow('Tenant', input.tenantName),
-      metaRow('Site', `${input.siteName} (${input.sitecode})`),
-      metaRow('Mode', modeLabel),
-      metaRow('Generated by', input.generatedBy),
-      metaRow('Generated at', input.generatedAt.toISOString()),
-      metaRow('Rows', String(deploying.length)),
-      ...(notDeployed.length ? [metaRow('Not deployed', String(notDeployed.length))] : []),
+      ...docxCover(brand, 'Change Recording'),
+      metaRow('Tenant', input.tenantName, p),
+      metaRow('Site', `${input.siteName} (${input.sitecode})`, p),
+      metaRow('Mode', modeLabel, p),
+      metaRow('Generated by', input.generatedBy, p),
+      metaRow('Generated at', input.generatedAt.toISOString(), p),
+      metaRow('Rows', String(deploying.length), p),
+      ...(notDeployed.length ? [metaRow('Not deployed', String(notDeployed.length), p)] : []),
       new Paragraph({ children: [new PageBreak()] }),
     ];
 
     const body: (Paragraph | Table)[] = [
-      calloutTable(modeCallout),
+      calloutTable(modeCallout, p),
       new Paragraph({ spacing: { after: 120 } }),
     ];
     if (deploying.length === 0) {
@@ -432,7 +349,7 @@ export class DeploymentDocumentService {
         }),
       );
     } else {
-      deploying.forEach((row, i) => body.push(...rowSection(row, i)));
+      deploying.forEach((row, i) => body.push(...rowSection(row, i, p)));
     }
     if (notDeployed.length) body.push(...notDeployedSection(notDeployed));
 

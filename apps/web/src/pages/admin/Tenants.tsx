@@ -31,7 +31,7 @@ import {
   shorthands,
 } from '@fluentui/react-components';
 import { DeleteRegular } from '@fluentui/react-icons';
-import type { Branding } from '@tvmf/shared';
+import { documentBrandingSource, type Branding, type DocumentBrandingChoice } from '@tvmf/shared';
 import { api, apiUpload } from '../../api';
 import { useAuth } from '../../auth';
 import { DataTable } from '../../components/DataTable';
@@ -76,6 +76,9 @@ interface Tenant {
   monitoring_enabled: boolean;
   msp_id: string | null;
   branding: Branding | null;
+  /** whose branding generated documents carry when an MSP looks after the customer */
+  document_branding: DocumentBrandingChoice;
+  msp_has_branding: boolean | null;
   sandbox: boolean;
   sandbox_email: string | null;
   created_at: string;
@@ -138,6 +141,11 @@ export function AdminTenants() {
     queryKey: ['msps', 'all'],
     enabled: can('tenant:update') && featureOn('msp'),
     queryFn: () => api<{ id: string; name: string }[]>('/msps'),
+  });
+  const setDocBranding = useMutation({
+    mutationFn: ({ id, choice }: { id: string; choice: DocumentBrandingChoice }) =>
+      api(`/tenants/${id}/document-branding`, { method: 'PATCH', body: JSON.stringify({ choice }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tenants'] }),
   });
   const setMsp = useMutation({
     mutationFn: ({ id, mspId }: { id: string; mspId: string | null }) =>
@@ -383,6 +391,7 @@ export function AdminTenants() {
                     ) : (
                       (mspList.data ?? []).find((m) => m.id === t.msp_id)?.name ?? '—'
                     )}
+                    <DocumentBrandingControl tenant={t} canEdit={can('tenant:update')} busy={setDocBranding.isPending} onChange={(choice) => setDocBranding.mutate({ id: t.id, choice })} />
                   </TableCell>
                   )}
                   <TableCell>
@@ -816,5 +825,45 @@ function ScopeDialog({
         </DialogBody>
       </DialogSurface>
     </Dialog>
+  );
+}
+
+
+/**
+ * Under a customer's MSP: whose branding its generated documents carry - handover packs, change recordings, resource account
+ * requests, report PDFs and call flow diagrams (docs/BRANDING.md) - and what that comes to now.
+ */
+const useDocBrandingStyles = makeStyles({
+  box: { display: 'grid', rowGap: '2px', marginTop: '6px' },
+  note: { opacity: 0.75, whiteSpace: 'normal', marginTop: '4px' },
+});
+
+function DocumentBrandingControl({ tenant: t, canEdit, busy, onChange }: { tenant: Tenant; canEdit: boolean; busy: boolean; onChange: (c: DocumentBrandingChoice) => void }) {
+  const ds = useDocBrandingStyles();
+  const source = documentBrandingSource({ mspFeatureOn: true, mspId: t.msp_id, choice: t.document_branding, customerHasBranding: !!t.branding, mspHasBranding: !!t.msp_has_branding });
+  const result =
+    source === 'msp' ? 'Documents carry the MSP’s branding.' : source === 'customer' ? 'Documents carry the customer’s branding.' : t.msp_id && t.document_branding === 'msp' ? 'The MSP has no branding yet, so documents carry Voxshift’s.' : 'The customer has no branding yet, so documents carry Voxshift’s.';
+  if (!t.msp_id) {
+    return (
+      <Text size={200} block className={ds.note}>
+        {t.branding ? 'Documents carry the customer’s branding.' : 'Documents carry Voxshift’s branding.'}
+      </Text>
+    );
+  }
+  return (
+    <div className={ds.box}>
+      <Text size={200}>Document branding</Text>
+      {canEdit ? (
+        <Select size="small" value={t.document_branding} disabled={busy} onChange={(_, d) => onChange(d.value as DocumentBrandingChoice)} aria-label={`Document branding for ${t.name}`}>
+          <option value="msp">The MSP’s branding</option>
+          <option value="customer">The customer’s branding</option>
+        </Select>
+      ) : (
+        <Text size={200}>{t.document_branding === 'msp' ? 'The MSP’s branding' : 'The customer’s branding'}</Text>
+      )}
+      <Text size={200} className={ds.note}>
+        {result}
+      </Text>
+    </div>
   );
 }
