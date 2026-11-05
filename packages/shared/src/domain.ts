@@ -525,6 +525,7 @@ export const AA_CALL_HANDLING_TYPES = ['AfterHours', 'Holiday'] as const;
 
 /** Sections of the Service Hand-Over Pack (from V1.18.docx). */
 export const HANDOVER_SECTIONS = [
+  { key: 'introduction', title: 'Introduction' },
   { key: 'site_information', title: 'Site Information' },
   { key: 'service_support_model', title: 'Service Support Model' },
   { key: 'phone_numbers', title: 'Phone Numbers' },
@@ -544,7 +545,7 @@ export const HANDOVER_SECTIONS = [
 ] as const;
 
 /** The Handover sections with no structured data source: filled from editable notes (per site, or for every site). */
-export const HANDOVER_NOTE_SECTIONS = ['service_support_model', 'paging', 'teams_configuration', 'outstanding_actions'] as const;
+export const HANDOVER_NOTE_SECTIONS = ['introduction', 'service_support_model', 'paging', 'teams_configuration', 'outstanding_actions'] as const;
 export type HandoverNoteSection = (typeof HANDOVER_NOTE_SECTIONS)[number];
 
 /** Every deployable Design & Build sheet, in the worker's run order - the single list the UI, API and change document use for "everything". */

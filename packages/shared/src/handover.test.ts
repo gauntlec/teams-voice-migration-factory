@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { HANDOVER_SECTIONS } from './domain';
 import { handoverGenerateSchema, handoverNoteSchema } from './dto';
-import { HANDOVER_NOTE_EMPTY, handoverScopeLabel, noteSectionContent, selectSections } from './handover';
+import { HANDOVER_NOTE_EMPTY, handoverScopeLabel, noteSectionContent, selectSections, noteLine, outstandingActionsContent } from './handover';
 
 describe('noteSectionContent', () => {
   it('shows the empty-state text when there is no note', () => {
@@ -75,5 +75,31 @@ describe('handover request schemas', () => {
     expect(handoverNoteSchema.safeParse({ sectionKey: 'paging', siteId: null, body: 'x' }).success).toBe(true);
     expect(handoverNoteSchema.safeParse({ sectionKey: 'phone_numbers', body: 'x' }).success).toBe(false);
     expect(handoverNoteSchema.safeParse({ sectionKey: 'paging', body: 'x'.repeat(20001) }).success).toBe(false);
+  });
+});
+
+describe('notes written for the pack', () => {
+  it('reads "## " as a numbered sub-heading and "- " as a bullet', () => {
+    expect(noteLine('## Welcome Document')).toEqual({ kind: 'heading', text: 'Welcome Document' });
+    expect(noteLine('- David Mead - david.mead@parker.com')).toEqual({ kind: 'bullet', text: 'David Mead - david.mead@parker.com' });
+    expect(noteLine('Plain text - with a dash')).toEqual({ kind: 'text', text: 'Plain text - with a dash' });
+  });
+
+  it('turns Outstanding Actions lines into numbered actions with an owner', () => {
+    expect(outstandingActionsContent([{ sitecode: null, body: 'Test 933 on the lobby phone | AT&T\n\n- Submit a ticket for Theresa' }, { sitecode: 'FSD02D', body: 'Fix the diagram | AT&T' }])).toEqual({
+      kind: 'blocks',
+      blocks: [
+        {
+          kind: 'actions',
+          caption: 'Outstanding Actions Table',
+          items: [
+            { description: 'Test 933 on the lobby phone', owner: 'AT&T' },
+            { description: 'Submit a ticket for Theresa', owner: '' },
+            { description: 'FSD02D: Fix the diagram', owner: 'AT&T' },
+          ],
+        },
+      ],
+    });
+    expect(outstandingActionsContent([])).toEqual({ kind: 'blocks', blocks: [{ kind: 'text', text: 'There are no outstanding actions.' }] });
   });
 });

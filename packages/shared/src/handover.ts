@@ -7,10 +7,53 @@ import { HANDOVER_SECTIONS, type HandoverNoteSection } from './domain';
 export type HandoverSectionContent =
   | { kind: 'table'; columns: string[]; rows: string[][] }
   | { kind: 'paragraphs'; paragraphs: string[] }
-  | { kind: 'placeholder'; note: string };
+  | { kind: 'placeholder'; note: string }
+  /** A section laid out like the template (docs: the corrected AT&T pack, 5 Nov 2026): text, sub-headings and tables in order. */
+  | { kind: 'blocks'; blocks: HandoverBlock[] };
+
+/**
+ * One part of a 'blocks' section. Tables carry their caption ("Table N – <caption>", numbered in the document).
+ * - labels: a label/value table, navy labels on the left (Site Information; Emergency Calling Policies).
+ * - cards: label/value tables two across (Call Queues: one card per queue).
+ * - actions: Outstanding Actions - numbered <section>.<n> in the document, with a description and an owner.
+ */
+export type HandoverBlock =
+  | { kind: 'heading'; title: string }
+  | { kind: 'text'; text: string; bold?: boolean }
+  | { kind: 'bullets'; items: string[] }
+  /** share: the table's width as a part of the text width (1 = full width), for a narrow table such as a list of policies */
+  | { kind: 'table'; columns: string[]; rows: string[][]; caption?: string; share?: number }
+  | { kind: 'labels'; rows: [string, string][]; caption?: string; title?: string }
+  | { kind: 'cards'; cards: [string, string][][]; caption?: string }
+  | { kind: 'actions'; items: { description: string; owner: string }[]; caption?: string };
+
+/** A note line that is a bullet ("- " or "• ") or a numbered sub-heading ("## "), as the document and preview draw it. */
+export function noteLine(line: string): { kind: 'bullet' | 'heading' | 'text'; text: string } {
+  const t = line.trim();
+  if (/^##\s+/.test(t)) return { kind: 'heading', text: t.replace(/^##\s+/, '') };
+  if (/^[-•*]\s+/.test(t)) return { kind: 'bullet', text: t.replace(/^[-•*]\s+/, '') };
+  return { kind: 'text', text: t };
+}
+
+/**
+ * Outstanding Actions written as notes: one action per line, "<description> | <owner and action>" (the owner is optional).
+ * Numbered by the document as <section>.<n>, as the template does.
+ */
+export function outstandingActionsContent(notes: readonly HandoverNote[]): HandoverSectionContent {
+  const items = notes
+    .flatMap((n) => n.body.split(/\r?\n/).map((l) => ({ l: l.trim(), site: n.sitecode })))
+    .filter((x) => x.l !== '')
+    .map(({ l, site }) => {
+      const [description, ...owner] = l.replace(/^[-•*]\s+/, '').split('|');
+      return { description: `${site ? `${site}: ` : ''}${description!.trim()}`, owner: owner.join('|').trim() };
+    });
+  if (items.length === 0) return { kind: 'blocks', blocks: [{ kind: 'text', text: 'There are no outstanding actions.' }] };
+  return { kind: 'blocks', blocks: [{ kind: 'actions', items, caption: 'Outstanding Actions Table' }] };
+}
 
 /** Shown for a note-backed section until someone writes a note for it. */
 export const HANDOVER_NOTE_EMPTY: Record<HandoverNoteSection, string> = {
+  introduction: 'The standard introduction is printed.',
   service_support_model: 'Not yet captured in Voxshift — agree the ongoing support model with the customer and add it to this section manually.',
   paging: 'No paging system data is currently collected by Voxshift.',
   teams_configuration: 'Not yet captured in Voxshift — record tenant-wide Microsoft Teams configuration decisions in this section manually.',
