@@ -131,7 +131,8 @@ export type ReportSection =
   | { kind: 'note'; text: string };
 
 export interface ReportDocument {
-  key: ReportKey;
+  /** a customer report, or the Portfolio report across customers (step 5) */
+  key: ReportKey | 'portfolio';
   title: string;
   /** one line under the title */
   summary: string;
@@ -628,6 +629,132 @@ export function buildExecutiveSummary(input: {
     ],
   };
 }
+
+/* ------------------------------ all customers (step 5) ------------------------------ */
+
+/** One customer on the All customers view. */
+export interface PortfolioRow {
+  tenantId: string;
+  name: string;
+  mspName: string | null;
+  status: import('./insights').CustomerGoLiveStatus;
+  /** 'operations' once every site is in service */
+  mode: 'migration' | 'operations';
+  sites: number;
+  sitesLive: number;
+  sitesInService: number;
+  users: number;
+  usersLive: number;
+  /** users live about 30 days ago, from the daily snapshots; null without history that far back */
+  usersLive30dAgo: number | null;
+  /** sites at risk or off track */
+  atRisk: number;
+  nextGoLive: { sitecode: string; date: string } | null;
+  /** present when Managed Services is on */
+  incidents?: { open: number; openP1: number; openP2: number; targetsMetPct: number | null; targetsMeasured: number };
+  openServiceRequests?: number;
+  /** the figures could not be worked out for this customer */
+  error?: string;
+}
+
+/** GET /insights/portfolio */
+export interface PortfolioData {
+  asOf: string;
+  rows: PortfolioRow[];
+}
+
+const STATUS_ORDER: Record<string, number> = { off_track: 0, at_risk: 1, on_track: 2, no_date: 3, complete: 4, no_sites: 5 };
+
+/** Worst first: off track, then a P1 open, at risk, on track, no dates, all live; then by name. */
+export function sortPortfolio(rows: PortfolioRow[]): PortfolioRow[] {
+  const rank = (r: PortfolioRow) => (r.error ? -1 : r.incidents?.openP1 ? 0.5 : STATUS_ORDER[r.status] ?? 9);
+  return [...rows].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+}
+
+export interface PortfolioTotals {
+  customers: number;
+  sites: number;
+  sitesLive: number;
+  users: number;
+  usersLive: number;
+  usersLive30dAgo: number | null;
+  openP1: number;
+  openP2: number;
+  /** response and restore targets met across customers, weighted by how many were measured */
+  targetsMetPct: number | null;
+  needAttention: number;
+}
+
+export function portfolioTotals(rows: PortfolioRow[]): PortfolioTotals {
+  const ok = rows.filter((r) => !r.error);
+  const sum = (f: (r: PortfolioRow) => number) => ok.reduce((n, r) => n + f(r), 0);
+  const measured = sum((r) => r.incidents?.targetsMeasured ?? 0);
+  const met = sum((r) => (r.incidents && r.incidents.targetsMetPct !== null ? (r.incidents.targetsMetPct / 100) * r.incidents.targetsMeasured : 0));
+  const withHistory = ok.filter((r) => r.usersLive30dAgo !== null);
+  return {
+    customers: rows.length,
+    sites: sum((r) => r.sites),
+    sitesLive: sum((r) => r.sitesLive),
+    users: sum((r) => r.users),
+    usersLive: sum((r) => r.usersLive),
+    usersLive30dAgo: withHistory.length ? withHistory.reduce((n, r) => n + r.usersLive30dAgo!, 0) + ok.filter((r) => r.usersLive30dAgo === null).reduce((n, r) => n + r.usersLive, 0) : null,
+    openP1: sum((r) => r.incidents?.openP1 ?? 0),
+    openP2: sum((r) => r.incidents?.openP2 ?? 0),
+    targetsMetPct: measured ? Math.round((met / measured) * 1000) / 10 : null,
+    needAttention: rows.filter((r) => r.error || r.status === 'off_track' || r.status === 'at_risk' || (r.incidents?.openP1 ?? 0) > 0).length,
+  };
+}
+
+/** The Portfolio report: every customer the person can open, worst first, as on the All customers view. */
+export function buildPortfolioReport(data: PortfolioData, today: string): ReportDocument {
+  const rows = sortPortfolio(data.rows);
+  const t = portfolioTotals(rows);
+  const fmt = (n: number) => n.toLocaleString('en-GB');
+  const sentences = [
+    `${fmt(t.usersLive)} of ${fmt(t.users)} users are live on Teams Phone across ${t.customers} ${t.customers === 1 ? 'customer' : 'customers'}, at ${t.sitesLive} of ${t.sites} sites.`,
+  ];
+  if (t.usersLive30dAgo !== null && t.usersLive > t.usersLive30dAgo) sentences.push(`${fmt(t.usersLive - t.usersLive30dAgo)} users went live in the last 30 days.`);
+  if (t.targetsMetPct !== null) sentences.push(`${t.targetsMetPct}% of incident response and restore targets were met in the last 30 days.`);
+  sentences.push(t.needAttention ? `${t.needAttention} ${t.needAttention === 1 ? 'customer needs' : 'customers need'} attention.` : 'No customer needs attention.');
+  return {
+    key: 'portfolio',
+    title: 'Portfolio',
+    summary: `${t.customers} customers · ${fmt(t.usersLive)} users live`,
+    period: { from: today, to: today },
+    sections: [
+      { kind: 'headline', title: `${t.sitesLive} of ${t.sites} sites live across ${t.customers} ${t.customers === 1 ? 'customer' : 'customers'}`, sentences },
+      {
+        kind: 'figures',
+        title: 'Across all customers',
+        figures: [
+          { label: 'Users live', value: t.usersLive, previous: t.usersLive30dAgo ?? undefined, better: 'up', note: `of ${fmt(t.users)}` },
+          { label: 'Sites live', value: t.sitesLive, better: 'up', note: `of ${t.sites}` },
+          { label: 'Incident targets met, 30 days', value: t.targetsMetPct, unit: '%', better: 'up' },
+          { label: 'Open P1 / P2 incidents', value: t.openP1 + t.openP2, better: 'down', note: `P1 ${t.openP1} · P2 ${t.openP2}` },
+          { label: 'Customers needing attention', value: t.needAttention, better: 'down', note: `of ${t.customers}` },
+        ],
+      },
+      {
+        kind: 'table',
+        title: 'Customers',
+        columns: ['Customer', 'Status', 'Sites live', 'Users live', 'Targets met', 'Open P1 / P2', 'Next go-live'],
+        numeric: [3],
+        rows: rows.map((r) => [
+          r.mspName ? `${r.name} (${r.mspName})` : r.name,
+          r.error ? 'Figures unavailable' : r.incidents?.openP1 ? 'P1 open' : r.mode === 'operations' && r.status === 'complete' ? 'In service' : (CUSTOMER_STATUS_TEXT[r.status] ?? null),
+          `${r.sitesLive} / ${r.sites}`,
+          r.usersLive,
+          r.incidents?.targetsMetPct === null || !r.incidents ? null : `${r.incidents.targetsMetPct}%`,
+          r.incidents ? `${r.incidents.openP1} / ${r.incidents.openP2}` : null,
+          r.nextGoLive ? `${r.nextGoLive.sitecode}, ${goLiveDateLabel(r.nextGoLive.date)}` : null,
+        ]),
+        empty: 'No customers.',
+      },
+    ],
+  };
+}
+
+const CUSTOMER_STATUS_TEXT: Record<string, string> = { complete: 'All sites live', on_track: 'On track', at_risk: 'At risk', off_track: 'Off track', no_date: 'No go-live dates', no_sites: 'No sites yet' };
 
 /* ------------------------------ scheduled reports (step 4b) ------------------------------ */
 

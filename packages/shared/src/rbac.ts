@@ -54,6 +54,7 @@ export const PERMISSIONS = [
   'bug:read', // view the bug-report board
   'bug:create', // log a bug report
   'reports:schedule', // set up scheduled report emails for a customer - staff only
+  'insights:portfolio', // the All customers view and Portfolio report - staff only, across the customers they can open
   'bug:manage', // move status, edit labels, delete - SUPER_ADMIN only
   'tenantdiscovery:read', // view the live-tenant Discovery inventory - admin & engineer only
   'tenantdiscovery:run', // connect to the customer tenant and run a discovery - admin & engineer only
@@ -97,6 +98,7 @@ export const PERMISSION_MATRIX: Record<Role, ReadonlySet<Permission>> = {
     'handover:generate',
     'handover:issue', // lock a draft pack as final
     'reports:schedule',
+    'insights:portfolio',
     'files:read',
     'audit:read:tenant',
     'feature:read',
@@ -132,6 +134,7 @@ export const PERMISSION_MATRIX: Record<Role, ReadonlySet<Permission>> = {
     'handover:generate',
     'handover:issue', // lock a draft pack as final
     'reports:schedule',
+    'insights:portfolio',
     'files:read',
     'audit:read:tenant',
     'feature:read',

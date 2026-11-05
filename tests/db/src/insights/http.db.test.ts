@@ -115,4 +115,13 @@ describe('Insights over HTTP', () => {
     expect((await call(adminToken, '/reports/nonsense/pdf')).status).toBe(404);
     expect((await call(adminToken, '/reports/executive/pdf?from=2026-11-02&to=2026-11-01')).status).toBe(400);
   });
+
+  it('gives staff the All customers view and its PDF, and refuses a customer user', async () => {
+    const all = await fetch(`${base}/api/insights/portfolio`, { headers: { authorization: `Bearer ${adminToken}` } });
+    expect(all.status).toBe(200);
+    expect(((await all.json()) as { rows: unknown[] }).rows.length).toBeGreaterThan(0);
+    const pdf = await fetch(`${base}/api/insights/portfolio/pdf`, { headers: { authorization: `Bearer ${adminToken}` } });
+    expect(pdf.headers.get('content-type')).toBe('application/pdf');
+    expect((await fetch(`${base}/api/insights/portfolio`, { headers: { authorization: `Bearer ${customerToken}` } })).status).toBe(403);
+  });
 });

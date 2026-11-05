@@ -111,7 +111,7 @@ files:read
 audit:read:tenant   audit:read:platform
 feature:read  feature:create  feature:manage
 bug:read  bug:create  bug:manage
-reports:schedule
+reports:schedule  insights:portfolio
 tenantdiscovery:read  tenantdiscovery:run
 monitoring:read  monitoring:manage
 platform:operate
@@ -147,6 +147,7 @@ sso:manage
 | bug:read / bug:create | ✓ | ✓ | ✓ | |
 | bug:manage (move / edit / delete cards) | ✓ | | | |
 | reports:schedule (set up scheduled report emails, Reports > Scheduled) | ✓ | ✓ | ✓ | |
+| insights:portfolio (Home > All customers, Portfolio report; only the customers the person can open) | ✓ | ✓ | ✓ | |
 | inc:read / inc:create (Incidents: see, raise, comment) | ✓ | ✓ | ✓ | ✓ (own sites if scoped) |
 | inc:manage (triage, assign, move, priority, internal notes, run diagnostic checks, ask an assistant, decide assistants' proposals) | ✓ | | ✓ | |
 | inc:msp (MSP incident queue) | ✓ | ✓ | ✓ | |

@@ -152,3 +152,25 @@ describe('scheduled report times', () => {
     expect(nextScheduleRun('quarterly', new Date('2027-01-01T07:00:00Z')).toISOString()).toBe('2027-04-01T07:00:00.000Z');
   });
 });
+
+describe('the portfolio', () => {
+  const row = (over: Record<string, unknown>) => ({
+    tenantId: String(over.name), name: 'X', mspName: null, status: 'on_track', mode: 'migration', sites: 4, sitesLive: 2, sitesInService: 1, users: 100, usersLive: 50,
+    usersLive30dAgo: 40, atRisk: 0, nextGoLive: null, incidents: { open: 1, openP1: 0, openP2: 0, targetsMetPct: 90, targetsMeasured: 10 }, ...over,
+  }) as never;
+  it('puts the worst first and adds up the customers', async () => {
+    const { buildPortfolioReport, portfolioTotals, sortPortfolio } = await import('./reports');
+    const rows = [
+      row({ name: 'Litware', status: 'complete', mode: 'operations' }),
+      row({ name: 'Contoso', status: 'at_risk', atRisk: 1 }),
+      row({ name: 'Woodgrove', status: 'complete', incidents: { open: 2, openP1: 1, openP2: 1, targetsMetPct: 50, targetsMeasured: 10 } }),
+      row({ name: 'Adventure', status: 'off_track' }),
+    ];
+    expect(sortPortfolio(rows).map((r) => r.name)).toEqual(['Adventure', 'Woodgrove', 'Contoso', 'Litware']);
+    expect(portfolioTotals(rows)).toMatchObject({ customers: 4, sites: 16, sitesLive: 8, users: 400, usersLive: 200, usersLive30dAgo: 160, openP1: 1, openP2: 1, targetsMetPct: 80, needAttention: 3 });
+    const doc = buildPortfolioReport({ asOf: '', rows }, '2026-11-05');
+    expect(doc.sections[0]).toMatchObject({ kind: 'headline', title: '8 of 16 sites live across 4 customers' });
+    const table = doc.sections[2];
+    expect(table?.kind === 'table' && table.rows.map((r) => [r[0], r[1]])).toEqual([['Adventure', 'Off track'], ['Woodgrove', 'P1 open'], ['Contoso', 'At risk'], ['Litware', 'In service']]);
+  });
+});
