@@ -12,6 +12,7 @@ import {
   DialogSurface,
   DialogTitle,
   Field,
+  Input,
   Link,
   Select,
   Spinner,
@@ -51,6 +52,8 @@ interface PackSource {
   siteCodes?: string[];
   sectionKeys?: string[];
   notes?: string | null;
+  /** the cover's project line */
+  projectName?: string | null;
 }
 
 interface Pack {
@@ -226,6 +229,7 @@ export function Handover() {
         <GenerateDialog
           tenantId={activeTenantId}
           sites={sites}
+          lastProject={[...(packs.data ?? [])].sort((a, b) => b.version - a.version)[0]?.source?.projectName ?? ''}
           onClose={() => setGenerateOpen(false)}
           onDone={() => {
             setGenerateOpen(false);
@@ -265,15 +269,19 @@ export function Handover() {
 function GenerateDialog({
   tenantId,
   sites,
+  lastProject,
   onClose,
   onDone,
 }: {
   tenantId: string;
   sites: SiteOption[];
+  /** the project line of the newest pack, offered again */
+  lastProject: string;
   onClose: () => void;
   onDone: () => void;
 }) {
   const cs = useStyles();
+  const [projectName, setProjectName] = useState(lastProject);
   const [mode, setMode] = useState<'all' | 'sites'>('all');
   const [siteIds, setSiteIds] = useState<Set<string>>(new Set());
   const [sectionKeys, setSectionKeys] = useState<Set<string>>(new Set(HANDOVER_SECTIONS.map((s) => s.key)));
@@ -295,6 +303,8 @@ function GenerateDialog({
           siteIds: mode === 'sites' ? [...siteIds] : [],
           sectionKeys: allSections ? [] : [...sectionKeys],
           notes: notes.trim() || undefined,
+          // empty clears it; the cover then has no project line
+          projectName: projectName.trim(),
         }),
       }),
     onSuccess: onDone,
@@ -337,6 +347,9 @@ function GenerateDialog({
                   />
                 ))}
               </div>
+            </Field>
+            <Field label="Project name (optional)" hint="Printed on the front page under the customer's name, for example “AT&T Global Teams Project”.">
+              <Input value={projectName} maxLength={120} onChange={(_, d) => setProjectName(d.value)} />
             </Field>
             <Field label="Internal note (optional)" hint="Kept with the pack in Voxshift. It isn't printed in the document.">
               <Textarea value={notes} maxLength={2000} onChange={(_, d) => setNotes(d.value)} resize="vertical" />

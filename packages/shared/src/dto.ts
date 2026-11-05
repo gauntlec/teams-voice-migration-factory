@@ -98,6 +98,8 @@ export const handoverGenerateSchema = z.preprocess(
   (v) => v ?? {},
   z.object({
     notes: z.string().trim().max(2000).optional(),
+    /** The cover's project line, e.g. "AT&T Global Teams Project"; kept from the last pack when not given. */
+    projectName: z.string().trim().max(120).optional(),
     siteIds: z.array(z.guid()).max(200).optional(),
     sectionKeys: z.array(z.string().refine(isHandoverSectionKey, 'Unknown handover section')).max(20).optional(),
   }),

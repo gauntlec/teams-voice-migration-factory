@@ -28,6 +28,8 @@ import { HandoverDocumentService, type HandoverSectionContent, type HandoverSect
 /** What a pack covers: the sites chosen (empty = every site) and the section keys chosen (empty = every section). */
 export interface HandoverGenerateInput {
   notes?: string;
+  /** the cover's project line; the last pack's when not given */
+  projectName?: string;
   siteIds?: string[];
   sectionKeys?: string[];
 }
@@ -42,6 +44,16 @@ export interface HandoverNoteInput {
 interface SiteScope {
   ids: string[];
   codes: string[];
+}
+
+/** US Letter when every site in the pack is in the US or Canada, A4 otherwise (the template is Letter for US sites). */
+const LETTER_COUNTRIES = /^(us|usa|united states( of america)?|ca|can|canada)$/i;
+
+/** What the cover and page set-up need beyond the sections: the project line, the site line, the paper size. */
+interface PackLayout {
+  projectName: string | null;
+  siteLabel: string;
+  pageSize: 'letter' | 'a4';
 }
 
 function targetSummary(settings: { action?: string; threshold?: number; target?: string | null } | null): string {
@@ -118,10 +130,31 @@ export class HandoverService {
     return { ids: rows.map((r) => r.id), codes: rows.map((r) => r.sitecode) };
   }
 
+  /**
+   * The cover's site line (one site's name, else "All sites" or the site codes) and the paper size, from the pack's sites;
+   * the project line as given, else the last pack's.
+   */
+  private async packLayout(t: TenantContext, scope: SiteScope | null, projectName: string | undefined): Promise<PackLayout> {
+    const s = tenantDb(this.db, t.schema);
+    let q = s.selectFrom('discovery_sites').select(['sitecode', 'name', 'country']);
+    if (scope) q = q.where('id', 'in', scope.ids);
+    const sites = await q.execute();
+    const siteLabel = sites.length === 1 ? sites[0]!.name || sites[0]!.sitecode : scope ? handoverScopeLabel(scope.codes) : 'All sites';
+    const pageSize = sites.length > 0 && sites.every((x) => x.country && LETTER_COUNTRIES.test(x.country.trim())) ? 'letter' : 'a4';
+    let project = projectName?.trim() || null;
+    if (projectName === undefined) {
+      const last = await s.selectFrom('handover_packs').select('source').orderBy('version', 'desc').limit(1).executeTakeFirst();
+      project = ((last?.source ?? {}) as { projectName?: string | null }).projectName ?? null;
+    }
+    return { projectName: project, siteLabel, pageSize };
+  }
+
   async generate(t: TenantContext, user: AuthedUser, body: HandoverGenerateInput) {
     assertCustomerWide(t, 'The Service Handover pack');
     const scoped = tenantDb(this.db, t.schema);
     const scope = await this.resolveScope(t, body.siteIds);
+    const layout = await this.packLayout(t, scope, body.projectName);
+    const customerLogo = (await this.branding?.customerLogo(t.id)) ?? null;
     // Sections are read before the transaction so the lock is held only for the writes.
     const built = await this.buildSections(t, scope);
     const sections = selectSections(built.sections, body.sectionKeys);
@@ -141,6 +174,8 @@ export class HandoverService {
 
       const data = await this.documentBuilder.build({
         brand: await this.branding?.forDocuments(t.id),
+        customerLogo,
+        ...layout,
         tenantName: t.name,
         version,
         generatedBy: user.displayName,
@@ -161,6 +196,8 @@ export class HandoverService {
           generated_at: generatedAt.toISOString(),
           source: {
             notes: body.notes ?? null,
+            // the cover's project and site lines and the paper size, so issuing draws the same front page
+            ...layout,
             snapshotAt: generatedAt.toISOString(),
             siteIds: scope?.ids ?? [],
             siteCodes: scope?.codes ?? [],
@@ -236,9 +273,13 @@ export class HandoverService {
     const savedSections = await scoped.selectFrom('handover_sections').selectAll().where('pack_id', '=', id).orderBy('ordinal').execute();
     const author = await platformDb(this.db).selectFrom('users').select('display_name').where('id', '=', full.generated_by).executeTakeFirst();
     const issuedAt = new Date();
-    const source = (full.source ?? {}) as { siteCodes?: string[]; liveAsOf?: string | null };
+    const source = (full.source ?? {}) as { siteCodes?: string[]; liveAsOf?: string | null } & Partial<PackLayout>;
     const data = await this.documentBuilder.build({
-        brand: await this.branding?.forDocuments(t.id),
+      brand: await this.branding?.forDocuments(t.id),
+      customerLogo: (await this.branding?.customerLogo(t.id)) ?? null,
+      projectName: source.projectName ?? null,
+      siteLabel: source.siteLabel ?? handoverScopeLabel(source.siteCodes),
+      pageSize: source.pageSize ?? 'a4',
       tenantName: t.name,
       version: full.version,
       generatedBy: author?.display_name ?? 'Voxshift',

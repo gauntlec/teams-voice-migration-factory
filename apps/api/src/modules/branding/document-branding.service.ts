@@ -75,6 +75,22 @@ export class DocumentBrandingService {
     };
   }
 
+  /**
+   * The customer's own logo, whichever branding its documents carry: the handover pack puts it on the right of every page's
+   * header, opposite the brand's. Null when it has none, or it can't be read.
+   */
+  async customerLogo(tenantId: string): Promise<DocumentBrand['logo']> {
+    const t = await platformDb(this.db).selectFrom('tenants').select('branding').where('id', '=', tenantId).executeTakeFirst();
+    const logo = (t?.branding as Branding | null)?.logo;
+    if (!logo) return null;
+    try {
+      return { data: await this.storage.read(logo.path), type: logo.contentType === 'image/png' ? 'png' : 'jpg', width: logo.width, height: logo.height };
+    } catch (e) {
+      this.log.warn(`customer logo for ${tenantId} could not be read: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
   /** The brand a document for this customer is drawn with. A logo that can't be read is left out, never failing the document. */
   async forDocuments(tenantId: string): Promise<DocumentBrand> {
     const { t, source, branding } = await this.load(tenantId);
