@@ -41,7 +41,8 @@ export class ProgressService {
     private readonly build: BuildService,
   ) {}
 
-  async progress(t: TenantContext, user: AuthedUser): Promise<CustomerProgress> {
+  /** `user` only needs a role: Insights asks for the full view with a role of its own. */
+  async progress(t: TenantContext, user: Pick<AuthedUser, 'role'>): Promise<CustomerProgress> {
     const s = tenantDb(this.db, t.schema);
     const fullView = can(user.role, 'build:read') && can(user.role, 'deployment:read');
 
@@ -257,7 +258,7 @@ export class ProgressService {
   }
 
   /** Open service requests (the site contact's own sites only); new ones are flagged to the engineers who plan them. */
-  private async addServiceRequests(t: TenantContext, user: AuthedUser, out: CustomerProgress) {
+  private async addServiceRequests(t: TenantContext, user: Pick<AuthedUser, 'role'>, out: CustomerProgress) {
     let q = tenantDb(this.db, t.schema)
       .selectFrom('service_requests')
       .select(['status', (eb) => eb.fn.countAll<string>().as('n')])

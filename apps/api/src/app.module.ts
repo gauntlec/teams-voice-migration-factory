@@ -26,6 +26,7 @@ import { TenantDiscoveryModule } from './modules/tenant-discovery/tenant-discove
 import { AuditReadModule } from './modules/audit/audit-read.module';
 import { DeviceStatusModule } from './modules/device-status/device-status.module';
 import { ProgressModule } from './modules/progress/progress.module';
+import { InsightsModule } from './modules/insights/insights.module';
 import { PlatformOpsModule } from './platform-ops/platform-ops.module';
 import { SsoModule } from './sso/sso.module';
 import { HealthController } from './health/health.controller';
@@ -56,6 +57,7 @@ import { FeatureGuard } from './common/feature.guard';
     TenantDiscoveryModule,
     AuditReadModule,
     ProgressModule,
+    InsightsModule,
     DeviceStatusModule,
     PlatformOpsModule,
     SsoModule,

@@ -8,5 +8,7 @@ import { ProgressService } from './progress.service';
   imports: [BuildModule],
   controllers: [ProgressController],
   providers: [ProgressService],
+  // InsightsModule builds its figures on the same progress rules.
+  exports: [ProgressService],
 })
 export class ProgressModule {}

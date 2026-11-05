@@ -18,6 +18,7 @@ import { OverviewTab, NetworkDiagramCard } from './site/siteOverview';
 import { HandsetTrackerCard } from './site/siteHandsets';
 import { SiteSuggestionsCard } from './discovery/siteSuggestions';
 import { SiteChangesCard, SiteReviewBar } from './site/siteReview';
+import { SiteGoLive } from './site/siteGoLive';
 import { NumberInventory, FlowImportButton, RaNumbersButton } from './site/siteNumbers';
 
 const useLocalStyles = makeStyles({
@@ -199,6 +200,7 @@ export function SiteWorkspace() {
         <Text size={200}>
           Assigned: <b>{numberSummary.assigned}</b>
         </Text>
+        {tid && <SiteGoLive tenantId={tid} siteId={siteId} canEdit={can('discovery:sites:manage')} />}
       </div>
 
       <SiteReviewBar
