@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
+import { sql } from 'kysely';
 import { emailEnabled, platformDb, tenantDb, webOrigin } from '@tvmf/db';
 import {
   isGlobalRole,
@@ -16,6 +17,7 @@ import {
   type ScheduledReportContext,
   type ScheduleFrequency,
   type ScheduleRecipient,
+  type SentReportView,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
 import type { AuthedUser, TenantContext } from '../../common/request';
@@ -29,6 +31,8 @@ import { renderReportPdf } from './report-pdf';
 const CHECK_EVERY_MS = 15 * 60_000;
 /** Attachment content is removed from the email log after this long (the message row stays). */
 const ATTACHMENT_DAYS = 90;
+/** Reports › Sent shows at most this many copies, newest first. */
+const SENT_LIMIT = 500;
 
 interface Person {
   id: string;
@@ -135,6 +139,78 @@ export class InsightsScheduleService implements OnModuleInit, OnModuleDestroy {
     const allowed = new Set((await this.candidates(t)).map((c) => c.id));
     const outsiders = input.recipients.filter((id) => !allowed.has(id));
     if (outsiders.length) throw new BadRequestException('Reports can only be sent to people who can open this customer in Voxshift.');
+  }
+
+  /**
+   * Reports › Sent (step 6b): every copy of a scheduled report emailed for this customer, newest first, from the email log
+   * (at most `SENT_LIMIT`). The PDF that went is offered while it is kept (ATTACHMENT_DAYS).
+   */
+  async sent(t: TenantContext): Promise<SentReportView[]> {
+    const p = platformDb(this.db);
+    const rows = await p
+      .selectFrom('email_messages as m')
+      .leftJoin('email_attachments as a', 'a.message_id', 'm.id')
+      .leftJoin('users as u', 'u.id', 'm.created_by')
+      .select([
+        'm.id as id',
+        'm.created_at as created_at',
+        'm.to_email as to_email',
+        'm.to_name as to_name',
+        'm.original_to_email as original_to_email',
+        'm.status as status',
+        'm.error as error',
+        'm.context as context',
+        'a.filename as filename',
+        sql<boolean>`a.content is not null`.as('kept'),
+        'u.display_name as sent_by',
+      ])
+      .where('m.tenant_id', '=', t.id)
+      .where('m.template', '=', 'scheduled_report')
+      .orderBy('m.created_at', 'desc')
+      .limit(SENT_LIMIT)
+      .execute();
+    return rows.map((r) => {
+      const c = (r.context ?? {}) as Partial<ScheduledReportContext>;
+      let path: string | null = null;
+      try {
+        if (c.url) {
+          // stored as the full address; relative when no web address was set
+          const u = new URL(c.url, 'http://x');
+          path = `${u.pathname}${u.search}`;
+        }
+      } catch {
+        path = null;
+      }
+      return {
+        id: r.id,
+        at: new Date(r.created_at).toISOString(),
+        reportTitle: c.reportTitle ?? 'Report',
+        periodLabel: c.periodLabel ?? '',
+        // a test customer's mail is redirected: show who it was for
+        toEmail: r.original_to_email ?? r.to_email,
+        toName: r.to_name,
+        status: r.status,
+        error: r.error,
+        path,
+        pdf: r.filename && r.kept ? { filename: r.filename } : null,
+        sentBy: r.sent_by ?? null,
+      };
+    });
+  }
+
+  /** The PDF a sent copy carried, while it is kept. Only this customer's scheduled reports. */
+  async sentPdf(t: TenantContext, messageId: string): Promise<{ filename: string; content: Buffer }> {
+    const row = await platformDb(this.db)
+      .selectFrom('email_attachments as a')
+      .innerJoin('email_messages as m', 'm.id', 'a.message_id')
+      .select(['a.filename', 'a.content'])
+      .where('m.id', '=', messageId)
+      .where('m.tenant_id', '=', t.id)
+      .where('m.template', '=', 'scheduled_report')
+      .executeTakeFirst();
+    if (!row) throw new NotFoundException('No such report was sent for this customer.');
+    if (!row.content) throw new NotFoundException(`The PDF is kept for ${ATTACHMENT_DAYS} days after it is sent; open the report for the same period instead.`);
+    return { filename: row.filename, content: row.content };
   }
 
   async create(t: TenantContext, user: AuthedUser, input: ReportScheduleInput, now = new Date()) {

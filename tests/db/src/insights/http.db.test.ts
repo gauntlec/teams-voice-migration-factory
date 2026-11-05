@@ -109,6 +109,11 @@ describe('Insights over HTTP', () => {
     expect(Buffer.from(await pdf.arrayBuffer()).subarray(0, 5).toString()).toBe('%PDF-');
 
     expect((await call(adminToken, '/reports/changes/pdf?from=2026-10-01&to=2026-10-31')).status).toBe(200);
+    // the Assistant activity report: its figures, and its PDF (step 6a)
+    const activity = await call(adminToken, '/assistants?from=2026-10-01&to=2026-10-31');
+    expect(activity.status).toBe(200);
+    expect(await activity.json()).toMatchObject({ incidents: true, serviceRequests: true, assistants: [] });
+    expect((await call(adminToken, '/reports/assistants/pdf?period=last_month')).status).toBe(200);
     // Monitoring switched off for the customer: no device report. And a report that doesn't exist.
     await platformDb(handle.db).updateTable('tenants').set({ monitoring_enabled: false }).where('id', '=', c.t.id).execute();
     expect((await call(adminToken, '/reports/devices/pdf')).status).toBe(403);

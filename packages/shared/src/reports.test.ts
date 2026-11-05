@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildAssistantReport,
+  type AssistantActivityData,
+  type AssistantActivityRow,
   buildChangeLogReport,
   buildExecutiveSummary,
   buildIncidentReport,
@@ -172,5 +175,23 @@ describe('the portfolio', () => {
     expect(doc.sections[0]).toMatchObject({ kind: 'headline', title: '8 of 16 sites live across 4 customers' });
     const table = doc.sections[2];
     expect(table?.kind === 'table' && table.rows.map((r) => [r[0], r[1]])).toEqual([['Adventure', 'Off track'], ['Woodgrove', 'P1 open'], ['Contoso', 'At risk'], ['Litware', 'In service']]);
+  });
+});
+
+describe('the Assistant activity report', () => {
+  const row = (over: Partial<AssistantActivityRow>): AssistantActivityRow => ({ agentId: 'a', name: 'Bot', builtin: false, incidentsWorked: 0, requestsWorked: 0, proposed: 0, approved: 0, rejected: 0, expired: 0, waiting: 0, handedOff: 0, takenBack: 0, resolved: 0, completed: 0, ...over });
+  const data = (over: Partial<AssistantActivityData>): AssistantActivityData => ({ from: '', to: '', incidents: true, serviceRequests: true, incidentsWorked: 0, requestsWorked: 0, assistants: [], proposals: [], medianMinutesToDecide: null, ...over });
+  it('names Voxshift’s own assistants, leaves out idle ones, and shows only the areas the person can read', () => {
+    const doc = buildAssistantReport(
+      data({ serviceRequests: false, incidentsWorked: 2, assistants: [row({ name: 'Triage', builtin: true, incidentsWorked: 2, proposed: 3, approved: 2, rejected: 1 }), row({ agentId: 'b', name: 'Idle' })] }),
+      null,
+      { from: '2026-10-01', to: '2026-10-31' },
+    );
+    const table = doc.sections.find((x) => x.kind === 'table' && x.title === 'By assistant');
+    expect(table?.kind === 'table' && table.columns).not.toContain('Requests');
+    expect(table?.kind === 'table' && table.rows).toEqual([['Triage (Voxshift)', 2, 3, 2, 1, 0, 0, 0, 0, 0]]);
+    const figures = doc.sections.find((x) => x.kind === 'figures');
+    expect(figures?.kind === 'figures' && figures.figures.map((f) => f.label)).not.toContain('Service requests worked');
+    expect(figures?.kind === 'figures' && figures.figures.find((f) => f.label === 'Approved by a person')?.value).toBe(66.7);
   });
 });

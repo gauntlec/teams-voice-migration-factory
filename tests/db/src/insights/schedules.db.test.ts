@@ -7,6 +7,7 @@ import { AuditService } from '../../../../apps/api/src/common/audit.service';
 import { BuildService } from '../../../../apps/api/src/modules/build/build.service';
 import { BuildValidationService } from '../../../../apps/api/src/modules/build/build-validation.service';
 import { IncidentReportService } from '../../../../apps/api/src/modules/incidents/incident-report.service';
+import { InsightsAssistantsService } from '../../../../apps/api/src/modules/insights/insights-assistants.service';
 import { InsightsReportsService } from '../../../../apps/api/src/modules/insights/insights-reports.service';
 import { InsightsScheduleService } from '../../../../apps/api/src/modules/insights/insights-schedule.service';
 import { InsightsService } from '../../../../apps/api/src/modules/insights/insights.service';
@@ -48,7 +49,7 @@ beforeAll(async () => {
   const requests = { report: async () => ({ raised: 0, deployed: 0, completedBy: { assistants: 0, people: 0 }, openBacklog: { total: 0, under1d: 0, d1to3: 0, d3to7: 0, over7d: 0 }, medianHoursToDeploy: null, resolutionMetPct: null, responseMetPct: null, responseMeasured: 0, resolutionMeasured: 0, byType: {}, byStatus: {} }) };
   const incidents = new IncidentReportService(handle.db);
   const insights = new InsightsService(handle.db, new ProgressService(handle.db, build), incidents, requests as never);
-  const reports = new InsightsReportsService(handle.db, insights, incidents, requests as never);
+  const reports = new InsightsReportsService(handle.db, insights, incidents, requests as never, new InsightsAssistantsService(handle.db));
   svc = new InsightsScheduleService(handle.db, reports, new MailService(handle.db, { add: async () => undefined } as never), audit);
 });
 
@@ -116,5 +117,28 @@ describe('scheduled reports', () => {
     expect(await svc.list(c.t)).toEqual([]);
     const audit = await c.s.selectFrom('audit_log').select('action').where('action', 'like', 'insights.schedule_%').orderBy('at').execute();
     expect(audit.map((a) => a.action)).toEqual(['insights.schedule_created', 'insights.schedule_sent_now', 'insights.schedule_updated', 'insights.schedule_deleted']);
+  });
+});
+
+describe('Reports › Sent (step 6b)', () => {
+  it('lists every copy sent for the customer, newest first, with the PDF while it is kept', async () => {
+    const sched = (await svc.list(c.t))[0];
+    if (sched) await svc.sendNow(c.t, pm, sched.id, now);
+    const sent = await svc.sent(c.t);
+    expect(sent.length).toBeGreaterThan(0);
+    const first = sent[0]!;
+    expect(first).toMatchObject({ status: 'queued', reportTitle: expect.any(String), pdf: { filename: expect.stringMatching(/\.pdf$/) } });
+    expect(first.path).toMatch(/^\/reports\/[a-z-]+\?period=last_(month|quarter)&customer=/);
+    expect(sent.map((x) => x.at)).toEqual([...sent.map((x) => x.at)].sort().reverse());
+    const pdf = await svc.sentPdf(c.t, first.id);
+    expect(pdf.content.subarray(0, 5).toString()).toBe('%PDF-');
+
+    // another customer can't read it, and once the PDF is no longer kept it says so
+    const other = await seedCustomer(handle, { name: 'Elsewhere' });
+    await expect(svc.sentPdf(other.t, first.id)).rejects.toThrow('No such report');
+    expect(await svc.sent(other.t)).toEqual([]);
+    await db.updateTable('email_attachments').set({ content: null }).where('message_id', '=', first.id).execute();
+    await expect(svc.sentPdf(c.t, first.id)).rejects.toThrow('kept for 90 days');
+    expect((await svc.sent(c.t)).find((x) => x.id === first.id)!.pdf).toBeNull();
   });
 });

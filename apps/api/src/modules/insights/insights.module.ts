@@ -10,13 +10,14 @@ import { InsightsPortfolioService } from './insights-portfolio.service';
 import { InsightsSnapshotService } from './insights-snapshot.service';
 import { InsightsReportsService } from './insights-reports.service';
 import { InsightsScheduleService } from './insights-schedule.service';
+import { InsightsAssistantsService } from './insights-assistants.service';
 import { InsightsService } from './insights.service';
 
 /** Voxshift Insights: the shared figures, the daily snapshots and site go-live dates (docs/INSIGHTS.md). */
 @Module({
   imports: [BrandingModule, MailModule, ProgressModule, IncidentsModule, ServiceRequestsModule],
   controllers: [InsightsController, InsightsPortfolioController],
-  providers: [InsightsService, InsightsReportsService, InsightsScheduleService, InsightsSnapshotService, InsightsPortfolioService],
+  providers: [InsightsService, InsightsAssistantsService, InsightsReportsService, InsightsScheduleService, InsightsSnapshotService, InsightsPortfolioService],
   exports: [InsightsService, InsightsReportsService],
 })
 export class InsightsModule {}

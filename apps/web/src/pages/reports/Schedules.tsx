@@ -25,7 +25,8 @@ import {
   shorthands,
   tokens,
 } from '@fluentui/react-components';
-import { AddRegular, DeleteRegular, EditRegular, SendRegular } from '@fluentui/react-icons';
+import { AddRegular, ArrowDownloadRegular, DeleteRegular, EditRegular, OpenRegular, SendRegular } from '@fluentui/react-icons';
+import { useNavigate } from 'react-router';
 import {
   REPORT_CATALOGUE,
   REPORT_KEYS,
@@ -38,8 +39,9 @@ import {
   type ReportScheduleView,
   type ScheduleFrequency,
   type ScheduleRecipient,
+  type SentReportView,
 } from '@tvmf/shared';
-import { api, ApiError } from '../../api';
+import { api, apiDownload, ApiError } from '../../api';
 import { DataTable } from '../../components/DataTable';
 import { LoadError } from '../../components/records';
 import { EmptyState, TableSkeleton } from '../../components/states';
@@ -320,5 +322,109 @@ function ScheduleDialog({
         </form>
       </DialogSurface>
     </Dialog>
+  );
+}
+
+const SENT_STATUS: Record<SentReportView['status'], { label: string; color: 'success' | 'warning' | 'danger' | 'informative' }> = {
+  queued: { label: 'Waiting to go', color: 'informative' },
+  sent: { label: 'Sent', color: 'success' },
+  failed: { label: 'Failed', color: 'danger' },
+  skipped: { label: 'Not sent', color: 'warning' },
+};
+
+/** Reports › Sent (step 6b): every copy of a scheduled report emailed for this customer, newest first. */
+export function SentPanel({ tenantId }: { tenantId: string }) {
+  const s = useStyles();
+  const notify = useNotify();
+  const navigate = useNavigate();
+  const list = useQuery({ queryKey: ['report-sent', tenantId], queryFn: () => api<SentReportView[]>(`/t/${tenantId}/insights/schedules/sent`) });
+  const download = async (x: SentReportView) => {
+    try {
+      await apiDownload(`/t/${tenantId}/insights/schedules/sent/${x.id}/pdf`, x.pdf!.filename);
+    } catch (e) {
+      notify((e as Error).message, { intent: 'error' });
+    }
+  };
+  return (
+    <div className={s.root}>
+      <Text className={s.muted}>
+        Every scheduled report emailed for this customer, newest first. The PDF that went is kept for 90 days; after that, open the report for the same period.
+      </Text>
+      {list.isLoading ? (
+        <TableSkeleton rows={4} cols={5} />
+      ) : list.isError ? (
+        <LoadError message={(list.error as Error).message} />
+      ) : list.data!.length === 0 ? (
+        <EmptyState title="No reports sent yet" hint="Reports appear here once a schedule sends them, or after Send now on the Scheduled tab." />
+      ) : (
+        <DataTable minWidth={860}>
+          <TableHeader>
+            <TableRow>
+              <TableHeaderCell>When</TableHeaderCell>
+              <TableHeaderCell>Report</TableHeaderCell>
+              <TableHeaderCell>To</TableHeaderCell>
+              <TableHeaderCell>Status</TableHeaderCell>
+              <TableHeaderCell />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {list.data!.map((x) => (
+              <TableRow key={x.id}>
+                <TableCell>
+                  {when(x.at)}
+                  {x.sentBy && (
+                    <Text size={200} className={s.muted} block>
+                      Send now by {x.sentBy}
+                    </Text>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <Text weight="semibold">{x.reportTitle}</Text>
+                  <Text size={200} className={s.muted} block>
+                    {x.periodLabel}
+                  </Text>
+                </TableCell>
+                <TableCell>
+                  <div className={s.wrap}>
+                    {x.toName ?? x.toEmail}
+                    {x.toName && (
+                      <Text size={200} className={s.muted} block>
+                        {x.toEmail}
+                      </Text>
+                    )}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className={s.wrap} title={x.error ?? undefined}>
+                    <Badge appearance="tint" color={SENT_STATUS[x.status].color}>
+                      {SENT_STATUS[x.status].label}
+                    </Badge>
+                    {x.error && (
+                      <Text size={200} className={s.muted} block>
+                        {x.error.slice(0, 160)}
+                      </Text>
+                    )}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className={s.actions}>
+                    {x.path && (
+                      <Button size="small" appearance="subtle" icon={<OpenRegular />} onClick={() => navigate(x.path!)} aria-label={`Open the ${x.reportTitle} report for ${x.periodLabel}`}>
+                        Open report
+                      </Button>
+                    )}
+                    {x.pdf && (
+                      <Button size="small" appearance="subtle" icon={<ArrowDownloadRegular />} onClick={() => void download(x)} aria-label={`Download the PDF sent to ${x.toName ?? x.toEmail}`}>
+                        PDF sent
+                      </Button>
+                    )}
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </DataTable>
+      )}
+    </div>
   );
 }
