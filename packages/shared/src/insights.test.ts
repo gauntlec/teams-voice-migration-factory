@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   customerGoLiveStatus,
   daysBetween,
+  goLiveDate,
   goLivePlan,
   insightsPeriod,
   insightsPeriodQuerySchema,
@@ -143,5 +144,14 @@ describe('goLivePlan', () => {
   it('counts each site’s users from its target date', () => {
     const sites = [{ users: 5, live: true, targetGoLive: null }, { users: 10, live: false, targetGoLive: '2026-11-19' }, { users: 7, live: false, targetGoLive: null }];
     expect(goLivePlan(sites, ['2026-11-18', '2026-11-19', '2026-12-01'])).toEqual([5, 15, 15]);
+  });
+});
+
+describe('goLiveDate', () => {
+  it('reads a real YYYY-MM-DD date and nothing else', () => {
+    expect(goLiveDate('2026-12-03')).toBe('2026-12-03');
+    expect(goLiveDate('2026-02-30')).toBeNull();
+    expect(goLiveDate('Q3 2026')).toBeNull();
+    expect(goLiveDate(undefined)).toBeNull();
   });
 });

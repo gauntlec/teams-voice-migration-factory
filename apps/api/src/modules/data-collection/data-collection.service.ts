@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { sql } from 'kysely';
 import { platformDb, setHandsetStage, siteHandsets, tenantDb } from '@tvmf/db';
-import { asSiteRegion, contactUserIds, handsetModelKey, type SiteContact, type SiteContacts, type SiteHandsetStatusInput } from '@tvmf/shared';
+import { asSiteRegion, contactUserIds, goLiveDate, handsetModelKey, type SiteContact, type SiteContacts, type SiteHandsetStatusInput } from '@tvmf/shared';
 import type {
   DiscoveryFlowInput,
   DiscoveryListQuery,
@@ -312,7 +312,7 @@ export class DataCollectionService {
   ) {
     const site = await this.scoped(t)
       .selectFrom('discovery_sites')
-      .select(['id', 'overview', 'region'])
+      .select(['id', 'overview', 'region', 'first_go_live'])
       .where('id', '=', siteId)
       .executeTakeFirst();
     if (!site) throw new NotFoundException('site not found');
@@ -354,9 +354,16 @@ export class DataCollectionService {
       delete next.assignedUserIds;
       delete next.primaryContactEmail;
     }
+    // Insights (docs/INSIGHTS.md) keeps the date first agreed, so a moved go-live date shows what was promised.
+    const goLive = goLiveDate(next.targetGoLive);
+    const goLiveMoved = 'targetGoLive' in patch && goLive !== goLiveDate((site.overview as DiscoverySiteOverview | null)?.targetGoLive);
     const row = await this.scoped(t)
       .updateTable('discovery_sites')
-      .set({ overview: next, ...(region !== undefined ? { region: region || null } : {}) })
+      .set({
+        overview: next,
+        ...(region !== undefined ? { region: region || null } : {}),
+        ...(goLiveMoved ? { first_go_live: goLive ? (site.first_go_live ? sql<string>`first_go_live` : goLive) : null, go_live_changed_at: new Date().toISOString(), go_live_changed_by: user.id } : {}),
+      })
       .where('id', '=', siteId)
       .returning(['id', 'overview', 'region'])
       .executeTakeFirstOrThrow();

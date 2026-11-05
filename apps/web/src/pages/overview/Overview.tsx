@@ -292,7 +292,7 @@ function Kpis({ m, prev, history, can }: { m: CustomerMetrics; prev?: CustomerMe
     label: 'Users live',
     value: fmt(g.usersLive),
     of: `/ ${fmt(g.users)}`,
-    delta: usersChange === null ? undefined : { text: `${signed(usersChange)} in 30 days`, good: usersChange === 0 ? null : usersChange > 0 },
+    delta: usersChange === null ? undefined : usersChange === 0 ? { text: 'No change in 30 days', good: null } : { text: `${signed(usersChange)} in 30 days`, good: usersChange > 0 },
     note: usersChange === null ? `${pctOf(g.usersLive, g.users)}% of users` : undefined,
     spark: history.map((p) => p.usersLive).concat(g.usersLive),
     to: deliveryLink,
@@ -313,7 +313,12 @@ function Kpis({ m, prev, history, can }: { m: CustomerMetrics; prev?: CustomerMe
       key: 'targets',
       label: 'Incident targets met',
       value: now === null ? '–' : `${now}%`,
-      delta: now !== null && before !== null ? { text: `${now >= before ? '▲' : '▼'} ${Math.abs(Math.round((now - before) * 10) / 10)} pts`, good: now === before ? null : now > before } : undefined,
+      delta:
+        now !== null && before !== null
+          ? now === before
+            ? { text: 'No change', good: null }
+            : { text: `${now > before ? '▲' : '▼'} ${Math.abs(Math.round((now - before) * 10) / 10)} pts`, good: now > before }
+          : undefined,
       note: now === null ? 'None measured in 30 days' : `${m.incidents.targetsMeasured} targets in 30 days`,
       to: '/incidents',
     });

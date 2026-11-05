@@ -136,7 +136,7 @@ export interface SiteMetrics {
   users: number;
   /** phone numbers in the site's number ranges */
   numbers: number;
-  /** YYYY-MM-DD */
+  /** YYYY-MM-DD, from the site overview's Target go-live field */
   targetGoLive: string | null;
   /** the date first agreed (YYYY-MM-DD), kept when the target moves */
   firstGoLive: string | null;
@@ -305,15 +305,15 @@ export const insightsHistoryQuerySchema = z
   .refine((q) => !q.from || !q.to || q.from <= q.to, { message: 'from must not be after to' });
 export type InsightsHistoryQuery = z.infer<typeof insightsHistoryQuerySchema>;
 
-/** PUT .../sites/:siteId/go-live - set, move or clear a site's target go-live date. */
-export const siteGoLiveSchema = z
-  .object({
-    targetGoLive: ymd.nullable(),
-    /** why the date moved; recorded in the audit log */
-    reason: z.string().trim().max(500).optional(),
-  })
-  .strict();
-export type SiteGoLiveInput = z.infer<typeof siteGoLiveSchema>;
+/**
+ * A site's go-live date from its overview's "Target go-live" field (DiscoverySiteOverview.targetGoLive): YYYY-MM-DD when it
+ * holds a real date, otherwise null. Older sites may hold free text ("Q3 2026"), which counts as no date.
+ */
+export function goLiveDate(value: unknown): string | null {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const d = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value ? value : null;
+}
 
 /**
  * The period for ?from=&to= (both YYYY-MM-DD, `to` inclusive): defaults to the 30 days up to and including today.

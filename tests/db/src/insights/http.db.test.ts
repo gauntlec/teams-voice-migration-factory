@@ -1,5 +1,5 @@
-// The Insights routes over real HTTP with the real module wiring and guards: the figures and history answer, a bad period
-// is refused, and only people who manage sites can set a go-live date. Only Redis is replaced.
+// The Insights routes over real HTTP with the real module wiring and guards: the figures, history and a site's go-live date
+// answer, and a bad period is refused. Only Redis is replaced.
 import 'reflect-metadata';
 import type { AddressInfo } from 'node:net';
 import { Global, Module } from '@nestjs/common';
@@ -93,16 +93,11 @@ describe('Insights over HTTP', () => {
     expect(await h.json()).toEqual([]);
   });
 
-  it('lets an admin set a go-live date, and a customer only read it', async () => {
-    const set = await call(adminToken, `/sites/${siteId}/go-live`, { method: 'PUT', body: JSON.stringify({ targetGoLive: '2026-12-03' }) });
-    expect(set.status).toBe(200);
-    expect(await set.json()).toMatchObject({ targetGoLive: '2026-12-03', firstGoLive: '2026-12-03' });
-
-    expect((await call(customerToken, `/sites/${siteId}/go-live`, { method: 'PUT', body: JSON.stringify({ targetGoLive: '2026-12-10' }) })).status).toBe(403);
+  it('gives a customer the site’s go-live date, read from its overview', async () => {
+    await c.s.updateTable('discovery_sites').set({ overview: JSON.stringify({ targetGoLive: '2026-12-03' }) as never }).where('id', '=', siteId).execute();
     const read = await call(customerToken, `/sites/${siteId}/go-live`);
     expect(read.status).toBe(200);
     expect(await read.json()).toMatchObject({ targetGoLive: '2026-12-03' });
-
-    expect((await call(adminToken, `/sites/${siteId}/go-live`, { method: 'PUT', body: JSON.stringify({ targetGoLive: '3 Dec' }) })).status).toBe(400);
+    expect((await call(customerToken, `/sites/${siteId}/go-live`, { method: 'PUT', body: '{}' })).status).toBe(404);
   });
 });

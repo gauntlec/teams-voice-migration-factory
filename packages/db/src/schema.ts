@@ -453,9 +453,10 @@ export interface DiscoverySitesTable {
   submitted_at: string | null;
   accepted_by: string | null;
   accepted_at: string | null;
-  /** Target go-live date (migration 0084), YYYY-MM-DD - read it with to_char, pg would turn a date into a local-time Date. */
-  target_go_live: string | null;
-  /** The date first agreed; kept when the target moves. */
+  /**
+   * The go-live date first agreed (migration 0084), kept when the overview's Target go-live moves (0085 folded a separate
+   * target column back into that field). YYYY-MM-DD - read it with to_char, pg would turn a date into a local-time Date.
+   */
   first_go_live: string | null;
   go_live_changed_at: string | null;
   go_live_changed_by: string | null;

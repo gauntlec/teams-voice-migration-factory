@@ -34,7 +34,7 @@ brand colour and dark mode. It came in with step 2, the first chart, rather than
 
 | Part | What it holds | Source |
 | --- | --- | --- |
-| `migration` | sites, sites live and in service, sites by stage, users and numbers in scope and live, port requests, next go-live, programme end, overall status, and one row per site | the home-page progress rules (`ProgressService`, `deriveSiteProgress`), `build_users` / `discovery_users`, `phone_numbers`, `number_port_requests`, `discovery_sites.target_go_live` |
+| `migration` | sites, sites live and in service, sites by stage, users and numbers in scope and live, port requests, next go-live, programme end, overall status, and one row per site | the home-page progress rules (`ProgressService`, `deriveSiteProgress`), `build_users` / `discovery_users`, `phone_numbers`, `number_port_requests`, the site overview's Target go-live |
 | `changes` | changes applied, failed and skipped in the customer's Teams tenant by live runs in the period, and the first-time success rate | `deployment_changes` joined to `deployments` (mode `execute`) |
 | `incidents` | raised, resolved, open (P1, P2), response and restoration targets met, median time to acknowledge and restore | `IncidentReportService.report`, plus a count of open incidents by priority |
 | `serviceRequests` | raised, completed (by an assistant), open, median time to complete, completion targets met | `ServiceRequestsService.report` |
@@ -58,20 +58,23 @@ brand colour and dark mode. It came in with step 2, the first chart, rather than
 
 ## Go-live dates
 
-Each site has an optional **target go-live date**.
+A site's go-live date is the **Target go-live** field it already had: **Site Data > (the site) > Overview**, stored as
+`discovery_sites.overview->>'targetGoLive'`.
 
-- **Who sets it:** project managers, engineers and admins (`discovery:sites:manage`), in **Site Data > (the site)**, next to
-  the number summary.
-- **Who sees it:** anyone who can open the site.
-- **Routes:**
-  - `GET /t/:tenantId/insights/sites/:siteId/go-live`
-  - `PUT /t/:tenantId/insights/sites/:siteId/go-live`, with body `{ targetGoLive: 'YYYY-MM-DD' | null, reason? }`
-- **First agreed date:** the first date given is kept as `first_go_live`, so a moved date can show what was agreed.
-  Clearing the date clears both.
-- **Audit:** every change is recorded in the customer's audit log as `discovery.site_go_live_set`, with the old date, the
-  new date and the reason.
-- **Not Site Data:** setting the date is a project decision. It does not change the site's review status and is not
-  listed as a change since submission.
+- **Who sets it:** project managers, engineers and admins (`discovery:sites:manage`). Customers see it.
+- **Where else it appears:** in handover packs, and on the site page next to the number summary
+  (`GET /t/:tenantId/insights/sites/:siteId/go-live`). For people who can set it, **Change** opens the Overview tab.
+- **Only real dates count:** older sites may hold free text ("Q3 2026"). That counts as no date (`goLiveDate`) until a
+  real date replaces it.
+- **First agreed date:** saving the overview keeps `first_go_live`, the date first agreed, so a moved date can show
+  "first agreed …". It is set the first time a date is given, kept when the date moves, and cleared when the date is
+  cleared. Changes are recorded like any other overview change (audit log, and "changed since submitted" on a submitted
+  site).
+
+Step 1 (tenant migration `0084`) first added a separate `target_go_live` column with its own date control. That
+duplicated this field, and was found when step 2 was checked on www. Migration `0085` folds the column back into the
+overview field and removes it. A date set through the column in the minutes it existed is kept, where the overview had
+no date. The same migration starts `first_go_live` from each site's current date.
 
 ### Go-live status
 
@@ -158,5 +161,5 @@ That makes both themes and customer branding work. Loading shows a skeleton of t
 ## Tests
 
 - `packages/shared/src/insights.test.ts`: the go-live rules, the customer status, periods and snapshot totals.
-- `tests/db/src/insights/insights.db.test.ts`: the queries behind the figures, go-live dates (first date kept, audit,
-  Site Data review untouched, site scope), what each role sees, one snapshot a day, history, and removing old snapshots.
+- `tests/db/src/insights/insights.db.test.ts`: the queries behind the figures, go-live dates (read from the overview, first date kept,
+  free text ignored, site scope), what each role sees, one snapshot a day, history, and removing old snapshots.
