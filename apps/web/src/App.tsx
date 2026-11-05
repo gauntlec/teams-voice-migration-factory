@@ -32,6 +32,7 @@ import { AdminPlatformSettings } from './pages/admin/PlatformSettings';
 import { AdminSso } from './pages/admin/Sso';
 import { FeatureRequests } from './pages/FeatureRequests';
 import { MspIncidents } from './pages/MspIncidents';
+import { MspReporting } from './pages/MspReporting';
 import { MspServiceRequests } from './pages/MspServiceRequests';
 import { IncidentNew } from './pages/IncidentNew';
 import { IncidentPage } from './pages/IncidentPage';
@@ -232,6 +233,14 @@ export function App() {
           element={
             <RequirePermission permission="inc:msp">
               <MspIncidents />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="/msp/reporting"
+          element={
+            <RequirePermission permission="insights:portfolio">
+              <MspReporting />
             </RequirePermission>
           }
         />

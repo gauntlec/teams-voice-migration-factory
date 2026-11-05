@@ -21,8 +21,8 @@ promised, are:
 | 5 | All-customers view, Portfolio report, Present mode | **Live** (2026.11.10) |
 | 6a | Assistant activity report (promised in step 5) | **Live** (2026.11.12) |
 | 6b | Reports › Sent: every scheduled report sent, kept to look back on (promised in step 4) | **Live** (2026.11.12) |
-| 6c | A site filter on the reports (promised in step 3) | **Built** (section below) |
-| 6d | Device availability over the report's period, not just the last 24 hours (promised in step 3) | **Built** (section below) |
+| 6c | A site filter on the reports (promised in step 3) | **Live** (2026.11.13) |
+| 6d | Device availability over the report's period, not just the last 24 hours (promised in step 3) | **Live** (2026.11.13) |
 
 The charts use Fluent UI's chart library (`@fluentui/react-charts`, pinned), so they follow the app theme, the customer's
 brand colour and dark mode. It came in with step 2, the first chart, rather than shipping unused in step 1.
@@ -266,7 +266,7 @@ then the hub refuses the message, which the email log shows as failed.
 
 ## All customers and Present mode (step 5)
 
-**Home › All customers** is for staff who work across customers (`insights:portfolio`: admins, project managers and
+**MSP › Customer reporting** (`/msp/reporting`) is for staff who work across customers (`insights:portfolio`: admins, project managers and
 engineers, with more than one customer). It shows every customer the person can open: every active customer for a
 Super Admin, the customers they are a member of for other staff. Each row comes from that customer's own Overview
 figures, worked out as that person (`InsightsPortfolioService`, `GET /insights/portfolio`, cached for a minute).
@@ -282,11 +282,13 @@ figures, worked out as that person (`InsightsPortfolioService`, `GET /insights/p
 - **Portfolio report** (`buildPortfolioReport`): a headline, the totals and the customers table. Download it as a PDF
   (`GET /insights/portfolio/pdf`) or export it to Excel.
 
-**Present** (Home, on Overview and All customers) shows the page full screen and a size up, for a meeting-room screen.
+**Present** shows the page full screen and a size up, for a meeting-room screen.
 
-- From **Overview** it presents the customer.
-- From **All customers** it presents the All customers view, then each customer's Overview in turn, every 20 seconds,
-  with a progress bar.
+- **Home › Overview** presents the active customer only. Home is about the active customer: its tabs are Overview and
+  My work (5 Nov 2026: All customers moved from Home to the MSP section, so the migration menu shows only the customer
+  you are working on).
+- **MSP › Customer reporting** presents the All customers view, then each customer's Overview in turn, every 20
+  seconds, with a progress bar.
 - The arrow keys move between slides, space pauses and Esc leaves. Each slide is the live page, so its figures are
   current. Leaving full screen ends Present mode.
 
