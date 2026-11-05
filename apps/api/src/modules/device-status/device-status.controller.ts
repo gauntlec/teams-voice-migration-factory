@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { deviceAlertSettingsSchema, deviceAutoSetupSchema, deviceInventoryInputSchema, deviceMonitorSettingsSchema, type DeviceAlertSettingsInput, type DeviceAutoSetupInput, type DeviceInventoryInput, type DeviceMonitorSettingsInput } from '@tvmf/shared';
 import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
 import type { AuthedUser, TenantContext } from '../../common/request';
@@ -8,6 +8,7 @@ import { RequireFeature } from '../../common/feature.guard';
 import { TenantGuard } from '../../rbac/tenant.guard';
 import { MonitoringEnabledGuard } from './monitoring-enabled.guard';
 import { DeviceStatusService } from './device-status.service';
+import { narrowToSite } from '../data-collection/site-scope';
 
 /**
  * Device status (docs/DEVICE-MONITORING.md): what Voxshift last read from the customer's Uptime Kuma status page, the list of devices to watch,
@@ -22,8 +23,9 @@ export class DeviceStatusController {
 
   @Get()
   @RequirePermission('monitoring:read')
-  overview(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser) {
-    return this.svc.overview(t, u);
+  overview(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Query('site', new ParseUUIDPipe({ optional: true })) site?: string) {
+    // the Reports page's site filter (Device status report)
+    return this.svc.overview(narrowToSite(t, site), u);
   }
 
   @Get('alerts')

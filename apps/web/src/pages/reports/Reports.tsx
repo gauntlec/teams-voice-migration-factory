@@ -40,6 +40,7 @@ import {
   utcDay,
   type AssistantActivityData,
   type ChangeLogData,
+  type DeviceAvailabilityData,
   type CustomerMetrics,
   type DeviceStatusOverview,
   type IncidentReportData,
@@ -209,12 +210,13 @@ function usePeriod() {
   const today = utcDay();
   const { period, preset: choice } = reportQueryPeriod({ period: params.get('period'), from: params.get('from'), to: params.get('to') }, today);
   const compare = params.get('compare') !== '0';
+  const site = params.get('site');
   const set = (next: Record<string, string | null>) => {
     const p = new URLSearchParams(params);
     for (const [k, v] of Object.entries(next)) v === null ? p.delete(k) : p.set(k, v);
     setParams(p, { replace: true });
   };
-  return { choice, period, compare, today, set, query: params.toString() };
+  return { choice, period, compare, site, today, set, query: params.toString() };
 }
 
 /** One report: its period, the comparison, the exports, and the report itself. */
@@ -226,10 +228,16 @@ export function ReportPage() {
   const { me, activeTenantId, can } = useAuth();
   useCustomerFromLink();
   const tenant = me?.tenants.find((t) => t.id === activeTenantId);
-  const { choice, period, compare, today, set, query } = usePeriod();
+  const { choice, period, compare, site, today, set, query } = usePeriod();
   const reportKey = (REPORT_KEYS as readonly string[]).includes(key ?? '') ? (key as ReportKey) : null;
   const usable = !!reportKey && !!tenant && reportAvailable(reportKey, can, tenant);
-  const doc = useReport(usable ? reportKey : null, activeTenantId ?? '', period, compare, today);
+  // the site filter (step 6c): the sites the person can see, from the Overview figures
+  const sitesQ = useQuery({ queryKey: ['insights', activeTenantId, 'metrics'], enabled: usable && !!activeTenantId, queryFn: () => api<CustomerMetrics>(`/t/${activeTenantId}/insights/metrics`) });
+  const sites = useMemo(() => [...(sitesQ.data?.migration.siteList ?? [])].sort((a, b) => a.sitecode.localeCompare(b.sitecode)), [sitesQ.data]);
+  const siteRow = site ? sites.find((x) => x.id === site) : undefined;
+  const siteLabel = siteRow ? [siteRow.sitecode, siteRow.name].filter(Boolean).join(' ') : undefined;
+  const raw = useReport(usable ? reportKey : null, activeTenantId ?? '', period, compare, today, site);
+  const doc = useMemo(() => ({ ...raw, data: raw.data && site ? { ...raw.data, site: siteLabel ?? 'One site' } : raw.data }), [raw, site, siteLabel]);
 
   if (!activeTenantId || !tenant) return <NoTenant />;
   if (!reportKey || !usable) {
@@ -258,7 +266,7 @@ export function ReportPage() {
   return (
     <Page
       title={meta.title}
-      subtitle={doc.data ? `${reportPeriodLabel(doc.data.period)}${doc.data.comparedWith ? `, compared with ${reportPeriodLabel(doc.data.comparedWith)}` : ''} · ${doc.data.summary}` : meta.description}
+      subtitle={doc.data ? `${doc.data.site ? `${doc.data.site} · ` : ''}${reportPeriodLabel(doc.data.period)}${doc.data.comparedWith ? `, compared with ${reportPeriodLabel(doc.data.comparedWith)}` : ''} · ${doc.data.summary}` : meta.description}
       actions={
         <RouterLink to="/reports">
           <Button appearance="subtle" icon={<ArrowLeftRegular />}>
@@ -297,10 +305,26 @@ export function ReportPage() {
                 </Field>
               </>
             )}
-            {(reportKey === 'incidents' || reportKey === 'service-requests') && (
+            {(reportKey === 'incidents' || reportKey === 'service-requests' || reportKey === 'assistants' || reportKey === 'devices') && (
               <Switch label="Compare with the period before" checked={compare} onChange={(_, d) => set({ compare: d.checked ? null : '0' })} />
             )}
           </>
+        )}
+        {sites.length > 1 && (
+          <Field label="Site" className={s.period}>
+            <Dropdown
+              value={siteLabel ?? 'All sites'}
+              selectedOptions={[site ?? 'all']}
+              onOptionSelect={(_, d) => set({ site: !d.optionValue || d.optionValue === 'all' ? null : d.optionValue })}
+            >
+              <Option value="all">All sites</Option>
+              {sites.map((x) => (
+                <Option key={x.id} value={x.id} text={[x.sitecode, x.name].filter(Boolean).join(' ')}>
+                  {[x.sitecode, x.name].filter(Boolean).join(' ')}
+                </Option>
+              ))}
+            </Dropdown>
+          </Field>
         )}
         <span className={s.spacer} />
         <Button appearance="primary" icon={<DocumentPdfRegular />} disabled={!doc.data} onClick={() => void exportAs('pdf')}>
@@ -326,55 +350,68 @@ export function ReportPage() {
 }
 
 /** Fetches what a report needs (and the previous period, when comparing) and builds its document. */
-function useReport(key: ReportKey | null, tenantId: string, period: ReportPeriod, compare: boolean, today: string): { data?: ReportDocument; isLoading: boolean; error: Error | null } {
+function useReport(key: ReportKey | null, tenantId: string, period: ReportPeriod, compare: boolean, today: string, site: string | null): { data?: ReportDocument; isLoading: boolean; error: Error | null } {
   const prevPeriod = useMemo(() => previousReportPeriod(period), [period]);
   const iso = reportPeriodQuery(period);
   const prevIso = reportPeriodQuery(prevPeriod);
   const t = `/t/${tenantId}`;
   const enabled = (k: ReportKey) => key === k;
-  const qs = (q: { from: string; to: string }) => `from=${encodeURIComponent(q.from)}&to=${encodeURIComponent(q.to)}`;
+  // ?site= narrows every read to that site (step 6c)
+  const sq = site ? `site=${encodeURIComponent(site)}` : '';
+  const and = sq ? `&${sq}` : '';
+  const qs = (q: { from: string; to: string }) => `from=${encodeURIComponent(q.from)}&to=${encodeURIComponent(q.to)}${and}`;
 
-  const metrics = useQuery({ queryKey: ['insights', tenantId, 'metrics'], enabled: enabled('migration'), queryFn: () => api<CustomerMetrics>(`${t}/insights/metrics`) });
+  const metrics = useQuery({ queryKey: ['insights', tenantId, 'metrics', site], enabled: enabled('migration'), queryFn: () => api<CustomerMetrics>(`${t}/insights/metrics${sq ? `?${sq}` : ''}`) });
   const execNow = useQuery({
-    queryKey: ['insights', tenantId, 'metrics', period.from, period.to],
+    queryKey: ['insights', tenantId, 'metrics', period.from, period.to, site],
     enabled: enabled('executive'),
-    queryFn: () => api<CustomerMetrics>(`${t}/insights/metrics?from=${period.from}&to=${period.to}`),
+    queryFn: () => api<CustomerMetrics>(`${t}/insights/metrics?from=${period.from}&to=${period.to}${and}`),
   });
   const execBefore = useQuery({
-    queryKey: ['insights', tenantId, 'metrics', prevPeriod.from, prevPeriod.to],
+    queryKey: ['insights', tenantId, 'metrics', prevPeriod.from, prevPeriod.to, site],
     enabled: enabled('executive'),
-    queryFn: () => api<CustomerMetrics>(`${t}/insights/metrics?from=${prevPeriod.from}&to=${prevPeriod.to}`),
+    queryFn: () => api<CustomerMetrics>(`${t}/insights/metrics?from=${prevPeriod.from}&to=${prevPeriod.to}${and}`),
   });
   const execHistory = useQuery({
-    queryKey: ['insights', tenantId, 'history', prevPeriod.from, period.to],
+    queryKey: ['insights', tenantId, 'history', prevPeriod.from, period.to, site],
     enabled: enabled('executive'),
-    queryFn: () => api<MetricHistoryPoint[]>(`${t}/insights/history?from=${prevPeriod.from}&to=${period.to}`),
+    queryFn: () => api<MetricHistoryPoint[]>(`${t}/insights/history?from=${prevPeriod.from}&to=${period.to}${and}`),
   });
   const history = useQuery({
-    queryKey: ['insights', tenantId, 'history', period.from, period.to],
+    queryKey: ['insights', tenantId, 'history', period.from, period.to, site],
     enabled: enabled('migration'),
-    queryFn: () => api<MetricHistoryPoint[]>(`${t}/insights/history?from=${period.from}&to=${period.to}`),
+    queryFn: () => api<MetricHistoryPoint[]>(`${t}/insights/history?from=${period.from}&to=${period.to}${and}`),
   });
-  const inc = useQuery({ queryKey: ['report', 'incidents', tenantId, iso.from, iso.to], enabled: enabled('incidents'), queryFn: () => api<IncidentReportData>(`${t}/incidents/report?${qs(iso)}`) });
+  const inc = useQuery({ queryKey: ['report', 'incidents', tenantId, iso.from, iso.to, site], enabled: enabled('incidents'), queryFn: () => api<IncidentReportData>(`${t}/incidents/report?${qs(iso)}`) });
   const incPrev = useQuery({
-    queryKey: ['report', 'incidents', tenantId, prevIso.from, prevIso.to],
+    queryKey: ['report', 'incidents', tenantId, prevIso.from, prevIso.to, site],
     enabled: enabled('incidents') && compare,
     queryFn: () => api<IncidentReportData>(`${t}/incidents/report?${qs(prevIso)}`),
   });
-  const sr = useQuery({ queryKey: ['report', 'sr', tenantId, iso.from, iso.to], enabled: enabled('service-requests'), queryFn: () => api<ServiceRequestReportData>(`${t}/service-requests/report?${qs(iso)}`) });
+  const sr = useQuery({ queryKey: ['report', 'sr', tenantId, iso.from, iso.to, site], enabled: enabled('service-requests'), queryFn: () => api<ServiceRequestReportData>(`${t}/service-requests/report?${qs(iso)}`) });
   const srPrev = useQuery({
-    queryKey: ['report', 'sr', tenantId, prevIso.from, prevIso.to],
+    queryKey: ['report', 'sr', tenantId, prevIso.from, prevIso.to, site],
     enabled: enabled('service-requests') && compare,
     queryFn: () => api<ServiceRequestReportData>(`${t}/service-requests/report?${qs(prevIso)}`),
   });
-  const assistants = useQuery({ queryKey: ['report', 'assistants', tenantId, period.from, period.to], enabled: enabled('assistants'), queryFn: () => api<AssistantActivityData>(`${t}/insights/assistants?from=${period.from}&to=${period.to}`) });
+  const assistants = useQuery({ queryKey: ['report', 'assistants', tenantId, period.from, period.to, site], enabled: enabled('assistants'), queryFn: () => api<AssistantActivityData>(`${t}/insights/assistants?from=${period.from}&to=${period.to}${and}`) });
   const assistantsPrev = useQuery({
-    queryKey: ['report', 'assistants', tenantId, prevPeriod.from, prevPeriod.to],
+    queryKey: ['report', 'assistants', tenantId, prevPeriod.from, prevPeriod.to, site],
     enabled: enabled('assistants') && compare,
-    queryFn: () => api<AssistantActivityData>(`${t}/insights/assistants?from=${prevPeriod.from}&to=${prevPeriod.to}`),
+    queryFn: () => api<AssistantActivityData>(`${t}/insights/assistants?from=${prevPeriod.from}&to=${prevPeriod.to}${and}`),
   });
-  const changes = useQuery({ queryKey: ['report', 'changes', tenantId, period.from, period.to], enabled: enabled('changes'), queryFn: () => api<ChangeLogData>(`${t}/insights/changes?from=${period.from}&to=${period.to}`) });
-  const devices = useQuery({ queryKey: ['report', 'devices', tenantId], enabled: enabled('devices'), queryFn: () => api<DeviceStatusOverview>(`${t}/device-status`) });
+  const changes = useQuery({ queryKey: ['report', 'changes', tenantId, period.from, period.to, site], enabled: enabled('changes'), queryFn: () => api<ChangeLogData>(`${t}/insights/changes?from=${period.from}&to=${period.to}${and}`) });
+  const availability = useQuery({
+    queryKey: ['report', 'device-availability', tenantId, period.from, period.to, site],
+    enabled: enabled('devices'),
+    queryFn: () => api<DeviceAvailabilityData>(`${t}/insights/devices/availability?from=${period.from}&to=${period.to}${and}`),
+  });
+  const availabilityPrev = useQuery({
+    queryKey: ['report', 'device-availability', tenantId, prevPeriod.from, prevPeriod.to, site],
+    enabled: enabled('devices') && compare,
+    queryFn: () => api<DeviceAvailabilityData>(`${t}/insights/devices/availability?from=${prevPeriod.from}&to=${prevPeriod.to}${and}`),
+  });
+  const devices = useQuery({ queryKey: ['report', 'devices', tenantId, site], enabled: enabled('devices'), queryFn: () => api<DeviceStatusOverview>(`${t}/device-status${sq ? `?${sq}` : ''}`) });
 
   const pick = (...qs2: { isLoading: boolean; error: unknown }[]) => ({ isLoading: qs2.some((q) => q.isLoading), error: (qs2.find((q) => q.error)?.error as Error | undefined) ?? null });
   switch (key) {
@@ -400,7 +437,13 @@ function useReport(key: ReportKey | null, tenantId: string, period: ReportPeriod
     case 'changes':
       return { ...pick(changes), data: changes.data ? buildChangeLogReport(changes.data, period) : undefined };
     case 'devices':
-      return { ...pick(devices), data: devices.data ? buildDeviceReport(devices.data.devices, today) : undefined };
+      return {
+        ...pick(devices, availability, ...(compare ? [availabilityPrev] : [])),
+        data:
+          devices.data && availability.data && (!compare || availabilityPrev.data)
+            ? buildDeviceReport(devices.data.devices, today, { period, data: availability.data, before: compare ? (availabilityPrev.data ?? null) : null, comparedWith: prevPeriod })
+            : undefined,
+      };
     default:
       return { isLoading: false, error: null };
   }

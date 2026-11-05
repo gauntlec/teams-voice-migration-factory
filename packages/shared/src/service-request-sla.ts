@@ -203,6 +203,8 @@ export const serviceRequestReportQuerySchema = z
   .object({
     from: z.string().regex(/^\d{4}-\d{2}-\d{2}/),
     to: z.string().regex(/^\d{4}-\d{2}-\d{2}/),
+    /** the Reports page's site filter */
+    site: z.guid().optional(),
   })
   .strict();
 export type ServiceRequestReportQuery = z.infer<typeof serviceRequestReportQuerySchema>;

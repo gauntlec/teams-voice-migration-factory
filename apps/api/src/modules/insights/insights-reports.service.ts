@@ -25,7 +25,7 @@ import {
 } from '@tvmf/shared';
 import type { TenantContext } from '../../common/request';
 import { InjectDb, type Db } from '../../db/db.module';
-import { isSiteScoped } from '../data-collection/site-scope';
+import { isSiteScoped, narrowToSite } from '../data-collection/site-scope';
 import { IncidentReportService } from '../incidents/incident-report.service';
 import { ServiceRequestsService } from '../service-requests/service-requests.service';
 import { InsightsAssistantsService } from './insights-assistants.service';
@@ -52,6 +52,14 @@ export class InsightsReportsService {
     if (!reportAvailableFor(k, allowed, { managedServices: t.managedServices, monitoring: !!t.monitoringEnabled })) {
       throw new ForbiddenException('This report isn’t available for this customer, or for your role.');
     }
+    const doc = await this.buildFor(narrowToSite(t, q.site), role, k, q, now);
+    if (!q.site) return doc;
+    const site = await tenantDb(this.db, t.schema).selectFrom('discovery_sites').select(['sitecode', 'name']).where('id', '=', q.site).executeTakeFirst();
+    if (!site) throw new NotFoundException('No such site.');
+    return { ...doc, site: [site.sitecode, site.name].filter(Boolean).join(' ') };
+  }
+
+  private async buildFor(t: TenantContext, role: Role, k: ReportKey, q: ReportQuery, now: Date): Promise<ReportDocument> {
     const today = utcDay(now);
     const { period } = reportQueryPeriod(q, today);
     const prev = previousReportPeriod(period);
@@ -100,7 +108,8 @@ export class InsightsReportsService {
           const ok = new Set(sites.map((x) => x.sitecode.toLowerCase()));
           devices = devices.filter((d) => d.sitecode !== null && ok.has(d.sitecode.toLowerCase()));
         }
-        return buildDeviceReport(devices, today);
+        const [data, before] = await Promise.all([this.insights.deviceAvailability(t, period, now), compare ? this.insights.deviceAvailability(t, prev, now) : Promise.resolve(null)]);
+        return buildDeviceReport(devices, today, { period, data, before, comparedWith: prev });
       }
     }
   }

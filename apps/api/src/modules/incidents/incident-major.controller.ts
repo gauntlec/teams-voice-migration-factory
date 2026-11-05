@@ -33,6 +33,7 @@ import { IncidentMajorService } from './incident-major.service';
 import { IncidentReportService } from './incident-report.service';
 import { IncidentReviewService } from './incident-review.service';
 import { ProblemsService } from './problems.service';
+import { narrowToSite } from '../data-collection/site-scope';
 
 /**
  * Major incidents, child incidents, problem records, post-incident reviews, customer notices
@@ -67,7 +68,7 @@ export class IncidentMajorController {
   @Get('report')
   @RequirePermission('inc:read')
   report(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Query(new ZodBody(incidentReportQuerySchema)) q: IncidentReportQuery) {
-    return this.reports.report(t, q.from, q.to, can(user.role, 'inc:manage'));
+    return this.reports.report(narrowToSite(t, q.site), q.from, q.to, can(user.role, 'inc:manage'));
   }
 
   /** Active customer users on this customer - who can be a named stakeholder. */

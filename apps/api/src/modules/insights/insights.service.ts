@@ -12,6 +12,7 @@ import {
   snapshotPoint,
   utcDay,
   type ChangeLogData,
+  type DeviceAvailabilityData,
   type CustomerMetrics,
   type DeviceMetrics,
   type IncidentMetrics,
@@ -199,7 +200,12 @@ export class InsightsService {
       };
       if (m.incidents) data.incidents = { open: m.incidents.open, openP1: m.incidents.openP1, openP2: m.incidents.openP2 };
       if (m.serviceRequests) data.serviceRequests = { open: m.serviceRequests.open };
-      if (m.devices) data.devices = { monitored: m.devices.monitored, down: m.devices.down, availability24hPct: m.devices.availability24hPct };
+      if (m.devices) {
+        data.devices = { monitored: m.devices.monitored, down: m.devices.down, availability24hPct: m.devices.availability24hPct };
+        // each device's last 24 hours, so a report can average it over any period (step 6d)
+        const o = await deviceStatusOverview(s);
+        data.deviceUptime = o.devices.map((d) => ({ id: d.kumaId, name: d.name, sitecode: d.sitecode, uptime24h: d.uptime24h }));
+      }
       const res = await s
         .insertInto('metric_snapshots')
         .values({ day, data: JSON.stringify(data) as never })
@@ -210,6 +216,59 @@ export class InsightsService {
     const cutoff = utcDay(new Date(Date.parse(`${day}T00:00:00Z`) - MAX_SNAPSHOT_DAYS * DAY_MS));
     await s.deleteFrom('metric_snapshots').where('day', '<', cutoff).execute();
     return wrote;
+  }
+
+  /**
+   * Each device's availability over a period (the Device status report, step 6d): the mean of the daily readings of its last
+   * 24 hours in the snapshots. A site contact sees only their sites' devices.
+   */
+  async deviceAvailability(t: TenantContext, q: { from?: string; to?: string } = {}, now = new Date()): Promise<DeviceAvailabilityData> {
+    const to = q.to ?? utcDay(now);
+    const from = q.from ?? utcDay(new Date(Date.parse(`${to}T00:00:00Z`) - 29 * DAY_MS));
+    const s = tenantDb(this.db, t.schema);
+    const rows = await s
+      .selectFrom('metric_snapshots')
+      .select([sql<string>`to_char(day, 'YYYY-MM-DD')`.as('day'), 'data'])
+      .where('day', '>=', from)
+      .where('day', '<=', to)
+      .where(sql<boolean>`data ? 'deviceUptime'`)
+      .orderBy('day')
+      .execute();
+    const first = await s.selectFrom('metric_snapshots').select(sql<string>`to_char(min(day), 'YYYY-MM-DD')`.as('day')).where(sql<boolean>`data ? 'deviceUptime'`).executeTakeFirst();
+    let keep: ((sitecode: string | null) => boolean) | null = null;
+    if (isSiteScoped(t)) {
+      const sites = await s.selectFrom('discovery_sites').select('sitecode').where('id', 'in', t.siteScope).execute();
+      const allowed = new Set(sites.map((x) => x.sitecode.toLowerCase()));
+      keep = (sc) => sc !== null && allowed.has(sc.toLowerCase());
+    }
+    const byDevice = new Map<number, { name: string; sitecode: string | null; sum: number; days: number }>();
+    let sum = 0;
+    let n = 0;
+    for (const r of rows) {
+      for (const d of (r.data as MetricSnapshot).deviceUptime ?? []) {
+        if (keep && !keep(d.sitecode)) continue;
+        const e = byDevice.get(d.id) ?? { name: d.name, sitecode: d.sitecode, sum: 0, days: 0 };
+        // the newest name and site win
+        e.name = d.name;
+        e.sitecode = d.sitecode;
+        if (d.uptime24h !== null) {
+          e.sum += d.uptime24h;
+          e.days++;
+          sum += d.uptime24h;
+          n++;
+        }
+        byDevice.set(d.id, e);
+      }
+    }
+    const pct = (v: number, k: number) => (k ? Math.round((v / k) * 10000) / 100 : null);
+    return {
+      from,
+      to,
+      days: rows.length,
+      firstDay: first?.day ?? null,
+      devices: [...byDevice.values()].map((e) => ({ name: e.name, sitecode: e.sitecode, availabilityPct: pct(e.sum, e.days), days: e.days })),
+      availabilityPct: pct(sum, n),
+    };
   }
 
   /* ------------------------------ change log ------------------------------ */

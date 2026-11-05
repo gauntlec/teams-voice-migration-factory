@@ -22,6 +22,16 @@ export function assertCustomerWide(t: TenantContext, what: string): void {
   }
 }
 
+/**
+ * A report's site filter (`?site=`, docs/INSIGHTS.md step 6c): the same reads, narrowed to that one site the way a site
+ * contact's are. Refused when the site is outside what the caller may already see.
+ */
+export function narrowToSite<T extends TenantContext>(t: T, site: string | undefined | null): T {
+  if (!site) return t;
+  if (t.siteScope && t.siteScope.length && !t.siteScope.includes(site)) throw new ForbiddenException('That site is outside your access.');
+  return { ...t, siteScope: [site] };
+}
+
 /** true when reads/writes must be narrowed to `t.siteScope`. */
 export function isSiteScoped(t: TenantContext): t is TenantContext & { siteScope: string[] } {
   return Array.isArray(t.siteScope) && t.siteScope.length > 0;
