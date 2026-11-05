@@ -177,6 +177,8 @@ interface NavDef {
   requiresManagedServices?: boolean;
   /** Only shown when Monitoring is switched on for the active customer (Administration > Customers). */
   requiresMonitoring?: boolean;
+  /** Only shown to someone who works across more than one customer (or a Super Admin). */
+  requiresMultiCustomer?: boolean;
 }
 
 const MIGRATION: NavDef[] = [
@@ -207,6 +209,7 @@ const OPERATIONS: NavDef[] = [
 const MSP_ITEMS: NavDef[] = [
   { to: '/msp/incidents', label: 'Incident console', icon: <AlertOn24Regular />, permission: 'inc:msp' },
   { to: '/msp/service-requests', label: 'Service request admin', icon: <TaskListSquareLtr24Regular />, permission: 'sr:msp' },
+  { to: '/msp/reporting', label: 'Customer reporting', icon: <DataBarVertical24Regular />, permission: 'insights:portfolio', requiresMultiCustomer: true },
 ];
 
 /**
@@ -333,7 +336,9 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const managedServices = tenants.find((t) => t.id === activeTenantId)?.managedServices ?? false;
   const monitoringOn = tenants.find((t) => t.id === activeTenantId)?.monitoring ?? true;
-  const navVisible = (i: NavDef) => (!i.permission || can(i.permission)) && (!i.requiresManagedServices || managedServices) && (!i.requiresMonitoring || monitoringOn);
+  const multiCustomer = me?.role === 'SUPER_ADMIN' || (me?.tenants.length ?? 0) > 1;
+  const navVisible = (i: NavDef) =>
+    (!i.permission || can(i.permission)) && (!i.requiresManagedServices || managedServices) && (!i.requiresMonitoring || monitoringOn) && (!i.requiresMultiCustomer || multiCustomer);
   // No Operations heading unless there is something under it (Managed Services on for this customer, and a permission to see it).
   const operationsVisible = OPERATIONS.some(navVisible);
   const renderNav = (items: NavDef[]) =>
@@ -481,7 +486,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               {renderNav(OPERATIONS)}
             </>
           )}
-          {MSP_ITEMS.some((i) => !i.permission || can(i.permission)) && (
+          {MSP_ITEMS.some(navVisible) && (
             <>
               <div className={s.navSectionLabel}>MSP</div>
               {renderNav(MSP_ITEMS)}

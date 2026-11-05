@@ -65,7 +65,7 @@ function statusOf(r: PortfolioRow) {
 export const usePortfolio = () => useQuery({ queryKey: ['insights', 'portfolio'], queryFn: () => api<PortfolioData>('/insights/portfolio'), refetchInterval: 120_000 });
 
 /**
- * Home > All customers (docs/INSIGHTS.md, step 5): every customer the person can open, worst first, with the figures
+ * MSP › Customer reporting (docs/INSIGHTS.md, step 5): every customer the person can open, worst first, with the figures
  * from each customer's Overview. Selecting a customer opens its Overview.
  */
 /** `presenting`: drawn as a Present mode slide - no buttons, and rows don't open anything. */

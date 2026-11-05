@@ -111,33 +111,31 @@ type LinkFor = (key: ProgressStageViewKey, siteId: string) => string | null;
 
 // Loaded on their own: they bring the chart library, which no other page needs yet.
 const Overview = lazy(() => import('./overview/Overview').then((m) => ({ default: m.Overview })));
-const AllCustomers = lazy(() => import('./overview/AllCustomers').then((m) => ({ default: m.AllCustomers })));
 const Presenter = lazy(() => import('./overview/Presenter').then((m) => ({ default: m.Presenter })));
 
 const TAB_KEY = 'voxshift.home.tab';
-type HomeTab = 'overview' | 'all' | 'work';
+type HomeTab = 'overview' | 'work';
 const savedTab = (): HomeTab => {
   try {
     const v = localStorage.getItem(TAB_KEY);
-    return v === 'work' || v === 'all' ? v : 'overview';
+    // 'all' (All customers) moved to MSP › Customer reporting
+    return v === 'work' ? v : 'overview';
   } catch {
     return 'overview';
   }
 };
-const TAB_TITLE: Record<HomeTab, string> = { overview: 'Overview', all: 'All customers', work: 'My work' };
+const TAB_TITLE: Record<HomeTab, string> = { overview: 'Overview', work: 'My work' };
 
 /**
  * The home page: the Overview (docs/INSIGHTS.md) for anyone who wants the picture, and My work - the list of what needs
  * doing and every site's stages - for the people doing it. The tab last chosen is remembered in this browser.
  */
 export function Dashboard() {
-  const { me, activeTenantId, can, setActiveTenant } = useAuth();
+  const { me, activeTenantId, can } = useAuth();
   const activeTenant = me?.tenants.find((t) => t.id === activeTenantId);
-  // All customers is for staff who work across more than one customer.
-  const portfolio = can('insights:portfolio') && (me?.role === 'SUPER_ADMIN' || (me?.tenants.length ?? 0) > 1);
-  const [stored, setTab] = useState<HomeTab>(savedTab);
-  const tab: HomeTab = stored === 'all' && !portfolio ? 'overview' : stored;
-  const [presenting, setPresenting] = useState<'one' | 'all' | null>(null);
+  // Home is the active customer only; every customer together is MSP › Customer reporting.
+  const [tab, setTab] = useState<HomeTab>(savedTab);
+  const [presenting, setPresenting] = useState(false);
   const choose = (t: HomeTab) => {
     setTab(t);
     try {
@@ -168,18 +166,14 @@ export function Dashboard() {
     );
   }
 
-  // Presenting every customer: All customers first, then each customer's Overview in turn.
-  const slides =
-    presenting === 'all'
-      ? [{ key: 'all', title: 'All customers', tenantId: null }, ...(me?.tenants ?? []).map((t) => ({ key: t.id, title: t.name, tenantId: t.id }))]
-      : [{ key: activeTenantId, title: activeTenant.name, tenantId: activeTenantId }];
+  const slides = [{ key: activeTenantId, title: activeTenant.name, tenantId: activeTenantId }];
 
   return (
     <Page
       title={TAB_TITLE[tab]}
       actions={
-        tab !== 'work' ? (
-          <Button icon={<PresenterRegular />} onClick={() => setPresenting(tab === 'all' ? 'all' : 'one')}>
+        tab === 'overview' ? (
+          <Button icon={<PresenterRegular />} onClick={() => setPresenting(true)}>
             Present
           </Button>
         ) : undefined
@@ -187,26 +181,16 @@ export function Dashboard() {
     >
       <TabList selectedValue={tab} onTabSelect={(_, d) => choose(d.value as HomeTab)}>
         <Tab value="overview">Overview</Tab>
-        {portfolio && <Tab value="all">All customers</Tab>}
         <Tab value="work">My work{attention ? ` (${attention})` : ''}</Tab>
       </TabList>
       {presenting && (
         <Suspense fallback={null}>
-          <Presenter slides={slides} can={can} onClose={() => setPresenting(null)} />
+          <Presenter slides={slides} can={can} onClose={() => setPresenting(false)} />
         </Suspense>
       )}
       {tab === 'overview' ? (
         <Suspense fallback={<Spinner label="Loading the overview…" />}>
           <Overview tenantId={activeTenantId} can={can} />
-        </Suspense>
-      ) : tab === 'all' ? (
-        <Suspense fallback={<Spinner label="Loading every customer…" />}>
-          <AllCustomers
-            onOpen={(id) => {
-              setActiveTenant(id);
-              choose('overview');
-            }}
-          />
         </Suspense>
       ) : q.isLoading ? (
         <Spinner label="Loading migration progress…" />
