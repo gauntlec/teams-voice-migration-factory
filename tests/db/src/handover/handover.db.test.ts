@@ -157,4 +157,20 @@ describe('Service Handover', () => {
     expect(visible.map((f) => f.id)).toEqual([issued.file_id]);
     await expect(files.readBytes(c.t, draftFileId, hide)).rejects.toBeInstanceOf(NotFoundException);
   });
+
+  it('prints the project line it was given, keeps it for the next pack, and sets the paper by the sites’ country', async () => {
+    await c.s.updateTable('discovery_sites').set({ country: 'United States', name: 'London HQ' } as never).execute();
+    const first = await svc.generate(c.t, engineer, { projectName: 'AT&T Global Teams Project', siteIds: [siteId] });
+    const src = (id: string) => c.s.selectFrom('handover_packs').select('source').where('id', '=', id).executeTakeFirstOrThrow().then((r) => r.source as Record<string, unknown>);
+    expect(await src(first.id)).toMatchObject({ projectName: 'AT&T Global Teams Project', siteLabel: 'London HQ', pageSize: 'letter' });
+    const doc = await docText((await files.readBytes(c.t, first.file_id!)).data);
+    expect(doc).toContain('AT&amp;T Global Teams Project');
+    // the next pack keeps the project line unless it is changed; an empty one clears it
+    const second = await svc.generate(c.t, engineer, {});
+    expect(await src(second.id)).toMatchObject({ projectName: 'AT&T Global Teams Project' });
+    const third = await svc.generate(c.t, engineer, { projectName: '' });
+    expect(await src(third.id)).toMatchObject({ projectName: null });
+    await c.s.updateTable('discovery_sites').set({ country: 'GB' } as never).execute();
+    expect(await src((await svc.generate(c.t, engineer, {})).id)).toMatchObject({ pageSize: 'a4' });
+  });
 });
