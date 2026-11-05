@@ -2,12 +2,15 @@ import { describe, expect, it } from 'vitest';
 import {
   customerGoLiveStatus,
   daysBetween,
+  goLivePlan,
   insightsPeriod,
   insightsPeriodQuerySchema,
+  overviewHeadline,
   siteGoLiveStatus,
   snapshotPoint,
   type GoLiveInput,
   type MetricSnapshot,
+  type SiteMetrics,
 } from './insights';
 
 const today = '2026-11-05';
@@ -94,5 +97,51 @@ describe('snapshotPoint', () => {
   });
   it('limits a site contact to their sites and leaves out customer-wide figures', () => {
     expect(snapshotPoint('2026-11-05', snap, ['b'])).toEqual({ day: '2026-11-05', sites: 1, sitesLive: 0, sitesInService: 0, users: 10, usersLive: 0, numbers: 12, numbersLive: 0 });
+  });
+});
+
+
+describe('the Overview headline', () => {
+  const s = (over: Partial<SiteMetrics>): SiteMetrics => ({
+    id: 'x', sitecode: 'X', name: null, stage: 'designed', live: false, inService: false, users: 10, numbers: 10,
+    targetGoLive: null, firstGoLive: null, goLive: { status: 'no_date', reason: null, daysLeft: null }, blockers: 0, ...over,
+  });
+  const m = (siteList: SiteMetrics[], over: Record<string, unknown> = {}) => ({
+    migration: {
+      status: 'on_track', sites: siteList.length, sitesLive: siteList.filter((x) => x.live).length, sitesInService: siteList.filter((x) => x.inService).length,
+      sitesByStage: {}, users: siteList.reduce((n, x) => n + x.users, 0), usersLive: siteList.filter((x) => x.live).reduce((n, x) => n + x.users, 0),
+      numbers: 0, numbersLive: 0, ports: { requests: 0, complete: 0 }, nextGoLive: null, programmeEnd: null, siteList, ...over,
+    } as never,
+  });
+
+  it('says how many sites are live and when the programme ends', () => {
+    const h = overviewHeadline(m(
+      [s({ live: true, goLive: { status: 'live', reason: null, daysLeft: null } }), s({ sitecode: 'BHX02', targetGoLive: '2026-11-19', goLive: { status: 'on_track', reason: null, daysLeft: 14 } })],
+      { nextGoLive: { siteId: 'b', sitecode: 'BHX02', date: '2026-11-19' }, programmeEnd: '2026-11-19' },
+    ));
+    expect(h).toEqual({ title: '1 of 2 sites live, on track for 19 Nov 2026', sentences: ['10 of 20 users are live on Teams Phone.', 'The next go-live is BHX02 on 19 Nov 2026.'] });
+  });
+
+  it('leads with the worst risk', () => {
+    const h = overviewHeadline(m(
+      [s({ sitecode: 'GLA01', goLive: { status: 'at_risk', reason: 'Site Data is not finished and go-live is in 20 days', daysLeft: 20 } }),
+        s({ sitecode: 'MAN01', goLive: { status: 'off_track', reason: 'The go-live date (1 Nov 2026) has passed and the site is not live', daysLeft: -4 } })],
+      { status: 'off_track' },
+    ));
+    expect(h.title).toBe('0 of 2 sites live, 1 off track');
+    expect(h.sentences[1]).toBe('MAN01: The go-live date (1 Nov 2026) has passed and the site is not live.');
+  });
+
+  it('handles no sites and all sites live', () => {
+    expect(overviewHeadline(m([], { status: 'no_sites' })).title).toBe('No sites yet');
+    const done = overviewHeadline(m([s({ live: true, inService: true }), s({ live: true })], { status: 'complete' }));
+    expect(done).toEqual({ title: 'All 2 sites are live', sentences: ['20 of 20 users are live on Teams Phone.', '1 site still to hand over to service.'] });
+  });
+});
+
+describe('goLivePlan', () => {
+  it('counts each site’s users from its target date', () => {
+    const sites = [{ users: 5, live: true, targetGoLive: null }, { users: 10, live: false, targetGoLive: '2026-11-19' }, { users: 7, live: false, targetGoLive: null }];
+    expect(goLivePlan(sites, ['2026-11-18', '2026-11-19', '2026-12-01'])).toEqual([5, 15, 15]);
   });
 });

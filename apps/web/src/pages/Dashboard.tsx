@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link as RouterLink } from 'react-router';
-import { Badge, Button, Card, SearchBox, Spinner, Text, makeStyles, mergeClasses, shorthands, tokens } from '@fluentui/react-components';
+import { Button, Card, SearchBox, Spinner, Tab, TabList, Text, makeStyles, mergeClasses, shorthands, tokens } from '@fluentui/react-components';
 import { ArrowRightRegular, CheckmarkCircle16Filled, CheckmarkCircleRegular, Circle16Regular, Warning16Filled } from '@fluentui/react-icons';
 import type {
   CustomerProgress,
@@ -109,9 +109,35 @@ const ATTENTION_PREVIEW = 8;
 
 type LinkFor = (key: ProgressStageViewKey, siteId: string) => string | null;
 
+// Loaded on its own: it brings the chart library, which no other page needs yet.
+const Overview = lazy(() => import('./overview/Overview').then((m) => ({ default: m.Overview })));
+
+const TAB_KEY = 'voxshift.home.tab';
+type HomeTab = 'overview' | 'work';
+const savedTab = (): HomeTab => {
+  try {
+    return localStorage.getItem(TAB_KEY) === 'work' ? 'work' : 'overview';
+  } catch {
+    return 'overview';
+  }
+};
+
+/**
+ * The home page: the Overview (docs/INSIGHTS.md) for anyone who wants the picture, and My work - the list of what needs
+ * doing and every site's stages - for the people doing it. The tab last chosen is remembered in this browser.
+ */
 export function Dashboard() {
   const { me, activeTenantId, can } = useAuth();
   const activeTenant = me?.tenants.find((t) => t.id === activeTenantId);
+  const [tab, setTab] = useState<HomeTab>(savedTab);
+  const choose = (t: HomeTab) => {
+    setTab(t);
+    try {
+      localStorage.setItem(TAB_KEY, t);
+    } catch {
+      // private window: the choice just isn't remembered
+    }
+  };
 
   const q = useQuery({
     queryKey: ['progress', activeTenantId],
@@ -121,18 +147,30 @@ export function Dashboard() {
     queryFn: () => api<CustomerProgress>(`/t/${activeTenantId}/progress`),
   });
 
+  const attention = q.data ? q.data.items.filter((i) => i.attention).length + q.data.sites.reduce((n, x) => n + x.blockers.length, 0) : null;
+
+  if (!activeTenantId || !activeTenant) {
+    return (
+      <Page platform
+        title={`Welcome, ${me?.displayName ?? ''}`}
+        subtitle={me?.role === 'SUPER_ADMIN' ? 'Create a customer under Administration → Customers to begin.' : 'You have not been assigned to a customer yet.'}
+      >
+        {null}
+      </Page>
+    );
+  }
+
   return (
-    <Page platform
-      title={`Welcome, ${me?.displayName ?? ''}`}
-      subtitle={
-        activeTenant
-          ? `Active customer: ${activeTenant.name}`
-          : me?.role === 'SUPER_ADMIN'
-            ? 'Create a customer under Administration → Customers to begin.'
-            : 'You have not been assigned to a customer yet.'
-      }
-    >
-      {!activeTenantId ? null : q.isLoading ? (
+    <Page title={tab === 'overview' ? 'Overview' : 'My work'}>
+      <TabList selectedValue={tab} onTabSelect={(_, d) => choose(d.value as HomeTab)}>
+        <Tab value="overview">Overview</Tab>
+        <Tab value="work">My work{attention ? ` (${attention})` : ''}</Tab>
+      </TabList>
+      {tab === 'overview' ? (
+        <Suspense fallback={<Spinner label="Loading the overview…" />}>
+          <Overview tenantId={activeTenantId} can={can} />
+        </Suspense>
+      ) : q.isLoading ? (
         <Spinner label="Loading migration progress…" />
       ) : q.isError ? (
         <LoadError message={(q.error as Error).message} />

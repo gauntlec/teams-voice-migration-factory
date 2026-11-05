@@ -12,14 +12,14 @@ The proposal, mock-ups and plan were agreed on 5 November 2026. The five steps a
 
 | Step | What | State |
 | --- | --- | --- |
-| 1 | Foundation: shared figures, daily snapshots, site go-live dates | **Built** (this page) |
-| 2 | Customer Overview home page (today's list moves to a My work tab) | Planned |
+| 1 | Foundation: shared figures, daily snapshots, site go-live dates | **Live** (2026.11.4) |
+| 2 | Customer Overview home page (today's list moves to a My work tab) | **Built** (section below) |
 | 3 | Reports area: catalogue, periods, comparison, Excel and CSV | Planned |
 | 4 | Executive summary PDF and scheduled emails | Planned |
 | 5 | All-customers view, Portfolio report, Present mode | Planned |
 
-The charts in steps 2 to 5 use Fluent UI's chart library (`@fluentui/react-charts`), so they follow the app theme and dark
-mode. The library is added in step 2, with the first chart, rather than shipped unused in step 1.
+The charts use Fluent UI's chart library (`@fluentui/react-charts`, pinned), so they follow the app theme, the customer's
+brand colour and dark mode. It came in with step 2, the first chart, rather than shipping unused in step 1.
 
 ## The figures
 
@@ -116,6 +116,44 @@ customer's figures per UTC day, in the customer's `metric_snapshots` table (tena
     counts.
 
 History starts on the day this ships, so the first trend lines in step 2 will be short.
+
+## The Overview (step 2)
+
+The home page (`apps/web/src/pages/Dashboard.tsx`) has two tabs. **Overview** (`pages/overview/Overview.tsx`) is the
+summary for anyone who wants the picture. **My work** is the list that was the home page before: Needs attention, then each
+site's stages. The tab last chosen is remembered in the browser, so engineers who live in My work stay there. The left
+menu calls the page **Home**.
+
+The Overview is built only from `/insights/metrics` (the last 30 days, plus the 30 days before for comparisons) and
+`/insights/history`. It shows:
+
+- **The brand panel:**
+  - the share of users live, as a ring;
+  - the headline (`overviewHeadline`), fixed sentences written from the figures, never generated text;
+  - the customer's status, the last go-live date and the time the figures were worked out.
+- **Five headline figures:**
+  - users live and numbers live, each with a trend line from the snapshots;
+  - incident targets met, compared with the 30 days before, and open incidents (P1, P2);
+  - changes applied first time.
+
+  Without Managed Services, sites live and open service requests replace the two incident figures. Each figure opens the
+  page behind it when the user can open that page.
+- **Users live against plan:**
+  - The actual line is the daily snapshots plus today's figure.
+  - The plan (`goLivePlan`) runs from today: a site's users count from its target go-live date. It is drawn as steps.
+  - When there are no dates yet, or little history, the card says so.
+- **Sites by stage and Next go-lives:** up to six sites not yet live, soonest first, with their status.
+- **Service health:**
+  - incident targets met, as a ring;
+  - service requests: median time to complete, and the share completed with an assistant;
+  - device availability.
+
+  Each card appears only when the customer has that part switched on.
+- **Needs a decision:** sites off track or at risk (with the reason), open P1 incidents, and sites without a go-live
+  date (for people who can set one).
+
+Colours come from Fluent theme tokens: the customer's brand colour, and the palette colours for good, warning and bad.
+That makes both themes and customer branding work. Loading shows a skeleton of the layout.
 
 ## Tests
 
