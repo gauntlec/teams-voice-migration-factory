@@ -33,6 +33,18 @@ const useStyles = makeStyles({
   // Text wraps rather than being cut off (DataTable keeps cells on one line; an inner block is its way to wrap one);
   // numbers line up on the right, headings with them.
   wrap: { whiteSpace: 'normal' },
+  // A very long cell (a full PowerShell message) shows four lines; the whole text is in its tooltip and the exports.
+  clamp: { display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflowY: 'hidden', maxWidth: '520px' } as never,
+  headline: {
+    display: 'grid',
+    ...shorthands.gap('4px'),
+    ...shorthands.padding('14px', '18px'),
+    ...shorthands.borderRadius(tokens.borderRadiusLarge),
+    backgroundColor: tokens.colorBrandBackground2,
+    ...shorthands.borderLeft('4px', 'solid', tokens.colorBrandStroke1),
+  },
+  headlineTitle: { fontSize: tokens.fontSizeBase500, fontWeight: tokens.fontWeightSemibold, letterSpacing: '-0.01em' },
+  headlineBody: { fontSize: tokens.fontSizeBase300, lineHeight: tokens.lineHeightBase400, maxWidth: '90ch' },
   num: { textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', '& .fui-TableHeaderCell__button': { justifyContent: 'flex-end' } },
   tables: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', ...shorthands.gap('16px'), alignItems: 'start' },
   wide: { gridColumnStart: 1, gridColumnEnd: -1 },
@@ -74,6 +86,14 @@ function Section({ section }: { section: ReportSection }) {
   const s = useStyles();
   const [all, setAll] = useState(false);
   if (section.kind === 'note') return <Text className={s.note}>{section.text}</Text>;
+  if (section.kind === 'headline') {
+    return (
+      <section className={s.headline} aria-label="Summary">
+        <span className={s.headlineTitle}>{section.title}</span>
+        <span className={s.headlineBody}>{section.sentences.join(' ')}</span>
+      </section>
+    );
+  }
   if (section.kind === 'figures') {
     return (
       <section className={s.section} aria-label={section.title}>
@@ -124,7 +144,15 @@ function Section({ section }: { section: ReportSection }) {
               <TableRow key={i}>
                 {r.map((v, j) => (
                   <TableCell key={j} className={numeric.has(j) ? s.num : undefined}>
-                    {numeric.has(j) ? cellText(v) : <div className={s.wrap}>{cellText(v)}</div>}
+                    {numeric.has(j) ? (
+                      cellText(v)
+                    ) : typeof v === 'string' && v.length > 240 ? (
+                      <div className={`${s.wrap} ${s.clamp}`} title={v}>
+                        {v}
+                      </div>
+                    ) : (
+                      <div className={s.wrap}>{cellText(v)}</div>
+                    )}
                   </TableCell>
                 ))}
               </TableRow>

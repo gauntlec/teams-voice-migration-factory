@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildChangeLogReport,
+  buildExecutiveSummary,
   buildIncidentReport,
   figureChange,
   previousReportPeriod,
   reportFileName,
   reportPeriodLabel,
+  reportAvailableFor,
   reportPresetPeriod,
+  reportQueryPeriod,
   reportSheets,
   toCsv,
   type IncidentReportData,
@@ -90,5 +93,51 @@ describe('exports', () => {
   it('quotes CSV cells that need it, and names the file', () => {
     expect(toCsv([['a', 'b,c', 'say "hi"', null, 3]])).toBe('a,"b,c","say ""hi""",,3');
     expect(reportFileName(doc, 'AT&T Voice Consult')).toBe('voxshift-changes-at-t-voice-consult-2026-11-01-to-2026-11-05');
+  });
+});
+
+
+describe('report queries and availability', () => {
+  it('reads the period from the address', () => {
+    expect(reportQueryPeriod({ period: 'last_month' }, today)).toEqual({ period: { from: '2026-10-01', to: '2026-10-31' }, preset: 'last_month' });
+    expect(reportQueryPeriod({ from: '2026-08-01', to: '2026-08-31', period: 'last_month' }, today)).toEqual({ period: { from: '2026-08-01', to: '2026-08-31' }, preset: 'custom' });
+    expect(reportQueryPeriod({ period: 'nonsense' }, today).preset).toBe('last_30_days');
+  });
+  it('offers a report only where its data can be read', () => {
+    const all = () => true;
+    expect(reportAvailableFor('executive', () => false, { managedServices: false, monitoring: false })).toBe(true);
+    expect(reportAvailableFor('incidents', all, { managedServices: false, monitoring: true })).toBe(false);
+    expect(reportAvailableFor('devices', all, { managedServices: true, monitoring: false })).toBe(false);
+    expect(reportAvailableFor('changes', (p) => p === 'audit:read:tenant', { managedServices: false, monitoring: false })).toBe(true);
+  });
+});
+
+describe('the Executive summary', () => {
+  const site = (id: string, live: boolean, status: string, reason: string | null = null) => ({
+    id, sitecode: id.toUpperCase(), name: null, stage: live ? 'operations' : 'designed', live, inService: live, users: 10, numbers: 10,
+    targetGoLive: live ? null : '2026-11-20', firstGoLive: null, goLive: { status, reason, daysLeft: null }, blockers: 0,
+  });
+  const metrics = {
+    asOf: '', period: { from: '', to: '' }, fullView: true, changes: { applied: 9, failed: 1, skipped: 0, firstTimePct: 90 },
+    migration: { status: 'at_risk', sites: 3, sitesLive: 2, sitesInService: 2, sitesByStage: {}, users: 30, usersLive: 20, numbers: 30, numbersLive: 20, ports: { requests: 0, complete: 0 },
+      nextGoLive: { siteId: 'c', sitecode: 'C', date: '2026-11-20' }, programmeEnd: '2026-11-20',
+      siteList: [site('a', true, 'live'), site('b', true, 'live'), site('c', false, 'at_risk', 'There is no clean dry run yet and go-live is in 15 days')] },
+    incidents: { raised: 5, resolved: 4, open: 1, openP1: 0, openP2: 0, targetsMetPct: 90, targetsMeasured: 10, medianMinutesToAcknowledge: 5, medianHoursToRestore: 1 },
+  } as never;
+  const history = [
+    { day: '2026-09-30', sites: 3, sitesLive: 0, sitesInService: 0, users: 30, usersLive: 0, numbers: 30, numbersLive: 0 },
+    { day: '2026-10-31', sites: 3, sitesLive: 1, sitesInService: 1, users: 30, usersLive: 10, numbers: 30, numbersLive: 10 },
+  ];
+  it('counts the migration as at the end of a past period and says what the period did', () => {
+    const doc = buildExecutiveSummary({ metrics, previous: { ...(metrics as object), incidents: { ...(metrics as { incidents: object }).incidents, targetsMetPct: 80 } } as never, history, period: { from: '2026-10-01', to: '2026-10-31' }, comparedWith: { from: '2026-09-01', to: '2026-09-30' }, today });
+    const head = doc.sections[0];
+    expect(head).toMatchObject({ kind: 'headline', title: '1 of 3 sites live, 1 at risk' });
+    expect(head?.kind === 'headline' && head.sentences.slice(0, 2)).toEqual([
+      'In this period 10 users moved to Teams Phone and 1 site went live.',
+      '90% of incident response and restore targets were met (80% the period before), from 5 incidents raised.',
+    ]);
+    const figs = doc.sections[1];
+    expect(figs?.kind === 'figures' && figs.figures[0]).toMatchObject({ label: 'Users live', value: 10, previous: 0 });
+    expect(doc.sections[2]).toMatchObject({ title: 'Risks and decisions', rows: [['C', 'At risk', 'There is no clean dry run yet and go-live is in 15 days']] });
   });
 });

@@ -1,9 +1,11 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link as RouterLink, useNavigate, useParams, useSearchParams } from 'react-router';
-import { Button, Dropdown, Field, Input, Option, Spinner, Switch, Text, makeStyles, shorthands, tokens } from '@fluentui/react-components';
+import { Button, Dropdown, Field, Input, Option, Spinner, Switch, Text, makeStyles, mergeClasses, shorthands, tokens } from '@fluentui/react-components';
 import {
   ArrowDownloadRegular,
+  DocumentPdfRegular,
+  SparkleRegular,
   ArrowLeftRegular,
   ChevronRightRegular,
   DocumentTableRegular,
@@ -15,19 +17,22 @@ import {
 } from '@fluentui/react-icons';
 import {
   REPORT_CATALOGUE,
+  REPORT_GROUPS,
   REPORT_KEYS,
   REPORT_PERIOD_LABELS,
   REPORT_PERIOD_PRESETS,
   SR_TYPE_DEFS,
   buildChangeLogReport,
   buildDeviceReport,
+  buildExecutiveSummary,
   buildIncidentReport,
   buildMigrationReport,
   buildServiceRequestReport,
   previousReportPeriod,
+  reportFileName,
   reportPeriodLabel,
   reportPeriodQuery,
-  reportPresetPeriod,
+  reportQueryPeriod,
   utcDay,
   type ChangeLogData,
   type CustomerMetrics,
@@ -37,10 +42,9 @@ import {
   type ReportDocument,
   type ReportKey,
   type ReportPeriod,
-  type ReportPeriodPreset,
   type ServiceRequestReportData,
 } from '@tvmf/shared';
-import { api } from '../../api';
+import { api, apiDownload } from '../../api';
 import { useAuth } from '../../auth';
 import { Page } from '../../components/Page';
 import { LoadError, NoTenant } from '../../components/records';
@@ -77,6 +81,7 @@ const useStyles = makeStyles({
     color: tokens.colorBrandForeground2,
     fontSize: '18px',
   },
+  featured: { ...shorthands.borderColor(tokens.colorBrandStroke1), boxShadow: `inset 0 0 0 1px ${tokens.colorBrandStroke1}, ${tokens.shadow4}` },
   cardText: { display: 'grid', ...shorthands.gap('2px') },
   muted: { color: tokens.colorNeutralForeground3 },
   chev: { color: tokens.colorNeutralForeground3, alignSelf: 'center' },
@@ -97,6 +102,7 @@ const useStyles = makeStyles({
 });
 
 const ICONS: Record<ReportKey, JSX.Element> = {
+  executive: <SparkleRegular />,
   migration: <TaskListLtrRegular />,
   changes: <HistoryRegular />,
   incidents: <WarningRegular />,
@@ -111,7 +117,7 @@ export function Reports() {
   const tenant = me?.tenants.find((t) => t.id === activeTenantId);
   if (!activeTenantId || !tenant) return <NoTenant />;
   const open = REPORT_KEYS.filter((k) => reportAvailable(k, can, tenant));
-  const groups = (['Migration', 'Service'] as const).map((g) => ({ g, keys: open.filter((k) => REPORT_CATALOGUE[k].group === g) })).filter((x) => x.keys.length || (x.g === 'Migration' && can('tenantdiscovery:read')));
+  const groups = REPORT_GROUPS.map((g) => ({ g, keys: open.filter((k) => REPORT_CATALOGUE[k].group === g) })).filter((x) => x.keys.length || (x.g === 'Migration' && can('tenantdiscovery:read')));
   return (
     <Page title="Reports" subtitle="Choose a report, then the period. Each one compares with the period before and exports to Excel or CSV.">
       {groups.map(({ g, keys }) => (
@@ -119,7 +125,7 @@ export function Reports() {
           <span className={s.groupTitle}>{g}</span>
           <div className={s.grid}>
             {keys.map((k) => (
-                <RouterLink key={k} to={`/reports/${k}`} className={s.card} aria-label={`Open the ${REPORT_CATALOGUE[k].title} report`}>
+                <RouterLink key={k} to={`/reports/${k}${k === 'executive' ? '?period=last_month' : ''}`} className={mergeClasses(s.card, k === 'executive' && s.featured)} aria-label={`Open the ${REPORT_CATALOGUE[k].title} report`}>
                   <span className={s.icon}>{ICONS[k]}</span>
                   <span className={s.cardText}>
                     <Text weight="semibold">{REPORT_CATALOGUE[k].title}</Text>
@@ -151,23 +157,18 @@ export function Reports() {
   );
 }
 
-/** ?period=last_month, or ?from=&to= for custom dates; ?compare=0 turns the comparison off. */
+/** ?period=last_month, or ?from=&to= for custom dates; ?compare=0 turns the comparison off (reportQueryPeriod, shared with the api's PDFs). */
 function usePeriod() {
   const [params, setParams] = useSearchParams();
   const today = utcDay();
-  const preset = (params.get('period') ?? 'last_30_days') as ReportPeriodPreset | 'custom';
-  const from = params.get('from');
-  const to = params.get('to');
-  const custom = from && to && /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to) && from <= to ? { from, to } : null;
-  const choice: ReportPeriodPreset | 'custom' = custom ? 'custom' : (REPORT_PERIOD_PRESETS as readonly string[]).includes(preset) ? preset : 'last_30_days';
-  const period: ReportPeriod = custom ?? reportPresetPeriod(choice as ReportPeriodPreset, today);
+  const { period, preset: choice } = reportQueryPeriod({ period: params.get('period'), from: params.get('from'), to: params.get('to') }, today);
   const compare = params.get('compare') !== '0';
   const set = (next: Record<string, string | null>) => {
     const p = new URLSearchParams(params);
     for (const [k, v] of Object.entries(next)) v === null ? p.delete(k) : p.set(k, v);
     setParams(p, { replace: true });
   };
-  return { choice, period, compare, today, set };
+  return { choice, period, compare, today, set, query: params.toString() };
 }
 
 /** One report: its period, the comparison, the exports, and the report itself. */
@@ -178,7 +179,7 @@ export function ReportPage() {
   const notify = useNotify();
   const { me, activeTenantId, can } = useAuth();
   const tenant = me?.tenants.find((t) => t.id === activeTenantId);
-  const { choice, period, compare, today, set } = usePeriod();
+  const { choice, period, compare, today, set, query } = usePeriod();
   const reportKey = (REPORT_KEYS as readonly string[]).includes(key ?? '') ? (key as ReportKey) : null;
   const usable = !!reportKey && !!tenant && reportAvailable(reportKey, can, tenant);
   const doc = useReport(usable ? reportKey : null, activeTenantId ?? '', period, compare, today);
@@ -195,10 +196,12 @@ export function ReportPage() {
     );
   }
   const meta = REPORT_CATALOGUE[reportKey];
-  const exportAs = async (kind: 'excel' | 'csv') => {
+  const exportAs = async (kind: 'pdf' | 'excel' | 'csv') => {
     if (!doc.data) return;
     try {
-      if (kind === 'excel') await exportReportExcel(doc.data, tenant.name);
+      // The PDF is made by the api from the same report sections, so it matches the page.
+      if (kind === 'pdf') await apiDownload(`/t/${activeTenantId}/insights/reports/${reportKey}/pdf${query ? `?${query}` : ''}`, `${reportFileName(doc.data, tenant.name)}.pdf`);
+      else if (kind === 'excel') await exportReportExcel(doc.data, tenant.name);
       else exportReportCsv(doc.data, tenant.name);
     } catch (e) {
       notify('The export did not work', { intent: 'error', body: (e as Error).message });
@@ -253,8 +256,11 @@ export function ReportPage() {
           </>
         )}
         <span className={s.spacer} />
+        <Button appearance="primary" icon={<DocumentPdfRegular />} disabled={!doc.data} onClick={() => void exportAs('pdf')}>
+          Download PDF
+        </Button>
         <Button icon={<ArrowDownloadRegular />} disabled={!doc.data} onClick={() => void exportAs('excel')}>
-          Export to Excel
+          Excel
         </Button>
         {doc.data && hasTable(doc.data) && (
           <Button appearance="subtle" disabled={!doc.data} onClick={() => void exportAs('csv')}>
@@ -277,6 +283,21 @@ function useReport(key: ReportKey | null, tenantId: string, period: ReportPeriod
   const qs = (q: { from: string; to: string }) => `from=${encodeURIComponent(q.from)}&to=${encodeURIComponent(q.to)}`;
 
   const metrics = useQuery({ queryKey: ['insights', tenantId, 'metrics'], enabled: enabled('migration'), queryFn: () => api<CustomerMetrics>(`${t}/insights/metrics`) });
+  const execNow = useQuery({
+    queryKey: ['insights', tenantId, 'metrics', period.from, period.to],
+    enabled: enabled('executive'),
+    queryFn: () => api<CustomerMetrics>(`${t}/insights/metrics?from=${period.from}&to=${period.to}`),
+  });
+  const execBefore = useQuery({
+    queryKey: ['insights', tenantId, 'metrics', prevPeriod.from, prevPeriod.to],
+    enabled: enabled('executive'),
+    queryFn: () => api<CustomerMetrics>(`${t}/insights/metrics?from=${prevPeriod.from}&to=${prevPeriod.to}`),
+  });
+  const execHistory = useQuery({
+    queryKey: ['insights', tenantId, 'history', prevPeriod.from, period.to],
+    enabled: enabled('executive'),
+    queryFn: () => api<MetricHistoryPoint[]>(`${t}/insights/history?from=${prevPeriod.from}&to=${period.to}`),
+  });
   const history = useQuery({
     queryKey: ['insights', tenantId, 'history', period.from, period.to],
     enabled: enabled('migration'),
@@ -299,6 +320,11 @@ function useReport(key: ReportKey | null, tenantId: string, period: ReportPeriod
 
   const pick = (...qs2: { isLoading: boolean; error: unknown }[]) => ({ isLoading: qs2.some((q) => q.isLoading), error: (qs2.find((q) => q.error)?.error as Error | undefined) ?? null });
   switch (key) {
+    case 'executive':
+      return {
+        ...pick(execNow, execBefore, execHistory),
+        data: execNow.data && execBefore.data && execHistory.data ? buildExecutiveSummary({ metrics: execNow.data, previous: execBefore.data, history: execHistory.data, period, comparedWith: prevPeriod, today }) : undefined,
+      };
     case 'migration':
       return { ...pick(metrics, history), data: metrics.data && history.data ? buildMigrationReport(metrics.data, history.data, period) : undefined };
     case 'incidents':
