@@ -45,7 +45,9 @@ export type WizardMenuOption = z.infer<typeof wizardMenuOptionSchema>;
 
 export const wizardCallFlowSchema = z
   .object({
-    mode: z.enum(['menu', 'direct', 'voicemail']),
+    /** 'disconnect': the greeting is played and the call ends (Teams admin center: call routing "Disconnect"; PowerShell: a menu option -Action DisconnectCall -DtmfResponse Automatic). */
+    mode: z.enum(['menu', 'direct', 'voicemail', 'disconnect']),
+    /** Typed text read in the auto attendant's language (Teams: up to 1,000 characters). */
     greeting: str(1000).optional(),
     /** mode === 'direct' only. */
     target: wizardTargetSchema.optional(),

@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { BadRequestException, ConflictException, Injectable, Optional, NotFoundException } from '@nestjs/common';
-import { sql, type Kysely } from 'kysely';
+import { sql, type Kysely, type Selectable } from 'kysely';
 import { computeSiteDrift, coolingUntil, makeAutoAttendantTargetResolver, refreshNumberConflict, releasedNumber, resolveLiveNumberTypes, tenantDb, type DB } from '@tvmf/db';
 import {
   identityDriftNotAccepted,
@@ -84,6 +84,7 @@ import { assertSiteInScope } from '../data-collection/site-scope';
 import { BuildValidationService } from './build-validation.service';
 
 type Scoped = ReturnType<typeof tenantDb>;
+type DiscoveryVoiceAppRow = Selectable<DB['discovery_voice_apps']>;
 const actorOf = (u: AuthedUser) => ({ id: u.id, email: u.email });
 
 /** The Design & Build lists that have bulk delete, by their route name, and the table each deletes from. */
@@ -1463,10 +1464,25 @@ export class BuildService {
     const linked = new Set([...existingAa, ...existingCq].map((e) => e.discovery_voice_app_id).filter(Boolean));
     let created = 0;
     const createdIds: string[] = [];
+    // Designed in the wizard (no live object behind it): built from the wizard's answers, as Import to Design & Build does.
+    const designed: { d: (typeof source)[number]; flowId: string; rowId?: string }[] = [];
     for (const d of source) {
-      if (linked.has(d.id)) continue;
+      const flowRow = await s
+        .selectFrom('discovery_flows')
+        .select(['id', 'kind', 'wizard_answers', 'imported_at', 'tenant_object_id', 'build_auto_attendant_id', 'build_call_queue_id'])
+        .where('voice_app_id', '=', d.id)
+        .executeTakeFirst();
+      // Only a flow with no live object behind it: Import sends one that has a live object back here to be built from Teams.
+      const hasAnswers = !!flowRow?.wizard_answers && flowRow.kind === d.kind && !flowRow.tenant_object_id;
+      if (linked.has(d.id)) {
+        // An earlier Populate copied a designed one as an empty row (name and notes only): fill it in from the wizard now.
+        if (hasAnswers && !d.tenant_object_id && !flowRow!.imported_at) {
+          const rowId = await this.untouchedEmptyVoiceAppRow(s, d.kind, d.id);
+          if (rowId) designed.push({ d, flowId: flowRow!.id, rowId });
+        }
+        continue;
+      }
       // a Design & Build row the Call flow's Import already made for this voice app is linked, not copied
-      const flowRow = await s.selectFrom('discovery_flows').select(['build_auto_attendant_id', 'build_call_queue_id']).where('voice_app_id', '=', d.id).executeTakeFirst();
       const madeBy = d.kind === 'auto_attendant' ? flowRow?.build_auto_attendant_id : flowRow?.build_call_queue_id;
       if (madeBy) {
         await s.updateTable(d.kind === 'auto_attendant' ? 'build_auto_attendants' : 'build_call_queues').set({ discovery_voice_app_id: d.id }).where('id', '=', madeBy).where('discovery_voice_app_id', 'is', null).execute();
@@ -1474,47 +1490,107 @@ export class BuildService {
         continue;
       }
       await this.adoptLiveVoiceApp(s, d);
-      if (d.kind === 'auto_attendant') {
-        const notes = [d.exception_conditions, d.exception_action].filter(Boolean).join(' / ') || null;
-        await s
-          .insertInto('build_auto_attendants')
-          .values({
-            site_id: siteId,
-            discovery_voice_app_id: d.id,
-            name: d.name,
-            resource_accounts: JSON.stringify([]),
-            config: {},
-            holiday_call_flows: JSON.stringify([]),
-            business_hours: d.business_hours,
-            ooh_action: d.ooh_action,
-            holiday: d.holiday,
-            advanced_features: d.advanced_features,
-            notes: [d.comments, notes].filter(Boolean).join(' / ') || null,
-          })
-          .execute();
-      } else {
-        await s
-          .insertInto('build_call_queues')
-          .values({
-            site_id: siteId,
-            discovery_voice_app_id: d.id,
-            name: d.name,
-            resource_accounts: JSON.stringify([]),
-            agents: JSON.stringify([]),
-            overflow: {},
-            timeout: {},
-            notes: d.comments,
-          })
-          .execute();
+      if (hasAnswers && !d.tenant_object_id) {
+        designed.push({ d, flowId: flowRow!.id });
+        continue;
       }
+      await this.insertVoiceAppRow(s, siteId, d);
       await this.linkDiscoveredFlow(s, d.id);
       created += 1;
       createdIds.push(d.id);
     }
+    // Call queues first, so an auto attendant that sends calls to one of them is linked to its new row.
+    designed.sort((a, b) => (a.d.kind === b.d.kind ? 0 : a.d.kind === 'call_queue' ? -1 : 1));
+    const warnings: string[] = [];
+    for (const { d, flowId, rowId } of designed) {
+      if (rowId) {
+        const col = d.kind === 'auto_attendant' ? 'build_auto_attendant_id' : 'build_call_queue_id';
+        await s.updateTable('discovery_flows').set({ [col]: rowId } as never).where('id', '=', flowId).execute();
+      }
+      try {
+        const r = await this.importFlowWizard(t, u, flowId, { populating: true });
+        warnings.push(...r.warnings.map((w) => `${d.name}: ${w}`));
+        if (!rowId) created += 1;
+      } catch (e) {
+        // The wizard's answers could not be turned into a row: keep the name and notes, as before, and say so.
+        const why = e instanceof Error ? e.message : String(e);
+        if (!rowId) {
+          await this.insertVoiceAppRow(s, siteId, d);
+          created += 1;
+        }
+        warnings.push(`${d.name}: its wizard answers could not be used (${why}) - fill it in by hand in Design & Build.`);
+      }
+    }
     if (createdIds.length > 0) await this.populateStructuredFromLive(s, siteId, createdIds);
     await this.linkResourceAccountsToVoiceApps(s, siteId);
     await this.audit.tenant(t.schema, 'build.voice_apps_populated', { actor: actorOf(u), targetType: 'discovery_site', targetId: siteId, detail: { created, total: source.length } });
-    return { created, skipped: source.length - created, total: source.length };
+    return { created, skipped: source.length - created, total: source.length, warnings };
+  }
+
+  /** The thin row Populate makes for a voice app with nothing better to go on: its name, and its Site Data notes kept. */
+  private async insertVoiceAppRow(s: Scoped, siteId: string, d: DiscoveryVoiceAppRow) {
+    if (d.kind === 'auto_attendant') {
+      const notes = [d.exception_conditions, d.exception_action].filter(Boolean).join(' / ') || null;
+      await s
+        .insertInto('build_auto_attendants')
+        .values({
+          site_id: siteId,
+          discovery_voice_app_id: d.id,
+          name: d.name,
+          resource_accounts: JSON.stringify([]),
+          config: {},
+          holiday_call_flows: JSON.stringify([]),
+          business_hours: d.business_hours,
+          ooh_action: d.ooh_action,
+          holiday: d.holiday,
+          advanced_features: d.advanced_features,
+          notes: [d.comments, notes].filter(Boolean).join(' / ') || null,
+        })
+        .execute();
+    } else {
+      await s
+        .insertInto('build_call_queues')
+        .values({
+          site_id: siteId,
+          discovery_voice_app_id: d.id,
+          name: d.name,
+          resource_accounts: JSON.stringify([]),
+          agents: JSON.stringify([]),
+          overflow: {},
+          timeout: {},
+          notes: d.comments,
+        })
+        .execute();
+    }
+  }
+
+  /**
+   * The Design & Build row of a voice app when it is still exactly the thin row Populate made (nothing set, never edited), so
+   * filling it from the wizard loses nothing an engineer did.
+   */
+  private async untouchedEmptyVoiceAppRow(s: Scoped, kind: 'auto_attendant' | 'call_queue', voiceAppId: string) {
+    if (kind === 'auto_attendant') {
+      const r = await s
+        .selectFrom('build_auto_attendants')
+        .select('id')
+        .where('discovery_voice_app_id', '=', voiceAppId)
+        .where('language_id', 'is', null)
+        .where('time_zone_id', 'is', null)
+        .where('default_call_flow', 'is', null)
+        .where('after_hours_call_flow', 'is', null)
+        .where(sql<boolean>`updated_at <= created_at + interval '5 seconds'`)
+        .executeTakeFirst();
+      return r?.id;
+    }
+    const r = await s
+      .selectFrom('build_call_queues')
+      .select('id')
+      .where('discovery_voice_app_id', '=', voiceAppId)
+      .where('language_id', 'is', null)
+      .where(sql<boolean>`jsonb_array_length(agents) = 0`)
+      .where(sql<boolean>`updated_at <= created_at + interval '5 seconds'`)
+      .executeTakeFirst();
+    return r?.id;
   }
 
   /**
@@ -2050,7 +2126,8 @@ export class BuildService {
    * stamps the link back onto the discovery_flows row so re-importing is a
    * no-op the UI can detect (imported_at set).
    */
-  async importFlowWizard(t: TenantContext, u: AuthedUser, flowId: string) {
+  /** `opts.populating`: called by Populate, which adds and links the resource accounts itself straight after. */
+  async importFlowWizard(t: TenantContext, u: AuthedUser, flowId: string, opts: { populating?: boolean } = {}) {
     const s = this.s(t);
     const flow = await s.selectFrom('discovery_flows').selectAll().where('id', '=', flowId).executeTakeFirst();
     if (!flow) throw new NotFoundException('flow not found');
@@ -2190,7 +2267,7 @@ export class BuildService {
       if (ra) {
         if (flow.kind === 'auto_attendant') await this.updateAutoAttendant(t, u, result.id, { resource_accounts: [ra.id] });
         else await this.updateCallQueue(t, u, result.id, { resource_accounts: [ra.id] });
-      } else {
+      } else if (!opts.populating) {
         warnings.push("The chosen resource account hasn't been populated into Design & Build yet - link it manually once it has (Resource accounts → Populate).");
       }
     }

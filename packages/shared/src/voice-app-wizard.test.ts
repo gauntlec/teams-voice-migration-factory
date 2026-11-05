@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { autoAttendantToWizard, callQueueToWizard } from './voice-app-wizard';
-import { convertCallQueueWizard } from './wizard-convert';
+import { convertAutoAttendantWizard, convertCallQueueWizard } from './wizard-convert';
 import { autoAttendantWizardAnswersSchema, callQueueWizardAnswersSchema } from './wizard';
 
 const weekdays = { monday: [{ start: '09:00', end: '17:00' }], tuesday: [{ start: '09:00', end: '17:00' }], wednesday: [{ start: '09:00', end: '17:00' }], thursday: [{ start: '09:00', end: '17:00' }], friday: [{ start: '09:00', end: '17:00' }], saturday: [], sunday: [] };
@@ -34,7 +34,9 @@ describe('a discovered auto attendant as wizard answers', () => {
     expect(answers!.operator).toEqual({ kind: 'person', label: 'op@x.test' });
     // the stored end is exclusive; the wizard's dates are whole days, both included
     expect(answers!.holidays![0]!.dateRange).toEqual({ start: '2026-12-25', end: '2026-12-26' });
-    expect(notes).toContain('Holiday "Christmas": the call is ended after the greeting.');
+    // a flow that ends the call is the wizard's "Play the message, then hang up"
+    expect(answers!.holidays![0]!.flow).toEqual({ mode: 'disconnect' });
+    expect(notes.some((n) => n.startsWith('Holiday "Christmas"'))).toBe(false);
   });
 
   it('shows an attendant with no after-hours flow as open all the time, and reads a single catch-all as a direct transfer', () => {
@@ -97,5 +99,20 @@ describe('a discovered call queue as wizard answers', () => {
   it('falls back to safe defaults for a queue with little set', () => {
     const { answers } = callQueueToWizard({}, {});
     expect(answers).toMatchObject({ routingMethod: 'Attendant', agentAlertTime: 30, overflow: { action: 'DisconnectWithBusy' }, timeout: { action: 'Disconnect' } });
+  });
+});
+
+describe('"Play the message, then hang up"', () => {
+  const base = { languageId: 'en-GB', timeZoneId: 'GMT Standard Time', hoursType: 'standard' as const, businessFlow: { mode: 'menu' as const, options: [] }, holidaysEnabled: false };
+  it('is the greeting followed by a Disconnect, and reads back the same way', () => {
+    const { value, warnings } = convertAutoAttendantWizard({ ...base, afterHoursFlow: { mode: 'disconnect', greeting: 'We are closed.' } }, { siteId: 's', name: 'Main' });
+    expect(value.after_hours_call_flow).toEqual({ greetings: [{ type: 'Text', text: 'We are closed.' }], menu: { options: [{ dtmf: 'Automatic', action: 'DisconnectCall' }] } });
+    expect(warnings.some((w) => w.startsWith('After hours'))).toBe(false);
+    const { answers } = autoAttendantToWizard({ languageId: 'en-GB', timeZoneId: 'GMT Standard Time', operator: null, schedule: value.schedule as never, defaultCallFlow: value.default_call_flow as never, afterHoursCallFlow: value.after_hours_call_flow as never, holidayCallFlows: [] }, ctx);
+    expect(answers!.afterHoursFlow).toEqual({ mode: 'disconnect', greeting: 'We are closed.' });
+  });
+  it('warns when there is no message to play', () => {
+    const { warnings } = convertAutoAttendantWizard({ ...base, afterHoursFlow: { mode: 'disconnect' } }, { siteId: 's', name: 'Main' });
+    expect(warnings).toContain('After hours: the call is ended with no message - add the message to play in Design & Build if one is wanted.');
   });
 });

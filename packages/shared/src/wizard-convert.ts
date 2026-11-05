@@ -146,6 +146,11 @@ function convertCallFlow(cf: WizardCallFlow, resolvers: WizardResolvers, warning
   // (DTMF 'Automatic', Teams' own sentinel for "no key pressed") - the
   // existing deploy machinery has no separate "redirect with no menu"
   // shape, this is how a plain forward is already represented.
+  // "Play the message, then hang up": the greeting, then Disconnect (New-CsAutoAttendantMenuOption -Action DisconnectCall -DtmfResponse Automatic).
+  if (cf.mode === 'disconnect') {
+    if (!greetings.length) warnings.push(`${label}: the call is ended with no message - add the message to play in Design & Build if one is wanted.`);
+    return { greetings, menu: { options: [{ dtmf: 'Automatic', action: 'DisconnectCall' }] } };
+  }
   if (cf.mode === 'voicemail') {
     return { greetings, menu: { options: [{ dtmf: 'Automatic', action: 'TransferCallToTarget', target: sharedVoicemailTarget(undefined, warnings, label) }] } };
   }
