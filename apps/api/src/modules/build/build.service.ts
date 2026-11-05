@@ -1212,18 +1212,11 @@ export class BuildService {
   }
 
   /**
-   * Deletes the build row, and - the "disassociate from a site" path for a
-   * resource account picked by mistake via "Link discovered resource
-   * account" (BuildService.importAndLinkResourceAccount) - also removes its
-   * underlying Site Data row (discovery_resource_accounts), but only
-   * when that row is still the empty shell Populate/Link created (every
-   * narrative field null). A Site Data row a human has since filled
-   * in with real content is left alone, exactly as this always behaved:
-   * deleting the build row must not silently destroy hand-entered Data
-   * Collection content. Any build_auto_attendants/build_call_queues row
-   * Populate seeded alongside it is untouched - its own discovery_resource_account_id
-   * just goes null (ON DELETE SET NULL), leaving whatever call-flow design
-   * exists in place, deletable separately if that's really the intent too.
+   * Deletes the Design & Build row only: its number goes back to the site's free pool and it comes off its auto attendants and
+   * call queues here. Site Data is left as it is, as for every other Design & Build delete - a resource account is removed
+   * from a site in Site Data. (From 17 Sep to 5 Nov 2026 this also deleted the Site Data row when it had no comments, meant
+   * for a "Link discovered resource account" made by mistake; once the voice app split left a Site Data resource account
+   * with only comments to fill in, that caught almost every row, and it was removed.)
    */
   async deleteResourceAccount(t: TenantContext, u: AuthedUser, id: string) {
     await this.assertNotSrLocked(t, [id]);
@@ -1243,27 +1236,13 @@ export class BuildService {
       }
       return deleted;
     });
-    let unlinkedFromSite = false;
-    if (row.discovery_resource_account_id) {
-      const discoveryRow = await this.s(t)
-        .selectFrom('discovery_resource_accounts')
-        .selectAll()
-        .where('id', '=', row.discovery_resource_account_id)
-        .executeTakeFirst();
-      // an empty shell: Populate or Link made it and nobody has added anything to it since
-      if (discoveryRow && (!discoveryRow.comments || discoveryRow.comments === 'Added from Discovery.')) {
-        await this.releaseHolder(t, 'resource_account', discoveryRow.id);
-        await this.s(t).deleteFrom('discovery_resource_accounts').where('id', '=', discoveryRow.id).execute();
-        unlinkedFromSite = true;
-      }
-    }
     await this.audit.tenant(t.schema, 'build.resource_account_deleted', {
       actor: actorOf(u),
       targetType: 'build_resource_account',
       targetId: id,
-      detail: { unlinkedFromSite },
+      detail: { name: row.display_name, upn: row.upn || null },
     });
-    return { ok: true, unlinkedFromSite };
+    return { ok: true };
   }
 
   async createResourceAccount(t: TenantContext, u: AuthedUser, body: BuildResourceAccountCreateInput) {

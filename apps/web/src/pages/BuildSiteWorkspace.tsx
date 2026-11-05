@@ -782,7 +782,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           params={listParams}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
-          bulkDelete={siteTools ? { noun: "resource account", plural: "resource accounts", note: "Their numbers go back to this site's free pool and they are taken off their auto attendants and call queues here. Nothing is changed in Teams." } : undefined}
+          bulkDelete={siteTools ? { noun: "resource account", plural: "resource accounts", note: "Their numbers go back to this site's free pool and they are taken off their auto attendants and call queues here. Site Data keeps them (remove one from the site there), and nothing is changed in Teams." } : undefined}
           onChanged={embedded?.onChanged}
           headerActions={
             siteTools && (
