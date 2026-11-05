@@ -4,6 +4,7 @@ import { deviceStatusOverview, tenantDb } from '@tvmf/db';
 import {
   can,
   customerGoLiveStatus,
+  goLiveDate,
   INC_OPEN_STATUSES,
   insightsPeriod,
   MAX_SNAPSHOT_DAYS,
@@ -18,11 +19,9 @@ import {
   type ProgressStageViewKey,
   type Role,
   type ServiceRequestMetrics,
-  type SiteGoLiveInput,
   type SiteMetrics,
 } from '@tvmf/shared';
-import { AuditService } from '../../common/audit.service';
-import type { AuthedUser, TenantContext } from '../../common/request';
+import type { TenantContext } from '../../common/request';
 import { InjectDb, type Db } from '../../db/db.module';
 import { assertSiteInScope, isSiteScoped } from '../data-collection/site-scope';
 import { IncidentReportService } from '../incidents/incident-report.service';
@@ -43,7 +42,6 @@ const pct = (part: number, whole: number) => (whole === 0 ? null : Math.round((p
 export class InsightsService {
   constructor(
     @InjectDb() private readonly db: Db,
-    private readonly audit: AuditService,
     private readonly progress: ProgressService,
     private readonly incidents: IncidentReportService,
     private readonly requests: ServiceRequestsService,
@@ -68,7 +66,7 @@ export class InsightsService {
       siteIds.length
         ? s
             .selectFrom('discovery_sites')
-            .select(['id', sql<string | null>`to_char(target_go_live, 'YYYY-MM-DD')`.as('target'), sql<string | null>`to_char(first_go_live, 'YYYY-MM-DD')`.as('first')])
+            .select(['id', sql<string | null>`overview->>'targetGoLive'`.as('target'), sql<string | null>`to_char(first_go_live, 'YYYY-MM-DD')`.as('first')])
             .where('id', 'in', siteIds)
             .execute()
         : [],
@@ -95,7 +93,8 @@ export class InsightsService {
         : [],
       this.changes(t, period),
     ]);
-    const dateOf = new Map(dates.map((d) => [d.id, d]));
+    // The overview's Target go-live field; free text from older sites counts as no date.
+    const dateOf = new Map(dates.map((d) => [d.id, { target: goLiveDate(d.target), first: d.first }]));
     const numbersOf = new Map(numbers.map((r) => [r.site_id, Number(r.n)]));
 
     const siteList: SiteMetrics[] = progress.sites.map((p) => {
@@ -212,48 +211,30 @@ export class InsightsService {
 
   /* ------------------------------ go-live dates ------------------------------ */
 
+  /**
+   * A site's go-live date: the Target go-live field of its overview (set in Site Data > Overview, which keeps
+   * first_go_live up to date - DataCollectionService.updateSiteOverview), and the date first agreed.
+   */
   async goLive(t: TenantContext, siteId: string) {
     assertSiteInScope(t, siteId);
     const row = await tenantDb(this.db, t.schema)
       .selectFrom('discovery_sites')
       .select([
         'id',
-        sql<string | null>`to_char(target_go_live, 'YYYY-MM-DD')`.as('targetGoLive'),
+        sql<string | null>`overview->>'targetGoLive'`.as('target'),
         sql<string | null>`to_char(first_go_live, 'YYYY-MM-DD')`.as('firstGoLive'),
         'go_live_changed_at as changedAt',
       ])
       .where('id', '=', siteId)
       .executeTakeFirst();
     if (!row) throw new NotFoundException('Site not found.');
-    return { siteId: row.id, targetGoLive: row.targetGoLive, firstGoLive: row.firstGoLive, changedAt: row.changedAt ? new Date(row.changedAt).toISOString() : null };
-  }
-
-  /**
-   * Set, move or clear a site's target go-live date. The first date given is kept as first_go_live so a moved date shows;
-   * clearing the date clears both. Recorded in the audit log with the reason. It is not a Site Data change: the site's
-   * review status and recorded changes are left alone.
-   */
-  async setGoLive(t: TenantContext, user: AuthedUser, siteId: string, input: SiteGoLiveInput) {
-    const before = await this.goLive(t, siteId);
-    const next = input.targetGoLive;
-    if (next === before.targetGoLive) return before;
-    await tenantDb(this.db, t.schema)
-      .updateTable('discovery_sites')
-      .set({
-        target_go_live: next,
-        first_go_live: next === null ? null : (before.firstGoLive ?? next),
-        go_live_changed_at: new Date().toISOString(),
-        go_live_changed_by: user.id,
-      })
-      .where('id', '=', siteId)
-      .execute();
-    await this.audit.tenant(t.schema, 'discovery.site_go_live_set', {
-      actor: { id: user.id, email: user.email },
-      targetType: 'discovery_site',
-      targetId: siteId,
-      detail: { from: before.targetGoLive, to: next, ...(input.reason ? { reason: input.reason } : {}) },
-    });
-    return this.goLive(t, siteId);
+    const targetGoLive = goLiveDate(row.target);
+    return {
+      siteId: row.id,
+      targetGoLive,
+      firstGoLive: targetGoLive ? row.firstGoLive : null,
+      changedAt: row.changedAt ? new Date(row.changedAt).toISOString() : null,
+    };
   }
 
   /* ------------------------------ parts ------------------------------ */

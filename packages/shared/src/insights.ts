@@ -136,7 +136,7 @@ export interface SiteMetrics {
   users: number;
   /** phone numbers in the site's number ranges */
   numbers: number;
-  /** YYYY-MM-DD */
+  /** YYYY-MM-DD, from the site overview's Target go-live field */
   targetGoLive: string | null;
   /** the date first agreed (YYYY-MM-DD), kept when the target moves */
   firstGoLive: string | null;
@@ -305,15 +305,15 @@ export const insightsHistoryQuerySchema = z
   .refine((q) => !q.from || !q.to || q.from <= q.to, { message: 'from must not be after to' });
 export type InsightsHistoryQuery = z.infer<typeof insightsHistoryQuerySchema>;
 
-/** PUT .../sites/:siteId/go-live - set, move or clear a site's target go-live date. */
-export const siteGoLiveSchema = z
-  .object({
-    targetGoLive: ymd.nullable(),
-    /** why the date moved; recorded in the audit log */
-    reason: z.string().trim().max(500).optional(),
-  })
-  .strict();
-export type SiteGoLiveInput = z.infer<typeof siteGoLiveSchema>;
+/**
+ * A site's go-live date from its overview's "Target go-live" field (DiscoverySiteOverview.targetGoLive): YYYY-MM-DD when it
+ * holds a real date, otherwise null. Older sites may hold free text ("Q3 2026"), which counts as no date.
+ */
+export function goLiveDate(value: unknown): string | null {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const d = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value ? value : null;
+}
 
 /**
  * The period for ?from=&to= (both YYYY-MM-DD, `to` inclusive): defaults to the 30 days up to and including today.
@@ -323,4 +323,59 @@ export function insightsPeriod(q: { from?: string; to?: string }, now: Date = ne
   const toDay = q.to ?? utcDay(now);
   const fromDay = q.from ?? utcDay(new Date(Date.parse(`${toDay}T00:00:00Z`) - 29 * DAY_MS));
   return { from: `${fromDay}T00:00:00.000Z`, to: new Date(Date.parse(`${toDay}T00:00:00Z`) + DAY_MS).toISOString() };
+}
+
+/* ------------------------------ the Overview ------------------------------ */
+
+const fmt = (n: number) => n.toLocaleString('en-GB');
+const plural = (n: number, one: string, many = `${one}s`) => `${fmt(n)} ${n === 1 ? one : many}`;
+
+export interface OverviewHeadline {
+  /** the one line in the brand panel, e.g. "9 of 14 sites live, on track for 4 Mar 2027" */
+  title: string;
+  /** two or three short sentences under it */
+  sentences: string[];
+}
+
+/**
+ * The Overview's headline, written from the figures by fixed sentences (never generated text), so it is always exactly
+ * what the numbers say.
+ */
+export function overviewHeadline(m: Pick<CustomerMetrics, 'migration'>): OverviewHeadline {
+  const g = m.migration;
+  if (g.sites === 0) return { title: 'No sites yet', sentences: ['Add the customer’s sites in Site Data to start tracking the migration.'] };
+  const usersLine = g.users > 0 ? `${fmt(g.usersLive)} of ${plural(g.users, 'user')} ${g.usersLive === 1 && g.users === 1 ? 'is' : 'are'} live on Teams Phone.` : null;
+  if (g.status === 'complete') {
+    const left = g.sites - g.sitesInService;
+    return {
+      title: g.sites === 1 ? 'The site is live' : `All ${g.sites} sites are live`,
+      sentences: [usersLine, left > 0 ? `${plural(left, 'site')} still to hand over to service.` : 'Every site is in service.'].filter((x): x is string => !!x),
+    };
+  }
+  const risky = g.siteList.filter((x) => x.goLive.status === 'off_track' || x.goLive.status === 'at_risk');
+  const off = risky.filter((x) => x.goLive.status === 'off_track').length;
+  const suffix =
+    g.status === 'on_track' && g.programmeEnd
+      ? `, on track for ${goLiveDateLabel(g.programmeEnd)}`
+      : g.status === 'off_track'
+        ? `, ${off} off track`
+        : g.status === 'at_risk'
+          ? `, ${risky.length} at risk`
+          : '';
+  const sentences: string[] = [];
+  if (usersLine) sentences.push(usersLine);
+  if (g.nextGoLive) sentences.push(`The next go-live is ${g.nextGoLive.sitecode} on ${goLiveDateLabel(g.nextGoLive.date)}.`);
+  const worst = risky.sort((a, b) => (a.goLive.status === b.goLive.status ? 0 : a.goLive.status === 'off_track' ? -1 : 1))[0];
+  if (worst?.goLive.reason) sentences.push(`${worst.sitecode}: ${worst.goLive.reason}.`);
+  const undated = g.siteList.filter((x) => x.goLive.status === 'no_date').length;
+  if (undated > 0 && sentences.length < 3) sentences.push(`${plural(undated, 'site')} ${undated === 1 ? 'has' : 'have'} no go-live date yet.`);
+  return { title: `${g.sitesLive} of ${plural(g.sites, 'site')} live${suffix}`, sentences };
+}
+
+/**
+ * The planned number of users live on each of `days` (YYYY-MM-DD, ascending): a site's users count from its target
+ * go-live date; a live site with no date counts from the start.
+ */
+export function goLivePlan(sites: Pick<SiteMetrics, 'users' | 'live' | 'targetGoLive'>[], days: string[]): number[] {
+  return days.map((d) => sites.reduce((n, x) => n + ((x.targetGoLive ? x.targetGoLive <= d : x.live) ? x.users : 0), 0));
 }

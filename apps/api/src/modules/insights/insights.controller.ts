@@ -1,11 +1,9 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Put, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, ParseUUIDPipe, Query, UseGuards } from '@nestjs/common';
 import {
   insightsHistoryQuerySchema,
   insightsPeriodQuerySchema,
-  siteGoLiveSchema,
   type InsightsHistoryQuery,
   type InsightsPeriodQuery,
-  type SiteGoLiveInput,
 } from '@tvmf/shared';
 import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
 import type { AuthedUser, TenantContext } from '../../common/request';
@@ -35,21 +33,10 @@ export class InsightsController {
     return this.svc.history(t, q);
   }
 
+  /** The site's go-live date (its overview's Target go-live) and the date first agreed. */
   @Get('sites/:siteId/go-live')
   @RequirePermission('discovery:read')
   goLive(@TenantCtx() t: TenantContext, @Param('siteId', ParseUUIDPipe) siteId: string) {
     return this.svc.goLive(t, siteId);
-  }
-
-  /** Project managers, engineers and admins set the date; customers see it. */
-  @Put('sites/:siteId/go-live')
-  @RequirePermission('discovery:sites:manage')
-  setGoLive(
-    @TenantCtx() t: TenantContext,
-    @CurrentUser() user: AuthedUser,
-    @Param('siteId', ParseUUIDPipe) siteId: string,
-    @Body(new ZodBody(siteGoLiveSchema)) body: SiteGoLiveInput,
-  ) {
-    return this.svc.setGoLive(t, user, siteId, body);
   }
 }

@@ -1,10 +1,12 @@
-// Voxshift Insights (docs/INSIGHTS.md): the shared figures read the right rows, a site's go-live date can be set and
-// moved without touching its Site Data review, and the daily snapshot is taken once a day and read back as history.
+// Voxshift Insights (docs/INSIGHTS.md): the shared figures read the right rows, a site's go-live date is its overview's
+// Target go-live field (with the date first agreed kept as it moves), and the daily snapshot is taken once a day and read
+// back as history.
 // The go-live rules themselves are unit-tested in packages/shared/src/insights.test.ts.
 import { beforeAll, describe, expect, it } from 'vitest';
 import { AuditService } from '../../../../apps/api/src/common/audit.service';
 import { BuildService } from '../../../../apps/api/src/modules/build/build.service';
 import { BuildValidationService } from '../../../../apps/api/src/modules/build/build-validation.service';
+import { DataCollectionService } from '../../../../apps/api/src/modules/data-collection/data-collection.service';
 import { IncidentReportService } from '../../../../apps/api/src/modules/incidents/incident-report.service';
 import { InsightsService } from '../../../../apps/api/src/modules/insights/insights.service';
 import { ProgressService } from '../../../../apps/api/src/modules/progress/progress.service';
@@ -13,6 +15,7 @@ import { seedCustomer, seedSite, seedUser, unused, useDb, type TestCustomer } fr
 const handle = useDb();
 let c: TestCustomer;
 let insights: InsightsService;
+let dc: DataCollectionService;
 let engineer: Awaited<ReturnType<typeof seedUser>>;
 let lon: string, nyc: string;
 const now = new Date('2026-11-05T09:00:00Z');
@@ -27,7 +30,8 @@ beforeAll(async () => {
   const requests = {
     report: async () => ({ raised: 4, deployed: 3, completedBy: { assistants: 1, people: 2 }, openBacklog: { total: 2 }, medianHoursToDeploy: 20.5, resolutionMetPct: 100 }),
   };
-  insights = new InsightsService(handle.db, audit, new ProgressService(handle.db, build), new IncidentReportService(handle.db), requests as never);
+  insights = new InsightsService(handle.db, new ProgressService(handle.db, build), new IncidentReportService(handle.db), requests as never);
+  dc = new DataCollectionService(handle.db, audit);
 
   // LON01: Site Data submitted, 2 users designed on 1 Nov, 3 numbers, live since a clean run on 3 Nov.
   // NYC01: 3 users captured, Site Data not submitted, nothing designed.
@@ -60,23 +64,25 @@ beforeAll(async () => {
 });
 
 describe('site go-live dates', () => {
-  it('sets, moves and clears the date, keeping the first agreed date and leaving the Site Data review alone', async () => {
-    const set = await insights.setGoLive(c.t, engineer, nyc, { targetGoLive: '2026-11-19' });
-    expect(set).toMatchObject({ targetGoLive: '2026-11-19', firstGoLive: '2026-11-19' });
-    const moved = await insights.setGoLive(c.t, engineer, nyc, { targetGoLive: '2026-12-03', reason: 'Carrier port date moved' });
-    expect(moved).toMatchObject({ targetGoLive: '2026-12-03', firstGoLive: '2026-11-19' });
+  const setDate = (siteId: string, targetGoLive: string) => dc.updateSiteOverview(c.t, engineer, siteId, { targetGoLive }, true);
 
-    const site = await c.s.selectFrom('discovery_sites').select('review_status').where('id', '=', nyc).executeTakeFirstOrThrow();
-    expect(site.review_status).toBe('draft');
-    const changes = await c.s.selectFrom('discovery_site_changes').select('id').where('site_id', '=', nyc).execute();
-    expect(changes).toEqual([]);
-    const audit = await c.s.selectFrom('audit_log').select(['action', 'detail']).where('action', '=', 'discovery.site_go_live_set').orderBy('at').execute();
-    expect(audit.map((a) => a.detail)).toEqual([{ from: null, to: '2026-11-19' }, { from: '2026-11-19', to: '2026-12-03', reason: 'Carrier port date moved' }]);
+  it('reads the overview’s Target go-live, keeping the first agreed date as it moves', async () => {
+    expect(await insights.goLive(c.t, nyc)).toMatchObject({ targetGoLive: null, firstGoLive: null });
+    await setDate(nyc, '2026-11-19');
+    expect(await insights.goLive(c.t, nyc)).toMatchObject({ targetGoLive: '2026-11-19', firstGoLive: '2026-11-19' });
+    await setDate(nyc, '2026-12-03');
+    expect(await insights.goLive(c.t, nyc)).toMatchObject({ targetGoLive: '2026-12-03', firstGoLive: '2026-11-19' });
+    // Saving other overview fields leaves it alone.
+    await dc.updateSiteOverview(c.t, engineer, nyc, { notes: 'Carrier port date moved' }, true);
+    expect(await insights.goLive(c.t, nyc)).toMatchObject({ targetGoLive: '2026-12-03', firstGoLive: '2026-11-19' });
 
-    await insights.setGoLive(c.t, engineer, lon, { targetGoLive: '2026-11-01' });
-    await insights.setGoLive(c.t, engineer, lon, { targetGoLive: null });
+    // Clearing the date clears the first one too; free text from an older site counts as no date.
+    await setDate(lon, '2026-11-01');
+    await setDate(lon, '');
     expect(await insights.goLive(c.t, lon)).toMatchObject({ targetGoLive: null, firstGoLive: null });
-    await insights.setGoLive(c.t, engineer, lon, { targetGoLive: '2026-11-01' });
+    await setDate(lon, 'Q4 2026');
+    expect(await insights.goLive(c.t, lon)).toMatchObject({ targetGoLive: null, firstGoLive: null });
+    await setDate(lon, '2026-11-01');
   });
 
   it('refuses a site outside a site contact’s sites', async () => {

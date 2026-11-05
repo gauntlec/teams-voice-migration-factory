@@ -18,7 +18,7 @@ import { OverviewTab, NetworkDiagramCard } from './site/siteOverview';
 import { HandsetTrackerCard } from './site/siteHandsets';
 import { SiteSuggestionsCard } from './discovery/siteSuggestions';
 import { SiteChangesCard, SiteReviewBar } from './site/siteReview';
-import { SiteGoLive } from './site/siteGoLive';
+import { goLiveQueryKey, SiteGoLive } from './site/siteGoLive';
 import { NumberInventory, FlowImportButton, RaNumbersButton } from './site/siteNumbers';
 
 const useLocalStyles = makeStyles({
@@ -142,6 +142,7 @@ export function SiteWorkspace() {
   // Anything that changes users or numbers also changes which numbers are free, so the pickers' list is read again too.
   const refreshSummary = () => {
     qc.invalidateQueries({ queryKey: ['site-avail-numbers', tid, siteId] });
+    if (tid) qc.invalidateQueries({ queryKey: goLiveQueryKey(tid, siteId) });
     return summary.refetch();
   };
 
@@ -200,7 +201,7 @@ export function SiteWorkspace() {
         <Text size={200}>
           Assigned: <b>{numberSummary.assigned}</b>
         </Text>
-        {tid && <SiteGoLive tenantId={tid} siteId={siteId} canEdit={can('discovery:sites:manage')} />}
+        {tid && <SiteGoLive tenantId={tid} siteId={siteId} onChange={canManageOverview && tab !== 'overview' ? () => setTab('overview') : undefined} />}
       </div>
 
       <SiteReviewBar

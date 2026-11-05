@@ -12,14 +12,14 @@ The proposal, mock-ups and plan were agreed on 5 November 2026. The five steps a
 
 | Step | What | State |
 | --- | --- | --- |
-| 1 | Foundation: shared figures, daily snapshots, site go-live dates | **Built** (this page) |
-| 2 | Customer Overview home page (today's list moves to a My work tab) | Planned |
+| 1 | Foundation: shared figures, daily snapshots, site go-live dates | **Live** (2026.11.4) |
+| 2 | Customer Overview home page (today's list moves to a My work tab) | **Built** (section below) |
 | 3 | Reports area: catalogue, periods, comparison, Excel and CSV | Planned |
 | 4 | Executive summary PDF and scheduled emails | Planned |
 | 5 | All-customers view, Portfolio report, Present mode | Planned |
 
-The charts in steps 2 to 5 use Fluent UI's chart library (`@fluentui/react-charts`), so they follow the app theme and dark
-mode. The library is added in step 2, with the first chart, rather than shipped unused in step 1.
+The charts use Fluent UI's chart library (`@fluentui/react-charts`, pinned), so they follow the app theme, the customer's
+brand colour and dark mode. It came in with step 2, the first chart, rather than shipping unused in step 1.
 
 ## The figures
 
@@ -34,7 +34,7 @@ mode. The library is added in step 2, with the first chart, rather than shipped 
 
 | Part | What it holds | Source |
 | --- | --- | --- |
-| `migration` | sites, sites live and in service, sites by stage, users and numbers in scope and live, port requests, next go-live, programme end, overall status, and one row per site | the home-page progress rules (`ProgressService`, `deriveSiteProgress`), `build_users` / `discovery_users`, `phone_numbers`, `number_port_requests`, `discovery_sites.target_go_live` |
+| `migration` | sites, sites live and in service, sites by stage, users and numbers in scope and live, port requests, next go-live, programme end, overall status, and one row per site | the home-page progress rules (`ProgressService`, `deriveSiteProgress`), `build_users` / `discovery_users`, `phone_numbers`, `number_port_requests`, the site overview's Target go-live |
 | `changes` | changes applied, failed and skipped in the customer's Teams tenant by live runs in the period, and the first-time success rate | `deployment_changes` joined to `deployments` (mode `execute`) |
 | `incidents` | raised, resolved, open (P1, P2), response and restoration targets met, median time to acknowledge and restore | `IncidentReportService.report`, plus a count of open incidents by priority |
 | `serviceRequests` | raised, completed (by an assistant), open, median time to complete, completion targets met | `ServiceRequestsService.report` |
@@ -58,20 +58,23 @@ mode. The library is added in step 2, with the first chart, rather than shipped 
 
 ## Go-live dates
 
-Each site has an optional **target go-live date**.
+A site's go-live date is the **Target go-live** field it already had: **Site Data > (the site) > Overview**, stored as
+`discovery_sites.overview->>'targetGoLive'`.
 
-- **Who sets it:** project managers, engineers and admins (`discovery:sites:manage`), in **Site Data > (the site)**, next to
-  the number summary.
-- **Who sees it:** anyone who can open the site.
-- **Routes:**
-  - `GET /t/:tenantId/insights/sites/:siteId/go-live`
-  - `PUT /t/:tenantId/insights/sites/:siteId/go-live`, with body `{ targetGoLive: 'YYYY-MM-DD' | null, reason? }`
-- **First agreed date:** the first date given is kept as `first_go_live`, so a moved date can show what was agreed.
-  Clearing the date clears both.
-- **Audit:** every change is recorded in the customer's audit log as `discovery.site_go_live_set`, with the old date, the
-  new date and the reason.
-- **Not Site Data:** setting the date is a project decision. It does not change the site's review status and is not
-  listed as a change since submission.
+- **Who sets it:** project managers, engineers and admins (`discovery:sites:manage`). Customers see it.
+- **Where else it appears:** in handover packs, and on the site page next to the number summary
+  (`GET /t/:tenantId/insights/sites/:siteId/go-live`). For people who can set it, **Change** opens the Overview tab.
+- **Only real dates count:** older sites may hold free text ("Q3 2026"). That counts as no date (`goLiveDate`) until a
+  real date replaces it.
+- **First agreed date:** saving the overview keeps `first_go_live`, the date first agreed, so a moved date can show
+  "first agreed …". It is set the first time a date is given, kept when the date moves, and cleared when the date is
+  cleared. Changes are recorded like any other overview change (audit log, and "changed since submitted" on a submitted
+  site).
+
+Step 1 (tenant migration `0084`) first added a separate `target_go_live` column with its own date control. That
+duplicated this field, and was found when step 2 was checked on www. Migration `0085` folds the column back into the
+overview field and removes it. A date set through the column in the minutes it existed is kept, where the overview had
+no date. The same migration starts `first_go_live` from each site's current date.
 
 ### Go-live status
 
@@ -117,8 +120,46 @@ customer's figures per UTC day, in the customer's `metric_snapshots` table (tena
 
 History starts on the day this ships, so the first trend lines in step 2 will be short.
 
+## The Overview (step 2)
+
+The home page (`apps/web/src/pages/Dashboard.tsx`) has two tabs. **Overview** (`pages/overview/Overview.tsx`) is the
+summary for anyone who wants the picture. **My work** is the list that was the home page before: Needs attention, then each
+site's stages. The tab last chosen is remembered in the browser, so engineers who live in My work stay there. The left
+menu calls the page **Home**.
+
+The Overview is built only from `/insights/metrics` (the last 30 days, plus the 30 days before for comparisons) and
+`/insights/history`. It shows:
+
+- **The brand panel:**
+  - the share of users live, as a ring;
+  - the headline (`overviewHeadline`), fixed sentences written from the figures, never generated text;
+  - the customer's status, the last go-live date and the time the figures were worked out.
+- **Five headline figures:**
+  - users live and numbers live, each with a trend line from the snapshots;
+  - incident targets met, compared with the 30 days before, and open incidents (P1, P2);
+  - changes applied first time.
+
+  Without Managed Services, sites live and open service requests replace the two incident figures. Each figure opens the
+  page behind it when the user can open that page.
+- **Users live against plan:**
+  - The actual line is the daily snapshots plus today's figure.
+  - The plan (`goLivePlan`) runs from today: a site's users count from its target go-live date. It is drawn as steps.
+  - When there are no dates yet, or little history, the card says so.
+- **Sites by stage and Next go-lives:** up to six sites not yet live, soonest first, with their status.
+- **Service health:**
+  - incident targets met, as a ring;
+  - service requests: median time to complete, and the share completed with an assistant;
+  - device availability.
+
+  Each card appears only when the customer has that part switched on.
+- **Needs a decision:** sites off track or at risk (with the reason), open P1 incidents, and sites without a go-live
+  date (for people who can set one).
+
+Colours come from Fluent theme tokens: the customer's brand colour, and the palette colours for good, warning and bad.
+That makes both themes and customer branding work. Loading shows a skeleton of the layout.
+
 ## Tests
 
 - `packages/shared/src/insights.test.ts`: the go-live rules, the customer status, periods and snapshot totals.
-- `tests/db/src/insights/insights.db.test.ts`: the queries behind the figures, go-live dates (first date kept, audit,
-  Site Data review untouched, site scope), what each role sees, one snapshot a day, history, and removing old snapshots.
+- `tests/db/src/insights/insights.db.test.ts`: the queries behind the figures, go-live dates (read from the overview, first date kept,
+  free text ignored, site scope), what each role sees, one snapshot a day, history, and removing old snapshots.
