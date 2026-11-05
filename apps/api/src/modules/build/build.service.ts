@@ -1502,6 +1502,7 @@ export class BuildService {
     // Call queues first, so an auto attendant that sends calls to one of them is linked to its new row.
     designed.sort((a, b) => (a.d.kind === b.d.kind ? 0 : a.d.kind === 'call_queue' ? -1 : 1));
     const warnings: string[] = [];
+    let filled = 0;
     for (const { d, flowId, rowId } of designed) {
       if (rowId) {
         const col = d.kind === 'auto_attendant' ? 'build_auto_attendant_id' : 'build_call_queue_id';
@@ -1510,7 +1511,8 @@ export class BuildService {
       try {
         const r = await this.importFlowWizard(t, u, flowId, { populating: true });
         warnings.push(...r.warnings.map((w) => `${d.name}: ${w}`));
-        if (!rowId) created += 1;
+        if (rowId) filled += 1;
+        else created += 1;
       } catch (e) {
         // The wizard's answers could not be turned into a row: keep the name and notes, as before, and say so.
         const why = e instanceof Error ? e.message : String(e);
@@ -1524,7 +1526,7 @@ export class BuildService {
     if (createdIds.length > 0) await this.populateStructuredFromLive(s, siteId, createdIds);
     await this.linkResourceAccountsToVoiceApps(s, siteId);
     await this.audit.tenant(t.schema, 'build.voice_apps_populated', { actor: actorOf(u), targetType: 'discovery_site', targetId: siteId, detail: { created, total: source.length } });
-    return { created, skipped: source.length - created, total: source.length, warnings };
+    return { created, filled, skipped: source.length - created - filled, total: source.length, warnings };
   }
 
   /** The thin row Populate makes for a voice app with nothing better to go on: its name, and its Site Data notes kept. */

@@ -190,7 +190,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
       setPopulateError(e instanceof ApiError ? e.message : 'Import failed');
     },
   });
-  type PopulateResult = { created: number; voiceApps?: { created: number; warnings?: string[] }; resourceAccounts?: { created: number } };
+  type PopulateResult = { created: number; voiceApps?: { created: number; filled?: number; warnings?: string[] }; resourceAccounts?: { created: number } };
   const populate = useMutation({
     mutationFn: (kind: 'users' | 'caps' | 'resource-accounts') =>
       api<PopulateResult>(`${base}/${kind}/populate`, { method: 'POST', body: JSON.stringify({ site_id: siteId }) }),
@@ -200,10 +200,15 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
       if (kind === 'resource-accounts' && r?.voiceApps && r.resourceAccounts) {
         const apps = r.voiceApps.created;
         const ras = r.resourceAccounts.created;
-        const added =
-          apps + ras === 0
-            ? 'Nothing new to add from Site Data.'
-            : `Added ${apps} auto attendant${apps === 1 ? '' : 's'} and call queue${apps === 1 ? '' : 's'} and ${ras} resource account${ras === 1 ? '' : 's'} from Site Data.`;
+        const filled = r.voiceApps.filled ?? 0;
+        const parts = [
+          apps ? `${apps} auto attendant${apps === 1 ? '' : 's'} or call queue${apps === 1 ? '' : 's'}` : '',
+          ras ? `${ras} resource account${ras === 1 ? '' : 's'}` : '',
+        ].filter(Boolean);
+        const added = [
+          parts.length ? `Added ${parts.join(' and ')} from Site Data.` : '',
+          filled ? `Filled in ${filled} auto attendant${filled === 1 ? '' : 's'} or call queue${filled === 1 ? '' : 's'} that had come across empty, from the wizard's answers.` : '',
+        ].filter(Boolean).join(' ') || 'Nothing new to add from Site Data.';
         const w = r.voiceApps.warnings ?? [];
         setVoiceMessage(w.length ? `${added} To check: ${w.slice(0, 8).join(' ')}${w.length > 8 ? ` (and ${w.length - 8} more)` : ''}` : added);
       }
