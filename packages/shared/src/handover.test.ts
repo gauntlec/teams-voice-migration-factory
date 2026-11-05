@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { HANDOVER_SECTIONS } from './domain';
 import { handoverGenerateSchema, handoverNoteSchema } from './dto';
-import { HANDOVER_NOTE_EMPTY, handoverScopeLabel, noteSectionContent, selectSections, noteLine, outstandingActionsContent } from './handover';
+import { HANDOVER_NOTE_EMPTY, handoverScopeLabel, issuedHandoverVersionLabel, nextHandoverVersionLabel, noteSectionContent, selectSections, noteLine, outstandingActionsContent } from './handover';
 
 describe('noteSectionContent', () => {
   it('shows the empty-state text when there is no note', () => {
@@ -101,5 +101,21 @@ describe('notes written for the pack', () => {
       ],
     });
     expect(outstandingActionsContent([])).toEqual({ kind: 'blocks', blocks: [{ kind: 'text', text: 'There are no outstanding actions.' }] });
+  });
+});
+
+describe('handover pack versions (major.minor)', () => {
+  const d = (version_label: string | null) => ({ status: 'draft' as const, version_label });
+  const i = (version_label: string | null) => ({ status: 'issued' as const, version_label });
+  it('numbers drafts 0.1, 0.2 until the first issue, then 1.1, 1.2', () => {
+    expect(nextHandoverVersionLabel([])).toBe('0.1');
+    expect(nextHandoverVersionLabel([d('0.1'), d('0.2')])).toBe('0.3');
+    expect(nextHandoverVersionLabel([d('0.1'), i('1.0')])).toBe('1.1');
+    expect(nextHandoverVersionLabel([d('0.1'), i('1.0'), d('1.1'), i('1.2')])).toBe('1.3');
+  });
+  it('issues a 0.x draft as 1.0 and keeps a 1.x number', () => {
+    expect(issuedHandoverVersionLabel('0.3', 3)).toBe('1.0');
+    expect(issuedHandoverVersionLabel(null, 1)).toBe('1.0');
+    expect(issuedHandoverVersionLabel('1.2', 5)).toBe('1.2');
   });
 });

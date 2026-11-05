@@ -61,6 +61,8 @@ interface PackSource {
 interface Pack {
   id: string;
   version: number;
+  /** major.minor: 0.x drafts, 1.0 the first issue, then 1.x */
+  version_label: string | null;
   status: 'draft' | 'issued';
   generated_at: string | null;
   file_id: string | null;
@@ -137,14 +139,19 @@ export function Handover() {
   const download = async (p: Pack) => {
     setActionError(null);
     try {
-      await apiDownload(`/t/${activeTenantId}/files/${p.file_id}/download`, `service-handover-v${p.version}.docx`);
+      await apiDownload(`/t/${activeTenantId}/files/${p.file_id}/download`, `service-handover-v${packVersion(p)}.docx`);
     } catch (e) {
       setActionError(errorMessage(e, 'Could not download the file'));
     }
   };
 
+  const [approval, setApproval] = useState({ company: '', name: '', date: new Date().toISOString().slice(0, 10) });
   const issue = useMutation({
-    mutationFn: (id: string) => api(`/t/${activeTenantId}/handover/packs/${id}/issue`, { method: 'POST' }),
+    mutationFn: (id: string) =>
+      api(`/t/${activeTenantId}/handover/packs/${id}/issue`, {
+        method: 'POST',
+        body: JSON.stringify({ approverCompany: approval.company.trim() || undefined, approverName: approval.name.trim() || undefined, approvalDate: approval.date || undefined }),
+      }),
     onSuccess: () => {
       setIssuing(null);
       qc.invalidateQueries({ queryKey: ['handover', activeTenantId] });
@@ -197,7 +204,7 @@ export function Handover() {
             <TableBody>
               {packs.data!.map((p) => (
                 <TableRow key={p.id}>
-                  <TableCell>v{p.version}</TableCell>
+                  <TableCell>{packVersion(p)}</TableCell>
                   <TableCell>{handoverScopeLabel(p.source?.siteCodes)}</TableCell>
                   <TableCell>
                     {p.source?.sectionKeys?.length ?? HANDOVER_SECTIONS.length} of {HANDOVER_SECTIONS.length}
@@ -245,11 +252,23 @@ export function Handover() {
       <Dialog open={!!issuing} onOpenChange={(_, d) => !d.open && setIssuing(null)}>
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>Issue v{issuing?.version}?</DialogTitle>
-            <DialogContent>
+            <DialogTitle>Issue version {issuing ? issuedVersion(issuing) : ''}?</DialogTitle>
+            <DialogContent className={cs.stack}>
               <Text block>
                 This marks the pack as final and records who issued it and when. It can&apos;t be undone. To change anything afterwards, generate a new version.
               </Text>
+              <Text block size={200}>
+                Who approved and signed it off is printed in the pack&apos;s Approvals &amp; Sign-Off section.
+              </Text>
+              <Field label="Approved by: company" hint="Leave empty for the company whose branding the pack carries.">
+                <Input value={approval.company} maxLength={120} onChange={(_, d) => setApproval((a) => ({ ...a, company: d.value }))} />
+              </Field>
+              <Field label="Approved by: name and title" hint="For example “Leigh Manton, AT&T Consulting, Director EMEA”.">
+                <Input value={approval.name} maxLength={200} onChange={(_, d) => setApproval((a) => ({ ...a, name: d.value }))} />
+              </Field>
+              <Field label="Date approved">
+                <Input type="date" value={approval.date} onChange={(_, d) => setApproval((a) => ({ ...a, date: d.value }))} />
+              </Field>
             </DialogContent>
             <DialogActions>
               <Button appearance="secondary" onClick={() => setIssuing(null)}>
@@ -284,6 +303,7 @@ function GenerateDialog({
 }) {
   const cs = useStyles();
   const [projectName, setProjectName] = useState(lastProject);
+  const [changeNote, setChangeNote] = useState('');
   const [mode, setMode] = useState<'all' | 'sites'>('all');
   const [siteIds, setSiteIds] = useState<Set<string>>(new Set());
   const [sectionKeys, setSectionKeys] = useState<Set<string>>(new Set(HANDOVER_SECTIONS.map((s) => s.key)));
@@ -307,6 +327,7 @@ function GenerateDialog({
           notes: notes.trim() || undefined,
           // empty clears it; the cover then has no project line
           projectName: projectName.trim(),
+          changeNote: changeNote.trim() || undefined,
         }),
       }),
     onSuccess: onDone,
@@ -352,6 +373,9 @@ function GenerateDialog({
             </Field>
             <Field label="Project name (optional)" hint="Printed on the front page under the customer's name, for example “AT&T Global Teams Project”.">
               <Input value={projectName} maxLength={120} onChange={(_, d) => setProjectName(d.value)} />
+            </Field>
+            <Field label="What changed in this version (optional)" hint="Printed in the pack's Document Control table, e.g. “Section 7 added for call queues”.">
+              <Input value={changeNote} maxLength={300} onChange={(_, d) => setChangeNote(d.value)} />
             </Field>
             <Field label="Internal note (optional)" hint="Kept with the pack in Voxshift. It isn't printed in the document.">
               <Textarea value={notes} maxLength={2000} onChange={(_, d) => setNotes(d.value)} resize="vertical" />
@@ -627,4 +651,14 @@ function PreviewTable({ columns, rows, caption }: { columns: string[]; rows: str
       )}
     </>
   );
+}
+
+/** A pack's version as printed in it: its major.minor label (older packs: their number). */
+function packVersion(p: Pack): string {
+  return p.version_label ?? String(p.version);
+}
+
+/** The version a draft becomes when issued: a 0.x draft is issued as 1.0; a 1.x keeps its number. */
+function issuedVersion(p: Pack): string {
+  return !p.version_label || p.version_label.startsWith('0.') ? '1.0' : p.version_label;
 }

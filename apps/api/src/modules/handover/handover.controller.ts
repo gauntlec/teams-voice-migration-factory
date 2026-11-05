@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Put, UseGuards } from '@nestjs/common';
-import { handoverGenerateSchema, handoverNoteSchema } from '@tvmf/shared';
+import { handoverGenerateSchema, handoverIssueSchema, handoverNoteSchema, type HandoverIssueInput } from '@tvmf/shared';
 import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
 import type { AuthedUser, TenantContext } from '../../common/request';
 import { ZodBody } from '../../common/zod.pipe';
@@ -41,8 +41,8 @@ export class HandoverController {
   /** Locks a draft pack as final. */
   @Post('packs/:id/issue')
   @RequirePermission('handover:issue')
-  issue(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id', ParseUUIDPipe) id: string) {
-    return this.handover.issue(t, user, id);
+  issue(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id', ParseUUIDPipe) id: string, @Body(new ZodBody(handoverIssueSchema)) body: HandoverIssueInput) {
+    return this.handover.issue(t, user, id, body);
   }
 
   /** The hand-written notes behind the sections with no structured data source. */

@@ -100,10 +100,23 @@ export const handoverGenerateSchema = z.preprocess(
     notes: z.string().trim().max(2000).optional(),
     /** The cover's project line, e.g. "AT&T Global Teams Project"; kept from the last pack when not given. */
     projectName: z.string().trim().max(120).optional(),
+    /** What changed in this version - the Comments column of the pack's Document Control table. */
+    changeNote: z.string().trim().max(300).optional(),
     siteIds: z.array(z.guid()).max(200).optional(),
     sectionKeys: z.array(z.string().refine(isHandoverSectionKey, 'Unknown handover section')).max(20).optional(),
   }),
 );
+
+/** Issuing a pack: who approved and signed it off (printed in Approvals & Sign-Off). All optional, for older clients. */
+export const handoverIssueSchema = z.preprocess(
+  (v) => v ?? {},
+  z.object({
+    approverCompany: z.string().trim().max(120).optional(),
+    approverName: z.string().trim().max(200).optional(),
+    approvalDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'use YYYY-MM-DD').optional(),
+  }),
+);
+export type HandoverIssueInput = z.infer<typeof handoverIssueSchema>;
 
 /** Writes (or, with an empty body, clears) the note for one section - for one site, or for every site (siteId null). */
 export const handoverNoteSchema = z.object({
