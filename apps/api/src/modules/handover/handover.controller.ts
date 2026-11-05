@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Put, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { handoverGenerateSchema, handoverIssueSchema, handoverNoteSchema, type HandoverIssueInput } from '@tvmf/shared';
 import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
 import type { AuthedUser, TenantContext } from '../../common/request';
@@ -30,6 +31,14 @@ export class HandoverController {
     @Body(new ZodBody(handoverGenerateSchema)) body: HandoverGenerateInput,
   ) {
     return this.handover.generate(t, user, body);
+  }
+
+  /** A call flow diagram the browser drew for a pack it is about to generate: a PNG, kept with the pack. */
+  @Post('diagrams')
+  @RequirePermission('handover:generate')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 25 * 1024 * 1024 } }))
+  uploadDiagram(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @UploadedFile() file: Express.Multer.File) {
+    return this.handover.uploadDiagram(t, user, file);
   }
 
   @Get('packs/:id')

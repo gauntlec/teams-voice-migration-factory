@@ -3,11 +3,12 @@
 // is listed under "Designed but Not Yet Live" with why. Drafts are for
 // Voxshift staff only; customers see a pack once it's issued, without the
 // internal note, and the issued document must not still say DRAFT.
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import JSZip from 'jszip';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { AuditService } from '../../../../apps/api/src/common/audit.service';
 import { FilesService } from '../../../../apps/api/src/modules/files/files.service';
+import { VOX_TILE_PNG_BASE64 } from '../../../../apps/api/src/modules/deployment/assets/vox-tile';
 import { HandoverDocumentService } from '../../../../apps/api/src/modules/handover/handover-document.service';
 import { HandoverService } from '../../../../apps/api/src/modules/handover/handover.service';
 import { seedCustomer, seedNumbers, seedSite, seedUser, useDb, type TestCustomer } from '../helpers';
@@ -203,5 +204,43 @@ describe('Service Handover', () => {
     // after the first issue, the next pack is 1.1
     const c = await svc2.generate(c2.t, engineer, {});
     expect((await label(c.id)).version_label).toBe('1.1');
+  });
+
+  it('keeps the call flow diagrams the browser drew with the pack, and prints them for live auto attendants', async () => {
+    const c3 = await seedCustomer(handle);
+    const site3 = (await seedSite(c3.s, { sitecode: 'HAU02' })).id;
+    await c3.s.insertInto('build_auto_attendants').values([{ site_id: site3, name: 'Main Number', resource_accounts: JSON.stringify([]), config: {}, holiday_call_flows: JSON.stringify([]) }, { site_id: site3, name: 'Not Live', resource_accounts: JSON.stringify([]), config: {}, holiday_call_flows: JSON.stringify([]) }] as never).execute();
+    await c3.s.insertInto('tenant_objects').values({ object_type: 'auto_attendant', object_key: 'aa-1', display_name: 'Main Number', data: JSON.stringify({}) } as never).execute();
+
+    // only a PNG is taken
+    await expect(svc.uploadDiagram(c3.t, engineer, { originalname: 'x.png', buffer: Buffer.from('not a picture') })).rejects.toBeInstanceOf(BadRequestException);
+    const png = Buffer.from(VOX_TILE_PNG_BASE64, 'base64');
+    const up = async (name: string) => (await svc.uploadDiagram(c3.t, engineer, { originalname: `call-flow-${name}.png`, buffer: png })).fileId;
+    const main = await up('Main Number');
+    const notLive = await up('Not Live');
+
+    const pack = await svc.generate(c3.t, engineer, {
+      diagrams: [
+        { name: 'Main Number', fileId: main, width: 1200, height: 500 },
+        { name: 'Not Live', fileId: notLive, width: 1200, height: 500 },
+        // not one of this customer's diagrams: ignored
+        { name: 'Main Number', fileId: '00000000-0000-4000-8000-000000000000', width: 10, height: 10 },
+      ],
+    });
+    const { sections } = await svc.get(c3.t, engineer, pack.id);
+    const blocks = (sections.find((x) => x.key === 'auto_attendants')!.content as { blocks: Block[] }).blocks;
+    expect(blocks.filter((b) => b.kind === 'heading')).toEqual([{ kind: 'heading', title: 'Call Flow Diagram' }]);
+    expect(blocks.filter((b) => b.kind === 'image')).toEqual([{ kind: 'image', fileId: main, title: 'Main Number', width: 1200, height: 500 }]);
+
+    const media = async (fileId: string) => Object.keys((await JSZip.loadAsync((await files.readBytes(c3.t, fileId)).data)).files).filter((f) => f.startsWith('word/media/')).length;
+    const draftMedia = await media(pack.file_id!);
+    // issuing draws it again from the same stored picture
+    const issued = await svc.issue(c3.t, engineer, pack.id, {});
+    expect(await media(issued.file_id!)).toBe(draftMedia);
+    expect(await docText((await files.readBytes(c3.t, issued.file_id!)).data)).toContain('Main Number');
+
+    // they belong to the pack: not in the Files list, and not readable by a customer
+    expect((await files.list(c3.t, {} as never)).some((f) => f.category === 'handover_diagram')).toBe(false);
+    await expect(files.readBytes(c3.t, main, hide)).rejects.toBeInstanceOf(NotFoundException);
   });
 });

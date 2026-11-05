@@ -25,7 +25,9 @@ export type HandoverBlock =
   | { kind: 'table'; columns: string[]; rows: string[][]; caption?: string; share?: number }
   | { kind: 'labels'; rows: [string, string][]; caption?: string; title?: string }
   | { kind: 'cards'; cards: [string, string][][]; caption?: string }
-  | { kind: 'actions'; items: { description: string; owner: string }[]; caption?: string };
+  | { kind: 'actions'; items: { description: string; owner: string }[]; caption?: string }
+  /** a picture kept with the pack (a call flow diagram): the stored file, what it shows, and its size in pixels */
+  | { kind: 'image'; fileId: string; title: string; width: number; height: number };
 
 /** A note line that is a bullet ("- " or "• ") or a numbered sub-heading ("## "), as the document and preview draw it. */
 export function noteLine(line: string): { kind: 'bullet' | 'heading' | 'text'; text: string } {

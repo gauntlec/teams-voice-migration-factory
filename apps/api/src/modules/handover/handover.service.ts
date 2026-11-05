@@ -36,10 +36,19 @@ export interface HandoverGenerateInput {
   notes?: string;
   /** what changed in this version (Document Control's Comments) */
   changeNote?: string;
+  /** call flow diagrams uploaded for this pack, one per auto attendant */
+  diagrams?: PackDiagram[];
   /** the cover's project line; the last pack's when not given */
   projectName?: string;
   siteIds?: string[];
   sectionKeys?: string[];
+}
+
+export interface PackDiagram {
+  name: string;
+  fileId: string;
+  width: number;
+  height: number;
 }
 
 export interface HandoverNoteInput {
@@ -141,6 +150,49 @@ export class HandoverService {
     return { ids: rows.map((r) => r.id), codes: rows.map((r) => r.sitecode) };
   }
 
+  /** Keeps a call flow diagram the browser drew for a pack it is about to generate. Only a PNG is accepted. */
+  async uploadDiagram(t: TenantContext, user: AuthedUser, file: { originalname: string; buffer: Buffer } | undefined) {
+    assertCustomerWide(t, 'The Service Handover pack');
+    if (!file) throw new BadRequestException('Choose a diagram to upload.');
+    if (file.buffer.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') throw new BadRequestException('A call flow diagram must be a PNG picture.');
+    const stored = await this.files.store(t, {
+      category: 'handover_diagram',
+      sourceType: 'handover_diagram',
+      sourceId: randomUUID(),
+      siteId: null,
+      filename: file.originalname || 'call-flow.png',
+      contentType: 'image/png',
+      data: file.buffer,
+      uploadedBy: user.id,
+    });
+    return { fileId: stored.id };
+  }
+
+  /** The diagrams named in a generate request that really are this customer's stored diagrams. */
+  private async knownDiagrams(t: TenantContext, diagrams: PackDiagram[] | undefined): Promise<PackDiagram[]> {
+    if (!diagrams?.length) return [];
+    const rows = await tenantDb(this.db, t.schema).selectFrom('files').select('id').where('category', '=', 'handover_diagram').where('id', 'in', diagrams.map((d) => d.fileId)).execute();
+    const known = new Set(rows.map((r) => r.id));
+    return diagrams.filter((d) => known.has(d.fileId));
+  }
+
+  /** The bytes of the pictures a pack's sections name, for the document. One that can't be read is left out, never failing the pack. */
+  private async packImages(t: TenantContext, sections: { content: HandoverSectionContent }[]): Promise<Map<string, Buffer>> {
+    const out = new Map<string, Buffer>();
+    for (const sec of sections) {
+      if (sec.content.kind !== 'blocks') continue;
+      for (const b of sec.content.blocks) {
+        if (b.kind !== 'image' || out.has(b.fileId)) continue;
+        try {
+          out.set(b.fileId, (await this.files.readBytes(t, b.fileId)).data);
+        } catch {
+          // drawn without it: the document says the diagram isn't available
+        }
+      }
+    }
+    return out;
+  }
+
   /**
    * The cover's site line (one site's name, else "All sites" or the site codes) and the paper size, from the pack's sites;
    * the project line as given, else the last pack's.
@@ -168,7 +220,7 @@ export class HandoverService {
     const customerLogo = (await this.branding?.customerLogo(t.id)) ?? null;
     // Sections are read before the transaction so the lock is held only for the writes.
     const brand = await this.branding?.forDocuments(t.id);
-    const built = await this.buildSections(t, scope, brand?.name);
+    const built = await this.buildSections(t, scope, brand?.name, await this.knownDiagrams(t, body.diagrams));
     const sections = selectSections(built.sections, body.sectionKeys);
     if (sections.length === 0) throw new BadRequestException('Choose at least one section for the pack.');
     const generatedAt = new Date();
@@ -194,6 +246,7 @@ export class HandoverService {
 
       const data = await this.documentBuilder.build({
         brand,
+        images: await this.packImages(t, sections),
         customerLogo,
         ...layout,
         tenantName: t.name,
@@ -314,6 +367,10 @@ export class HandoverService {
     });
     const data = await this.documentBuilder.build({
       brand,
+      images: await this.packImages(
+        t,
+        savedSections.map((sec) => ({ content: sec.content as HandoverSectionContent })),
+      ),
       versionLabel,
       approval,
       history,
@@ -448,7 +505,7 @@ export class HandoverService {
    * isn't there. Auto attendants and call queues count as live when Teams has
    * one by that name. Numbers show who holds them in Teams.
    */
-  private async buildSections(t: TenantContext, scope: SiteScope | null, brandName = 'Voxshift'): Promise<{ sections: HandoverSectionData[]; liveAsOf: string | null }> {
+  private async buildSections(t: TenantContext, scope: SiteScope | null, brandName = 'Voxshift', diagrams: PackDiagram[] = []): Promise<{ sections: HandoverSectionData[]; liveAsOf: string | null }> {
     const scoped = tenantDb(this.db, t.schema);
     const bySite = scope !== null;
     const ids = scope?.ids ?? [];
@@ -709,6 +766,14 @@ export class HandoverService {
           ? [
               { kind: 'text', text: 'The following auto attendants were deployed:' },
               { kind: 'table', columns: ['Name', 'Site', 'Language', 'Time zone', 'Resource accounts'], rows: built.autoAttendants, caption: 'Auto Attendants Information Table' },
+              // the diagram of each auto attendant that is live (a diagram also shows the ones it hands calls to)
+              ...((): HandoverBlock[] => {
+                const live = new Set(built.autoAttendants.map((a) => a[0]!.toLowerCase()));
+                const shown = diagrams.filter((d) => live.has(d.name.toLowerCase()));
+                return shown.length
+                  ? [{ kind: 'heading', title: 'Call Flow Diagram' }, ...shown.map((d): HandoverBlock => ({ kind: 'image', fileId: d.fileId, title: d.name, width: d.width, height: d.height }))]
+                  : [];
+              })(),
             ]
           : [{ kind: 'text', text: 'No auto attendants were deployed.' }],
       ),

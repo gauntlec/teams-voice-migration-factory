@@ -67,6 +67,8 @@ export interface HandoverSectionData {
 export interface HandoverDocumentInput {
   /** whose branding the pack carries (DocumentBrandingService); Voxshift's when not given */
   brand?: DocumentBrand;
+  /** the pictures the sections name (call flow diagrams), by stored file id */
+  images?: Map<string, Buffer>;
   /** the customer's own logo, for the right of the page header (whichever branding the pack carries) */
   customerLogo?: DocumentBrand['logo'];
   tenantName: string;
@@ -340,7 +342,7 @@ function noteParagraphs(lines: string[]): Paragraph[] {
   });
 }
 
-function sectionBody(section: HandoverSectionData, total: number, nextTable: () => number, number: number): (Paragraph | Table)[] {
+function sectionBody(section: HandoverSectionData, total: number, nextTable: () => number, number: number, images: Map<string, Buffer>, maxImageHeight: number): (Paragraph | Table)[] {
   const out: (Paragraph | Table)[] = [h1(section.title)];
   const { content } = section;
   const captionFor = (label?: string) => caption(nextTable(), label ?? CAPTION[section.key] ?? `${section.title} Table`);
@@ -350,15 +352,29 @@ function sectionBody(section: HandoverSectionData, total: number, nextTable: () 
     return [...out, ...noteParagraphs(content.paragraphs)];
   }
   if (content.kind === 'blocks') {
-    for (const b of content.blocks) out.push(...blockBody(b, total, captionFor, number));
+    for (const b of content.blocks) out.push(...blockBody(b, total, captionFor, number, images, maxImageHeight));
     return out;
   }
   if (content.rows.length === 0) return [...out, body(EMPTY_TEXT[section.key] ?? 'Nothing recorded.')];
   return [...out, dataTable(content.columns, content.rows, total), captionFor()];
 }
 
-function blockBody(b: HandoverBlock, total: number, captionFor: (label?: string) => Paragraph, section: number): (Paragraph | Table)[] {
+function blockBody(b: HandoverBlock, total: number, captionFor: (label?: string) => Paragraph, section: number, images: Map<string, Buffer>, maxImageHeight: number): (Paragraph | Table)[] {
   switch (b.kind) {
+    case 'image': {
+      const data = images.get(b.fileId);
+      if (!data) return [body(`The call flow diagram for ${b.title} isn't available.`)];
+      // as wide as the text (twentieths of a point to pixels), and never taller than the page has room for
+      const size = fit(b.width, b.height, Math.round((total / 20) * (96 / 72)), maxImageHeight);
+      const scale = Math.min(size.width / (b.width || 1), size.height / (b.height || 1));
+      return [
+        new Paragraph({ spacing: { before: 120, after: 60 }, keepNext: true, children: [text(b.title, { bold: true })] }),
+        new Paragraph({
+          spacing: { after: 200 },
+          children: [new ImageRun({ type: 'png', data, transformation: { width: Math.round(b.width * scale), height: Math.round(b.height * scale) }, altText: { title: `Call flow: ${b.title}`, description: `Call flow diagram for ${b.title}`, name: `Call flow ${b.title}` } })],
+        }),
+      ];
+    }
     case 'heading':
       return [h2(b.title)];
     case 'text': {
@@ -514,7 +530,9 @@ export class HandoverDocumentService {
       caption(nextTable(), 'Document Control Table'),
     ];
     // the data sections follow from 2.
-    const content = [...approvals, ...sections.flatMap((s, i) => sectionBody(s, total, nextTable, i + 2))];
+    // room for a picture on a page: the page less its margins, header and footer, in pixels
+    const maxImageHeight = Math.round(((page.height - 2 * MARGIN) / 20) * (96 / 72)) - 80;
+    const content = [...approvals, ...sections.flatMap((s, i) => sectionBody(s, total, nextTable, i + 2, input.images ?? new Map(), maxImageHeight))];
 
     const doc = new Document({
       creator: author,

@@ -1687,7 +1687,7 @@ export interface HandoverSectionsTable {
  */
 export interface FilesTable {
   id: Generated<string>;
-  category: 'deployment_change_document' | 'number_port_document' | 'resource_account_request' | 'handover_pack' | 'service_request_attachment' | 'incident_attachment';
+  category: 'deployment_change_document' | 'number_port_document' | 'resource_account_request' | 'handover_pack' | 'handover_diagram' | 'service_request_attachment' | 'incident_attachment';
   source_type: string;
   source_id: string;
   site_id: string | null;

@@ -8,7 +8,7 @@ import { InjectDb, type Db } from '../../db/db.module';
 import { FILE_STORAGE_BACKEND, type FileStorageBackend } from './file-storage.interface';
 
 export interface StoreFileInput {
-  category: 'deployment_change_document' | 'number_port_document' | 'resource_account_request' | 'handover_pack' | 'service_request_attachment' | 'incident_attachment';
+  category: 'deployment_change_document' | 'number_port_document' | 'resource_account_request' | 'handover_pack' | 'handover_diagram' | 'service_request_attachment' | 'incident_attachment';
   sourceType: string;
   sourceId: string;
   siteId: string | null;
@@ -105,7 +105,8 @@ export class FilesService {
    * is still being prepared and must not reach them.
    */
   async list(t: TenantContext, filter: FilesQuery, opts: FileAccess = {}): Promise<FileRow[]> {
-    let q = tenantDb(this.db, t.schema).selectFrom('files').selectAll().orderBy('created_at', 'desc');
+    // a handover pack's diagrams are part of the pack, not documents in their own right
+    let q = tenantDb(this.db, t.schema).selectFrom('files').selectAll().where('category', '!=', 'handover_diagram').orderBy('created_at', 'desc');
     if (opts.hideDraftHandover) {
       q = q.where((eb) =>
         eb.or([
@@ -130,6 +131,7 @@ export class FilesService {
     const row = await s.selectFrom('files').selectAll().where('id', '=', id).executeTakeFirst();
     if (!row) throw new NotFoundException('file not found');
     assertSiteInScope(t, row.site_id);
+    if (opts.hideDraftHandover && row.category === 'handover_diagram') throw new NotFoundException('file not found');
     if (opts.hideDraftHandover && row.category === 'handover_pack') {
       const pack = await s.selectFrom('handover_packs').select(['status', 'file_id']).where('id', '=', row.source_id).executeTakeFirst();
       if (pack?.status !== 'issued' || pack.file_id !== row.id) throw new NotFoundException('file not found');

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { lazy, Suspense, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Badge,
@@ -33,10 +33,13 @@ import {
   handoverScopeLabel,
   type HandoverNoteSection,
   noteLine,
+  type CallFlowGraph,
   type HandoverBlock,
   type HandoverSectionContent,
 } from '@tvmf/shared';
-import { api, apiDownload, ApiError } from '../api';
+import { api, apiDownload, apiUpload, ApiError } from '../api';
+import { useNotify } from '../hooks/useNotify';
+import type { CapturedDiagram } from '../components/CallFlowDiagram';
 import { useAuth } from '../auth';
 import { DataTable } from '../components/DataTable';
 import { Page } from '../components/Page';
@@ -109,6 +112,9 @@ const useStyles = makeStyles({
   },
   rowActions: { display: 'flex', columnGap: tokens.spacingHorizontalM, alignItems: 'center' },
 });
+
+// Loaded on its own: it brings the diagram library, which only generating a pack needs here.
+const CallFlowCapture = lazy(() => import('../components/CallFlowDiagram').then((m) => ({ default: m.CallFlowCapture })));
 
 function errorMessage(e: unknown, fallback: string) {
   return e instanceof ApiError ? e.message : fallback;
@@ -304,6 +310,45 @@ function GenerateDialog({
   const cs = useStyles();
   const [projectName, setProjectName] = useState(lastProject);
   const [changeNote, setChangeNote] = useState('');
+  // Drawing the call flow diagrams, one at a time, off-screen: the one being drawn, and how far along it is.
+  const notify = useNotify();
+  const [drawing, setDrawing] = useState<{ key: number; graph: CallFlowGraph; done: (shot: CapturedDiagram | null, error?: string) => void } | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
+
+  /** Draws and uploads each auto attendant's diagram. A diagram that fails is left out and named afterwards, never stopping the pack. */
+  const drawDiagrams = async (): Promise<{ diagrams: { name: string; fileId: string; width: number; height: number }[]; failed: string[] }> => {
+    const out: { name: string; fileId: string; width: number; height: number }[] = [];
+    const failed: string[] = [];
+    if (!sectionKeys.has('auto_attendants')) return { diagrams: out, failed };
+    setProgress('Reading the call flows…');
+    const { loadSiteCallFlowGraphs } = await import('./build/flowDialogs');
+    const chosen = mode === 'sites' ? sites.filter((x) => siteIds.has(x.id)) : sites;
+    const graphs: { name: string; graph: CallFlowGraph }[] = [];
+    for (const site of chosen) graphs.push(...(await loadSiteCallFlowGraphs(tenantId, site.id)));
+    for (const [i, g] of graphs.entries()) {
+      setProgress(`Drawing call flow diagrams (${i + 1} of ${graphs.length})…`);
+      try {
+        const shot = await new Promise<CapturedDiagram>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('timed out')), 60_000);
+          setDrawing({
+            key: i,
+            graph: g.graph,
+            done: (s, error) => {
+              clearTimeout(timer);
+              if (s) resolve(s);
+              else reject(new Error(error ?? 'not drawn'));
+            },
+          });
+        });
+        const up = await apiUpload<{ fileId: string }>(`/t/${tenantId}/handover/diagrams`, new File([shot.blob], `call-flow-${g.name}.png`, { type: 'image/png' }));
+        out.push({ name: g.name, fileId: up.fileId, width: shot.width, height: shot.height });
+      } catch {
+        failed.push(g.name);
+      }
+    }
+    setDrawing(null);
+    return { diagrams: out, failed };
+  };
   const [mode, setMode] = useState<'all' | 'sites'>('all');
   const [siteIds, setSiteIds] = useState<Set<string>>(new Set());
   const [sectionKeys, setSectionKeys] = useState<Set<string>>(new Set(HANDOVER_SECTIONS.map((s) => s.key)));
@@ -318,10 +363,14 @@ function GenerateDialog({
 
   const allSections = sectionKeys.size === HANDOVER_SECTIONS.length;
   const generate = useMutation({
-    mutationFn: () =>
-      api(`/t/${tenantId}/handover/packs`, {
+    mutationFn: async () => {
+      // Diagrams need Design & Build; someone who can't read it still gets the pack, without them.
+      const { diagrams, failed } = await drawDiagrams().catch(() => ({ diagrams: [], failed: ['the call flow diagrams'] }));
+      setProgress('Generating the pack…');
+      await api(`/t/${tenantId}/handover/packs`, {
         method: 'POST',
         body: JSON.stringify({
+          diagrams,
           siteIds: mode === 'sites' ? [...siteIds] : [],
           sectionKeys: allSections ? [] : [...sectionKeys],
           notes: notes.trim() || undefined,
@@ -329,8 +378,17 @@ function GenerateDialog({
           projectName: projectName.trim(),
           changeNote: changeNote.trim() || undefined,
         }),
-      }),
-    onSuccess: onDone,
+      });
+      return failed;
+    },
+    onSuccess: (failed) => {
+      if (failed.length) notify('The pack was generated without some call flow diagrams', { intent: 'warning', body: `Not drawn: ${failed.join(', ')}. Generate it again to retry.` });
+      onDone();
+    },
+    onSettled: () => {
+      setDrawing(null);
+      setProgress(null);
+    },
   });
   const invalid = sectionKeys.size === 0 || (mode === 'sites' && siteIds.size === 0);
 
@@ -381,6 +439,16 @@ function GenerateDialog({
               <Textarea value={notes} maxLength={2000} onChange={(_, d) => setNotes(d.value)} resize="vertical" />
             </Field>
             {generate.isError && <DangerText>{errorMessage(generate.error, 'Could not generate the pack')}</DangerText>}
+            {progress && (
+              <Text size={200} role="status">
+                {progress}
+              </Text>
+            )}
+            {drawing && (
+              <Suspense fallback={null}>
+                <CallFlowCapture key={drawing.key} graph={drawing.graph} onDone={drawing.done} />
+              </Suspense>
+            )}
           </DialogContent>
           <DialogActions>
             <Button appearance="secondary" onClick={onClose}>
@@ -607,6 +675,12 @@ function PreviewBlock({ block: b }: { block: HandoverBlock }) {
           ))}
           {b.caption && <Text size={200} italic>{b.caption}</Text>}
         </div>
+      );
+    case 'image':
+      return (
+        <Text size={200} block>
+          Call flow diagram: {b.title} (a picture in the document)
+        </Text>
       );
     case 'actions':
       return <PreviewTable columns={['Description', 'Owner and Action']} rows={b.items.map((a) => [a.description, a.owner])} caption={b.caption} />;

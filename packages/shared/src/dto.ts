@@ -102,6 +102,8 @@ export const handoverGenerateSchema = z.preprocess(
     projectName: z.string().trim().max(120).optional(),
     /** What changed in this version - the Comments column of the pack's Document Control table. */
     changeNote: z.string().trim().max(300).optional(),
+    /** Call flow diagrams the browser drew and uploaded (POST /handover/diagrams), one per auto attendant. */
+    diagrams: z.array(z.object({ name: z.string().trim().min(1).max(256), fileId: z.guid(), width: z.number().int().positive().max(20000), height: z.number().int().positive().max(20000) })).max(200).optional(),
     siteIds: z.array(z.guid()).max(200).optional(),
     sectionKeys: z.array(z.string().refine(isHandoverSectionKey, 'Unknown handover section')).max(20).optional(),
   }),
