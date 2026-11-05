@@ -102,6 +102,7 @@ the worker renders a branded template and sends it via SMTP. See
 | handover | `/t/:tenantId/handover` | generate the handover pack from final state |
 | audit | `/t/:tenantId/audit` + `/audit` | read-only audit views |
 | progress | `/t/:tenantId/progress` | home-page dashboard: each site's migration stage and blockers, derived from the other modules' data. See `docs/PROGRESS.md` |
+| insights | `/t/:tenantId/insights` | Voxshift Insights: one set of figures for the Overview and Reports, site go-live dates and status, daily snapshots for trends. See `docs/INSIGHTS.md` |
 | feature-requests | `/feature-requests` | staff-only enhancement board (kanban); SUPER_ADMIN moves cards, generates a "prompt for Claude" per card |
 | tenant-discovery | `/t/:tenantId/tenant-discovery` | **Discovery**: admin/engineer connects to the customer's live Teams tenant (device code, PowerShell in the worker) and snapshots users, licences, numbers and every voice policy; links to Site Data. See `docs/DISCOVERY.md` |
 

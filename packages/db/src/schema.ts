@@ -453,6 +453,20 @@ export interface DiscoverySitesTable {
   submitted_at: string | null;
   accepted_by: string | null;
   accepted_at: string | null;
+  /** Target go-live date (migration 0084), YYYY-MM-DD - read it with to_char, pg would turn a date into a local-time Date. */
+  target_go_live: string | null;
+  /** The date first agreed; kept when the target moves. */
+  first_go_live: string | null;
+  go_live_changed_at: string | null;
+  go_live_changed_by: string | null;
+}
+
+/** The customer's figures once a day (migration 0084): data is a MetricSnapshot from @tvmf/shared. */
+export interface MetricSnapshotsTable {
+  /** YYYY-MM-DD (UTC) - read it with to_char */
+  day: string;
+  data: Json<import('@tvmf/shared').MetricSnapshot>;
+  created_at: Ts;
 }
 
 /** An address on a site besides its primary one (migration 0076): another building on a campus. Pinned on the map under the site's code. */
@@ -1846,6 +1860,7 @@ export interface DB {
   // tenant
   discovery: DiscoveryTable;
   discovery_sites: DiscoverySitesTable;
+  metric_snapshots: MetricSnapshotsTable;
   discovery_site_addresses: DiscoverySiteAddressesTable;
   site_handset_tracking: SiteHandsetTrackingTable;
   discovery_site_changes: DiscoverySiteChangesTable;

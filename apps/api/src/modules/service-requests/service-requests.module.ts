@@ -27,5 +27,7 @@ import { SrProposalsService } from './sr-proposals.service';
   // SrAgentsController first: its fixed paths (agents, :id/takeover ...) must win over ServiceRequestsController's :id.
   controllers: [SrAgentsController, ServiceRequestsController, MspServiceRequestsController, SrAgentApiController],
   providers: [ServiceRequestsService, MspServiceRequestsService, SrClaimsService, SrAgentView, SrProposalsService, SrAgentsService, SrAgentApiService, SrBuiltinChangesService],
+  // InsightsModule reads the service request report.
+  exports: [ServiceRequestsService],
 })
 export class ServiceRequestsModule {}
