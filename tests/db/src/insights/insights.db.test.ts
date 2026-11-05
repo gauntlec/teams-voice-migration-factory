@@ -162,3 +162,14 @@ describe('daily snapshots', () => {
     expect(old).toEqual([]);
   });
 });
+
+describe('change log', () => {
+  it('lists the live runs’ changes in the period, newest first, with the site and who ran them', async () => {
+    const log = await insights.changeLog(c.t, 'PROJECT_MANAGER', { from: '2026-11-01', to: '2026-11-05' }, now);
+    expect(log.truncated).toBe(false);
+    expect(log.rows.map((r) => r.result)).toEqual(['failed', 'applied', 'applied', 'applied']);
+    expect(log.rows[0]).toMatchObject({ sitecode: 'LON01', objectType: 'user', cmdlet: 'Set-CsPhoneNumberAssignment', operator: 'ENGINEER' });
+    expect((await insights.changeLog(c.t, 'ENGINEER', { from: '2026-10-01', to: '2026-10-31' }, now)).rows).toEqual([]);
+    expect((await insights.changeLog({ ...c.t, siteScope: [nyc] }, 'CUSTOMER', { from: '2026-11-01', to: '2026-11-05' }, now)).rows).toEqual([]);
+  });
+});

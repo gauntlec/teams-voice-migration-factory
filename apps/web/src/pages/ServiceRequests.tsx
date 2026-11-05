@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router';
 import { QueueTiles, SlaBadge, queueFilter, type QueueFilter } from '../components/SrTarget';
-import { ReportsDialog, SettingsDialog, useSrSettings } from './ServiceRequestAdmin';
+import { SettingsDialog, useSrSettings } from './ServiceRequestAdmin';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Badge,
@@ -268,7 +268,6 @@ export function ServiceRequests() {
   });
   const [modesOpen, setModesOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [reportsOpen, setReportsOpen] = useState(false);
   const [tile, setTile] = useState<QueueFilter>('all');
   const staff = can('sr:manage');
   const filteredRows = (list.data ?? []).filter(queueFilter(staff && status === 'open' ? tile : 'all'));
@@ -318,7 +317,7 @@ export function ServiceRequests() {
             </MenuTrigger>
             <MenuPopover>
               <MenuList>
-                <MenuItem onClick={() => setReportsOpen(true)}>Reports</MenuItem>
+                <MenuItem onClick={() => navigate('/reports/service-requests')}>Reports</MenuItem>
                 <MenuItem onClick={() => setSettingsOpen(true)}>{staff ? 'Settings' : 'Our targets'}</MenuItem>
                 {can('sr:manage') && <MenuItem onClick={() => setModesOpen(true)}>Site modes</MenuItem>}
               </MenuList>
@@ -439,7 +438,6 @@ export function ServiceRequests() {
       )}
       {modesOpen && <SiteModesDialog base={base} sites={sitesQ.data ?? []} onClose={() => setModesOpen(false)} />}
       {settingsOpen && <SettingsDialog base={base} onClose={() => setSettingsOpen(false)} />}
-      {reportsOpen && <ReportsDialog base={base} onClose={() => setReportsOpen(false)} />}
     </Page>
   );
 }

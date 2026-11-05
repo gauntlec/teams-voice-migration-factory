@@ -29,6 +29,7 @@ export * from './msp-notify';
 export * from './wizard-convert';
 export * from './progress';
 export * from './insights';
+export * from './reports';
 export * from './release-safety';
 export * from './base-url';
 export * from './hub-connection';

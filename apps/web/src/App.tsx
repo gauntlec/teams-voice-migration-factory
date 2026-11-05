@@ -9,6 +9,7 @@ import { StaffAccessWait } from './pages/StaffAccessWait';
 import { SetPassword } from './pages/SetPassword';
 import { EnrolTotp } from './pages/EnrolTotp';
 import { Dashboard } from './pages/Dashboard';
+import { ReportPage, Reports } from './pages/reports/Reports';
 import { DataCollection } from './pages/DataCollection';
 import { DataCollectionPolicies } from './pages/DataCollectionPolicies';
 import { SiteWorkspace } from './pages/SiteWorkspace';
@@ -67,6 +68,8 @@ export function App() {
     <AppShell>
       <Routes>
         <Route path="/" element={<Dashboard />} />
+        <Route path="/reports" element={<Reports />} />
+        <Route path="/reports/:key" element={<ReportPage />} />
         <Route path="/incidents" element={<Incidents />} />
         <Route path="/incidents/new" element={<IncidentNew />} />
         <Route

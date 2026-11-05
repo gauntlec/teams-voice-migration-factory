@@ -11,7 +11,6 @@ import {
   DialogTitle,
   Field,
   Input,
-  Select,
   Spinner,
   TableBody,
   TableCell,
@@ -277,129 +276,6 @@ export function SettingsDialog({ base, onClose }: { base: string; onClose: () =>
                 Save
               </Button>
             )}
-          </DialogActions>
-        </DialogBody>
-      </DialogSurface>
-    </Dialog>
-  );
-}
-
-interface Report {
-  raised: number;
-  deployed: number;
-  completedBy?: { assistants: number; people: number };
-  byType: Record<string, number>;
-  byStatus: Record<string, number>;
-  medianHoursToDeploy: number | null;
-  responseMetPct: number | null;
-  resolutionMetPct: number | null;
-  responseMeasured: number;
-  resolutionMeasured: number;
-  openBacklog: { total: number; under1d: number; d1to3: number; d3to7: number; over7d: number };
-}
-
-/** The last 12 calendar months, newest first, as [label, from, to). */
-function months(): { label: string; from: string; to: string }[] {
-  const out = [];
-  const now = new Date();
-  for (let i = 0; i < 12; i++) {
-    const start = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
-    out.push({ label: start.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }), from: start.toISOString(), to: end.toISOString() });
-  }
-  return out;
-}
-
-export function ReportsDialog({ base, onClose }: { base: string; onClose: () => void }) {
-  const ls = useLocalStyles();
-  const cs = useStyles();
-  const list = useMemo(months, []);
-  const [pick, setPick] = useState(0);
-  const m = list[pick]!;
-  const report = useQuery({
-    queryKey: ['sr-report', base, m.from],
-    queryFn: () => api<Report>(`${base}/report?from=${encodeURIComponent(m.from)}&to=${encodeURIComponent(m.to)}`),
-  });
-  const r = report.data;
-  const pct = (v: number | null, n: number) => (v === null ? '—' : `${v}%`) + (n ? ` of ${n}` : '');
-  const tiles = r
-    ? [
-        { label: 'Raised', value: String(r.raised) },
-        { label: 'Completed', value: String(r.deployed) },
-        ...(r.completedBy?.assistants ? [{ label: 'Done by assistants', value: `${r.completedBy.assistants} of ${r.completedBy.assistants + r.completedBy.people}` }] : []),
-        { label: 'Median time to complete', value: r.medianHoursToDeploy === null ? '—' : r.medianHoursToDeploy >= 48 ? `${Math.round(r.medianHoursToDeploy / 24)} days` : `${r.medianHoursToDeploy}h` },
-        { label: 'First response on time', value: pct(r.responseMetPct, r.responseMeasured) },
-        { label: 'Completed on time', value: pct(r.resolutionMetPct, r.resolutionMeasured) },
-      ]
-    : [];
-  return (
-    <Dialog open onOpenChange={(_, x) => !x.open && onClose()}>
-      <DialogSurface className={ls.w94vwMaxW820}>
-        <DialogBody>
-          <DialogTitle>Service request report</DialogTitle>
-          <DialogContent className={mergeClasses(cs.stack, ls.maxH74vhScroll)}>
-            <Field label="Month">
-              <Select value={String(pick)} onChange={(_, d) => setPick(Number(d.value))}>
-                {list.map((x, i) => (
-                  <option key={x.from} value={i}>
-                    {x.label}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            {report.isLoading && <Spinner size="tiny" />}
-            {report.isError && <LoadError message={(report.error as Error).message} />}
-            {r && (
-              <>
-                <div className={cs.tiles}>
-                  {tiles.map((t) => (
-                    <div key={t.label} className={cs.tile}>
-                      <Text size={200}>{t.label}</Text>
-                      <span className={cs.value}>{t.value}</span>
-                    </div>
-                  ))}
-                </div>
-                <Text size={200} className={cs.muted}>
-                  For requests raised in {m.label}. Times leave out time spent waiting on the customer. On-time figures count requests that have
-                  finished that stage.
-                </Text>
-                <div className={cs.section}>
-                  <Text weight="semibold">By type</Text>
-                  {r.raised === 0 ? (
-                    <Text size={200}>No requests were raised this month.</Text>
-                  ) : (
-                    <DataTable size="small" minWidth={360}>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHeaderCell>Type</TableHeaderCell>
-                          <TableHeaderCell>Raised</TableHeaderCell>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {SR_TYPES.filter((t) => r.byType[t]).map((t) => (
-                          <TableRow key={t}>
-                            <TableCell>{SR_TYPE_DEFS[t].label}</TableCell>
-                            <TableCell>{r.byType[t]}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </DataTable>
-                  )}
-                </div>
-                <div className={cs.section}>
-                  <Text weight="semibold">Open right now: {r.openBacklog.total}</Text>
-                  <Text size={200}>
-                    Under a day: {r.openBacklog.under1d} · 1–3 days: {r.openBacklog.d1to3} · 3–7 days: {r.openBacklog.d3to7} · Over a week:{' '}
-                    {r.openBacklog.over7d}
-                  </Text>
-                </div>
-              </>
-            )}
-          </DialogContent>
-          <DialogActions>
-            <Button appearance="secondary" onClick={onClose}>
-              Close
-            </Button>
           </DialogActions>
         </DialogBody>
       </DialogSurface>
