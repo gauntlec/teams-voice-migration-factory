@@ -31,6 +31,7 @@ describe('pack page numbers', () => {
   it('finds a long title that wraps, and one with characters special to a pattern', () => {
     expect(headingPages('5.  A very long section title that goes on and on\nand wraps', [h('5.', 'A very long section title that goes on and on and wraps')])).not.toBeNull();
     expect(headingPages('7.  Common Area Phones (CAPS)', [h('7.', 'Common Area Phones (CAPS)')])).not.toBeNull();
+    expect(headingPages('8.  Back\\slash [site] $1', [h('8.', 'Back\\slash [site] $1')])).not.toBeNull();
   });
 
   it('gives no numbers at all rather than a guess when a heading is missing or out of order', () => {

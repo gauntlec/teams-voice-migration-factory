@@ -218,6 +218,8 @@ describe('Service Handover', () => {
     const rdg2 = await gen([rdg], 'A change at Reading');
     const all1 = await gen();
     expect([await label(rdg1), await label(lds1), await label(rdg2), await label(all1)]).toEqual(['0.1', '0.1', '0.2', '0.1']);
+    // the screen's list shows the version as printed
+    expect((await svc.list(c4.t, engineer)).map((p) => p.version_label)).toEqual(['0.1', '0.2', '0.1', '0.1']);
 
     // the two 0.1s are different files, and each site's Document Control lists only its own packs
     const name = (p: { file_id: string | null }) => c4.s.selectFrom('files').select('filename').where('id', '=', p.file_id!).executeTakeFirstOrThrow().then((r) => r.filename);

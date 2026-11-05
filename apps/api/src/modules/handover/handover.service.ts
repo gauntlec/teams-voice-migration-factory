@@ -126,7 +126,7 @@ export class HandoverService {
     const staff = isPackAuthor(user);
     const rows = await tenantDb(this.db, t.schema)
       .selectFrom('handover_packs')
-      .select(['id', 'version', 'status', 'generated_by', 'generated_at', 'file_id', 'issued_by', 'issued_at', 'source', 'created_at'])
+      .select(['id', 'version', 'version_label', 'status', 'generated_by', 'generated_at', 'file_id', 'issued_by', 'issued_at', 'source', 'created_at'])
       // A draft is still being prepared - customers only ever see issued packs.
       .$if(!staff, (qb) => qb.where('status', '=', 'issued'))
       .orderBy('version', 'desc')

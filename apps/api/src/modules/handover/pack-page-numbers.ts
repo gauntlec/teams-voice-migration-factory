@@ -34,6 +34,9 @@ export async function measuringCopy(docx: Buffer): Promise<Buffer> {
   return zip.generateAsync({ type: 'nodebuffer' });
 }
 
+/** Text to match exactly in a pattern, whatever characters it has. */
+const literal = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 /**
  * Which page each heading is on, from pdftotext's output (a form feed between pages). A heading is a line starting with its number and
  * title; a contents line is the same but has dot leaders, so it doesn't count. Null unless every heading is found in order: a pack's
@@ -45,7 +48,7 @@ export function headingPages(pdfText: string, headings: readonly PackHeading[]):
   let page = 0;
   let line = 0;
   for (const h of headings) {
-    const start = new RegExp(`^\\s*${h.number.replace(/\./g, '\\.')}\\s+${h.title.trim().slice(0, 40).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')}`);
+    const start = new RegExp(`^\\s*${literal(h.number)}\\s+${literal(h.title.trim().slice(0, 40)).replace(/\s+/g, '\\s+')}`);
     let hit = false;
     while (!hit && page < pages.length) {
       const lines = pages[page]!.split('\n');
