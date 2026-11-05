@@ -141,3 +141,14 @@ describe('the Executive summary', () => {
     expect(doc.sections[2]).toMatchObject({ title: 'Risks and decisions', rows: [['C', 'At risk', 'There is no clean dry run yet and go-live is in 15 days']] });
   });
 });
+
+describe('scheduled report times', () => {
+  it('sends on the 1st at 07:00 UTC, quarterly in January, April, July and October', async () => {
+    const { nextScheduleRun } = await import('./reports');
+    expect(nextScheduleRun('monthly', new Date('2026-11-05T10:00:00Z')).toISOString()).toBe('2026-12-01T07:00:00.000Z');
+    expect(nextScheduleRun('monthly', new Date('2026-12-01T06:59:00Z')).toISOString()).toBe('2026-12-01T07:00:00.000Z');
+    expect(nextScheduleRun('monthly', new Date('2026-12-01T07:00:00Z')).toISOString()).toBe('2027-01-01T07:00:00.000Z');
+    expect(nextScheduleRun('quarterly', new Date('2026-11-05T10:00:00Z')).toISOString()).toBe('2027-01-01T07:00:00.000Z');
+    expect(nextScheduleRun('quarterly', new Date('2027-01-01T07:00:00Z')).toISOString()).toBe('2027-04-01T07:00:00.000Z');
+  });
+});

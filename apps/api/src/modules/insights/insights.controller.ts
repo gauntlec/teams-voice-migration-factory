@@ -1,10 +1,12 @@
-import { Controller, Get, Param, ParseUUIDPipe, Query, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Post, Put, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import {
   insightsHistoryQuerySchema,
   insightsPeriodQuerySchema,
   reportFileName,
   reportQuerySchema,
+  reportScheduleSchema,
+  type ReportScheduleInput,
   type ReportQuery,
   type InsightsHistoryQuery,
   type InsightsPeriodQuery,
@@ -15,6 +17,7 @@ import { ZodBody } from '../../common/zod.pipe';
 import { RequirePermission } from '../../rbac/require-permission.decorator';
 import { TenantGuard } from '../../rbac/tenant.guard';
 import { InsightsReportsService } from './insights-reports.service';
+import { InsightsScheduleService } from './insights-schedule.service';
 import { InsightsService } from './insights.service';
 import { renderReportPdf } from './report-pdf';
 
@@ -28,6 +31,7 @@ export class InsightsController {
   constructor(
     private readonly svc: InsightsService,
     private readonly reports: InsightsReportsService,
+    private readonly schedules: InsightsScheduleService,
   ) {}
 
   @Get('metrics')
@@ -72,5 +76,51 @@ export class InsightsController {
     res.setHeader('Content-Disposition', `attachment; filename="${reportFileName(doc, t.name)}.pdf"`);
     res.setHeader('Cache-Control', 'no-store');
     res.send(pdf);
+  }
+
+  /* Scheduled reports (step 4b): staff set them up; everyone on the customer can see who gets what. */
+
+  @Get('schedules')
+  @RequirePermission('reports:schedule')
+  listSchedules(@TenantCtx() t: TenantContext) {
+    return this.schedules.list(t);
+  }
+
+  /** Who a report can be sent to: people who can open this customer. */
+  @Get('schedules/recipients')
+  @RequirePermission('reports:schedule')
+  scheduleRecipients(@TenantCtx() t: TenantContext) {
+    return this.schedules.candidates(t);
+  }
+
+  @Post('schedules')
+  @RequirePermission('reports:schedule')
+  createSchedule(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Body(new ZodBody(reportScheduleSchema)) body: ReportScheduleInput) {
+    return this.schedules.create(t, user, body);
+  }
+
+  @Put('schedules/:id')
+  @RequirePermission('reports:schedule')
+  updateSchedule(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodBody(reportScheduleSchema)) body: ReportScheduleInput,
+  ) {
+    return this.schedules.update(t, user, id, body);
+  }
+
+  @Delete('schedules/:id')
+  @HttpCode(204)
+  @RequirePermission('reports:schedule')
+  async deleteSchedule(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id', ParseUUIDPipe) id: string) {
+    await this.schedules.remove(t, user, id);
+  }
+
+  /** Send it now, for the period it would cover now (last month or last quarter). */
+  @Post('schedules/:id/send-now')
+  @RequirePermission('reports:schedule')
+  sendScheduleNow(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id', ParseUUIDPipe) id: string) {
+    return this.schedules.sendNow(t, user, id);
   }
 }

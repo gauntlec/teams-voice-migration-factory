@@ -83,6 +83,17 @@ export interface MspsTable {
   teams_notify: ColumnType<import('@tvmf/shared').MspNotifyConfig, string | undefined, string>;
 }
 
+/** A file sent with an email (platform migration 0040): a scheduled report's PDF. Content removed after 90 days. */
+export interface EmailAttachmentsTable {
+  id: Generated<string>;
+  message_id: string;
+  filename: string;
+  content_type: string;
+  content: Buffer | null;
+  size: number;
+  created_at: Ts;
+}
+
 export interface EmailMessagesTable {
   id: Generated<string>;
   to_email: string;
@@ -463,6 +474,22 @@ export interface DiscoverySitesTable {
 }
 
 /** The customer's figures once a day (migration 0084): data is a MetricSnapshot from @tvmf/shared. */
+/** A scheduled report (tenant migration 0086). */
+export interface ReportSchedulesTable {
+  id: Generated<string>;
+  report_key: string;
+  frequency: 'monthly' | 'quarterly';
+  recipients: Json<string[]>;
+  enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  next_run_at: string;
+  last_run_at: string | null;
+  last_status: string | null;
+  last_detail: string | null;
+  created_by: string | null;
+  created_at: Ts;
+  updated_at: Ts;
+}
+
 export interface MetricSnapshotsTable {
   /** YYYY-MM-DD (UTC) - read it with to_char */
   day: string;
@@ -1841,6 +1868,7 @@ export interface DB {
   sso_replay_guard: SsoReplayGuardTable;
   invitations: InvitationsTable;
   email_messages: EmailMessagesTable;
+  email_attachments: EmailAttachmentsTable;
   feature_requests: FeatureRequestsTable;
   bug_reports: BugReportsTable;
   platform_audit_log: PlatformAuditLogTable;
@@ -1862,6 +1890,7 @@ export interface DB {
   discovery: DiscoveryTable;
   discovery_sites: DiscoverySitesTable;
   metric_snapshots: MetricSnapshotsTable;
+  report_schedules: ReportSchedulesTable;
   discovery_site_addresses: DiscoverySiteAddressesTable;
   site_handset_tracking: SiteHandsetTrackingTable;
   discovery_site_changes: DiscoverySiteChangesTable;

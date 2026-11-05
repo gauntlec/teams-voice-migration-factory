@@ -1,12 +1,13 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link as RouterLink, useNavigate, useParams, useSearchParams } from 'react-router';
-import { Button, Dropdown, Field, Input, Option, Spinner, Switch, Text, makeStyles, mergeClasses, shorthands, tokens } from '@fluentui/react-components';
+import { Button, Dropdown, Field, Input, Option, Spinner, Switch, Tab, TabList, Text, makeStyles, mergeClasses, shorthands, tokens } from '@fluentui/react-components';
 import {
   ArrowDownloadRegular,
   DocumentPdfRegular,
   SparkleRegular,
   ArrowLeftRegular,
+  CalendarClockRegular,
   ChevronRightRegular,
   DocumentTableRegular,
   HistoryRegular,
@@ -52,6 +53,20 @@ import { useNotify } from '../../hooks/useNotify';
 import { exportReportCsv, exportReportExcel, hasTable } from '../../lib/exportReport';
 import { reportAvailable } from './reportsShared';
 import { ReportView } from './ReportView';
+import { SchedulesPanel } from './Schedules';
+
+/**
+ * An emailed report link carries ?customer=<id>: switch to that customer when this person can open it, so the link shows
+ * the report it was sent about.
+ */
+function useCustomerFromLink() {
+  const [params] = useSearchParams();
+  const { me, activeTenantId, setActiveTenant } = useAuth();
+  const want = params.get('customer');
+  useEffect(() => {
+    if (want && want !== activeTenantId && me?.tenants.some((t) => t.id === want)) setActiveTenant(want);
+  }, [want, activeTenantId, me, setActiveTenant]);
+}
 
 const useStyles = makeStyles({
   group: { display: 'grid', ...shorthands.gap('8px') },
@@ -114,12 +129,30 @@ const ICONS: Record<ReportKey, JSX.Element> = {
 export function Reports() {
   const s = useStyles();
   const { me, activeTenantId, can } = useAuth();
+  const [params, setParams] = useSearchParams();
+  useCustomerFromLink();
   const tenant = me?.tenants.find((t) => t.id === activeTenantId);
   if (!activeTenantId || !tenant) return <NoTenant />;
+  const canSchedule = can('reports:schedule');
+  const tab = canSchedule && params.get('tab') === 'scheduled' ? 'scheduled' : 'catalogue';
+  const startWith = params.get('new');
+  const chooseTab = (t: string) => setParams(t === 'scheduled' ? { tab: 'scheduled' } : {}, { replace: true });
   const open = REPORT_KEYS.filter((k) => reportAvailable(k, can, tenant));
   const groups = REPORT_GROUPS.map((g) => ({ g, keys: open.filter((k) => REPORT_CATALOGUE[k].group === g) })).filter((x) => x.keys.length || (x.g === 'Migration' && can('tenantdiscovery:read')));
   return (
-    <Page title="Reports" subtitle="Choose a report, then the period. Each one compares with the period before and exports to Excel or CSV.">
+    <Page title="Reports" subtitle="Choose a report, then the period. Each one compares with the period before, downloads as a PDF and exports to Excel or CSV.">
+      {canSchedule && (
+        <TabList selectedValue={tab} onTabSelect={(_, d) => chooseTab(String(d.value))}>
+          <Tab value="catalogue">Reports</Tab>
+          <Tab value="scheduled" icon={<CalendarClockRegular />}>
+            Scheduled
+          </Tab>
+        </TabList>
+      )}
+      {tab === 'scheduled' ? (
+        <SchedulesPanel tenantId={activeTenantId} tenant={tenant} can={can} startWith={(REPORT_KEYS as readonly string[]).includes(startWith ?? '') ? (startWith as ReportKey) : null} />
+      ) : (
+        <>
       {groups.map(({ g, keys }) => (
         <div key={g} className={s.group}>
           <span className={s.groupTitle}>{g}</span>
@@ -153,6 +186,8 @@ export function Reports() {
           </div>
         </div>
       ))}
+        </>
+      )}
     </Page>
   );
 }
@@ -178,6 +213,7 @@ export function ReportPage() {
   const navigate = useNavigate();
   const notify = useNotify();
   const { me, activeTenantId, can } = useAuth();
+  useCustomerFromLink();
   const tenant = me?.tenants.find((t) => t.id === activeTenantId);
   const { choice, period, compare, today, set, query } = usePeriod();
   const reportKey = (REPORT_KEYS as readonly string[]).includes(key ?? '') ? (key as ReportKey) : null;
@@ -262,6 +298,11 @@ export function ReportPage() {
         <Button icon={<ArrowDownloadRegular />} disabled={!doc.data} onClick={() => void exportAs('excel')}>
           Excel
         </Button>
+        {can('reports:schedule') && (
+          <Button appearance="subtle" icon={<CalendarClockRegular />} onClick={() => navigate(`/reports?tab=scheduled&new=${reportKey}`)}>
+            Schedule
+          </Button>
+        )}
         {doc.data && hasTable(doc.data) && (
           <Button appearance="subtle" disabled={!doc.data} onClick={() => void exportAs('csv')}>
             CSV

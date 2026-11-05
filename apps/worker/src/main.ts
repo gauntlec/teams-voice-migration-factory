@@ -1227,6 +1227,16 @@ async function handleMail(job: Job) {
     return;
   }
 
+  // Files kept with the message (a scheduled report's PDF). Their content is removed after 90 days; a resend after that
+  // goes without them rather than failing.
+  const files = await platformDb(db)
+    .selectFrom('email_attachments')
+    .select(['filename', 'content_type', 'content'])
+    .where('message_id', '=', id)
+    .where('content', 'is not', null)
+    .orderBy('created_at')
+    .execute();
+
   try {
     await sendMail(mailCfg, {
       to: delivery.to,
@@ -1235,6 +1245,7 @@ async function handleMail(job: Job) {
       html: rendered.html,
       text: rendered.text,
       replyTo: row.reply_to,
+      ...(files.length ? { attachments: files.map((f) => ({ filename: f.filename, contentType: f.content_type, content: f.content as Buffer })) } : {}),
     });
     await platformDb(db)
       .updateTable('email_messages')

@@ -26,6 +26,7 @@ import {
   type ServiceRequestMessageContext,
   type ServiceRequestStatusChangedContext,
   type SsoAdminSigninContext,
+  type ScheduledReportContext,
   type SsoStaffAccessRequestContext,
   type UserInvitationContext,
 } from '@tvmf/shared';
@@ -50,6 +51,8 @@ export function renderEmail(template: string, context: Record<string, unknown>, 
   switch (template as EmailTemplate) {
     case 'user_invitation':
       return invitation(context as unknown as UserInvitationContext, branding);
+    case 'scheduled_report':
+      return scheduledReport(context as unknown as ScheduledReportContext, branding);
     case 'discovery_completed':
       return discoveryCompleted(context as unknown as DiscoveryCompletedContext, branding);
     case 'deployment_completed':
@@ -267,6 +270,27 @@ function discoveryCompleted(c: DiscoveryCompletedContext, branding?: EmailBrandi
     ],
   };
 
+  return { subject, html: renderHtml(layout, branding), text: renderText(layout) };
+}
+
+/** A scheduled report (docs/INSIGHTS.md, step 4b): its headline in the email, the full report as the attached PDF. */
+function scheduledReport(c: ScheduledReportContext, branding?: EmailBranding): RenderedEmail {
+  const subject = `${c.reportTitle}: ${c.customerName}, ${c.periodLabel}`;
+  const intro = [
+    `Your ${c.frequencyLabel.toLowerCase()} ${c.reportTitle} for ${c.customerName}, covering ${c.periodLabel}, is attached as a PDF (${c.filename}).`,
+    ...(c.headline ? [c.headline, ...c.sentences] : [c.summary]),
+  ];
+  const layout: LayoutInput = {
+    previewText: c.headline ?? c.summary,
+    eyebrow: `${c.frequencyLabel} report`,
+    heading: `${c.reportTitle} — ${c.customerName}`,
+    intro,
+    cta: { label: 'Open the report in Voxshift', url: c.url },
+    outro: [
+      'The report is built with what your role can see, so it may differ from copies sent to others.',
+      'You are receiving this because someone on the team added you to this scheduled report. Ask them to take you off it if you no longer need it.',
+    ],
+  };
   return { subject, html: renderHtml(layout, branding), text: renderText(layout) };
 }
 

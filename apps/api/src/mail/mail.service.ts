@@ -18,6 +18,8 @@ export interface EnqueueMailInput {
   mspId?: string | null;
   /** Where a reply goes (an incident's reply address), if not to the sender. */
   replyTo?: string | null;
+  /** Files sent with it (a scheduled report's PDF). Kept with the message, so Resend sends the same file. */
+  attachments?: { filename: string; contentType: 'application/pdf'; content: Buffer }[];
 }
 
 /** BullMQ options: retry a handful of times with growing backoff. */
@@ -68,6 +70,12 @@ export class MailService {
       })
       .returning('id')
       .executeTakeFirstOrThrow();
+    if (input.attachments?.length) {
+      await platformDb(this.db)
+        .insertInto('email_attachments')
+        .values(input.attachments.map((a) => ({ message_id: row.id, filename: a.filename, content_type: a.contentType, content: a.content, size: a.content.length })))
+        .execute();
+    }
 
     await this.queue.add('send', { id: row.id }, JOB_OPTS);
     return { id: row.id };

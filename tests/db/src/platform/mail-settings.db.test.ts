@@ -131,6 +131,23 @@ describe('sending through the installation\'s own mail server', () => {
     }
   });
 
+  it('sends a scheduled report\u2019s PDF as an attachment', async () => {
+    const srv = await mailServer();
+    try {
+      await svc.setMail(setMailSettingsSchema.parse({ mode: 'smtp', smtp: { host: '127.0.0.1', port: srv.port, secure: false, user: 'mailer@example.test', password: 's3cret-pass', from: 'voice@contoso.test', fromName: 'Contoso Voice' } }), admin.id);
+      const c = await resolveMail(handle.db);
+      if (c.mode === 'none') throw new Error('unreachable');
+      const pdf = Buffer.from('%PDF-1.3 report');
+      await sendMail(c, { to: 'jo@example.test', subject: 'Executive summary', html: '<p>Attached</p>', text: 'Attached', attachments: [{ filename: 'voxshift-executive-contoso.pdf', contentType: 'application/pdf', content: pdf }] });
+      const raw = srv.got[0]!.raw.replace(/\r\n[ \t]+/g, ' ');
+      expect(raw).toMatch(/Content-Type: application\/pdf; name="?voxshift-executive-contoso\.pdf"?/);
+      expect(raw).toMatch(/Content-Disposition: attachment; filename="?voxshift-executive-contoso\.pdf"?/);
+      expect(raw.replace(/\r?\n/g, '')).toContain(pdf.toString('base64'));
+    } finally {
+      await srv.close();
+    }
+  });
+
   it('refuses a server that offers no encryption instead of falling back to plain text, and a wrong password fails', async () => {
     const plain = await mailServer({ disabledCommands: ['STARTTLS', 'AUTH'], authOptional: true });
     try {
@@ -191,6 +208,9 @@ describe('sending through the Voxshift Hub', () => {
       expect(hub.seen[0]!.auth).toBe(`Bearer ${TOKEN}`);
       expect(Object.keys(hub.seen[0]!.body).sort()).toEqual(['fromName', 'html', 'replyTo', 'subject', 'text', 'to', 'toName']);
       expect(hub.seen[0]!.body).not.toHaveProperty('from'); // the hub decides the From address
+      // A report PDF goes to the hub as base64.
+      await sendMail(c, { to: 'jo@example.test', subject: 'Report', html: '<p>Hi</p>', text: 'Hi', attachments: [{ filename: 'report.pdf', contentType: 'application/pdf', content: Buffer.from('%PDF-1.3') }] });
+      expect(hub.seen[1]!.body.attachments).toEqual([{ filename: 'report.pdf', contentType: 'application/pdf', contentBase64: Buffer.from('%PDF-1.3').toString('base64') }]);
     } finally {
       await hub.close();
     }

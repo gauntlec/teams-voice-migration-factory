@@ -629,6 +629,66 @@ export function buildExecutiveSummary(input: {
   };
 }
 
+/* ------------------------------ scheduled reports (step 4b) ------------------------------ */
+
+export const SCHEDULE_FREQUENCIES = ['monthly', 'quarterly'] as const;
+export type ScheduleFrequency = (typeof SCHEDULE_FREQUENCIES)[number];
+export const SCHEDULE_FREQUENCY_LABELS: Record<ScheduleFrequency, string> = { monthly: 'Monthly', quarterly: 'Quarterly' };
+/** The period each send covers: the whole month or quarter just ended. */
+export const SCHEDULE_PERIOD: Record<ScheduleFrequency, ReportPeriodPreset> = { monthly: 'last_month', quarterly: 'last_quarter' };
+/** Sends go out at this hour (UTC) on the 1st, once the daily snapshot of the 1st has been taken. */
+export const SCHEDULE_SEND_HOUR_UTC = 7;
+/** How many people one schedule can send to. */
+export const MAX_SCHEDULE_RECIPIENTS = 25;
+
+/** The first send time strictly after `after`: 07:00 UTC on the 1st of the next month (quarterly: of January, April, July or October). */
+export function nextScheduleRun(frequency: ScheduleFrequency, after: Date): Date {
+  const y = after.getUTCFullYear();
+  const m = after.getUTCMonth();
+  for (let i = 0; i <= 12; i++) {
+    const at = new Date(Date.UTC(y, m + i, 1, SCHEDULE_SEND_HOUR_UTC));
+    if (at.getTime() <= after.getTime()) continue;
+    if (frequency === 'quarterly' && at.getUTCMonth() % 3 !== 0) continue;
+    return at;
+  }
+  throw new Error('no next run');
+}
+
+export const reportScheduleSchema = z
+  .object({
+    reportKey: z.enum(REPORT_KEYS),
+    frequency: z.enum(SCHEDULE_FREQUENCIES),
+    recipients: z.array(z.string().uuid()).min(1, 'Choose at least one person').max(MAX_SCHEDULE_RECIPIENTS),
+    enabled: z.boolean().optional(),
+  })
+  .strict();
+export type ReportScheduleInput = z.infer<typeof reportScheduleSchema>;
+
+export interface ScheduleRecipient {
+  id: string;
+  name: string;
+  email: string;
+  role: import('./rbac').Role;
+  /** false when they can no longer open the customer (left, or switched off): they are skipped */
+  ok: boolean;
+}
+
+/** GET /t/:tenantId/insights/schedules */
+export interface ReportScheduleView {
+  id: string;
+  reportKey: ReportKey;
+  reportTitle: string;
+  frequency: ScheduleFrequency;
+  recipients: ScheduleRecipient[];
+  enabled: boolean;
+  nextRunAt: string;
+  lastRunAt: string | null;
+  /** 'sent' | 'partly_sent' | 'email_off' | 'failed' */
+  lastStatus: string | null;
+  lastDetail: string | null;
+  createdBy: string | null;
+}
+
 /* ------------------------------ exports ------------------------------ */
 
 /** A sheet for Excel, or a table for CSV: a title and rows of cells, the first row the column headings. */
