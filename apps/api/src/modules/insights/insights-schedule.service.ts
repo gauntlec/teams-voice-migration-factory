@@ -223,7 +223,14 @@ export class InsightsScheduleService implements OnModuleInit, OnModuleDestroy {
           monitoringEnabled: !!r.monitoring_enabled,
         };
         const s = tenantDb(this.db, t.schema);
-        const due = await s.selectFrom('report_schedules').selectAll().where('enabled', '=', true).where('next_run_at', '<=', now.toISOString()).execute();
+        // One customer that can't be read (being created or deleted right now) must not stop every other customer's reports.
+        let due: Awaited<ReturnType<typeof this.dueFor>>;
+        try {
+          due = await this.dueFor(t, now);
+        } catch (e) {
+          this.log.warn(`${r.slug}: ${(e as Error).message}`);
+          continue;
+        }
         for (const sched of due) {
           // Move the next send first, so a failure part-way never sends the same report twice.
           await s.updateTable('report_schedules').set({ next_run_at: nextScheduleRun(sched.frequency, now).toISOString() }).where('id', '=', sched.id).execute();
@@ -246,6 +253,10 @@ export class InsightsScheduleService implements OnModuleInit, OnModuleDestroy {
       this.running = false;
     }
     return ran;
+  }
+
+  private dueFor(t: TenantContext, now: Date) {
+    return tenantDb(this.db, t.schema).selectFrom('report_schedules').selectAll().where('enabled', '=', true).where('next_run_at', '<=', now.toISOString()).execute();
   }
 
   /** Builds and queues one copy per person, as that person. Records the outcome on the schedule. */

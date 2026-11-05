@@ -40,7 +40,6 @@ export const TABS = [
   'voice-apps',
   'resource-accounts',
   'network',
-  'flows',
 ] as const;
 
 export type TabKey = (typeof TABS)[number];
@@ -66,10 +65,9 @@ export const TAB_LABEL: Record<TabKey, string> = {
   numbers: 'Number Assignments',
   users: 'Users',
   caps: 'Common area phones',
-  'voice-apps': 'Voice apps',
+  'voice-apps': 'Auto attendants & call queues',
   'resource-accounts': 'Resource accounts',
   network: 'Network (E911)',
-  flows: 'Call flows',
 };
 
 /**

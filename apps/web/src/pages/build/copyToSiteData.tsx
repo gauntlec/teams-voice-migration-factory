@@ -86,7 +86,7 @@ export function CopyToSiteDataButton({
                 </>
               ) : (
                 <Text size={300} block>
-                  {row ? `Its settings` : `The settings of every ${noun} on this site`} replace what Site Data's Call flows tab has for {row ? 'it' : 'them'}, so
+                  {row ? `Its settings` : `The settings of every ${noun} on this site`} replace the call flow Site Data's Auto attendants & call queues tab has for {row ? 'it' : 'them'}, so
                   the wizard shows what is being built. A {noun} with no call flow in Site Data gets one. Nothing is changed in Teams.
                 </Text>
               )}

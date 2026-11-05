@@ -284,6 +284,7 @@ export function AutoAttendantWizard({
   teamChoices,
   onCreated,
   editing,
+  forVoiceApp,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -295,18 +296,20 @@ export function AutoAttendantWizard({
   onCreated: () => void;
   /** Editing an already-saved wizard capture instead of creating a new one - PATCHes the existing flow row and shows "Save changes" instead of "Create". Render with `key={editing.id}` so each row gets its own fresh state. */
   editing?: AutoAttendantWizardEditing;
+  /** Designing the call flow of an auto attendant or call queue already in Site Data (Design call flow): the flow is saved as its capture, named as it, with its resource account. */
+  forVoiceApp?: { id: string; name: string; resourceAccountId: string | null };
 }) {
   const ls = useLocalStyles();
-  const [name, setName] = useState(editing?.name ?? '');
+  const [name, setName] = useState(editing?.name ?? forVoiceApp?.name ?? '');
   const [answers, setAnswers] = useState<AutoAttendantWizardAnswers>(editing?.answers ?? DEFAULT_ANSWERS);
-  const [resourceAccountId, setResourceAccountId] = useState(editing?.resourceAccountId ?? '');
+  const [resourceAccountId, setResourceAccountId] = useState(editing?.resourceAccountId ?? forVoiceApp?.resourceAccountId ?? '');
   const [raDialogOpen, setRaDialogOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const save = useMutation({
     mutationFn: () => {
       const body = JSON.stringify({
-        ...(editing ? {} : { site_id: siteId, kind: 'auto_attendant' }),
+        ...(editing ? {} : { site_id: siteId, kind: 'auto_attendant', ...(forVoiceApp ? { voice_app_id: forVoiceApp.id } : {}) }),
         name,
         description: `Captured via the Auto Attendant wizard - ${flowSummary(answers.businessFlow, 'Business hours')[0] ?? ''}`,
         wizard_answers: answers,
