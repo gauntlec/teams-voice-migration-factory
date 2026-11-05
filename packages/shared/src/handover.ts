@@ -108,20 +108,39 @@ export function handoverScopeLabel(siteCodes: readonly string[] | null | undefin
   return siteCodes && siteCodes.length > 0 ? [...siteCodes].sort().join(', ') : 'All sites';
 }
 
-/**
- * A new pack's version (major.minor, the team's rule for documents): drafts are 0.1, 0.2, … until a pack is first issued;
- * after that every new pack is the next 1.x - 1.1, 1.2 - a draft until it is issued.
- */
-export function nextHandoverVersionLabel(packs: readonly { status: 'draft' | 'issued'; version_label: string | null }[]): string {
-  if (!packs.some((p) => p.status === 'issued')) return `0.${packs.length + 1}`;
-  const minors = packs.map((p) => /^1\.(\d+)$/.exec(p.version_label ?? '')?.[1]).filter((m): m is string => !!m).map(Number);
-  return `1.${(minors.length ? Math.max(...minors) : 0) + 1}`;
+/** Do two packs cover the same sites? A site's packs have their own version numbers and Document Control; so does "all sites". */
+export function sameHandoverScope(a: readonly string[] | null | undefined, b: readonly string[] | null | undefined): boolean {
+  return [...(a ?? [])].sort().join(',') === [...(b ?? [])].sort().join(',');
 }
 
-/** The version a pack is issued as: the first issue of a 0.x draft makes it 1.0; a 1.x keeps its number. */
-export function issuedHandoverVersionLabel(label: string | null, version: number): string {
-  if (!label || label.startsWith('0.')) return '1.0';
-  return label || `1.${version}`;
+type VersionedPack = { status: 'draft' | 'issued'; version_label: string | null };
+const minorsOf = (packs: readonly VersionedPack[], major: 0 | 1) =>
+  packs.map((p) => new RegExp(`^${major}\\.(\\d+)$`).exec(p.version_label ?? '')?.[1]).filter((m): m is string => !!m).map(Number);
+
+/**
+ * A new pack's version (major.minor, the team's rule for documents), given the packs for the same sites: drafts are 0.1, 0.2, … until
+ * one is first issued; after that every new pack is the next 1.x - 1.1, 1.2 - a draft until it is issued. Each site counts on its own.
+ */
+export function nextHandoverVersionLabel(packs: readonly VersionedPack[]): string {
+  const ones = minorsOf(packs, 1);
+  if (ones.length > 0 || packs.some((p) => p.status === 'issued')) return `1.${Math.max(0, ...ones) + 1}`;
+  return `0.${Math.max(0, ...minorsOf(packs, 0)) + 1}`;
+}
+
+/**
+ * The version a pack is issued as, given the packs for the same sites: the first issue of a 0.x draft makes it 1.0, a later 0.x draft
+ * takes the next 1.x (never a second 1.0), and a 1.x keeps its number.
+ */
+export function issuedHandoverVersionLabel(label: string | null, packs: readonly VersionedPack[]): string {
+  if (label && !label.startsWith('0.')) return label;
+  return packs.some((p) => p.status === 'issued') ? nextHandoverVersionLabel(packs) : '1.0';
+}
+
+/** A pack's file name: packs for different sites can have the same version, so it says which sites. */
+export function handoverFileName(prefix: string | null, siteCodes: readonly string[] | null | undefined, versionLabel: string): string {
+  const codes = [...(siteCodes ?? [])].sort();
+  const scope = codes.length === 0 ? '' : codes.length <= 3 ? `-${codes.join('-').replace(/[^A-Za-z0-9-]/g, '')}` : `-${codes.length}-sites`;
+  return `${prefix ? `${prefix}-` : ''}service-handover${scope}-v${versionLabel}.docx`;
 }
 
 /** Approvals & Sign-Off, entered when a pack is issued. */

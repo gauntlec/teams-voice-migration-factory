@@ -33,8 +33,13 @@ WORKDIR /app
 # Debian's security index: BuildKit re-fetches a remote ADD and only reuses the layer when the file is unchanged, so this line makes the
 # upgrade below run again whenever Debian publishes a security update (a cached upgrade layer would otherwise keep old packages).
 ADD https://security.debian.org/debian-security/dists/bookworm-security/InRelease /tmp/debian-security-InRelease
-RUN apt-get update && apt-get upgrade -y --no-install-recommends && rm -rf /var/lib/apt/lists/* /tmp/debian-security-InRelease \
+# LibreOffice lays a handover pack out to find its contents page's page numbers (pack-page-numbers.ts), with Carlito, which has Calibri's
+# measurements; poppler-utils reads the pages back.
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+  && apt-get install -y --no-install-recommends libreoffice-writer-nogui fonts-crosextra-carlito poppler-utils \
+  && rm -rf /var/lib/apt/lists/* /tmp/debian-security-InRelease \
   && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
+COPY apps/api/calibri-fonts.conf /etc/fonts/conf.d/30-calibri.conf
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/packages ./packages

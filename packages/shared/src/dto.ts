@@ -109,6 +109,9 @@ export const handoverGenerateSchema = z.preprocess(
   }),
 );
 
+/** The live call flows to draw for a pack: its sites (none = every site). */
+export const handoverCallFlowsSchema = z.preprocess((v) => v ?? {}, z.object({ siteIds: z.array(z.guid()).max(200).optional() }));
+
 /** Issuing a pack: who approved and signed it off (printed in Approvals & Sign-Off). All optional, for older clients. */
 export const handoverIssueSchema = z.preprocess(
   (v) => v ?? {},

@@ -206,6 +206,80 @@ describe('Service Handover', () => {
     expect((await label(c.id)).version_label).toBe('1.1');
   });
 
+  it('counts versions for each site on its own, never reusing a number, and names the site in the file', async () => {
+    const c4 = await seedCustomer(handle);
+    const rdg = (await seedSite(c4.s, { sitecode: 'RDG01' })).id;
+    const lds = (await seedSite(c4.s, { sitecode: 'LDS01' })).id;
+    const gen = (siteIds?: string[], changeNote?: string) => svc.generate(c4.t, engineer, { ...(siteIds ? { siteIds } : {}), ...(changeNote ? { changeNote } : {}) });
+    const label = (p: { id: string }) => c4.s.selectFrom('handover_packs').select('version_label').where('id', '=', p.id).executeTakeFirstOrThrow().then((r) => r.version_label);
+
+    const rdg1 = await gen([rdg]);
+    const lds1 = await gen([lds]);
+    const rdg2 = await gen([rdg], 'A change at Reading');
+    const all1 = await gen();
+    expect([await label(rdg1), await label(lds1), await label(rdg2), await label(all1)]).toEqual(['0.1', '0.1', '0.2', '0.1']);
+
+    // the two 0.1s are different files, and each site's Document Control lists only its own packs
+    const name = (p: { file_id: string | null }) => c4.s.selectFrom('files').select('filename').where('id', '=', p.file_id!).executeTakeFirstOrThrow().then((r) => r.filename);
+    expect(await name(rdg1)).toContain('RDG01-v0.1');
+    expect(await name(lds1)).toContain('LDS01-v0.1');
+    const leeds2 = await gen([lds]);
+    expect(await docText((await files.readBytes(c4.t, leeds2.file_id!)).data)).not.toContain('A change at Reading');
+    expect(await label(leeds2)).toBe('0.2');
+
+    // issuing at one site leaves the other in drafts
+    expect((await svc.issue(c4.t, engineer, rdg2.id, {})).version_label).toBe('1.0');
+    expect(await label(await gen([lds]))).toBe('0.3');
+    expect(await label(await gen([rdg]))).toBe('1.1');
+    // an older draft issued afterwards doesn't print a second 1.0
+    expect((await svc.issue(c4.t, engineer, rdg1.id, {})).version_label).toBe('1.2');
+    // a site that carries numbers from before each site counted on its own goes on from its highest
+    await c4.s.updateTable('handover_packs').set({ version_label: '0.9' }).where('id', '=', lds1.id).execute();
+    expect(await label(await gen([lds]))).toBe('0.10');
+  });
+
+  it('builds the diagrams from what is live in Teams: only the site\'s attendants, with people by name', async () => {
+    const c5 = await seedCustomer(handle);
+    const here = (await seedSite(c5.s, { sitecode: 'HERE1' })).id;
+    const there = (await seedSite(c5.s, { sitecode: 'THERE' })).id;
+    const design = (site_id: string, name: string) => ({ site_id, name, resource_accounts: JSON.stringify([]), config: {}, holiday_call_flows: JSON.stringify([]) });
+    await c5.s.insertInto('build_auto_attendants').values([design(here, 'Main Number'), design(here, 'Main Overflow'), design(here, 'Designed Only'), design(there, 'Elsewhere')] as never).execute();
+    const flow = (id: string) => ({ DefaultCallFlow: { Id: 'cf', Greetings: [], Menu: { MenuOptions: [{ DtmfResponse: 100, Action: 'TransferCallToTarget', CallTarget: { Id: id, Type: 'ApplicationEndpoint' } }] } } });
+    const AGENT = 'aaaaaaaa-0000-4000-8000-000000000001';
+    const LEFT = 'aaaaaaaa-0000-4000-8000-000000000002';
+    const UNKNOWN = 'bbbbbbbb-0000-4000-8000-000000000003';
+    await c5.s
+      .insertInto('tenant_objects')
+      .values(
+        [
+          { object_type: 'auto_attendant', object_key: 'aa-over', display_name: 'Main Overflow', data: JSON.stringify({ Identity: 'aa-over', ...flow('ra-q'), ApplicationInstances: ['ra-over'] }) },
+          { object_type: 'auto_attendant', object_key: 'aa-main', display_name: 'Main Number', data: JSON.stringify({ Identity: 'aa-main', ...flow('ra-over'), ApplicationInstances: ['ra-main'] }) },
+          { object_type: 'auto_attendant', object_key: 'aa-else', display_name: 'Elsewhere', data: JSON.stringify({ Identity: 'aa-else', ...flow('ra-q') }) },
+          { object_type: 'call_queue', object_key: 'q', display_name: 'Reception', data: JSON.stringify({ Identity: 'q', ApplicationInstances: ['ra-q'], Agents: [{ ObjectId: AGENT.toUpperCase() }, { ObjectId: LEFT }, { ObjectId: UNKNOWN }] }) },
+          { object_type: 'resource_account', object_key: 'ra-main', display_name: 'Main RA', data: JSON.stringify({ UserPrincipalName: 'main@contoso.test', PhoneNumber: 'tel:+15550001' }) },
+          { object_type: 'resource_account', object_key: 'ra-over', display_name: 'Overflow RA', data: JSON.stringify({ UserPrincipalName: 'over@contoso.test' }) },
+        ] as never,
+      )
+      .execute();
+    const person = async (entra_id: string, upn: string, removed_at?: string) => {
+      const obj = await c5.s.insertInto('tenant_objects').values({ object_type: 'user', object_key: upn, display_name: upn, data: {} } as never).returning('id').executeTakeFirstOrThrow();
+      await c5.s.insertInto('tenant_users').values({ object_id: obj.id, entra_id, upn, display_name: upn, account_type: 'User', ...(removed_at ? { removed_at } : {}) } as never).execute();
+    };
+    await person(AGENT, 'agent@contoso.test');
+    await person(LEFT, 'left@contoso.test', '2026-10-01T00:00:00.000Z');
+
+    const graphs = await svc.callFlowGraphs(c5.t, [here]);
+    // the Main Number has the phone number, and its diagram already shows the Overflow, so there's one diagram; nothing from the other site or only designed
+    expect(graphs.map((g) => g.name)).toEqual(['Main Number']);
+    const nodes = graphs[0]!.graph.nodes;
+    expect(nodes.some((n) => n.label === 'Main Overflow')).toBe(true);
+    expect(nodes.some((n) => n.label === 'Elsewhere' || n.label === 'Designed Only')).toBe(false);
+    // the people show by name, someone since removed from the sync too; only someone Voxshift has never seen is a shortened id
+    expect(nodes.find((n) => n.label === 'Reception')!.agents).toEqual(['agent@contoso.test', 'left@contoso.test', 'User (bbbbbbbb…)']);
+    // and the whole customer has the other site's attendant too
+    expect((await svc.callFlowGraphs(c5.t)).map((g) => g.name)).toContain('Elsewhere');
+  });
+
   it('keeps the call flow diagrams the browser drew with the pack, and prints them for live auto attendants', async () => {
     const c3 = await seedCustomer(handle);
     const site3 = (await seedSite(c3.s, { sitecode: 'HAU02' })).id;

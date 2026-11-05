@@ -36,6 +36,9 @@ import {
   type CallFlowGraph,
   type HandoverBlock,
   type HandoverSectionContent,
+  handoverFileName,
+  issuedHandoverVersionLabel,
+  sameHandoverScope,
 } from '@tvmf/shared';
 import { api, apiDownload, apiUpload, ApiError } from '../api';
 import { useNotify } from '../hooks/useNotify';
@@ -59,6 +62,8 @@ interface PackSource {
   notes?: string | null;
   /** the cover's project line */
   projectName?: string | null;
+  /** the sites it covers (none = all sites): each set of sites has its own version numbers */
+  siteIds?: string[];
 }
 
 interface Pack {
@@ -145,7 +150,7 @@ export function Handover() {
   const download = async (p: Pack) => {
     setActionError(null);
     try {
-      await apiDownload(`/t/${activeTenantId}/files/${p.file_id}/download`, `service-handover-v${packVersion(p)}.docx`);
+      await apiDownload(`/t/${activeTenantId}/files/${p.file_id}/download`, handoverFileName(null, p.source?.siteCodes, packVersion(p)));
     } catch (e) {
       setActionError(errorMessage(e, 'Could not download the file'));
     }
@@ -258,7 +263,7 @@ export function Handover() {
       <Dialog open={!!issuing} onOpenChange={(_, d) => !d.open && setIssuing(null)}>
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>Issue version {issuing ? issuedVersion(issuing) : ''}?</DialogTitle>
+            <DialogTitle>Issue version {issuing ? issuedHandoverVersionLabel(issuing.version_label, (packs.data ?? []).filter((x) => sameHandoverScope(x.source?.siteIds, issuing.source?.siteIds))) : ''}?</DialogTitle>
             <DialogContent className={cs.stack}>
               <Text block>
                 This marks the pack as final and records who issued it and when. It can&apos;t be undone. To change anything afterwards, generate a new version.
@@ -320,11 +325,8 @@ function GenerateDialog({
     const out: { name: string; fileId: string; width: number; height: number }[] = [];
     const failed: string[] = [];
     if (!sectionKeys.has('auto_attendants')) return { diagrams: out, failed };
-    setProgress('Reading the call flows…');
-    const { loadSiteCallFlowGraphs } = await import('./build/flowDialogs');
-    const chosen = mode === 'sites' ? sites.filter((x) => siteIds.has(x.id)) : sites;
-    const graphs: { name: string; graph: CallFlowGraph }[] = [];
-    for (const site of chosen) graphs.push(...(await loadSiteCallFlowGraphs(tenantId, site.id)));
+    setProgress('Reading the call flows from what Teams has…');
+    const graphs = await api<{ name: string; graph: CallFlowGraph }[]>(`/t/${tenantId}/handover/call-flows`, { method: 'POST', body: JSON.stringify({ siteIds: mode === 'sites' ? [...siteIds] : [] }) });
     for (const [i, g] of graphs.entries()) {
       setProgress(`Drawing call flow diagrams (${i + 1} of ${graphs.length})…`);
       try {
@@ -364,7 +366,6 @@ function GenerateDialog({
   const allSections = sectionKeys.size === HANDOVER_SECTIONS.length;
   const generate = useMutation({
     mutationFn: async () => {
-      // Diagrams need Design & Build; someone who can't read it still gets the pack, without them.
       const { diagrams, failed } = await drawDiagrams().catch(() => ({ diagrams: [], failed: ['the call flow diagrams'] }));
       setProgress('Generating the pack…');
       await api(`/t/${tenantId}/handover/packs`, {
@@ -588,7 +589,7 @@ function PreviewDialog({ tenantId, packId, onClose }: { tenantId: string; packId
       <DialogSurface className={ls.w92vwMaxW1100}>
         <DialogBody>
           <DialogTitle>
-            {q.data ? `Pack v${q.data.pack.version} — ${handoverScopeLabel(q.data.pack.source?.siteCodes)}` : 'Pack preview'}
+            {q.data ? `Pack v${packVersion(q.data.pack)} — ${handoverScopeLabel(q.data.pack.source?.siteCodes)}` : 'Pack preview'}
           </DialogTitle>
           <DialogContent className={ls.maxH70vhScroll}>
             {q.isLoading && <Spinner size="tiny" />}
@@ -730,9 +731,4 @@ function PreviewTable({ columns, rows, caption }: { columns: string[]; rows: str
 /** A pack's version as printed in it: its major.minor label (older packs: their number). */
 function packVersion(p: Pack): string {
   return p.version_label ?? String(p.version);
-}
-
-/** The version a draft becomes when issued: a 0.x draft is issued as 1.0; a 1.x keeps its number. */
-function issuedVersion(p: Pack): string {
-  return !p.version_label || p.version_label.startsWith('0.') ? '1.0' : p.version_label;
 }

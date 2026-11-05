@@ -3,8 +3,11 @@ import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { planIdentityRows, planResourceAccountRows, platformDb, tenantDb, type PlannedIdentityRow } from '@tvmf/db';
 import {
+  buildAutoAttendantFlowGraphFromLive,
   can,
   contactLabel,
+  type CallFlowGraph,
+  type CallFlowResourceAccount,
   HANDOVER_NOTE_SECTIONS,
   HANDOVER_SECTIONS,
   handoverScopeLabel,
@@ -14,6 +17,8 @@ import {
   noteSectionContent,
   nextHandoverVersionLabel,
   issuedHandoverVersionLabel,
+  handoverFileName,
+  sameHandoverScope,
   outstandingActionsContent,
   type HandoverApproval,
   type HandoverHistoryRow,
@@ -150,6 +155,56 @@ export class HandoverService {
     return { ids: rows.map((r) => r.id), codes: rows.map((r) => r.sitecode) };
   }
 
+  /**
+   * The call flows to draw for a pack: what Teams has (Discovery's last read), as this is the as-built document. One graph per auto
+   * attendant the sites have that is live, starting from those with a phone number and leaving out one already inside another's
+   * graph (a Main Number's graph follows its transfers, so its Overflow attendant is on the same picture). Built here because the
+   * names of a queue's agents need the whole user list, which is far too big to send to a browser on a large tenant.
+   */
+  async callFlowGraphs(t: TenantContext, siteIds?: string[]): Promise<{ name: string; graph: CallFlowGraph }[]> {
+    assertCustomerWide(t, 'The Service Handover pack');
+    const s = tenantDb(this.db, t.schema);
+    const scope = await this.resolveScope(t, siteIds);
+    const designed = await s
+      .selectFrom('build_auto_attendants')
+      .select('name')
+      .$if(!!scope, (q) => q.where('site_id', 'in', scope!.ids))
+      .execute();
+    if (designed.length === 0) return [];
+    const wanted = new Set(designed.map((a) => a.name.toLowerCase()));
+    const objects = await s.selectFrom('tenant_objects').select(['object_type', 'object_key', 'display_name', 'data']).where('object_type', 'in', ['auto_attendant', 'call_queue', 'schedule', 'resource_account']).where('removed_at', 'is', null).execute();
+    const live = (type: string) => objects.filter((o) => o.object_type === type).map((o) => ({ name: o.display_name ?? o.object_key, data: (o.data ?? {}) as Record<string, unknown> }));
+    const autoAttendants = live('auto_attendant');
+    const callQueues = live('call_queue');
+    const schedules = objects.filter((o) => o.object_type === 'schedule').map((o) => ({ key: o.object_key, data: (o.data ?? {}) as Record<string, unknown> }));
+    const resourceAccounts = new Map<string, CallFlowResourceAccount>(
+      objects
+        .filter((o) => o.object_type === 'resource_account')
+        .map((o) => {
+          const d = (o.data ?? {}) as Record<string, unknown>;
+          return [o.object_key.toLowerCase(), { name: o.display_name ?? null, upn: typeof d.UserPrincipalName === 'string' ? d.UserPrincipalName : null, number: typeof d.PhoneNumber === 'string' && d.PhoneNumber ? d.PhoneNumber : null }];
+        }),
+    );
+    // Agents and transfer targets are Entra ids. A user since removed from the sync still has a name, better than a shortened id; a current one wins.
+    const users = await s.selectFrom('tenant_users').select(['entra_id', 'upn', 'removed_at']).where('entra_id', 'is not', null).orderBy(sql`removed_at is null`).execute();
+    const usersByEntraId = new Map(users.map((u) => [u.entra_id!.toLowerCase(), u.upn]));
+
+    const hasNumber = (data: Record<string, unknown>) => (Array.isArray(data.ApplicationInstances) ? (data.ApplicationInstances as unknown[]) : []).some((id) => typeof id === 'string' && !!resourceAccounts.get(id.toLowerCase())?.number);
+    const ordered = autoAttendants
+      .filter((a) => wanted.has(a.name.toLowerCase()))
+      .sort((a, b) => Number(hasNumber(b.data)) - Number(hasNumber(a.data)) || a.name.localeCompare(b.name));
+    const drawn = new Set<string>();
+    const out: { name: string; graph: CallFlowGraph }[] = [];
+    for (const aa of ordered) {
+      const identity = typeof aa.data.Identity === 'string' ? aa.data.Identity.toLowerCase() : null;
+      if (identity && drawn.has(identity)) continue;
+      const graph = buildAutoAttendantFlowGraphFromLive(aa, autoAttendants, callQueues, schedules, usersByEntraId, resourceAccounts);
+      for (const n of graph.nodes) if (n.id.startsWith('aa:')) drawn.add(n.id.slice('aa:'.length).toLowerCase());
+      if (graph.nodes.length) out.push({ name: aa.name, graph });
+    }
+    return out;
+  }
+
   /** Keeps a call flow diagram the browser drew for a pack it is about to generate. Only a PNG is accepted. */
   async uploadDiagram(t: TenantContext, user: AuthedUser, file: { originalname: string; buffer: Buffer } | undefined) {
     assertCustomerWide(t, 'The Service Handover pack');
@@ -235,8 +290,7 @@ export class HandoverService {
       const s = tenantDb(trx, t.schema);
       const last = await s.selectFrom('handover_packs').select((eb) => eb.fn.max('version').as('v')).executeTakeFirst();
       const version = Number(last?.v ?? 0) + 1;
-      const earlier = await s.selectFrom('handover_packs').select(['status', 'version_label']).execute();
-      const versionLabel = nextHandoverVersionLabel(earlier);
+      const versionLabel = nextHandoverVersionLabel(await this.packsForSites(s, scope?.ids ?? []));
       const history = await this.historyRows(s, scope?.ids ?? [], version, {
         author: user.displayName,
         version: `${versionLabel} (draft)`,
@@ -301,7 +355,7 @@ export class HandoverService {
         sourceType: 'handover_pack',
         sourceId: pack.id,
         siteId: null,
-        filename: `${t.schema}-service-handover-v${versionLabel}.docx`,
+        filename: handoverFileName(t.schema, scope?.codes, versionLabel),
         contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         data,
         uploadedBy: user.id,
@@ -352,7 +406,7 @@ export class HandoverService {
     const issuedAt = new Date();
     const source = (full.source ?? {}) as { siteCodes?: string[]; siteIds?: string[]; liveAsOf?: string | null; changeNote?: string | null } & Partial<PackLayout>;
     const brand = await this.branding?.forDocuments(t.id);
-    const versionLabel = issuedHandoverVersionLabel(full.version_label, full.version);
+    const versionLabel = issuedHandoverVersionLabel(full.version_label, await this.packsForSites(scoped, source.siteIds ?? []));
     // Approvals & Sign-Off: who approved it, as entered when issuing (the company defaults to the pack's brand)
     const approval: HandoverApproval = {
       company: body.approverCompany?.trim() || brand?.name || 'Voxshift',
@@ -392,7 +446,7 @@ export class HandoverService {
       sourceType: 'handover_pack',
       sourceId: id,
       siteId: null,
-      filename: `${t.schema}-service-handover-v${versionLabel}.docx`,
+      filename: handoverFileName(t.schema, source.siteCodes, versionLabel),
       contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       data,
       uploadedBy: user.id,
@@ -422,10 +476,15 @@ export class HandoverService {
    * Document Control: the customer's earlier packs covering the same sites, oldest first, then this one. Each row is who
    * generated it, its version (a draft says so), when, and what changed (the note given when generating).
    */
+  /** The packs for exactly these sites: each site's packs have their own version numbers. */
+  private async packsForSites(s: ReturnType<typeof tenantDb>, siteIds: string[]) {
+    const packs = await s.selectFrom('handover_packs').select(['status', 'version_label', 'source']).execute();
+    return packs.filter((p) => sameHandoverScope(((p.source ?? {}) as { siteIds?: string[] }).siteIds, siteIds));
+  }
+
   private async historyRows(s: ReturnType<typeof tenantDb>, siteIds: string[], version: number, current: HandoverHistoryRow): Promise<HandoverHistoryRow[]> {
-    const same = (ids: unknown) => [...((Array.isArray(ids) ? ids : []) as string[])].sort().join(',') === [...siteIds].sort().join(',');
     const rows = (await s.selectFrom('handover_packs').select(['version', 'version_label', 'status', 'generated_by', 'generated_at', 'issued_at', 'created_at', 'source']).where('version', '<', version).orderBy('version').execute()).filter((r) =>
-      same(((r.source ?? {}) as { siteIds?: string[] }).siteIds),
+      sameHandoverScope(((r.source ?? {}) as { siteIds?: string[] }).siteIds, siteIds),
     );
     const ids = [...new Set(rows.map((r) => r.generated_by))];
     const names = new Map(ids.length ? (await platformDb(this.db).selectFrom('users').select(['id', 'display_name']).where('id', 'in', ids).execute()).map((u) => [u.id, u.display_name] as [string, string]) : []);

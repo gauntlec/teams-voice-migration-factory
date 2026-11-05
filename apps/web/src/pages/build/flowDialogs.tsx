@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Spinner, Text , makeStyles, mergeClasses } from '@fluentui/react-components';
-import { buildAutoAttendantFlowGraphFromDesign, buildCallQueueFlowGraphFromDesign, type CallFlowGraph, type LiveVoiceApps, type TenantObject, type TenantUserSummary, type AutoAttendantCallableEntity, type AutoAttendantCallFlow, type AutoAttendantHolidayCallFlow, type AutoAttendantSchedule, type CallFlowResourceAccount, type CallQueueActionSettings, type DesignAutoAttendantInput, type DesignCallQueueInput, type Paginated } from '@tvmf/shared';
+import { buildAutoAttendantFlowGraphFromDesign, buildCallQueueFlowGraphFromDesign, type LiveVoiceApps, type TenantObject, type TenantUserSummary, type AutoAttendantCallableEntity, type AutoAttendantCallFlow, type AutoAttendantHolidayCallFlow, type AutoAttendantSchedule, type CallFlowResourceAccount, type CallQueueActionSettings, type DesignAutoAttendantInput, type DesignCallQueueInput, type Paginated } from '@tvmf/shared';
 import { api } from '../../api';
 import { CallFlowDiagram } from '../../components/CallFlowDiagram';
 import { LoadError, useRecordStyles, type Row } from '../../components/records';
@@ -60,54 +60,6 @@ function toDesignAaInput(
     timeZone: (r.time_zone_id as string | null) ?? null,
     userNameExtension: (r.user_name_extension as string | null) ?? null,
   };
-}
-
-/**
- * A site's call flow diagrams for its handover pack: the graph of each auto attendant, starting from those with a phone number, leaving
- * out one already drawn inside another's diagram (a Main Number's graph follows its transfers, so its Overflow attendant is on the same
- * page). Built from Design & Build, so people show by name.
- */
-export async function loadSiteCallFlowGraphs(tid: string, siteId: string): Promise<{ name: string; graph: CallFlowGraph }[]> {
-  const base = `/t/${tid}/build`;
-  const [aas, cqs, ras] = await Promise.all([
-    api<Paginated<Row>>(`${base}/auto-attendants?siteId=${siteId}&limit=500`),
-    api<Paginated<Row>>(`${base}/call-queues?siteId=${siteId}&limit=500`),
-    api<Paginated<Row>>(`${base}/resource-accounts?siteId=${siteId}&limit=500`),
-  ]);
-  if (aas.items.length === 0) return [];
-  const hasPhoneNumberById = new Map<string, boolean>();
-  const resourceAccountById = new Map<string, CallFlowResourceAccount>();
-  for (const r of ras.items) {
-    const discoveryId = r.discovery_resource_account_id as string | null;
-    if (discoveryId) hasPhoneNumberById.set(discoveryId, !!(r.phone_number_id || r.phone_number));
-    resourceAccountById.set(String(r.id), { name: (r.display_name as string | null) ?? (r.name as string | null) ?? null, upn: (r.upn as string | null) ?? null, number: (r.phone_number as string | null) ?? (r.e164 as string | null) ?? null });
-  }
-  const inputs = aas.items.map((r) => toDesignAaInput(r, hasPhoneNumberById, resourceAccountById));
-  const queues = cqs.items.map((r) => toDesignCqInput(r, resourceAccountById));
-  // A menu option can transfer to a voice app outside this site: drawn from the discovered data, fetched only when some option does.
-  let live: LiveVoiceApps | undefined;
-  if (JSON.stringify(aas.items).includes('"liveId"')) {
-    const d = `/t/${tid}/tenant-discovery`;
-    const [la, lq, ls, lu] = await Promise.all([fetchAllPages<TenantObject>(`${d}/objects?type=auto_attendant`), fetchAllPages<TenantObject>(`${d}/objects?type=call_queue`), fetchAllPages<TenantObject>(`${d}/objects?type=schedule`), fetchAllPages<TenantUserSummary>(`${d}/users?`)]);
-    live = {
-      autoAttendants: la.items.map((o) => ({ name: o.display_name ?? o.object_key, data: o.data })),
-      callQueues: lq.items.map((o) => ({ name: o.display_name ?? o.object_key, data: o.data })),
-      schedules: ls.items.map((o) => ({ key: o.object_key, data: o.data })),
-      usersByEntraId: new Map(lu.items.filter((u) => u.entra_id).map((u) => [u.entra_id!.toLowerCase(), u.upn])),
-    };
-  }
-  // Attendants with a number first, so a front door's diagram takes in what hangs off it.
-  const fronts = (a: DesignAutoAttendantInput) => (a.resourceAccounts?.some((x) => x.number) || a.hasPhoneNumber ? 0 : 1);
-  const ordered = [...inputs].sort((a, b) => fronts(a) - fronts(b) || a.name.localeCompare(b.name));
-  const drawn = new Set<string>();
-  const out: { name: string; graph: CallFlowGraph }[] = [];
-  for (const aa of ordered) {
-    if (drawn.has(aa.buildId)) continue;
-    const graph = buildAutoAttendantFlowGraphFromDesign(aa, inputs, queues, live);
-    for (const n of graph.nodes) if (n.id.startsWith('aa:')) drawn.add(n.id.slice('aa:'.length));
-    if (graph.nodes.length) out.push({ name: aa.name, graph });
-  }
-  return out;
 }
 
 /**
