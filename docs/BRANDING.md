@@ -48,6 +48,7 @@ palette throughout (`apps/api/src/modules/branding/docx-brand.ts`).
 
 - Excel and CSV exports (report data, licence report, validation issues) and import templates: they are data for
   people to work in, not documents to hand over.
+- The portfolio report (Insights > All customers): it covers every customer, so it carries Voxshift's branding.
 - Emails: they are already branded by who receives them (the existing email branding).
 
 A new document generator must take its brand from `DocumentBrandingService` and be added to the table above and to

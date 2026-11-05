@@ -16,8 +16,8 @@ The proposal, mock-ups and plan were agreed on 5 November 2026. The five steps a
 | 2 | Customer Overview home page (today's list moves to a My work tab) | **Live** (2026.11.5) |
 | 3 | Reports area: catalogue, periods, comparison, Excel and CSV | **Live** (2026.11.6) |
 | 4a | Executive summary report, and a PDF of every report | **Live** (2026.11.7) |
-| 4b | Scheduled reports by email, with the PDF attached | **Built** (section below) |
-| 5 | All-customers view, Portfolio report, Present mode | Planned |
+| 4b | Scheduled reports by email, with the PDF attached | **Live** (2026.11.8) |
+| 5 | All-customers view, Portfolio report, Present mode | **Built** (section below) |
 
 The charts use Fluent UI's chart library (`@fluentui/react-charts`, pinned), so they follow the app theme, the customer's
 brand colour and dark mode. It came in with step 2, the first chart, rather than shipping unused in step 1.
@@ -258,6 +258,32 @@ send where it is. Creating, changing, sending now and deleting are recorded in t
 **The hub.** An installation that sends mail through the hub needs hub PR #15 live before attachments go through. Until
 then the hub refuses the message, which the email log shows as failed.
 
+## All customers and Present mode (step 5)
+
+**Home › All customers** is for staff who work across customers (`insights:portfolio`: admins, project managers and
+engineers, with more than one customer). It shows every customer the person can open: every active customer for a
+Super Admin, the customers they are a member of for other staff. Each row comes from that customer's own Overview
+figures, worked out as that person (`InsightsPortfolioService`, `GET /insights/portfolio`, cached for a minute).
+
+- **Order (`sortPortfolio`):** worst first. A customer whose figures could not be read comes first, then off track, a
+  priority 1 open, at risk, on track, no go-live dates, and all live. Selecting a customer opens its Overview.
+- **Totals (`portfolioTotals`):**
+  - users and sites live, with the users who went live in the last 30 days;
+  - incident targets met, weighted by how many targets each customer measured;
+  - open P1 and P2 incidents;
+  - customers needing attention.
+- **A customer that can't be read** shows as "Figures unavailable" instead of failing the page.
+- **Portfolio report** (`buildPortfolioReport`): a headline, the totals and the customers table. Download it as a PDF
+  (`GET /insights/portfolio/pdf`) or export it to Excel.
+
+**Present** (Home, on Overview and All customers) shows the page full screen and a size up, for a meeting-room screen.
+
+- From **Overview** it presents the customer.
+- From **All customers** it presents the All customers view, then each customer's Overview in turn, every 20 seconds,
+  with a progress bar.
+- The arrow keys move between slides, space pauses and Esc leaves. Each slide is the live page, so its figures are
+  current. Leaving full screen ends Present mode.
+
 ## Tests
 
 - `packages/shared/src/insights.test.ts`: the go-live rules, the customer status, periods and snapshot totals.
@@ -279,7 +305,10 @@ then the hub refuses the message, which the email log shows as failed.
   - nothing sent while email is off;
   - changing (a new frequency moves the next send), pausing and deleting, with the audit log.
 - `tests/db/src/platform/mail-settings.db.test.ts`: attachments over SMTP and to the hub as base64.
+- `tests/db/src/insights/portfolio.db.test.ts`: who sees which customers (Super Admin, a member engineer, an engineer
+  with none), each customer's own figures, and a customer whose figures fail shown as unavailable.
 - `tests/db/src/insights/http.db.test.ts`, the real wiring over HTTP:
   - the figures, history and a site's go-live date answer, and a bad period is refused;
   - a PDF of the Executive summary and of the Change log (a real `%PDF` file, with its name);
-  - the refusals: Monitoring off, an unknown report, a backwards period.
+  - the refusals: Monitoring off, an unknown report, a backwards period;
+  - the All customers view and its PDF for staff, refused for a customer user.
