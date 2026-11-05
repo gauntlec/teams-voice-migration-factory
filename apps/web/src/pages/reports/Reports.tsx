@@ -13,6 +13,7 @@ import {
   HistoryRegular,
   PhoneRegular,
   BotRegular,
+  MailCheckmarkRegular,
   ReceiptRegular,
   TaskListLtrRegular,
   WarningRegular,
@@ -56,7 +57,7 @@ import { useNotify } from '../../hooks/useNotify';
 import { exportReportCsv, exportReportExcel, hasTable } from '../../lib/exportReport';
 import { reportAvailable } from './reportsShared';
 import { ReportView } from './ReportView';
-import { SchedulesPanel } from './Schedules';
+import { SchedulesPanel, SentPanel } from './Schedules';
 
 /**
  * An emailed report link carries ?customer=<id>: switch to that customer when this person can open it, so the link shows
@@ -138,9 +139,10 @@ export function Reports() {
   const tenant = me?.tenants.find((t) => t.id === activeTenantId);
   if (!activeTenantId || !tenant) return <NoTenant />;
   const canSchedule = can('reports:schedule');
-  const tab = canSchedule && params.get('tab') === 'scheduled' ? 'scheduled' : 'catalogue';
+  const asked = params.get('tab');
+  const tab = canSchedule && (asked === 'scheduled' || asked === 'sent') ? asked : 'catalogue';
   const startWith = params.get('new');
-  const chooseTab = (t: string) => setParams(t === 'scheduled' ? { tab: 'scheduled' } : {}, { replace: true });
+  const chooseTab = (t: string) => setParams(t === 'scheduled' || t === 'sent' ? { tab: t } : {}, { replace: true });
   const open = REPORT_KEYS.filter((k) => reportAvailable(k, can, tenant));
   const groups = REPORT_GROUPS.map((g) => ({ g, keys: open.filter((k) => REPORT_CATALOGUE[k].group === g) })).filter((x) => x.keys.length || (x.g === 'Migration' && can('tenantdiscovery:read')));
   return (
@@ -151,9 +153,14 @@ export function Reports() {
           <Tab value="scheduled" icon={<CalendarClockRegular />}>
             Scheduled
           </Tab>
+          <Tab value="sent" icon={<MailCheckmarkRegular />}>
+            Sent
+          </Tab>
         </TabList>
       )}
-      {tab === 'scheduled' ? (
+      {tab === 'sent' ? (
+        <SentPanel tenantId={activeTenantId} />
+      ) : tab === 'scheduled' ? (
         <SchedulesPanel tenantId={activeTenantId} tenant={tenant} can={can} startWith={(REPORT_KEYS as readonly string[]).includes(startWith ?? '') ? (startWith as ReportKey) : null} />
       ) : (
         <>

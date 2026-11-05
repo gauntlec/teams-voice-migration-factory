@@ -119,3 +119,26 @@ describe('scheduled reports', () => {
     expect(audit.map((a) => a.action)).toEqual(['insights.schedule_created', 'insights.schedule_sent_now', 'insights.schedule_updated', 'insights.schedule_deleted']);
   });
 });
+
+describe('Reports › Sent (step 6b)', () => {
+  it('lists every copy sent for the customer, newest first, with the PDF while it is kept', async () => {
+    const sched = (await svc.list(c.t))[0];
+    if (sched) await svc.sendNow(c.t, pm, sched.id, now);
+    const sent = await svc.sent(c.t);
+    expect(sent.length).toBeGreaterThan(0);
+    const first = sent[0]!;
+    expect(first).toMatchObject({ status: 'queued', reportTitle: expect.any(String), pdf: { filename: expect.stringMatching(/\.pdf$/) } });
+    expect(first.path).toMatch(/^\/reports\/[a-z-]+\?period=last_(month|quarter)&customer=/);
+    expect(sent.map((x) => x.at)).toEqual([...sent.map((x) => x.at)].sort().reverse());
+    const pdf = await svc.sentPdf(c.t, first.id);
+    expect(pdf.content.subarray(0, 5).toString()).toBe('%PDF-');
+
+    // another customer can't read it, and once the PDF is no longer kept it says so
+    const other = await seedCustomer(handle, { name: 'Elsewhere' });
+    await expect(svc.sentPdf(other.t, first.id)).rejects.toThrow('No such report');
+    expect(await svc.sent(other.t)).toEqual([]);
+    await db.updateTable('email_attachments').set({ content: null }).where('message_id', '=', first.id).execute();
+    await expect(svc.sentPdf(c.t, first.id)).rejects.toThrow('kept for 90 days');
+    expect((await svc.sent(c.t)).find((x) => x.id === first.id)!.pdf).toBeNull();
+  });
+});

@@ -918,6 +918,26 @@ export interface ScheduleRecipient {
 }
 
 /** GET /t/:tenantId/insights/schedules */
+/** Reports › Sent (step 6b): one copy of a scheduled report as it was emailed, from the email log. */
+export interface SentReportView {
+  /** the email's id */
+  id: string;
+  at: string;
+  reportTitle: string;
+  periodLabel: string;
+  toName: string | null;
+  toEmail: string;
+  /** the email log's state: waiting to go, sent, failed, or not sent (email off, or a test customer's mail held back) */
+  status: 'queued' | 'sent' | 'failed' | 'skipped';
+  error: string | null;
+  /** the report page for the same period, as a path in the app */
+  path: string | null;
+  /** the PDF that was sent is still kept (90 days) and can be downloaded */
+  pdf: { filename: string } | null;
+  /** who pressed Send now; null for the schedule's own send */
+  sentBy: string | null;
+}
+
 export interface ReportScheduleView {
   id: string;
   reportKey: ReportKey;

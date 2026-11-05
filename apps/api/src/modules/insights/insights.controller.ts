@@ -98,6 +98,24 @@ export class InsightsController {
     return this.schedules.list(t);
   }
 
+  /** Reports › Sent: every scheduled report emailed for this customer, newest first. */
+  @Get('schedules/sent')
+  @RequirePermission('reports:schedule')
+  sentReports(@TenantCtx() t: TenantContext) {
+    return this.schedules.sent(t);
+  }
+
+  /** The PDF a sent copy carried, while it is kept (90 days). */
+  @Get('schedules/sent/:messageId/pdf')
+  @RequirePermission('reports:schedule')
+  async sentReportPdf(@TenantCtx() t: TenantContext, @Param('messageId', ParseUUIDPipe) messageId: string, @Res() res: Response) {
+    const { filename, content } = await this.schedules.sentPdf(t, messageId);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/["\\\r\n]/g, '')}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(content);
+  }
+
   /** Who a report can be sent to: people who can open this customer. */
   @Get('schedules/recipients')
   @RequirePermission('reports:schedule')

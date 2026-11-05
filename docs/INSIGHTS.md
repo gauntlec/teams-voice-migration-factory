@@ -20,7 +20,7 @@ promised, are:
 | 4b | Scheduled reports by email, with the PDF attached | **Live** (2026.11.8) |
 | 5 | All-customers view, Portfolio report, Present mode | **Live** (2026.11.10) |
 | 6a | Assistant activity report (promised in step 5) | **Built** (section below) |
-| 6b | Reports › Sent: every scheduled report sent, kept to look back on (promised in step 4) | To do |
+| 6b | Reports › Sent: every scheduled report sent, kept to look back on (promised in step 4) | **Built** (section below) |
 | 6c | A site filter on the reports that can be cut by site (promised in step 3) | To do |
 | 6d | Device availability over the report's period, not just the last 24 hours (promised in step 3) | To do |
 
@@ -310,6 +310,19 @@ like every report with a period, and has its PDF, Excel and CSV like the rest.
   it ran (the same rule as "fixed by" and "completed by an assistant" in the incident and service request reports).
 - **Tables:** one row per assistant that did anything (Voxshift's own are marked "(Voxshift)"), and the steps by kind.
 
+## Reports › Sent (step 6b)
+
+**Reports › Sent** sits next to Scheduled, for the same people (`reports:schedule`). It lists every copy of a scheduled
+report emailed for the customer, newest first (at most 500), from the email log (`InsightsScheduleService.sent`,
+`GET /insights/schedules/sent`).
+
+- **Each row:** when it went (and who pressed Send now, if anyone), the report and its period, who it went to (for a test
+  customer whose mail is redirected, who it was for), and the email's state: waiting to go, sent, failed (with the reason)
+  or not sent.
+- **Open report** opens the same report for the same period, as the person looking.
+- **PDF sent** downloads the copy that went, built as its recipient, while it is kept: 90 days, the same as the email
+  attachment (`GET /insights/schedules/sent/:messageId/pdf`). Only this customer's scheduled reports can be read this way.
+
 ## Tests
 
 - `packages/shared/src/insights.test.ts`: the go-live rules, the customer status, periods and snapshot totals.
@@ -329,7 +342,8 @@ like every report with a period, and has its PDF, Excel and CSV like the rest.
   - due sends: one copy per person built as them (a site contact's own sites), the PDF attached and kept with the email,
     the link to the right customer, someone who lost access skipped, the next send moved;
   - nothing sent while email is off;
-  - changing (a new frequency moves the next send), pausing and deleting, with the audit log.
+  - changing (a new frequency moves the next send), pausing and deleting, with the audit log;
+  - Reports › Sent: newest first, the report link, the PDF while it is kept, nothing from another customer.
 - `tests/db/src/platform/mail-settings.db.test.ts`: attachments over SMTP and to the hub as base64.
 - `tests/db/src/insights/portfolio.db.test.ts`: who sees which customers (Super Admin, a member engineer, an engineer
   with none), each customer's own figures, and a customer whose figures fail shown as unavailable.
