@@ -56,7 +56,9 @@ export async function siteRowActivity(s: Scoped, siteId: string, now = Date.now(
       if (v.startedAt && now - Date.parse(v.startedAt) > VERIFY_STALE_MS) continue;
       state = 'checking';
     } else if (r.finished_at && lastRead > Date.parse(String(r.finished_at))) continue;
-    const changed = await s.selectFrom('deployment_changes').select('object_id').distinct().where('deployment_id', '=', r.id).where('result', 'in', ['applied', 'failed']).where('object_id', 'is not', null).execute();
+    // A re-check also reads what failed, to show what's missing. "Sent, not confirmed" is only for what Teams accepted: a change that failed wasn't sent.
+    const results = state === 'checking' ? ['applied', 'failed'] : ['applied'];
+    const changed = await s.selectFrom('deployment_changes').select('object_id').distinct().where('deployment_id', '=', r.id).where('result', 'in', results as never).where('object_id', 'is not', null).execute();
     changed.forEach((c) => mark(c.object_id!, state));
   }
   return out;
