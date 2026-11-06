@@ -164,11 +164,32 @@ function isPsEmptyArray(v: unknown): v is PsEmptyArray {
  */
 export const NOT_DEPLOYED_CMDLET = '(not deployed)';
 
+/** One setting that made the planner send a command: what the design wants and what Teams has, in words. */
+export interface SettingDifference {
+  setting: string;
+  design: string;
+  teams: string;
+}
+
+/** A difference as one phrase, for a warning line. */
+export function formatDifference(d: SettingDifference): string {
+  return `${d.setting.charAt(0).toLowerCase()}${d.setting.slice(1)} (design ${d.design}, live ${d.teams})`;
+}
+
+const NOT_SET = 'Not set';
+const shown = (v: string | number | boolean | null | undefined): string => (v === null || v === undefined || v === '' ? NOT_SET : typeof v === 'boolean' ? (v ? 'On' : 'Off') : String(v));
+const shownList = (v: string[]): string => (v.length ? v.join(', ') : 'None');
+
 export interface CmdletInvocation {
   cmdlet: string;
   parameters: Record<string, unknown>;
   objectType: string;
   objectId?: string;
+  /**
+   * Why a command is planned against a live object, from the comparison that planned it, so a report can't disagree with what would be
+   * sent. Absent when there is nothing to compare with (a new object).
+   */
+  differences?: SettingDifference[];
   /** Planned because of a Voxshift default, not anything designed for this row, so it doesn't count as drift. */
   byDefault?: boolean;
   /**
@@ -399,6 +420,26 @@ export function identityRowWarnings(row: Pick<BuildIdentityRow, 'e164' | 'number
  * Users and CAPs plan identically - only the object type tag differs, matching
  * `deployment_changes.object_type` ('user' | 'cap').
  */
+/** For a setting Teams hasn't been asked about yet, so it can't be called a difference from anything. */
+const NOT_READ = 'Not read yet';
+function describeForwarding(f: CallForwardingSettings['forwarding'] | null | undefined): string {
+  if (!f?.enabled) return 'Off';
+  return [f.type, f.targetType, f.target].filter(Boolean).join(', ');
+}
+function describeUnanswered(u: CallForwardingSettings['unanswered'] | null | undefined): string {
+  if (!u?.enabled) return 'Off';
+  return [u.targetType, u.target, u.delaySeconds != null ? `after ${u.delaySeconds} seconds` : null].filter(Boolean).join(', ');
+}
+function describePickupGroup(p: PickupGroupSettings | null | undefined): string {
+  if (!p?.targets?.length) return 'None';
+  return `${p.targets.join(', ')}${p.order ? ` (${p.order})` : ''}`;
+}
+function describeDelegate(d: CallDelegate | null | undefined): string {
+  if (!d) return 'Not a delegate';
+  const can = [d.makeCalls && 'make calls', d.receiveCalls && 'receive calls', d.manageSettings && 'manage settings', d.pickUpHeldCalls && 'pick up held calls', d.joinActiveCalls && 'join active calls'].filter(Boolean);
+  return can.length ? `Can ${can.join(', ')}` : 'No permissions';
+}
+
 export function planIdentityRow(
   row: BuildIdentityRow,
   objectType: 'user' | 'cap',
@@ -406,6 +447,8 @@ export function planIdentityRow(
 ): CmdletInvocation[] {
   const calls: CmdletInvocation[] = [];
   const identity = row.upn;
+  const diff = (setting: string, design: string | boolean | null | undefined, teams: string | boolean | null | undefined) =>
+    live ? { differences: [{ setting, design: shown(design), teams: shown(teams) }] } : {};
 
   if (row.revoke_ev) {
     // Skip if live already shows EV off - nothing left to revoke.
@@ -415,6 +458,7 @@ export function planIdentityRow(
         parameters: { Identity: identity, RemoveAll: true },
         objectType,
         objectId: row.id,
+        ...diff('Enterprise Voice', 'Off, number removed', true),
       });
     }
     return calls;
@@ -432,6 +476,7 @@ export function planIdentityRow(
         parameters: { Identity: identity, EnterpriseVoiceEnabled: true },
         objectType,
         objectId: row.id,
+        ...diff('Enterprise Voice', true, false),
       });
     }
   } else if (row.e164 && row.number_type && (!live || numKey(live.lineUri) !== numKey(row.e164))) {
@@ -447,6 +492,7 @@ export function planIdentityRow(
       },
       objectType,
       objectId: row.id,
+      ...diff('Phone number', row.e164, live?.lineUri),
     });
   }
 
@@ -462,6 +508,7 @@ export function planIdentityRow(
       parameters: { Identity: identity, PolicyName: grantPolicyName(value) },
       objectType,
       objectId: row.id,
+      ...diff(kind.label, value, (tenantType ? live?.policies[tenantType] : undefined) ?? 'Global (default)'),
     });
   }
 
@@ -490,6 +537,14 @@ export function planIdentityRow(
         },
         objectType,
         objectId: row.id,
+        ...(live
+          ? {
+              differences:
+                live.voicemailEnabled === row.voicemail.enabled
+                  ? [{ setting: 'Voicemail language', design: shown(row.voicemail.language), teams: shown(live.voicemailPromptLanguage) }]
+                  : [{ setting: 'Voicemail', design: shown(row.voicemail.enabled), teams: live.voicemailEnabled === undefined ? NOT_READ : shown(live.voicemailEnabled) }],
+            }
+          : {}),
       });
     }
   }
@@ -512,6 +567,7 @@ export function planIdentityRow(
       },
       objectType,
       objectId: row.id,
+      ...diff('Call forwarding', describeForwarding(f), liveCalling ? describeForwarding(liveCalling.callForwarding.forwarding) : NOT_READ),
     });
   }
   // A user with voicemail on and no choice of their own gets the default, unless Teams already has an active rule for them: someone
@@ -537,6 +593,7 @@ export function planIdentityRow(
       },
       objectType,
       objectId: row.id,
+      ...diff('If a call is unanswered', describeUnanswered(u), liveCalling ? describeUnanswered(liveUnanswered) : NOT_READ),
     });
   }
   if (row.call_forwarding?.busyOnBusy && !(liveCalling && liveCalling.callForwarding.busyOnBusy === row.call_forwarding.busyOnBusy)) {
@@ -545,6 +602,7 @@ export function planIdentityRow(
       parameters: { Identity: identity, BusyOnBusyOption: row.call_forwarding.busyOnBusy },
       objectType,
       objectId: row.id,
+      ...diff('Busy on busy', row.call_forwarding.busyOnBusy, liveCalling ? liveCalling.callForwarding.busyOnBusy : NOT_READ),
     });
   }
   // build_users/build_caps.pickup_group defaults to `{}` (NOT NULL, see the
@@ -566,6 +624,7 @@ export function planIdentityRow(
       },
       objectType,
       objectId: row.id,
+      ...diff('Call group', describePickupGroup(row.pickup_group), liveCalling ? describePickupGroup(liveCalling.pickupGroup) : NOT_READ),
     });
   }
   for (const d of Array.isArray(row.delegates) ? row.delegates : []) {
@@ -586,6 +645,11 @@ export function planIdentityRow(
       },
       objectType,
       objectId: row.id,
+      ...diff(
+        `Delegate ${d.delegateUpn}`,
+        describeDelegate(d),
+        liveCalling ? describeDelegate(liveCalling.delegates.find((l) => l.delegateUpn?.toLowerCase() === d.delegateUpn.toLowerCase())) : NOT_READ,
+      ),
     });
   }
 
@@ -652,6 +716,7 @@ export function planResourceAccountRow(row: BuildResourceAccountRow, live?: Live
       },
       objectType: 'resource_account',
       objectId: row.id,
+      ...(live ? { differences: [{ setting: 'Phone number', design: shown(row.phone_number), teams: shown(live.lineUri) }] } : {}),
     });
   }
   if (row.voice_routing_policy && (!live || !policyMatchesLive(row.voice_routing_policy, live.policies['OnlineVoiceRoutingPolicy']))) {
@@ -660,6 +725,7 @@ export function planResourceAccountRow(row: BuildResourceAccountRow, live?: Live
       parameters: { Identity: row.upn, PolicyName: grantPolicyName(row.voice_routing_policy) },
       objectType: 'resource_account',
       objectId: row.id,
+      ...(live ? { differences: [{ setting: 'Voice Routing Policy', design: shown(row.voice_routing_policy), teams: live.policies['OnlineVoiceRoutingPolicy'] ?? 'Global (default)' }] } : {}),
     });
   }
   return calls;
@@ -738,12 +804,12 @@ export function planSharedCallingPolicyRow(
     return [{ cmdlet: 'New-CsTeamsSharedCallingRoutingPolicy', parameters, objectType: 'shared_calling_policy', objectId: row.id }];
   }
   const sortedLive = [...(live.emergencyNumbers ?? [])].sort();
-  const changed =
-    (live.resourceAccount ?? '').toLowerCase() !== resourceAccount.toLowerCase() ||
-    JSON.stringify(sortedNumbers) !== JSON.stringify(sortedLive) ||
-    (live.description ?? undefined) !== (row.description ?? undefined);
-  if (!changed) return [];
-  return [{ cmdlet: 'Set-CsTeamsSharedCallingRoutingPolicy', parameters, objectType: 'shared_calling_policy', objectId: row.id }];
+  const differences: SettingDifference[] = [];
+  if ((live.resourceAccount ?? '').toLowerCase() !== resourceAccount.toLowerCase()) differences.push({ setting: 'Resource account', design: resourceAccount, teams: shown(live.resourceAccount) });
+  if (JSON.stringify(sortedNumbers) !== JSON.stringify(sortedLive)) differences.push({ setting: 'Emergency numbers', design: shownList(sortedNumbers), teams: shownList(sortedLive) });
+  if ((live.description ?? undefined) !== (row.description ?? undefined)) differences.push({ setting: 'Description', design: shown(row.description), teams: shown(live.description) });
+  if (!differences.length) return [];
+  return [{ cmdlet: 'Set-CsTeamsSharedCallingRoutingPolicy', parameters, objectType: 'shared_calling_policy', objectId: row.id, differences }];
 }
 
 type CallQueueRoutingMethod = (typeof CALL_QUEUE_ROUTING_METHODS)[number];
@@ -1114,16 +1180,16 @@ export function planCallQueueRow(
     ...(row.voicemail_triage_template_id ? { SharedVoicemailTriageSettingsTemplateId: row.voicemail_triage_template_id } : {}),
   };
   // A design that leaves an extra unset keeps whatever Teams has: only a set one is compared.
-  const extrasDiffer = (want: CallQueueActionSettings | null | undefined, have: { priority?: number; redirectPrompt?: string; redirectAudioId?: string } | undefined) => {
+  const extrasDifferences = (label: string, want: CallQueueActionSettings | null | undefined, have: { priority?: number; redirectPrompt?: string; redirectAudioId?: string } | undefined): SettingDifference[] => {
     const w = callQueueActionExtras('Overflow', want, audio);
     const tts = w.OverflowRedirectPersonTextToSpeechPrompt ?? w.OverflowRedirectVoicemailTextToSpeechPrompt ?? w.OverflowDisconnectTextToSpeechPrompt;
     const file = (w.OverflowRedirectPersonAudioFilePrompt ?? w.OverflowRedirectVoicemailAudioFilePrompt ?? w.OverflowDisconnectAudioFilePrompt) as string | undefined;
-    return (
-      (w.OverflowActionCallPriority !== undefined && w.OverflowActionCallPriority !== have?.priority) ||
-      (tts !== undefined && tts !== have?.redirectPrompt) ||
-      // a placeholder (not imported yet) never matches, so the import and Set happen
-      (file !== undefined && file.toLowerCase() !== (have?.redirectAudioId ?? '').toLowerCase())
-    );
+    const out: SettingDifference[] = [];
+    if (w.OverflowActionCallPriority !== undefined && w.OverflowActionCallPriority !== have?.priority) out.push({ setting: `${label}: call priority`, design: shown(w.OverflowActionCallPriority as number), teams: shown(have?.priority) });
+    if (tts !== undefined && tts !== have?.redirectPrompt) out.push({ setting: `${label}: spoken message`, design: shown(tts as string), teams: shown(have?.redirectPrompt) });
+    // a placeholder (not imported yet) never matches, so the import and Set happen
+    if (file !== undefined && file.toLowerCase() !== (have?.redirectAudioId ?? '').toLowerCase()) out.push({ setting: `${label}: audio message`, design: shown(want?.redirectAudio?.filename), teams: shown(have?.redirectAudioId) });
+    return out;
   };
 
   if (!live) {
@@ -1134,33 +1200,37 @@ export function planCallQueueRow(
   } else {
     const sortedUsers = users.map((u) => u.toLowerCase()).sort();
     const sortedLive = (live.agentObjectIds ?? []).map((u) => u.toLowerCase()).sort();
-    const changed =
-      live.routingMethod !== row.routing_method ||
-      live.agentAlertTime !== row.agent_alert_time ||
-      live.presenceBasedRouting !== row.presence_based_routing ||
-      (live.overflowAction ?? undefined) !== (row.overflow?.action ?? undefined) ||
-      (live.overflowThreshold ?? undefined) !== (row.overflow?.threshold ?? undefined) ||
-      !sameTarget(live.overflowActionTarget, overflowTarget) ||
-      (live.timeoutAction ?? undefined) !== (row.timeout?.action ?? undefined) ||
-      (live.timeoutThreshold ?? undefined) !== timeoutThreshold ||
-      !sameTarget(live.timeoutActionTarget, timeoutTarget) ||
-      (live.noAgentAction ?? undefined) !== (row.no_agent_action?.action ?? undefined) ||
-      !sameTarget(live.noAgentActionTarget, noAgentTarget) ||
-      (live.noAgentApplyTo ?? undefined) !== (row.no_agent_apply_to ?? undefined) ||
-      extrasDiffer(row.overflow, live.overflowExtras) ||
-      extrasDiffer(row.timeout, live.timeoutExtras) ||
-      extrasDiffer(row.no_agent_action, live.noAgentExtras) ||
-      (row.authorized_users != null && !sameIds(resolveUpnIds(row.authorized_users, agentObjectIds), live.authorizedUsers)) ||
-      (row.hide_authorized_users != null && !sameIds(resolveUpnIds(row.hide_authorized_users, agentObjectIds), live.hideAuthorizedUsers)) ||
-      (!!row.voicemail_triage_template_id && row.voicemail_triage_template_id.toLowerCase() !== (live.voicemailTriageTemplateId ?? '').toLowerCase()) ||
-      (needsLanguage && (live.languageId ?? undefined) !== (row.language_id ?? undefined)) ||
-      JSON.stringify(sortedUsers) !== JSON.stringify(sortedLive);
-    if (changed) {
+    const upnOf = new Map([...agentObjectIds].map(([upn, id]) => [id.toLowerCase(), upn]));
+    const named = (ids: string[] | undefined) => shownList((ids ?? []).map((id) => upnOf.get(id.toLowerCase()) ?? id));
+    const differences: SettingDifference[] = [];
+    const differs = (isDifferent: boolean, setting: string, design: string | number | boolean | null | undefined, teams: string | number | boolean | null | undefined) => {
+      if (isDifferent) differences.push({ setting, design: shown(design), teams: shown(teams) });
+    };
+    differs(live.routingMethod !== row.routing_method, 'Routing method', row.routing_method, live.routingMethod);
+    differs(live.agentAlertTime !== row.agent_alert_time, 'Agent alert time', row.agent_alert_time, live.agentAlertTime);
+    differs(live.presenceBasedRouting !== row.presence_based_routing, 'Presence-based routing', row.presence_based_routing, live.presenceBasedRouting);
+    differs((live.overflowAction ?? undefined) !== (row.overflow?.action ?? undefined), 'Overflow: action', row.overflow?.action, live.overflowAction);
+    differs((live.overflowThreshold ?? undefined) !== (row.overflow?.threshold ?? undefined), 'Overflow: threshold', row.overflow?.threshold, live.overflowThreshold);
+    differs(!sameTarget(live.overflowActionTarget, overflowTarget), 'Overflow: target', overflowTarget, live.overflowActionTarget);
+    differs((live.timeoutAction ?? undefined) !== (row.timeout?.action ?? undefined), 'Timeout: action', row.timeout?.action, live.timeoutAction);
+    differs((live.timeoutThreshold ?? undefined) !== timeoutThreshold, 'Timeout: threshold', timeoutThreshold, live.timeoutThreshold);
+    differs(!sameTarget(live.timeoutActionTarget, timeoutTarget), 'Timeout: target', timeoutTarget, live.timeoutActionTarget);
+    differs((live.noAgentAction ?? undefined) !== (row.no_agent_action?.action ?? undefined), 'No agents: action', row.no_agent_action?.action, live.noAgentAction);
+    differs(!sameTarget(live.noAgentActionTarget, noAgentTarget), 'No agents: target', noAgentTarget, live.noAgentActionTarget);
+    differs((live.noAgentApplyTo ?? undefined) !== (row.no_agent_apply_to ?? undefined), 'No agents: applies to', row.no_agent_apply_to, live.noAgentApplyTo);
+    differences.push(...extrasDifferences('Overflow', row.overflow, live.overflowExtras), ...extrasDifferences('Timeout', row.timeout, live.timeoutExtras), ...extrasDifferences('No agents', row.no_agent_action, live.noAgentExtras));
+    if (row.authorized_users != null && !sameIds(resolveUpnIds(row.authorized_users, agentObjectIds), live.authorizedUsers)) differences.push({ setting: 'Authorised users', design: shownList(row.authorized_users), teams: named(live.authorizedUsers) });
+    if (row.hide_authorized_users != null && !sameIds(resolveUpnIds(row.hide_authorized_users, agentObjectIds), live.hideAuthorizedUsers)) differences.push({ setting: 'Hidden authorised users', design: shownList(row.hide_authorized_users), teams: named(live.hideAuthorizedUsers) });
+    differs(!!row.voicemail_triage_template_id && row.voicemail_triage_template_id.toLowerCase() !== (live.voicemailTriageTemplateId ?? '').toLowerCase(), 'Voicemail triage template', row.voicemail_triage_template_id, live.voicemailTriageTemplateId);
+    differs(needsLanguage && (live.languageId ?? undefined) !== (row.language_id ?? undefined), 'Language', row.language_id, live.languageId);
+    if (JSON.stringify(sortedUsers) !== JSON.stringify(sortedLive)) differences.push({ setting: 'Agents', design: named(users), teams: named(live.agentObjectIds) });
+    if (differences.length) {
       calls.push({
         cmdlet: 'Set-CsCallQueue',
         parameters: { Identity: live.identity, ...parameters },
         objectType: 'call_queue',
         objectId: row.id,
+        differences,
       });
     }
   }
@@ -1184,6 +1254,7 @@ export function planCallQueueRow(
       parameters: { Identities: unassociatedInstanceIds, ConfigurationId: live.identity, ConfigurationType: 'CallQueue' },
       objectType: 'call_queue',
       objectId: row.id,
+      differences: [{ setting: 'Linked resource accounts', design: shownList(linkedInstanceIds), teams: shownList(live.applicationInstanceIds ?? []) }],
     });
   }
   // A resource account unlinked in Design & Build keeps its live
@@ -1202,6 +1273,7 @@ export function planCallQueueRow(
         parameters: { Identities: removedInstanceIds },
         objectType: 'call_queue',
         objectId: row.id,
+        differences: [{ setting: 'Linked resource accounts', design: shownList(linkedInstanceIds), teams: shownList(live?.applicationInstanceIds ?? []) }],
       });
     }
   }
@@ -2119,10 +2191,65 @@ function describeCallFlow(cf: AutoAttendantCallFlow | null): string {
   ].filter(Boolean).join(', ');
 }
 
-/** What differs between two call flows: the first piece that does, with both sides. Null when they are the same. */
-function callFlowDifference(design: AutoAttendantCallFlow | null, live: AutoAttendantCallFlow | null): string | null {
-  if (callFlowEqual(design, live)) return null;
-  return `design: ${describeCallFlow(design)}; live: ${describeCallFlow(live)}`;
+const keyName = (dtmf: string) => (dtmf === 'Automatic' ? 'no key pressed' : `key ${dtmf.replace(/^Tone/, '')}`);
+const saidText = (prompts: AutoAttendantPrompt[] | undefined): string => {
+  const said = (prompts ?? []).filter((p) => p.type === 'AudioFile' || isSpoken(p)).map((p) => (p.type === 'AudioFile' ? 'Audio file' : (p.text as string)));
+  return said.length ? said.join(' ') : 'None';
+};
+/** A menu target in words. Takes a saved target or a normalised one, and names a voice app when this site knows it. */
+function describeTarget(t: unknown, voiceAppNames: Map<string, string>): string {
+  const e = t as { kind?: string; identity?: string; unresolved?: string | null; upn?: string; number?: string; groupId?: string; liveId?: string } | null | undefined;
+  if (!e) return 'None';
+  switch (e.kind) {
+    case 'voice_app':
+      return e.identity ? (voiceAppNames.get(e.identity.toLowerCase()) ?? e.identity) : 'A voice app not in Teams yet';
+    case 'user':
+      return e.upn ?? e.liveId ?? 'A person';
+    case 'external':
+      return e.number ?? 'An outside number';
+    case 'voicemail':
+      return `Voicemail${e.upn ? ` of ${e.upn}` : ''}`;
+    case 'shared_voicemail':
+      return `Shared voicemail${e.groupId ?? e.liveId ? ` (${e.groupId ?? e.liveId})` : ''}`;
+    default:
+      return JSON.stringify(e);
+  }
+}
+function describeOption(o: AutoAttendantMenuOption | undefined, voiceAppNames: Map<string, string>): string {
+  if (!o) return 'No option';
+  const does =
+    o.action === 'TransferCallToTarget' ? `Transfer to ${describeTarget(o.target, voiceAppNames)}` :
+    o.action === 'TransferCallToOperator' ? 'Transfer to the operator' :
+    o.action === 'Announcement' ? `Announcement: ${saidText(o.prompt ? [o.prompt] : [])}` : 'Disconnect';
+  return `${does}${o.voiceResponse ? `, or say "${o.voiceResponse}"` : ''}`;
+}
+/** Each piece of a call flow that differs. Takes normalised flows, and always agrees with callFlowEqual. */
+function callFlowSettingDifferences(label: string, design: AutoAttendantCallFlow | null, live: AutoAttendantCallFlow | null, voiceAppNames: Map<string, string>): SettingDifference[] {
+  if (callFlowEqual(design, live)) return [];
+  if (!design || !live) return [{ setting: label, design: design ? describeCallFlow(design) : 'None', teams: live ? describeCallFlow(live) : 'None' }];
+  const out: SettingDifference[] = [];
+  if (!structurallyEqual(design.greetings, live.greetings)) out.push({ setting: `${label}: greeting`, design: saidText(design.greetings), teams: saidText(live.greetings) });
+  if (!structurallyEqual(design.menu.prompts ?? [], live.menu.prompts ?? [])) out.push({ setting: `${label}: menu prompt`, design: saidText(design.menu.prompts), teams: saidText(live.menu.prompts) });
+  if (!!design.menu.enableDialByName !== !!live.menu.enableDialByName) out.push({ setting: `${label}: dial by name`, design: shown(!!design.menu.enableDialByName), teams: shown(!!live.menu.enableDialByName) });
+  if ((design.menu.directorySearchMethod ?? undefined) !== (live.menu.directorySearchMethod ?? undefined)) out.push({ setting: `${label}: directory search`, design: shown(design.menu.directorySearchMethod), teams: shown(live.menu.directorySearchMethod) });
+  const designOptions = sortedMenuOptions(design);
+  const liveOptions = sortedMenuOptions(live);
+  for (const dtmf of [...new Set([...designOptions, ...liveOptions].map((o) => o.dtmf))].sort()) {
+    const a = designOptions.find((o) => o.dtmf === dtmf);
+    const b = liveOptions.find((o) => o.dtmf === dtmf);
+    if (!structurallyEqual(a ?? null, b ?? null)) out.push({ setting: `${label}: ${keyName(dtmf)}`, design: describeOption(a, voiceAppNames), teams: describeOption(b, voiceAppNames) });
+  }
+  return out.length ? out : [{ setting: label, design: describeCallFlow(design), teams: describeCallFlow(live) }];
+}
+const WEEK_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const;
+function describeSchedule(sc: AutoAttendantSchedule | null | undefined): string {
+  if (!sc) return 'None';
+  if (sc.type === 'fixed') return shownList((sc.fixed?.ranges ?? []).map((r) => `${r.start} to ${r.end}`));
+  const days = WEEK_DAYS.flatMap((d) => {
+    const ranges = sc.weekly?.[d] ?? [];
+    return ranges.length ? [`${d.charAt(0).toUpperCase()}${d.slice(1, 3)} ${ranges.map((r) => `${r.start}-${r.end}`).join(', ')}`] : [];
+  });
+  return shownList(days);
 }
 
 /** Holidays compared by name rather than array position, for the same reason. */
@@ -2175,38 +2302,61 @@ export function autoAttendantDifferences(
   live: AutoAttendantLiveState,
   crossRef: AutoAttendantCrossRef = new Map(),
   userObjectIds: Map<string, string> = new Map(),
+  targetNames: AutoAttendantTargetNames = new Map(),
 ): string[] {
+  if (!live.structured) return ['the live settings could not be read'];
+  return autoAttendantSettingDifferences(savedRow, live, crossRef, userObjectIds, targetNames).map(formatDifference);
+}
+
+/** The same comparison, each setting with both values. */
+export function autoAttendantSettingDifferences(
+  savedRow: BuildAutoAttendantRow,
+  live: AutoAttendantLiveState,
+  crossRef: AutoAttendantCrossRef = new Map(),
+  userObjectIds: Map<string, string> = new Map(),
+  targetNames: AutoAttendantTargetNames = new Map(),
+): SettingDifference[] {
   const s = live.structured;
-  if (!s) return ['the live settings could not be read'];
+  if (!s) return [{ setting: 'Live settings', design: 'Saved', teams: 'Could not be read' }];
   const row = asSentToTeams(savedRow, live, crossRef);
-  const diffs: string[] = [];
-  if (row.authorized_users != null && !sameIds(resolveUpnIds(row.authorized_users, userObjectIds), s.authorizedUsers)) diffs.push('authorised users');
-  if (row.hide_authorized_users != null && !sameIds(resolveUpnIds(row.hide_authorized_users, userObjectIds), s.hideAuthorizedUsers)) diffs.push('hidden authorised users');
-  if (row.user_name_extension && row.user_name_extension !== (s.userNameExtension ?? 'None')) diffs.push(`dial-by-name extension (design ${row.user_name_extension}, live ${s.userNameExtension ?? 'None'})`);
-  if ((row.language_id ?? undefined) !== (s.languageId ?? undefined)) diffs.push(`language (design ${row.language_id ?? 'none'}, live ${s.languageId ?? 'none'})`);
-  if ((row.time_zone_id ?? undefined) !== (s.timeZoneId ?? undefined)) diffs.push(`time zone (design ${row.time_zone_id ?? 'none'}, live ${s.timeZoneId ?? 'none'})`);
-  if ((row.voice_id ?? undefined) !== (s.voiceId ?? undefined)) diffs.push(`voice (design ${row.voice_id ?? 'none'}, live ${s.voiceId ?? 'none'})`);
-  if (!!row.voice_response_enabled !== !!s.enableVoiceResponse) diffs.push('voice response');
-  if (!structurallyEqual(normalizeTarget(row.operator ?? undefined, crossRef) ?? null, normalizeTarget(s.operator ?? undefined, crossRef) ?? null)) diffs.push('operator');
-  const bh = callFlowDifference(normalizeFlow(row.default_call_flow, crossRef), normalizeFlow(s.defaultCallFlow, crossRef));
-  if (bh) diffs.push(`business hours call flow (${bh})`);
+  const diffs: SettingDifference[] = [];
+  const upnOf = new Map([...userObjectIds].map(([upn, id]) => [id.toLowerCase(), upn]));
+  const named = (ids: string[] | undefined) => shownList((ids ?? []).map((id) => upnOf.get(id.toLowerCase()) ?? id));
+  const voiceAppNames = new Map<string, string>();
+  for (const [key, id] of crossRef) {
+    const name = targetNames.get(key);
+    if (name) voiceAppNames.set(id.toLowerCase(), name);
+  }
+  if (row.authorized_users != null && !sameIds(resolveUpnIds(row.authorized_users, userObjectIds), s.authorizedUsers)) diffs.push({ setting: 'Authorised users', design: shownList(row.authorized_users), teams: named(s.authorizedUsers) });
+  if (row.hide_authorized_users != null && !sameIds(resolveUpnIds(row.hide_authorized_users, userObjectIds), s.hideAuthorizedUsers)) diffs.push({ setting: 'Hidden authorised users', design: shownList(row.hide_authorized_users), teams: named(s.hideAuthorizedUsers) });
+  if (row.user_name_extension && row.user_name_extension !== (s.userNameExtension ?? 'None')) diffs.push({ setting: 'Dial-by-name extension', design: row.user_name_extension, teams: s.userNameExtension ?? 'None' });
+  if ((row.language_id ?? undefined) !== (s.languageId ?? undefined)) diffs.push({ setting: 'Language', design: row.language_id ?? 'none', teams: s.languageId ?? 'none' });
+  if ((row.time_zone_id ?? undefined) !== (s.timeZoneId ?? undefined)) diffs.push({ setting: 'Time zone', design: row.time_zone_id ?? 'none', teams: s.timeZoneId ?? 'none' });
+  if ((row.voice_id ?? undefined) !== (s.voiceId ?? undefined)) diffs.push({ setting: 'Voice', design: row.voice_id ?? 'none', teams: s.voiceId ?? 'none' });
+  if (!!row.voice_response_enabled !== !!s.enableVoiceResponse) diffs.push({ setting: 'Voice response', design: shown(!!row.voice_response_enabled), teams: shown(!!s.enableVoiceResponse) });
+  const designOperator = normalizeTarget(row.operator ?? undefined, crossRef) ?? null;
+  const liveOperator = normalizeTarget(s.operator ?? undefined, crossRef) ?? null;
+  if (!structurallyEqual(designOperator, liveOperator)) diffs.push({ setting: 'Operator', design: describeTarget(designOperator, voiceAppNames), teams: describeTarget(liveOperator, voiceAppNames) });
+  diffs.push(...callFlowSettingDifferences('Business hours', normalizeFlow(row.default_call_flow, crossRef), normalizeFlow(s.defaultCallFlow, crossRef), voiceAppNames));
 
   const effectiveAfterHours = row.after_hours_call_flow && row.schedule ? row.after_hours_call_flow : null;
   const effectiveAfterHoursSchedule = row.after_hours_call_flow && row.schedule ? row.schedule : null;
-  const ah = callFlowDifference(normalizeFlow(effectiveAfterHours, crossRef), normalizeFlow(s.afterHoursCallFlow, crossRef));
-  if (ah) diffs.push(`after hours call flow (${ah})`);
-  if (!scheduleEqual(effectiveAfterHoursSchedule, s.schedule)) diffs.push('after hours schedule');
+  diffs.push(...callFlowSettingDifferences('After hours', normalizeFlow(effectiveAfterHours, crossRef), normalizeFlow(s.afterHoursCallFlow, crossRef), voiceAppNames));
+  if (!scheduleEqual(effectiveAfterHoursSchedule, s.schedule)) diffs.push({ setting: 'After hours: schedule', design: describeSchedule(effectiveAfterHoursSchedule), teams: describeSchedule(s.schedule) });
 
   const rowHolidays = sortedHolidays(row.holiday_call_flows);
   const liveHolidays = sortedHolidays(s.holidayCallFlows);
-  if (rowHolidays.length !== liveHolidays.length) diffs.push(`holidays (design ${rowHolidays.length}, live ${liveHolidays.length})`);
+  if (rowHolidays.length !== liveHolidays.length) diffs.push({ setting: 'Holidays', design: shownList(rowHolidays.map((h) => h.name)), teams: shownList(liveHolidays.map((h) => h.name)) });
   else {
     for (let i = 0; i < rowHolidays.length; i++) {
       const a = rowHolidays[i]!;
       const b = liveHolidays[i]!;
-      if (a.name !== b.name) diffs.push(`holiday name (design "${a.name}", live "${b.name}")`);
-      else if (!callFlowEqual(normalizeFlow(a.callFlow, crossRef), normalizeFlow(b.callFlow, crossRef))) diffs.push(`holiday "${a.name}" call flow (${callFlowDifference(normalizeFlow(a.callFlow, crossRef), normalizeFlow(b.callFlow, crossRef))})`);
-      else if (!scheduleEqual(a.schedule, b.schedule)) diffs.push(`holiday "${a.name}" dates`);
+      if (a.name !== b.name) diffs.push({ setting: 'Holiday name', design: a.name, teams: b.name });
+      else {
+        const flow = callFlowSettingDifferences(`Holiday "${a.name}"`, normalizeFlow(a.callFlow, crossRef), normalizeFlow(b.callFlow, crossRef), voiceAppNames);
+        if (flow.length) diffs.push(...flow);
+        else if (!scheduleEqual(a.schedule, b.schedule)) diffs.push({ setting: `Holiday "${a.name}": dates`, design: describeSchedule(a.schedule), teams: describeSchedule(b.schedule) });
+      }
     }
   }
   return diffs;
@@ -2329,6 +2479,7 @@ export function planAutoAttendantRow(
         parameters: { Instance: { $var: 'aa' } },
         objectType: 'auto_attendant',
         objectId: row.id,
+        differences: autoAttendantSettingDifferences(row, live, crossRef, userObjectIds, targetNames),
         preamble: ctx.steps,
       });
     }
@@ -2349,6 +2500,7 @@ export function planAutoAttendantRow(
       parameters: { Identities: unassociatedInstanceIds, ConfigurationId: live.identity, ConfigurationType: 'AutoAttendant' },
       objectType: 'auto_attendant',
       objectId: row.id,
+      differences: [{ setting: 'Linked resource accounts', design: shownList(linkedInstanceIds), teams: shownList(live.applicationInstanceIds ?? []) }],
     });
   }
   // A resource account unlinked in Design & Build keeps its live
@@ -2364,6 +2516,7 @@ export function planAutoAttendantRow(
         parameters: { Identities: removedInstanceIds },
         objectType: 'auto_attendant',
         objectId: row.id,
+        differences: [{ setting: 'Linked resource accounts', design: shownList(linkedInstanceIds), teams: shownList(live?.applicationInstanceIds ?? []) }],
       });
     }
   }

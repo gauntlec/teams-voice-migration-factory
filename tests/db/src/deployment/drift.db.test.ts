@@ -83,6 +83,8 @@ describe('drift', () => {
     const d = await computeSiteDrift(c.s, siteId);
     expect(d).toMatchObject({ drifted: 1, awaitingSync: 0 });
     expect(d.rows[0]).toMatchObject({ rowId, objectType: 'user', name: UPN, state: 'drift', cmdlets: ['Set-CsOnlineVoicemailUserSettings'] });
+    expect(d.rows[0]!.differences?.map((x) => x.setting)).toEqual(['Voicemail']);
+    expect(d.lastSyncAt).toBeTruthy();
     const rollup = await deployments.siteRollup(c.t);
     expect(rollup.find((r) => r.id === siteId)?.drift).toMatchObject({ drifted: 1, awaitingSync: 0 });
     const preview = await deployments.previewChanges(c.t, { siteId, sheets: ['users'] } as never);
