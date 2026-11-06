@@ -161,8 +161,6 @@ preserves that exactly:
    - the same error-driven signal the reference script relies on, rather than
    a separate pre-check call.
 
-A site's deployment page shows this as it happens, on every tab: a banner with what is running and how the last run ended (and a message when one finishes), and it refreshes the planned changes itself. Until a live run's changes have been read back, the plan still compares them with how Teams was before the run. So those rows are marked **checking Teams** and can't be selected, and the API refuses a second live run that includes them. If the re-check didn't happen, the rows are marked **sent, not confirmed** until Teams is next read, and can still be deployed.
-
 Auto Attendant / Call Queue *menu* authoring (greetings, DTMF menus, holiday
 call flows) is out of scope for this delivery - resource accounts here cover
 identity + number only, matching what the reference script itself automates.
@@ -215,6 +213,8 @@ The Deployment site workspace's **Run history** shows it in a Verification
 column: "Verified: 48/50 match - 2 still differ", with the differing rows and
 what differs underneath. Teams can lag; if a difference looks wrong, run
 Validate against tenant later to re-check.
+
+A site's deployment page shows this as it happens, on every tab: a banner with what is running and how the last run ended (and a message when one finishes), and it refreshes the planned changes itself. Until a live run's changes have been read back, the plan still compares them with how Teams was before the run. So those rows are marked **checking Teams** and can't be selected, and the API refuses a second live run that includes them. If the re-check didn't happen, the rows are marked **sent, not confirmed** until Teams is next read, and can still be deployed.
 
 Also still available:
 
