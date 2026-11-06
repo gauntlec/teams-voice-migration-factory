@@ -85,7 +85,9 @@ function flowOf(cf: AutoAttendantCallFlow | null, operator: AutoAttendantCallabl
     out.push({ key: keyOf(o.dtmf), label: label.slice(0, 100) || 'Option', target });
   }
   if (out.length > 12) notes.push(`${where}: only the first 12 menu options were carried over.`);
-  return { mode: 'menu', ...greeting, options: out.slice(0, 12), ...(cf.menu.enableDialByName ? { allowDialByName: true } : {}) };
+  const menuPrompt = cf.menu.prompts?.find((p) => p.type === 'Text' && p.text)?.text;
+  if (cf.menu.prompts?.some((p) => p.type === 'AudioFile')) notes.push(`${where}: an audio menu prompt was not carried over.`);
+  return { mode: 'menu', ...greeting, ...(menuPrompt ? { menuPrompt: menuPrompt.slice(0, 1000) } : {}), options: out.slice(0, 12), ...(cf.menu.enableDialByName ? { allowDialByName: true } : {}) };
 }
 
 const nextDay = (iso: string) => new Date(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10) + 1)).toISOString().slice(0, 10);

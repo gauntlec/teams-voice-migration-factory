@@ -1515,6 +1515,7 @@ export function autoAttendantRowWarnings(
   raObjectIds: Map<string, string>,
   userObjectIds: Map<string, string>,
   targetNames: AutoAttendantTargetNames = new Map(),
+  live?: AutoAttendantLiveState,
 ): string[] {
   const warnings: string[] = [];
   const unresolvedRas = row.resource_accounts.filter((id) => !raObjectIds.has(id));
@@ -1553,7 +1554,8 @@ export function autoAttendantRowWarnings(
   checkFlow(row.after_hours_call_flow, 'After hours');
   for (const h of row.holiday_call_flows) checkFlow(h.callFlow, h.name);
   if (unresolved.length) warnings.push(...unresolved);
-  if (autoAttendantDeployBlockers(row, crossRef, userObjectIds, targetNames).length) {
+  warnings.push(...menuPromptProblems(row, crossRef, userObjectIds, live).map((p) => `${p} A live deployment leaves this Auto Attendant out until it has one.`));
+  if (transferBlockers(row, crossRef, userObjectIds, targetNames).length) {
     warnings.push("A live deployment leaves this Auto Attendant out until its transfer targets are ready, rather than disconnect those callers. A queue or attendant in the same run counts as ready.");
   }
   // Same "after hours only deploys with both a flow and a schedule" rule as planAutoAttendantRow.
@@ -1595,7 +1597,7 @@ function callableEntityProblem(entity: AutoAttendantCallableEntity, crossRef: Au
  * has to have a -CallTarget to transfer (Microsoft Learn), and the only other choice is a different action from the one designed. Only what
  * would be sent counts, so an after-hours flow with no schedule doesn't.
  */
-export function autoAttendantDeployBlockers(
+function transferBlockers(
   row: Pick<BuildAutoAttendantRow, 'operator' | 'default_call_flow' | 'after_hours_call_flow' | 'schedule' | 'holiday_call_flows'>,
   crossRef: AutoAttendantCrossRef,
   userObjectIds: Map<string, string>,
@@ -1617,6 +1619,36 @@ export function autoAttendantDeployBlockers(
   checkFlow(row.default_call_flow, 'Business hours');
   if (row.schedule) checkFlow(row.after_hours_call_flow, 'After hours');
   for (const h of row.holiday_call_flows) checkFlow(h.callFlow, h.name);
+  return out;
+}
+
+/** Why a live run must leave this attendant out: a transfer target that isn't ready, or a menu with nothing to say to callers. */
+export function autoAttendantDeployBlockers(
+  row: BuildAutoAttendantRow,
+  crossRef: AutoAttendantCrossRef,
+  userObjectIds: Map<string, string>,
+  targetNames: AutoAttendantTargetNames = new Map(),
+  live?: AutoAttendantLiveState,
+): string[] {
+  return [...transferBlockers(row, crossRef, userObjectIds, targetNames), ...menuPromptProblems(row, crossRef, userObjectIds, live)];
+}
+
+/**
+ * Menus that would be refused because nothing can be spoken: keys or a name search with no text to read out. An audio prompt counts as
+ * nothing here because it can't be sent yet (see buildPrompt). An attendant that already matches Teams has nothing to send, so no problem.
+ */
+function menuPromptProblems(row: BuildAutoAttendantRow, crossRef: AutoAttendantCrossRef, userObjectIds: Map<string, string>, live?: AutoAttendantLiveState): string[] {
+  if (live && autoAttendantMatchesLive(row, live, crossRef, userObjectIds)) return [];
+  const resolved = withMenuPrompts(row, live);
+  const out: string[] = [];
+  const checkFlow = (cf: AutoAttendantCallFlow | null | undefined, label: string) => {
+    if (cf && menuTakesInput(cf.menu) && !(cf.menu.prompts ?? []).some(isSpoken)) {
+      out.push(`${label} menu has no spoken prompt, and Teams refuses a menu that takes key presses without one. Add a Menu prompt such as "For Sales press 1".`);
+    }
+  };
+  checkFlow(resolved.default_call_flow, 'Business hours');
+  if (resolved.schedule) checkFlow(resolved.after_hours_call_flow, 'After hours');
+  for (const h of resolved.holiday_call_flows) checkFlow(h.callFlow, h.name);
   return out;
 }
 
@@ -1752,6 +1784,42 @@ function buildMenuOption(ctx: AaBuildCtx, opt: AutoAttendantMenuOption, crossRef
 const SYNTHESIZED_DISCONNECT_OPTION: AutoAttendantMenuOption = { dtmf: 'Automatic', action: 'DisconnectCall' };
 function effectiveMenuOptions(menu: AutoAttendantMenu): AutoAttendantMenuOption[] {
   return menu.options.length || menu.enableDialByName || menu.directorySearchMethod ? menu.options : [SYNTHESIZED_DISCONNECT_OPTION];
+}
+
+/** Keys to press or a directory to search: what Teams calls a menu that accepts user input. A lone Automatic option takes none. */
+function menuTakesInput(menu: AutoAttendantMenu): boolean {
+  return !!menu.enableDialByName || !!menu.directorySearchMethod || menu.options.some((o) => o.dtmf !== 'Automatic');
+}
+const isSpoken = (p: AutoAttendantPrompt): boolean => p.type === 'Text' && !!p.text;
+const spokenTexts = (prompts: AutoAttendantPrompt[]): string => prompts.filter(isSpoken).map((p) => p.text).join(' ');
+
+/**
+ * The call flow as it is sent to Teams. New-CsAutoAttendantMenu is refused with "Menu prompts cannot be null or empty for menus that accept
+ * user input", though Microsoft Learn doesn't mark -Prompts mandatory, so a menu with keys and no prompt of its own needs one found for it:
+ * - Teams already has a prompt and the greeting is unchanged: the design simply never held the prompt (attendants read through the wizard
+ *   used to lose it). Keep it, so the customer's "press 1" wording isn't overwritten.
+ * - Otherwise the greeting becomes the menu prompt and stops being a greeting, so callers hear it once. Learn: the flow plays the greeting,
+ *   then renders the menu, whose prompts play when it is activated. The setup wizard's one message box is the usual source of this shape.
+ * Idempotent, and applied before comparing as well as before sending, so a deployed attendant doesn't read as different afterwards.
+ */
+function withMenuPrompt(cf: AutoAttendantCallFlow, live?: AutoAttendantCallFlow | null): AutoAttendantCallFlow {
+  if (!menuTakesInput(cf.menu) || cf.menu.prompts?.length) return cf;
+  const livePrompts = live?.menu.prompts ?? [];
+  if (live && livePrompts.length && spokenTexts(live.greetings) === spokenTexts(cf.greetings)) {
+    return { ...cf, menu: { ...cf.menu, prompts: livePrompts } };
+  }
+  const spoken = cf.greetings.filter(isSpoken);
+  if (!spoken.length) return cf;
+  return { greetings: cf.greetings.filter((g) => !isSpoken(g)), menu: { ...cf.menu, prompts: spoken } };
+}
+function withMenuPrompts<R extends Pick<BuildAutoAttendantRow, 'default_call_flow' | 'after_hours_call_flow' | 'holiday_call_flows'>>(row: R, live?: AutoAttendantLiveState): R {
+  const s = live?.structured;
+  return {
+    ...row,
+    default_call_flow: row.default_call_flow && withMenuPrompt(row.default_call_flow, s?.defaultCallFlow),
+    after_hours_call_flow: row.after_hours_call_flow && withMenuPrompt(row.after_hours_call_flow, s?.afterHoursCallFlow),
+    holiday_call_flows: row.holiday_call_flows.map((h) => ({ ...h, callFlow: withMenuPrompt(h.callFlow, s?.holidayCallFlows.find((l) => l.name === h.name)?.callFlow) })),
+  };
 }
 
 /** New-CsAutoAttendantPrompt. Only a text-to-speech prompt is deployable today - an AudioFile prompt needs Import-CsOnlineAudioFile run first (not modeled), so it's silently skipped rather than emitted broken. */
@@ -2065,13 +2133,14 @@ function normalizeFlow(cf: AutoAttendantCallFlow | null, crossRef: AutoAttendant
  * they match (or when nothing was read from the live one, in which case it says so: there is nothing to compare against).
  */
 export function autoAttendantDifferences(
-  row: BuildAutoAttendantRow,
+  savedRow: BuildAutoAttendantRow,
   live: AutoAttendantLiveState,
   crossRef: AutoAttendantCrossRef = new Map(),
   userObjectIds: Map<string, string> = new Map(),
 ): string[] {
   const s = live.structured;
   if (!s) return ['the live settings could not be read'];
+  const row = withMenuPrompts(savedRow, live);
   const diffs: string[] = [];
   if (row.authorized_users != null && !sameIds(resolveUpnIds(row.authorized_users, userObjectIds), s.authorizedUsers)) diffs.push('authorised users');
   if (row.hide_authorized_users != null && !sameIds(resolveUpnIds(row.hide_authorized_users, userObjectIds), s.hideAuthorizedUsers)) diffs.push('hidden authorised users');
@@ -2126,7 +2195,7 @@ export function autoAttendantDifferences(
  * the target.
  */
 export function planAutoAttendantRow(
-  row: BuildAutoAttendantRow,
+  savedRow: BuildAutoAttendantRow,
   crossRef: AutoAttendantCrossRef,
   raObjectIds: Map<string, string>,
   userObjectIds: Map<string, string>,
@@ -2134,6 +2203,7 @@ export function planAutoAttendantRow(
   targetNames: AutoAttendantTargetNames = new Map(),
 ): CmdletInvocation[] {
   const calls: CmdletInvocation[] = [];
+  const row = withMenuPrompts(savedRow, live);
   if (!row.default_call_flow) return calls;
   // New-CsAutoAttendant requires -LanguageId/-TimeZoneId (Microsoft Learn:
   // both Mandatory: True). Unlike the update path below (Set-CsAutoAttendant

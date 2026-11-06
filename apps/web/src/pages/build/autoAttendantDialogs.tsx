@@ -265,7 +265,7 @@ function CallFlowEditor({
       <Field label="Greeting (text-to-speech)" hint="Played once when the call is answered.">
         <Textarea value={greetingText} onChange={(_, d) => setGreetingText(d.value)} rows={2} />
       </Field>
-      <Field label="Menu prompt (text-to-speech)" hint='Read out after the greeting, e.g. "For Sales press 1, for Support press 2."'>
+      <Field label="Menu prompt (text-to-speech)" hint='Read out after the greeting, e.g. "For Sales press 1, for Support press 2." Teams needs one when callers can press a key: left blank, the greeting above is used as the menu prompt.'>
         <Textarea value={menuPromptText} onChange={(_, d) => setMenuPromptText(d.value)} rows={2} />
       </Field>
       <div className={ls.flexWrapItemsCenterGap16}>
