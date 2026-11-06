@@ -214,14 +214,7 @@ column: "Verified: 48/50 match - 2 still differ", with the differing rows and
 what differs underneath. Teams can lag; if a difference looks wrong, run
 Validate against tenant later to re-check.
 
-### Voicemail and unanswered calls
-
-Teams leaves a user's unanswered calls set to "Do nothing", even with voicemail on, so callers never reach voicemail. Voxshift's default for a user with voicemail on is Microsoft's documented one: `Set-CsUserCallingSettings -IsUnansweredEnabled $true -UnansweredTargetType Voicemail -UnansweredDelay 00:00:20`.
-
-- **Changing it:** "If a call is unanswered" in the user dialogs in Site Data and Design & Build. Choosing what the default already gives stores nothing, so the row keeps following voicemail being turned on or off. Anything else, including "Do nothing", is that row's own choice and is deployed as designed.
-- **What it won't overwrite:** with nothing chosen, an unanswered rule already active in Teams is left alone. The default only replaces "Do nothing", or applies when Discovery hasn't read the user's settings yet.
-- **Rows already deployed:** with voicemail on and "Do nothing" in Teams, these show one planned command the next time. It's marked `byDefault`, so it doesn't count as drift.
-- **Not covered:** common area phones and resource accounts don't get the default.
+A site's deployment page shows this as it happens, on every tab: a banner with what is running and how the last run ended (and a message when one finishes), and it refreshes the planned changes itself. Until a live run's changes have been read back, the plan still compares them with how Teams was before the run. So those rows are marked **checking Teams** and can't be selected, and the API refuses a second live run that includes them. If the re-check didn't happen, the rows are marked **sent, not confirmed** until Teams is next read, and can still be deployed.
 
 Also still available:
 
@@ -230,6 +223,15 @@ Also still available:
   or resource-account creation cmdlets).
 - Design & Build's per-row validation badge (`docs/DATA-MODEL.md`
   `build_users.validation`) reflects Discovery's live state.
+
+### Voicemail and unanswered calls
+
+Teams leaves a user's unanswered calls set to "Do nothing", even with voicemail on, so callers never reach voicemail. Voxshift's default for a user with voicemail on is Microsoft's documented one: `Set-CsUserCallingSettings -IsUnansweredEnabled $true -UnansweredTargetType Voicemail -UnansweredDelay 00:00:20`.
+
+- **Changing it:** "If a call is unanswered" in the user dialogs in Site Data and Design & Build. Choosing what the default already gives stores nothing, so the row keeps following voicemail being turned on or off. Anything else, including "Do nothing", is that row's own choice and is deployed as designed.
+- **What it won't overwrite:** with nothing chosen, an unanswered rule already active in Teams is left alone. The default only replaces "Do nothing", or applies when Discovery hasn't read the user's settings yet.
+- **Rows already deployed:** with voicemail on and "Do nothing" in Teams, these show one planned command the next time. It's marked `byDefault`, so it doesn't count as drift.
+- **Not covered:** common area phones and resource accounts don't get the default.
 
 ## Scheduled runs (cutover in a change window)
 

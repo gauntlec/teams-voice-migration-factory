@@ -5,6 +5,7 @@ export * from './email';
 export * from './deployment';
 export * from './deployment-verify';
 export * from './deployment-rollback';
+export * from './deployment-status';
 export * from './aa-live-parse';
 export * from './call-flow-graph';
 export * from './color';
@@ -514,6 +515,9 @@ export interface DeploymentSiteRollup {
  * data; `renderedCommands` is the same calls pre-rendered to PowerShell text
  * via renderCommand(), for display and for the change-recording document.
  */
+/** What a live run is doing to a planned row (packages/db/src/deployment-activity.ts). */
+export type DeploymentRowActivity = 'deploying' | 'checking' | 'unconfirmed';
+
 export interface DeploymentPreviewRow {
   rowId: string;
   objectType: 'user' | 'cap' | 'resource_account' | 'call_queue' | 'auto_attendant' | 'shared_calling_policy';
@@ -537,6 +541,8 @@ export interface DeploymentPreviewRow {
   wave?: string | null;
   /** Set when the row was deployed and Teams has changed since (see drift.ts); absent for a design not yet deployed. */
   drift?: import('./drift').DriftState;
+  /** A live run has just sent this row and Teams hasn't been read back yet, so its planned changes may already be done. */
+  activity?: DeploymentRowActivity;
   /**
    * True when this row wasn't in the caller's own `rowIds` selection but was
    * pulled in by DeploymentService.expandScopeWithDependencies - a Call

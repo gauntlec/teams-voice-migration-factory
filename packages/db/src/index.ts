@@ -19,6 +19,7 @@ export * from './device-status';
 export * from './device-sync';
 export * from './monitoring-admin';
 export * from './drift';
+export * from './deployment-activity';
 export * from './number-cooloff';
 export * from './number-reconcile';
 export * from './number-parking';
