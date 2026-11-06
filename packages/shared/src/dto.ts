@@ -660,6 +660,22 @@ const voicemailLanguage = z.preprocess(
     .optional(),
 );
 
+/** Unanswered calls, per Set-CsUserCallingSettings' Unanswered settings group (Learn: 5-60 seconds). */
+const unansweredCallSchema = z
+  .object({
+    enabled: z.boolean(),
+    delaySeconds: z.number().int().min(5).max(60).optional(),
+    targetType: z.enum(CALL_TARGET_TYPES).optional(),
+    target: optStr(200),
+  })
+  .strict();
+
+function checkUnanswered(val: z.infer<typeof unansweredCallSchema> | undefined, ctx: z.RefinementCtx) {
+  if (!val?.enabled) return;
+  if (!val.targetType) ctx.addIssue({ code: 'custom', path: ['unanswered', 'targetType'], message: 'Required when unanswered forwarding is enabled' });
+  if (val.targetType === 'SingleTarget' && !val.target) ctx.addIssue({ code: 'custom', path: ['unanswered', 'target'], message: 'Required for a single target' });
+}
+
 export const discoveryUserSchema = z
   .object({
     site_id: siteIdRef,
@@ -669,6 +685,13 @@ export const discoveryUserSchema = z
     caller_id: callerId,
     voicemail_enabled: yn.optional(),
     voicemail_language: voicemailLanguage,
+    /** What happens to unanswered calls; nothing set = the default (voicemail after 20 seconds with voicemail on). */
+    call_forwarding: z
+      .object({ unanswered: unansweredCallSchema.optional() })
+      .strict()
+      .superRefine((val, ctx) => checkUnanswered(val.unanswered, ctx))
+      .nullable()
+      .optional(),
     requires_handset: yn.optional(),
     handset_model: optStr(120),
     access_port_id: optStr(80),
@@ -1070,16 +1093,7 @@ const callForwardingSchema = z
       })
       .strict()
       .optional(),
-    unanswered: z
-      .object({
-        enabled: z.boolean(),
-        // seconds, per Learn's allowed range/increments (5-60s)
-        delaySeconds: z.number().int().min(5).max(60).optional(),
-        targetType: z.enum(CALL_TARGET_TYPES).optional(),
-        target: optStr(200),
-      })
-      .strict()
-      .optional(),
+    unanswered: unansweredCallSchema.optional(),
     busyOnBusy: z.enum(BUSY_ON_BUSY_OPTIONS).optional(),
   })
   .strict()
@@ -1096,12 +1110,7 @@ const callForwardingSchema = z
         ctx.addIssue({ code: 'custom', path: ['forwarding', 'target'], message: 'Required for a single target' });
       }
     }
-    if (val.unanswered?.enabled) {
-      if (!val.unanswered.targetType) ctx.addIssue({ code: 'custom', path: ['unanswered', 'targetType'], message: 'Required when unanswered forwarding is enabled' });
-      if (val.unanswered.targetType === 'SingleTarget' && !val.unanswered.target) {
-        ctx.addIssue({ code: 'custom', path: ['unanswered', 'target'], message: 'Required for a single target' });
-      }
-    }
+    checkUnanswered(val.unanswered, ctx);
   })
   .optional();
 

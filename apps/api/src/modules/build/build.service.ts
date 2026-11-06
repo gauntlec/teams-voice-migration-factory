@@ -609,6 +609,8 @@ export class BuildService {
             enabled: d.voicemail_enabled ?? template?.voicemail_enabled ?? null,
             language: d.voicemail_language ?? template?.voicemail_language ?? null,
           },
+          // what Site Data chose for unanswered calls; nothing chosen leaves the row on the default
+          ...(d.call_forwarding?.unanswered ? { call_forwarding: { unanswered: d.call_forwarding.unanswered } } : {}),
         };
       },
     });
@@ -1103,6 +1105,7 @@ export class BuildService {
       device_model?: string | null;
       voicemail_enabled?: boolean | null;
       voicemail_language?: string | null;
+      call_forwarding?: import('@tvmf/shared').CallForwardingSettings | null;
       calling_policy_id?: string | null;
     },
   >(

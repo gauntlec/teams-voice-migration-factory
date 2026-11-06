@@ -1,4 +1,5 @@
 import { AddressListEditor, addressesToPayload, addressesToText } from './AddressListEditor';
+import { UnansweredCallEditor } from './UnansweredCallEditor';
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDebounced } from '../hooks/useDebounced';
@@ -90,7 +91,9 @@ export interface FieldDef {
   key: string;
   label: string;
   /** 'addresses' is a site's list of extra addresses (AddressListEditor); its value is that list as JSON text. */
-  type?: 'text' | 'textarea' | 'number' | 'select' | 'boolean' | 'ref' | 'radio' | 'string-array' | 'addresses' | 'date';
+  type?: 'text' | 'textarea' | 'number' | 'select' | 'boolean' | 'ref' | 'radio' | 'string-array' | 'addresses' | 'date' | 'unanswered';
+  /** For 'unanswered' (its value is the row's call_forwarding as JSON text): the field saying whether voicemail is on. */
+  voicemailKey?: string;
   options?: readonly string[];
   choices?: Choice[] | ((row: Row | null) => Choice[]);
   required?: boolean;
@@ -172,6 +175,8 @@ export function buildPayload(fields: FieldDef[], values: Record<string, string>)
             ? v || null
             : f.type === 'addresses'
               ? addressesToPayload(v)
+            : f.type === 'unanswered'
+              ? (JSON.parse(v || '{}') as unknown)
             : f.type === 'string-array'
               ? v
                   .split('\n')
@@ -479,6 +484,7 @@ export function RecordDialog({
             return [f.key, v === true ? 'true' : v === false ? 'false' : (f.default ?? 'false')];
           if (f.type === 'string-array') return [f.key, Array.isArray(v) ? v.join('\n') : ''];
           if (f.type === 'addresses') return [f.key, addressesToText(v)];
+          if (f.type === 'unanswered') return [f.key, JSON.stringify(v ?? {})];
           return [f.key, v == null ? '' : String(v)];
         }),
       ),
@@ -530,6 +536,8 @@ export function RecordDialog({
                     />
                   ) : f.type === 'addresses' ? (
                     <AddressListEditor value={values[f.key] ?? '[]'} onChange={(text) => setValues((v) => ({ ...v, [f.key]: text }))} geocode={geocode} />
+                  ) : f.type === 'unanswered' ? (
+                    <UnansweredCallEditor value={values[f.key] ?? '{}'} voicemailOn={values[f.voicemailKey ?? ''] === 'true'} onChange={(text) => setValues((v) => ({ ...v, [f.key]: text }))} />
                   ) : f.type === 'radio' ? (
                     <RadioGroup
                       layout="horizontal"

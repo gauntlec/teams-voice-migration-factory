@@ -78,7 +78,7 @@ export async function annotateDrift(s: Scoped, rows: DeploymentPreviewRow[]): Pr
   const live = await resolveLiveIdentityState(s, identity.map((r) => r.upn));
   for (const r of rows) {
     if (!r.calls.length) continue;
-    const cmdlets = r.calls.map((c) => c.cmdlet);
+    const cmdlets = r.calls.filter((c) => !c.byDefault).map((c) => c.cmdlet);
     if (r.objectType === 'user' || r.objectType === 'cap') {
       const l = live.get(r.upn.toLowerCase());
       evidence.set(r.rowId, driftEvidence(cmdlets, { voicemail: l?.voicemailEnabled !== undefined, callingSettings: l?.callingSettings !== undefined }));

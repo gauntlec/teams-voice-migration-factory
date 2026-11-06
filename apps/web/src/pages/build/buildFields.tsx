@@ -38,7 +38,7 @@ export function policyColumns(): ColumnDef[] {
 // only warning about it after (identityRowWarnings).
 const disabledForSharedCalling = (values: Record<string, string>) => !!values['policy_ids.shared_calling_policy'];
 
-export function identityFields(policyFields: FieldDef[], numberChoicesFor: (row: Row | null) => Choice[]): FieldDef[] {
+export function identityFields(policyFields: FieldDef[], numberChoicesFor: (row: Row | null) => Choice[], opts: { unanswered?: boolean } = {}): FieldDef[] {
   return [
     { key: 'upn', label: 'UPN', required: true, placeholder: 'user@customer.com' },
     { key: 'phone_number_id', label: 'Phone number', type: 'ref', choices: numberChoicesFor, disabledWhen: disabledForSharedCalling },
@@ -52,6 +52,8 @@ export function identityFields(policyFields: FieldDef[], numberChoicesFor: (row:
     { key: 'voicemail.enabled', label: 'Voicemail enabled', type: 'boolean' },
     // Culture codes only - Teams rejects a plain name like "English" (see VOICEMAIL_PROMPT_LANGUAGES).
     { key: 'voicemail.language', label: 'Voicemail language', type: 'ref', choices: VOICEMAIL_LANGUAGE_CHOICES },
+    // Users only. The whole of call_forwarding goes through this field, so the rest of it (set under Calling settings) is kept.
+    ...(opts.unanswered ? [{ key: 'call_forwarding', label: 'If a call is unanswered', type: 'unanswered', voicemailKey: 'voicemail.enabled', full: true } satisfies FieldDef] : []),
     ...policyFields,
     { key: 'comments', label: 'Comments', type: 'textarea', full: true },
   ];
