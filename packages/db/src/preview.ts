@@ -384,7 +384,7 @@ export async function previewSiteChanges(s: Scoped, query: DeploymentPreviewQuer
     for (const planRow of planRows) {
       const live: AutoAttendantLiveState | undefined = liveAutoAttendants.get(planRow.id);
       const calls = planAutoAttendantRow(planRow, crossRef, raObjectIds, userObjectIds, live, targetNames);
-      const warnings = autoAttendantRowWarnings(planRow, crossRef, raObjectIds, userObjectIds, targetNames);
+      const warnings = autoAttendantRowWarnings(planRow, crossRef, raObjectIds, userObjectIds, targetNames, live);
       // say why a live auto attendant is being changed, so a row that looks unchanged to the engineer is not a mystery
       if (live && calls.length > 0) {
         const diffs = autoAttendantDifferences(planRow, live, crossRef, userObjectIds);

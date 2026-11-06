@@ -49,6 +49,8 @@ export const wizardCallFlowSchema = z
     mode: z.enum(['menu', 'direct', 'voicemail', 'disconnect']),
     /** Typed text read in the auto attendant's language (Teams: up to 1,000 characters). */
     greeting: str(1000).optional(),
+    /** mode === 'menu' only: read out to offer the choices (New-CsAutoAttendantMenu -Prompts). Left out, the greeting is used when deploying. */
+    menuPrompt: str(1000).optional(),
     /** mode === 'direct' only. */
     target: wizardTargetSchema.optional(),
     /** mode === 'menu' only. */

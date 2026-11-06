@@ -175,6 +175,14 @@ function CallFlowEditor({
       </RadioGroup>
       {value.mode === 'menu' && (
         <div className={ls.gridGap8}>
+          <Field label="What should we say to offer the choices?" hint="Read out when the menu plays. If you leave this blank, the message above is used instead.">
+            <Textarea
+              value={value.menuPrompt ?? ''}
+              maxLength={1000}
+              placeholder="For Sales press 1. For Support press 2."
+              onChange={(_, d) => onChange({ ...value, menuPrompt: d.value })}
+            />
+          </Field>
           <Checkbox
             checked={!!value.allowDialByName}
             label="Let callers reach someone by saying or typing their name"

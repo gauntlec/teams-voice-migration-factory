@@ -971,10 +971,10 @@ async function handleDeploymentRun(job: Job) {
           const name = targetNames.get(key);
           if (!crossRef!.has(key) && name) await refreshCrossRefEntry(crossRef!, ref.kind, ref.buildId, name);
         }
-        // A key press must not end up dropping the caller because its target isn't ready. Leave the attendant out and say why.
-        const blockers = autoAttendantDeployBlockers(planRow, crossRef!, userObjectIds, targetNames);
+        // A key press must not end up dropping the caller because its target isn't ready, and Teams refuses a menu with nothing to say. Leave the attendant out and say why.
+        const blockers = autoAttendantDeployBlockers(planRow, crossRef!, userObjectIds, targetNames, liveAutoAttendants.get(planRow.id));
         if (blockers.length) {
-          await recordNotDeployed({ objectType: 'auto_attendant', id: planRow.id, upn: planRow.name }, `Not deployed, so callers aren't disconnected: ${blockers.join('; ')}.`);
+          await recordNotDeployed({ objectType: 'auto_attendant', id: planRow.id, upn: planRow.name }, `Not deployed, so callers aren't disconnected or left without instructions: ${blockers.join('; ')}.`);
           continue;
         }
       }

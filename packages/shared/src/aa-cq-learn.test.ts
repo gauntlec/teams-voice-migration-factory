@@ -17,6 +17,7 @@ import {
 } from './deployment';
 import { convertAutoAttendantWizard, convertCallQueueWizard } from './wizard-convert';
 import { buildAutoAttendantFlowGraphFromLive, buildCallQueueFlowGraphFromLive } from './call-flow-graph';
+import { buildAutoAttendantToWizard } from './voice-app-wizard';
 
 /** Every cmdlet+params a call (and its preamble) issues, for asserting on one specific cmdlet. */
 function steps(call: CmdletInvocation): { cmdlet: string; parameters: Record<string, unknown> }[] {
@@ -431,5 +432,133 @@ describe('a call queue with a spoken message', () => {
   it('warns when there is a spoken message but no language', () => {
     const warnings = callQueueRowWarnings(cq({ language_id: null, timeout: { action: 'Disconnect', threshold: 60, redirectPrompt: 'Goodbye.' } }), new Map(), new Map());
     expect(warnings.join(' ')).toMatch(/no language is set/);
+  });
+});
+
+describe('a menu that takes key presses needs a spoken prompt (New-CsAutoAttendantMenu -Prompts)', () => {
+  const GREETING = 'Thank you for calling. Press 1 for Purchasing.';
+  const keys: AutoAttendantCallFlow['menu']['options'] = [{ dtmf: 'Tone1', action: 'DisconnectCall' }];
+  const row = (cf: AutoAttendantCallFlow, over: Partial<BuildAutoAttendantRow> = {}) => aaRow({ operator: null, default_call_flow: cf, ...over });
+  const greetingOnly: AutoAttendantCallFlow = { greetings: [{ type: 'Text', text: GREETING }], menu: { options: keys } };
+  /** The named commands of a plan, and the text of the prompt each parameter points at. */
+  const planned = (calls: CmdletInvocation[]) => {
+    const all = calls.flatMap(steps);
+    const prompts = new Map<string, unknown>();
+    for (const p of calls.flatMap((c) => c.preamble ?? [])) {
+      if ('cmdlet' in p && p.cmdlet === 'New-CsAutoAttendantPrompt' && p.assignTo) prompts.set(p.assignTo, p.parameters.TextToSpeechPrompt);
+    }
+    const said = (v: unknown) => ((v as { $var: string }[] | undefined) ?? []).map((r) => prompts.get(r.$var));
+    const of = (cmdlet: string) => all.filter((c) => c.cmdlet === cmdlet);
+    return { of, said, promptCount: prompts.size };
+  };
+  const liveState = (r: BuildAutoAttendantRow, defaultCallFlow: AutoAttendantCallFlow) => ({
+    identity: 'aa-live',
+    languageId: r.language_id ?? undefined,
+    timeZoneId: r.time_zone_id ?? undefined,
+    applicationInstanceIds: [],
+    structured: {
+      languageId: r.language_id ?? undefined,
+      timeZoneId: r.time_zone_id ?? undefined,
+      defaultCallFlow,
+      afterHoursCallFlow: null,
+      schedule: null,
+      holidayCallFlows: [],
+    } as never,
+  });
+
+  it('sends the greeting as the menu prompt, once, when the menu has keys and no prompt (the Glasgow failure)', () => {
+    const p = planned(planAutoAttendantRow(row(greetingOnly), new Map(), new Map(), users));
+    const [menu] = p.of('New-CsAutoAttendantMenu');
+    const [callFlow] = p.of('New-CsAutoAttendantCallFlow');
+    expect(p.said(menu!.parameters.Prompts)).toEqual([GREETING]);
+    expect(callFlow!.parameters.Greetings).toBeUndefined();
+    expect(p.promptCount).toBe(1);
+  });
+
+  it('leaves a greeting and a menu prompt as they are', () => {
+    const cf: AutoAttendantCallFlow = { greetings: [{ type: 'Text', text: 'Welcome.' }], menu: { options: keys, prompts: [{ type: 'Text', text: 'Press 1.' }] } };
+    const p = planned(planAutoAttendantRow(row(cf), new Map(), new Map(), users));
+    expect(p.said(p.of('New-CsAutoAttendantMenu')[0]!.parameters.Prompts)).toEqual(['Press 1.']);
+    expect(p.said(p.of('New-CsAutoAttendantCallFlow')[0]!.parameters.Greetings)).toEqual(['Welcome.']);
+  });
+
+  it('does not add a prompt to a menu that takes no input: the message stays a greeting', () => {
+    const cf: AutoAttendantCallFlow = { greetings: [{ type: 'Text', text: 'We are closed.' }], menu: { options: [{ dtmf: 'Automatic', action: 'DisconnectCall' }] } };
+    const p = planned(planAutoAttendantRow(row(cf), new Map(), new Map(), users));
+    expect(p.of('New-CsAutoAttendantMenu')[0]!.parameters.Prompts).toBeUndefined();
+    expect(p.said(p.of('New-CsAutoAttendantCallFlow')[0]!.parameters.Greetings)).toEqual(['We are closed.']);
+    expect(autoAttendantDeployBlockers(row(cf), new Map(), users)).toEqual([]);
+  });
+
+  it('treats dial by name as input, as both Learn examples do', () => {
+    const cf: AutoAttendantCallFlow = { greetings: [{ type: 'Text', text: 'Say a name.' }], menu: { enableDialByName: true, options: [] } };
+    const p = planned(planAutoAttendantRow(row(cf), new Map(), new Map(), users));
+    expect(p.said(p.of('New-CsAutoAttendantMenu')[0]!.parameters.Prompts)).toEqual(['Say a name.']);
+  });
+
+  it('covers after hours and holiday menus too', () => {
+    const r = row(flow([]), {
+      after_hours_call_flow: greetingOnly,
+      schedule: { type: 'weekly', weekly: { monday: [{ start: '09:00', end: '17:00' }], complement: true } } as never,
+      holiday_call_flows: [{ name: 'Christmas', callFlow: greetingOnly, schedule: { type: 'fixed', fixed: { ranges: [{ start: '2026-12-25', end: '2026-12-25' }] } } }] as never,
+    });
+    const p = planned(planAutoAttendantRow(r, new Map(), new Map(), users));
+    expect(p.of('New-CsAutoAttendantMenu').map((m) => p.said(m.parameters.Prompts))).toEqual([[], [GREETING], [GREETING]]);
+  });
+
+  it('warns and leaves the attendant out when there is nothing to say', () => {
+    const r = row({ greetings: [], menu: { options: keys } });
+    expect(autoAttendantDeployBlockers(r, new Map(), users).join(' ')).toMatch(/Business hours menu has no spoken prompt/);
+    expect(autoAttendantRowWarnings(r, new Map(), new Map(), users).join(' ')).toMatch(/no spoken prompt.*leaves this Auto Attendant out/);
+    expect(autoAttendantRowWarnings(r, new Map(), new Map(), users).join(' ')).not.toMatch(/transfer targets/);
+  });
+
+  it('warns about an audio menu prompt, which cannot be sent, rather than letting Teams refuse it', () => {
+    const r = row({ greetings: [{ type: 'Text', text: GREETING }], menu: { options: keys, prompts: [{ type: 'AudioFile' }] } });
+    expect(autoAttendantDeployBlockers(r, new Map(), users).join(' ')).toMatch(/no spoken prompt/);
+  });
+
+  it('does not read as different from Teams once deployed', () => {
+    const r = row(greetingOnly);
+    const deployed: AutoAttendantCallFlow = { greetings: [], menu: { options: keys, prompts: [{ type: 'Text', text: GREETING }] } };
+    expect(planAutoAttendantRow(r, new Map(), new Map(), users, liveState(r, deployed))).toEqual([]);
+  });
+
+  it('keeps the live prompt when the design lost it and the greeting is unchanged, so the wording is not overwritten', () => {
+    const live: AutoAttendantCallFlow = { greetings: [{ type: 'Text', text: 'Welcome.' }], menu: { options: keys, prompts: [{ type: 'Text', text: 'Press 1 for Sales.' }] } };
+    const r = row({ greetings: [{ type: 'Text', text: 'Welcome.' }], menu: { options: keys } });
+    expect(planAutoAttendantRow(r, new Map(), new Map(), users, liveState(r, live))).toEqual([]);
+
+    const changed = { ...r, default_call_flow: { ...r.default_call_flow!, menu: { options: [...keys, { dtmf: 'Tone2' as const, action: 'DisconnectCall' as const }] } } };
+    const p = planned(planAutoAttendantRow(changed, new Map(), new Map(), users, liveState(changed, live)));
+    expect(p.said(p.of('New-CsAutoAttendantMenu')[0]!.parameters.Prompts)).toEqual(['Press 1 for Sales.']);
+    expect(p.said(p.of('New-CsAutoAttendantCallFlow')[0]!.parameters.Greetings)).toEqual(['Welcome.']);
+  });
+
+  it('keeps a live prompt when the design has no greeting either, rather than leaving the attendant out', () => {
+    const live: AutoAttendantCallFlow = { greetings: [], menu: { options: keys, prompts: [{ type: 'Text', text: 'Press 1.' }] } };
+    const r = row({ greetings: [], menu: { options: keys } });
+    expect(autoAttendantDeployBlockers(r, new Map(), users, new Map(), liveState(r, live))).toEqual([]);
+    expect(planAutoAttendantRow(r, new Map(), new Map(), users, liveState(r, live))).toEqual([]);
+  });
+
+  it('uses a changed greeting as the new prompt after deployment', () => {
+    const live: AutoAttendantCallFlow = { greetings: [], menu: { options: keys, prompts: [{ type: 'Text', text: GREETING }] } };
+    const r = row({ greetings: [{ type: 'Text', text: 'New wording. Press 1.' }], menu: { options: keys } });
+    const p = planned(planAutoAttendantRow(r, new Map(), new Map(), users, liveState(r, live)));
+    expect(p.said(p.of('New-CsAutoAttendantMenu')[0]!.parameters.Prompts)).toEqual(['New wording. Press 1.']);
+    expect(p.of('New-CsAutoAttendantCallFlow')[0]!.parameters.Greetings).toBeUndefined();
+  });
+
+  it('carries a menu prompt through the wizard both ways', () => {
+    const base = { name: 'AA', language: 'en-GB', timeZone: 'GMT Standard Time' };
+    const { value } = convertAutoAttendantWizard(
+      { ...base, businessFlow: { mode: 'menu', greeting: 'Welcome.', menuPrompt: ' Press 1. ', options: [{ key: '1', label: 'Sales', target: { kind: 'external', label: '+441234567890' } }] } } as never,
+      { siteId: 'site', name: 'AA' },
+    );
+    expect(value.default_call_flow).toMatchObject({ greetings: [{ type: 'Text', text: 'Welcome.' }], menu: { prompts: [{ type: 'Text', text: 'Press 1.' }] } });
+
+    const { answers } = buildAutoAttendantToWizard({ ...aaRow(), default_call_flow: value.default_call_flow } as never);
+    expect(answers!.businessFlow).toMatchObject({ mode: 'menu', greeting: 'Welcome.', menuPrompt: 'Press 1.' });
   });
 });

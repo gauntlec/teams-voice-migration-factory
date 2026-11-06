@@ -140,7 +140,8 @@ function convertCallFlow(cf: WizardCallFlow, resolvers: WizardResolvers, warning
   if (cf.mode === 'menu') {
     const options = (cf.options ?? []).map((o) => convertMenuOption(o, resolvers, warnings, label));
     if (!options.length) warnings.push(`${label}: no menu options were added, so callers will hear the greeting and then be disconnected.`);
-    return { greetings, menu: { enableDialByName: cf.allowDialByName, options } };
+    const menuPrompt = cf.menuPrompt?.trim();
+    return { greetings, menu: { enableDialByName: cf.allowDialByName, options, ...(menuPrompt ? { prompts: [{ type: 'Text' as const, text: menuPrompt }] } : {}) } };
   }
   // 'direct' and 'voicemail' both collapse to a single catch-all menu option
   // (DTMF 'Automatic', Teams' own sentinel for "no key pressed") - the

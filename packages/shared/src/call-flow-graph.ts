@@ -380,8 +380,9 @@ export interface DesignCallQueueInput {
 
 function designGreeting(cf: AutoAttendantCallFlow | null): string | undefined {
   if (!cf) return undefined;
-  const texts = cf.greetings.filter((g) => g.type === 'Text' && g.text).map((g) => g.text as string);
-  return snippet(texts, cf.greetings.some((g) => g.type === 'AudioFile'));
+  const spoken = [...cf.greetings, ...(cf.menu.prompts ?? [])];
+  const texts = spoken.filter((g) => g.type === 'Text' && g.text).map((g) => g.text as string);
+  return snippet(texts, spoken.some((g) => g.type === 'AudioFile'));
 }
 
 function designCqSublabel(cq: DesignCallQueueInput): string | undefined {
@@ -632,8 +633,9 @@ export interface LiveScheduleInput {
 
 function liveGreeting(cf: LiveCallFlow | undefined): string | undefined {
   if (!cf) return undefined;
-  const texts = cf.greetings.filter((g) => g.type === 'Text' && g.text).map((g) => g.text as string);
-  return snippet(texts, cf.greetings.some((g) => g.type === 'AudioFile'));
+  const spoken = [...cf.greetings, ...(cf.menu.prompts ?? [])];
+  const texts = spoken.filter((g) => g.type === 'Text' && g.text).map((g) => g.text as string);
+  return snippet(texts, spoken.some((g) => g.type === 'AudioFile'));
 }
 
 function liveCqSublabel(data: Record<string, unknown>): string | undefined {

@@ -226,6 +226,18 @@ Also still available:
 - Design & Build's per-row validation badge (`docs/DATA-MODEL.md`
   `build_users.validation`) reflects Discovery's live state.
 
+### Auto attendant menu prompts
+
+Teams refuses `New-CsAutoAttendantMenu` when a menu takes key presses or a name search and has no `-Prompts` ("Menu prompts cannot be null or empty for menus that accept user input"). Microsoft Learn doesn't mark the parameter mandatory, but says it holds the prompts to play when the menu is activated, and every Learn example sets it. A menu with a single `Automatic` option takes no input and needs no prompt.
+
+When a design has keys and no menu prompt, the plan works one out:
+
+- **Teams already has a prompt and the greeting is unchanged:** the live prompt is kept. Attendants read through the wizard used to lose their prompt, and this stops the customer's wording being overwritten.
+- **Otherwise:** the greeting becomes the menu prompt and is no longer sent as a greeting, so callers hear it once. Comparison with Teams works on the same result, so the attendant doesn't show as different after deployment.
+- **Nothing to say** (no text in either, or only an audio prompt, which can't be sent yet): the preview warns and a live run leaves the attendant out with the reason. An attendant that already matches Teams isn't affected.
+
+The wizard has its own "What should we say to offer the choices?" box, and Design & Build has the Menu prompt field.
+
 ### Auto attendant transfers that aren't ready
 
 A menu option's transfer needs a target Teams can reach (`New-CsAutoAttendantMenuOption -Action TransferCallToTarget -CallTarget`, with a call queue or auto attendant given as `New-CsAutoAttendantCallableEntity -Type ConfigurationEndpoint`). Voxshift never swaps a transfer for `DisconnectCall` on a live run, because a key press would silently drop callers.

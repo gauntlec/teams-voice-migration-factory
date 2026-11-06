@@ -37,6 +37,7 @@ function entityText(e: AutoAttendantCallableEntity | undefined, nameOf: (id: str
 function flowText(cf: AutoAttendantCallFlow | null, operator: AutoAttendantCallableEntity | null | undefined, nameOf: (id: string) => string | undefined): string | null {
   if (!cf) return null;
   const greeting = cf.greetings.find((g) => g.type === 'Text' && g.text)?.text;
+  const menuPrompt = cf.menu.prompts?.find((p) => p.type === 'Text' && p.text)?.text;
   const options = cf.menu.options.map((o) => {
     const where =
       o.action === 'TransferCallToTarget' ? `transfer to ${entityText(o.target, nameOf)}` :
@@ -46,6 +47,7 @@ function flowText(cf: AutoAttendantCallFlow | null, operator: AutoAttendantCalla
   });
   return join([
     greeting ? `Greeting: "${greeting}"` : null,
+    menuPrompt ? `Menu prompt: "${menuPrompt}"` : null,
     options.length ? `Menu: ${options.join('; ')}` : 'No menu options',
     cf.menu.enableDialByName ? 'Dial by name is on' : null,
   ]);
