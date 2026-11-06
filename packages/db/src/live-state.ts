@@ -12,6 +12,7 @@ import {
   liveAutoAttendantToStructured,
   type AutoAttendantCallableEntity,
   type AutoAttendantCrossRef,
+  type AutoAttendantTargetNames,
   type AutoAttendantLiveState,
   type CallQueueLiveState,
   type LiveCallableEntityRef,
@@ -391,6 +392,15 @@ export async function buildAutoAttendantCrossRef(s: Scoped, siteId: string): Pro
     if (live?.identity) crossRef.set(`call_queue:${row.id}`, live.identity);
   }
   return crossRef;
+}
+
+/** The name of every Auto Attendant and Call Queue designed for a site, live or not, keyed as the cross reference is. */
+export async function buildAutoAttendantTargetNames(s: Scoped, siteId: string): Promise<AutoAttendantTargetNames> {
+  const [aaRows, cqRows] = await Promise.all([
+    s.selectFrom('build_auto_attendants').select(['id', 'name']).where('site_id', '=', siteId).execute(),
+    s.selectFrom('build_call_queues').select(['id', 'name']).where('site_id', '=', siteId).execute(),
+  ]);
+  return new Map([...aaRows.map((r) => [`auto_attendant:${r.id}`, r.name] as const), ...cqRows.map((r) => [`call_queue:${r.id}`, r.name] as const)]);
 }
 
 /** The -PhoneNumberType values Set-CsPhoneNumberAssignment accepts. */

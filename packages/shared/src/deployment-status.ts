@@ -70,7 +70,9 @@ export function runMessage(r: DeploymentRunStatus, now = Date.now()): RunMessage
     return { tone: 'info', title: 'What-If complete', detail: whatif ? `${changes(whatif)} worked out. Nothing was sent to Teams.` : 'Nothing to change. Nothing was sent to Teams.' };
   }
   if (failed) return { tone: 'error', title: `Deployment finished with ${failed} failed`, detail: `${changes(applied)} applied, ${failed} failed. See the run for what failed and why.` };
-  if (!applied) return { tone: 'info', title: 'Nothing to deploy', detail: skipped ? `Nothing was changed in Teams. ${skipped} left out: see the run for why.` : 'What you selected already matches Teams, so nothing was sent.' };
+  if (applied && skipped) return { tone: 'warning', title: `Deployed, but ${skipped} left out`, detail: `${changes(applied)} applied. ${skipped} left out: see the run for why.` };
+  if (!applied && skipped) return { tone: 'warning', title: `Nothing deployed: ${skipped} left out`, detail: 'See the run for why.' };
+  if (!applied) return { tone: 'info', title: 'Nothing to deploy', detail: 'What you selected already matches Teams, so nothing was sent.' };
   const v = r.verification;
   if (v?.status === 'verified') {
     const differ = v.differing.length;

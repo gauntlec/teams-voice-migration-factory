@@ -224,6 +224,13 @@ Also still available:
 - Design & Build's per-row validation badge (`docs/DATA-MODEL.md`
   `build_users.validation`) reflects Discovery's live state.
 
+### Auto attendant transfers that aren't ready
+
+A menu option's transfer needs a target Teams can reach (`New-CsAutoAttendantMenuOption -Action TransferCallToTarget -CallTarget`, with a call queue or auto attendant given as `New-CsAutoAttendantCallableEntity -Type ConfigurationEndpoint`). Voxshift never swaps a transfer for `DisconnectCall` on a live run, because a key press would silently drop callers.
+
+- **Preview and What-If:** a queue or attendant of the site not in Teams yet is looked up by its exact name, so the commands show where the call goes. A Shared Voicemail with no group, or a person not found, shows that in the command.
+- **Live run:** queues deploy before auto attendants. A target created in the same run counts, and Voxshift asks Teams before deciding one is missing. If a transfer still can't be sent, that auto attendant is left out with the reason on the run, and nothing about it changes in Teams.
+
 ### Voicemail and unanswered calls
 
 Teams leaves a user's unanswered calls set to "Do nothing", even with voicemail on, so callers never reach voicemail. Voxshift's default for a user with voicemail on is Microsoft's documented one: `Set-CsUserCallingSettings -IsUnansweredEnabled $true -UnansweredTargetType Voicemail -UnansweredDelay 00:00:20`.
