@@ -51,6 +51,7 @@ function toDesignAaInput(
     buildId: String(r.id),
     name: String(r.name),
     operator: (r.operator as AutoAttendantCallableEntity | null) ?? null,
+    voiceResponseEnabled: !!r.voice_response_enabled,
     defaultCallFlow: (r.default_call_flow as AutoAttendantCallFlow | null) ?? null,
     afterHoursCallFlow: (r.after_hours_call_flow as AutoAttendantCallFlow | null) ?? null,
     holidayCallFlows: Array.isArray(r.holiday_call_flows) ? (r.holiday_call_flows as AutoAttendantHolidayCallFlow[]) : [],

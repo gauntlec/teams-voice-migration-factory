@@ -43,7 +43,7 @@ function flowText(cf: AutoAttendantCallFlow | null, operator: AutoAttendantCalla
       o.action === 'TransferCallToTarget' ? `transfer to ${entityText(o.target, nameOf)}` :
       o.action === 'TransferCallToOperator' ? `transfer to the operator${operator ? ` (${entityText(operator, nameOf)})` : ''}` :
       o.action === 'Announcement' ? 'play an announcement' : 'end the call';
-    return `${keyOf(o.dtmf)}: ${where}`;
+    return `${keyOf(o.dtmf)}${o.voiceResponse?.trim() ? ` or say "${o.voiceResponse.trim()}"` : ''}: ${where}`;
   });
   return join([
     greeting ? `Greeting: "${greeting}"` : null,

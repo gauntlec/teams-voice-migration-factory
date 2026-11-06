@@ -39,6 +39,8 @@ export const wizardMenuOptionSchema = z
     key: str(4).min(1),
     label: str(100).min(1),
     target: wizardTargetSchema,
+    /** What a caller can say instead of pressing the key (New-CsAutoAttendantMenuOption -VoiceResponses). */
+    voiceCommand: str(256).optional(),
   })
   .strict();
 export type WizardMenuOption = z.infer<typeof wizardMenuOptionSchema>;
@@ -80,6 +82,8 @@ export const autoAttendantWizardAnswersSchema = z
   .object({
     languageId: str(20).min(1),
     timeZoneId: str(80).min(1),
+    /** New-CsAutoAttendant -EnableVoiceResponse: callers can speak as well as press keys. */
+    voiceInputs: z.boolean().optional(),
     hoursType: z.enum(['always', 'standard', 'custom']),
     /** hoursType === 'custom' only. */
     customHours: wizardWeeklyHoursSchema.optional(),

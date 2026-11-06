@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { liveAutoAttendantToStructured, parseLiveCallTarget, parseLiveMenuOption, parseLiveSchedule } from './aa-live-parse';
 import {
   autoAttendantDeployBlockers,
+  autoAttendantDifferences,
   autoAttendantRowWarnings,
   callQueueRowWarnings,
   normalizeFixedRange,
@@ -18,6 +19,7 @@ import {
 import { convertAutoAttendantWizard, convertCallQueueWizard } from './wizard-convert';
 import { buildAutoAttendantFlowGraphFromLive, buildCallQueueFlowGraphFromLive } from './call-flow-graph';
 import { buildAutoAttendantToWizard } from './voice-app-wizard';
+import { AA_SUPPORTED_LANGUAGES } from './domain';
 
 /** Every cmdlet+params a call (and its preamble) issues, for asserting on one specific cmdlet. */
 function steps(call: CmdletInvocation): { cmdlet: string; parameters: Record<string, unknown> }[] {
@@ -560,5 +562,129 @@ describe('a menu that takes key presses needs a spoken prompt (New-CsAutoAttenda
 
     const { answers } = buildAutoAttendantToWizard({ ...aaRow(), default_call_flow: value.default_call_flow } as never);
     expect(answers!.businessFlow).toMatchObject({ mode: 'menu', greeting: 'Welcome.', menuPrompt: 'Press 1.' });
+  });
+});
+
+describe('voice commands on menu options (New-CsAutoAttendantMenuOption -VoiceResponses)', () => {
+  const QUEUE_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const opt = (over: Partial<AutoAttendantCallFlow['menu']['options'][number]> = {}): AutoAttendantCallFlow['menu']['options'][number] => ({
+    dtmf: 'Tone1',
+    action: 'TransferCallToTarget',
+    target: { kind: 'call_queue', liveId: QUEUE_ID },
+    ...over,
+  });
+  const cf = (o: AutoAttendantCallFlow['menu']['options'][number]): AutoAttendantCallFlow => ({ greetings: [], menu: { options: [o], prompts: [{ type: 'Text', text: 'Press 1.' }] } });
+  const row = (flowOf: AutoAttendantCallFlow, over: Partial<BuildAutoAttendantRow> = {}) => aaRow({ operator: null, default_call_flow: flowOf, ...over });
+  const liveOf = (r: BuildAutoAttendantRow, defaultCallFlow: AutoAttendantCallFlow) => ({
+    identity: 'aa-live',
+    languageId: r.language_id ?? undefined,
+    timeZoneId: r.time_zone_id ?? undefined,
+    applicationInstanceIds: [],
+    structured: { languageId: r.language_id ?? undefined, timeZoneId: r.time_zone_id ?? undefined, enableVoiceResponse: r.voice_response_enabled, operator: null, defaultCallFlow, afterHoursCallFlow: null, schedule: null, holidayCallFlows: [] },
+  });
+  const sent = (calls: CmdletInvocation[]) => calls.flatMap(steps).find((s) => s.cmdlet === 'New-CsAutoAttendantMenuOption')?.parameters.VoiceResponses;
+
+  it('sends the command as Learn shows, with the key', () => {
+    const calls = planAutoAttendantRow(row(cf(opt({ voiceResponse: 'Customer Service' })), { voice_response_enabled: true }), new Map(), new Map(), users);
+    expect(renderCommand(calls[0]!)).toContain("-DtmfResponse 'Tone1' -CallTarget $ce1 -VoiceResponses @('Customer Service')");
+  });
+
+  it('sends no parameter when there is no command, or on an Automatic option', () => {
+    expect(sent(planAutoAttendantRow(row(cf(opt())), new Map(), new Map(), users))).toBeUndefined();
+    expect(sent(planAutoAttendantRow(row(cf(opt({ voiceResponse: ' ' }))), new Map(), new Map(), users))).toBeUndefined();
+    expect(sent(planAutoAttendantRow(row(cf(opt({ dtmf: 'Automatic', voiceResponse: 'Sales' }))), new Map(), new Map(), users))).toBeUndefined();
+  });
+
+  it('keeps the command on an update when the design never held it, instead of deleting it from Teams', () => {
+    const saved = row(cf(opt()), { name: 'Renamed' });
+    const live = liveOf(saved, cf(opt({ voiceResponse: 'SALES' })));
+    expect(planAutoAttendantRow(row(cf(opt())), new Map(), new Map(), users, live)).toEqual([]);
+    const changed = row({ ...cf(opt()), greetings: [{ type: 'Text', text: 'New greeting.' }] });
+    expect(sent(planAutoAttendantRow(changed, new Map(), new Map(), users, live))).toEqual(['SALES']);
+  });
+
+  it('does not carry a command over to a different target or action', () => {
+    const r = row(cf(opt({ target: { kind: 'call_queue', liveId: 'ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee' } })));
+    expect(sent(planAutoAttendantRow(r, new Map(), new Map(), users, liveOf(r, cf(opt({ voiceResponse: 'SALES' })))))).toBeUndefined();
+    const r2 = row(cf(opt({ action: 'DisconnectCall', target: undefined })));
+    expect(sent(planAutoAttendantRow(r2, new Map(), new Map(), users, liveOf(r2, cf(opt({ voiceResponse: 'SALES' })))))).toBeUndefined();
+  });
+
+  it('removes the command when it is cleared', () => {
+    const r = row(cf(opt({ voiceResponse: '' })));
+    const calls = planAutoAttendantRow(r, new Map(), new Map(), users, liveOf(r, cf(opt({ voiceResponse: 'SALES' }))));
+    expect(calls).toHaveLength(1);
+    expect(sent(calls)).toBeUndefined();
+  });
+
+  it('changes the command when it is edited, and says so in the difference', () => {
+    const r = row(cf(opt({ voiceResponse: 'Accounts' })));
+    const live = liveOf(r, cf(opt({ voiceResponse: 'Sales' })));
+    expect(sent(planAutoAttendantRow(r, new Map(), new Map(), users, live))).toEqual(['Accounts']);
+    expect(autoAttendantDifferences(r, live).join(' ')).toMatch(/say "accounts".*say "sales"/);
+  });
+
+  it('ignores case and spacing when comparing, because Teams keeps what it was given', () => {
+    const r = row(cf(opt({ voiceResponse: ' sales ' })));
+    expect(planAutoAttendantRow(r, new Map(), new Map(), users, liveOf(r, cf(opt({ voiceResponse: 'SALES' }))))).toEqual([]);
+  });
+
+  it('reads the command from Teams', () => {
+    expect(parseLiveMenuOption({ DtmfResponse: 1, Action: 2, CallTarget: { Id: USER_GUID, Type: 6 }, VoiceResponses: ['SALES'] })?.voiceResponse).toBe('SALES');
+    expect(parseLiveMenuOption({ DtmfResponse: 0, Action: 0, VoiceResponses: [] })).toEqual({ dtmf: 'Tone0', action: 'TransferCallToOperator' });
+    const structured = liveAutoAttendantToStructured(
+      { DefaultCallFlow: { Greetings: [], Menu: { MenuOptions: [{ DtmfResponse: 0, Action: 0, VoiceResponses: ['OPERATOR'] }] } } },
+      new Map(),
+      () => undefined,
+    );
+    expect(structured.defaultCallFlow!.menu.options[0]!.voiceResponse).toBe('OPERATOR');
+  });
+
+  it('warns when commands are set with voice response off', () => {
+    const warn = (r: BuildAutoAttendantRow) => autoAttendantRowWarnings(r, new Map(), new Map(), users).join(' ');
+    expect(warn(row(cf(opt({ voiceResponse: 'Sales' }))))).toMatch(/voice response is off/);
+    expect(warn(row(cf(opt({ voiceResponse: 'Sales' })), { voice_response_enabled: true }))).not.toMatch(/voice response is off/);
+  });
+
+  it('warns when voice response is on for a language Learn lists with no speech recognition', () => {
+    const warn = (language_id: string) => autoAttendantRowWarnings(row(cf(opt()), { voice_response_enabled: true, language_id }), new Map(), new Map(), users).join(' ');
+    expect(warn('en-IE')).toMatch(/no speech recognition for English \(Ireland\)/);
+    expect(warn('en-GB')).not.toMatch(/speech recognition/);
+  });
+
+  it('matches the speech recognition languages in Learn', () => {
+    expect(AA_SUPPORTED_LANGUAGES.filter((l) => l.speechInput).map((l) => l.code).sort()).toEqual(
+      ['de-DE', 'en-AU', 'en-CA', 'en-GB', 'en-IN', 'en-US', 'es-ES', 'es-MX', 'fr-CA', 'fr-CH', 'fr-FR', 'it-IT', 'ja-JP', 'pt-BR', 'zh-CN'],
+    );
+  });
+
+  it('carries commands and the voice setting through the wizard both ways', () => {
+    const { value } = convertAutoAttendantWizard(
+      {
+        languageId: 'en-GB',
+        timeZoneId: 'GMT Standard Time',
+        voiceInputs: true,
+        hoursType: 'always',
+        holidaysEnabled: false,
+        businessFlow: { mode: 'menu', menuPrompt: 'Press 1.', options: [{ key: '1', label: 'Sales', voiceCommand: ' Sales ', target: { kind: 'external', label: '+441234567890' } }] },
+      } as never,
+      { siteId: 'site', name: 'AA' },
+    );
+    expect(value.voice_response_enabled).toBe(true);
+    expect((value.default_call_flow as AutoAttendantCallFlow).menu.options[0]!.voiceResponse).toBe('Sales');
+
+    const { answers } = buildAutoAttendantToWizard(value as never);
+    expect(answers!.voiceInputs).toBe(true);
+    expect(answers!.businessFlow.options![0]!.voiceCommand).toBe('Sales');
+  });
+
+  it('shows the command on the diagram only when callers can use it', () => {
+    const data = (on: boolean) => ({ Identity: 'aa', Name: 'Main', VoiceResponseEnabled: on, DefaultCallFlow: { Greetings: [], Menu: { MenuOptions: [{ DtmfResponse: 1, Action: 1, VoiceResponses: ['SALES'] }] } } });
+    const labels = (on: boolean) => {
+      const aa = { name: 'Main', data: data(on) };
+      return buildAutoAttendantFlowGraphFromLive(aa, [aa], [], []).edges.map((e) => e.label);
+    };
+    expect(labels(true)).toContain('Press 1 or say "SALES"');
+    expect(labels(false)).toContain('Press 1');
   });
 });

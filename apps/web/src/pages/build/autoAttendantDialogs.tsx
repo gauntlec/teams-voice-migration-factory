@@ -194,6 +194,11 @@ function MenuOptionRow({
             ))}
           </Dropdown>
         </Field>
+        {value.dtmf !== 'Automatic' && (
+          <Field label="Voice command">
+            <Input value={value.voiceResponse ?? ''} placeholder="Sales" maxLength={256} onChange={(_, d) => onChange({ ...value, voiceResponse: d.value })} />
+          </Field>
+        )}
         <Button size="small" appearance="subtle" icon={<DeleteRegular />} onClick={onRemove} />
       </div>
       {value.action === 'TransferCallToTarget' && (
@@ -302,6 +307,7 @@ function CallFlowEditor({
             Add option
           </Button>
         </div>
+        <MutedText size={200}>A voice command is what a caller can say instead of pressing the key. It needs voice response switched on for this attendant.</MutedText>
         <div className={ls.gridGap8Mt6}>
           {value.menu.options.map((o, i) => (
             <MenuOptionRow

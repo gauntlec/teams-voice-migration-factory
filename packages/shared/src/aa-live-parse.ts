@@ -44,6 +44,8 @@ export interface LiveCallableEntityRef {
 export interface LiveMenuOption {
   dtmf: (typeof AA_DTMF_RESPONSES)[number];
   action: 'TransferCallToTarget' | 'TransferCallToOperator' | 'Announcement' | 'DisconnectCall';
+  /** VoiceResponses: Learn limits it to one per option. */
+  voiceResponse?: string;
   target?: LiveCallableEntityRef;
   /** Only for 'Announcement'. */
   prompt?: LivePrompt;
@@ -156,14 +158,16 @@ export function parseLiveMenuOption(raw: unknown): LiveMenuOption | undefined {
   if (!dtmf) return undefined;
   const target = parseLiveCallTarget(o.CallTarget);
   const action = decodeEnum(o.Action, MENU_OPTION_ACTION_TYPES);
-  if (action === 'TransferCallToOperator') return { dtmf, action: 'TransferCallToOperator' };
+  const spoken = Array.isArray(o.VoiceResponses) ? o.VoiceResponses.find((v): v is string => typeof v === 'string' && !!v.trim()) : undefined;
+  const voice = spoken ? { voiceResponse: spoken } : {};
+  if (action === 'TransferCallToOperator') return { dtmf, action: 'TransferCallToOperator', ...voice };
   if (action === 'Announcement') {
     const prompt = parseLivePrompt(o.Prompt);
-    return { dtmf, action: 'Announcement', ...(prompt && prompt.type !== 'None' ? { prompt } : {}) };
+    return { dtmf, action: 'Announcement', ...(prompt && prompt.type !== 'None' ? { prompt } : {}), ...voice };
   }
-  if (action === 'DisconnectCall') return { dtmf, action: 'DisconnectCall' };
+  if (action === 'DisconnectCall') return { dtmf, action: 'DisconnectCall', ...voice };
   // TransferCallToTarget, or an older snapshot without Action at all.
-  return target ? { dtmf, action: 'TransferCallToTarget', target } : { dtmf, action: 'DisconnectCall' };
+  return target ? { dtmf, action: 'TransferCallToTarget', target, ...voice } : { dtmf, action: 'DisconnectCall', ...voice };
 }
 
 export function parseLiveMenu(raw: unknown): LiveMenu | undefined {
@@ -315,6 +319,7 @@ export function liveAutoAttendantToStructured(
     action: opt.action,
     ...(opt.action === 'TransferCallToTarget' ? { target: resolveTarget(opt.target) } : {}),
     ...(opt.action === 'Announcement' && opt.prompt ? { prompt: { type: opt.prompt.type, text: opt.prompt.text } } : {}),
+    ...(opt.voiceResponse ? { voiceResponse: opt.voiceResponse } : {}),
   });
   const resolveMenu = (m: LiveMenu): AutoAttendantMenu => ({
     enableDialByName: m.enableDialByName,

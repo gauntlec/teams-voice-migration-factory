@@ -82,7 +82,7 @@ function flowOf(cf: AutoAttendantCallFlow | null, operator: AutoAttendantCallabl
       notes.push(`${where}: option ${keyOf(o.dtmf)} has no destination that could be read.`);
       continue;
     }
-    out.push({ key: keyOf(o.dtmf), label: label.slice(0, 100) || 'Option', target });
+    out.push({ key: keyOf(o.dtmf), label: label.slice(0, 100) || 'Option', target, ...(o.voiceResponse ? { voiceCommand: o.voiceResponse.slice(0, 256) } : {}) });
   }
   if (out.length > 12) notes.push(`${where}: only the first 12 menu options were carried over.`);
   const menuPrompt = cf.menu.prompts?.find((p) => p.type === 'Text' && p.text)?.text;
@@ -128,6 +128,7 @@ export function autoAttendantToWizard(live: LiveAutoAttendantStructured, ctx: Vo
   const answers = {
     languageId: live.languageId ?? 'en-US',
     timeZoneId: live.timeZoneId ?? 'UTC',
+    ...(live.enableVoiceResponse ? { voiceInputs: true } : {}),
     hoursType,
     ...(customHours ? { customHours } : {}),
     businessFlow,
@@ -196,6 +197,7 @@ export function callQueueToWizard(data: Record<string, unknown>, ctx: VoiceAppWi
 export interface BuildAutoAttendantForWizard {
   language_id?: string | null;
   time_zone_id?: string | null;
+  voice_response_enabled?: boolean | null;
   operator?: unknown;
   default_call_flow?: unknown;
   after_hours_call_flow?: unknown;
@@ -213,6 +215,7 @@ export function buildAutoAttendantToWizard(row: BuildAutoAttendantForWizard, ctx
     {
       languageId: row.language_id ?? undefined,
       timeZoneId: row.time_zone_id ?? undefined,
+      enableVoiceResponse: row.voice_response_enabled ?? undefined,
       operator: (row.operator as AutoAttendantCallableEntity | null | undefined) ?? null,
       defaultCallFlow: (row.default_call_flow as AutoAttendantCallFlow | null | undefined) ?? null,
       afterHoursCallFlow: (row.after_hours_call_flow as AutoAttendantCallFlow | null | undefined) ?? null,

@@ -244,8 +244,11 @@ const SCHEDULE_ORDER = { holiday: 1, business_hours: 2, after_hours: 3 } as cons
 const scheduleEdgeLabel = (branch: 'holiday' | 'business_hours' | 'after_hours') =>
   `${SCHEDULE_ORDER[branch]}. ${branch === 'holiday' ? 'Holiday' : branch === 'business_hours' ? 'Business hours' : 'After hours'}`;
 
-function dtmfLabel(dtmf: string): string {
-  return dtmf === 'Automatic' ? 'No input' : `Press ${dtmf.replace(/^Tone/, '')}`;
+/** A voice command only belongs on the diagram when callers can use it: Teams keeps them on attendants with voice inputs off. */
+function dtmfLabel(dtmf: string, voiceCommand?: string): string {
+  if (dtmf === 'Automatic') return 'No input';
+  const key = `Press ${dtmf.replace(/^Tone/, '')}`;
+  return voiceCommand?.trim() ? `${key} or say "${voiceCommand.trim()}"` : key;
 }
 
 const GREETING_SNIPPET_MAX = 160;
@@ -352,6 +355,8 @@ export interface DesignAutoAttendantInput {
   defaultCallFlow: AutoAttendantCallFlow | null;
   afterHoursCallFlow: AutoAttendantCallFlow | null;
   holidayCallFlows: { name: string; callFlow: AutoAttendantCallFlow; schedule?: AutoAttendantSchedule | null }[];
+  /** -EnableVoiceResponse: whether callers can use the options' voice commands. */
+  voiceResponseEnabled?: boolean;
   /** Set when this AA's resource account has a phone number attached - the real front door a caller dials, vs. an AA only reachable via another AA's menu. */
   hasPhoneNumber?: boolean;
   /** This AA's resource accounts, with the numbers a caller dials. */
@@ -533,7 +538,7 @@ export function buildAutoAttendantFlowGraphFromDesign(
   };
 
   const walkMenuOption = (sourceId: string, opt: AutoAttendantMenuOption, owner: DesignAutoAttendantInput, branch: CallFlowBranch) => {
-    const label = dtmfLabel(opt.dtmf);
+    const label = dtmfLabel(opt.dtmf, owner.voiceResponseEnabled ? opt.voiceResponse : undefined);
     if (opt.action === 'DisconnectCall') {
       b.addEdge(sourceId, b.ensureNode({ id: 'disconnect', kind: 'disconnect', label: 'Disconnect' }), label, branch);
       return;
@@ -870,7 +875,7 @@ export function buildAutoAttendantFlowGraphFromLive(
   };
 
   const walkMenuOption = (sourceId: string, opt: LiveMenuOption, owner: LiveAutoAttendantInput, branch: CallFlowBranch) => {
-    const label = dtmfLabel(opt.dtmf);
+    const label = dtmfLabel(opt.dtmf, owner.data.VoiceResponseEnabled === true ? opt.voiceResponse : undefined);
     if (opt.action === 'DisconnectCall') {
       b.addEdge(sourceId, b.ensureNode({ id: 'disconnect', kind: 'disconnect', label: 'Disconnect' }), label, branch);
       return;

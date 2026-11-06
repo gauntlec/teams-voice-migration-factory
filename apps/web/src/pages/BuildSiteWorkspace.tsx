@@ -1169,7 +1169,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
             { key: 'language_id', label: 'Language', type: 'ref', choices: AA_LANGUAGE_CHOICES },
             { key: 'time_zone_id', label: 'Time zone', type: 'ref', choices: AA_TIME_ZONE_CHOICES },
             { key: 'voice_id', label: 'Voice', type: 'radio', options: ['Male', 'Female'] },
-            { key: 'voice_response_enabled', label: 'Enable voice response (speech input)', type: 'boolean' },
+            { key: 'voice_response_enabled', label: 'Voice response (callers can speak their choice)', type: 'boolean' },
             { key: 'notes', label: 'Notes', type: 'textarea', full: true },
           ]}
         />
