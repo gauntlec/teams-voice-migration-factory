@@ -1,5 +1,6 @@
 import { POLICY_KINDS, POLICY_KIND_TO_TENANT_TYPE } from './domain';
 import type { CmdletInvocation, LiveIdentityState } from './deployment';
+import { NOTHING_CHANGED_REASON } from './deployment-status';
 
 /* ========================================================================
  * After a live deployment: what was there before each change (for the
@@ -166,6 +167,7 @@ export function verificationRowDifferences(calls: CmdletInvocation[], live: Live
 /** "Verified: 48/50 match - 2 still differ" - the one-line summary the Run history shows. */
 export function verificationHeadline(v: DeploymentVerification): string {
   if (v.status === 'pending') return 'Checking the live tenant…';
+  if (v.status === 'skipped' && v.reason === NOTHING_CHANGED_REASON) return 'Nothing changed, so nothing to check';
   if (v.status !== 'verified') return v.status === 'skipped' ? `Not verified: ${v.reason}` : `Verification failed: ${v.reason}`;
   const differ = v.differing.length;
   return `Verified: ${v.matched}/${v.checked} match${differ ? ` - ${differ} still differ` : ''}`;

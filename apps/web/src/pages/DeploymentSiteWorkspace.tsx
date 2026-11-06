@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link as RouterLink, useParams, useSearchParams } from 'react-router';
 import {
@@ -35,7 +35,12 @@ import {
   DEPLOYMENT_SHEETS,
   DRIFT_ACCEPTABLE,
   groupDeploymentRows,
+  isRunActive,
+  runMessage,
+  runsSignature,
+  runStage,
   verificationHeadline,
+  VERIFY_STALE_MS,
   type DeploymentGroupBy,
   type DeploymentPreviewRow,
   type DeploymentSiteRollup,
@@ -50,6 +55,8 @@ import { DataTable } from '../components/DataTable';
 import { Page } from '../components/Page';
 import { LoadError, NoTenant, useRecordStyles } from '../components/records';
 import { DangerText } from '../components/ui';
+import { DeploymentRunBanners } from '../components/DeploymentRunBanners';
+import { useNotify } from '../hooks/useNotify';
 
 const useLocalStyles = makeStyles({
   justifySpacebetween: { justifyContent: "space-between" },
@@ -139,6 +146,9 @@ interface Deployment {
   verification: DeploymentVerification | null;
   /** scheduled cutover: when a queued live run starts; null = at once */
   run_at: string | null;
+  finished_at: string | null;
+  /** how many changes have gone out so far, while it is running */
+  changes_done?: number;
   created_by: string;
   created_at: string;
 }
@@ -163,13 +173,11 @@ function runStatusBadge(d: Deployment): { label: string; color: 'success' | 'dan
   const failed = d.summary?.failed ?? 0;
   if (d.status === 'failed') return { label: 'failed', color: 'danger', icon: true };
   if (d.status === 'completed' && failed > 0) return { label: `completed - ${failed} failed`, color: 'danger', icon: true };
+  if (d.status === 'completed' && d.mode === 'execute' && (d.summary?.applied ?? 0) === 0) return { label: 'nothing to change', color: 'informative' };
   if (d.status === 'completed') return { label: 'completed', color: 'success' };
   if (d.status === 'queued' && d.run_at) return { label: 'scheduled', color: 'informative' };
   return { label: d.status, color: 'informative' };
 }
-
-/** A re-check that never finished (worker stopped mid-way) - don't show "Checking…" forever. */
-const VERIFY_STALE_MS = 60 * 60_000;
 
 const VERIFY_OBJECT_LABEL: Record<string, string> = { user: 'User', cap: 'Common Area Phone', resource_account: 'Resource Account' };
 
@@ -273,6 +281,7 @@ export function DeploymentSiteWorkspace() {
   const { siteId = '' } = useParams();
   const { activeTenantId: tid, can } = useAuth();
   const qc = useQueryClient();
+  const notify = useNotify();
   const base = `/t/${tid}/deployments`;
   const canDryRun = can('deployment:dryrun');
   const canExecute = can('deployment:execute');
@@ -334,10 +343,36 @@ export function DeploymentSiteWorkspace() {
   const deployments = useQuery({
     queryKey: ['deployments', tid, siteId],
     enabled: !!tid && !!siteId,
-    refetchInterval: tab === 'history' ? 4000 : false,
+    // Always, on every tab: this is what tells the page a run has started, moved on or finished.
+    refetchInterval: 4000,
     queryFn: () => api<Deployment[]>(`${base}?siteId=${siteId}`),
   });
   const siteDeployments = deployments.data ?? [];
+  const liveRunGoing = siteDeployments.some((d) => d.mode === 'execute' && ['starting', 'running'].includes(runStage(d)));
+
+  // When a run moves on a stage the planned changes and the site's counts are out of date, so read them again without being asked.
+  const signature = runsSignature(siteDeployments);
+  const lastSignature = useRef<string | null>(null);
+  const wasActive = useRef<Set<string>>(new Set());
+  const [dismissedRuns, setDismissedRuns] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (!deployments.data) return;
+    const changed = lastSignature.current !== null && lastSignature.current !== signature;
+    lastSignature.current = signature;
+    // A run that finishes while the page is open gets a message too, in case the top of the page is scrolled out of view.
+    for (const d of deployments.data) {
+      if (isRunActive(d)) wasActive.current.add(d.id);
+      else if (wasActive.current.delete(d.id)) {
+        const m = runMessage(d);
+        notify(m.title, { body: m.detail, intent: m.tone === 'error' ? 'error' : m.tone === 'warning' ? 'warning' : m.tone === 'info' ? 'info' : 'success' });
+      }
+    }
+    if (!changed) return;
+    qc.invalidateQueries({ queryKey: ['deployment-preview', tid, siteId] });
+    qc.invalidateQueries({ queryKey: ['deployment-summary', tid] });
+    qc.invalidateQueries({ queryKey: ['deployment-drift', tid, siteId] });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when the runs move on, not whenever notify is re-created
+  }, [signature, deployments.data]);
 
   // Worked out fresh when the tab opens (and saved, so the site list's count follows).
   const drift = useQuery({
@@ -466,6 +501,10 @@ export function DeploymentSiteWorkspace() {
   if (!site) return <LoadError message="Site not found." />;
 
   const rows = preview.data ?? [];
+  // Rows just sent to Teams can't be selected until they have been read back: sending them again would repeat every change.
+  const isSettling = (r: DeploymentPreviewRow) => r.activity === 'deploying' || r.activity === 'checking';
+  const selectable = rows.filter((r) => !isSettling(r));
+  const anySettling = selectable.length < rows.length;
   const toggleRow = (rowId: string) =>
     setSelectedRowIds((prev) => {
       const next = new Set(prev);
@@ -474,7 +513,7 @@ export function DeploymentSiteWorkspace() {
       return next;
     });
   const toggleAll = () =>
-    setSelectedRowIds((prev) => (prev.size === rows.length ? new Set() : new Set(rows.map((r) => r.rowId))));
+    setSelectedRowIds((prev) => (prev.size === selectable.length ? new Set() : new Set(selectable.map((r) => r.rowId))));
   /** Ticks a whole group (a wave, or an object type); unticks it when every row in it is already ticked. */
   const toggleGroup = (ids: string[]) =>
     setSelectedRowIds((prev) => {
@@ -530,6 +569,16 @@ export function DeploymentSiteWorkspace() {
         <Tab value="history">Run history</Tab>
       </TabList>
 
+      <DeploymentRunBanners
+        runs={siteDeployments}
+        dismissed={dismissedRuns}
+        onDismiss={(id) => setDismissedRuns((prev) => new Set(prev).add(id))}
+        onOpen={(id) => {
+          setTab('history');
+          setSelectedDeployment(id);
+        }}
+      />
+
       {tab === 'changes' && (
         <Card className={s.card}>
           <div className={mergeClasses(cs.row, ls.justifySpacebetween)}>
@@ -556,17 +605,25 @@ export function DeploymentSiteWorkspace() {
               </Button>
               <Button
                 appearance="primary"
-                disabled={!activeConn || !canExecute || teamsReadOnly || run.isPending}
-                title={teamsReadOnly ? 'This customer tenant is read-only - live changes are disabled.' : undefined}
+                disabled={!activeConn || !canExecute || teamsReadOnly || run.isPending || liveRunGoing || (selectedRowIds.size === 0 && anySettling)}
+                title={
+                  teamsReadOnly
+                    ? 'This customer tenant is read-only - live changes are disabled.'
+                    : liveRunGoing
+                      ? 'A live deployment is running on this site. Wait for it to finish.'
+                      : selectedRowIds.size === 0 && anySettling
+                        ? 'Some rows are still being checked in Teams. Wait for the check, or select the rows you want to deploy.'
+                        : undefined
+                }
                 onClick={() => {
                   if (selectedRowIds.size === 0) setConfirmWholeSiteDeploy(true);
                   else run.mutate({ mode: 'execute', everyone: false });
                 }}
               >
-                {selectedRowIds.size > 0 ? `Deploy selected (${selectedRowIds.size})` : 'Deploy everything'}
+                {run.isPending ? 'Starting…' : selectedRowIds.size > 0 ? `Deploy selected (${selectedRowIds.size})` : 'Deploy everything'}
               </Button>
               <Button
-                disabled={!activeConn || !canExecute || teamsReadOnly || run.isPending}
+                disabled={!activeConn || !canExecute || teamsReadOnly || run.isPending || liveRunGoing}
                 title="Start the live run at a set time, inside the change window"
                 onClick={() => setScheduleOpen(true)}
               >
@@ -584,6 +641,7 @@ export function DeploymentSiteWorkspace() {
             every check but sends nothing to Microsoft Teams — cmdlets are rendered to a script instead. Select rows
             below to act on just those.
           </Text>
+          {run.isError && !scheduleOpen && <DangerText>{run.error instanceof ApiError ? run.error.message : 'Could not start the run.'}</DangerText>}
           {selectedRowIds.size === 0 && rows.length > 0 && (
             <div className={cs.wholeSiteBanner}>
               <WarningRegular />
@@ -689,7 +747,7 @@ export function DeploymentSiteWorkspace() {
               <TableHeader>
                 <TableRow>
                   <TableHeaderCell>
-                    <Checkbox checked={selectedRowIds.size === rows.length} onChange={toggleAll} />
+                    <Checkbox checked={selectable.length > 0 && selectedRowIds.size === selectable.length} disabled={selectable.length === 0} onChange={toggleAll} />
                   </TableHeaderCell>
                   <TableHeaderCell>UPN</TableHeaderCell>
                   <TableHeaderCell>Type</TableHeaderCell>
@@ -699,13 +757,14 @@ export function DeploymentSiteWorkspace() {
               <TableBody>
                 {groups.flatMap((g) => {
                   const group = g.rows;
-                  const ids = group.map((r) => r.rowId);
+                  const ids = group.filter((r) => !isSettling(r)).map((r) => r.rowId);
                   const ticked = ids.filter((id) => selectedRowIds.has(id)).length;
                   return [
                     <TableRow key={`group-${g.key}`}>
                       <TableCell className={cs.groupHeaderCell}>
                         <Checkbox
-                          checked={ticked === ids.length ? true : ticked > 0 ? 'mixed' : false}
+                          checked={ids.length > 0 && ticked === ids.length ? true : ticked > 0 ? 'mixed' : false}
+                          disabled={ids.length === 0}
                           onChange={() => toggleGroup(ids)}
                           aria-label={`Select all ${g.label}`}
                         />
@@ -717,10 +776,34 @@ export function DeploymentSiteWorkspace() {
                     ...group.map((r) => (
                       <TableRow key={r.rowId}>
                         <TableCell>
-                          <Checkbox checked={selectedRowIds.has(r.rowId)} onChange={() => toggleRow(r.rowId)} />
+                          <Checkbox checked={selectedRowIds.has(r.rowId)} disabled={isSettling(r)} onChange={() => toggleRow(r.rowId)} />
                         </TableCell>
                         <TableCell>
                           {r.upn}
+                          {isSettling(r) && (
+                            <Badge
+                              className={cs.autoIncludedTag}
+                              appearance="tint"
+                              color="brand"
+                              title={
+                                r.activity === 'deploying'
+                                  ? 'A live deployment is sending this row to Teams now.'
+                                  : 'Already sent to Teams. Voxshift is about to read it back, and until then the commands here are what it planned, not what is left to do.'
+                              }
+                            >
+                              {r.activity === 'deploying' ? 'deploying now…' : 'checking Teams…'}
+                            </Badge>
+                          )}
+                          {r.activity === 'unconfirmed' && (
+                            <Badge
+                              className={cs.autoIncludedTag}
+                              appearance="tint"
+                              color="warning"
+                              title="Sent to Teams by a recent deployment, but not read back, so these commands may already be done. Run Validate against tenant on this site, or Discovery, before deploying it again."
+                            >
+                              sent, not confirmed
+                            </Badge>
+                          )}
                           {r.drift === 'drift' && (
                             <Badge
                               className={cs.autoIncludedTag}

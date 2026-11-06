@@ -2,6 +2,9 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { sql } from 'kysely';
 import {
   annotateDrift,
+  annotateRowActivity,
+  rowsStillSettling,
+  siteRowActivity,
   computeSiteDrift,
   expandScopeWithDependencies,
   previewSiteChanges,
@@ -114,6 +117,7 @@ export class DeploymentService {
     const s = tenantDb(this.db, t.schema);
     const rows = await previewSiteChanges(s, query);
     await annotateDrift(s, rows);
+    annotateRowActivity(rows, await siteRowActivity(s, query.siteId));
     return rows;
   }
 
@@ -311,6 +315,19 @@ export class DeploymentService {
       input.scope.sheets,
       input.scope.rowIds,
     );
+    // The plan can't see a live run's changes until they have been read back from Teams, so sending the same rows again now would
+    // repeat every change, and only the first run could be re-checked. A What-If sends nothing, so it isn't held up.
+    if (input.mode === 'execute') {
+      const settling = rowsStillSettling(await siteRowActivity(s, input.scope.siteId), rowIds);
+      if (settling > 0) {
+        throw new ConflictException(
+          rowIds?.length
+            ? `${settling} of the selected row${rowIds.length === 1 ? ' was' : 's were'} deployed moments ago and ${settling === 1 ? 'is' : 'are'} still being checked in Teams. Wait for the check to finish (about a minute), or untick ${settling === 1 ? 'it' : 'them'}.`
+            : 'Rows on this site were deployed moments ago and are still being checked in Teams. Wait for the check to finish (about a minute), then deploy again.',
+        );
+      }
+    }
+
     // autoIncludedRowIds isn't part of createDeploymentSchema (the client
     // never sends it) - stashed onto the stored/queued scope purely so Run
     // History can show "+N rows included automatically" for this run. The
@@ -378,10 +395,17 @@ export class DeploymentService {
     return { ok: true };
   }
 
-  listDeployments(t: TenantContext, siteId?: string) {
-    let q = tenantDb(this.db, t.schema).selectFrom('deployments').selectAll();
+  async listDeployments(t: TenantContext, siteId?: string) {
+    const s = tenantDb(this.db, t.schema);
+    let q = s.selectFrom('deployments').selectAll();
     if (siteId) q = q.where(sql<boolean>`scope->>'siteId' = ${siteId}`);
-    return q.orderBy('created_at', 'desc').limit(50).execute();
+    const rows = await q.orderBy('created_at', 'desc').limit(50).execute();
+    // how far a running run has got, for the screen: its summary is only written at the end
+    const running = rows.filter((r) => r.status === 'running').map((r) => r.id);
+    if (running.length === 0) return rows;
+    const done = await s.selectFrom('deployment_changes').select(['deployment_id', (eb) => eb.fn.countAll<string>().as('n')]).where('deployment_id', 'in', running).groupBy('deployment_id').execute();
+    const counts = new Map(done.map((d) => [d.deployment_id, Number(d.n)]));
+    return rows.map((r) => (r.status === 'running' ? { ...r, changes_done: counts.get(r.id) ?? 0 } : r));
   }
 
   async getDeployment(t: TenantContext, id: string) {

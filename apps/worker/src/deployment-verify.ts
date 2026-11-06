@@ -1,5 +1,6 @@
 import { sql } from 'kysely';
 import { planIdentityRows, planResourceAccountRows, resolveLiveNumberTypes, type PlannedIdentityRow } from '@tvmf/db';
+import { NOTHING_CHANGED_REASON } from '@tvmf/shared';
 import {
   identityBeforeState,
   lineUriToNumber,
@@ -72,7 +73,7 @@ export async function verifyDeployment(
     .where('deployment_id', '=', args.deploymentId)
     .execute();
   if (!changes.some((c) => c.result === 'applied')) {
-    return stop('skipped', 'Nothing was changed live, so there was nothing to check.');
+    return stop('skipped', NOTHING_CHANGED_REASON);
   }
   // Failed changes count as touched too: the re-check then shows what's still missing.
   const touched: Record<IdentityType, Set<string>> = { user: new Set(), cap: new Set(), resource_account: new Set() };
@@ -127,9 +128,13 @@ export async function verifyDeployment(
       throw err;
     });
   if (!run) {
+    // Say which: one run's re-check blocking another's isn't a Discovery run anyone started.
+    const earlier = await s.selectFrom('deployments').select('id').where('id', '!=', args.deploymentId).where(sql<boolean>`verification->>'status' = 'pending'`).executeTakeFirst();
     return stop(
       'skipped',
-      'A Discovery run or Validate check was already in progress, so the live re-check was skipped. Run Validate against tenant on this site (or re-run Discovery) to check it.',
+      earlier
+        ? "Another deployment's re-check was still running, and only one can read Teams at a time, so this run wasn't re-checked. Run Validate against tenant on this site to check it."
+        : 'A Discovery run or Validate check was already in progress, so the live re-check was skipped. Run Validate against tenant on this site (or re-run Discovery) to check it.',
     );
   }
 
