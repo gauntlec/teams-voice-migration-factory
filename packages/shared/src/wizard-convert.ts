@@ -125,6 +125,11 @@ function convertTarget(t: WizardTarget | undefined, resolvers: WizardResolvers, 
 }
 
 function convertMenuOption(opt: WizardMenuOption, resolvers: WizardResolvers, warnings: string[], flowLabel: string): AutoAttendantMenuOption {
+  const converted = convertMenuAction(opt, resolvers, warnings, flowLabel);
+  return opt.voiceCommand === undefined || converted.dtmf === 'Automatic' ? converted : { ...converted, voiceResponse: opt.voiceCommand.trim() };
+}
+
+function convertMenuAction(opt: WizardMenuOption, resolvers: WizardResolvers, warnings: string[], flowLabel: string): AutoAttendantMenuOption {
   const dtmf = DTMF_BY_DIGIT[opt.key] ?? 'Automatic';
   if (opt.target.kind === 'operator') return { dtmf, action: 'TransferCallToOperator' };
   // "Play a message" - an Announcement: played, then the caller returns to the menu.
@@ -211,7 +216,7 @@ export function convertAutoAttendantWizard(
       name: opts.name,
       language_id: answers.languageId,
       time_zone_id: answers.timeZoneId,
-      voice_response_enabled: false,
+      voice_response_enabled: !!answers.voiceInputs,
       operator,
       default_call_flow,
       after_hours_call_flow,

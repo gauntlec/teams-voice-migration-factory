@@ -1427,6 +1427,8 @@ const autoAttendantMenuOptionSchema = z
     target: autoAttendantCallableEntitySchema.optional(),
     /** New-CsAutoAttendantMenuOption -Prompt - only for action 'Announcement'. */
     prompt: autoAttendantPromptSchema.optional(),
+    /** New-CsAutoAttendantMenuOption -VoiceResponses (one per option). Empty removes one already in Teams. */
+    voiceResponse: z.string().trim().max(256).optional(),
   })
   .strict();
 

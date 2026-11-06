@@ -127,11 +127,14 @@ function nextMenuKey(options: WizardMenuOption[]): string {
   return MENU_KEYS.find((k) => !used.has(k)) ?? String(options.length + 1);
 }
 
+const speechRecognitionFor = (languageId: string): boolean => AA_SUPPORTED_LANGUAGES.some((l) => l.code === languageId && l.speechInput);
+
 /** The greeting + routing question shared by the business-hours, after-hours and holiday steps. */
 function CallFlowEditor({
   value,
   onChange,
   allowVoicemail = true,
+  voiceInputs = false,
   base,
   tenantId,
   siteId,
@@ -141,6 +144,8 @@ function CallFlowEditor({
   value: WizardCallFlow;
   onChange: (v: WizardCallFlow) => void;
   allowVoicemail?: boolean;
+  /** Show a voice command box on each menu option. */
+  voiceInputs?: boolean;
   base: string;
   tenantId: string;
   siteId: string;
@@ -197,6 +202,11 @@ function CallFlowEditor({
                 <Field label="Option name">
                   <Input value={opt.label} placeholder="Sales" onChange={(_, d) => updateOption(i, { ...opt, label: d.value })} />
                 </Field>
+                {voiceInputs && (
+                  <Field label="Or the caller can say">
+                    <Input value={opt.voiceCommand ?? ''} placeholder="Sales" maxLength={256} onChange={(_, d) => updateOption(i, { ...opt, voiceCommand: d.value })} />
+                  </Field>
+                )}
                 <TargetPicker
                   value={opt.target}
                   onChange={(t) => updateOption(i, { ...opt, target: t ?? { kind: 'person', label: '' } })}
@@ -359,7 +369,12 @@ export function AutoAttendantWizard({
             <Dropdown
               value={AA_LANGUAGE_CHOICES.find((c) => c.value === answers.languageId)?.label ?? ''}
               selectedOptions={[answers.languageId]}
-              onOptionSelect={(_, d) => setAnswers((a) => ({ ...a, languageId: d.optionValue ?? a.languageId }))}
+              onOptionSelect={(_, d) =>
+                setAnswers((a) => {
+                  const languageId = d.optionValue ?? a.languageId;
+                  return { ...a, languageId, voiceInputs: speechRecognitionFor(languageId) ? a.voiceInputs : false };
+                })
+              }
             >
               {AA_LANGUAGE_CHOICES.map((c) => (
                 <Option key={c.value} value={c.value}>
@@ -367,6 +382,14 @@ export function AutoAttendantWizard({
                 </Option>
               ))}
             </Dropdown>
+          </Field>
+          <Field hint={speechRecognitionFor(answers.languageId) ? 'Callers can also say the key number. You can add a word such as "Sales" to each menu option.' : 'Teams has no speech recognition for this language, so callers can only press keys.'}>
+            <Checkbox
+              label="Let callers speak their choice as well as pressing a key"
+              checked={!!answers.voiceInputs}
+              disabled={!speechRecognitionFor(answers.languageId) && !answers.voiceInputs}
+              onChange={(_, d) => setAnswers((a) => ({ ...a, voiceInputs: !!d.checked }))}
+            />
           </Field>
           <Field label="What time zone is this for?">
             <Dropdown
@@ -408,7 +431,7 @@ export function AutoAttendantWizard({
       key: 'business',
       title: 'During business hours',
       content: (
-        <CallFlowEditor
+        <CallFlowEditor voiceInputs={!!answers.voiceInputs}
           value={answers.businessFlow}
           onChange={(v) => setAnswers((a) => ({ ...a, businessFlow: v }))}
           base={base}
@@ -425,7 +448,7 @@ export function AutoAttendantWizard({
             key: 'after-hours',
             title: 'After hours',
             content: (
-              <CallFlowEditor
+              <CallFlowEditor voiceInputs={!!answers.voiceInputs}
                 value={answers.afterHoursFlow ?? { mode: 'voicemail' }}
                 onChange={(v) => setAnswers((a) => ({ ...a, afterHoursFlow: v }))}
                 base={base}
@@ -512,7 +535,7 @@ export function AutoAttendantWizard({
                       onClick={() => setAnswers((a) => ({ ...a, holidays: (a.holidays ?? []).filter((_, idx) => idx !== i) }))}
                     />
                   </div>
-                  <CallFlowEditor
+                  <CallFlowEditor voiceInputs={!!answers.voiceInputs}
                     value={h.flow}
                     onChange={(v) => setAnswers((a) => ({ ...a, holidays: (a.holidays ?? []).map((x, idx) => (idx === i ? { ...x, flow: v } : x)) }))}
                     base={base}

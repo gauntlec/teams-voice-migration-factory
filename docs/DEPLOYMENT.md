@@ -238,6 +238,16 @@ When a design has keys and no menu prompt, the plan works one out:
 
 The wizard has its own "What should we say to offer the choices?" box, and Design & Build has the Menu prompt field.
 
+### Auto attendant voice commands
+
+A menu option can have a key and a voice command (`New-CsAutoAttendantMenuOption -DtmfResponse Tone1 -VoiceResponses "Sales"`). Microsoft Learn allows one voice command per option, and it can be several words. It works when the attendant has voice inputs on (`-EnableVoiceResponse`), and callers can also say the key number. The command is also spoken back, as in "Transferring your call to sales".
+
+- **Where it is set:** the "Or the caller can say" box in the wizard, and "Voice command" on each option in Design & Build. Voice response is a checkbox on the wizard's first step and a field on the Design & Build attendant.
+- **Keeping what is in Teams:** a menu is rebuilt whole on every update, so a command must be sent again or it is deleted. An option with no saved command keeps the live one, as long as its key, action and target are unchanged. Clearing the box saves an empty command, which removes it.
+- **Comparison:** ignores case, because Teams keeps what it was given ("SALES", "One").
+- **Warnings:** the preview warns when commands are set with voice response off, and when voice response is on for a language with no speech recognition. Learn's language table is `AA_SUPPORTED_LANGUAGES` (`speechInput`).
+- **Diagrams:** the edge reads `Press 1 or say "Sales"` only when voice inputs are on. Teams also keeps commands on attendants with them off.
+
 ### Auto attendant transfers that aren't ready
 
 A menu option's transfer needs a target Teams can reach (`New-CsAutoAttendantMenuOption -Action TransferCallToTarget -CallTarget`, with a call queue or auto attendant given as `New-CsAutoAttendantCallableEntity -Type ConfigurationEndpoint`). Voxshift never swaps a transfer for `DisconnectCall` on a live run, because a key press would silently drop callers.

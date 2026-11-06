@@ -276,7 +276,7 @@ export const AA_SUPPORTED_LANGUAGES = [
   { code: 'fr-FR', label: 'French (France)', speechInput: true },
   { code: 'fr-CH', label: 'French (Switzerland)', speechInput: true },
   { code: 'de-AT', label: 'German (Austria)', speechInput: false },
-  { code: 'de-DE', label: 'German (Germany)', speechInput: false },
+  { code: 'de-DE', label: 'German (Germany)', speechInput: true },
   { code: 'de-CH', label: 'German (Switzerland)', speechInput: false },
   { code: 'el-GR', label: 'Greek (Greece)', speechInput: false },
   { code: 'he-IL', label: 'Hebrew (Israel)', speechInput: false },

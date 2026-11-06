@@ -2,6 +2,7 @@ import { VOICEMAIL_UNANSWERED_DEFAULT, delegateMatchesLive, forwardingMatchesLiv
 import {
   AA_CALLABLE_ENTITY_KINDS,
   AA_DIRECTORY_SEARCH_METHODS,
+  AA_SUPPORTED_LANGUAGES,
   AA_DTMF_RESPONSES,
   AA_MENU_OPTION_ACTIONS,
   AA_SCHEDULE_TYPES,
@@ -1260,6 +1261,11 @@ export interface AutoAttendantMenuOption {
   target?: AutoAttendantCallableEntity;
   /** -Prompt - only for action 'Announcement' (played, then the caller returns to the menu). */
   prompt?: AutoAttendantPrompt;
+  /**
+   * -VoiceResponses: what a caller can say instead of pressing the key, when the attendant has voice inputs on. Learn: one per option, and
+   * it can be several words. Left out means never set here, so a command already in Teams is kept; an empty string means remove it.
+   */
+  voiceResponse?: string;
 }
 
 /** New-CsAutoAttendantMenu. Mirrors dto.ts's autoAttendantMenuSchema. */
@@ -1554,6 +1560,14 @@ export function autoAttendantRowWarnings(
   checkFlow(row.after_hours_call_flow, 'After hours');
   for (const h of row.holiday_call_flows) checkFlow(h.callFlow, h.name);
   if (unresolved.length) warnings.push(...unresolved);
+  const savedFlows = [row.default_call_flow, row.after_hours_call_flow, ...row.holiday_call_flows.map((h) => h.callFlow)];
+  if (!row.voice_response_enabled && savedFlows.some((cf) => cf?.menu.options.some((o) => o.voiceResponse?.trim()))) {
+    warnings.push('Voice commands are set, but voice response is off for this Auto Attendant, so callers can only press keys until it is switched on.');
+  }
+  const language = AA_SUPPORTED_LANGUAGES.find((l) => l.code === row.language_id);
+  if (row.voice_response_enabled && language && !language.speechInput) {
+    warnings.push(`Voice response is on, but Teams has no speech recognition for ${language.label}, so callers can only press keys.`);
+  }
   warnings.push(...menuPromptProblems(row, crossRef, userObjectIds, live).map((p) => `${p} A live deployment leaves this Auto Attendant out until it has one.`));
   if (transferBlockers(row, crossRef, userObjectIds, targetNames).length) {
     warnings.push("A live deployment leaves this Auto Attendant out until its transfer targets are ready, rather than disconnect those callers. A queue or attendant in the same run counts as ready.");
@@ -1639,7 +1653,7 @@ export function autoAttendantDeployBlockers(
  */
 function menuPromptProblems(row: BuildAutoAttendantRow, crossRef: AutoAttendantCrossRef, userObjectIds: Map<string, string>, live?: AutoAttendantLiveState): string[] {
   if (live && autoAttendantMatchesLive(row, live, crossRef, userObjectIds)) return [];
-  const resolved = withMenuPrompts(row, live);
+  const resolved = asSentToTeams(row, live, crossRef);
   const out: string[] = [];
   const checkFlow = (cf: AutoAttendantCallFlow | null | undefined, label: string) => {
     if (cf && menuTakesInput(cf.menu) && !(cf.menu.prompts ?? []).some(isSpoken)) {
@@ -1760,6 +1774,8 @@ function buildMenuOption(ctx: AaBuildCtx, opt: AutoAttendantMenuOption, crossRef
   } else if (opt.action === 'TransferCallToOperator') {
     parameters = { Action: 'TransferCallToOperator', DtmfResponse: opt.dtmf };
   }
+  const voice = opt.dtmf === 'Automatic' ? undefined : opt.voiceResponse?.trim();
+  if (voice) parameters.VoiceResponses = [voice];
   const varName = nextAaVar(ctx, 'opt');
   ctx.steps.push({ assignTo: varName, cmdlet: 'New-CsAutoAttendantMenuOption', parameters });
   return { $var: varName };
@@ -1812,13 +1828,30 @@ function withMenuPrompt(cf: AutoAttendantCallFlow, live?: AutoAttendantCallFlow 
   if (!spoken.length) return cf;
   return { greetings: cf.greetings.filter((g) => !isSpoken(g)), menu: { ...cf.menu, prompts: spoken } };
 }
-function withMenuPrompts<R extends Pick<BuildAutoAttendantRow, 'default_call_flow' | 'after_hours_call_flow' | 'holiday_call_flows'>>(row: R, live?: AutoAttendantLiveState): R {
+/**
+ * A menu is always rebuilt whole when it is sent, so a voice command the design has never held would be deleted from Teams (rows saved
+ * before voice commands existed here, and anything read through the old parser). Keep the live one when the option still does the same
+ * thing: same key, same action, same target. A changed option doesn't inherit it, because "Sales" mustn't follow a key to another queue.
+ */
+function withLiveVoiceCommands(cf: AutoAttendantCallFlow, live: AutoAttendantCallFlow | null | undefined, crossRef: AutoAttendantCrossRef): AutoAttendantCallFlow {
+  if (!live) return cf;
+  const options = cf.menu.options.map((o) => {
+    if (o.voiceResponse !== undefined || o.dtmf === 'Automatic') return o;
+    const same = live.menu.options.find((l) => l.dtmf === o.dtmf && l.action === o.action);
+    if (!same?.voiceResponse || !structurallyEqual(normalizeTarget(same.target, crossRef) ?? null, normalizeTarget(o.target, crossRef) ?? null)) return o;
+    return { ...o, voiceResponse: same.voiceResponse };
+  });
+  return { ...cf, menu: { ...cf.menu, options } };
+}
+/** The saved row as it is compared with Teams and sent to it. */
+function asSentToTeams<R extends Pick<BuildAutoAttendantRow, 'default_call_flow' | 'after_hours_call_flow' | 'holiday_call_flows'>>(row: R, live: AutoAttendantLiveState | undefined, crossRef: AutoAttendantCrossRef): R {
   const s = live?.structured;
+  const flow = (cf: AutoAttendantCallFlow, liveFlow?: AutoAttendantCallFlow | null) => withMenuPrompt(withLiveVoiceCommands(cf, liveFlow, crossRef), liveFlow);
   return {
     ...row,
-    default_call_flow: row.default_call_flow && withMenuPrompt(row.default_call_flow, s?.defaultCallFlow),
-    after_hours_call_flow: row.after_hours_call_flow && withMenuPrompt(row.after_hours_call_flow, s?.afterHoursCallFlow),
-    holiday_call_flows: row.holiday_call_flows.map((h) => ({ ...h, callFlow: withMenuPrompt(h.callFlow, s?.holidayCallFlows.find((l) => l.name === h.name)?.callFlow) })),
+    default_call_flow: row.default_call_flow && flow(row.default_call_flow, s?.defaultCallFlow),
+    after_hours_call_flow: row.after_hours_call_flow && flow(row.after_hours_call_flow, s?.afterHoursCallFlow),
+    holiday_call_flows: row.holiday_call_flows.map((h) => ({ ...h, callFlow: flow(h.callFlow, s?.holidayCallFlows.find((l) => l.name === h.name)?.callFlow) })),
   };
 }
 
@@ -2076,7 +2109,7 @@ function callFlowEqual(a: AutoAttendantCallFlow | null, b: AutoAttendantCallFlow
 function describeCallFlow(cf: AutoAttendantCallFlow | null): string {
   if (!cf) return 'none';
   const text = (v: unknown) => JSON.stringify(v).slice(0, 90);
-  const option = (o: AutoAttendantMenuOption) => `${o.dtmf} ${o.action}${o.target ? ` to ${text(o.target)}` : ''}${o.prompt ? ` ${text(o.prompt)}` : ''}`;
+  const option = (o: AutoAttendantMenuOption) => `${o.dtmf} ${o.action}${o.target ? ` to ${text(o.target)}` : ''}${o.prompt ? ` ${text(o.prompt)}` : ''}${o.voiceResponse ? ` say "${o.voiceResponse}"` : ''}`;
   return [
     `greeting ${text(cf.greetings)}`,
     cf.menu.prompts?.length ? `menu prompt ${text(cf.menu.prompts)}` : null,
@@ -2125,7 +2158,12 @@ function normalizeTarget(t: AutoAttendantCallableEntity | undefined, crossRef: A
 }
 function normalizeFlow(cf: AutoAttendantCallFlow | null, crossRef: AutoAttendantCrossRef): AutoAttendantCallFlow | null {
   if (!cf) return cf;
-  return { ...cf, menu: { ...cf.menu, options: cf.menu.options.map((o) => (o.target ? { ...o, target: normalizeTarget(o.target, crossRef) as AutoAttendantCallableEntity } : o)) } };
+  const options = cf.menu.options.map(({ voiceResponse, ...o }) => {
+    // Teams keeps the case it was given (live: "SALES", "One"), and what a caller says has no case. An empty one means none.
+    const voice = o.dtmf === 'Automatic' ? undefined : voiceResponse?.trim().toLowerCase();
+    return { ...o, ...(o.target ? { target: normalizeTarget(o.target, crossRef) as AutoAttendantCallableEntity } : {}), ...(voice ? { voiceResponse: voice } : {}) };
+  });
+  return { ...cf, menu: { ...cf.menu, options } };
 }
 
 /**
@@ -2140,7 +2178,7 @@ export function autoAttendantDifferences(
 ): string[] {
   const s = live.structured;
   if (!s) return ['the live settings could not be read'];
-  const row = withMenuPrompts(savedRow, live);
+  const row = asSentToTeams(savedRow, live, crossRef);
   const diffs: string[] = [];
   if (row.authorized_users != null && !sameIds(resolveUpnIds(row.authorized_users, userObjectIds), s.authorizedUsers)) diffs.push('authorised users');
   if (row.hide_authorized_users != null && !sameIds(resolveUpnIds(row.hide_authorized_users, userObjectIds), s.hideAuthorizedUsers)) diffs.push('hidden authorised users');
@@ -2203,7 +2241,7 @@ export function planAutoAttendantRow(
   targetNames: AutoAttendantTargetNames = new Map(),
 ): CmdletInvocation[] {
   const calls: CmdletInvocation[] = [];
-  const row = withMenuPrompts(savedRow, live);
+  const row = asSentToTeams(savedRow, live, crossRef);
   if (!row.default_call_flow) return calls;
   // New-CsAutoAttendant requires -LanguageId/-TimeZoneId (Microsoft Learn:
   // both Mandatory: True). Unlike the update path below (Set-CsAutoAttendant
