@@ -297,25 +297,34 @@ function scheduledReport(c: ScheduledReportContext, branding?: EmailBranding): R
 function deploymentCompleted(c: DeploymentCompletedContext, branding?: EmailBranding): RenderedEmail {
   const failed = c.outcome === 'failed';
   const withErrors = c.outcome === 'completed_with_errors';
-  const modeLabel = c.mode === 'dry_run' ? 'What-If' : 'Execute';
+  const whatIf = c.mode === 'dry_run';
+  // A What-If sends nothing to Teams, and a live run with nothing to send changed nothing: neither is a deployment that completed.
+  const nothingSent = !whatIf && !failed && !withErrors && c.applied === 0;
+  const runName = whatIf ? 'What-If' : 'Deployment';
+  const runPhrase = whatIf ? 'What-If run' : 'deployment';
   const failureWord = c.failed === 1 ? 'failure' : 'failures';
 
+  const doneLine = nothingSent ? `Nothing to deploy — ${c.siteName}` : `${runName} complete — ${c.siteName}`;
   const subject = failed
-    ? `Deployment failed — ${c.siteName}`
+    ? `${runName} failed — ${c.siteName}`
     : withErrors
-      ? `Deployment completed with ${c.failed} ${failureWord} — ${c.siteName}`
-      : `Deployment complete — ${c.siteName}`;
+      ? `${runName} completed with ${c.failed} ${failureWord} — ${c.siteName}`
+      : doneLine;
 
   const summaryLine = `applied:${c.applied}  whatif:${c.whatif}  skipped:${c.skipped}  failed:${c.failed}`;
 
   const intro = [
     failed
-      ? `The ${modeLabel} deployment you ran for ${c.siteName} (${c.sitecode}) at ${c.customerName} did not finish.`
-      : `The ${modeLabel} deployment you ran for ${c.siteName} (${c.sitecode}) at ${c.customerName} has completed${
-          withErrors ? `, but ${c.failed} ${failureWord} to ${c.total} planned change${c.total === 1 ? '' : 's'} failed` : ''
-        }.`,
+      ? `The ${runPhrase} you ran for ${c.siteName} (${c.sitecode}) at ${c.customerName} did not finish.`
+      : nothingSent
+        ? `The deployment you ran for ${c.siteName} (${c.sitecode}) at ${c.customerName} had nothing to send, so nothing was changed in Teams.`
+        : `The ${runPhrase} you ran for ${c.siteName} (${c.sitecode}) at ${c.customerName} has completed${
+            withErrors ? `, but ${c.failed} ${failureWord} to ${c.total} planned change${c.total === 1 ? '' : 's'} failed` : ''
+          }.`,
     `${c.total} change${c.total === 1 ? '' : 's'} processed · ran for ${c.durationText}.`,
   ];
+  if (whatIf) intro.push('Nothing was sent to Teams.');
+  else if (!failed && c.applied > 0) intro.push('Voxshift now reads these changes back from Teams, which takes about a minute. Run history shows the result.');
   if (failed && c.errorMessage) intro.push(c.errorMessage);
 
   const outro: string[] = [];
@@ -327,14 +336,14 @@ function deploymentCompleted(c: DeploymentCompletedContext, branding?: EmailBran
 
   const layout: LayoutInput = {
     previewText: failed
-      ? `Deployment for ${c.siteName} did not finish.`
-      : `Deployment for ${c.siteName}: ${summaryLine}.`,
-    eyebrow: 'Deployment',
+      ? `${runName} for ${c.siteName} did not finish.`
+      : `${runName} for ${c.siteName}: ${summaryLine}.`,
+    eyebrow: runName,
     heading: failed
-      ? `Deployment did not finish — ${c.siteName}`
+      ? `${runName} did not finish — ${c.siteName}`
       : withErrors
         ? `Completed with ${c.failed} ${failureWord} — ${c.siteName}`
-        : `Deployment complete — ${c.siteName}`,
+        : doneLine,
     intro,
     callout: failed ? undefined : { label: 'Result', value: summaryLine },
     cta: { label: 'Open Deployment', url: c.runUrl },
