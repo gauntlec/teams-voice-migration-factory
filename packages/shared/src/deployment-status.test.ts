@@ -30,9 +30,9 @@ describe('a run on the deployment screen', () => {
   });
 
   it('only calls a live run complete once Teams has confirmed it', () => {
-    expect(runMessage(run({ verification: verified }), now)).toMatchObject({ tone: 'success', title: 'Deployment complete', detail: '6 changes applied and confirmed in Teams (1 of 1 account matches).' });
+    expect(runMessage(run({ verification: verified }), now)).toMatchObject({ tone: 'success', title: 'Deployment complete', detail: '6 changes applied and confirmed in Teams (1 of 1 checked matches).' });
     const differs = { ...verified, matched: 0, differing: [{ objectType: 'user' as const, objectId: 'a', upn: 'a', differences: ['x'] }] };
-    expect(runMessage(run({ verification: differs }), now)).toMatchObject({ tone: 'warning', title: 'Deployed, but 1 account still differs in Teams' });
+    expect(runMessage(run({ verification: differs }), now)).toMatchObject({ tone: 'warning', title: 'Deployed, but 1 item still differs in Teams' });
     expect(runMessage(run({ verification: { status: 'skipped', checkedAt: ago(0), reason: 'Why.' } }), now)).toMatchObject({ tone: 'warning', title: 'Deployed, but not confirmed in Teams', detail: '6 changes applied. Why.' });
   });
 

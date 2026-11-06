@@ -1,5 +1,5 @@
 import { sql } from 'kysely';
-import { planIdentityRows, planResourceAccountRows, resolveLiveNumberTypes, type PlannedIdentityRow } from '@tvmf/db';
+import { planIdentityRows, planResourceAccountRows, previewSiteChanges, resolveLiveNumberTypes, type PlannedIdentityRow } from '@tvmf/db';
 import { NOTHING_CHANGED_REASON } from '@tvmf/shared';
 import {
   identityBeforeState,
@@ -16,7 +16,7 @@ import {
   type LiveIdentityState,
   type PickupGroupSettings,
 } from '@tvmf/shared';
-import { emptyProgress, runTargetedUserSync, type Scoped } from './discovery/run';
+import { emptyProgress, runTargetedUserSync, runTargetedVoiceAppSync, type Scoped } from './discovery/run';
 import type { TeamsExecutor } from './teams/executor';
 
 // Planning a site's rows against live state is shared with the API (Service
@@ -40,11 +40,25 @@ export const VERIFY_MAX_ACCOUNTS = 200;
 const IDENTITY_TYPES = ['user', 'cap', 'resource_account'] as const;
 type IdentityType = (typeof IDENTITY_TYPES)[number];
 
+/** Call queues and auto attendants re-read per run. Each is a round trip or two; the rest are counted as not re-checked. */
+export const VERIFY_MAX_VOICE_APPS = 100;
+
+const VOICE_APP_TYPES = ['call_queue', 'auto_attendant'] as const;
+type VoiceAppType = (typeof VOICE_APP_TYPES)[number];
+
+/** What's still planned for a queue or attendant that was read back, in words. */
+function voiceAppDifferences(row: { calls: { cmdlet: string; deferred?: boolean }[]; warnings: string[] }): string[] {
+  const named = row.warnings.filter((w) => w.startsWith('Differs from the live'));
+  if (named.length) return named;
+  const cmdlets = [...new Set(row.calls.filter((c) => !c.deferred).map((c) => c.cmdlet))];
+  return cmdlets.length ? [`Differs from the design: deploying again would run ${cmdlets.join(', ')}`] : [];
+}
+
 /**
- * After a live deployment run: re-read exactly the users, CAPs and resource
- * accounts it touched from Teams (a targeted Discovery check, the same one
- * Design & Build's Validate uses), then re-plan those rows against the fresh
- * state. A design that landed plans zero calls; anything still planned is
+ * After a live deployment run: re-read exactly the users, CAPs, resource
+ * accounts, call queues and auto attendants it touched from Teams (a targeted
+ * Discovery check, the same one Design & Build's Validate uses), then re-plan
+ * those rows against the fresh state. A design that landed plans zero calls; anything still planned is
  * listed as still different. The verdict is saved on deployments.verification
  * and returned. Never throws for a Teams problem - that becomes a 'failed'
  * verdict, and the deployment itself is unaffected either way.
@@ -82,12 +96,15 @@ export async function verifyDeployment(
       touched[c.object_type as IdentityType].add(c.object_id);
     }
   }
-  const touchedCount = IDENTITY_TYPES.reduce((n, t) => n + touched[t].size, 0);
+  const touchedApps: Record<VoiceAppType, Set<string>> = { call_queue: new Set(), auto_attendant: new Set() };
+  for (const c of changes) {
+    if ((c.result === 'applied' || c.result === 'failed') && c.object_id && (VOICE_APP_TYPES as readonly string[]).includes(c.object_type)) {
+      touchedApps[c.object_type as VoiceAppType].add(c.object_id);
+    }
+  }
+  const touchedCount = IDENTITY_TYPES.reduce((n, t) => n + touched[t].size, 0) + VOICE_APP_TYPES.reduce((n, t) => n + touchedApps[t].size, 0);
   if (touchedCount === 0) {
-    return stop(
-      'skipped',
-      "This run only changed Call Queues, Auto Attendants or Shared Calling policies - those aren't re-checked automatically. Re-run Discovery to see them.",
-    );
+    return stop('skipped', "This run only changed Shared Calling policies - those aren't re-checked automatically. Re-run Discovery to see them.");
   }
   const unverifiableSettings = changes.filter((c) => c.result === 'applied' && UNVERIFIABLE_CMDLETS.has(c.cmdlet)).length;
 
@@ -105,7 +122,19 @@ export async function verifyDeployment(
     ...ras.map((r) => ({ ...r, objectType: 'resource_account' as const })),
   ];
   const toCheck = accounts.slice(0, VERIFY_MAX_ACCOUNTS);
-  const notChecked = accounts.length - toCheck.length;
+  // Queues first: an attendant's transfers are compared with the queues' ids, so they should be read before it's judged.
+  const appRows = await Promise.all(
+    (['call_queue', 'auto_attendant'] as const).map(async (objectType) => {
+      const ids = [...touchedApps[objectType]];
+      if (!ids.length) return [];
+      const table = objectType === 'call_queue' ? 'build_call_queues' : 'build_auto_attendants';
+      const rows = await s.selectFrom(table).select(['id', 'name']).where('id', 'in', ids).execute();
+      return rows.map((r) => ({ ...r, objectType }));
+    }),
+  );
+  const apps = appRows.flat();
+  const appsToCheck = apps.slice(0, VERIFY_MAX_VOICE_APPS);
+  const notChecked = accounts.length - toCheck.length + apps.length - appsToCheck.length;
   const upns = [...new Set(toCheck.map((a) => a.upn.toLowerCase()))];
 
   // Take the customer's one discovery-run-in-flight slot
@@ -119,7 +148,7 @@ export async function verifyDeployment(
       kind: 'targeted',
       started_by: args.operatorUserId,
       started_at: new Date().toISOString(),
-      scope_types: ['user'],
+      scope_types: [...(toCheck.length ? (['user'] as const) : []), ...new Set(appsToCheck.map((a) => a.objectType))],
     })
     .returning('id')
     .executeTakeFirst()
@@ -142,7 +171,8 @@ export async function verifyDeployment(
   const progress = emptyProgress();
   try {
     if (args.delayMs) await new Promise((r) => setTimeout(r, args.delayMs));
-    await runTargetedUserSync(s, exec, run.id, upns, progress);
+    if (upns.length) await runTargetedUserSync(s, exec, run.id, upns, progress);
+    if (appsToCheck.length) await runTargetedVoiceAppSync(s, exec, run.id, appsToCheck, progress);
     progress.step = null;
     await s
       .updateTable('tenant_discovery_runs')
@@ -190,12 +220,30 @@ export async function verifyDeployment(
     if (differences.length) differing.push({ objectType: row.objectType, objectId: row.id, upn: row.upn, differences });
   }
 
+  // Queues and attendants: the same question, is anything still planned now the plan can see what Teams has?
+  if (appsToCheck.length) {
+    const seenApps = new Set(
+      (await s.selectFrom('tenant_objects').select(sql<string>`lower(display_name)`.as('name')).where('last_seen_run_id', '=', run.id).where('object_type', 'in', [...VOICE_APP_TYPES]).execute()).map((r) => r.name),
+    );
+    const replanned = await previewSiteChanges(s, { siteId: args.siteId, sheets: ['call_queues', 'auto_attendants'], rowIds: appsToCheck.map((a) => a.id) } as never);
+    for (const app of appsToCheck) {
+      const row = replanned.find((r) => r.rowId === app.id);
+      let differences: string[];
+      if (!seenApps.has(app.name.toLowerCase())) {
+        const err = progress.errors.find((e) => e.message.toLowerCase().startsWith(`${app.name.toLowerCase()}:`));
+        differences = [err ? `Could not be re-read from Teams: ${err.message.slice(app.name.length + 1).trim()}` : 'Not found in Teams when re-checked'];
+      } else differences = row ? voiceAppDifferences(row) : [];
+      if (differences.length) differing.push({ objectType: app.objectType, objectId: app.id, upn: app.name, differences });
+    }
+  }
+
+  const checked = planned.length + appsToCheck.length;
   return save({
     status: 'verified',
     checkedAt: new Date().toISOString(),
     discoveryRunId: run.id,
-    checked: planned.length,
-    matched: planned.length - differing.length,
+    checked,
+    matched: checked - differing.length,
     differing,
     notChecked,
     unverifiableSettings,

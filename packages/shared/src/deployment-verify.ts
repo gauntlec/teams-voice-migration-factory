@@ -83,8 +83,8 @@ export function lineUriToNumber(lineUri: string | null | undefined): string | nu
 export const UNVERIFIABLE_CMDLETS: ReadonlySet<string> = new Set(['Set-CsUserCallingSettings', 'New-CsUserCallingDelegate']);
 
 export interface DeploymentVerificationRow {
-  objectType: 'user' | 'cap' | 'resource_account';
-  /** build_users / build_caps / build_resource_accounts id */
+  objectType: 'user' | 'cap' | 'resource_account' | 'call_queue' | 'auto_attendant';
+  /** build_users / build_caps / build_resource_accounts / build_call_queues / build_auto_attendants id */
   objectId: string;
   upn: string;
   /** one plain-English line per thing that still differs */

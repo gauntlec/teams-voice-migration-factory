@@ -393,7 +393,7 @@ export function CallQueueWizard({
               value={answers.noAgentsApplyTo}
               onChange={(_, d) => setAnswers((a) => ({ ...a, noAgentsApplyTo: d.value as typeof a.noAgentsApplyTo }))}
             >
-              {CALL_QUEUE_NO_AGENT_APPLY_TO.map((v) => (
+              {(['AllCalls', 'NewCalls'] as const).map((v) => (
                 <Radio key={v} value={v} label={APPLY_TO_LABELS[v]} />
               ))}
             </RadioGroup>
