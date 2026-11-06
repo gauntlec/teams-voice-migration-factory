@@ -41,6 +41,11 @@ describe('a run on the deployment screen', () => {
     expect(runMessage(run({ summary: {}, verification: { status: 'skipped', checkedAt: ago(0), reason: NOTHING_CHANGED_REASON } }), now)).toMatchObject({ tone: 'info', title: 'Nothing to deploy' });
   });
 
+  it('says when something was left out, rather than calling it complete', () => {
+    expect(runMessage(run({ summary: { applied: 12, skipped: 1 }, verification: verified }), now)).toMatchObject({ tone: 'warning', title: 'Deployed, but 1 left out' });
+    expect(runMessage(run({ summary: { applied: 0, skipped: 1 } }), now)).toMatchObject({ tone: 'warning', title: 'Nothing deployed: 1 left out' });
+  });
+
   it('reports failures ahead of anything else', () => {
     expect(runMessage(run({ summary: { applied: 5, failed: 1 }, verification: verified }), now)).toMatchObject({ tone: 'error', title: 'Deployment finished with 1 failed' });
     expect(runMessage(run({ status: 'failed' }), now)).toMatchObject({ tone: 'error', title: 'The deployment did not finish' });

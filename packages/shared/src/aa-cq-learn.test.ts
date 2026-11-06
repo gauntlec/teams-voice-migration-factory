@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { liveAutoAttendantToStructured, parseLiveCallTarget, parseLiveMenuOption, parseLiveSchedule } from './aa-live-parse';
 import {
+  autoAttendantDeployBlockers,
   autoAttendantRowWarnings,
   callQueueRowWarnings,
   normalizeFixedRange,
@@ -367,5 +368,68 @@ describe('Auto Attendant update path (Set-CsAutoAttendant -Instance)', () => {
   it('still uses -EnableVoiceResponse, the real parameter, when creating', () => {
     const [call] = planAutoAttendantRow(aaRow({ voice_response_enabled: true }), new Map(), new Map(), users);
     expect(call!.parameters.EnableVoiceResponse).toBe(true);
+  });
+});
+
+// Glasgow, 6 Nov 2026: AA-UK-PTD649-MainNumber's menu keys all rendered as DisconnectCall because its call queues weren't in Teams yet.
+describe('a menu option transferring to a call queue that is not in Teams yet', () => {
+  const QUEUE = 'd6259b72-6bd6-4c85-b959-b7cf5fe7749a';
+  const names = new Map([[`call_queue:${QUEUE}`, 'UK-Glasgow-MainNumberPurchasing']]);
+  const toQueue = { dtmf: 'Tone1' as const, action: 'TransferCallToTarget' as const, target: { kind: 'call_queue' as const, buildId: QUEUE } };
+  const row = aaRow({ operator: null, default_call_flow: flow([toQueue]) });
+  const optionOf = (call: CmdletInvocation) => steps(call).find((s) => s.cmdlet === 'New-CsAutoAttendantMenuOption')!;
+  const entityOf = (call: CmdletInvocation) => steps(call).find((s) => s.cmdlet === 'New-CsAutoAttendantCallableEntity')!;
+
+  it('still shows the transfer, looking the queue up by its exact name', () => {
+    const [call] = planAutoAttendantRow(row, new Map(), new Map(), users, undefined, names);
+    expect(optionOf(call!).parameters.Action).toBe('TransferCallToTarget');
+    const text = renderCommand(call!);
+    expect(text).toContain("$cq1 = Get-CsCallQueue -NameFilter 'UK-Glasgow-MainNumberPurchasing' | Where-Object { $_.Name -eq 'UK-Glasgow-MainNumberPurchasing' }");
+    expect(text).toMatch(/New-CsAutoAttendantCallableEntity -Type 'ConfigurationEndpoint' -Identity \$cq1\.Identity/);
+    expect(text).not.toContain('DisconnectCall');
+  });
+
+  it('uses the queue id once it is live, as Microsoft Learn documents for a nested call queue', () => {
+    const [call] = planAutoAttendantRow(row, new Map([[`call_queue:${QUEUE}`, 'live-id']]), new Map(), users, undefined, names);
+    expect(entityOf(call!).parameters).toEqual({ Type: 'ConfigurationEndpoint', Identity: 'live-id' });
+    expect(optionOf(call!).parameters).toMatchObject({ Action: 'TransferCallToTarget', DtmfResponse: 'Tone1' });
+    expect(renderCommand(call!)).not.toContain('Get-CsCallQueue');
+  });
+
+  it('keeps the attendant out of a live run, naming the queue, until it is in Teams', () => {
+    expect(autoAttendantDeployBlockers(row, new Map(), users, names)).toEqual(["Business hours key Tone1 transfers to Call Queue UK-Glasgow-MainNumberPurchasing, which isn't in Teams yet"]);
+    expect(autoAttendantDeployBlockers(row, new Map([[`call_queue:${QUEUE}`, 'live-id']]), users, names)).toEqual([]);
+    expect(autoAttendantRowWarnings(row, new Map(), new Map(), users, names).join(' ')).toMatch(/leaves this Auto Attendant out/);
+  });
+
+  it('also keeps it out for other targets Teams cannot be told about, in the flows that would be sent', () => {
+    const shared = { dtmf: 'Automatic' as const, action: 'TransferCallToTarget' as const, target: { kind: 'shared_voicemail' as const } };
+    const schedule = { type: 'weekly' as const, weekly: { monday: [{ start: '09:00', end: '17:00' }] } };
+    const noSchedule = aaRow({ operator: null, default_call_flow: flow([]), after_hours_call_flow: flow([shared]), schedule: null });
+    expect(autoAttendantDeployBlockers(noSchedule, new Map(), users)).toEqual([]);
+    expect(autoAttendantDeployBlockers({ ...noSchedule, schedule } as never, new Map(), users)).toEqual(["After hours key Automatic targets Shared Voicemail, but its M365 group ID isn't set yet"]);
+    const [shown] = planAutoAttendantRow({ ...noSchedule, schedule } as never, new Map(), new Map(), users);
+    expect(renderCommand(shown!)).toContain("-Type 'SharedVoicemail' -Identity '<M365 group ID not set>'");
+    expect(renderCommand(shown!)).not.toMatch(/-Action 'DisconnectCall' -DtmfResponse 'Automatic'.*After/);
+    const person = aaRow({ operator: null, default_call_flow: flow([{ dtmf: 'Tone1', action: 'TransferCallToTarget', target: { kind: 'user', upn: 'nobody@contoso.test' } }]) });
+    expect(autoAttendantDeployBlockers(person, new Map(), new Map()).join(' ')).toMatch(/nobody@contoso\.test/);
+  });
+});
+
+// Glasgow, 6 Nov 2026: Teams refused the queue with "Language ID must be present for text to speech prompt".
+describe('a call queue with a spoken message', () => {
+  const cq = (over: Partial<BuildCallQueueRow>): BuildCallQueueRow =>
+    ({ id: 'q1', name: 'Sales', routing_method: 'RoundRobin', agent_alert_time: 20, presence_based_routing: true, agents: [], overflow: null, timeout: null, no_agent_action: null, no_agent_apply_to: null, language_id: null, resource_accounts: [], authorized_users: null, hide_authorized_users: null, voicemail_triage_template_id: null, ...over }) as BuildCallQueueRow;
+  it('sends its language', () => {
+    const [call] = planCallQueueRow(cq({ language_id: 'en-GB', overflow: { action: 'DisconnectWithBusy', threshold: 2, redirectPrompt: 'We are unable to take your call.' } }), new Map(), new Map());
+    expect(call!.parameters).toMatchObject({ LanguageId: 'en-GB', OverflowDisconnectTextToSpeechPrompt: 'We are unable to take your call.' });
+  });
+  it('leaves it out with no spoken message or shared voicemail', () => {
+    const [call] = planCallQueueRow(cq({ language_id: 'en-GB', overflow: { action: 'DisconnectWithBusy', threshold: 2 } }), new Map(), new Map());
+    expect(call!.parameters.LanguageId).toBeUndefined();
+  });
+  it('warns when there is a spoken message but no language', () => {
+    const warnings = callQueueRowWarnings(cq({ language_id: null, timeout: { action: 'Disconnect', threshold: 60, redirectPrompt: 'Goodbye.' } }), new Map(), new Map());
+    expect(warnings.join(' ')).toMatch(/no language is set/);
   });
 });

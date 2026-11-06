@@ -30,6 +30,7 @@ import {
 } from '@tvmf/shared';
 import {
   buildAutoAttendantCrossRef,
+  buildAutoAttendantTargetNames,
   resolveAutoAttendantDeepContext,
   resolveLiveAutoAttendantState,
   resolveLiveCallQueueState,
@@ -340,11 +341,12 @@ export async function previewSiteChanges(s: Scoped, query: DeploymentPreviewQuer
     // GUID) - an AA can have several resource accounts, or none yet,
     // exactly like a Call Queue.
     const raIds = [...new Set(rows.flatMap((r) => (r.resource_accounts as string[] | null) ?? []))];
-    const [ras, crossRef] = await Promise.all([
+    const [ras, crossRef, targetNames] = await Promise.all([
       raIds.length
         ? s.selectFrom('build_resource_accounts').select(['id', 'upn']).where('id', 'in', raIds).execute()
         : Promise.resolve([]),
       buildAutoAttendantCrossRef(s, query.siteId),
+      buildAutoAttendantTargetNames(s, query.siteId),
     ]);
     const liveIdentity = await resolveLiveIdentityState(s, ras.map((r) => r.upn));
     const raObjectIds = new Map<string, string>();
@@ -381,8 +383,8 @@ export async function previewSiteChanges(s: Scoped, query: DeploymentPreviewQuer
 
     for (const planRow of planRows) {
       const live: AutoAttendantLiveState | undefined = liveAutoAttendants.get(planRow.id);
-      const calls = planAutoAttendantRow(planRow, crossRef, raObjectIds, userObjectIds, live);
-      const warnings = autoAttendantRowWarnings(planRow, crossRef, raObjectIds, userObjectIds);
+      const calls = planAutoAttendantRow(planRow, crossRef, raObjectIds, userObjectIds, live, targetNames);
+      const warnings = autoAttendantRowWarnings(planRow, crossRef, raObjectIds, userObjectIds, targetNames);
       // say why a live auto attendant is being changed, so a row that looks unchanged to the engineer is not a mystery
       if (live && calls.length > 0) {
         const diffs = autoAttendantDifferences(planRow, live, crossRef, userObjectIds);

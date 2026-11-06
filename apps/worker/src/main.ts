@@ -5,6 +5,7 @@ import IORedis from 'ioredis';
 import { sql } from 'kysely';
 import {
   buildAutoAttendantCrossRef,
+  buildAutoAttendantTargetNames,
   audioImportMap,
   computeSiteDrift,
   createDb,
@@ -20,6 +21,8 @@ import {
   collectAutoAttendantUserUpns,
   collectCallQueueTargetUpns,
   orderAutoAttendantRowsByDependency,
+  autoAttendantDeployBlockers,
+  collectAutoAttendantVoiceAppRefs,
   planAutoAttendantRow,
   planCallQueueRow,
   planSharedCallingPolicyRow,
@@ -958,8 +961,24 @@ async function handleDeploymentRun(job: Job) {
     const userLiveIdentity = await resolveLiveIdentityState(scoped, collectAutoAttendantUserUpns(planRows));
     const userObjectIds = new Map<string, string>();
     for (const [upn, v] of userLiveIdentity) if (v.objectId) userObjectIds.set(upn, v.objectId);
+    const targetNames = await buildAutoAttendantTargetNames(scoped, scope.siteId);
+    const sendsToTeams = !whatIf && !teamsReadOnly;
     for (const planRow of planRows) {
-      const calls = planAutoAttendantRow(planRow, crossRef!, raObjectIds, userObjectIds, liveAutoAttendants.get(planRow.id));
+      if (sendsToTeams) {
+        // Discovery may not have seen a queue deployed since its last read: ask Teams before deciding it isn't there.
+        for (const ref of collectAutoAttendantVoiceAppRefs(planRow)) {
+          const key = `${ref.kind}:${ref.buildId}`;
+          const name = targetNames.get(key);
+          if (!crossRef!.has(key) && name) await refreshCrossRefEntry(crossRef!, ref.kind, ref.buildId, name);
+        }
+        // A key press must not end up dropping the caller because its target isn't ready. Leave the attendant out and say why.
+        const blockers = autoAttendantDeployBlockers(planRow, crossRef!, userObjectIds, targetNames);
+        if (blockers.length) {
+          await recordNotDeployed({ objectType: 'auto_attendant', id: planRow.id, upn: planRow.name }, `Not deployed, so callers aren't disconnected: ${blockers.join('; ')}.`);
+          continue;
+        }
+      }
+      const calls = planAutoAttendantRow(planRow, crossRef!, raObjectIds, userObjectIds, liveAutoAttendants.get(planRow.id), targetNames);
       let created = false;
       for (const call of calls) {
         const result = await runCall(call);

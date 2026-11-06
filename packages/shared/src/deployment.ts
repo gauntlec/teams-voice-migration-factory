@@ -75,6 +75,8 @@ export interface PreambleCallStep {
   assignTo: string;
   cmdlet: string;
   parameters: Record<string, unknown>;
+  /** Only for a Get- lookup by -NameFilter: keep just the object with exactly this name. */
+  exactName?: string;
 }
 
 /**
@@ -95,6 +97,9 @@ export interface PreambleAssignStep {
 }
 
 export type PreambleStep = PreambleCallStep | PreambleAssignStep;
+
+/** Get-CsCallQueue/Get-CsAutoAttendant -NameFilter matches part of a name, so an exact match is one more fixed filter on the same name. */
+const exactNameFilter = (name: string) => ` | Where-Object { $_.Name -eq ${psQuote(name)} }`;
 
 /**
  * Sentinel: reference an earlier PreambleStep's result by variable name,
@@ -262,7 +267,7 @@ export function renderStatement(cmdlet: string, parameters: Record<string, unkno
 export function renderPreambleStep(step: PreambleStep): string {
   return step.kind === 'assign'
     ? `$${step.target}.${step.property} = ${renderValue(step.value) ?? '$null'}`
-    : `$${step.assignTo} = ${renderStatement(step.cmdlet, step.parameters)}`;
+    : `$${step.assignTo} = ${renderStatement(step.cmdlet, step.parameters)}${step.exactName ? exactNameFilter(step.exactName) : ''}`;
 }
 
 /**
@@ -992,6 +997,16 @@ function sameTarget(a: string | undefined, b: string | undefined): boolean {
  * time; surfacing it here means the gap is visible in the preview instead of
  * as a failed cmdlet.
  */
+/**
+ * Whether New-CsCallQueue/Set-CsCallQueue need -LanguageId. Teams rejects a text-to-speech prompt without one ("Language ID must be present
+ * for text to speech prompt", seen on 6 Nov 2026 on a disconnect prompt), as well as a SharedVoicemail action (Microsoft Learn).
+ */
+function callQueueNeedsLanguage(row: Pick<BuildCallQueueRow, 'overflow' | 'timeout' | 'no_agent_action'>): boolean {
+  return ([row.overflow, row.timeout, row.no_agent_action] as (CallQueueActionSettings | null | undefined)[]).some(
+    (a) => a?.action === 'SharedVoicemail' || (!!a?.redirectPrompt?.trim() && !!callQueuePromptStem('Overflow', a.action)),
+  );
+}
+
 export function callQueueRowWarnings(
   row: Pick<BuildCallQueueRow, 'agents' | 'resource_accounts' | 'overflow' | 'timeout' | 'no_agent_action' | 'language_id' | 'authorized_users' | 'hide_authorized_users'>,
   agentObjectIds: Map<string, string>,
@@ -1010,12 +1025,9 @@ export function callQueueRowWarnings(
       `${unresolvedRas.length} linked resource account(s) have no live Application Instance yet (New-CsOnlineApplicationInstance not run), so this queue won't get a phone number until that's done.`,
     );
   }
-  const needsLanguage =
-    row.overflow?.action === 'SharedVoicemail' ||
-    row.timeout?.action === 'SharedVoicemail' ||
-    row.no_agent_action?.action === 'SharedVoicemail';
+  const needsLanguage = callQueueNeedsLanguage(row);
   if (needsLanguage && !row.language_id) {
-    warnings.push('A SharedVoicemail action is configured but no language is set, so this queue will fail to deploy until one is chosen.');
+    warnings.push('A SharedVoicemail action or a spoken message is configured but no language is set, so this queue will fail to deploy until one is chosen.');
   }
   // Each action's target rules - see resolveCallQueueActionTarget.
   const checkTarget = (settings: CallQueueActionSettings | null | undefined, where: string) => {
@@ -1066,10 +1078,7 @@ export function planCallQueueRow(
   const users = row.agents
     .map((upn) => agentObjectIds.get(upn.toLowerCase()))
     .filter((id): id is string => !!id);
-  const needsLanguage =
-    row.overflow?.action === 'SharedVoicemail' ||
-    row.timeout?.action === 'SharedVoicemail' ||
-    row.no_agent_action?.action === 'SharedVoicemail';
+  const needsLanguage = callQueueNeedsLanguage(row);
 
   // A Forward/Voicemail target picked via the Design & Build editor's
   // UpnAutocomplete is stored as the person's plain UPN, not their Entra
@@ -1357,6 +1366,12 @@ export interface AutoAttendantLiveState {
  */
 export type AutoAttendantCrossRef = Map<string, string>;
 
+/**
+ * The same keys as AutoAttendantCrossRef -> the name of every same-site Auto Attendant/Call Queue, live or not. A transfer to one that isn't
+ * in Teams yet is planned as a lookup by this name, so the commands show where the call goes (see buildCallableEntity).
+ */
+export type AutoAttendantTargetNames = Map<string, string>;
+
 function crossRefKey(kind: 'auto_attendant' | 'call_queue', buildId: string): string {
   return `${kind}:${buildId}`;
 }
@@ -1499,6 +1514,7 @@ export function autoAttendantRowWarnings(
   crossRef: AutoAttendantCrossRef,
   raObjectIds: Map<string, string>,
   userObjectIds: Map<string, string>,
+  targetNames: AutoAttendantTargetNames = new Map(),
 ): string[] {
   const warnings: string[] = [];
   const unresolvedRas = row.resource_accounts.filter((id) => !raObjectIds.has(id));
@@ -1516,26 +1532,8 @@ export function autoAttendantRowWarnings(
   }
   const unresolved: string[] = [];
   const check = (entity: AutoAttendantCallableEntity | undefined, where: string) => {
-    if (!entity) return;
-    if ((entity.kind === 'auto_attendant' || entity.kind === 'call_queue') && !entity.liveId && (!entity.buildId || !crossRef.has(crossRefKey(entity.kind, entity.buildId)))) {
-      unresolved.push(`${where} targets an Auto Attendant/Call Queue that doesn't resolve live yet`);
-    }
-    if (entity.kind === 'user') {
-      if (!entity.upn) unresolved.push(`${where} has no UPN set for its user target`);
-      else if (!userObjectIds.has(entity.upn.toLowerCase())) unresolved.push(`${where} targets a user (${entity.upn}) that doesn't resolve to a live Entra identity yet`);
-    }
-    // Plain Voicemail has no deployable cmdlet form at all (Microsoft's own
-    // -Type enum has no "Voicemail" entry) and buildCallableEntity always
-    // returns undefined for it, falling back to DisconnectCall - warn every
-    // time, there's no fixing this one from data. Shared Voicemail now
-    // deploys correctly once groupId is set (see buildCallableEntity); only
-    // warn while it's still missing.
-    if (entity.kind === 'voicemail') {
-      unresolved.push(`${where} targets plain Voicemail, which has no deployable cmdlet form - it will disconnect the call instead of deploying`);
-    }
-    if (entity.kind === 'shared_voicemail' && !entity.groupId) {
-      unresolved.push(`${where} targets Shared Voicemail, but its M365 group ID isn't set yet - it will disconnect the call instead of deploying`);
-    }
+    const problem = entity && callableEntityProblem(entity, crossRef, userObjectIds, targetNames);
+    if (problem) unresolved.push(`${where} ${problem}`);
   };
   check(row.operator ?? undefined, 'Operator');
   const checkFlow = (cf: AutoAttendantCallFlow | null | undefined, label: string) => {
@@ -1555,6 +1553,9 @@ export function autoAttendantRowWarnings(
   checkFlow(row.after_hours_call_flow, 'After hours');
   for (const h of row.holiday_call_flows) checkFlow(h.callFlow, h.name);
   if (unresolved.length) warnings.push(...unresolved);
+  if (autoAttendantDeployBlockers(row, crossRef, userObjectIds, targetNames).length) {
+    warnings.push("A live deployment leaves this Auto Attendant out until its transfer targets are ready, rather than disconnect those callers. A queue or attendant in the same run counts as ready.");
+  }
   // Same "after hours only deploys with both a flow and a schedule" rule as planAutoAttendantRow.
   if (row.after_hours_call_flow && row.schedule) warnings.push(...scheduleProblems(row.schedule, 'After-hours schedule'));
   for (const h of row.holiday_call_flows) warnings.push(...scheduleProblems(h.schedule, `Holiday "${h.name}"`));
@@ -1562,10 +1563,68 @@ export function autoAttendantRowWarnings(
   return warnings;
 }
 
+/**
+ * Why a transfer can't reach this target (a phrase following where it is used), or null when it can. A same-site Auto Attendant/Call Queue
+ * not in Teams yet, a person not found there, or Shared Voicemail with no group: the design says where the call goes, but Teams can't be told.
+ */
+function callableEntityProblem(entity: AutoAttendantCallableEntity, crossRef: AutoAttendantCrossRef, userObjectIds: Map<string, string>, targetNames: AutoAttendantTargetNames): string | null {
+  switch (entity.kind) {
+    case 'auto_attendant':
+    case 'call_queue': {
+      if (entity.liveId && !entity.buildId) return null;
+      if (entity.buildId && crossRef.has(crossRefKey(entity.kind, entity.buildId))) return null;
+      const label = entity.kind === 'call_queue' ? 'Call Queue' : 'Auto Attendant';
+      const name = entity.buildId ? targetNames.get(crossRefKey(entity.kind, entity.buildId)) : undefined;
+      return name ? `transfers to ${label} ${name}, which isn't in Teams yet` : `transfers to a ${label} that isn't in Teams yet`;
+    }
+    case 'user':
+      if (!entity.upn) return 'has no UPN set for its user target';
+      return userObjectIds.has(entity.upn.toLowerCase()) ? null : `targets a user (${entity.upn}) that doesn't resolve to a live Entra identity yet`;
+    case 'external':
+      return entity.number ? null : 'has no phone number set for its external target';
+    case 'voicemail':
+      // Microsoft's -Type enum has no "Voicemail" entry and -Identity is mandatory, so this can't be sent at all. Use Shared Voicemail.
+      return 'targets plain Voicemail, which Teams has no command for: choose Shared Voicemail instead';
+    case 'shared_voicemail':
+      return entity.groupId ? null : "targets Shared Voicemail, but its M365 group ID isn't set yet";
+  }
+}
+
+/**
+ * Why a live deployment must leave this Auto Attendant out. Sending it anyway would make a working key press drop the caller: a menu option
+ * has to have a -CallTarget to transfer (Microsoft Learn), and the only other choice is a different action from the one designed. Only what
+ * would be sent counts, so an after-hours flow with no schedule doesn't.
+ */
+export function autoAttendantDeployBlockers(
+  row: Pick<BuildAutoAttendantRow, 'operator' | 'default_call_flow' | 'after_hours_call_flow' | 'schedule' | 'holiday_call_flows'>,
+  crossRef: AutoAttendantCrossRef,
+  userObjectIds: Map<string, string>,
+  targetNames: AutoAttendantTargetNames = new Map(),
+): string[] {
+  const out: string[] = [];
+  const check = (entity: AutoAttendantCallableEntity | undefined, where: string) => {
+    if (!entity) {
+      out.push(`${where} has no transfer target set`);
+      return;
+    }
+    const problem = callableEntityProblem(entity, crossRef, userObjectIds, targetNames);
+    if (problem) out.push(`${where} ${problem}`);
+  };
+  const checkFlow = (cf: AutoAttendantCallFlow | null | undefined, label: string) => {
+    for (const opt of cf?.menu.options ?? []) if (opt.action === 'TransferCallToTarget') check(opt.target, `${label} key ${opt.dtmf}`);
+  };
+  if (row.operator) check(row.operator, 'The operator');
+  checkFlow(row.default_call_flow, 'Business hours');
+  if (row.schedule) checkFlow(row.after_hours_call_flow, 'After hours');
+  for (const h of row.holiday_call_flows) checkFlow(h.callFlow, h.name);
+  return out;
+}
+
 /** Accumulates one AA row's preamble steps plus its own per-prefix variable-name counters - passed through every builder below instead of module state, so nothing leaks across calls. */
 interface AaBuildCtx {
   steps: PreambleStep[];
   counters: Record<string, number>;
+  targetNames: AutoAttendantTargetNames;
 }
 function nextAaVar(ctx: AaBuildCtx, prefix: string): string {
   ctx.counters[prefix] = (ctx.counters[prefix] ?? 0) + 1;
@@ -1582,7 +1641,7 @@ function nextAaVar(ctx: AaBuildCtx, prefix: string): string {
  */
 function buildCallableEntity(ctx: AaBuildCtx, entity: AutoAttendantCallableEntity, crossRef: AutoAttendantCrossRef, userObjectIds: Map<string, string>): VarRef | undefined {
   let type: string;
-  let identity: string | undefined;
+  let identity: string | VarRef | undefined;
   switch (entity.kind) {
     case 'auto_attendant':
     case 'call_queue':
@@ -1593,6 +1652,16 @@ function buildCallableEntity(ctx: AaBuildCtx, entity: AutoAttendantCallableEntit
       // separate New-CsOnlineApplicationInstanceAssociation step below).
       type = 'ConfigurationEndpoint';
       identity = entity.buildId ? crossRef.get(crossRefKey(entity.kind, entity.buildId)) : entity.liveId || undefined;
+      if (!identity && entity.buildId) {
+        // Not in Teams yet (it deploys first in the same run, or hasn't been deployed): the commands still show the transfer, looking the
+        // target up by name when they run. A live run never gets here with one missing - see autoAttendantDeployBlockers.
+        const name = ctx.targetNames.get(crossRefKey(entity.kind, entity.buildId));
+        if (name) {
+          const lookup = nextAaVar(ctx, entity.kind === 'call_queue' ? 'cq' : 'aa');
+          ctx.steps.push({ assignTo: lookup, cmdlet: entity.kind === 'call_queue' ? 'Get-CsCallQueue' : 'Get-CsAutoAttendant', parameters: { NameFilter: name }, exactName: name });
+          identity = { $var: lookup, prop: 'Identity' };
+        }
+      }
       if (!identity) return undefined;
       break;
     case 'user':
@@ -1601,7 +1670,7 @@ function buildCallableEntity(ctx: AaBuildCtx, entity: AutoAttendantCallableEntit
       // resolves via Get-CsOnlineUser), not the raw UPN - mirrors how
       // planCallQueueRow already resolves agent UPNs via agentObjectIds.
       type = 'User';
-      identity = entity.upn ? userObjectIds.get(entity.upn.toLowerCase()) : undefined;
+      identity = entity.upn ? userObjectIds.get(entity.upn.toLowerCase()) ?? `<${entity.upn}: not found in Teams>` : undefined;
       if (!identity) return undefined;
       break;
     case 'external':
@@ -1629,9 +1698,9 @@ function buildCallableEntity(ctx: AaBuildCtx, entity: AutoAttendantCallableEntit
       // search yet, matching the bug's own accepted scope). Falls back to
       // the same "skip, don't guess" behavior as every other unresolved
       // target when it isn't set yet.
+      // Shown as not set rather than as a different action; a live run leaves the row out (autoAttendantDeployBlockers).
       type = 'SharedVoicemail';
-      identity = entity.groupId;
-      if (!identity) return undefined;
+      identity = entity.groupId || '<M365 group ID not set>';
       break;
   }
   const varName = nextAaVar(ctx, 'ce');
@@ -1643,9 +1712,10 @@ function buildCallableEntity(ctx: AaBuildCtx, entity: AutoAttendantCallableEntit
  * New-CsAutoAttendantMenuOption. Per Microsoft Learn only TransferCallToTarget
  * takes a -CallTarget and only Announcement takes a -Prompt;
  * TransferCallToOperator and DisconnectCall take neither (operator routing
- * uses the AA's own -Operator). A TransferCallToTarget whose target didn't
- * resolve, or an Announcement with no text, falls back to DisconnectCall
- * rather than guess - autoAttendantRowWarnings surfaces both.
+ * uses the AA's own -Operator). An Announcement with no text falls back to
+ * DisconnectCall, and so does a TransferCallToTarget with no way of naming
+ * its target, in the preview and What-If only: autoAttendantRowWarnings says
+ * so, and autoAttendantDeployBlockers keeps such a transfer from going live.
  */
 function buildMenuOption(ctx: AaBuildCtx, opt: AutoAttendantMenuOption, crossRef: AutoAttendantCrossRef, userObjectIds: Map<string, string>): VarRef {
   let parameters: Record<string, unknown> = { Action: 'DisconnectCall', DtmfResponse: opt.dtmf };
@@ -2061,6 +2131,7 @@ export function planAutoAttendantRow(
   raObjectIds: Map<string, string>,
   userObjectIds: Map<string, string>,
   live?: AutoAttendantLiveState,
+  targetNames: AutoAttendantTargetNames = new Map(),
 ): CmdletInvocation[] {
   const calls: CmdletInvocation[] = [];
   if (!row.default_call_flow) return calls;
@@ -2075,7 +2146,7 @@ export function planAutoAttendantRow(
   if (!live && (!row.language_id || !row.time_zone_id)) return calls;
 
   if (!live || !autoAttendantMatchesLive(row, live, crossRef, userObjectIds)) {
-    const ctx: AaBuildCtx = { steps: [], counters: {} };
+    const ctx: AaBuildCtx = { steps: [], counters: {}, targetNames };
 
     const defaultFlowRef = buildCallFlow(ctx, row.default_call_flow, `${row.name} - Business hours`, crossRef, userObjectIds);
     const otherFlowRefs: VarRef[] = [];
