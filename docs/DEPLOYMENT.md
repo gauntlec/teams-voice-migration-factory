@@ -337,6 +337,8 @@ unit-tested); data: `packages/db/src/drift.ts`.
 - A user's or common area phone's voicemail and calling-settings commands are planned whenever Discovery has not read those
   settings yet (`voicemail_enabled` / `calling_settings` null), so they are not evidence of drift (`driftEvidence`); only
   commands for settings Discovery has read count. `DriftRow.cmdlets` lists the evidence.
+- **What differs:** each planned command carries `differences`: the setting, the design's value and Teams' value, written by the comparison that planned it (`CmdletInvocation.differences` in `deployment.ts`), so the report can't disagree with what would be sent. The Drift tab shows them as a table for every kind of row, and Planned changes names them for a call queue or auto attendant. A value of "Not read yet" means Discovery hasn't read that setting. If the planner can't name a setting, the tab says so.
+- **Check before acting:** drift means the two differ as Voxshift reads them. It's usually someone changing Teams, but a value Voxshift misreads looks the same (Glasgow's four queues in November 2026 were a misread `NoAgentApplyTo`), and Accept into design would copy a misread value into the design.
 - **When it is worked out:** after every completed Discovery sync, for every site with a live run (the worker,
   `discovery/run.ts`), saved in `deployment_drift`; after every live deployment run for its site; and when the Drift tab opens
   (`GET /t/:id/deployments/drift?siteId=`). The Deployment sites list shows the saved count.

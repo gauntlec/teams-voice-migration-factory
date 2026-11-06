@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link as RouterLink, useParams, useSearchParams } from 'react-router';
 import {
@@ -273,6 +273,41 @@ const OBJECT_TYPE_LABEL: Record<DeploymentPreviewRow['objectType'], string> = {
 const GROUP_ORDER: DeploymentPreviewRow['objectType'][] = ['user', 'cap', 'resource_account', 'shared_calling_policy', 'call_queue', 'auto_attendant'];
 
 const GROUP_BY_KEY = 'tvmf.deployment.groupBy';
+
+const DIFFERENCE_TEXT_MAX = 160;
+/** A drifted row's settings, with the design's value and Teams' value, so an engineer can judge it before accepting or putting back. */
+function DriftDifferences({ row }: { row: DriftRow }) {
+  const items = row.differences ?? [];
+  const value = (v: string) => (
+    <Text size={200} title={v.length > DIFFERENCE_TEXT_MAX ? v : undefined} style={{ overflowWrap: 'anywhere' }}>
+      {v.length > DIFFERENCE_TEXT_MAX ? `${v.slice(0, DIFFERENCE_TEXT_MAX)}…` : v}
+    </Text>
+  );
+  if (!items.length) {
+    return (
+      <Text size={200}>
+        Voxshift would send {row.cmdlets.join(', ') || 'a command'}, but can't name the setting. Check the command on Planned changes before accepting or putting this back.
+      </Text>
+    );
+  }
+  return (
+    <div style={{ display: 'grid', gap: 4 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1fr) minmax(0, 1.2fr) minmax(0, 1.2fr)', columnGap: 12, rowGap: 4 }}>
+        <Text size={100} weight="semibold">Setting</Text>
+        <Text size={100} weight="semibold">In the design</Text>
+        <Text size={100} weight="semibold">In Teams</Text>
+        {items.map((d) => (
+          <Fragment key={d.setting}>
+            <Text size={200} weight="semibold">{d.setting}</Text>
+            {value(d.design)}
+            {value(d.teams)}
+          </Fragment>
+        ))}
+      </div>
+      <Text size={100}>Put back runs {row.cmdlets.join(', ')}.</Text>
+    </div>
+  );
+}
 
 export function DeploymentSiteWorkspace() {
   const ls = useLocalStyles();
@@ -866,9 +901,9 @@ export function DeploymentSiteWorkspace() {
             Drift
           </Text>
           <Text size={200} className={s.muted}>
-            Rows that were deployed and have not been edited since, but no longer match Teams - someone changed them in Teams Admin
-            Center or PowerShell. This is worked out from the last Discovery sync, so run one first for an up-to-date answer.
-            Accept into design keeps the change: the design takes what Teams has now. Put back selects the row on Planned changes,
+            Rows that were deployed and have not been edited since, but don't match what Discovery last read from Teams. This is usually
+            someone changing them in Teams Admin Center or PowerShell, so check the values first, and run a Discovery sync for an up-to-date answer.
+            Accept into design makes the design take the value shown for Teams. Put back selects the row on Planned changes,
             where What-If and Deploy apply the design again. A number change that was rejected on Validation issues is listed here as
             kept as in Teams: the design has one number and Teams another on purpose, and a deployment leaves it.
           </Text>
@@ -893,7 +928,7 @@ export function DeploymentSiteWorkspace() {
                   </Button>
                 </div>
               )}
-              <DataTable size="small" minWidth={820}>
+              <DataTable size="small" minWidth={1040}>
                 <TableHeader>
                   <TableRow>
                     <TableHeaderCell>Name</TableHeaderCell>
@@ -920,8 +955,8 @@ export function DeploymentSiteWorkspace() {
                         )}
                       </TableCell>
                       <TableCell>{OBJECT_TYPE_LABEL[r.objectType]}</TableCell>
-                      <TableCell style={r.state === 'kept' ? { whiteSpace: 'normal', overflow: 'visible', textOverflow: 'clip', maxWidth: 'none', minWidth: 320 } : undefined}>
-                        {r.state === 'kept' ? r.note : r.cmdlets.join(', ')}
+                      <TableCell style={{ whiteSpace: 'normal', overflow: 'visible', textOverflow: 'clip', maxWidth: 'none', minWidth: 480 }}>
+                        {r.state === 'kept' ? r.note : <DriftDifferences row={r} />}
                       </TableCell>
                       <TableCell>{r.lastDeployedAt ? new Date(r.lastDeployedAt).toLocaleString() : '—'}</TableCell>
                       <TableCell>
@@ -948,7 +983,7 @@ export function DeploymentSiteWorkspace() {
                 </TableBody>
               </DataTable>
               <Text size={200} className={s.muted}>
-                Checked {new Date(drift.data.computedAt).toLocaleString()}.
+                Compared with what Discovery last read from Teams{drift.data.lastSyncAt ? ` (full sync ${new Date(drift.data.lastSyncAt).toLocaleString()})` : ''}. Checked {new Date(drift.data.computedAt).toLocaleString()}.
               </Text>
             </>
           )}

@@ -127,7 +127,7 @@ describe('linking voice apps that already exist', () => {
     flow.menu.options = flow.menu.options.map(({ target: _t, ...o }) => o);
     await c.s.updateTable('build_auto_attendants').set({ default_call_flow: flow as never }).where('id', '=', row.id).execute();
     const before = await deploy.previewChanges(c.t, { siteId: site, sheets: ['auto_attendants'] } as never);
-    expect(before.find((r) => r.upn === 'Far')?.warnings.join(' ')).toMatch(/business hours call flow/);
+    expect(before.find((r) => r.upn === 'Far')?.warnings.join(' ')).toMatch(/business hours: no key pressed \(design Transfer to None, live Transfer to Far Queue\)/);
 
     await build.refreshVoiceAppFromLive(c.t, engineer, 'auto_attendant', row.id);
     const after = await deploy.previewChanges(c.t, { siteId: site, sheets: ['auto_attendants'] } as never);

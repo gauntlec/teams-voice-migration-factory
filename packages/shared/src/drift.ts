@@ -8,6 +8,8 @@
 /** `drift`: live changed after the deployment. `awaiting_sync`: deployed, but no sync has read the tenant since. */
 export type DriftState = 'drift' | 'awaiting_sync';
 
+import type { SettingDifference } from './deployment';
+
 /** One row's latest live run, from its deployment_changes rows. */
 export interface RowDeploymentHistory {
   /** When the row's latest live run with at least one applied command and no failed one last touched it. */
@@ -49,8 +51,10 @@ export interface DriftRow {
   state: DriftRowState;
   /** `kept` rows: what differs, in words. */
   note?: string;
-  /** The cmdlets that would put it back, e.g. Set-CsCallQueue - what differs, in Teams' own words. */
+  /** The commands that would put it back, e.g. Set-CsCallQueue. */
   cmdlets: string[];
+  /** Each setting that differs, with the design's value and Teams' value. Empty if the planner can't name one. */
+  differences?: SettingDifference[];
   lastDeployedAt: string;
 }
 
@@ -61,6 +65,8 @@ export interface SiteDriftSummary {
   /** number changes the engineer rejected: design and Teams differ on purpose */
   kept: number;
   computedAt: string;
+  /** When Discovery last read the whole tenant, which is what the comparison is against. */
+  lastSyncAt?: string | null;
   rows: DriftRow[];
 }
 

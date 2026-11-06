@@ -1,5 +1,6 @@
 import {
   autoAttendantDifferences,
+  formatDifference,
   autoAttendantRowWarnings,
   callQueueRowWarnings,
   collectAutoAttendantUserUpns,
@@ -319,6 +320,9 @@ export async function previewSiteChanges(s: Scoped, query: DeploymentPreviewQuer
       const live: CallQueueLiveState | undefined = liveQueues.get(row.id);
       const calls = planCallQueueRow(planRow, agentObjectIds, raObjectIds, live, audio);
       const warnings = callQueueRowWarnings(planRow, agentObjectIds, raObjectIds);
+      // say why a live queue is being changed, as an auto attendant does
+      const named = calls.flatMap((c) => c.differences ?? []);
+      if (named.length > 0) warnings.push(`Differs from the live call queue: ${named.map(formatDifference).join('; ')}.`);
       if (calls.length === 0 && warnings.length === 0) continue;
       out.push({
         rowId: row.id,
@@ -387,7 +391,7 @@ export async function previewSiteChanges(s: Scoped, query: DeploymentPreviewQuer
       const warnings = autoAttendantRowWarnings(planRow, crossRef, raObjectIds, userObjectIds, targetNames, live);
       // say why a live auto attendant is being changed, so a row that looks unchanged to the engineer is not a mystery
       if (live && calls.length > 0) {
-        const diffs = autoAttendantDifferences(planRow, live, crossRef, userObjectIds);
+        const diffs = autoAttendantDifferences(planRow, live, crossRef, userObjectIds, targetNames);
         if (diffs.length > 0) warnings.push(`Differs from the live auto attendant: ${diffs.join('; ')}.`);
       }
       if (calls.length === 0 && warnings.length === 0) continue;

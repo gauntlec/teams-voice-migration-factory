@@ -6,6 +6,7 @@ import {
   type DeploymentPreviewRow,
   type DriftRow,
   type RowDeploymentHistory,
+  type SettingDifference,
   type SiteDriftSummary,
 } from '@tvmf/shared';
 import { resolveLiveIdentityState, type Scoped } from './live-state';
@@ -110,11 +111,20 @@ async function rowUpdatedAt(s: Scoped, rows: DeploymentPreviewRow[]): Promise<Ma
   return out;
 }
 
+/** What the planner said differs, for the commands that count as evidence. A setting reached by two commands is listed once. */
+function rowDifferences(row: DeploymentPreviewRow, evidence: string[]): SettingDifference[] {
+  const seen = new Set<string>();
+  return row.calls
+    .filter((c) => !c.byDefault && evidence.includes(c.cmdlet))
+    .flatMap((c) => c.differences ?? [])
+    .filter((d) => !seen.has(d.setting) && !!seen.add(d.setting));
+}
+
 /** Works out a site's drift from the stored live state and saves it (deployment_drift), replacing the last check. */
 export async function computeSiteDrift(s: Scoped, siteId: string, runId: string | null = null): Promise<SiteDriftSummary> {
   const preview = await previewSiteChanges(s, { siteId, sheets: [...DEPLOYMENT_SHEETS] });
   const evidence = await annotateDrift(s, preview);
-  const history = await rowDeploymentHistory(s, preview.filter((r) => r.drift).map((r) => r.rowId));
+  const [history, lastSyncAt] = await Promise.all([rowDeploymentHistory(s, preview.filter((r) => r.drift).map((r) => r.rowId)), lastCompletedSyncAt(s)]);
   const rows: DriftRow[] = preview
     .filter((r) => r.drift)
     .map((r) => ({
@@ -123,6 +133,7 @@ export async function computeSiteDrift(s: Scoped, siteId: string, runId: string 
       name: r.upn,
       state: r.drift!,
       cmdlets: evidence.get(r.rowId) ?? [],
+      differences: rowDifferences(r, evidence.get(r.rowId) ?? []),
       lastDeployedAt: history.get(r.rowId)?.lastCleanAt ?? '',
     }));
   // Number changes the engineer rejected: design and Teams differ on purpose, so they are listed here (not counted as drift).
@@ -150,6 +161,7 @@ export async function computeSiteDrift(s: Scoped, siteId: string, runId: string 
     awaitingSync: rows.filter((r) => r.state === 'awaiting_sync').length,
     kept: rows.filter((r) => r.state === 'kept').length,
     computedAt: new Date().toISOString(),
+    lastSyncAt,
     rows,
   };
   await s
