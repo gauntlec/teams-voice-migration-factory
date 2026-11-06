@@ -768,6 +768,8 @@ export interface DiscoveryUsersTable {
   caller_id: 'user' | 'anonymous' | 'main_number' | null;
   voicemail_enabled: ColumnType<boolean, boolean | undefined, boolean>;
   voicemail_language: string | null;
+  /** 0091: what happens to unanswered calls, copied to build_users by Populate. NULL = the default (see VOICEMAIL_UNANSWERED_DEFAULT). */
+  call_forwarding: ColumnType<import('@tvmf/shared').CallForwardingSettings | null, import('@tvmf/shared').CallForwardingSettings | null | undefined, import('@tvmf/shared').CallForwardingSettings | null>;
   requires_handset: ColumnType<boolean, boolean | undefined, boolean>;
   handset_model: string | null;
   access_port_id: string | null;

@@ -477,6 +477,7 @@ export function SiteWorkspace() {
               // Culture codes only - Teams rejects a plain name like "English".
               choices: VOICEMAIL_PROMPT_LANGUAGES.map((l) => ({ value: l.code, label: `${l.label} (${l.code})` })),
             },
+            { key: 'call_forwarding', label: 'If a call is unanswered', type: 'unanswered', voicemailKey: 'voicemail_enabled', full: true },
             { key: 'requires_handset', label: 'Requires a physical handset', type: 'boolean' },
             { key: 'handset_model', label: 'Handset model' },
             { key: 'access_port_id', label: 'Access port ID' },

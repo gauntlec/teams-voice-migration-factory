@@ -1008,6 +1008,7 @@ export class TelephonyService {
           caller_id: nz(i.caller_id),
           voicemail_enabled: i.voicemail_enabled ?? true,
           voicemail_language: nz(i.voicemail_language),
+          call_forwarding: i.call_forwarding ?? null,
           requires_handset: i.requires_handset ?? false,
           handset_model: nz(i.handset_model),
           access_port_id: nz(i.access_port_id),
@@ -1055,6 +1056,7 @@ export class TelephonyService {
     ] as const) {
       if (k in patch) set[k] = typeof patch[k] === 'boolean' ? patch[k] : nz(patch[k] as string);
     }
+    if ('call_forwarding' in patch) set.call_forwarding = patch.call_forwarding ?? null;
     // a changed UPN re-resolves the Discovery link
     if ('upn' in patch) set.tenant_user_id = await this.tenantUserIdFor(t, patch.upn);
     if ('site_id' in patch) set.site_id = await this.resolveHolderSite(t, patch.site_id);

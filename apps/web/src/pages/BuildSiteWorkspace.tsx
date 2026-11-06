@@ -691,7 +691,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
             },
             { key: 'validation', label: 'Validation', render: (r) => <ValidationBadge v={r.validation as BuildRowValidation | null} /> },
           ]}
-          fields={identityFields(policyFields, numberChoicesFor)}
+          fields={identityFields(policyFields, numberChoicesFor, { unanswered: true })}
         />
       )}
 

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Dropdown, Field, Option, Spinner, Text, tokens , makeStyles, shorthands } from '@fluentui/react-components';
 import { DeleteRegular } from '@fluentui/react-icons';
-import { BUSY_ON_BUSY_OPTIONS, CALL_FORWARDING_TYPES, CALL_GROUP_ORDERS, CALL_TARGET_TYPES, type CallDelegate, type CallForwardingSettings, type PickupGroupSettings } from '@tvmf/shared';
+import { UNANSWERED_DELAYS, BUSY_ON_BUSY_OPTIONS, CALL_FORWARDING_TYPES, CALL_GROUP_ORDERS, CALL_TARGET_TYPES, type CallDelegate, type CallForwardingSettings, type PickupGroupSettings } from '@tvmf/shared';
 import { api, ApiError } from '../../api';
 import { UpnAutocomplete } from '../../components/UpnAutocomplete';
 import { type Choice, type Row } from '../../components/records';
@@ -133,8 +133,6 @@ export function CallingPolicyMapDialog({
 
 /** unset = no cmdlet planned at all; off = explicitly disabled (Set-...-Enabled $false); on = configured. */
 type TriState = 'unset' | 'off' | 'on';
-
-const UNANSWERED_DELAYS = [5, 10, 15, 20, 30, 40, 50, 60];
 
 export function CallingSettingsDialog({
   tenantId,
@@ -297,7 +295,9 @@ export function CallingSettingsDialog({
               <div>
                 <Text weight="semibold">Unanswered calls</Text>
                 <div className={ls.flexWrapItemsEndGap8Mt6}>
-                  <Field label="Status">{triStateDropdown(unaMode, setUnaMode)}</Field>
+                  <Field label="Status" hint={unaMode === 'unset' ? 'Not set: a user with voicemail on goes to voicemail after 20 seconds.' : undefined}>
+                    {triStateDropdown(unaMode, setUnaMode)}
+                  </Field>
                   {unaMode === 'on' && (
                     <>
                       <Field label="Ring for">

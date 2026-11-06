@@ -117,6 +117,34 @@ export function forwardingMatchesLive(design: NonNullable<CallForwardingSettings
   return !!live && live.enabled && live.type === design.type && live.targetType === design.targetType && (design.targetType !== 'SingleTarget' || same(plainTarget(live.target), plainTarget(design.target)));
 }
 
+/** The ring times Teams offers before an unanswered call moves on. */
+export const UNANSWERED_DELAYS = [5, 10, 15, 20, 30, 40, 50, 60] as const;
+
+type UnansweredSetting = NonNullable<CallForwardingSettings['unanswered']>;
+
+/**
+ * Teams leaves a user's unanswered calls with nowhere to go ("If unanswered: Do nothing"), even with voicemail on, so a caller never reaches
+ * it. Voxshift's default is Microsoft's documented one: voicemail after 20 seconds (Set-CsUserCallingSettings, Learn's Example 10).
+ */
+export const VOICEMAIL_UNANSWERED_DEFAULT = { enabled: true, delaySeconds: 20, targetType: 'Voicemail' } as const satisfies UnansweredSetting;
+
+/** What applies when nothing has been chosen for a user. */
+export function defaultUnanswered(voicemailOn: boolean): UnansweredSetting {
+  return voicemailOn ? VOICEMAIL_UNANSWERED_DEFAULT : { enabled: false };
+}
+
+const sameUnanswered = (a: UnansweredSetting, b: UnansweredSetting) =>
+  a.enabled === b.enabled && (!a.enabled || ((a.delaySeconds ?? 20) === (b.delaySeconds ?? 20) && a.targetType === b.targetType && (a.target ?? '') === (b.target ?? '')));
+
+/**
+ * A row's call forwarding with this choice for unanswered calls. Choosing what the default already gives stores nothing, so the row
+ * keeps following voicemail being turned on or off; anything else is stored as that row's own choice.
+ */
+export function setUnansweredChoice(settings: CallForwardingSettings, next: UnansweredSetting, voicemailOn: boolean): CallForwardingSettings {
+  const { unanswered: _old, ...rest } = settings;
+  return sameUnanswered(next, defaultUnanswered(voicemailOn)) ? rest : { ...rest, unanswered: next };
+}
+
 export function unansweredMatchesLive(design: NonNullable<CallForwardingSettings['unanswered']>, live: CallForwardingSettings['unanswered'] | undefined): boolean {
   if (!design.enabled) return live ? live.enabled === false : true;
   return (

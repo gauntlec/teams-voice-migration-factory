@@ -76,6 +76,7 @@ export function callingSettingsSummary(r: Row): string {
   const bits: string[] = [];
   if (cf?.forwarding?.enabled) bits.push('Forwarding');
   if (cf?.unanswered?.enabled) bits.push('Unanswered');
+  else if (!cf?.unanswered && (r.voicemail as { enabled?: boolean | null } | null)?.enabled === true) bits.push('Voicemail after 20s');
   if (cf?.busyOnBusy) bits.push('Busy on busy');
   if (pg?.targets?.length) bits.push('Pickup group');
   if (delegates.length) bits.push(`${delegates.length} delegate${delegates.length === 1 ? '' : 's'}`);

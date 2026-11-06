@@ -1,4 +1,4 @@
-import { delegateMatchesLive, forwardingMatchesLive, pickupGroupMatchesLive, unansweredMatchesLive } from './calling-settings';
+import { VOICEMAIL_UNANSWERED_DEFAULT, delegateMatchesLive, forwardingMatchesLive, pickupGroupMatchesLive, unansweredMatchesLive } from './calling-settings';
 import {
   AA_CALLABLE_ENTITY_KINDS,
   AA_DIRECTORY_SEARCH_METHODS,
@@ -163,6 +163,8 @@ export interface CmdletInvocation {
   parameters: Record<string, unknown>;
   objectType: string;
   objectId?: string;
+  /** Planned because of a Voxshift default, not anything designed for this row, so it doesn't count as drift. */
+  byDefault?: boolean;
   /**
    * True for a cmdlet that must never run live - e.g. New-CsOnlineApplicationInstance,
    * which always needs a manual licensing step (a role a Teams Administrator
@@ -506,9 +508,15 @@ export function planIdentityRow(
       objectId: row.id,
     });
   }
-  if (row.call_forwarding?.unanswered && !(liveCalling && unansweredMatchesLive(row.call_forwarding.unanswered, liveCalling.callForwarding.unanswered))) {
-    const u = row.call_forwarding.unanswered;
+  // A user with voicemail on and no choice of their own gets the default, unless Teams already has an active rule for them: someone
+  // chose that, and a default mustn't overwrite it. It isn't a difference from the design, so it never counts as drift (byDefault).
+  const designedUnanswered = row.call_forwarding?.unanswered;
+  const liveUnanswered = liveCalling?.callForwarding?.unanswered;
+  const unansweredByDefault = !designedUnanswered && objectType === 'user' && row.voicemail?.enabled === true && !liveUnanswered?.enabled;
+  const u: CallForwardingSettings['unanswered'] = designedUnanswered ?? (unansweredByDefault ? VOICEMAIL_UNANSWERED_DEFAULT : undefined);
+  if (u && !(liveCalling && unansweredMatchesLive(u, liveUnanswered))) {
     calls.push({
+      ...(unansweredByDefault ? { byDefault: true } : {}),
       cmdlet: 'Set-CsUserCallingSettings',
       parameters: {
         Identity: identity,
@@ -517,7 +525,7 @@ export function planIdentityRow(
           ? {
               UnansweredDelay: toHms(u.delaySeconds ?? 20),
               UnansweredTargetType: u.targetType,
-              UnansweredTarget: u.target,
+              ...(u.target ? { UnansweredTarget: u.target } : {}),
             }
           : {}),
       },
