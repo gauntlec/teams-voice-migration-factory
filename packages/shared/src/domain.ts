@@ -485,7 +485,11 @@ export const CALL_QUEUE_OVERFLOW_ACTIONS = ['DisconnectWithBusy', 'Forward', 'Vo
 export const CALL_QUEUE_TIMEOUT_ACTIONS = ['Disconnect', 'Forward', 'Voicemail', 'SharedVoicemail'] as const;
 /** NoAgentAction fires when zero agents are opted in - distinct from Overflow (queue full) and Timeout (waited too long). */
 export const CALL_QUEUE_NO_AGENT_ACTIONS = ['Queue', 'Disconnect', 'Forward', 'Voicemail', 'SharedVoicemail'] as const;
-export const CALL_QUEUE_NO_AGENT_APPLY_TO = ['AllCalls', 'NewCalls'] as const;
+/**
+ * Order matters: Get-CsCallQueue returns these as numbers, decoded by position (decodeCallQueueEnum). From MicrosoftTeams 8.0.0's own
+ * assembly (Microsoft.Rtc.Management.Hosted.HuntGroup.Models.NoAgentApplyTo): NewCalls=0, AllCalls=1. It had been the other way round.
+ */
+export const CALL_QUEUE_NO_AGENT_APPLY_TO = ['NewCalls', 'AllCalls'] as const;
 
 export const GREETING_TYPES = ['None', 'Text', 'AudioFile'] as const;
 

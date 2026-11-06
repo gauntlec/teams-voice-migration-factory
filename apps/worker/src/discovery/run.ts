@@ -1395,6 +1395,73 @@ export async function runTargetedUserSync(
   progress.note = null;
 }
 
+/**
+ * Reads these call queues and auto attendants back from Teams by name, plus each auto attendant's schedules, into the same stored state a
+ * sync keeps: what a deployment's re-check compares with the design. There is no bulk form for "just these", and a sync would read every
+ * voice app of the tenant. Something not found just isn't marked seen, and one failing doesn't stop the others.
+ */
+export async function runTargetedVoiceAppSync(
+  s: Scoped,
+  exec: TeamsExecutor,
+  runId: string,
+  apps: { objectType: 'call_queue' | 'auto_attendant'; name: string }[],
+  progress: TenantDiscoveryProgress,
+) {
+  progress.step = 'voice_apps';
+  const specFor = (type: TenantObjectType) => STEP_CMDLETS.voice_apps.find((sp) => sp.objectType === type)!;
+  const save = async (type: TenantObjectType, spec: { key: (r: Rec) => string | null | undefined; name: (r: Rec) => string | null | undefined }, r: Rec) => {
+    const key = spec.key(r);
+    if (!key) return;
+    const prevRow = await s.selectFrom('tenant_objects').select(['data', 'display_name', 'removed_at']).where('object_type', '=', type).where('object_key', '=', key).executeTakeFirst();
+    const prev = prevRow ? { data: prevRow.data as Rec, display_name: prevRow.display_name, removed_at: prevRow.removed_at } : undefined;
+    const { id, change } = await upsertObject(s, runId, type, key, spec.name(r) ?? null, r, prev);
+    progress.counts[type] = (progress.counts[type] ?? 0) + 1;
+    if (!change) return;
+    progress.changed[change] += 1;
+    await s
+      .insertInto('tenant_object_versions')
+      .values({
+        object_id: id,
+        run_id: runId,
+        object_type: type,
+        object_key: key,
+        display_name: spec.name(r) ?? null,
+        change_kind: change,
+        changed_fields: change === 'updated' ? diffKeys(prev?.data ?? null, r) : [],
+        before: prev?.data ?? null,
+        after: r,
+        changed_at: new Date().toISOString(),
+      })
+      .execute();
+  };
+  const scheduleSpec = specFor('schedule');
+  for (const [i, app] of apps.entries()) {
+    const spec = specFor(app.objectType);
+    progress.note = `Checking ${app.name} (${i + 1}/${apps.length})…`;
+    await saveProgress(s, runId, progress);
+    try {
+      // -NameFilter matches part of a name, so keep only the exact one.
+      const recs = (await exec.query(spec.command, { NameFilter: app.name }, { select: spec.select, depth: spec.depth })) as Rec[];
+      const hit = recs.find((r) => r && typeof r === 'object' && typeof r.Name === 'string' && r.Name.toLowerCase() === app.name.toLowerCase());
+      if (!hit) continue;
+      await save(app.objectType, spec, hit);
+      // An auto attendant's hours and holidays are schedules of their own: without them it can't be compared with its design.
+      if (app.objectType === 'auto_attendant' && Array.isArray(hit.CallHandlingAssociations)) {
+        for (const a of hit.CallHandlingAssociations as Rec[]) {
+          if (typeof a?.ScheduleId !== 'string') continue;
+          const schedules = (await exec.query(scheduleSpec.command, { Id: a.ScheduleId }, { select: scheduleSpec.select, depth: scheduleSpec.depth })) as Rec[];
+          for (const sched of schedules) if (sched && typeof sched === 'object') await save('schedule', scheduleSpec, sched);
+        }
+      }
+    } catch (e) {
+      const message = (e as Error).message ?? String(e);
+      if (!exec.alive || /pwsh exited|could not start pwsh|executor disposed|not connected|session is disconnected/i.test(message)) throw e;
+      progress.errors.push({ step: 'voice_apps', message: `${app.name}: ${message}` });
+    }
+  }
+  progress.note = null;
+}
+
 /** A user with voice features: Enterprise Voice on, or a phone number. Everything else has no Teams voice settings worth reading. */
 const isVoiceEnabled = (u: { enterprise_voice_enabled: boolean | null; line_uri: string | null }) => u.enterprise_voice_enabled === true || !!u.line_uri;
 

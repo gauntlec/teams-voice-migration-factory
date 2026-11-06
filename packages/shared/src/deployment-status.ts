@@ -76,8 +76,8 @@ export function runMessage(r: DeploymentRunStatus, now = Date.now()): RunMessage
   const v = r.verification;
   if (v?.status === 'verified') {
     const differ = v.differing.length;
-    if (differ) return { tone: 'warning', title: `Deployed, but ${differ} account${differ === 1 ? '' : 's'} still differ${differ === 1 ? 's' : ''} in Teams`, detail: `${changes(applied)} applied. See Run history for what differs. Teams can take a few minutes to show a change.` };
-    return { tone: 'success', title: 'Deployment complete', detail: `${changes(applied)} applied and confirmed in Teams (${v.matched} of ${v.checked} account${v.checked === 1 ? ' matches' : 's match'}).` };
+    if (differ) return { tone: 'warning', title: `Deployed, but ${differ} ${differ === 1 ? 'item still differs' : 'items still differ'} in Teams`, detail: `${changes(applied)} applied. See Run history for what differs. Teams can take a few minutes to show a change.` };
+    return { tone: 'success', title: 'Deployment complete', detail: `${changes(applied)} applied and confirmed in Teams (${v.matched} of ${v.checked} checked ${v.checked === 1 ? 'matches' : 'match'}).` };
   }
   if (v?.status === 'skipped' || v?.status === 'failed') return { tone: 'warning', title: 'Deployed, but not confirmed in Teams', detail: `${changes(applied)} applied. ${v.reason}` };
   return { tone: 'warning', title: 'Deployed, but not confirmed in Teams', detail: `${changes(applied)} applied. Run Validate against tenant on this site to check them.` };

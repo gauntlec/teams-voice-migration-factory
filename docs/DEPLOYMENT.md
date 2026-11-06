@@ -214,6 +214,8 @@ column: "Verified: 48/50 match - 2 still differ", with the differing rows and
 what differs underneath. Teams can lag; if a difference looks wrong, run
 Validate against tenant later to re-check.
 
+Call queues and auto attendants a run changed are re-checked the same way: read back by exact name (`Get-CsCallQueue` / `Get-CsAutoAttendant -NameFilter`), with an auto attendant's schedules (`Get-CsOnlineSchedule -Id`), then re-planned against what Teams now has. Anything still planned is listed as a difference. Up to 100 are re-read per run. Shared Calling policies aren't re-checked: re-run Discovery to see them.
+
 A site's deployment page shows this as it happens, on every tab: a banner with what is running and how the last run ended (and a message when one finishes), and it refreshes the planned changes itself. Until a live run's changes have been read back, the plan still compares them with how Teams was before the run. So those rows are marked **checking Teams** and can't be selected, and the API refuses a second live run that includes them. If the re-check didn't happen, the rows are marked **sent, not confirmed** until Teams is next read, and can still be deployed.
 
 Also still available:

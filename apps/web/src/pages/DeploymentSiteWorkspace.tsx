@@ -179,7 +179,7 @@ function runStatusBadge(d: Deployment): { label: string; color: 'success' | 'dan
   return { label: d.status, color: 'informative' };
 }
 
-const VERIFY_OBJECT_LABEL: Record<string, string> = { user: 'User', cap: 'Common Area Phone', resource_account: 'Resource Account' };
+const VERIFY_OBJECT_LABEL: Record<string, string> = { user: 'User', cap: 'Common Area Phone', resource_account: 'Resource Account', call_queue: 'Call Queue', auto_attendant: 'Auto Attendant' };
 
 /**
  * The Run history's answer to "did it land?" for a live run: the one-line
