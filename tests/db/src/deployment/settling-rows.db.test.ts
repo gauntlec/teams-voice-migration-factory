@@ -21,9 +21,9 @@ const live = (rowIds?: string[]) => ({ connectionId, mode: 'execute' as const, s
 const whatIf = (rowIds: string[]) => ({ ...live(rowIds), mode: 'dry_run' as const });
 
 /** A live run that has finished sending this row, in whatever state of re-check. */
-async function sent(rowId: string, verification: unknown, finishedAt = new Date().toISOString()) {
+async function sent(rowId: string, verification: unknown, finishedAt = new Date().toISOString(), result: 'applied' | 'failed' = 'applied') {
   const dep = await c.s.insertInto('deployments').values({ connection_id: connectionId, mode: 'execute', scope: { siteId, sheets: ['users'], rowIds: [rowId] }, status: 'completed', created_by: engineer.id, summary: { applied: 1 }, finished_at: finishedAt, verification } as never).returning('id').executeTakeFirstOrThrow();
-  await c.s.insertInto('deployment_changes').values({ deployment_id: dep.id, seq: 1, operator_user_id: engineer.id, correlation_id: 'x', object_type: 'user', object_id: rowId, cmdlet: 'Set-CsPhoneNumberAssignment', parameters: {}, before: {}, after: {}, result: 'applied' } as never).execute();
+  await c.s.insertInto('deployment_changes').values({ deployment_id: dep.id, seq: 1, operator_user_id: engineer.id, correlation_id: 'x', object_type: 'user', object_id: rowId, cmdlet: 'Set-CsPhoneNumberAssignment', parameters: {}, before: {}, after: {}, result } as never).execute();
   return dep.id;
 }
 const activityOf = async (rowId: string) => (await svc.previewChanges(c.t, { siteId, sheets: ['users'] } as never)).find((r) => r.rowId === rowId)?.activity;
@@ -72,6 +72,12 @@ describe('rows just sent to Teams', () => {
     const run = await svc.createDeployment(c.t, engineer, live([jo]), can);
     await c.s.updateTable('deployments').set({ status: 'completed', verification: { status: 'verified' } } as never).where('id', '=', run.id).execute();
     await c.s.insertInto('tenant_discovery_runs').values({ connection_id: connectionId, status: 'completed', kind: 'sync', started_by: engineer.id, started_at: new Date().toISOString(), finished_at: new Date().toISOString() } as never).execute();
+    expect(await activityOf(jo)).toBeUndefined();
+    await c.s.updateTable('deployments').set({ verification: { status: 'verified' } } as never).where('id', '=', dep).execute();
+  });
+
+  it("aren't called sent when the change failed, as a call queue's did at Glasgow", async () => {
+    const dep = await sent(jo, { status: 'skipped', checkedAt: new Date().toISOString(), reason: 'Nothing was changed live, so there was nothing to check.' }, new Date(Date.now() + 120_000).toISOString(), 'failed');
     expect(await activityOf(jo)).toBeUndefined();
     await c.s.updateTable('deployments').set({ verification: { status: 'verified' } } as never).where('id', '=', dep).execute();
   });
