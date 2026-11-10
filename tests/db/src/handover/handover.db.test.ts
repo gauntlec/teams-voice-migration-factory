@@ -1,17 +1,19 @@
 // Service Handover documents what is deployed. A Design & Build row that
 // matches live Teams goes in the pack with the live values; one that doesn't
-// is listed under "Designed but Not Yet Live" with why. Drafts are for
+// is listed under "Deployment Issues" with why, with the open validation issues. Drafts are for
 // Voxshift staff only; customers see a pack once it's issued, without the
 // internal note, and the issued document must not still say DRAFT.
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import JSZip from 'jszip';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { AuditService } from '../../../../apps/api/src/common/audit.service';
+import { BuildValidationService } from '../../../../apps/api/src/modules/build/build-validation.service';
+import { BuildService } from '../../../../apps/api/src/modules/build/build.service';
 import { FilesService } from '../../../../apps/api/src/modules/files/files.service';
 import { VOX_TILE_PNG_BASE64 } from '../../../../apps/api/src/modules/deployment/assets/vox-tile';
 import { HandoverDocumentService } from '../../../../apps/api/src/modules/handover/handover-document.service';
 import { HandoverService } from '../../../../apps/api/src/modules/handover/handover.service';
-import { seedCustomer, seedNumbers, seedSite, seedUser, useDb, type TestCustomer } from '../helpers';
+import { seedCustomer, seedNumbers, seedSite, seedUser, unused, useDb, type TestCustomer } from '../helpers';
 
 const handle = useDb();
 let c: TestCustomer;
@@ -85,7 +87,9 @@ beforeAll(async () => {
     folderStats: async () => ({ files: 0, bytes: 0 }),
   };
   files = new FilesService(handle.db, storage);
-  svc = new HandoverService(handle.db, files, new HandoverDocumentService(), new AuditService(handle.db));
+  const audit = new AuditService(handle.db);
+  const build = new BuildService(handle.db, audit, new BuildValidationService(handle.db), unused('discovery'), unused('documentBuilder'), unused('files'));
+  svc = new HandoverService(handle.db, files, new HandoverDocumentService(), audit, undefined, build);
 });
 
 const docText = async (buf: Buffer) => (await (await JSZip.loadAsync(buf)).file('word/document.xml')!.async('string')).replace(/<[^>]+>/g, ' ');
@@ -122,15 +126,26 @@ describe('Service Handover', () => {
       ]),
     );
     expect(blocksOf('call_queues')).toEqual([{ kind: 'text', text: 'No call queues were created.' }]);
+    // Deployment Issues: what isn't live, then the open validation issues (Pat isn't in the tenant)
+    expect(blocksOf('not_yet_live').filter((b) => b.kind === 'heading').map((b) => (b as { title: string }).title)).toEqual(['Designed but Not Yet Live', 'Validation Issues']);
+    const issues = asRecords(tables('not_yet_live').find((t) => (t as { caption?: string }).caption === 'Validation Issues Table')!);
+    expect(issues).toEqual(expect.arrayContaining([expect.objectContaining({ Item: 'pat@contoso.test', Type: 'User', Site: 'LON01', Issue: 'Not in tenant (blocks deployment)' })]));
 
     const numberTables = tables('phone_numbers');
     const numbers = numberTables.filter((t) => t.columns[0] === 'Number').flatMap(asRecords);
     expect(numbers.find((n) => n.Number === '+442070000201')).toMatchObject({ Status: 'In use', 'Assigned to (in Teams)': 'Jo Bloggs (User)' });
     expect(numbers.find((n) => n.Number === '+442070000202')).toMatchObject({ Status: 'Spare' });
-    // the allocation summary under the number lists
-    expect(asRecords(numberTables.find((t) => t.caption === 'Number Allocations Table')!)).toEqual(
-      expect.arrayContaining([expect.objectContaining({ Allocation: 'Assigned to an object', Quantity: '1' }), expect.objectContaining({ Allocation: 'Spare', Quantity: '2' })]),
-    );
+    // the section opens with the site's ranges, then the allocation summary: always the same four rows
+    expect(numberTables[0]).toMatchObject({ caption: 'Number Ranges Table', rows: [['+442070000201 – +442070000203', 'New', '—', 'LON01', '3']] });
+    expect(blocksOf('phone_numbers')[1]).toEqual({ kind: 'text', text: 'A total of 3 x numbers in 1 x range were provided for this site:' });
+    expect(numberTables[1]!.caption).toBe('Number Allocations Table');
+    expect(asRecords(numberTables[1]!).map((r) => [r.Allocation, r.Quantity])).toEqual([
+      ['Assigned to an object', '1'],
+      ['Spare', '2'],
+      ['Parked', '0'],
+      ['Customer to cease', '0'],
+    ]);
+    expect(asRecords(numberTables[1]!)[2]!.Comments).toMatch(/^The carrier retains control of the number/);
 
     // the policies the live users have, from data rather than a note
     expect(tables('teams_configuration').find((t) => t.columns[0] === 'Voice Routing Policy')!.rows).toEqual([['VRP-UK']]);
@@ -306,7 +321,7 @@ describe('Service Handover', () => {
     const { sections } = await svc.get(c3.t, engineer, pack.id);
     const blocks = (sections.find((x) => x.key === 'auto_attendants')!.content as { blocks: Block[] }).blocks;
     expect(blocks.filter((b) => b.kind === 'heading')).toEqual([{ kind: 'heading', title: 'Call Flow Diagram' }]);
-    expect(blocks.filter((b) => b.kind === 'image')).toEqual([{ kind: 'image', fileId: main, title: 'Main Number', width: 1200, height: 500 }]);
+    expect(blocks.filter((b) => b.kind === 'image')).toEqual([{ kind: 'image', fileId: main, title: 'Main Number', width: 1200, height: 500, caption: 'Call Flow Diagram – Main Number' }]);
 
     const media = async (fileId: string) => Object.keys((await JSZip.loadAsync((await files.readBytes(c3.t, fileId)).data)).files).filter((f) => f.startsWith('word/media/')).length;
     const draftMedia = await media(pack.file_id!);

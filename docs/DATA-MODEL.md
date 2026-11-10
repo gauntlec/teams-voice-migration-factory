@@ -151,13 +151,18 @@ it). A row with nothing left to change is live and is printed with the values
 Teams has (number, voice routing and calling policy, voicemail) plus when
 Voxshift last changed it (`deployment_changes`, execute runs, applied) or
 "Already in place". Anything else - not created, not found, a different
-number or policy, calling still to be removed - goes in the **Designed but Not
-Yet Live** section with what differs. Voicemail is only known for accounts a
+number or policy, calling still to be removed - goes in the **Deployment
+Issues** section with what differs, followed by the site's open Design & Build
+validation issues (accept/reject records left out); with neither it says "No
+deployment issues were observed". The section is in issued packs too. Voicemail is only known for accounts a
 targeted check has read, so an unread value isn't treated as a difference
 (shown as "designed, not checked live"). Auto attendants and call queues count
 as live when Teams has one by that name; queues list their agents. Phone
-Numbers say who holds each number in Teams (`tenant_users.line_uri`): In use /
-Spare / Reserved / Parked. The cover says when Discovery last read Teams ("Checked
+Numbers open with the site's Number Ranges (range, transition, carrier, count)
+and Number Allocations (always Assigned, Spare, Parked and Customer to cease;
+Reserved only when used), then say who holds each number in Teams
+(`tenant_users.line_uri`): In use / Spare / Reserved / Parked. Call flow
+diagrams carry "Figure N" captions; each call queue is its own captioned table. The cover says when Discovery last read Teams ("Checked
 against Teams", also saved as `source.liveAsOf`), so re-run Discovery - or
 rely on a deployment's automatic re-check - before generating.
 
