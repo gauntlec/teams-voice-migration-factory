@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Badge, Button, Spinner, Tab, TabList, Text , makeStyles, shorthands, tokens } from '@fluentui/react-components';
 import { ArrowLeftRegular, ArrowUploadRegular, WarningRegular } from '@fluentui/react-icons';
-import { portDue, portStageText, CALLER_ID_OPTIONS, FLOW_KINDS, NETWORK_LOCATIONS, NETWORK_SCOPES, NETWORK_TYPES, NUMBER_RANGE_KINDS, RESOURCE_ACCOUNT_KINDS, VOICEMAIL_PROMPT_LANGUAGES, type AutoAttendantWizardAnswers, type CallQueueWizardAnswers, type Paginated, type TenantUserSummary } from '@tvmf/shared';
+import { portDue, portStageText, CALLER_ID_OPTIONS, FLOW_KINDS, NETWORK_LOCATIONS, NETWORK_SCOPES, NETWORK_TYPES, NUMBER_RANGE_KINDS, NUMBER_RANGE_KIND_LABELS, type NumberRangeKind, RESOURCE_ACCOUNT_KINDS, VOICEMAIL_PROMPT_LANGUAGES, type AutoAttendantWizardAnswers, type CallQueueWizardAnswers, type Paginated, type TenantUserSummary } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { AutoAttendantWizard } from '../components/AutoAttendantWizard';
@@ -290,7 +290,7 @@ export function SiteWorkspace() {
           columns={[
             { key: 'range_start', label: 'From' },
             { key: 'range_end', label: 'To' },
-            { key: 'kind', label: 'Kind' },
+            { key: 'kind', label: 'Number transition', render: (r) => NUMBER_RANGE_KIND_LABELS[r.kind as NumberRangeKind] ?? String(r.kind ?? '—') },
             {
               key: 'size',
               label: 'Numbers',
@@ -335,7 +335,7 @@ export function SiteWorkspace() {
           fields={[
             { key: 'range_start', label: 'Range start', required: true, placeholder: '19133743250' },
             { key: 'range_end', label: 'Range end', required: true, placeholder: '19133743257' },
-            { key: 'kind', label: 'Kind', type: 'select', options: NUMBER_RANGE_KINDS, required: true },
+            { key: 'kind', label: 'Number transition', type: 'select', options: NUMBER_RANGE_KINDS, optionLabels: NUMBER_RANGE_KIND_LABELS, required: true },
             { key: 'carrier', label: 'Carrier (where the numbers are now)' },
             { key: 'new_carrier', label: 'New carrier (port-in: where they are moving to)', placeholder: 'Required for a port-in', disabledWhen: (v) => v.kind !== 'port' },
             { key: 'comments', label: 'Comments', type: 'textarea', full: true },

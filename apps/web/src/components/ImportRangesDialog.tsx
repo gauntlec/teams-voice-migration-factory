@@ -24,7 +24,7 @@ import {
 } from '@fluentui/react-components';
 import { Dialog } from './AppDialog';
 import { ArrowDownloadRegular, ArrowUploadRegular } from '@fluentui/react-icons';
-import { MAX_RANGE_SIZE, NUMBER_RANGE_KINDS, type NumberRangeKind } from '@tvmf/shared';
+import { MAX_RANGE_SIZE, NUMBER_RANGE_KIND_LABELS, NUMBER_RANGE_KINDS, type NumberRangeKind } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { DataTable } from './DataTable';
 import { DangerText } from './ui';
@@ -54,7 +54,7 @@ const useStyles = makeStyles({
 });
 
 /** What each stored range kind is called on screen in this dialog. */
-const RANGE_TYPE_LABEL: Record<NumberRangeKind, string> = { new: 'new', port: 'port', retain: 're-point' };
+const RANGE_TYPE_LABEL: Record<NumberRangeKind, string> = NUMBER_RANGE_KIND_LABELS;
 
 const START_HEADERS = ['did-start', 'did start', 'did_start', 'didstart', 'start', 'range start', 'from'];
 const END_HEADERS = ['did-end', 'did end', 'did_end', 'didend', 'end', 'range end', 'to'];
@@ -267,7 +267,7 @@ export function ImportRangesDialog({
               </div>
 
               <div className={s.options}>
-                <Field label="Type (all rows)">
+                <Field label="Number transition (all rows)">
                   <Select value={kind} onChange={(_, d) => setKind(d.value as NumberRangeKind)}>
                     {NUMBER_RANGE_KINDS.map((k) => (
                       <option key={k} value={k}>
