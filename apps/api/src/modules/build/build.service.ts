@@ -71,6 +71,7 @@ import {
   type DiscoveryBulkDeleteInput,
   buildAutoAttendantToWizard,
   buildCallQueueToWizard,
+  needsHandset,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
 import { applyBulkPatch, auditBulkPatch } from '../../common/bulk-patch';
@@ -261,7 +262,7 @@ export class BuildService {
     if (ids.length === 0) return out;
     const rows = await this.s(t)
       .selectFrom('discovery_users')
-      .select(['id', 'requested_number', 'caller_id', 'voicemail_enabled', 'voicemail_language'])
+      .select(['id', 'requested_number', 'caller_id', 'voicemail_enabled', 'voicemail_language', 'requires_handset', 'handset_model', 'handset_installed_at'])
       .where('id', 'in', ids)
       .execute();
     for (const r of rows) {
@@ -270,6 +271,9 @@ export class BuildService {
         requested_caller_id: r.caller_id,
         requested_voicemail_enabled: r.voicemail_enabled,
         requested_voicemail_language: r.voicemail_language,
+        requested_handset: needsHandset(r),
+        requested_handset_model: r.handset_model?.trim() || null,
+        handset_installed_at: r.handset_installed_at ? new Date(r.handset_installed_at).toISOString() : null,
       });
     }
     return out;
@@ -828,6 +832,11 @@ export class BuildService {
     if (q.serviceRequestId) base = base.where('id', 'in', s.selectFrom('service_request_items').select('row_id').where('request_id', '=', q.serviceRequestId));
     if (q.hidden !== undefined) base = base.where('hidden', '=', q.hidden);
     else base = base.where('hidden', '=', false);
+    if (q.handset && table === 'build_users') {
+      // from the Site Data record the row came from: marked as needing a handset, or a model named (needsHandset in @tvmf/shared)
+      const has = sql<boolean>`exists (select 1 from ${sql.table(`${t.schema}.discovery_users`)} d where d.id = ${sql.ref('build_users.discovery_user_id')} and (d.requires_handset or coalesce(btrim(d.handset_model), '') <> ''))`;
+      base = base.where(q.handset === 'yes' ? has : sql<boolean>`not ${has}`);
+    }
     if (q.q) {
       // The UPN, the number and the person's name. A row has no name of its own (a CAP does), so the name is looked up from the
       // tenant user with that UPN and from the Site Data record the row was populated from.
@@ -3172,6 +3181,10 @@ function emptyUserContext() {
     requested_caller_id: null as string | null,
     requested_voicemail_enabled: null as boolean | null,
     requested_voicemail_language: null as string | null,
+    /** from Site Data: whether this user gets a physical handset, which model, and when it was ticked as installed */
+    requested_handset: false,
+    requested_handset_model: null as string | null,
+    handset_installed_at: null as string | null,
   };
 }
 

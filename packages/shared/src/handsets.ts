@@ -32,6 +32,32 @@ export interface HandsetModelRow {
   status: HandsetStage;
   updatedBy: string | null;
   updatedAt: string | null;
+  /** how many of this model have been ticked as installed on the Deployment page */
+  installed: number;
+}
+
+/** A user needs a handset when Site Data says so, or names the model they get. */
+export function needsHandset(u: { requires_handset?: boolean | null; handset_model?: string | null }): boolean {
+  return !!u.requires_handset || !!handsetModelKey(u.handset_model);
+}
+
+/** One user or common area phone that gets a physical handset, and whether it has been installed (Deployment > Handsets). */
+export interface SiteHandsetDevice {
+  kind: 'user' | 'cap';
+  /** discovery_users.id or discovery_caps.id */
+  id: string;
+  name: string;
+  /** the UPN, when known */
+  upn: string | null;
+  model: string | null;
+  installedAt: string | null;
+  installedBy: string | null;
+}
+
+export interface SiteHandsetDevices {
+  devices: SiteHandsetDevice[];
+  installed: number;
+  total: number;
 }
 
 export interface SiteHandsets {
@@ -76,6 +102,7 @@ export function summariseHandsets(
         status,
         updatedBy: t?.updated_by ?? null,
         updatedAt: t?.updated_at ? new Date(t.updated_at).toISOString() : null,
+        installed: 0,
       };
     })
     .sort((a, b) => a.model.localeCompare(b.model));

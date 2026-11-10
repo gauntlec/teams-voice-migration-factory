@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
+import { HandsetInstallCard } from './site/siteHandsets';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link as RouterLink, useParams, useSearchParams } from 'react-router';
 import {
@@ -321,7 +322,10 @@ export function DeploymentSiteWorkspace() {
   const canExecute = can('deployment:execute');
 
   const [searchParams] = useSearchParams();
-  const [tab, setTab] = useState<'changes' | 'drift' | 'history'>(() => (searchParams.get('tab') === 'drift' ? 'drift' : 'changes'));
+  const [tab, setTab] = useState<'changes' | 'drift' | 'history' | 'handsets'>(() => {
+    const t = searchParams.get('tab');
+    return t === 'drift' || t === 'handsets' ? t : 'changes';
+  });
   const [driftMessage, setDriftMessage] = useState<string | null>(null);
   const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(new Set());
   // How the planned changes are grouped: by what they are, or by migration wave. Remembered per browser; the page works without it.
@@ -601,6 +605,7 @@ export function DeploymentSiteWorkspace() {
         <Tab value="changes">Planned changes</Tab>
         <Tab value="drift">Drift{site.drift?.drifted ? ` (${site.drift.drifted})` : ''}</Tab>
         <Tab value="history">Run history</Tab>
+        <Tab value="handsets">Handsets</Tab>
       </TabList>
 
       <DeploymentRunBanners
@@ -988,6 +993,8 @@ export function DeploymentSiteWorkspace() {
           )}
         </Card>
       )}
+
+      {tab === 'handsets' && <HandsetInstallCard base={`/t/${tid}/discovery`} siteId={siteId!} canEdit={can('discovery:sites:manage')} />}
 
       {tab === 'history' && (
         <>

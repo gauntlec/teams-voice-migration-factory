@@ -858,6 +858,8 @@ export const discoveryListQuerySchema = z.object({
   status: z.enum(NUMBER_STATUSES).optional(),
   /** Call flows only: one kind ('other' = free-text routing notes, listed apart from auto attendants and call queues) */
   kind: z.enum(FLOW_KINDS).optional(),
+  /** Users only: those who get a physical handset ('yes') or don't ('no'). */
+  handset: z.enum(['yes', 'no']).optional(),
   page: z.coerce.number().int().min(1).max(100000).default(1),
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });
@@ -1578,6 +1580,8 @@ export const buildListQuerySchema = z.object({
   hidden: z.preprocess((v) => (v === 'true' ? true : v === 'false' ? false : v), z.boolean()).optional(),
   /** Only rows designed for this service request (its Design tab). */
   serviceRequestId: z.guid().optional(),
+  /** Users only: those whose Site Data record says they get a physical handset ('yes') or not ('no'). */
+  handset: z.enum(['yes', 'no']).optional(),
   page: z.coerce.number().int().min(1).max(100000).default(1),
   limit: z.coerce.number().int().min(1).max(500).default(200),
 });
@@ -1853,3 +1857,7 @@ export const siteHandsetStatusSchema = z
   .object({ model: z.string().trim().min(1).max(120), status: z.enum(['not_ordered', 'ordered', 'delivered', 'in_tooling', 'installed']) })
   .strict();
 export type SiteHandsetStatusInput = z.infer<typeof siteHandsetStatusSchema>;
+
+/** Deployment > Handsets: tick a user's or common area phone's handset as installed and working, or clear it. */
+export const handsetInstalledSchema = z.object({ installed: z.boolean() }).strict();
+export type HandsetInstalledInput = z.infer<typeof handsetInstalledSchema>;
