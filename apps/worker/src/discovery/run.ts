@@ -1242,6 +1242,7 @@ async function projectUsers(s: Scoped, runId: string, users: { objectId: string;
       return !k || k.removed || k.hash !== v.projection_hash;
     });
   if (!rows.length) return;
+  const handedOver = await releaseReusedUpns(s, rows, known);
   const upsert = (values: typeof rows) =>
     s
       .insertInto('tenant_users')
@@ -1272,7 +1273,65 @@ async function projectUsers(s: Scoped, runId: string, users: { objectId: string;
     }
   }
   for (const r of rows) known?.set(r.object_id, { hash: r.projection_hash, removed: false });
+  if (handedOver.length) await relinkSiteData(s, handedOver);
   if (first) throw first;
+}
+
+/**
+ * A UPN now belongs to a different Teams account than the row holding it: the account was deleted and created again, or two accounts
+ * swapped UPNs. The old row is marked removed so the new account can be stored (the UPN index allows one live row per UPN, migration
+ * 0095). If the old account is still in the tenant under another UPN, its own row comes back live when it is projected. Returns the
+ * rows marked.
+ */
+async function releaseReusedUpns(s: Scoped, rows: { object_id: string; upn: string }[], known?: Map<string, Projected>) {
+  const claimant = new Map(rows.map((r) => [r.upn.toLowerCase(), r.object_id]));
+  const holders: { id: string; object_id: string; upn: string }[] = [];
+  const upns = [...claimant.keys()];
+  for (let i = 0; i < upns.length; i += 1000) {
+    holders.push(
+      ...(await s
+        .selectFrom('tenant_users')
+        .select(['id', 'object_id', 'upn'])
+        .where('removed_at', 'is', null)
+        .where(sql`lower(upn)`, 'in', upns.slice(i, i + 1000))
+        .execute()),
+    );
+  }
+  const stale = holders.filter((h) => claimant.get(h.upn.toLowerCase()) !== h.object_id);
+  if (!stale.length) return [];
+  await s
+    .updateTable('tenant_users')
+    .set({ removed_at: new Date().toISOString() })
+    .where(
+      'id',
+      'in',
+      stale.map((h) => h.id),
+    )
+    .execute();
+  for (const h of stale) {
+    const k = known?.get(h.object_id);
+    if (k) k.removed = true; // so a later batch rewrites it even if its values are unchanged
+  }
+  return stale;
+}
+
+/** Site Data users linked to a row whose UPN moved to another account follow the UPN to that account's row. */
+async function relinkSiteData(s: Scoped, handedOver: { id: string; upn: string }[]) {
+  for (const h of handedOver) {
+    const now = await s
+      .selectFrom('tenant_users')
+      .select('id')
+      .where('removed_at', 'is', null)
+      .where(sql`lower(upn)`, '=', h.upn.toLowerCase())
+      .executeTakeFirst();
+    if (!now) continue;
+    await s
+      .updateTable('discovery_users')
+      .set({ tenant_user_id: now.id })
+      .where('tenant_user_id', '=', h.id)
+      .where(sql`lower(upn)`, '=', h.upn.toLowerCase())
+      .execute();
+  }
 }
 
 function userValues(runId: string, objectId: string, r: Rec) {
