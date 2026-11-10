@@ -160,6 +160,8 @@ export interface FeatureRequest {
   created_at: string;
   updated_at: string;
   status_changed_at: string;
+  /** How many files are attached. */
+  attachment_count: number;
 }
 
 export interface BugReport {
@@ -196,6 +198,10 @@ export interface BugReportAttachment {
 
 /** Largest file a bug report takes: the same 10 MB as an incident attachment. */
 export const BUG_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+
+/** A file attached to a feature request: the same shape and the same 10 MB limit as a bug report's. */
+export type FeatureRequestAttachment = BugReportAttachment;
+export const FEATURE_ATTACHMENT_MAX_BYTES = BUG_ATTACHMENT_MAX_BYTES;
 
 /* ------------------ Discovery (live customer-tenant inventory) ------------------ */
 

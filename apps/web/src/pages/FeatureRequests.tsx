@@ -13,6 +13,7 @@ import {
   Dropdown,
   Field,
   Input,
+  Link,
   Menu,
   MenuItem,
   MenuList,
@@ -33,6 +34,7 @@ import {
 import { Dialog } from '../components/AppDialog';
 import {
   AddRegular,
+  AttachRegular,
   CheckmarkRegular,
   CopyRegular,
   DeleteRegular,
@@ -49,10 +51,12 @@ import {
   type FeatureArea,
   type FeaturePriority,
   type FeatureRequest,
+  type FeatureRequestAttachment,
+  FEATURE_ATTACHMENT_MAX_BYTES,
   type FeatureStatus,
   type Role,
 } from '@tvmf/shared';
-import { api, ApiError } from '../api';
+import { api, apiDownload, apiUpload, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { Page } from '../components/Page';
 
@@ -262,6 +266,11 @@ function buildClaudePrompt(f: FeatureRequest): string {
     '## Constraints / out of scope',
     f.constraints || na,
     '',
+    '## Decision notes so far',
+    f.decision_note || na,
+    '',
+    f.attachment_count ? `_${f.attachment_count} file${f.attachment_count === 1 ? ' is' : 's are'} attached to this request on the Feature requests board._` : null,
+    f.attachment_count ? '' : null,
     '---',
     'Review how this works in the codebase today, raise anything ambiguous, then implement it following the repo conventions in `docs/ARCHITECTURE.md` (shared `DataTable`, `makeStyles` for styling, RBAC in `packages/shared/src/rbac.ts`, plain-SQL migrations, zod DTOs in `packages/shared/src/dto.ts`). Typecheck every workspace and build the web app before finishing. When it ships, set this feature request to "Deployed".',
   ];
@@ -601,14 +610,96 @@ function DetailRow({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
+const fileSize = (n: number) => (n >= 1024 * 1024 ? `${(n / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+
+/** The files on a request: download any; attach when you asked for it or administer the board; remove what you attached. */
+function Attachments({ f, canAttach, canRemove }: { f: FeatureRequest; canAttach: boolean; canRemove: (a: FeatureRequestAttachment) => boolean }) {
+  const s = useStyles();
+  const qc = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const key = ['feature-request-attachments', f.id];
+  const list = useQuery({ queryKey: key, queryFn: () => api<FeatureRequestAttachment[]>(`/feature-requests/${f.id}/attachments`) });
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: key });
+    qc.invalidateQueries({ queryKey: ['feature-requests'] });
+  };
+  const upload = useMutation({
+    mutationFn: (file: File) => {
+      if (file.size > FEATURE_ATTACHMENT_MAX_BYTES) throw new ApiError(400, 'That file is too large (10 MB at most).');
+      return apiUpload(`/feature-requests/${f.id}/attachments`, file);
+    },
+    onSuccess: () => {
+      setError(null);
+      refresh();
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Could not attach the file.'),
+  });
+  const remove = useMutation({
+    mutationFn: (a: FeatureRequestAttachment) => api(`/feature-requests/${f.id}/attachments/${a.id}`, { method: 'DELETE' }),
+    onSuccess: refresh,
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Could not remove the file.'),
+  });
+  const items = list.data ?? [];
+  if (!canAttach && items.length === 0) return null;
+  return (
+    <div className={s.detailField}>
+      <span className={s.detailLabel}>Attachments</span>
+      {list.isLoading && <Spinner size="tiny" />}
+      {items.map((a) => (
+        <div key={a.id} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+          <AttachRegular />
+          <Link
+            onClick={() => apiDownload(`/feature-requests/${f.id}/attachments/${a.id}`, a.filename).catch((e) => setError(e instanceof ApiError ? e.message : 'Could not download the file.'))}
+          >
+            {a.filename}
+          </Link>
+          <Text size={200} className={s.meta}>
+            {fileSize(a.size)} · {a.uploaded_by_name ?? 'Unknown'} · {timeAgo(a.created_at)}
+          </Text>
+          {canRemove(a) && (
+            <Button size="small" appearance="subtle" icon={<DeleteRegular />} aria-label={`Remove ${a.filename}`} disabled={remove.isPending} onClick={() => remove.mutate(a)} />
+          )}
+        </div>
+      ))}
+      {canAttach && (
+        <div>
+          <input
+            id={`feature-attach-${f.id}`}
+            type="file"
+            hidden
+            accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.txt,.csv,.docx,.xlsx,.pptx,.doc,.xls"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = '';
+              if (file) upload.mutate(file);
+            }}
+          />
+          <Button size="small" icon={<AttachRegular />} disabled={upload.isPending} onClick={() => document.getElementById(`feature-attach-${f.id}`)?.click()}>
+            {upload.isPending ? 'Attaching…' : 'Attach a file'}
+          </Button>
+        </div>
+      )}
+      {error && (
+        <MessageBar intent="error">
+          <MessageBarBody>{error}</MessageBarBody>
+        </MessageBar>
+      )}
+    </div>
+  );
+}
+
 function DetailDialog({
   f,
   canEdit,
+  canAttach,
+  canRemoveAttachment,
   onEdit,
   onClose,
 }: {
   f: FeatureRequest;
   canEdit: boolean;
+  canAttach: boolean;
+  canRemoveAttachment: (a: FeatureRequestAttachment) => boolean;
   onEdit: () => void;
   onClose: () => void;
 }) {
@@ -653,6 +744,7 @@ function DetailDialog({
               <DetailRow label="Acceptance criteria" value={f.acceptance} />
               <DetailRow label="Constraints / out of scope" value={f.constraints} />
               <DetailRow label="Decision note" value={f.decision_note} />
+              <Attachments f={f} canAttach={canAttach} canRemove={canRemoveAttachment} />
             </div>
           </DialogContent>
           <DialogActions>
@@ -762,6 +854,12 @@ function RequestCard({
       <div className={s.cardFoot}>
         <Text className={s.meta}>
           {f.submitted_by_name ?? 'Unknown'} · {timeAgo(f.created_at)}
+          {f.attachment_count > 0 && (
+            <span title={`${f.attachment_count} attached file${f.attachment_count === 1 ? '' : 's'}`}>
+              {' · '}
+              <AttachRegular style={{ verticalAlign: 'text-bottom' }} /> {f.attachment_count}
+            </span>
+          )}
         </Text>
         <div className={ls.flexGap2}>
           <Button
@@ -946,6 +1044,8 @@ export function FeatureRequests() {
         <DetailDialog
           f={(list.data ?? []).find((x) => x.id === detail.id) ?? detail}
           canEdit={canManage || isOwnNew((list.data ?? []).find((x) => x.id === detail.id) ?? detail)}
+          canAttach={canManage || (!!me?.id && detail.submitted_by === me.id)}
+          canRemoveAttachment={(a) => canManage || (!!me?.id && a.uploaded_by === me.id)}
           onEdit={() => setDialog({ mode: 'edit', f: detail })}
           onClose={() => setDetail(null)}
         />
