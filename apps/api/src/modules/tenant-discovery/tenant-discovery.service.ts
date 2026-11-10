@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { sql, type Kysely } from 'kysely';
-import { platformDb, siteSuggestions, tenantDb, type DB } from '@tvmf/db';
+import { forgetTeamsNumbers, platformDb, siteSuggestions, tenantDb, type DB } from '@tvmf/db';
 import {
   matchSitecodeFromName,
   RESOURCE_ACCOUNT_APPLICATION_IDS,
@@ -630,8 +630,8 @@ export class TenantDiscoveryService {
    * Delete every discovered object, the Users/Policies projections, the M365
    * group cache and the run history for this customer. `tenant_users` / `tenant_policies` cascade from
    * `tenant_objects.object_id`; Site Data users are kept but their
-   * `tenant_user_id` link is cleared (FK is ON DELETE SET NULL). Blocked while a
-   * discovery is queued or running. Not reversible - re-run discovery to rebuild.
+   * `tenant_user_id` link is cleared (FK is ON DELETE SET NULL). The number inventory loses what the syncs added (forgetTeamsNumbers)
+   * and the stored drift goes. Blocked while a discovery is queued or running. Not reversible - re-run discovery to rebuild.
    */
   async purge(t: TenantContext, user: AuthedUser) {
     const s = this.s(t);
@@ -695,8 +695,13 @@ export class TenantDiscoveryService {
     await s.deleteFrom('tenant_discovery_runs').execute();
     // The M365 group cache is discovered data too (Graph sign-in / each run).
     await s.deleteFrom('tenant_groups').execute();
+    // So is what the syncs wrote into the number inventory: the "Found in Teams" ranges and who Teams had each number on (bug report
+    // "Delete All Data Button": another tenant's numbers stayed in the Number management report). Site Data's own numbers stay.
+    const numbers = await forgetTeamsNumbers(s);
+    // and the drift each site was last checked for, which compared the design with the data just deleted
+    await s.deleteFrom('deployment_drift').execute();
 
-    const result = { objects, versions, users, policies, runs, groups, dataCollectionLinksCleared, callingPolicyMappingsRemoved };
+    const result = { objects, versions, users, policies, runs, groups, dataCollectionLinksCleared, callingPolicyMappingsRemoved, ...numbers };
     await this.audit.tenant(t.schema, 'tenant_discovery.purged', {
       actor: actorOf(user),
       targetType: 'tenant',

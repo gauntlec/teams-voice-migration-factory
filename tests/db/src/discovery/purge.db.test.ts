@@ -44,4 +44,39 @@ describe('TenantDiscoveryService.purge', () => {
     expect(await c.s.selectFrom('discovery_calling_policies').select('id').where('id', '=', cp.id).execute()).toHaveLength(1);
     expect(await c.s.selectFrom('calling_policy_site_map').select('id').execute()).toHaveLength(0);
   });
+
+  it('also removes what the syncs wrote into the number inventory, keeping Site Data numbers', async () => {
+    const admin = await seedUser(handle, 'SUPER_ADMIN');
+    const s = c.s;
+    const site = await s.insertInto('discovery_sites').values({ sitecode: 'NUM1', name: 'Numbers' } as never).returning('id').executeTakeFirstOrThrow();
+    // a range typed in Site Data, with a number Teams had on someone and one reserved
+    const own = await s.insertInto('discovery_number_ranges').values({ range_start: '+441000000001', range_end: '+441000000002', kind: 'new', sitecode: 'NUM1' } as never).returning('id').executeTakeFirstOrThrow();
+    await s.insertInto('phone_numbers').values([
+      { range_id: own.id, e164: '+441000000001', status: 'assigned', live_only: true, live_status: 'Assigned', live_holder_kind: 'user', live_holder_upn: 'someone@other.test', live_holder_name: 'Someone' },
+      { range_id: own.id, e164: '+441000000002', status: 'reserved', live_status: 'Assigned', live_holder_upn: 'else@other.test', conflict: 'Live in Teams on else' },
+    ] as never).execute();
+    // a "Found in Teams" range a sync made: one plain number, and one a person has since parked
+    const found = await s.insertInto('discovery_number_ranges').values({ range_start: '+442000000001', range_end: '+442000000003', kind: 'retain', sitecode: null, comments: 'Found in Teams by Discovery: assigned there, but in none of our ranges.' } as never).returning('id').executeTakeFirstOrThrow();
+    await s.insertInto('phone_numbers').values([
+      { range_id: found.id, e164: '+442000000001', status: 'assigned', live_only: true, live_status: 'Assigned', live_holder_upn: 'a@other.test' },
+      { range_id: found.id, e164: '+442000000003', status: 'parked', live_status: 'Assigned', live_holder_upn: 'b@other.test' },
+    ] as never).execute();
+    const empty = await s.insertInto('discovery_number_ranges').values({ range_start: '+443000000001', range_end: '+443000000001', kind: 'retain', sitecode: null, comments: 'Found in Teams by Discovery: assigned there, but in none of our ranges.' } as never).returning('id').executeTakeFirstOrThrow();
+    await s.insertInto('phone_numbers').values({ range_id: empty.id, e164: '+443000000001', status: 'assigned', live_only: true, live_status: 'Assigned', live_holder_upn: 'c@other.test' } as never).execute();
+    await s.insertInto('deployment_drift').values({ site_id: site.id, drifted: 2, rows: JSON.stringify([]) } as never).execute();
+
+    const svc = new TenantDiscoveryService(handle.db, unused('queue'), new AuditService(handle.db), unused('deployments'), unused('dataCollection'), unused('telephony'));
+    const result = await svc.purge(c.t, admin);
+    expect(result).toMatchObject({ numbersRemoved: 2, rangesRemoved: 1 });
+
+    const numbers = await s.selectFrom('phone_numbers').select(['e164', 'status', 'live_only', 'live_holder_upn', 'conflict']).orderBy('e164').execute();
+    expect(numbers).toEqual([
+      { e164: '+441000000001', status: 'available', live_only: false, live_holder_upn: null, conflict: null },
+      { e164: '+441000000002', status: 'reserved', live_only: false, live_holder_upn: null, conflict: null },
+      { e164: '+442000000003', status: 'parked', live_only: false, live_holder_upn: null, conflict: null },
+    ]);
+    // the Site Data range stays, the found range with a parked number stays, the emptied one goes
+    expect((await s.selectFrom('discovery_number_ranges').select('id').execute()).map((r) => r.id).sort()).toEqual([own.id, found.id].sort());
+    expect(await s.selectFrom('deployment_drift').select('site_id').execute()).toHaveLength(0);
+  });
 });
