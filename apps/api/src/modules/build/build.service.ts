@@ -539,7 +539,8 @@ export class BuildService {
         return { apps: new Set([...aa, ...cq].map((r) => r.discovery_voice_app_id)), ras: new Set(ra.map((r) => r.discovery_resource_account_id)) };
       };
       const before = await snapshot();
-      if (appIds.length) await this.populateVoiceApps(t, u, siteId, appIds);
+      const populated = appIds.length ? await this.populateVoiceApps(t, u, siteId, appIds) : undefined;
+      const adoptedRow = new Map((populated?.adopted ?? []).map((a) => [a.voiceAppId, a.rowName]));
       if (allRaIds.length) await this.populateResourceAccounts(t, u, siteId, allRaIds);
       const after = await snapshot();
       for (const g of group) {
@@ -547,7 +548,11 @@ export class BuildService {
         const own = input.kind === 'resource_account' ? [id] : raOf(g);
         const newRas = own.filter((r) => after.ras.has(r) && !before.ras.has(r)).length;
         if (input.kind === 'resource_account') g.designAndBuild = before.ras.has(id) ? 'already_on_site' : after.ras.has(id) ? 'added' : 'not_added';
-        else g.designAndBuild = !before.apps.has(id) && after.apps.has(id) ? 'added' : before.apps.has(id) ? (newRas > 0 ? 'added' : 'already_on_site') : 'not_added';
+        else if (adoptedRow.has(id)) {
+          // linked to the row that was already there, not added a second time
+          g.designAndBuild = 'already_on_site';
+          g.note = [g.note, `Linked to "${adoptedRow.get(id)}", which was already in Design & Build.`].filter(Boolean).join(' ');
+        } else g.designAndBuild = !before.apps.has(id) && after.apps.has(id) ? 'added' : before.apps.has(id) ? (newRas > 0 ? 'added' : 'already_on_site') : 'not_added';
       }
     }
     return results;
@@ -1556,6 +1561,7 @@ export class BuildService {
     const linked = new Set([...existingAa, ...existingCq].map((e) => e.discovery_voice_app_id).filter(Boolean));
     let created = 0;
     const createdIds: string[] = [];
+    const adopted: { voiceAppId: string; rowName: string }[] = [];
     // Designed in the wizard (no live object behind it): built from the wizard's answers, as Import to Design & Build does.
     const designed: { d: (typeof source)[number]; flowId: string; rowId?: string }[] = [];
     for (const d of source) {
@@ -1567,6 +1573,16 @@ export class BuildService {
       // Only a flow with no live object behind it: Import sends one that has a live object back here to be built from Teams.
       const hasAnswers = !!flowRow?.wizard_answers && flowRow.kind === d.kind && !flowRow.tenant_object_id;
       if (linked.has(d.id)) {
+        // its row now knows the Teams object it is, if it didn't already
+        const identity = await this.teamsIdentityOf(s, d.tenant_object_id);
+        if (identity) {
+          await s
+            .updateTable(d.kind === 'auto_attendant' ? 'build_auto_attendants' : 'build_call_queues')
+            .set({ teams_identity: identity })
+            .where('discovery_voice_app_id', '=', d.id)
+            .where('teams_identity', 'is', null)
+            .execute();
+        }
         // An earlier Populate copied a designed one as an empty row (name and notes only): fill it in from the wizard now.
         if (hasAnswers && !d.tenant_object_id && !flowRow!.imported_at) {
           const rowId = await this.untouchedEmptyVoiceAppRow(s, d.kind, d.id);
@@ -1582,6 +1598,14 @@ export class BuildService {
         continue;
       }
       await this.adoptLiveVoiceApp(s, d);
+      // Match before creating: a row already on the site for the same Teams object, or of the same kind and name with no link, is
+      // linked rather than built a second time (Glasgow's duplicate queues and attendant).
+      const existing = await this.adoptExistingVoiceAppRow(s, siteId, d);
+      if (existing) {
+        adopted.push({ voiceAppId: d.id, rowName: existing.name });
+        await this.linkDiscoveredFlow(s, d.id);
+        continue;
+      }
       if (hasAnswers && !d.tenant_object_id) {
         designed.push({ d, flowId: flowRow!.id });
         continue;
@@ -1617,12 +1641,74 @@ export class BuildService {
     }
     if (createdIds.length > 0) await this.populateStructuredFromLive(s, siteId, createdIds);
     await this.linkResourceAccountsToVoiceApps(s, siteId);
-    await this.audit.tenant(t.schema, 'build.voice_apps_populated', { actor: actorOf(u), targetType: 'discovery_site', targetId: siteId, detail: { created, total: source.length } });
-    return { created, filled, skipped: source.length - created - filled, total: source.length, warnings };
+    for (const a of adopted) {
+      const name = source.find((d) => d.id === a.voiceAppId)?.name ?? a.rowName;
+      warnings.push(`${name}: linked to "${a.rowName}", which was already in Design & Build, instead of adding it again.`);
+    }
+    await this.audit.tenant(t.schema, 'build.voice_apps_populated', {
+      actor: actorOf(u),
+      targetType: 'discovery_site',
+      targetId: siteId,
+      detail: { created, linkedExisting: adopted.length, total: source.length },
+    });
+    return { created, filled, linkedExisting: adopted.length, adopted, skipped: source.length - created - filled - adopted.length, total: source.length, warnings };
+  }
+
+  /**
+   * Links a Site Data voice app to the Design & Build row on its site that is already the same thing, so Populate and Add to site
+   * never build it twice: first a row that recorded the same Teams object, then a row of the same kind and name with no Site Data
+   * link (only when exactly one fits). Returns the row linked, or nothing when a new row is needed.
+   */
+  private async adoptExistingVoiceAppRow(s: Scoped, siteId: string, d: { id: string; kind: 'auto_attendant' | 'call_queue'; name: string; tenant_object_id: string | null }) {
+    const table = d.kind === 'auto_attendant' ? 'build_auto_attendants' : 'build_call_queues';
+    const identity = (await this.teamsIdentityOf(s, d.tenant_object_id)) ?? undefined;
+    let row: { id: string; name: string } | undefined;
+    if (identity) {
+      row = await s
+        .selectFrom(table)
+        .select(['id', 'name'])
+        .where('site_id', '=', siteId)
+        .where(sql`lower(teams_identity)`, '=', identity.toLowerCase())
+        .executeTakeFirst();
+    }
+    if (!row) {
+      // Unlinked, or linked only to a voice app designed in the wizard (nothing in Teams behind it): the live one is the same thing.
+      const named = await s
+        // both tables have these columns; typed as one so the join resolves
+        .selectFrom(`${table} as b` as 'build_call_queues as b')
+        .leftJoin('discovery_voice_apps as v', 'v.id', 'b.discovery_voice_app_id')
+        .select(['b.id', 'b.name', 'b.teams_identity'])
+        .where('b.site_id', '=', siteId)
+        .where('b.discovery_voice_app_id', 'is distinct from', d.id)
+        // (a voice app that is itself only designed takes an unlinked row, never another design's)
+        .where((eb) => (identity ? eb.or([eb('b.discovery_voice_app_id', 'is', null), eb('v.tenant_object_id', 'is', null)]) : eb('b.discovery_voice_app_id', 'is', null)))
+        .where(sql`lower(b.name)`, '=', d.name.trim().toLowerCase())
+        .execute();
+      // a same-named row that already deploys to a different Teams object is a different voice app
+      const fits = named.filter((r) => !r.teams_identity || !identity || r.teams_identity.toLowerCase() === identity.toLowerCase());
+      if (fits.length === 1) row = fits[0];
+    }
+    if (!row) return undefined;
+    await s
+      .updateTable(table)
+      .set({ discovery_voice_app_id: d.id, ...(identity ? { teams_identity: sql<string>`coalesce(teams_identity, ${identity})` } : {}) } as never)
+      .where('id', '=', row.id)
+      .execute();
+    return row;
+  }
+
+  /** The Teams Identity of a discovered auto attendant or call queue (its Get-Cs* Identity; Discovery keys them by it too). */
+  private async teamsIdentityOf(s: Scoped, tenantObjectId: string | null | undefined): Promise<string | null> {
+    if (!tenantObjectId) return null;
+    const o = await s.selectFrom('tenant_objects').select(['object_key', 'data']).where('id', '=', tenantObjectId).executeTakeFirst();
+    if (!o) return null;
+    const identity = (o.data as Record<string, unknown> | null)?.Identity;
+    return typeof identity === 'string' && identity ? identity : o.object_key;
   }
 
   /** The thin row Populate makes for a voice app with nothing better to go on: its name, and its Site Data notes kept. */
   private async insertVoiceAppRow(s: Scoped, siteId: string, d: DiscoveryVoiceAppRow) {
+    const teams_identity = await this.teamsIdentityOf(s, d.tenant_object_id);
     if (d.kind === 'auto_attendant') {
       const notes = [d.exception_conditions, d.exception_action].filter(Boolean).join(' / ') || null;
       await s
@@ -1630,6 +1716,7 @@ export class BuildService {
         .values({
           site_id: siteId,
           discovery_voice_app_id: d.id,
+          teams_identity,
           name: d.name,
           resource_accounts: JSON.stringify([]),
           config: {},
@@ -1647,6 +1734,7 @@ export class BuildService {
         .values({
           site_id: siteId,
           discovery_voice_app_id: d.id,
+          teams_identity,
           name: d.name,
           resource_accounts: JSON.stringify([]),
           agents: JSON.stringify([]),
@@ -2025,7 +2113,7 @@ export class BuildService {
     const noAgentAction = body.no_agent_action !== undefined ? body.no_agent_action : (existing.no_agent_action as Record<string, unknown>);
     const languageId = body.language_id !== undefined ? body.language_id : existing.language_id;
     this.assertCallQueueLanguage(overflow, timeout, noAgentAction, languageId);
-    const { agents, resource_accounts, ...rest } = body;
+    const { agents, resource_accounts, rename_site_data, ...rest } = body;
     const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
     // pg binds a plain array as a native Postgres array, not jsonb, unless
     // stringified first (see schema.ts) - agents/resource_accounts are the
@@ -2040,6 +2128,7 @@ export class BuildService {
       .returningAll()
       .executeTakeFirst();
     if (!row) throw new NotFoundException('row not found');
+    if (rename_site_data && body.name && body.name !== existing.name) await this.renameSiteDataVoiceApp(t, u, row.discovery_voice_app_id, body.name);
     await this.audit.tenant(t.schema, 'build.call_queue_updated', {
       actor: actorOf(u),
       targetType: 'build_call_queue',
@@ -2066,6 +2155,20 @@ export class BuildService {
     ) {
       throw new BadRequestException('language_id is required when overflow, timeout or no-agent action is SharedVoicemail');
     }
+  }
+
+  /**
+   * Renaming a voice app in Design & Build can rename its Site Data entry and Call flow too, so the two sides stay in step without a
+   * copy back and a delete (the route that unlinked Glasgow's deployed rows).
+   */
+  private async renameSiteDataVoiceApp(t: TenantContext, u: AuthedUser, voiceAppId: string | null, name: string) {
+    if (!voiceAppId) return;
+    const s = this.s(t);
+    const now = new Date().toISOString();
+    const app = await s.updateTable('discovery_voice_apps').set({ name, updated_at: now }).where('id', '=', voiceAppId).returning('id').executeTakeFirst();
+    if (!app) return;
+    await s.updateTable('discovery_flows').set({ name }).where('voice_app_id', '=', voiceAppId).execute();
+    await this.audit.tenant(t.schema, 'discovery.voice_app_renamed', { actor: actorOf(u), targetType: 'discovery_voice_app', targetId: voiceAppId, detail: { name, from: 'design_and_build' } });
   }
 
   /* ======================== auto attendants ========================= */
@@ -2144,7 +2247,8 @@ export class BuildService {
 
   async updateAutoAttendant(t: TenantContext, u: AuthedUser, id: string, body: BuildAutoAttendantPatchInput) {
     await this.assertNotSrLocked(t, [id]);
-    const { holiday_call_flows, resource_accounts, ...rest } = body;
+    const { holiday_call_flows, resource_accounts, rename_site_data, ...rest } = body;
+    const before = rename_site_data && body.name ? await this.s(t).selectFrom('build_auto_attendants').select('name').where('id', '=', id).executeTakeFirst() : undefined;
     const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
     // pg binds a plain array as a native Postgres array, not jsonb, unless
     // stringified first (see schema.ts) - holiday_call_flows and
@@ -2160,6 +2264,7 @@ export class BuildService {
       .returningAll()
       .executeTakeFirst();
     if (!row) throw new NotFoundException('row not found');
+    if (rename_site_data && body.name && before && body.name !== before.name) await this.renameSiteDataVoiceApp(t, u, row.discovery_voice_app_id, body.name);
     await this.audit.tenant(t.schema, 'build.auto_attendant_updated', {
       actor: actorOf(u),
       targetType: 'build_auto_attendant',
@@ -2227,11 +2332,74 @@ export class BuildService {
    * Design & Build is linked as it is, never re-synced, so an engineer's edits there are kept. `chain` (internal) is the
    * captures this Import is already handling, so a queue that points back at its attendant can't loop.
    */
+  /**
+   * Importing a Site Data capture into a row that has already been deployed (bug report "Site Data -> Design and Build CQ/AA name
+   * change"): the deployed name is kept, never renamed back to the capture's, and anything else the import would change is listed and
+   * refused (409, code `confirm_import`) until the person confirms. Populate, which only fills rows it made, never asks.
+   */
+  private async guardImportOverDeployed(
+    s: Scoped,
+    kind: 'auto_attendant' | 'call_queue',
+    rowId: string,
+    patch: Record<string, unknown>,
+    opts: { populating?: boolean; confirmed?: boolean },
+    warnings: string[],
+  ) {
+    const table = kind === 'auto_attendant' ? 'build_auto_attendants' : 'build_call_queues';
+    const row = (await s.selectFrom(table).selectAll().where('id', '=', rowId).executeTakeFirst()) as Record<string, unknown> | undefined;
+    if (!row) return;
+    const deployed =
+      !!row.teams_identity ||
+      !!(await s.selectFrom('deployment_changes').select('id').where('object_id', '=', rowId).where('result', '=', 'applied').limit(1).executeTakeFirst());
+    if (!deployed) return;
+    if (typeof patch.name === 'string' && patch.name !== row.name) {
+      warnings.push(`The name stays "${String(row.name)}", as deployed. The capture's name "${patch.name}" was not used.`);
+    }
+    delete patch.name;
+    if (opts.populating || opts.confirmed) return;
+    const labels: Record<string, string> =
+      kind === 'auto_attendant'
+        ? {
+            default_call_flow: 'business hours call flow',
+            after_hours_call_flow: 'after hours call flow',
+            schedule: 'opening hours',
+            holiday_call_flows: 'holidays',
+            operator: 'operator',
+            language_id: 'language',
+            time_zone_id: 'time zone',
+            voice_response_enabled: 'voice inputs',
+          }
+        : {
+            agents: 'agents',
+            routing_method: 'routing method',
+            agent_alert_time: 'how long agents are rung',
+            presence_based_routing: 'presence-based routing',
+            overflow: 'overflow',
+            timeout: 'timeout',
+            no_agent_action: 'what happens with no agents',
+            language_id: 'language',
+            welcome_message: 'greeting',
+            music_on_hold: 'music on hold',
+          };
+    const same = (a: unknown, b: unknown) => JSON.stringify(canonical(a ?? null)) === JSON.stringify(canonical(b ?? null));
+    const changes = Object.entries(labels)
+      .filter(([k]) => k in patch && !same(patch[k], row[k]))
+      .map(([, label]) => label);
+    if (!changes.length) return;
+    throw new ConflictException({
+      statusCode: 409,
+      code: 'confirm_import',
+      message: `"${String(row.name)}" has been deployed. Importing this capture would replace its ${changes.join(', ')} with the capture's. Confirm to go ahead.`,
+      changes,
+      name: row.name,
+    });
+  }
+
   async importFlowWizard(
     t: TenantContext,
     u: AuthedUser,
     flowId: string,
-    opts: { populating?: boolean; chain?: Set<string> } = {},
+    opts: { populating?: boolean; chain?: Set<string>; confirmed?: boolean } = {},
   ): Promise<{ row: { id: string }; flow: Selectable<DB['discovery_flows']>; warnings: string[]; alsoImported: { flowId: string; name: string; kind: string }[] }> {
     const s = this.s(t);
     const flow = await s.selectFrom('discovery_flows').selectAll().where('id', '=', flowId).executeTakeFirst();
@@ -2246,6 +2414,12 @@ export class BuildService {
       const rowId = linked.build_auto_attendant_id ?? linked.build_call_queue_id;
       if (!rowId) throw new BadRequestException('This discovered voice app could not be added to Design & Build.');
       return { row: { id: rowId }, flow: linked, warnings: [] as string[], alsoImported: [] };
+    }
+    // Read from Teams, already in Design & Build and not edited since: there is nothing new to bring, so the row is left as built
+    // from the live settings rather than overwritten with the capture's thinner version of them.
+    const already = flow.build_auto_attendant_id ?? flow.build_call_queue_id;
+    if (flow.tenant_object_id && already && flow.imported_at && new Date(flow.updated_at) <= new Date(flow.imported_at)) {
+      return { row: { id: already }, flow, warnings: [] as string[], alsoImported: [] };
     }
     if (!flow.wizard_answers) throw new BadRequestException('This call flow has no wizard capture to import.');
     if (!flow.site_id) throw new BadRequestException('This call flow has no site.');
@@ -2367,6 +2541,7 @@ export class BuildService {
       warnings = w;
       if (flow.build_auto_attendant_id) {
         const { site_id: _site, ...patch } = value;
+        await this.guardImportOverDeployed(s, 'auto_attendant', flow.build_auto_attendant_id, patch, opts, warnings);
         result = await this.updateAutoAttendant(t, u, flow.build_auto_attendant_id, patch);
       } else {
         result = await this.createAutoAttendant(t, u, value);
@@ -2376,6 +2551,7 @@ export class BuildService {
       warnings = w;
       if (flow.build_call_queue_id) {
         const { site_id: _site, ...patch } = value;
+        await this.guardImportOverDeployed(s, 'call_queue', flow.build_call_queue_id, patch, opts, warnings);
         result = await this.updateCallQueue(t, u, flow.build_call_queue_id, patch);
       } else {
         result = await this.createCallQueue(t, u, value);
@@ -3351,4 +3527,11 @@ const hasIssue = hasValidationIssue;
 /** Postgres unique_violation (23505) - the (site_id, lower(upn)) index tripped. */
 function isUniqueViolation(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: string }).code === '23505';
+}
+
+/** A value with its object keys in a fixed order, so two equal designs compare equal however their keys were written. */
+function canonical(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(canonical);
+  if (v && typeof v === 'object') return Object.fromEntries(Object.keys(v as object).sort().map((k) => [k, canonical((v as Record<string, unknown>)[k])]));
+  return v;
 }

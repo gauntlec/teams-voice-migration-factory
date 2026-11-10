@@ -158,16 +158,45 @@ export interface LiveRowRef {
   id: string;
   name: string;
   discovery_voice_app_id?: string | null;
+  /** The Teams Identity the row recorded when it was created or first matched (migration 0096): tried before anything else. */
+  teams_identity?: string | null;
 }
 
 /**
- * Finds the live object (Discovery's tenant_objects) behind each Design & Build row, keyed by the row's id. A row made from, or linked
- * to, a Site Data voice app is matched on that voice app's exact discovered object (its Teams GUID) - never on its name, which
- * two voice apps can share. Only a row with no link falls back to its name, and then only when exactly one live object has that name
- * and no other row has already claimed it: a name that fits several is not guessed at.
+ * Finds the live object (Discovery's tenant_objects) behind each Design & Build row, keyed by the row's id. A row that recorded its
+ * Teams Identity is matched on that first, so losing its Site Data entry can't make it forget what it deploys to. Next, a row made
+ * from, or linked to, a Site Data voice app is matched on that voice app's exact discovered object (its Teams GUID) - never on its
+ * name, which two voice apps can share. Only a row with neither falls back to its name, and then only when exactly one live object
+ * has that name and no other row has already claimed it: a name that fits several is not guessed at.
  */
 async function liveObjectsForRows(scoped: Scoped, type: 'auto_attendant' | 'call_queue', rows: LiveRowRef[]) {
   const out = new Map<string, { display_name: string | null; data: Record<string, unknown> }>();
+  if (rows.length === 0) return out;
+  const claimed = new Set<string>();
+  const identities = [...new Set(rows.map((r) => r.teams_identity?.toLowerCase()).filter((v): v is string => !!v))];
+  if (identities.length) {
+    const own = await scoped
+      .selectFrom('tenant_objects')
+      .select(['id', 'object_key', 'display_name', 'data'])
+      .where('object_type', '=', type)
+      .where('removed_at', 'is', null)
+      .where((eb) => eb.or([eb(sql`lower(object_key)`, 'in', identities), eb(sql`lower(data->>'Identity')`, 'in', identities)]))
+      .execute();
+    const byIdentity = new Map<string, (typeof own)[number]>();
+    for (const o of own) {
+      byIdentity.set(o.object_key.toLowerCase(), o);
+      const id = (o.data as Record<string, unknown> | null)?.Identity;
+      if (typeof id === 'string') byIdentity.set(id.toLowerCase(), o);
+    }
+    for (const r of rows) {
+      const hit = r.teams_identity ? byIdentity.get(r.teams_identity.toLowerCase()) : undefined;
+      if (hit && !claimed.has(hit.id)) {
+        out.set(r.id, { display_name: hit.display_name, data: (hit.data ?? {}) as Record<string, unknown> });
+        claimed.add(hit.id);
+      }
+    }
+  }
+  rows = rows.filter((r) => !out.has(r.id));
   if (rows.length === 0) return out;
   const appIds = [...new Set(rows.map((r) => r.discovery_voice_app_id).filter((v): v is string => !!v))];
   const apps = appIds.length ? await scoped.selectFrom('discovery_voice_apps').select(['id', 'tenant_object_id']).where('id', 'in', appIds).execute() : [];
@@ -187,11 +216,10 @@ async function liveObjectsForRows(scoped: Scoped, type: 'auto_attendant' | 'call
     })
     .execute();
   const byId = new Map(objects.map((o) => [o.id, o]));
-  const claimed = new Set<string>();
   for (const r of rows) {
     const objectId = r.discovery_voice_app_id ? objectOfApp.get(r.discovery_voice_app_id) : null;
     const hit = objectId ? byId.get(objectId) : undefined;
-    if (hit) {
+    if (hit && !claimed.has(hit.id)) {
       out.set(r.id, { display_name: hit.display_name, data: (hit.data ?? {}) as Record<string, unknown> });
       claimed.add(hit.id);
     }
@@ -202,6 +230,34 @@ async function liveObjectsForRows(scoped: Scoped, type: 'auto_attendant' | 'call
     if (named.length === 1) out.set(r.id, { display_name: named[0]!.display_name, data: (named[0]!.data ?? {}) as Record<string, unknown> });
   }
   return out;
+}
+
+/**
+ * The live auto attendants or call queues (any site) holding each of these names, lower-cased name -> how many. A row with no live
+ * object of its own whose name is here would plan New-Cs* for something Teams already has, so it is held back instead.
+ */
+export async function liveVoiceAppNamesInUse(scoped: Scoped, type: 'auto_attendant' | 'call_queue', names: string[]) {
+  const wanted = [...new Set(names.map((n) => n.trim().toLowerCase()).filter(Boolean))];
+  const out = new Map<string, number>();
+  if (!wanted.length) return out;
+  const rows = await scoped
+    .selectFrom('tenant_objects')
+    .select('display_name')
+    .where('object_type', '=', type)
+    .where('removed_at', 'is', null)
+    .where(sql`lower(display_name)`, 'in', wanted)
+    .execute();
+  for (const r of rows) {
+    const k = (r.display_name ?? '').toLowerCase();
+    out.set(k, (out.get(k) ?? 0) + 1);
+  }
+  return out;
+}
+
+/** Why a row with no live object of its own is not created: Teams already has a voice app of that kind with its name. */
+export function nameTakenInTeamsReason(kind: 'auto_attendant' | 'call_queue', name: string) {
+  const what = kind === 'auto_attendant' ? 'An auto attendant' : 'A call queue';
+  return `${what} called "${name}" already exists in Teams, and this row isn't linked to it, so it is not created again. Link the row to it (Discovery > Add to site, or Populate), or rename the row.`;
 }
 
 /**

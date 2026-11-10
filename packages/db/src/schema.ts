@@ -1044,6 +1044,8 @@ export interface BuildAutoAttendantsTable {
   id: Generated<string>;
   /** FK -> discovery_sites.id (ON DELETE CASCADE). Build rows are always site-scoped. */
   site_id: string;
+  /** The Teams Identity (GUID) of the live object this row deploys to, recorded when it is first matched or created (migration 0096), so deleting or replacing its Site Data entry can't make it forget it. */
+  teams_identity: string | null;
   /** FK -> discovery_voice_apps.id (ON DELETE SET NULL): the voice app this was seeded from - only ever set by Populate. */
   discovery_voice_app_id: string | null;
   name: string;
@@ -1098,6 +1100,8 @@ export interface BuildCallQueuesTable {
   id: Generated<string>;
   /** FK -> discovery_sites.id (ON DELETE CASCADE). Build rows are always site-scoped. */
   site_id: string;
+  /** The Teams Identity (GUID) of the live object this row deploys to, recorded when it is first matched or created (migration 0096), so deleting or replacing its Site Data entry can't make it forget it. */
+  teams_identity: string | null;
   /** FK -> discovery_voice_apps.id (ON DELETE SET NULL): the voice app this was seeded from. */
   discovery_voice_app_id: string | null;
   name: string;

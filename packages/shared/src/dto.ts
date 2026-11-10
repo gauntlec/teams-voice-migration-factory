@@ -1392,7 +1392,8 @@ export const buildCallQueueCreateSchema = z
   .strict();
 export type BuildCallQueueCreateInput = z.infer<typeof buildCallQueueCreateSchema>;
 
-export const buildCallQueuePatchSchema = z.object({ name: optStr(160), ...buildCallQueueWritable }).strict();
+/** `rename_site_data`: when the name changes, also rename the linked Site Data voice app and its call flow, so the two stay in step. */
+export const buildCallQueuePatchSchema = z.object({ name: optStr(160), rename_site_data: z.boolean().optional(), ...buildCallQueueWritable }).strict();
 export type BuildCallQueuePatchInput = z.infer<typeof buildCallQueuePatchSchema>;
 
 /**
@@ -1556,7 +1557,8 @@ export const buildAutoAttendantCreateSchema = z
   .strict();
 export type BuildAutoAttendantCreateInput = z.infer<typeof buildAutoAttendantCreateSchema>;
 
-export const buildAutoAttendantPatchSchema = z.object({ name: optStr(160), ...buildAutoAttendantWritable }).strict();
+/** `rename_site_data`: as for a call queue. */
+export const buildAutoAttendantPatchSchema = z.object({ name: optStr(160), rename_site_data: z.boolean().optional(), ...buildAutoAttendantWritable }).strict();
 export type BuildAutoAttendantPatchInput = z.infer<typeof buildAutoAttendantPatchSchema>;
 
 /**
@@ -1898,3 +1900,7 @@ export type SiteHandsetStatusInput = z.infer<typeof siteHandsetStatusSchema>;
 /** Deployment > Handsets: tick a user's or common area phone's handset as installed and working, or clear it. */
 export const handsetInstalledSchema = z.object({ installed: z.boolean() }).strict();
 export type HandsetInstalledInput = z.infer<typeof handsetInstalledSchema>;
+
+/** Site Data's Call flows "Import to Design & Build": `confirm` goes ahead when the row it updates has already been deployed. */
+export const flowImportSchema = z.object({ confirm: z.boolean().optional() }).strict();
+export type FlowImportInput = z.infer<typeof flowImportSchema>;

@@ -104,6 +104,8 @@ export interface FieldDef {
   full?: boolean;
   /** Only on the Add form: left out when an existing row is edited (for a value that is acted on once, at creation). */
   addOnly?: boolean;
+  /** Only on the Edit form: left out of the Add form (for an option about changing an existing row). */
+  editOnly?: boolean;
   /** A textarea starts this many rows tall and grows with what is typed (default: the browser's small box). */
   rows?: number;
   /** A heading shown above this field when the previous field is in a different section (consecutive fields share one). */
@@ -503,7 +505,7 @@ export function RecordDialog({
 
   const resolveChoices = (f: FieldDef): Choice[] =>
     typeof f.choices === 'function' ? f.choices(editing) : (f.choices ?? []);
-  const shown = editing ? fields.filter((f) => !f.addOnly) : fields;
+  const shown = editing ? fields.filter((f) => !f.addOnly) : fields.filter((f) => !f.editOnly);
 
   return (
     <Dialog open={open} onOpenChange={(_, d) => onOpenChange(d.open)}>

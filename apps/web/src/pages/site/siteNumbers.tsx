@@ -18,6 +18,7 @@ const useLocalStyles = makeStyles({
   flexGap8: { display: "flex", ...shorthands.gap('8px') },
   flex1: { flex: 1 },
   gridGap4: { display: "grid", ...shorthands.gap('4px') },
+  mt8: { marginTop: '8px' },
 });
 
 
@@ -486,15 +487,29 @@ export function FlowImportButton({
   const [warnings, setWarnings] = useState<string[] | null>(null);
   const [alsoImported, setAlsoImported] = useState<{ name: string; kind: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // The row this capture updates has been deployed: what the import would replace, waiting for a yes.
+  const [confirm, setConfirm] = useState<string | null>(null);
   const doImport = useMutation({
-    mutationFn: () => api<{ warnings: string[]; alsoImported?: { name: string; kind: string }[] }>(`/t/${tid}/build/flows/${flow.id}/import`, { method: 'POST' }),
+    mutationFn: (confirmed: boolean) =>
+      api<{ warnings: string[]; alsoImported?: { name: string; kind: string }[] }>(`/t/${tid}/build/flows/${flow.id}/import`, {
+        method: 'POST',
+        body: JSON.stringify(confirmed ? { confirm: true } : {}),
+      }),
     onSuccess: (r) => {
       setError(null);
+      setConfirm(null);
       setWarnings(r.warnings ?? []);
       setAlsoImported(r.alsoImported ?? []);
       onChanged();
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Import failed'),
+    onError: (e) => {
+      const body = e instanceof ApiError ? (e.body as { code?: string } | undefined) : undefined;
+      if (e instanceof ApiError && e.status === 409 && body?.code === 'confirm_import') {
+        setConfirm(e.message);
+        return;
+      }
+      setError(e instanceof ApiError ? e.message : 'Import failed');
+    },
   });
 
   if (!flow.wizard_answers) return null;
@@ -517,12 +532,33 @@ export function FlowImportButton({
           size="small"
           appearance={stale ? 'primary' : 'subtle'}
           disabled={doImport.isPending}
-          onClick={() => doImport.mutate()}
+          onClick={() => doImport.mutate(false)}
           title={stale ? "This row was edited since it was last synced to Design & Build" : undefined}
         >
           {doImport.isPending ? 'Syncing…' : stale ? 'Update Design & Build' : 'Import to Design & Build'}
         </Button>
       )}
+      <Dialog open={!!confirm} onOpenChange={(_, d) => !d.open && setConfirm(null)}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>Replace a deployed {flow.kind === 'auto_attendant' ? 'auto attendant' : 'call queue'}?</DialogTitle>
+            <DialogContent>
+              <Text block>{confirm}</Text>
+              <Text block size={200} className={ls.mt8}>
+                Its name stays as deployed. Nothing changes in Teams until it is deployed again.
+              </Text>
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setConfirm(null)}>
+                Cancel
+              </Button>
+              <Button appearance="primary" disabled={doImport.isPending} onClick={() => doImport.mutate(true)}>
+                {doImport.isPending ? 'Importing…' : 'Replace with the capture'}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
       <Dialog
         open={warnings !== null || !!error}
         onOpenChange={(_, d) => {

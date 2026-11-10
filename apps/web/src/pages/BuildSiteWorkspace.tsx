@@ -1057,6 +1057,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           ]}
           fields={[
             { key: 'name', label: 'Name', required: true },
+            { key: 'rename_site_data', label: 'When the name changes, rename it in Site Data too', type: 'boolean', default: 'true', editOnly: true },
             { key: 'routing_method', label: 'Routing method', type: 'select', options: CALL_QUEUE_ROUTING_METHODS },
             { key: 'agent_alert_time', label: 'Agent alert time (seconds, 15-180)', type: 'number' },
             { key: 'presence_based_routing', label: 'Presence-based routing', type: 'boolean' },
@@ -1180,6 +1181,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           ]}
           fields={[
             { key: 'name', label: 'Name', required: true },
+            { key: 'rename_site_data', label: 'When the name changes, rename it in Site Data too', type: 'boolean', default: 'true', editOnly: true },
             { key: 'language_id', label: 'Language', type: 'ref', choices: AA_LANGUAGE_CHOICES },
             { key: 'time_zone_id', label: 'Time zone', type: 'ref', choices: AA_TIME_ZONE_CHOICES },
             { key: 'voice_id', label: 'Voice', type: 'radio', options: ['Male', 'Female'] },

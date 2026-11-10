@@ -13,6 +13,8 @@ import {
   resolveAutoAttendantDeepContext,
   resolveLiveAutoAttendantState,
   resolveLiveCallQueueState,
+  liveVoiceAppNamesInUse,
+  nameTakenInTeamsReason,
   resolveLiveIdentityState,
   resolveLiveSharedCallingPolicyState,
   tenantDb, emailEnabled, webOrigin as resolveWebOrigin, sweepStaffAccess } from '@tvmf/db';
@@ -773,9 +775,25 @@ async function handleDeploymentRun(job: Job) {
       const hit = (recs as Record<string, unknown>[]).find((r) => typeof r.Name === 'string' && r.Name.toLowerCase() === name.toLowerCase());
       const identity = hit && typeof hit.Identity === 'string' ? hit.Identity : undefined;
       if (identity) crossRef.set(`${kind}:${buildId}`, identity);
+      return identity;
     } catch {
       // best-effort - see doc comment above
+      return undefined;
     }
+  };
+
+  /**
+   * The row remembers the Teams object it deploys to (migration 0096), from the first time it is matched or created, so deleting or
+   * replacing its Site Data entry can't turn it back into a create. Only ever filled in, never changed.
+   */
+  const rememberTeamsIdentity = async (kind: 'call_queue' | 'auto_attendant', rowId: string, identity: string | undefined) => {
+    if (!identity) return;
+    await scoped
+      .updateTable(kind === 'call_queue' ? 'build_call_queues' : 'build_auto_attendants')
+      .set({ teams_identity: identity })
+      .where('id', '=', rowId)
+      .where('teams_identity', 'is', null)
+      .execute();
   };
 
   // Built once, up front, whenever either sheet that can reference a
@@ -865,10 +883,11 @@ async function handleDeploymentRun(job: Job) {
       })),
     );
     const allUpns = [...rows.flatMap((r) => (r.agents as string[] | null) ?? []), ...ras.map((r) => r.upn), ...cqTargetUpns];
-    const [liveIdentity, liveQueues, audio] = await Promise.all([
+    const [liveIdentity, liveQueues, audio, namesInUse] = await Promise.all([
       resolveLiveIdentityState(scoped, allUpns),
       resolveLiveCallQueueState(scoped, rows),
       audioImportMap(scoped, rows),
+      liveVoiceAppNamesInUse(scoped, 'call_queue', rows.map((r) => r.name)),
     ]);
     const agentObjectIds = new Map<string, string>();
     for (const [upn, v] of liveIdentity) if (v.objectId) agentObjectIds.set(upn, v.objectId);
@@ -878,6 +897,12 @@ async function handleDeploymentRun(job: Job) {
       if (oid) raObjectIds.set(ra.id, oid);
     }
     for (const row of rows) {
+      const liveQueue = liveQueues.get(row.id);
+      if (!liveQueue && namesInUse.has(row.name.trim().toLowerCase())) {
+        await recordNotDeployed({ objectType: 'call_queue', id: row.id, upn: row.name }, nameTakenInTeamsReason('call_queue', row.name));
+        continue;
+      }
+      if (!whatIf) await rememberTeamsIdentity('call_queue', row.id, liveQueue?.identity || undefined);
       const calls = planCallQueueRow(
         {
           id: row.id,
@@ -898,7 +923,7 @@ async function handleDeploymentRun(job: Job) {
         },
         agentObjectIds,
         raObjectIds,
-        liveQueues.get(row.id),
+        liveQueue,
         audio,
       );
       let created = false;
@@ -919,7 +944,7 @@ async function handleDeploymentRun(job: Job) {
       // See refreshCrossRefEntry - lets an Auto Attendant deployed later in
       // THIS run transfer to a queue this run just created, instead of
       // waiting for a Discovery sync.
-      if (created && crossRef) await refreshCrossRefEntry(crossRef, 'call_queue', row.id, row.name);
+      if (created && crossRef) await rememberTeamsIdentity('call_queue', row.id, await refreshCrossRefEntry(crossRef, 'call_queue', row.id, row.name));
     }
   }
 
@@ -974,7 +999,14 @@ async function handleDeploymentRun(job: Job) {
     for (const [upn, v] of userLiveIdentity) if (v.objectId) userObjectIds.set(upn, v.objectId);
     const targetNames = await buildAutoAttendantTargetNames(scoped, scope.siteId);
     const sendsToTeams = !whatIf && !teamsReadOnly;
+    const aaNamesInUse = await liveVoiceAppNamesInUse(scoped, 'auto_attendant', planRows.map((r) => r.name));
     for (const planRow of planRows) {
+      const liveAa = liveAutoAttendants.get(planRow.id);
+      if (!liveAa && aaNamesInUse.has(planRow.name.trim().toLowerCase())) {
+        await recordNotDeployed({ objectType: 'auto_attendant', id: planRow.id, upn: planRow.name }, nameTakenInTeamsReason('auto_attendant', planRow.name));
+        continue;
+      }
+      if (!whatIf) await rememberTeamsIdentity('auto_attendant', planRow.id, liveAa?.identity || undefined);
       if (sendsToTeams) {
         // Discovery may not have seen a queue deployed since its last read: ask Teams before deciding it isn't there.
         for (const ref of collectAutoAttendantVoiceAppRefs(planRow)) {
@@ -1004,7 +1036,7 @@ async function handleDeploymentRun(job: Job) {
       // See refreshCrossRefEntry - lets a later row in this same batch (or a
       // future sheet, though auto_attendants already runs last) transfer to
       // the Auto Attendant this run just created.
-      if (created && crossRef) await refreshCrossRefEntry(crossRef, 'auto_attendant', planRow.id, planRow.name);
+      if (created && crossRef) await rememberTeamsIdentity('auto_attendant', planRow.id, await refreshCrossRefEntry(crossRef, 'auto_attendant', planRow.id, planRow.name));
     }
   }
 
