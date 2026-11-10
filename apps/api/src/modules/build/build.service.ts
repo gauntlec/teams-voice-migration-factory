@@ -40,6 +40,8 @@ import {
   type BuildResourceAccountPatchInput,
   type BuildRowValidation,
   type BuildSharedCallingPolicyCreateInput,
+  type BuildSharedCallingPopulateInput,
+  type LiveSharedCallingPolicy,
   type BuildSharedCallingPolicyPatchInput,
   type BuildSiteRollup,
   type BuildTemplateApplyInput,
@@ -1409,6 +1411,104 @@ export class BuildService {
       detail: { fields: Object.keys(patch) },
     });
     return row;
+  }
+
+  /**
+   * The Shared Calling policies Discovery read from Teams (Global left out: it can't be created), each with whether this site uses
+   * it and whether Design & Build already has it. The resource account is matched to this site's Design & Build resource
+   * accounts by UPN (Teams may hold the account's object ID, which Discovery's users turn into a UPN).
+   */
+  async liveSharedCallingPolicies(t: TenantContext, siteId: string): Promise<LiveSharedCallingPolicy[]> {
+    assertSiteInScope(t, siteId);
+    const s = this.s(t);
+    const [live, design, ras, buildUsers, buildCaps, liveUsers] = await Promise.all([
+      s.selectFrom('tenant_policies').select(['name', 'data']).where('policy_type', '=', 'TeamsSharedCallingRoutingPolicy').where('removed_at', 'is', null).orderBy('name').execute(),
+      s.selectFrom('build_shared_calling_policies').select('name').where('site_id', '=', siteId).execute(),
+      s.selectFrom('build_resource_accounts').select(['id', 'upn']).where('site_id', '=', siteId).execute(),
+      s.selectFrom('build_users').select(sql<string | null>`policies->>'shared_calling_policy'`.as('p')).where('site_id', '=', siteId).execute(),
+      s.selectFrom('build_caps').select(sql<string | null>`policies->>'shared_calling_policy'`.as('p')).where('site_id', '=', siteId).execute(),
+      s
+        .selectFrom('discovery_users as du')
+        .innerJoin('tenant_users as tu', 'tu.id', 'du.tenant_user_id')
+        .select(sql<string | null>`tu.policies->>'TeamsSharedCallingRoutingPolicy'`.as('p'))
+        .where('du.site_id', '=', siteId)
+        .execute(),
+    ]);
+    const policies = live.filter((p) => p.name.toLowerCase() !== 'global');
+    const raw = policies.map((p) => (p.data as Record<string, unknown>).ResourceAccount).filter((v): v is string => typeof v === 'string' && !!v);
+    const ids = raw.filter((v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)).map((v) => v.toLowerCase());
+    const upnById = new Map<string, string>();
+    if (ids.length) {
+      const found = await s.selectFrom('tenant_users').select(['upn', 'entra_id']).where(sql<string>`lower(entra_id)`, 'in', ids).execute();
+      for (const f of found) if (f.entra_id) upnById.set(f.entra_id.toLowerCase(), f.upn);
+    }
+    const raByUpn = new Map(ras.filter((r) => r.upn).map((r) => [r.upn.toLowerCase(), r.id]));
+    const used = new Set([...buildUsers, ...buildCaps, ...liveUsers].map((r) => (r.p ?? '').replace(/^Tag:/i, '').trim().toLowerCase()).filter(Boolean));
+    const inDesign = new Set(design.map((d) => d.name.toLowerCase()));
+    return policies.map((p) => {
+      const d = p.data as Record<string, unknown>;
+      const ra = typeof d.ResourceAccount === 'string' && d.ResourceAccount ? d.ResourceAccount.replace(/^sip:/i, '') : null;
+      const upn = ra ? (upnById.get(ra.toLowerCase()) ?? (ra.includes('@') ? ra : null)) : null;
+      const raRow = upn ? (raByUpn.get(upn.toLowerCase()) ?? null) : null;
+      return {
+        name: p.name,
+        description: typeof d.Description === 'string' && d.Description ? d.Description : null,
+        emergencyNumbers: Array.isArray(d.EmergencyNumbers) ? (d.EmergencyNumbers as unknown[]).filter((v): v is string => typeof v === 'string') : [],
+        resourceAccount: upn ?? ra,
+        resourceAccountRowId: raRow,
+        usedOnSite: used.has(p.name.toLowerCase()) || !!raRow,
+        inDesign: inDesign.has(p.name.toLowerCase()),
+      };
+    });
+  }
+
+  /**
+   * Populate Shared Calling policies: the chosen live policies become Design & Build rows on this site, matched by name so a policy
+   * is never added twice. A row already there is left alone unless `updateExisting` is set. A resource account not yet in Design &
+   * Build on this site is left empty, with a warning.
+   */
+  async populateSharedCallingPolicies(t: TenantContext, u: AuthedUser, body: BuildSharedCallingPopulateInput) {
+    const live = await this.liveSharedCallingPolicies(t, body.site_id);
+    const s = this.s(t);
+    const existing = await s.selectFrom('build_shared_calling_policies').select(['id', 'name']).where('site_id', '=', body.site_id).execute();
+    const rowByName = new Map(existing.map((e) => [e.name.toLowerCase(), e.id]));
+    const byName = new Map(live.map((p) => [p.name.toLowerCase(), p]));
+    const warnings: string[] = [];
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+    for (const want of [...new Set(body.names.map((n) => n.toLowerCase()))]) {
+      const p = byName.get(want);
+      if (!p) {
+        warnings.push(`"${body.names.find((n) => n.toLowerCase() === want)}" isn't a Shared Calling policy Discovery has read from Teams.`);
+        continue;
+      }
+      const values = { resource_account_id: p.resourceAccountRowId, emergency_numbers: JSON.stringify(p.emergencyNumbers), description: p.description };
+      const rowId = rowByName.get(want);
+      if (rowId && !body.updateExisting) {
+        skipped += 1;
+        continue;
+      }
+      if (rowId) {
+        await this.assertNotSrLocked(t, [rowId]);
+        await s.updateTable('build_shared_calling_policies').set({ ...values, updated_at: new Date().toISOString() } as never).where('id', '=', rowId).execute();
+        updated += 1;
+      } else {
+        const row = await s.insertInto('build_shared_calling_policies').values({ site_id: body.site_id, name: p.name, ...values } as never).returning('id').executeTakeFirstOrThrow();
+        rowByName.set(want, row.id);
+        created += 1;
+      }
+      if (p.resourceAccount && !p.resourceAccountRowId) {
+        warnings.push(`${p.name}: its resource account (${p.resourceAccount}) isn't in Design & Build on this site, so it's left empty. Populate or link the resource account, then pick it on the policy.`);
+      }
+    }
+    await this.audit.tenant(t.schema, 'build.shared_calling_policies_populated', {
+      actor: actorOf(u),
+      targetType: 'discovery_site',
+      targetId: body.site_id,
+      detail: { created, updated, skipped, warnings: warnings.length },
+    });
+    return { created, updated, skipped, warnings };
   }
 
   async deleteSharedCallingPolicy(t: TenantContext, u: AuthedUser, id: string) {

@@ -1212,6 +1212,31 @@ export const buildPopulateSchema = z.object({ site_id: z.guid() }).strict();
 export type BuildPopulateInput = z.infer<typeof buildPopulateSchema>;
 
 /**
+ * Shared calling policies from Teams into Design & Build (Discovery's tenant_policies). `names`: the live policies to bring in
+ * (matched by name, case-insensitive). `updateExisting`: also overwrite a Design & Build row of the same name with what Teams
+ * has; off by default so an engineer's edits are kept.
+ */
+export const buildSharedCallingPopulateSchema = z
+  .object({ site_id: z.guid(), names: z.array(z.string().trim().min(1).max(256)).min(1).max(200), updateExisting: z.boolean().optional() })
+  .strict();
+export type BuildSharedCallingPopulateInput = z.infer<typeof buildSharedCallingPopulateSchema>;
+
+/** One live Shared Calling policy, as the Populate dialog lists it for a site. */
+export interface LiveSharedCallingPolicy {
+  name: string;
+  description: string | null;
+  emergencyNumbers: string[];
+  /** the resource account's UPN when Discovery knows it, else what Teams holds (an object ID) */
+  resourceAccount: string | null;
+  /** the Design & Build resource account on this site it would link to */
+  resourceAccountRowId: string | null;
+  /** users or common area phones on this site have it, in Design & Build or in Teams, or it calls out through one of the site's resource accounts */
+  usedOnSite: boolean;
+  /** a Design & Build row of the same name is already on this site */
+  inDesign: boolean;
+}
+
+/**
  * Design & Build's "Link discovered resource account" action - pulls one
  * specific `tenant_objects` row (a live resource account not yet in Data
  * Collection at all) straight into this site, without the engineer having

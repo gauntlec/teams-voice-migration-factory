@@ -24,6 +24,7 @@ import { DangerText } from '../components/ui';
 import { CopyToSiteDataButton } from './build/copyToSiteData';
 import { RefreshFromTeamsButton } from './build/refreshFromTeams';
 import { AccessDialog } from './build/accessDialog';
+import { SharedCallingPopulateButton } from './build/sharedCallingPopulate';
 
 const useLocalStyles = makeStyles({
   mt8: { marginTop: '8px' },
@@ -905,7 +906,8 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           readOnly={!canWrite}
           bulkDelete={siteTools ? { noun: "shared calling policy", plural: "shared calling policies", note: "Nothing is changed in Teams." } : undefined}
           onChanged={embedded?.onChanged}
-          emptyText="No Shared Calling policies yet."
+          emptyText="No Shared Calling policies yet - add one, or Populate from Teams."
+          headerActions={siteTools ? <SharedCallingPopulateButton base={base} siteId={siteId} onDone={() => void qc.invalidateQueries({ queryKey: ['shared-calling-policies', tid, siteId] })} /> : undefined}
           columns={[
             withSrTags({ key: 'name', label: 'Name' }),
             {
