@@ -95,6 +95,8 @@ export interface FieldDef {
   /** For 'unanswered' (its value is the row's call_forwarding as JSON text): the field saying whether voicemail is on. */
   voicemailKey?: string;
   options?: readonly string[];
+  /** For 'select': what to show for each option, when that differs from the stored value. */
+  optionLabels?: Readonly<Record<string, string>>;
   choices?: Choice[] | ((row: Row | null) => Choice[]);
   required?: boolean;
   placeholder?: string;
@@ -308,7 +310,7 @@ export function BulkEditDialog({
                       ? typeof f.choices === 'function'
                         ? f.choices(null)
                         : (f.choices ?? [])
-                      : (f.options ?? []).map((o) => ({ value: o, label: o }));
+                      : (f.options ?? []).map((o) => ({ value: o, label: f.optionLabels?.[o] ?? o }));
                   return (
                     <Field key={f.key} label={f.label} style={wide}>
                       <Dropdown
@@ -572,13 +574,13 @@ export function RecordDialog({
                       value={
                         f.type === 'ref'
                           ? (resolveChoices(f).find((c) => c.value === values[f.key])?.label ?? '')
-                          : (values[f.key] ?? '')
+                          : (f.optionLabels?.[values[f.key] ?? ''] ?? values[f.key] ?? '')
                       }
                       onOptionSelect={(_, d) => setValues((v) => ({ ...v, [f.key]: d.optionValue ?? '' }))}
                     >
                       {(f.type === 'ref'
                         ? [{ value: '', label: '— none —' }, ...resolveChoices(f)]
-                        : (f.options ?? []).map((o) => ({ value: o, label: o }))
+                        : (f.options ?? []).map((o) => ({ value: o, label: f.optionLabels?.[o] ?? o }))
                       ).map((o) => (
                         <Option key={o.value || '__none'} value={o.value} text={o.label}>
                           {o.label}

@@ -39,6 +39,11 @@ export function asSiteRegion(v: unknown): SiteRegion | '' {
 /** discovery_number_ranges.kind */
 export const NUMBER_RANGE_KINDS = ['new', 'port', 'retain'] as const;
 export type NumberRangeKind = (typeof NUMBER_RANGE_KINDS)[number];
+/**
+ * What each kind is called on screen, under the heading "Number transition" (bug report "Label for Number ranges"). The stored value
+ * stays 'retain': numbers that stay with the carrier and are re-pointed to Teams, as the handover pack's "Re-pointed Numbers" says.
+ */
+export const NUMBER_RANGE_KIND_LABELS: Record<NumberRangeKind, string> = { new: 'New', port: 'Port', retain: 'Re-point' };
 
 /** discovery_network.scope / network_type */
 export const NETWORK_SCOPES = ['internal', 'external'] as const;
