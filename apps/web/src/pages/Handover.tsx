@@ -13,6 +13,9 @@ import {
   Field,
   Input,
   Link,
+  MessageBar,
+  MessageBarBody,
+  MessageBarTitle,
   Select,
   Spinner,
   TableBody,
@@ -39,6 +42,7 @@ import {
   handoverFileName,
   issuedHandoverVersionLabel,
   sameHandoverScope,
+  type HandoverUnportedRange,
 } from '@tvmf/shared';
 import { api, apiDownload, apiUpload, ApiError } from '../api';
 import { useNotify } from '../hooks/useNotify';
@@ -117,6 +121,7 @@ const useStyles = makeStyles({
     ...shorthands.borderRadius(tokens.borderRadiusMedium),
   },
   rowActions: { display: 'flex', columnGap: tokens.spacingHorizontalM, alignItems: 'center' },
+  unportedList: { ...shorthands.margin(tokens.spacingVerticalXS, 0, 0), paddingLeft: tokens.spacingHorizontalL, maxHeight: '160px', overflowY: 'auto' },
 });
 
 // Loaded on its own: it brings the diagram library, which only generating a pack needs here.
@@ -370,8 +375,19 @@ function GenerateDialog({
   };
 
   const allSections = sectionKeys.size === HANDOVER_SECTIONS.length;
+  // Port ranges on the chosen sites not ported yet: asked about before anything is drawn or a draft made (bug report
+  // "Service Handover - Pre creation check"). null = not asked yet.
+  const [unported, setUnported] = useState<HandoverUnportedRange[] | null>(null);
   const generate = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (acceptUnported: boolean): Promise<{ held: HandoverUnportedRange[] } | { failed: string[] }> => {
+      if (!acceptUnported) {
+        setProgress('Checking the number ranges…');
+        const check = await api<{ unportedRanges: HandoverUnportedRange[] }>(`/t/${tenantId}/handover/pre-check`, {
+          method: 'POST',
+          body: JSON.stringify({ siteIds: mode === 'sites' ? [...siteIds] : [] }),
+        });
+        if (check.unportedRanges.length) return { held: check.unportedRanges };
+      }
       const { diagrams, failed } = await drawDiagrams().catch(() => ({ diagrams: [], failed: ['the call flow diagrams'] }));
       setProgress('Generating the pack…');
       await api(`/t/${tenantId}/handover/packs`, {
@@ -384,11 +400,17 @@ function GenerateDialog({
           // empty clears it; the cover then has no project line
           projectName: projectName.trim(),
           changeNote: changeNote.trim() || undefined,
+          ...(acceptUnported ? { acceptUnported: true } : {}),
         }),
       });
-      return failed;
+      return { failed };
     },
-    onSuccess: (failed) => {
+    onSuccess: (r) => {
+      if ('held' in r) {
+        setUnported(r.held);
+        return;
+      }
+      const { failed } = r;
       if (failed.length) notify('The pack was generated without some call flow diagrams', { intent: 'warning', body: `Not drawn: ${failed.join(', ')}. Generate it again to retry.` });
       onDone();
     },
@@ -398,6 +420,11 @@ function GenerateDialog({
     },
   });
   const invalid = sectionKeys.size === 0 || (mode === 'sites' && siteIds.size === 0);
+  // a change to the sites asks again
+  const changeSites = (next: () => void) => {
+    setUnported(null);
+    next();
+  };
 
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
@@ -406,7 +433,7 @@ function GenerateDialog({
           <DialogTitle>Generate handover pack</DialogTitle>
           <DialogContent className={cs.stack}>
             <Field label="Sites">
-              <Select value={mode} onChange={(_, d) => setMode(d.value as 'all' | 'sites')}>
+              <Select value={mode} onChange={(_, d) => changeSites(() => setMode(d.value as 'all' | 'sites'))}>
                 <option value="all">All sites</option>
                 <option value="sites">Specific sites</option>
               </Select>
@@ -419,7 +446,7 @@ function GenerateDialog({
                     key={s.id}
                     label={s.name ? `${s.sitecode} — ${s.name}` : s.sitecode}
                     checked={siteIds.has(s.id)}
-                    onChange={(_, d) => setSiteIds(toggle(siteIds, s.id, !!d.checked))}
+                    onChange={(_, d) => changeSites(() => setSiteIds(toggle(siteIds, s.id, !!d.checked)))}
                   />
                 ))}
               </div>
@@ -445,6 +472,25 @@ function GenerateDialog({
             <Field label="Internal note (optional)" hint="Kept with the pack in Voxshift. It isn't printed in the document.">
               <Textarea value={notes} maxLength={2000} onChange={(_, d) => setNotes(d.value)} resize="vertical" />
             </Field>
+            {unported && unported.length > 0 && (
+              <MessageBar intent="warning" layout="multiline">
+                <MessageBarBody>
+                  <MessageBarTitle>
+                    {unported.length === 1 ? 'A number range has not been ported yet' : `${unported.length} number ranges have not been ported yet`}
+                  </MessageBarTitle>
+                  The pack hands the service over, but these numbers are still with the old carrier. Create the draft anyway, or mark the ports
+                  complete in Site Data &gt; Number porting first.
+                  <ul className={cs.unportedList}>
+                    {unported.map((r) => (
+                      <li key={`${r.sitecode}-${r.start}`}>
+                        {r.sitecode}
+                        {r.siteName && r.siteName !== r.sitecode ? ` ${r.siteName}` : ''}: {r.start === r.end ? r.start : `${r.start} – ${r.end}`} ({r.stage})
+                      </li>
+                    ))}
+                  </ul>
+                </MessageBarBody>
+              </MessageBar>
+            )}
             {generate.isError && <DangerText>{errorMessage(generate.error, 'Could not generate the pack')}</DangerText>}
             {progress && (
               <Text size={200} role="status">
@@ -461,9 +507,15 @@ function GenerateDialog({
             <Button appearance="secondary" onClick={onClose}>
               Cancel
             </Button>
-            <Button appearance="primary" disabled={invalid || generate.isPending} onClick={() => generate.mutate()}>
-              {generate.isPending ? 'Generating…' : 'Generate pack'}
-            </Button>
+            {unported && unported.length > 0 ? (
+              <Button appearance="primary" disabled={invalid || generate.isPending} onClick={() => generate.mutate(true)}>
+                {generate.isPending ? 'Generating…' : 'Create the draft anyway'}
+              </Button>
+            ) : (
+              <Button appearance="primary" disabled={invalid || generate.isPending} onClick={() => generate.mutate(false)}>
+                {generate.isPending ? 'Generating…' : 'Generate pack'}
+              </Button>
+            )}
           </DialogActions>
         </DialogBody>
       </DialogSurface>

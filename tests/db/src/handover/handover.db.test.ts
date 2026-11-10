@@ -3,7 +3,7 @@
 // is listed under "Deployment Issues" with why, with the open validation issues. Drafts are for
 // Voxshift staff only; customers see a pack once it's issued, without the
 // internal note, and the issued document must not still say DRAFT.
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import JSZip from 'jszip';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { AuditService } from '../../../../apps/api/src/common/audit.service';
@@ -379,5 +379,41 @@ describe('Service Handover outstanding actions', () => {
     await svc.updateAction(c.t, customer, a.id, { done: true });
     expect((await svc.listActions(c.t)).find((x) => x.id === a.id)).toMatchObject({ done_by: first.done_by, done_at: first.done_at });
     await expect(svc.createAction(c.t, engineer, { siteId: '00000000-0000-4000-8000-000000000000', description: 'x' })).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+// Bug report "Service Handover - Pre creation check": before a draft is made, the engineer is told about port ranges on the pack's
+// sites that have not been ported yet, and asked whether to go ahead.
+describe('Service Handover with numbers still to port', () => {
+  it('lists the port ranges not yet ported, refuses a draft until asked to go ahead, and asks nothing for sites that are done', async () => {
+    const d = await seedCustomer(handle);
+    await seedSite(d.s, { sitecode: 'MAN01' });
+    const gla = (await seedSite(d.s, { sitecode: 'GLA01' })).id;
+    await d.s
+      .insertInto('discovery_number_ranges')
+      .values([
+        { range_start: '+441610000100', range_end: '+441610000199', kind: 'port', sitecode: 'MAN01', port_foc_date: '2026-11-20', port_submitted_to_carrier_at: '2026-11-01T09:00:00Z' },
+        { range_start: '+441410000100', range_end: '+441410000109', kind: 'port', sitecode: 'GLA01', port_completed_at: '2026-11-05T12:00:00Z' },
+        { range_start: '+441410000200', range_end: '+441410000209', kind: 'new', sitecode: 'GLA01' },
+        // a port range on no site is not the pack's business
+        { range_start: '+441000000000', range_end: '+441000000009', kind: 'port', sitecode: null },
+      ] as never)
+      .execute();
+
+    const ranges = await svc.unportedRanges(d.t);
+    expect(ranges).toEqual([{ sitecode: 'MAN01', siteName: 'MAN01', start: '+441610000100', end: '+441610000199', stage: expect.stringMatching(/20 Nov 2026/) }]);
+    expect(await svc.unportedRanges(d.t, [gla])).toEqual([]);
+
+    const refused = await svc.generate(d.t, engineer, {}).catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(ConflictException);
+    const body = (refused as ConflictException).getResponse() as { code: string; ranges: unknown[]; message: string };
+    expect(body.code).toBe('confirm_unported');
+    expect(body.ranges).toHaveLength(1);
+    expect(body.message).toMatch(/not been ported yet/);
+    expect(await d.s.selectFrom('handover_packs').select('id').execute()).toHaveLength(0);
+
+    await svc.generate(d.t, engineer, { acceptUnported: true });
+    await svc.generate(d.t, engineer, { siteIds: [gla] });
+    expect(await d.s.selectFrom('handover_packs').select('id').execute()).toHaveLength(2);
   });
 });
