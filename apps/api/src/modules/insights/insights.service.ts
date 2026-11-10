@@ -1,9 +1,11 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { sql } from 'kysely';
-import { deviceStatusOverview, platformDb, tenantDb } from '@tvmf/db';
+import { deviceStatusOverview, FOUND_IN_TEAMS_COMMENT, platformDb, tenantDb } from '@tvmf/db';
 import {
   type NumberReportData,
   type NumberReportStatus,
+  type OffSiteNumberData,
+  type OffSiteNumberReason,
   can,
   customerGoLiveStatus,
   goLiveDate,
@@ -39,6 +41,33 @@ const DAY_MS = 86_400_000;
 const CHANGE_LOG_LIMIT = 5000;
 /** The Number management report reads at most this many numbers (a site filter shows a big customer's numbers whole). */
 const NUMBER_REPORT_LIMIT = 50000;
+
+/** How many numbers a range holds ("+441000" to "+441099" = 100). */
+function rangeSize(a: string, b: string) {
+  const x = a.replace(/\D/g, '');
+  const y = b.replace(/\D/g, '');
+  if (!x || !y) return 1;
+  const n = BigInt(y) - BigInt(x) + 1n;
+  return n > 0n ? Number(n) : 1;
+}
+
+/** Why a range with no site has none: a Discovery sync made it for numbers Teams has in none of the customer's ranges, or a person left it without one. */
+function offSiteReason(comments: string | null): OffSiteNumberReason {
+  return comments?.startsWith(FOUND_IN_TEAMS_COMMENT.replace(/%$/, '')) ? 'found_in_teams' : 'no_site';
+}
+
+/** A number's status and holder, as both number reports show them: Teams's holder when Discovery has seen one, else Site Data's. */
+function numberReportRow(r: { e164: string; status: string; holderType: string | null; liveUpn: string | null; liveName: string | null; liveKind: string | null; note: string | null; designUpn: string | null; designName: string | null }) {
+  const live = !!r.liveUpn;
+  const status: NumberReportStatus = live || r.holderType || r.status === 'assigned' ? 'Assigned' : r.status === 'parked' ? 'Parked' : r.status === 'reserved' ? 'Reserved' : 'Spare';
+  return {
+    e164: r.e164,
+    status,
+    upn: live ? r.liveUpn : r.designUpn,
+    name: live ? r.liveName : (r.designName ?? (r.holderType === 'analogue' ? r.note : null)),
+    holderType: live ? (r.liveKind === 'resource_account' ? 'resource_account' : r.liveKind === 'user' ? (r.holderType === 'cap' ? 'cap' : 'user') : 'other') : r.holderType,
+  };
+}
 const pct = (part: number, whole: number) => (whole === 0 ? null : Math.round((part / whole) * 1000) / 10);
 
 /**
@@ -289,16 +318,50 @@ export class InsightsService {
    * The Number management report's data: every number range and number in Site Data with its site and country, and who has each
    * assigned one (Teams's holder when Discovery has seen one, otherwise the Site Data holder). Narrowed to the caller's sites.
    */
+  /** The Number management report: the ranges and numbers on the customer's sites (or the one site chosen). */
   async numbers(t: TenantContext): Promise<NumberReportData> {
     const s = tenantDb(this.db, t.schema);
     const codes = isSiteScoped(t) ? (await s.selectFrom('discovery_sites').select('sitecode').where('id', 'in', t.siteScope).execute()).map((x) => x.sitecode) : null;
     if (codes && !codes.length) return { ranges: [], numbers: [], truncated: false };
+    // Only ranges on a site: what isn't on one is the "Numbers not on a site" report (bug report "Number Management Report").
+    const { ranges, rows, truncated } = await this.numberRows(t, codes ? { sitecodes: codes } : 'on-site');
+    return {
+      ranges: ranges.map((r) => ({ start: r.start, end: r.end, size: rangeSize(r.start, r.end), kind: r.kind, carrier: r.carrier, sitecode: r.sitecode, siteName: r.siteName, country: r.country })),
+      numbers: rows.map((r) => ({ ...numberReportRow(r), sitecode: r.sitecode, siteName: r.siteName, country: r.country })),
+      truncated,
+    };
+  }
+
+  /**
+   * The Numbers not on a site report: ranges with no site, and their numbers - most of them numbers a Discovery sync found assigned in
+   * Teams but in none of the customer's ranges ("Found in Teams" ranges, see number-reconcile.ts). Customer-wide, so not for someone
+   * who can only see some sites.
+   */
+  async numbersOffSite(t: TenantContext): Promise<OffSiteNumberData> {
+    if (isSiteScoped(t)) return { ranges: [], numbers: [], truncated: false };
+    const { ranges, rows, truncated } = await this.numberRows(t, 'off-site');
+    return {
+      ranges: ranges.map((r) => ({ start: r.start, end: r.end, size: rangeSize(r.start, r.end), kind: r.kind, carrier: r.carrier, reason: offSiteReason(r.comments) })),
+      numbers: rows.map((r) => ({ ...numberReportRow(r), reason: offSiteReason(r.comments) })),
+      truncated,
+    };
+  }
+
+  /** The ranges and numbers for the two number reports: on the given sites, on any site, or on none. */
+  private async numberRows(t: TenantContext, which: { sitecodes: string[] } | 'on-site' | 'off-site') {
+    const s = tenantDb(this.db, t.schema);
+    const cond =
+      typeof which === 'object'
+        ? sql<boolean>`r.sitecode in (${sql.join(which.sitecodes)})`
+        : which === 'on-site'
+          ? sql<boolean>`r.sitecode is not null`
+          : sql<boolean>`r.sitecode is null`;
     const [ranges, rows] = await Promise.all([
       s
         .selectFrom('discovery_number_ranges as r')
         .leftJoin('discovery_sites as ds', 'ds.sitecode', 'r.sitecode')
-        .select(['r.range_start as start', 'r.range_end as end', 'r.kind as kind', 'r.carrier as carrier', 'r.sitecode as sitecode', 'ds.name as siteName', 'ds.country as country'])
-        .$if(!!codes, (qb) => qb.where('r.sitecode', 'in', codes!))
+        .select(['r.range_start as start', 'r.range_end as end', 'r.kind as kind', 'r.carrier as carrier', 'r.sitecode as sitecode', 'r.comments as comments', 'ds.name as siteName', 'ds.country as country'])
+        .where(cond)
         .orderBy('r.sitecode')
         .orderBy('r.range_start')
         .execute(),
@@ -318,42 +381,18 @@ export class InsightsService {
           'pn.live_holder_kind as liveKind',
           'pn.note as note',
           'r.sitecode as sitecode',
+          'r.comments as comments',
           'ds.name as siteName',
           'ds.country as country',
           sql<string | null>`coalesce(du.upn, dc.upn, dra.upn)`.as('designUpn'),
           sql<string | null>`coalesce(du.display_name, dc.display_name, dra.name)`.as('designName'),
         ])
-        .$if(!!codes, (qb) => qb.where('r.sitecode', 'in', codes!))
+        .where(cond)
         .orderBy('pn.e164')
         .limit(NUMBER_REPORT_LIMIT + 1)
         .execute(),
     ]);
-    const size = (a: string, b: string) => {
-      const x = a.replace(/\D/g, '');
-      const y = b.replace(/\D/g, '');
-      if (!x || !y) return 1;
-      const n = BigInt(y) - BigInt(x) + 1n;
-      return n > 0n ? Number(n) : 1;
-    };
-    const numbers = rows.slice(0, NUMBER_REPORT_LIMIT).map((r) => {
-      const live = !!r.liveUpn;
-      const status: NumberReportStatus = live || r.holderType || r.status === 'assigned' ? 'Assigned' : r.status === 'parked' ? 'Parked' : r.status === 'reserved' ? 'Reserved' : 'Spare';
-      return {
-        e164: r.e164,
-        status,
-        sitecode: r.sitecode,
-        siteName: r.siteName,
-        country: r.country,
-        upn: live ? r.liveUpn : r.designUpn,
-        name: live ? r.liveName : (r.designName ?? (r.holderType === 'analogue' ? r.note : null)),
-        holderType: live ? (r.liveKind === 'resource_account' ? 'resource_account' : r.liveKind === 'user' ? (r.holderType === 'cap' ? 'cap' : 'user') : 'other') : r.holderType,
-      };
-    });
-    return {
-      ranges: ranges.map((r) => ({ ...r, size: size(r.start, r.end) })),
-      numbers,
-      truncated: rows.length > NUMBER_REPORT_LIMIT,
-    };
+    return { ranges, rows: rows.slice(0, NUMBER_REPORT_LIMIT), truncated: rows.length > NUMBER_REPORT_LIMIT };
   }
 
   async changeLog(t: TenantContext, role: Role, q: { from?: string; to?: string }, now = new Date()): Promise<ChangeLogData> {

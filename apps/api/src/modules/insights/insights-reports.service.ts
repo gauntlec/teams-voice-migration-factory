@@ -10,6 +10,7 @@ import {
   buildIncidentReport,
   buildMigrationReport,
   buildNumberReport,
+  buildOffSiteNumberReport,
   buildServiceRequestReport,
   can,
   previousReportPeriod,
@@ -101,6 +102,8 @@ export class InsightsReportsService {
       }
       case 'numbers':
         return buildNumberReport(await this.insights.numbers(t), today);
+      case 'numbers-off-site':
+        return buildOffSiteNumberReport(await this.insights.numbersOffSite(t), today);
       case 'changes':
         return buildChangeLogReport(await this.insights.changeLog(t, role, period, now), period);
       case 'devices': {

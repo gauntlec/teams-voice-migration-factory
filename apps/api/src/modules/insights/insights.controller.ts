@@ -66,6 +66,13 @@ export class InsightsController {
     return this.svc.numbers(narrowToSite(t, q.site));
   }
 
+  /** The Numbers not on a site report: ranges with no site and their numbers (customer-wide; empty for someone limited to some sites). */
+  @Get('numbers/off-site')
+  @RequirePermission('discovery:read')
+  numbersOffSite(@TenantCtx() t: TenantContext) {
+    return this.svc.numbersOffSite(t);
+  }
+
   /** The Assistant activity report: what the AI assistants did in the period (Managed Services, inc:read or sr:read). */
   @Get('assistants')
   @RequirePermission('tenant:read')

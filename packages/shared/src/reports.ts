@@ -143,7 +143,7 @@ export interface ReportDocument {
   sections: ReportSection[];
 }
 
-export const REPORT_KEYS = ['executive', 'migration', 'numbers', 'incidents', 'service-requests', 'assistants', 'changes', 'devices'] as const;
+export const REPORT_KEYS = ['executive', 'migration', 'numbers', 'numbers-off-site', 'incidents', 'service-requests', 'assistants', 'changes', 'devices'] as const;
 export type ReportKey = (typeof REPORT_KEYS)[number];
 
 /** The catalogue: what each report is for, in plain words. */
@@ -159,7 +159,14 @@ export const REPORT_CATALOGUE: Record<ReportKey, { title: string; group: (typeof
   numbers: {
     title: 'Number management',
     group: 'Migration',
-    description: 'Every number range and phone number, whether each number is assigned, spare, reserved or parked, and who has the assigned ones. Best downloaded as Excel.',
+    description: 'Every number range and phone number on your sites, whether each number is assigned, spare, reserved or parked, and who has the assigned ones. Numbers on no site are in Numbers not on a site. Best downloaded as Excel.',
+    period: false,
+  },
+  'numbers-off-site': {
+    title: 'Numbers not on a site',
+    group: 'Migration',
+    description:
+      'Numbers that belong to no site: the ones Discovery found assigned in Teams but in none of your ranges, and any range entered without a site. Who has each one, so you can add it to a site or tidy it up in Teams. Best downloaded as Excel.',
     period: false,
   },
   changes: { title: 'Change log', group: 'Migration', description: 'Every change Voxshift made in the customer’s Teams tenant, and whether it applied. For auditors and change boards.', period: true },
@@ -184,6 +191,7 @@ export function reportAvailableFor(key: ReportKey, can: (p: Permission) => boole
     case 'migration':
       return true;
     case 'numbers':
+    case 'numbers-off-site':
       return can('discovery:read');
     case 'changes':
       return can('deployment:read') || can('audit:read:tenant');
@@ -328,7 +336,7 @@ export interface ChangeLogData {
   truncated: boolean;
 }
 
-/** GET /t/:tenantId/insights/numbers (InsightsService.numbers): the ranges and numbers in Site Data, with who holds each. */
+/** GET /t/:tenantId/insights/numbers (InsightsService.numbers): the ranges and numbers on the customer's sites, with who holds each. */
 export type NumberReportStatus = 'Assigned' | 'Spare' | 'Reserved' | 'Parked';
 export interface NumberReportData {
   ranges: { start: string; end: string; size: number; kind: 'new' | 'port' | 'retain'; carrier: string | null; sitecode: string | null; siteName: string | null; country: string | null }[];
@@ -343,6 +351,21 @@ export interface NumberReportData {
     name: string | null;
     holderType: string | null;
   }[];
+  /** more numbers than the report reads; the first by number are shown */
+  truncated: boolean;
+}
+
+/** Why a number belongs to no site: Discovery found it in Teams in none of the customer's ranges, or its range was entered without a site. */
+export type OffSiteNumberReason = 'found_in_teams' | 'no_site';
+export const OFF_SITE_REASON_LABELS: Record<OffSiteNumberReason, string> = {
+  found_in_teams: 'Found in Teams, in none of your ranges',
+  no_site: 'Range has no site',
+};
+
+/** GET /t/:tenantId/insights/numbers/off-site (InsightsService.numbersOffSite): the ranges with no site, and their numbers. */
+export interface OffSiteNumberData {
+  ranges: { start: string; end: string; size: number; kind: 'new' | 'port' | 'retain'; carrier: string | null; reason: OffSiteNumberReason }[];
+  numbers: { e164: string; status: NumberReportStatus; upn: string | null; name: string | null; holderType: string | null; reason: OffSiteNumberReason }[];
   /** more numbers than the report reads; the first by number are shown */
   truncated: boolean;
 }
@@ -712,6 +735,48 @@ export function buildNumberReport(d: NumberReportData, today: string): ReportDoc
     key: 'numbers',
     title: REPORT_CATALOGUE.numbers.title,
     summary: `${count(d.ranges.length, 'range')} · ${count(d.numbers.length, 'number')} · ${assigned.length.toLocaleString('en-GB')} assigned`,
+    period: { from: today, to: today },
+    sections,
+  };
+}
+
+/** Numbers not on a site: the ranges with no site, and every number in them with who has it and why it is on no site. */
+export function buildOffSiteNumberReport(d: OffSiteNumberData, today: string): ReportDocument {
+  const found = d.numbers.filter((x) => x.reason === 'found_in_teams').length;
+  const assigned = d.numbers.filter((x) => x.status === 'Assigned').length;
+  const sections: ReportSection[] = [
+    {
+      kind: 'figures',
+      title: 'Numbers not on a site',
+      figures: [
+        { label: 'Numbers', value: d.numbers.length, better: null },
+        { label: 'Found in Teams', value: found, better: null, note: 'in none of your ranges' },
+        { label: 'In a range with no site', value: d.numbers.length - found, better: null },
+        { label: 'Assigned', value: assigned, better: null },
+      ],
+    },
+    {
+      kind: 'table',
+      title: 'Numbers',
+      columns: ['Number', 'Why it is on no site', 'Status', 'UPN', 'Name', 'Assigned to'],
+      rows: d.numbers.map((x) => [x.e164, OFF_SITE_REASON_LABELS[x.reason], x.status, x.upn, x.name, x.holderType ? (HOLDER_TYPE[x.holderType] ?? x.holderType) : null]),
+      empty: 'Every number is on a site.',
+      note: 'Add a number to a site by putting it in one of the site’s number ranges in Site Data. A number Teams no longer has goes from this list at the next Discovery sync.',
+    },
+    {
+      kind: 'table',
+      title: 'Ranges with no site',
+      columns: ['Range', 'Size', 'Why it is on no site', 'Number transition', 'Carrier'],
+      numeric: [1],
+      rows: d.ranges.map((r) => [r.start === r.end ? r.start : `${r.start} – ${r.end}`, r.size, OFF_SITE_REASON_LABELS[r.reason], RANGE_KIND[r.kind] ?? r.kind, r.carrier]),
+      empty: 'Every range is on a site.',
+    },
+  ];
+  if (d.truncated) sections.push({ kind: 'note', text: 'There are more numbers than the report reads; the first ones by number are shown.' });
+  return {
+    key: 'numbers-off-site',
+    title: REPORT_CATALOGUE['numbers-off-site'].title,
+    summary: `${count(d.numbers.length, 'number')} · ${found.toLocaleString('en-GB')} found in Teams`,
     period: { from: today, to: today },
     sections,
   };
