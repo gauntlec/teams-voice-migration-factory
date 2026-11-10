@@ -15,7 +15,7 @@ describe('noteSectionContent', () => {
   });
 
   it('labels notes by site once any site-specific note exists, all-sites first then by site code', () => {
-    const c = noteSectionContent('outstanding_actions', [
+    const c = noteSectionContent('paging', [
       { sitecode: 'LON02', body: 'Port the DDI range' },
       { sitecode: null, body: 'Retire the old PBX' },
       { sitecode: 'DAL01', body: 'Fit the paging amp' },
@@ -85,8 +85,14 @@ describe('notes written for the pack', () => {
     expect(noteLine('Plain text - with a dash')).toEqual({ kind: 'text', text: 'Plain text - with a dash' });
   });
 
-  it('turns Outstanding Actions lines into numbered actions with an owner', () => {
-    expect(outstandingActionsContent([{ sitecode: null, body: 'Test 933 on the lobby phone | AT&T\n\n- Submit a ticket for Theresa' }, { sitecode: 'FSD02D', body: 'Fix the diagram | AT&T' }])).toEqual({
+  it('turns the open outstanding actions into numbered actions with an owner, a site’s prefixed with its code', () => {
+    expect(
+      outstandingActionsContent([
+        { sitecode: null, description: 'Test 933 on the lobby phone', owner: 'AT&T' },
+        { sitecode: null, description: 'Submit a ticket for the paging amp ', owner: '' },
+        { sitecode: 'FSD02D', description: 'Fix the diagram', owner: 'AT&T' },
+      ]),
+    ).toEqual({
       kind: 'blocks',
       blocks: [
         {
@@ -94,7 +100,7 @@ describe('notes written for the pack', () => {
           caption: 'Outstanding Actions Table',
           items: [
             { description: 'Test 933 on the lobby phone', owner: 'AT&T' },
-            { description: 'Submit a ticket for Theresa', owner: '' },
+            { description: 'Submit a ticket for the paging amp', owner: '' },
             { description: 'FSD02D: Fix the diagram', owner: 'AT&T' },
           ],
         },

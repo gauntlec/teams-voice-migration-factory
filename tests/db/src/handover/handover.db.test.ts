@@ -335,3 +335,49 @@ describe('Service Handover', () => {
     await expect(files.readBytes(c3.t, main, hide)).rejects.toBeInstanceOf(NotFoundException);
   });
 });
+
+describe('Service Handover outstanding actions', () => {
+  it('adds actions, ticks one off, and prints only the open ones in the pack (a site’s with its code)', async () => {
+    const all = await svc.createAction(c.t, engineer, { siteId: null, description: 'Test 933 on the lobby phone', owner: 'AT&T' });
+    const lon = await svc.createAction(c.t, engineer, { siteId, description: 'Fix the diagram' });
+    const done = await svc.createAction(c.t, engineer, { siteId, description: 'Retire the old PBX', owner: 'Customer' });
+    await svc.updateAction(c.t, engineer, done.id, { done: true });
+
+    const listed = await svc.listActions(c.t);
+    // open first, then done; who added and who ticked
+    expect(listed.map((a) => [a.description, a.sitecode, !!a.done_at])).toEqual([
+      ['Test 933 on the lobby phone', null, false],
+      ['Fix the diagram', 'LON01', false],
+      ['Retire the old PBX', 'LON01', true],
+    ]);
+    expect(listed[2]).toMatchObject({ created_by_name: 'Eve Engineer', done_by_name: 'Eve Engineer' });
+
+    const pack = await svc.generate(c.t, engineer, {});
+    const { sections } = await svc.get(c.t, engineer, pack.id);
+    const actions = sections.find((s) => s.key === 'outstanding_actions')!.content as { kind: 'blocks'; blocks: Block[] };
+    expect(actions.blocks[0]).toMatchObject({
+      kind: 'actions',
+      items: [
+        { description: 'Test 933 on the lobby phone', owner: 'AT&T' },
+        { description: 'LON01: Fix the diagram', owner: '' },
+      ],
+    });
+
+    // opened again, edited, deleted
+    await svc.updateAction(c.t, engineer, done.id, { done: false, description: 'Retire the old PBX by Friday' });
+    expect((await svc.listActions(c.t, siteId)).find((a) => a.id === done.id)).toMatchObject({ done_at: null, done_by: null, description: 'Retire the old PBX by Friday' });
+    await svc.deleteAction(c.t, engineer, lon.id);
+    await svc.deleteAction(c.t, engineer, all.id);
+    await expect(svc.deleteAction(c.t, engineer, all.id)).rejects.toBeInstanceOf(NotFoundException);
+    expect((await svc.listActions(c.t)).map((a) => a.description)).toEqual(['Retire the old PBX by Friday']);
+  });
+
+  it('ticking an action already done keeps who did it first, and an action can’t be added for an unknown site', async () => {
+    const a = await svc.createAction(c.t, engineer, { siteId: null, description: 'Hand over the admin guide' });
+    await svc.updateAction(c.t, engineer, a.id, { done: true });
+    const first = (await svc.listActions(c.t)).find((x) => x.id === a.id)!;
+    await svc.updateAction(c.t, customer, a.id, { done: true });
+    expect((await svc.listActions(c.t)).find((x) => x.id === a.id)).toMatchObject({ done_by: first.done_by, done_at: first.done_at });
+    await expect(svc.createAction(c.t, engineer, { siteId: '00000000-0000-4000-8000-000000000000', description: 'x' })).rejects.toBeInstanceOf(NotFoundException);
+  });
+});

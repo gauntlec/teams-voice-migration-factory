@@ -49,6 +49,7 @@ import { Page } from '../components/Page';
 import { LoadError, NoTenant } from './DataCollection';
 import { DangerText } from '../components/ui';
 import { TableSkeleton } from '../components/states';
+import { HandoverActionsDialog } from './handover/handoverActions';
 
 const useLocalStyles = makeStyles({
   w92vwMaxW1100: { maxWidth: "1100px", width: "92vw" },
@@ -132,6 +133,7 @@ export function Handover() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [generateOpen, setGenerateOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [issuing, setIssuing] = useState<Pack | null>(null);
 
@@ -184,14 +186,17 @@ export function Handover() {
       title="Service Handover"
       subtitle="Generate a handover pack from the final configuration, for all sites or just some. Add the notes Voxshift can't collect itself, preview the pack, then issue it once it's final."
       actions={
-        canGenerate ? (
-          <div className={cs.rowActions}>
-            <Button onClick={() => setNotesOpen(true)}>Edit notes</Button>
-            <Button appearance="primary" onClick={() => setGenerateOpen(true)}>
-              Generate pack
-            </Button>
-          </div>
-        ) : undefined
+        <div className={cs.rowActions}>
+          <Button onClick={() => setActionsOpen(true)}>Outstanding actions</Button>
+          {canGenerate && (
+            <>
+              <Button onClick={() => setNotesOpen(true)}>Edit notes</Button>
+              <Button appearance="primary" onClick={() => setGenerateOpen(true)}>
+                Generate pack
+              </Button>
+            </>
+          )}
+        </div>
       }
     >
       {actionError && <LoadError message={actionError} />}
@@ -258,6 +263,7 @@ export function Handover() {
         />
       )}
       {notesOpen && <NotesDialog tenantId={activeTenantId} sites={sites} onClose={() => setNotesOpen(false)} />}
+      {actionsOpen && <HandoverActionsDialog tenantId={activeTenantId} sites={sites} canEdit={canGenerate} onClose={() => setActionsOpen(false)} />}
       {previewId && <PreviewDialog tenantId={activeTenantId} packId={previewId} onClose={() => setPreviewId(null)} />}
 
       <Dialog open={!!issuing} onOpenChange={(_, d) => !d.open && setIssuing(null)}>
@@ -545,11 +551,9 @@ function NotesDialog({ tenantId, sites, onClose }: { tenantId: string; sites: Si
             <Field
               label="Note"
               hint={
-                section === 'outstanding_actions'
-                  ? 'One action per line: the description, then | and who owns it, e.g. “Test 933 on the lobby phone | AT&T”. Numbered in the pack. Leave empty and save to clear it.'
-                  : section === 'introduction'
-                    ? 'Replaces the standard introduction. One paragraph per line; start a line with “- ” for a bullet. Leave empty and save to go back to the standard text.'
-                    : 'One paragraph per line. Start a line with “## ” for a numbered sub-heading (e.g. “## Welcome Document”) or “- ” for a bullet. Leave empty and save to clear it.'
+                section === 'introduction'
+                  ? 'Replaces the standard introduction. One paragraph per line; start a line with “- ” for a bullet. Leave empty and save to go back to the standard text.'
+                  : 'One paragraph per line. Start a line with “## ” for a numbered sub-heading (e.g. “## Welcome Document”) or “- ” for a bullet. Leave empty and save to clear it.'
               }
             >
               {notesQ.isLoading ? (
