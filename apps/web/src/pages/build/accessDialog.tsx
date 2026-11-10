@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Dropdown, Field, Input, Option, Switch, Text, makeStyles, shorthands, tokens } from '@fluentui/react-components';
+import { Button, Checkbox, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Dropdown, Field, Input, Option, Switch, Text, makeStyles, shorthands, tokens } from '@fluentui/react-components';
+import { Dialog } from '../../components/AppDialog';
 import { DeleteRegular } from '@fluentui/react-icons';
 import { USER_NAME_EXTENSIONS } from '@tvmf/shared';
 import { api, ApiError } from '../../api';

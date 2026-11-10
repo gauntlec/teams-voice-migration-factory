@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Button,
-  Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
@@ -20,6 +19,7 @@ import {
   shorthands,
   tokens,
 } from '@fluentui/react-components';
+import { Dialog } from '../../components/AppDialog';
 import type { TenantDeletionCounts, TenantDeletionResult, TenantDeletionSummary } from '@tvmf/shared';
 import { api, ApiError } from '../../api';
 import { useAuth } from '../../auth';

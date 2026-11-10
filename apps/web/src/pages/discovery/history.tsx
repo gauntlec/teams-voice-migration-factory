@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Dropdown, Option, SearchBox, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text , makeStyles, shorthands, mergeClasses } from '@fluentui/react-components';
+import { Button, Card, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Dropdown, Option, SearchBox, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, makeStyles, shorthands, mergeClasses } from '@fluentui/react-components';
+import { Dialog } from '../../components/AppDialog';
 import { EyeRegular, HistoryRegular } from '@fluentui/react-icons';
 import { TENANT_OBJECT_TYPES, TENANT_OBJECT_TYPE_LABELS, type Paginated, type TenantDiscoveryRun, type TenantObjectType, type TenantObjectVersion } from '@tvmf/shared';
 import { api } from '../../api';

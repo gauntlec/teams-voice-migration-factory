@@ -3,7 +3,6 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   Button,
   Checkbox,
-  Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
@@ -18,6 +17,7 @@ import {
   makeStyles,
   tokens,
 } from '@fluentui/react-components';
+import { Dialog } from '../../components/AppDialog';
 import type { BuildIssueRecipient, BuildIssueRow, EmailBuildIssuesInput, EmailBuildIssuesResult } from '@tvmf/shared';
 import { api, ApiError } from '../../api';
 

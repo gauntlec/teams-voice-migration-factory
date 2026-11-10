@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Spinner, Text , makeStyles, mergeClasses } from '@fluentui/react-components';
+import { Button, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Spinner, Text, makeStyles, mergeClasses } from '@fluentui/react-components';
+import { Dialog } from '../../components/AppDialog';
 import { buildAutoAttendantFlowGraphFromDesign, buildCallQueueFlowGraphFromDesign, type LiveVoiceApps, type TenantObject, type TenantUserSummary, type AutoAttendantCallableEntity, type AutoAttendantCallFlow, type AutoAttendantHolidayCallFlow, type AutoAttendantSchedule, type CallFlowResourceAccount, type CallQueueActionSettings, type DesignAutoAttendantInput, type DesignCallQueueInput, type Paginated } from '@tvmf/shared';
 import { api } from '../../api';
 import { CallFlowDiagram } from '../../components/CallFlowDiagram';

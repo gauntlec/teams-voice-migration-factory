@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
-import { Badge, Button, Card, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Dropdown, Field, MessageBar, MessageBarBody, Option, SearchBox, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text , makeStyles, shorthands, mergeClasses } from '@fluentui/react-components';
+import { Badge, Button, Card, Checkbox, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Dropdown, Field, MessageBar, MessageBarBody, Option, SearchBox, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, makeStyles, shorthands, mergeClasses } from '@fluentui/react-components';
+import { Dialog } from '../../components/AppDialog';
 import { EyeRegular } from '@fluentui/react-icons';
 import { buildAutoAttendantFlowGraphFromLive, buildCallQueueFlowGraphFromLive, isCommonAreaPhone, TENANT_OBJECT_TYPE_LABELS, TENANT_POLICY_TYPE_LABELS, TENANT_POLICY_TYPES, type Paginated, type TenantEndpoint, type TenantObject, type TenantObjectType, type TenantPolicySummary, type TenantPolicyType, type TenantUserSummary, type TenantGroupSummary } from '@tvmf/shared';
 import { api, ApiError } from '../../api';

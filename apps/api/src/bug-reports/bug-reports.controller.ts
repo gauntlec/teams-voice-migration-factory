@@ -53,9 +53,10 @@ export class BugReportsController {
     return this.bugs.update(id, body, this.actor(user), can(user.role, 'bug:manage'));
   }
 
+  /** An administrator deletes anything; the person who reported a bug withdraws it while it is still New. */
   @Delete(':id')
-  @RequirePermission('bug:manage')
+  @RequirePermission('bug:create')
   remove(@Param('id') id: string, @CurrentUser() user: AuthedUser) {
-    return this.bugs.remove(id, this.actor(user));
+    return this.bugs.remove(id, this.actor(user), can(user.role, 'bug:manage'));
   }
 }

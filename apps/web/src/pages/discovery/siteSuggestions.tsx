@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Card, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, MessageBar, MessageBarBody, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, makeStyles, tokens } from '@fluentui/react-components';
+import { Badge, Button, Card, Checkbox, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, MessageBar, MessageBarBody, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, makeStyles, tokens } from '@fluentui/react-components';
+import { Dialog } from '../../components/AppDialog';
 import type { AddFromDiscoveryInput, AddFromDiscoveryItemResult, MixedSuggestion, SiteSuggestion, SiteSuggestions } from '@tvmf/shared';
 import { api, ApiError } from '../../api';
 import { useAuth } from '../../auth';

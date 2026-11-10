@@ -6,7 +6,6 @@ import {
   Card,
   Checkbox,
   Select,
-  Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
@@ -26,10 +25,10 @@ import {
   TableRow,
   Text,
   tokens,
-
   makeStyles,
   shorthands,
 } from '@fluentui/react-components';
+import { Dialog } from '../../components/AppDialog';
 import { DeleteRegular } from '@fluentui/react-icons';
 import { documentBrandingSource, type Branding, type DocumentBrandingChoice } from '@tvmf/shared';
 import { api, apiUpload } from '../../api';

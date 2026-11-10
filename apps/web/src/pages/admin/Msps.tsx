@@ -3,7 +3,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Button,
   Card,
-  Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
@@ -22,10 +21,10 @@ import {
   TableRow,
   Text,
   tokens,
-
   makeStyles,
   shorthands,
 } from '@fluentui/react-components';
+import { Dialog } from '../../components/AppDialog';
 import { DeleteRegular } from '@fluentui/react-icons';
 import type { Branding } from '@tvmf/shared';
 import { api, apiUpload } from '../../api';

@@ -5,7 +5,6 @@ import {
   Button,
   Card,
   Checkbox,
-  Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
@@ -28,9 +27,9 @@ import {
   makeStyles,
   shorthands,
   tokens,
-
   mergeClasses,
 } from '@fluentui/react-components';
+import { Dialog } from '../../components/AppDialog';
 import {
   AGENT_ACTION_CLASS_LABELS,
   AGENT_DOMAINS,

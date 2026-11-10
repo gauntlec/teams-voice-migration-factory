@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Text, Textarea, makeStyles, tokens , mergeClasses } from '@fluentui/react-components';
+import { Badge, Button, Card, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Text, Textarea, makeStyles, tokens, mergeClasses } from '@fluentui/react-components';
+import { Dialog } from './AppDialog';
 import { DeleteRegular } from '@fluentui/react-icons';
 import { INC_REVIEW_SECTIONS, type IncReviewAction } from '@tvmf/shared';
 import { api } from '../api';

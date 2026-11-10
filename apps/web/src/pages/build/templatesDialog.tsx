@@ -1,6 +1,7 @@
 import { Fragment, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Dropdown, Field, Input, Option, Spinner, Text, tokens , makeStyles, shorthands } from '@fluentui/react-components';
+import { Badge, Button, Checkbox, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Dropdown, Field, Input, Option, Spinner, Text, tokens, makeStyles, shorthands } from '@fluentui/react-components';
+import { Dialog } from '../../components/AppDialog';
 import { DeleteRegular } from '@fluentui/react-icons';
 import { POLICY_KIND_GROUPS, POLICY_KINDS, VOICEMAIL_PROMPT_LANGUAGES, type PolicyKey } from '@tvmf/shared';
 import { api, ApiError } from '../../api';

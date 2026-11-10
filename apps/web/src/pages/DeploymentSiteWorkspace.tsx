@@ -6,7 +6,6 @@ import {
   Button,
   Card,
   Checkbox,
-  Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
@@ -27,9 +26,9 @@ import {
   makeStyles,
   shorthands,
   tokens,
-
   mergeClasses,
 } from '@fluentui/react-components';
+import { Dialog } from '../components/AppDialog';
 import { ArrowLeftRegular, CheckmarkCircleRegular, WarningRegular } from '@fluentui/react-icons';
 import {
   DEPLOYMENT_SHEETS,

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Tab, TabList, Text, makeStyles, shorthands, tokens } from '@fluentui/react-components';
+import { Badge, Button, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Tab, TabList, Text, makeStyles, shorthands, tokens } from '@fluentui/react-components';
+import { Dialog } from '../../components/AppDialog';
 import { CheckmarkRegular, ChevronLeftRegular, ChevronRightRegular, CopyRegular } from '@fluentui/react-icons';
 import { TENANT_OBJECT_CHANGE_KIND_LABELS, type Paginated, type TenantDiscoveryChangeCounts, type TenantDiscoveryRun, type TenantObject, type TenantObjectChangeKind, type TenantObjectType } from '@tvmf/shared';
 import { api } from '../../api';

@@ -3,7 +3,6 @@ import { useMutation } from '@tanstack/react-query';
 import {
   Badge,
   Button,
-  Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
@@ -20,6 +19,7 @@ import {
   shorthands,
   tokens,
 } from '@fluentui/react-components';
+import { Dialog } from './AppDialog';
 import { ArrowDownloadRegular, ArrowUploadRegular } from '@fluentui/react-icons';
 import { normalizeVoicemailLanguage } from '@tvmf/shared';
 import { api, ApiError } from '../api';

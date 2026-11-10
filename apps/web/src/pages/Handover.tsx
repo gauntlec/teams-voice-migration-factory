@@ -5,7 +5,6 @@ import {
   Button,
   Card,
   Checkbox,
-  Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
@@ -27,6 +26,7 @@ import {
   shorthands,
   tokens,
 } from '@fluentui/react-components';
+import { Dialog } from '../components/AppDialog';
 import {
   HANDOVER_NOTE_SECTIONS,
   HANDOVER_SECTIONS,

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Dropdown, Field, Option, Spinner, Text, tokens , makeStyles, shorthands } from '@fluentui/react-components';
+import { Badge, Button, Checkbox, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Dropdown, Field, Option, Spinner, Text, tokens, makeStyles, shorthands } from '@fluentui/react-components';
+import { Dialog } from '../../components/AppDialog';
 import { DeleteRegular } from '@fluentui/react-icons';
 import { UNANSWERED_DELAYS, BUSY_ON_BUSY_OPTIONS, CALL_FORWARDING_TYPES, CALL_GROUP_ORDERS, CALL_TARGET_TYPES, type CallDelegate, type CallForwardingSettings, type PickupGroupSettings } from '@tvmf/shared';
 import { api, ApiError } from '../../api';

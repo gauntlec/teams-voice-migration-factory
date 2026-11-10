@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Button,
   Checkbox,
-  Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
@@ -22,9 +21,9 @@ import {
   Textarea,
   makeStyles,
   tokens,
-
   mergeClasses,
 } from '@fluentui/react-components';
+import { Dialog } from './AppDialog';
 import {
   INC_DEFAULT_COVER,
   INC_DEFAULT_MATRIX,

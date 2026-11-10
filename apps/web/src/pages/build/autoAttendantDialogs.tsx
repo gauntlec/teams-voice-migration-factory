@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Button, Card, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Dropdown, Field, Input, Option, Spinner, Text, Textarea, tokens , makeStyles, shorthands } from '@fluentui/react-components';
+import { Button, Card, Checkbox, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Dropdown, Field, Input, Option, Spinner, Text, Textarea, tokens, makeStyles, shorthands } from '@fluentui/react-components';
+import { Dialog } from '../../components/AppDialog';
 import { DeleteRegular } from '@fluentui/react-icons';
 import { AA_CALLABLE_ENTITY_KINDS, AA_DIRECTORY_SEARCH_METHODS, AA_DTMF_RESPONSES, AA_MENU_OPTION_ACTIONS, AA_SCHEDULE_TYPES, type AutoAttendantCallableEntity, type AutoAttendantCallFlow, type AutoAttendantHolidayCallFlow, type AutoAttendantMenuOption, type AutoAttendantSchedule, type AutoAttendantTimeRange, type Paginated } from '@tvmf/shared';
 import { api, ApiError } from '../../api';

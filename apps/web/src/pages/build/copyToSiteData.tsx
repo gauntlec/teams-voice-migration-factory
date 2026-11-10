@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Text } from '@fluentui/react-components';
+import { Button, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Text } from '@fluentui/react-components';
+import { Dialog } from '../../components/AppDialog';
 import { ArrowSyncRegular } from '@fluentui/react-icons';
 import { api, ApiError } from '../../api';
 import { DangerText } from '../../components/ui';

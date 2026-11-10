@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router';
-import { Badge, Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Spinner, Tab, TabList, Text, Tooltip, tokens , makeStyles } from '@fluentui/react-components';
+import { Badge, Button, Card, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Spinner, Tab, TabList, Text, Tooltip, tokens, makeStyles } from '@fluentui/react-components';
+import { Dialog } from '../components/AppDialog';
 import { ArrowLeftRegular } from '@fluentui/react-icons';
 import { CALL_QUEUE_ROUTING_METHODS, NUMBER_TYPES, POLICY_KIND_GROUPS, POLICY_KIND_TO_TENANT_TYPE, POLICY_KINDS, RESOURCE_ACCOUNT_KINDS, type AutoAttendantCallFlow, type BuildIssueRow, type BuildRowValidation, type BuildSiteRollup, type CallQueueActionSettings, type FileRow, type Paginated, type TenantPolicySummary } from '@tvmf/shared';
 import { api, apiDownload, ApiError } from '../api';

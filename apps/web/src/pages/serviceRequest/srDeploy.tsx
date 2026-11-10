@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link as RouterLink } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Link, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, Textarea , makeStyles, mergeClasses } from '@fluentui/react-components';
+import { Badge, Button, Card, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Link, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, Textarea, makeStyles, mergeClasses } from '@fluentui/react-components';
+import { Dialog } from '../../components/AppDialog';
 import { WarningRegular } from '@fluentui/react-icons';
 import { srInChangeWindow, srChangeWindowText, type DeploymentPreviewRow, type SrChangeWindow, type SrDeploymentRun, type SrDesignSummary } from '@tvmf/shared';
 import { api } from '../../api';

@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Link as RouterLink } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Link, Select, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text , makeStyles, shorthands } from '@fluentui/react-components';
+import { Badge, Button, Card, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Link, Select, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, makeStyles, shorthands } from '@fluentui/react-components';
+import { Dialog } from '../components/AppDialog';
 import { ArrowLeftRegular } from '@fluentui/react-icons';
 import { INC_CATEGORY_BY_KEY, INC_PROBLEM_STATUSES, INC_PROBLEM_STATUS_LABELS, type IncPriority, type IncProblemStatus, type IncStatus } from '@tvmf/shared';
 import { api } from '../api';
