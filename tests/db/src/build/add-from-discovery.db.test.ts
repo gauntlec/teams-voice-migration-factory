@@ -579,3 +579,71 @@ async function dcRaFor(objectKey: string) {
   const obj = await c.s.selectFrom('tenant_objects').select('id').where('object_key', '=', objectKey).executeTakeFirstOrThrow();
   return (await c.s.selectFrom('discovery_resource_accounts').select('id').where('tenant_object_id', '=', obj.id).executeTakeFirst())?.id;
 }
+
+describe('importing an auto attendant whose wizard set up other call flows', () => {
+  it('imports the call queue and attendant it points at first and links them, all in one Import', async () => {
+    const dc = new DataCollectionService(handle.db, new AuditService(handle.db));
+    const site = (await seedSite(c.s, { sitecode: 'NST01' })).id;
+    const cq = {
+      languageId: 'en-GB',
+      agents: [],
+      routingMethod: 'Attendant',
+      presenceBasedRouting: false,
+      agentAlertTime: 30,
+      overflowThreshold: 50,
+      overflow: { action: 'DisconnectWithBusy' },
+      timeoutThreshold: 1200,
+      timeout: { action: 'Disconnect' },
+      noAgents: { action: 'Queue' },
+      noAgentsApplyTo: 'AllCalls',
+    };
+    const aa = (businessFlow: unknown) => ({ languageId: 'en-GB', timeZoneId: 'GMT Standard Time', hoursType: 'always', businessFlow, holidaysEnabled: false });
+    const add = (kind: string, name: string, answers: unknown) => dc.addFlow(c.t, engineer, { site_id: site, kind, name, wizard_answers: answers, wizard_version: 1 } as never, true);
+
+    // Main Menu: key 1 goes to Nested Sales (a queue set up in the wizard), key 2 to Nested Overflow, an attendant whose own
+    // menu sends calls back to Main Menu
+    const sales = await add('call_queue', 'Nested Sales', cq);
+    const main = await add('auto_attendant', 'Main Menu Nested', aa({ mode: 'direct', target: { kind: 'operator' } }));
+    const overflow = await add('auto_attendant', 'Nested Overflow', aa({ mode: 'direct', target: { kind: 'team', label: 'Main Menu Nested', flowId: main.id } }));
+    await c.s
+      .updateTable('discovery_flows')
+      .set({
+        wizard_answers: JSON.stringify(
+          aa({
+            mode: 'menu',
+            greeting: 'Welcome',
+            options: [
+              { key: '1', label: 'Sales', target: { kind: 'call_queue', label: 'Nested Sales', flowId: sales.id } },
+              { key: '2', label: 'Overflow', target: { kind: 'team', label: 'Nested Overflow', flowId: overflow.id } },
+            ],
+          }),
+        ),
+      } as never)
+      .where('id', '=', main.id)
+      .execute();
+
+    const res = await build.importFlowWizard(c.t, engineer, main.id);
+    expect(res.alsoImported.map((a) => a.name).sort()).toEqual(['Nested Overflow', 'Nested Sales']);
+    expect(res.warnings.filter((w) => /isn't on this site's Call flows|couldn't be imported/.test(w))).toEqual([]);
+
+    const flows = await c.s.selectFrom('discovery_flows').select(['id', 'build_auto_attendant_id', 'build_call_queue_id', 'imported_at']).where('site_id', '=', site).execute();
+    const byId = new Map(flows.map((f) => [f.id, f]));
+    const salesRow = byId.get(sales.id)!.build_call_queue_id!;
+    const overflowRow = byId.get(overflow.id)!.build_auto_attendant_id!;
+    expect(salesRow).toBeTruthy();
+    expect(overflowRow).toBeTruthy();
+    expect(flows.every((f) => f.imported_at)).toBe(true);
+
+    // Main Menu's options point at the rows just made, and Nested Overflow points back at Main Menu's row
+    const mainRow = await c.s.selectFrom('build_auto_attendants').select(['default_call_flow']).where('id', '=', res.row.id).executeTakeFirstOrThrow();
+    const options = (mainRow.default_call_flow as { menu: { options: { target?: { buildId?: string } }[] } }).menu.options;
+    expect(options.map((o) => o.target?.buildId)).toEqual([salesRow, overflowRow]);
+    const back = await c.s.selectFrom('build_auto_attendants').select(['default_call_flow']).where('id', '=', overflowRow).executeTakeFirstOrThrow();
+    expect(JSON.stringify(back.default_call_flow)).toContain(res.row.id);
+
+    // importing again doesn't make second rows of the queue or attendant it points at
+    await build.importFlowWizard(c.t, engineer, main.id);
+    expect(await c.s.selectFrom('build_call_queues').select('id').where('site_id', '=', site).execute()).toHaveLength(1);
+    expect(await c.s.selectFrom('build_auto_attendants').select('id').where('site_id', '=', site).execute()).toHaveLength(2);
+  });
+});

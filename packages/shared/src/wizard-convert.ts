@@ -27,6 +27,25 @@ export interface WizardResolvers {
   /** Resolves a specific Call flows capture (set via "Set up a new call queue", not typed) to its already-imported build row - undefined if that capture hasn't been imported yet. */
   resolveFlow: (flowId: string) => { kind: 'call_queue' | 'auto_attendant'; buildId: string } | undefined;
 }
+/**
+ * The other Call flows captures a wizard's answers point at ("Set up a new call queue", or a planned capture picked as a
+ * destination): every `flowId` anywhere in the answers. Importing a capture imports these first, so one Import links them.
+ */
+export function wizardFlowRefs(answers: unknown): string[] {
+  const out = new Set<string>();
+  const walk = (v: unknown) => {
+    if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === 'object') {
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+        if (k === 'flowId' && typeof x === 'string' && x) out.add(x);
+        else walk(x);
+      }
+    }
+  };
+  walk(answers);
+  return [...out];
+}
+
 const NO_RESOLVERS: WizardResolvers = { resolvePerson: () => undefined, resolveTeam: () => undefined, resolveFlow: () => undefined };
 
 const DTMF_BY_DIGIT: Record<string, AutoAttendantMenuOption['dtmf']> = {
@@ -92,7 +111,7 @@ function convertTarget(t: WizardTarget | undefined, resolvers: WizardResolvers, 
       if (match) return { kind: match.kind, buildId: match.buildId };
       warnings.push(
         t.flowId
-          ? `${where}: routes to "${label || 'a planned capture'}", which hasn't been imported to Design & Build yet - import it, then re-import this Auto Attendant to link it.`
+          ? `${where}: routes to "${label || 'a planned capture'}", which isn't on this site's Call flows any more or couldn't be imported - pick it again in the wizard, then import this again.`
           : `${where}: routes to "${label || 'a department'}" - link it to the right Auto Attendant or Call Queue after import.`,
       );
       return { kind: 'call_queue' };
@@ -117,7 +136,7 @@ function convertTarget(t: WizardTarget | undefined, resolvers: WizardResolvers, 
       const match = t.flowId ? resolvers.resolveFlow(t.flowId) : undefined;
       if (match) return { kind: match.kind, buildId: match.buildId };
       warnings.push(
-        `${where}: routes to a call queue${t.label ? ` ("${t.label}")` : ''} created via the wizard, which hasn't been imported to Design & Build yet - import it, then re-import this Auto Attendant to link it.`,
+        `${where}: routes to a call queue${t.label ? ` ("${t.label}")` : ''} set up in the wizard, which isn't on this site's Call flows any more or couldn't be imported - pick it again in the wizard, then import this again.`,
       );
       return { kind: 'call_queue' };
     }
