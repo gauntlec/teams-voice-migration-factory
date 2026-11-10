@@ -31,6 +31,8 @@ import {
   type HandoverActionCreateInput,
   type HandoverActionPatchInput,
   type HandoverNoteSection,
+  type HandoverUnportedRange,
+  portStageText,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
 import type { AuthedUser, TenantContext } from '../../common/request';
@@ -52,6 +54,8 @@ export interface HandoverGenerateInput {
   projectName?: string;
   siteIds?: string[];
   sectionKeys?: string[];
+  /** go ahead although some port ranges on the pack's sites are not ported yet (see unportedRanges) */
+  acceptUnported?: boolean;
 }
 
 export interface PackDiagram {
@@ -279,10 +283,42 @@ export class HandoverService {
     return { projectName: project, siteLabel, pageSize };
   }
 
+  /**
+   * Port ranges on the pack's sites (none chosen = every site) whose port is not marked complete. Asked before a draft is made
+   * (bug report "Service Handover - Pre creation check"): the pack hands over the service, and these numbers are not on Teams yet.
+   */
+  async unportedRanges(t: TenantContext, siteIds?: string[]): Promise<HandoverUnportedRange[]> {
+    assertCustomerWide(t, 'The Service Handover pack');
+    const scope = await this.resolveScope(t, siteIds);
+    const rows = await tenantDb(this.db, t.schema)
+      .selectFrom('discovery_number_ranges as r')
+      .innerJoin('discovery_sites as ds', 'ds.sitecode', 'r.sitecode')
+      // the FOC date as text: a date column comes back as a Date, and portStageText reads YYYY-MM-DD
+      .select(['ds.sitecode as sitecode', 'ds.name as siteName', 'r.range_start as start', 'r.range_end as end', 'r.kind', 'r.port_status', 'r.port_submitted_to_carrier_at', 'r.port_completed_at'])
+      .select(sql<string | null>`to_char(r.port_foc_date, 'YYYY-MM-DD')`.as('port_foc_date'))
+      .where('r.kind', '=', 'port')
+      .where('r.port_completed_at', 'is', null)
+      .$if(!!scope, (q) => q.where('ds.id', 'in', scope!.ids))
+      .orderBy('ds.sitecode')
+      .orderBy('r.range_start')
+      .execute();
+    return rows.map((r) => ({ sitecode: r.sitecode, siteName: r.siteName, start: r.start, end: r.end, stage: portStageText(r) }));
+  }
+
   async generate(t: TenantContext, user: AuthedUser, body: HandoverGenerateInput) {
     assertCustomerWide(t, 'The Service Handover pack');
     const scoped = tenantDb(this.db, t.schema);
     const scope = await this.resolveScope(t, body.siteIds);
+    if (!body.acceptUnported) {
+      const ranges = await this.unportedRanges(t, body.siteIds);
+      if (ranges.length) {
+        throw new ConflictException({
+          code: 'confirm_unported',
+          ranges,
+          message: `${ranges.length === 1 ? 'A number range on these sites has' : `${ranges.length} number ranges on these sites have`} not been ported yet. Create the draft anyway?`,
+        });
+      }
+    }
     const layout = await this.packLayout(t, scope, body.projectName);
     const customerLogo = (await this.branding?.customerLogo(t.id)) ?? null;
     // Sections are read before the transaction so the lock is held only for the writes.

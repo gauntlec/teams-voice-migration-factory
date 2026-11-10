@@ -106,6 +106,8 @@ export const handoverGenerateSchema = z.preprocess(
     diagrams: z.array(z.object({ name: z.string().trim().min(1).max(256), fileId: z.guid(), width: z.number().int().positive().max(20000), height: z.number().int().positive().max(20000) })).max(200).optional(),
     siteIds: z.array(z.guid()).max(200).optional(),
     sectionKeys: z.array(z.string().refine(isHandoverSectionKey, 'Unknown handover section')).max(20).optional(),
+    /** Create the draft although some of its sites' number ranges have not been ported yet (409 `confirm_unported` otherwise). */
+    acceptUnported: z.boolean().optional(),
   }),
 );
 

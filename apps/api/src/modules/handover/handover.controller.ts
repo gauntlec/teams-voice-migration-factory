@@ -44,6 +44,14 @@ export class HandoverController {
   }
 
   /** What Teams has for a pack's auto attendants, as graphs for the browser to draw (a POST: a pack can name many sites). */
+  /** Before a pack is generated: the port ranges on its sites that have not been ported yet, for the engineer to confirm. */
+  @Post('pre-check')
+  @HttpCode(200)
+  @RequirePermission('handover:generate')
+  preCheck(@TenantCtx() t: TenantContext, @Body(new ZodBody(handoverCallFlowsSchema)) body: { siteIds?: string[] }) {
+    return this.handover.unportedRanges(t, body.siteIds).then((unportedRanges) => ({ unportedRanges }));
+  }
+
   @Post('call-flows')
   @HttpCode(200)
   @RequirePermission('handover:generate')

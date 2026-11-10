@@ -167,3 +167,17 @@ export interface HandoverHistoryRow {
   date: string;
   comments: string;
 }
+
+/**
+ * A port range on a pack's sites whose port is not marked complete (bug report "Service Handover - Pre creation check"): the pack
+ * describes the service as handed over, so before a draft is made the engineer is asked whether to go ahead with numbers still to port.
+ */
+export interface HandoverUnportedRange {
+  sitecode: string;
+  siteName: string | null;
+  start: string;
+  end: string;
+  /** where the port has got to, in words (portStageText in number-port-carrier.ts) */
+  stage: string;
+}
+
