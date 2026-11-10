@@ -97,6 +97,7 @@ export class InsightsService {
         : [],
       this.changes(t, period),
     ]);
+    const handsetsOf = await this.handsetsBySite(t, siteIds);
     // The overview's Target go-live field; free text from older sites counts as no date.
     const dateOf = new Map(dates.map((d) => [d.id, { target: goLiveDate(d.target), first: d.first }]));
     const numbersOf = new Map(numbers.map((r) => [r.site_id, Number(r.n)]));
@@ -122,6 +123,7 @@ export class InsightsService {
         firstGoLive: d?.first ?? null,
         goLive,
         blockers: p.blockers.length,
+        handsets: handsetsOf.get(p.id) ?? { total: 0, installed: 0 },
       };
     });
 
@@ -145,6 +147,7 @@ export class InsightsService {
         numbers: sum((x) => x.numbers),
         numbersLive: sum((x) => (x.live ? x.numbers : 0)),
         ports: { requests: ports.length, complete: ports.filter((x) => x.status === 'complete').length },
+        handsets: { total: sum((x) => x.handsets?.total ?? 0), installed: sum((x) => x.handsets?.installed ?? 0) },
         nextGoLive: open[0] ? { siteId: open[0].id, sitecode: open[0].sitecode, date: open[0].targetGoLive! } : null,
         programmeEnd: open.length ? open[open.length - 1]!.targetGoLive : null,
         siteList,
@@ -361,6 +364,37 @@ export class InsightsService {
   }
 
   /* ------------------------------ parts ------------------------------ */
+
+  /**
+   * Physical handsets per site, as Deployment > Handsets lists them: users who get one (the needsHandset rule in @tvmf/shared:
+   * "Requires a physical handset", or a model named) and every common area phone, with how many are ticked installed.
+   */
+  private async handsetsBySite(t: TenantContext, siteIds: string[]) {
+    const out = new Map<string, { total: number; installed: number }>();
+    if (siteIds.length === 0) return out;
+    const s = tenantDb(this.db, t.schema);
+    const [users, caps] = await Promise.all([
+      s
+        .selectFrom('discovery_users')
+        .select(['site_id', (eb) => eb.fn.countAll<string>().as('n'), sql<string>`count(handset_installed_at)`.as('installed')])
+        .where('site_id', 'in', siteIds)
+        .where(sql<boolean>`(requires_handset or coalesce(btrim(handset_model), '') <> '')`)
+        .groupBy('site_id')
+        .execute(),
+      s
+        .selectFrom('discovery_caps')
+        .select(['site_id', (eb) => eb.fn.countAll<string>().as('n'), sql<string>`count(handset_installed_at)`.as('installed')])
+        .where('site_id', 'in', siteIds)
+        .groupBy('site_id')
+        .execute(),
+    ]);
+    for (const r of [...users, ...caps]) {
+      const id = r.site_id as string;
+      const cur = out.get(id) ?? { total: 0, installed: 0 };
+      out.set(id, { total: cur.total + Number(r.n), installed: cur.installed + Number(r.installed) });
+    }
+    return out;
+  }
 
   private async countBySite(t: TenantContext, table: 'build_users' | 'discovery_users', siteIds: string[]) {
     if (siteIds.length === 0) return new Map<string, number>();

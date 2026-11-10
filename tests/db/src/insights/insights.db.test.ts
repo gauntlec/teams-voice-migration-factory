@@ -42,8 +42,10 @@ beforeAll(async () => {
     .execute();
   await c.s
     .insertInto('discovery_users')
-    .values([{ upn: 'c@contoso.test', site_id: nyc }, { upn: 'd@contoso.test', site_id: nyc }, { upn: 'e@contoso.test', site_id: nyc }] as never)
+    .values([{ upn: 'c@contoso.test', site_id: nyc }, { upn: 'd@contoso.test', site_id: nyc }, { upn: 'e@contoso.test', site_id: nyc, handset_model: 'Poly CCX 400', handset_installed_at: '2026-11-04T09:00:00Z' }] as never)
     .execute();
+  // a common area phone at LON01, not installed yet: with e@ above, 2 handsets and 1 installed
+  await c.s.insertInto('discovery_caps').values({ site_id: lon, display_name: 'Reception', device_model: 'Poly CCX 400' } as never).execute();
   const range = await c.s
     .insertInto('discovery_number_ranges')
     .values({ sitecode: 'LON01', range_start: '+442070000000', range_end: '+442070000002', kind: 'new' } as never)
@@ -107,14 +109,15 @@ describe('metrics', () => {
       numbers: 3,
       numbersLive: 3,
       ports: { requests: 0, complete: 0 },
+      handsets: { total: 2, installed: 1 },
       nextGoLive: { siteId: nyc, sitecode: 'NYC01', date: '2026-12-03' },
       programmeEnd: '2026-12-03',
     });
     const [l, n] = siteList;
     // LON01's date has passed, but it is live.
-    expect(l).toMatchObject({ sitecode: 'LON01', live: true, users: 2, targetGoLive: '2026-11-01', goLive: { status: 'live' } });
+    expect(l).toMatchObject({ sitecode: 'LON01', live: true, users: 2, targetGoLive: '2026-11-01', goLive: { status: 'live' }, handsets: { total: 1, installed: 0 } });
     // NYC01: Site Data unfinished 28 days before go-live.
-    expect(n).toMatchObject({ sitecode: 'NYC01', live: false, users: 3, firstGoLive: '2026-11-19', goLive: { status: 'at_risk', daysLeft: 28 } });
+    expect(n).toMatchObject({ sitecode: 'NYC01', live: false, users: 3, firstGoLive: '2026-11-19', goLive: { status: 'at_risk', daysLeft: 28 }, handsets: { total: 1, installed: 1 } });
     expect(m.changes).toEqual({ applied: 3, failed: 1, skipped: 0, firstTimePct: 75 });
     expect(m.incidents).toMatchObject({ raised: 0, open: 0, openP1: 0, targetsMetPct: null });
     expect(m.serviceRequests).toEqual({ raised: 4, completed: 3, completedByAssistants: 1, open: 2, medianHoursToComplete: 20.5, targetsMetPct: 100 });

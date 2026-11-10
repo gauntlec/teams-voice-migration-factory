@@ -145,6 +145,28 @@ describe('the Executive summary', () => {
   });
 });
 
+describe('the Migration report', () => {
+  it('shows handsets installed, overall and per site, only where a site has handsets', async () => {
+    const { buildMigrationReport } = await import('./reports');
+    const site = (id: string, handsets?: { total: number; installed: number }) => ({
+      id, sitecode: id.toUpperCase(), name: null, stage: 'designed', live: false, inService: false, users: 1, numbers: 1,
+      targetGoLive: null, firstGoLive: null, goLive: { status: 'no_date', reason: null, daysLeft: null }, blockers: 0, handsets,
+    });
+    const metrics = {
+      migration: { status: 'on_track', sites: 2, sitesLive: 0, sitesInService: 0, sitesByStage: {}, users: 2, usersLive: 0, numbers: 2, numbersLive: 0,
+        ports: { requests: 0, complete: 0 }, handsets: { total: 5, installed: 2 }, nextGoLive: null, programmeEnd: null,
+        siteList: [site('a', { total: 5, installed: 2 }), site('b', { total: 0, installed: 0 })] },
+    } as never;
+    const doc = buildMigrationReport(metrics, [], { from: '2026-11-01', to: '2026-11-30' } as never);
+    const figs = doc.sections[0];
+    expect(figs?.kind === 'figures' && figs.figures.find((f) => f.label === 'Handsets installed')).toMatchObject({ value: 2, note: 'of 5' });
+    const table = doc.sections[1];
+    const col = table?.kind === 'table' ? table.columns.indexOf('Handsets installed') : -1;
+    expect(col).toBeGreaterThan(0);
+    expect(table?.kind === 'table' && table.rows.map((r) => r[col])).toEqual(['2 of 5', null]);
+  });
+});
+
 describe('scheduled report times', () => {
   it('sends on the 1st at 07:00 UTC, quarterly in January, April, July and October', async () => {
     const { nextScheduleRun } = await import('./reports');

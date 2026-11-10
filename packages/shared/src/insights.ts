@@ -142,6 +142,8 @@ export interface SiteMetrics {
   firstGoLive: string | null;
   goLive: GoLiveResult;
   blockers: number;
+  /** physical handsets: users who get one (Site Data) and common area phones, and how many are ticked installed on Deployment > Handsets */
+  handsets?: { total: number; installed: number };
 }
 
 export interface MigrationMetrics {
@@ -157,6 +159,8 @@ export interface MigrationMetrics {
   numbersLive: number;
   /** number port requests: all, and those complete */
   ports: { requests: number; complete: number };
+  /** physical handsets across the sites, and how many are installed */
+  handsets?: { total: number; installed: number };
   /** the earliest target date among sites not yet live */
   nextGoLive: { siteId: string; sitecode: string; date: string } | null;
   /** the latest target date among sites not yet live */

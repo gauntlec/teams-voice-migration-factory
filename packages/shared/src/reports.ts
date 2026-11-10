@@ -342,12 +342,13 @@ export function buildMigrationReport(m: CustomerMetrics, history: MetricHistoryP
         { label: 'Numbers live', value: g.numbersLive, previous: prev('numbersLive'), better: 'up', note: `of ${g.numbers.toLocaleString('en-GB')}` },
         { label: 'Sites in service', value: g.sitesInService, previous: prev('sitesInService'), better: 'up' },
         { label: 'Number ports complete', value: g.ports.complete, better: 'up', note: `of ${g.ports.requests}` },
+        ...(g.handsets?.total ? [{ label: 'Handsets installed', value: g.handsets.installed, better: 'up' as const, note: `of ${g.handsets.total}` }] : []),
       ],
     },
     {
       kind: 'table',
       title: 'Sites',
-      columns: ['Site', 'Name', 'Stage', 'Users', 'Numbers', 'Go-live', 'First agreed', 'Status', 'Why'],
+      columns: ['Site', 'Name', 'Stage', 'Users', 'Numbers', 'Handsets installed', 'Go-live', 'First agreed', 'Status', 'Why'],
       numeric: [3, 4],
       rows: g.siteList.map((x) => [
         x.sitecode,
@@ -355,6 +356,7 @@ export function buildMigrationReport(m: CustomerMetrics, history: MetricHistoryP
         PROGRESS_STAGE_LABELS[x.stage],
         x.users,
         x.numbers,
+        x.handsets?.total ? `${x.handsets.installed} of ${x.handsets.total}` : null,
         x.targetGoLive ? goLiveDateLabel(x.targetGoLive) : null,
         x.firstGoLive && x.firstGoLive !== x.targetGoLive ? goLiveDateLabel(x.firstGoLive) : null,
         GO_LIVE_STATUS_LABELS[x.goLive.status],
