@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Job } from 'bullmq';
 import { sql, type Kysely } from 'kysely';
-import { computeSiteDrift, markNumbersReleased, reconcileNumbersWithTeams, type NumberReconcileResult, platformDb, sitesWithLiveRuns, tenantDb, type DB, webOrigin as resolveWebOrigin } from '@tvmf/db';
+import { computeSiteDrift, connectionTenantProblem, markNumbersReleased, reconcileNumbersWithTeams, type NumberReconcileResult, platformDb, sitesWithLiveRuns, tenantDb, type DB, webOrigin as resolveWebOrigin } from '@tvmf/db';
 import {
   RESOURCE_ACCOUNT_APPLICATION_IDS,
   numberReleasedInTeams,
@@ -209,6 +209,21 @@ async function runDiscovery(
       progress,
       scopeTypes,
     });
+    return;
+  }
+
+  // Never read another company's Teams into this customer: the sign-in was checked against the customer's Microsoft tenant when it
+  // was made, and is checked again here in case the customer's recorded tenant changed since (packages/db/src/teams-tenant.ts).
+  const tenantProblem = await connectionTenantProblem(db, schema, connectionId);
+  if (tenantProblem) {
+    await s
+      .updateTable('tenant_discovery_runs')
+      .set({ status: 'failed', finished_at: new Date().toISOString(), error: tenantProblem })
+      .where('id', '=', runId)
+      .where('status', '=', 'queued')
+      .execute();
+    if (targetedUpns?.length) return;
+    await notifyRunComplete(db, s, enqueueMail, { tenantId, runId, operatorUserId, outcome: 'failed', errorMessage: tenantProblem, startedAt, progress, scopeTypes });
     return;
   }
 

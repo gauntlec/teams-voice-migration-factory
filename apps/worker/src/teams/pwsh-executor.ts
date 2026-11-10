@@ -4,7 +4,7 @@ import { appendFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { psQuote, renderCommand, renderPreambleStep, renderStatement } from '@tvmf/shared';
-import type { CmdletInvocation, CmdletResult, DeviceCodePrompt, QueryOpts, TeamsExecutor } from './executor';
+import type { CmdletInvocation, CmdletResult, DeviceCodePrompt, QueryOpts, SignedIn, TeamsExecutor } from './executor';
 
 /**
  * Default per-command timeout. Big read cmdlets on a large tenant (a full
@@ -65,7 +65,7 @@ export class PwshTeamsExecutor implements TeamsExecutor {
   /** Set while a timed-out command may still be running in pwsh - see abandon(). */
   private stalled: { done: Promise<void> } | null = null;
   private devicePrompt: { resolve: (p: DeviceCodePrompt) => void; reject: (e: Error) => void } | null = null;
-  private signIn: Promise<{ upn: string; tenantId: string }> | null = null;
+  private signIn: Promise<SignedIn> | null = null;
   private signedIn = false;
   private disposed = false;
   lastUsedAt = Date.now();
@@ -303,13 +303,15 @@ export class PwshTeamsExecutor implements TeamsExecutor {
       this.devicePrompt = { resolve, reject };
     });
     // The connect call blocks until the engineer completes sign-in (or ~15 min).
-    // Its result object carries Account/TenantId; we print only those two.
+    // Its result object carries Account/TenantId; we print only those two, and the
+    // tenant's display name (Get-CsTenant) so a refused sign-in can name it.
     this.signIn = this.exec(
       `Import-Module MicrosoftTeams -ErrorAction Stop
 try {
   $c = Connect-MicrosoftTeams -UseDeviceAuthentication${tenantArg} -ErrorAction Stop
   $acct = if ($c.Account -is [string]) { $c.Account } else { $c.Account.Id }
-  Write-Output ('__SIGNIN__' + (@{ upn = $acct; tenantId = [string]$c.TenantId } | ConvertTo-Json -Compress))
+  $tname = try { [string](Get-CsTenant -ErrorAction Stop).DisplayName } catch { $null }
+  Write-Output ('__SIGNIN__' + (@{ upn = $acct; tenantId = [string]$c.TenantId; tenantName = $tname } | ConvertTo-Json -Compress))
 } catch { Write-Output ('__SIGNINERR__' + $_.Exception.Message) }`,
       this.opts.signInTimeoutMs ?? 16 * 60_000,
     ).then((out) => {
@@ -318,16 +320,16 @@ try {
         const err = out.split('\n').find((l) => l.startsWith('__SIGNINERR__'));
         throw new Error(err ? err.slice('__SIGNINERR__'.length) : 'sign-in did not complete');
       }
-      const j = JSON.parse(ok.slice('__SIGNIN__'.length)) as { upn: string | null; tenantId: string };
+      const j = JSON.parse(ok.slice('__SIGNIN__'.length)) as { upn: string | null; tenantId: string; tenantName?: string | null };
       this.signedIn = true;
-      return { upn: j.upn ?? 'unknown', tenantId: j.tenantId };
+      return { upn: j.upn ?? 'unknown', tenantId: j.tenantId, tenantName: j.tenantName || null };
     });
     // surface sign-in failures to beginDeviceCode's caller if the code never came
     this.signIn.catch((e) => this.devicePrompt?.reject(e));
     return prompt;
   }
 
-  awaitSignIn(): Promise<{ upn: string; tenantId: string }> {
+  awaitSignIn(): Promise<SignedIn> {
     if (!this.signIn) return Promise.reject(new Error('beginDeviceCode() not called'));
     return this.signIn;
   }

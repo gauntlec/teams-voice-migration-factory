@@ -22,6 +22,7 @@ export * from './drift';
 export * from './deployment-activity';
 export * from './number-cooloff';
 export * from './number-reconcile';
+export * from './teams-tenant';
 export * from './number-parking';
 export * from './site-suggestions';
 export * from './site-handsets';

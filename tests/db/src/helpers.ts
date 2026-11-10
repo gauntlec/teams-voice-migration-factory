@@ -137,11 +137,14 @@ export async function seedNumbers(s: Scoped, sitecode: string, e164s: string[]) 
     .execute();
 }
 
+/** The Microsoft tenant seedConnection's sign-ins reach (the worker checks it against the customer's own - teams-tenant.ts). */
+export const TEST_MS_TENANT = '0c0c0c0c-1111-2222-3333-444444444444';
+
 /** An active customer-tenant sign-in (the "connection" a discovery run uses). */
 export async function seedConnection(s: Scoped, owner: AuthedUser) {
   return s
     .insertInto('connections')
-    .values({ started_by: owner.id, status: 'active', upn: 'admin@contoso.test' } as never)
+    .values({ started_by: owner.id, status: 'active', upn: 'admin@contoso.test', ms_tenant_id: TEST_MS_TENANT, ms_tenant_name: 'Contoso' } as never)
     .returningAll()
     .executeTakeFirstOrThrow();
 }

@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { sql, type Kysely } from 'kysely';
-import { forgetTeamsNumbers, platformDb, siteSuggestions, tenantDb, type DB } from '@tvmf/db';
+import { customerMicrosoftTenant, forgetMicrosoftTenant, forgetTeamsNumbers, platformDb, siteSuggestions, tenantDb, type DB } from '@tvmf/db';
 import {
   matchSitecodeFromName,
   RESOURCE_ACCOUNT_APPLICATION_IDS,
@@ -700,8 +700,30 @@ export class TenantDiscoveryService {
     const numbers = await forgetTeamsNumbers(s);
     // and the drift each site was last checked for, which compared the design with the data just deleted
     await s.deleteFrom('deployment_drift').execute();
+    // Starting over: the customer's recorded Microsoft tenant is forgotten (a wrong one is cleared this way), and the sign-ins made
+    // against it end, so the next sign-in records the tenant again.
+    const forgotten = await customerMicrosoftTenant(this.db as Kysely<DB>, t.schema);
+    await forgetMicrosoftTenant(this.db as Kysely<DB>, t.id);
+    const ended = await s
+      .updateTable('connections')
+      .set({ status: 'closed', closed_at: new Date().toISOString() })
+      .where('status', 'in', ['pending', 'active'])
+      .returning('id')
+      .execute();
 
-    const result = { objects, versions, users, policies, runs, groups, dataCollectionLinksCleared, callingPolicyMappingsRemoved, ...numbers };
+    const result = {
+      objects,
+      versions,
+      users,
+      policies,
+      runs,
+      groups,
+      dataCollectionLinksCleared,
+      callingPolicyMappingsRemoved,
+      ...numbers,
+      microsoftTenantForgotten: forgotten?.source === 'recorded' ? forgotten.id : null,
+      signInsEnded: ended.length,
+    };
     await this.audit.tenant(t.schema, 'tenant_discovery.purged', {
       actor: actorOf(user),
       targetType: 'tenant',
@@ -780,7 +802,9 @@ export class TenantDiscoveryService {
       }
     }
     const td = (tenantObj?.data ?? {}) as Record<string, unknown>;
+    const ms = await customerMicrosoftTenant(this.db as Kysely<DB>, t.schema);
     return {
+      microsoftTenant: ms,
       tenant: tenantObj
         ? {
             id: tenantObj.object_key,

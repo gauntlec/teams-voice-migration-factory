@@ -43,6 +43,10 @@ export interface TenantsTable {
   deletion_started_by: ColumnType<string | null, string | null | undefined, string | null>;
   /** Counts shown before the deletion was confirmed (numbers only), kept so a retry can still report them. */
   deletion_summary: ColumnType<Record<string, number> | null, string | null | undefined, string | null>;
+  /** The customer's own Microsoft tenant: a Teams sign-in to any other is refused - see 0044_tenant_microsoft_tenant.sql and teams-tenant.ts. */
+  teams_tenant_id: ColumnType<string | null, string | null | undefined, string | null>;
+  teams_tenant_name: ColumnType<string | null, string | null | undefined, string | null>;
+  teams_tenant_recorded_at: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 export interface UsersTable {
@@ -1176,6 +1180,11 @@ export interface ConnectionsTable {
   graph_expires_at: string | null;
   /** Why the last group-lookup sign-in failed, for the engineer to act on; null otherwise. */
   graph_error: string | null;
+  /** The Microsoft tenant this sign-in reached (tenant migration 0098); null until signed in. */
+  ms_tenant_id: ColumnType<string | null, string | null | undefined, string | null>;
+  ms_tenant_name: ColumnType<string | null, string | null | undefined, string | null>;
+  /** Why the sign-in was refused (a different tenant from the customer's own); null otherwise. */
+  refused_reason: ColumnType<string | null, string | null | undefined, string | null>;
   /* deliberately NO token columns - see docs/SECURITY.md */
 }
 

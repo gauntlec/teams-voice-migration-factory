@@ -42,6 +42,16 @@ interface Connection {
   graph_upn: string | null;
   /** why the last group-lookup sign-in failed, when it did */
   graph_error: string | null;
+  /** the Microsoft tenant this sign-in reached */
+  ms_tenant_id: string | null;
+  ms_tenant_name: string | null;
+  /** why the sign-in was refused or failed (e.g. another company's Microsoft tenant), when it was */
+  refused_reason: string | null;
+}
+
+/** "Contoso Ltd (0c0c…)" - the customer's Microsoft tenant, as the connection card names it. */
+function tenantLabel(t: { id: string; name: string | null }) {
+  return t.name ? `${t.name} (${t.id})` : t.id;
 }
 
 /** Steps that carry more than one object type - only these get an expander. */
@@ -284,6 +294,17 @@ export function ConnectCard({
         point-in-time: nothing is stored, and the session ends when it expires. A session can only be
         used by the engineer who started it, or by a Super Admin.
       </Text>
+      <Text size={200} className={s.muted}>
+        {summary?.microsoftTenant ? (
+          <>
+            Microsoft tenant: <b>{tenantLabel(summary.microsoftTenant)}</b>
+            {summary.microsoftTenant.source === 'discovered' ? ' (from the discovered data; recorded at the next sign-in)' : ''}. A
+            sign-in to any other tenant is refused.
+          </>
+        ) : (
+          <>The first sign-in records this customer&apos;s Microsoft tenant. After that, a sign-in to any other tenant is refused.</>
+        )}
+      </Text>
 
       {canManage && sessions.length > 0 && (
         <div className={ls.gridGap4}>
@@ -336,20 +357,28 @@ export function ConnectCard({
       )}
 
       {!c || c.status === 'expired' || c.status === 'closed' ? (
-        <div className={s.row}>
-          <Button
-            appearance="primary"
-            icon={<PlugConnectedRegular />}
-            disabled={!canRun || start.isPending}
-            onClick={() => start.mutate()}
-          >
-            Connect to customer tenant
-          </Button>
-          {c && (
-            <Text size={200} className={s.muted}>
-              Previous session {c.status}
-              {c.upn ? ` (${c.upn})` : ''}.
-            </Text>
+        <div className={ls.gridGap8}>
+          <div className={s.row}>
+            <Button
+              appearance="primary"
+              icon={<PlugConnectedRegular />}
+              disabled={!canRun || start.isPending}
+              onClick={() => start.mutate()}
+            >
+              Connect to customer tenant
+            </Button>
+            {c && !c.refused_reason && (
+              <Text size={200} className={s.muted}>
+                Previous session {c.status}
+                {c.upn ? ` (${c.upn})` : ''}.
+              </Text>
+            )}
+          </div>
+          {c?.refused_reason && (
+            <DangerText size={200} role="alert">
+              {c.upn ? `Sign-in as ${c.upn} refused. ` : ''}
+              {c.refused_reason}
+            </DangerText>
           )}
         </div>
       ) : c.status === 'pending' ? (
@@ -755,7 +784,8 @@ export function PurgeCard({
   const [err, setErr] = useState<string | null>(null);
 
   const total = Object.values(summary?.counts ?? {}).reduce((a, b) => a + (b ?? 0), 0);
-  const hasData = total > 0 || !!summary?.lastRun || (summary?.groupsCount ?? 0) > 0;
+  // A recorded Microsoft tenant counts: deleting is how a wrong one is cleared, even with nothing discovered from it yet.
+  const hasData = total > 0 || !!summary?.lastRun || (summary?.groupsCount ?? 0) > 0 || summary?.microsoftTenant?.source === 'recorded';
   const running = !!summary?.lastRun && ['queued', 'running'].includes(summary.lastRun.status);
 
   const purge = useMutation({
@@ -785,6 +815,7 @@ export function PurgeCard({
         and the run history for this customer. Site Data entries are kept, but lose their link to a discovered user.
         Design &amp; Build calling-policy choices that point at a discovered policy are removed too (the sites and calling policies themselves stay).
         Numbers Discovery found in Teams but in none of your ranges are removed, and every other number forgets who Teams had it on.
+        The customer&apos;s recorded Microsoft tenant is forgotten and open sign-ins end, so the next sign-in records the tenant again.
         Re-run discovery to rebuild. This cannot be undone.
       </Text>
       <div className={s.row}>
@@ -817,7 +848,9 @@ export function PurgeCard({
               {total === 1 ? '' : 's'}, the Users and Policies projections
               {summary?.groupsCount ? `, ${summary.groupsCount.toLocaleString()} cached M365 groups` : ''}
               {summary?.lastRun ? ' and the run history' : ''}. Any Site Data users stay, but
-              lose their link to a discovered identity, and any Design &amp; Build calling-policy choice that points at a discovered policy is removed. This cannot be undone.
+              lose their link to a discovered identity, and any Design &amp; Build calling-policy choice that points at a discovered policy is removed.
+              {summary?.microsoftTenant?.source === 'recorded' ? ` The recorded Microsoft tenant ${tenantLabel(summary.microsoftTenant)} is forgotten, and open sign-ins end.` : ' Open sign-ins end.'}{' '}
+              This cannot be undone.
               {running && (
                 <Text className={ls.blockMt8Danger}>
                   A discovery is running — wait for it to finish first.
