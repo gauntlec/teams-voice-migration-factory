@@ -400,6 +400,21 @@ or a legal duty to keep security records, or to have a database administrator ed
   engineer only their own live session; a `SUPER_ADMIN` sees every engineer's
   and picks which one a sync runs on. A `SUPER_ADMIN` running on another
   engineer's session is written to both audit logs (`sessionOwnerId`, `ranAs`).
+- **One Microsoft tenant per customer.** `platform.tenants.teams_tenant_id`
+  records the customer's own Microsoft tenant: from its discovered
+  `Get-CsTenant` record, or else its first sign-in (`packages/db/src/teams-tenant.ts`).
+  When a sign-in completes, the worker compares the tenant it reached
+  (`connections.ms_tenant_id`) with that record *before* the connection becomes
+  active; a sign-in to any other tenant is refused, its reason kept in
+  `connections.refused_reason` and shown on the Discovery and Deployment
+  pages, and the PowerShell session is closed. Discovery runs and deployments
+  check again as they start, so nothing is read from or deployed to another
+  company's tenant from this customer. With the tenant known, the sign-in is
+  sent to it (`-TenantId`), so a guest or partner account lands there rather
+  than in its home tenant. *Delete discovered data* forgets the record and
+  ends open sign-ins, which is how a wrong record is cleared. (Bug report
+  "Delete All Data Button", November 2026: a sign-in to another company's
+  tenant read that company's Teams into the wrong customer.)
 - **Per-customer read-only safeguard.** `platform.tenants.teams_read_only`
   (SUPER_ADMIN-only, `tenant:update`, toggled from the admin Customers page)
   guarantees no write cmdlet (`Set-Cs*`/`Grant-Cs*`/`New-Cs*`/`Remove-Cs*`)

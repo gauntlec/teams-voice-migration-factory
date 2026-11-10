@@ -17,7 +17,7 @@ import {
   nameTakenInTeamsReason,
   resolveLiveIdentityState,
   resolveLiveSharedCallingPolicyState,
-  tenantDb, emailEnabled, webOrigin as resolveWebOrigin, sweepStaffAccess } from '@tvmf/db';
+  tenantDb, emailEnabled, webOrigin as resolveWebOrigin, sweepStaffAccess, checkMicrosoftTenant, connectionTenantProblem, customerMicrosoftTenant, WrongMicrosoftTenantError } from '@tvmf/db';
 import { HUB_HEARTBEAT_SECONDS, NOT_DEPLOYED_CMDLET, buildColorRamp, siteContactTargets, type Branding, type DiscoverySiteOverview, type PortDocumentItemSummary } from '@tvmf/shared';
 import {
   collectAutoAttendantUserUpns,
@@ -350,9 +350,13 @@ async function handleConnectionStart(job: Job) {
   const exec = newExecutor();
   executors.set(connectionId, exec);
   executorSchema.set(connectionId, schema);
+  // With the customer's tenant known, the sign-in is sent straight to it, so a guest or partner account lands there rather than in its
+  // own home tenant (which the check below would refuse).
+  const own = await customerMicrosoftTenant(db, schema).catch(() => null);
+  const target = tenantDomain ?? own?.id ?? null;
 
   try {
-    const prompt = await exec.beginDeviceCode(tenantDomain);
+    const prompt = await exec.beginDeviceCode(target);
     await tenantDb(db, schema)
       .updateTable('connections')
       .set({
@@ -364,7 +368,37 @@ async function handleConnectionStart(job: Job) {
       .where('id', '=', connectionId)
       .execute();
 
-    const signIn = await exec.awaitSignIn();
+    let signIn: Awaited<ReturnType<typeof exec.awaitSignIn>>;
+    try {
+      signIn = await exec.awaitSignIn();
+    } catch (err) {
+      // A sign-in sent to the customer's recorded tenant fails for an account that isn't in it: say which tenant was asked for.
+      const message = (err as Error).message ?? '';
+      const hint =
+        !tenantDomain && own && /AADSTS|tenant/i.test(message)
+          ? ` Voxshift sent it to this customer's Microsoft tenant ${own.name ? `${own.name} (${own.id})` : own.id}, so the account must be one that can sign in there. If that tenant is wrong, delete this customer's discovered data on the Discovery page to clear it, then sign in again.`
+          : '';
+      await refuseConnection(schema, connectionId, `The sign-in did not complete: ${message}${hint}`);
+      throw err;
+    }
+    // Before the connection becomes active: a sign-in to any other Microsoft tenant than the customer's own is refused, so nothing
+    // can be read from it or deployed to it.
+    const ms = { id: signIn.tenantId, name: signIn.tenantName };
+    await tenantDb(db, schema).updateTable('connections').set({ ms_tenant_id: ms.id, ms_tenant_name: ms.name, upn: signIn.upn }).where('id', '=', connectionId).execute();
+    try {
+      const outcome = await checkMicrosoftTenant(db, schema, ms);
+      // eslint-disable-next-line no-console
+      if (outcome === 'recorded') console.log(`[connection ${connectionId}] recorded the customer's Microsoft tenant ${ms.id}`);
+    } catch (err) {
+      if (err instanceof WrongMicrosoftTenantError) {
+        await refuseConnection(schema, connectionId, err.message);
+        // eslint-disable-next-line no-console
+        console.warn(`[connection ${connectionId}] refused: signed in to Microsoft tenant ${ms.id}, not the customer's`);
+        await expireConnection(schema, connectionId, 'wrong Microsoft tenant');
+        return;
+      }
+      throw err;
+    }
     await tenantDb(db, schema)
       .updateTable('connections')
       .set({
@@ -381,6 +415,16 @@ async function handleConnectionStart(job: Job) {
     await expireConnection(schema, connectionId, (err as Error).message);
     throw err;
   }
+}
+
+/** Why a sign-in was refused, for the page to show; the connection is expired separately. */
+async function refuseConnection(schema: string, connectionId: string, reason: string) {
+  await tenantDb(db, schema)
+    .updateTable('connections')
+    .set({ refused_reason: reason.slice(0, 1000) })
+    .where('id', '=', connectionId)
+    .execute()
+    .catch(() => undefined);
 }
 
 /**
@@ -558,6 +602,9 @@ async function handleDeploymentRun(job: Job) {
     if (!exec) {
       throw new Error('The tenant connection is no longer available (it expired, or the worker restarted since it was made) - reconnect to the customer tenant and run the deployment again.');
     }
+    // The sign-in was checked when it was made; checked again here in case the customer's recorded tenant changed since.
+    const tenantProblem = await connectionTenantProblem(db, schema, connectionId);
+    if (tenantProblem) throw new Error(tenantProblem);
     // Dry runs never run a cmdlet, so only live runs need the lock.
     if (mode === 'execute') await withConnectionLock(connectionId, () => runDeployment(exec));
     else await runDeployment(exec);

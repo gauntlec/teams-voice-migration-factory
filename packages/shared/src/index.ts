@@ -374,6 +374,11 @@ export interface TenantGroupSummary {
 
 /** `GET .../tenant-discovery/summary` */
 export interface TenantDiscoverySummary {
+  /**
+   * The customer's own Microsoft tenant: a Teams sign-in to any other is refused. 'recorded' = checked on every sign-in; 'discovered' =
+   * not recorded yet, taken from the discovered data (it is recorded by the next sign-in). null = unknown until the first sign-in.
+   */
+  microsoftTenant: { id: string; name: string | null; source: 'recorded' | 'discovered'; recordedAt: string | null } | null;
   tenant: { id: string | null; displayName: string | null; domains: string[] } | null;
   lastRun: TenantDiscoveryRun | null;
   /** the requesting user's own active session (or null) */

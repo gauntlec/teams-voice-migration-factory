@@ -42,11 +42,18 @@ export interface QueryOpts {
   select?: readonly string[];
 }
 
+export interface SignedIn {
+  upn: string;
+  /** the Microsoft tenant the sign-in reached - checked against the customer's own (packages/db/src/teams-tenant.ts) */
+  tenantId: string;
+  tenantName: string | null;
+}
+
 export interface TeamsExecutor {
   /** Begin device-code sign-in; resolves once the code is available to show. */
   beginDeviceCode(tenantDomain: string | null): Promise<DeviceCodePrompt>;
-  /** Resolves when the engineer has completed sign-in (or rejects on timeout). */
-  awaitSignIn(): Promise<{ upn: string; tenantId: string }>;
+  /** Resolves when the engineer has completed sign-in (or rejects on timeout): who signed in, and to which Microsoft tenant. */
+  awaitSignIn(): Promise<SignedIn>;
   /** Run a read-only Get-Cs* cmdlet and return its records (used by Discovery). */
   query(command: string, params?: Record<string, unknown>, opts?: QueryOpts): Promise<unknown[]>;
   /**
@@ -271,11 +278,11 @@ export class SimulatedTeamsExecutor implements TeamsExecutor {
     };
   }
 
-  async awaitSignIn(): Promise<{ upn: string; tenantId: string }> {
+  async awaitSignIn(): Promise<SignedIn> {
     await new Promise((r) => setTimeout(r, 3000));
     this.signedIn = true;
     this.lastUsedAt = Date.now();
-    return { upn: 'engineer@customer.example', tenantId: SIM_TENANT };
+    return { upn: 'engineer@customer.example', tenantId: SIM_TENANT, tenantName: 'Simulated Customer Ltd' };
   }
 
   async query(

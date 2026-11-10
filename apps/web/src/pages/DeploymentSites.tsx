@@ -27,6 +27,7 @@ import { DataTable } from '../components/DataTable';
 import { Page } from '../components/Page';
 import { LoadError, NoTenant, useRecordStyles } from '../components/records';
 import { TableSkeleton } from '../components/states';
+import { DangerText } from '../components/ui';
 
 const useLocalStyles = makeStyles({
   justifySpacebetween: { justifyContent: "space-between" },
@@ -63,6 +64,8 @@ interface Connection {
   verification_uri: string | null;
   upn: string | null;
   started_at: string;
+  /** why the sign-in was refused or failed (e.g. another company's Microsoft tenant), when it was */
+  refused_reason: string | null;
 }
 
 export function DeploymentSites() {
@@ -173,6 +176,12 @@ export function DeploymentSites() {
                 </Button>
               )}
             </div>
+            {!activeConn && latestConn?.status !== 'pending' && latestConn?.refused_reason && (
+              <DangerText size={200} block role="alert">
+                {latestConn.upn ? `Sign-in as ${latestConn.upn} refused. ` : ''}
+                {latestConn.refused_reason}
+              </DangerText>
+            )}
             <Text size={200} className={s.muted}>
               {activeConn
                 ? 'One connection covers every site below.'
