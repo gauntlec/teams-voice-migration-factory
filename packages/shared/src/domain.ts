@@ -554,7 +554,8 @@ export const HANDOVER_SECTIONS = [
 ] as const;
 
 /** The Handover sections with no structured data source: filled from editable notes (per site, or for every site). */
-export const HANDOVER_NOTE_SECTIONS = ['introduction', 'service_support_model', 'paging', 'teams_configuration', 'outstanding_actions'] as const;
+/** The sections written by hand as notes. Outstanding Actions were a note until 0094; they are records now (handover_actions). */
+export const HANDOVER_NOTE_SECTIONS = ['introduction', 'service_support_model', 'paging', 'teams_configuration'] as const;
 export type HandoverNoteSection = (typeof HANDOVER_NOTE_SECTIONS)[number];
 
 /** Every deployable Design & Build sheet, in the worker's run order - the single list the UI, API and change document use for "everything". */

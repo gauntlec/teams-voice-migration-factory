@@ -1678,6 +1678,20 @@ export interface ServiceRequestItemsTable {
 }
 
 /** One note per (section_key, site_id); site_id NULL applies to every site. */
+/** 0094: a Service Handover outstanding action; ticked off with done_at/done_by (set and cleared together). */
+export interface HandoverActionsTable {
+  id: Generated<string>;
+  /** FK -> discovery_sites.id (ON DELETE CASCADE); null = every site */
+  site_id: string | null;
+  description: string;
+  owner: ColumnType<string, string | undefined, string>;
+  position: ColumnType<number, number | undefined, number>;
+  created_by: string;
+  created_at: Ts;
+  done_at: string | null;
+  done_by: string | null;
+}
+
 export interface HandoverNotesTable {
   id: Generated<string>;
   section_key: 'introduction' | 'service_support_model' | 'paging' | 'teams_configuration' | 'outstanding_actions';
@@ -1964,6 +1978,7 @@ export interface DB {
   handover_packs: HandoverPacksTable;
   handover_sections: HandoverSectionsTable;
   handover_notes: HandoverNotesTable;
+  handover_actions: HandoverActionsTable;
   service_requests: ServiceRequestsTable;
   service_request_events: ServiceRequestEventsTable;
   service_request_items: ServiceRequestItemsTable;

@@ -37,18 +37,27 @@ export function noteLine(line: string): { kind: 'bullet' | 'heading' | 'text'; t
   return { kind: 'text', text: t };
 }
 
+/** One outstanding action as the Service Handover page lists it (handover_actions). */
+export interface HandoverAction {
+  id: string;
+  site_id: string | null;
+  sitecode: string | null;
+  description: string;
+  owner: string;
+  created_by: string;
+  created_by_name: string | null;
+  created_at: string;
+  done_at: string | null;
+  done_by: string | null;
+  done_by_name: string | null;
+}
+
 /**
- * Outstanding Actions written as notes: one action per line, "<description> | <owner and action>" (the owner is optional).
- * Numbered by the document as <section>.<n>, as the template does.
+ * The pack's Outstanding Actions: the open ones (a ticked-off action drops out of the next version), a site's prefixed with its
+ * code. Numbered by the document as <section>.<n>, as the template does.
  */
-export function outstandingActionsContent(notes: readonly HandoverNote[]): HandoverSectionContent {
-  const items = notes
-    .flatMap((n) => n.body.split(/\r?\n/).map((l) => ({ l: l.trim(), site: n.sitecode })))
-    .filter((x) => x.l !== '')
-    .map(({ l, site }) => {
-      const [description, ...owner] = l.replace(/^[-•*]\s+/, '').split('|');
-      return { description: `${site ? `${site}: ` : ''}${description!.trim()}`, owner: owner.join('|').trim() };
-    });
+export function outstandingActionsContent(actions: readonly { sitecode: string | null; description: string; owner: string }[]): HandoverSectionContent {
+  const items = actions.map((a) => ({ description: `${a.sitecode ? `${a.sitecode}: ` : ''}${a.description.trim()}`, owner: a.owner.trim() }));
   if (items.length === 0) return { kind: 'blocks', blocks: [{ kind: 'text', text: 'There are no outstanding actions.' }] };
   return { kind: 'blocks', blocks: [{ kind: 'actions', items, caption: 'Outstanding Actions Table' }] };
 }
@@ -59,7 +68,6 @@ export const HANDOVER_NOTE_EMPTY: Record<HandoverNoteSection, string> = {
   service_support_model: 'Not yet captured in Voxshift — agree the ongoing support model with the customer and add it to this section manually.',
   paging: 'No paging system data is currently collected by Voxshift.',
   teams_configuration: 'Not yet captured in Voxshift — record tenant-wide Microsoft Teams configuration decisions in this section manually.',
-  outstanding_actions: 'No outstanding actions recorded for this handover.',
 };
 
 export interface HandoverNote {

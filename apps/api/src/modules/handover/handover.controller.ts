@@ -1,6 +1,16 @@
-import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Put, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Put, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { handoverCallFlowsSchema, handoverGenerateSchema, handoverIssueSchema, handoverNoteSchema, type HandoverIssueInput } from '@tvmf/shared';
+import {
+  handoverActionCreateSchema,
+  handoverActionPatchSchema,
+  handoverCallFlowsSchema,
+  handoverGenerateSchema,
+  handoverIssueSchema,
+  handoverNoteSchema,
+  type HandoverActionCreateInput,
+  type HandoverActionPatchInput,
+  type HandoverIssueInput,
+} from '@tvmf/shared';
 import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
 import type { AuthedUser, TenantContext } from '../../common/request';
 import { ZodBody } from '../../common/zod.pipe';
@@ -60,6 +70,33 @@ export class HandoverController {
   @RequirePermission('handover:issue')
   issue(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id', ParseUUIDPipe) id: string, @Body(new ZodBody(handoverIssueSchema)) body: HandoverIssueInput) {
     return this.handover.issue(t, user, id, body);
+  }
+
+  /** Outstanding actions, open first; `siteId` narrows to one site plus the all-sites ones. */
+  @Get('actions')
+  @RequirePermission('handover:read')
+  actions(@TenantCtx() t: TenantContext, @Query('siteId') siteId?: string) {
+    if (siteId !== undefined && !/^[0-9a-f-]{36}$/i.test(siteId)) throw new BadRequestException('siteId must be a site id');
+    return this.handover.listActions(t, siteId);
+  }
+
+  @Post('actions')
+  @RequirePermission('handover:generate')
+  addAction(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Body(new ZodBody(handoverActionCreateSchema)) body: HandoverActionCreateInput) {
+    return this.handover.createAction(t, user, body);
+  }
+
+  /** Edit an action, or tick it off / open it again. */
+  @Patch('actions/:id')
+  @RequirePermission('handover:generate')
+  updateAction(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id', ParseUUIDPipe) id: string, @Body(new ZodBody(handoverActionPatchSchema)) body: HandoverActionPatchInput) {
+    return this.handover.updateAction(t, user, id, body);
+  }
+
+  @Delete('actions/:id')
+  @RequirePermission('handover:generate')
+  deleteAction(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id', ParseUUIDPipe) id: string) {
+    return this.handover.deleteAction(t, user, id);
   }
 
   /** The hand-written notes behind the sections with no structured data source. */

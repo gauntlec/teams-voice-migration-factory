@@ -27,6 +27,9 @@ import {
   type HandoverBlock,
   type DiscoverySiteOverview,
   type HandoverNote,
+  type HandoverAction,
+  type HandoverActionCreateInput,
+  type HandoverActionPatchInput,
   type HandoverNoteSection,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
@@ -512,6 +515,83 @@ export class HandoverService {
     ];
   }
 
+  /* --------------------------- outstanding actions --------------------------- */
+
+  /** Every outstanding action, open first, with who added and ticked each one. `siteId` narrows to one site (plus the all-sites ones). */
+  async listActions(t: TenantContext, siteId?: string): Promise<HandoverAction[]> {
+    assertCustomerWide(t, 'The Service Handover pack');
+    const rows = await tenantDb(this.db, t.schema)
+      .selectFrom('handover_actions as a')
+      .leftJoin('discovery_sites as ds', 'ds.id', 'a.site_id')
+      .select(['a.id as id', 'a.site_id as site_id', 'ds.sitecode as sitecode', 'a.description as description', 'a.owner as owner', 'a.created_by as created_by', 'a.created_at as created_at', 'a.done_at as done_at', 'a.done_by as done_by'])
+      .$if(!!siteId, (qb) => qb.where((eb) => eb.or([eb('a.site_id', '=', siteId!), eb('a.site_id', 'is', null)])))
+      .orderBy(sql`a.done_at is not null`)
+      .orderBy('ds.sitecode', (ob) => ob.nullsFirst())
+      .orderBy('a.position')
+      .orderBy('a.created_at')
+      .execute();
+    const ids = [...new Set(rows.flatMap((r) => [r.created_by, r.done_by]).filter((x): x is string => !!x))];
+    const names = new Map(ids.length ? (await platformDb(this.db).selectFrom('users').select(['id', 'display_name']).where('id', 'in', ids).execute()).map((u) => [u.id, u.display_name] as [string, string]) : []);
+    return rows.map((r) => ({
+      ...r,
+      created_at: new Date(r.created_at).toISOString(),
+      done_at: r.done_at ? new Date(r.done_at).toISOString() : null,
+      created_by_name: names.get(r.created_by) ?? null,
+      done_by_name: r.done_by ? (names.get(r.done_by) ?? null) : null,
+    }));
+  }
+
+  async createAction(t: TenantContext, user: AuthedUser, input: HandoverActionCreateInput) {
+    assertCustomerWide(t, 'The Service Handover pack');
+    const s = tenantDb(this.db, t.schema);
+    if (input.siteId && !(await s.selectFrom('discovery_sites').select('id').where('id', '=', input.siteId).executeTakeFirst())) throw new NotFoundException('site not found');
+    const last = await s
+      .selectFrom('handover_actions')
+      .select((eb) => eb.fn.max('position').as('p'))
+      .$if(!!input.siteId, (qb) => qb.where('site_id', '=', input.siteId!))
+      .$if(!input.siteId, (qb) => qb.where('site_id', 'is', null))
+      .executeTakeFirst();
+    const row = await s
+      .insertInto('handover_actions')
+      .values({ site_id: input.siteId, description: input.description, owner: input.owner ?? '', position: Number(last?.p ?? 0) + 1, created_by: user.id })
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    await this.audit.tenant(t.schema, 'handover.action_added', { actor: { id: user.id, email: user.email }, targetType: 'handover_action', targetId: row.id, detail: { siteId: input.siteId } });
+    return row;
+  }
+
+  /** Edits an action's words, or ticks it off (`done: true`) or opens it again (`done: false`). */
+  async updateAction(t: TenantContext, user: AuthedUser, id: string, input: HandoverActionPatchInput) {
+    assertCustomerWide(t, 'The Service Handover pack');
+    const patch: Record<string, unknown> = {};
+    if (input.description !== undefined) patch.description = input.description;
+    if (input.owner !== undefined) patch.owner = input.owner;
+    if (input.done === true) Object.assign(patch, { done_at: new Date().toISOString(), done_by: user.id });
+    if (input.done === false) Object.assign(patch, { done_at: null, done_by: null });
+    let q = tenantDb(this.db, t.schema).updateTable('handover_actions').set(patch as never).where('id', '=', id);
+    // ticking an action that is already done keeps who did it first
+    if (input.done === true) q = q.where('done_at', 'is', null);
+    const row = await q.returning('id').executeTakeFirst();
+    if (!row) {
+      const exists = await tenantDb(this.db, t.schema).selectFrom('handover_actions').select('id').where('id', '=', id).executeTakeFirst();
+      if (!exists) throw new NotFoundException('action not found');
+    }
+    await this.audit.tenant(t.schema, input.done === undefined ? 'handover.action_edited' : input.done ? 'handover.action_done' : 'handover.action_reopened', {
+      actor: { id: user.id, email: user.email },
+      targetType: 'handover_action',
+      targetId: id,
+    });
+    return { id };
+  }
+
+  async deleteAction(t: TenantContext, user: AuthedUser, id: string) {
+    assertCustomerWide(t, 'The Service Handover pack');
+    const row = await tenantDb(this.db, t.schema).deleteFrom('handover_actions').where('id', '=', id).returning(['id', 'description']).executeTakeFirst();
+    if (!row) throw new NotFoundException('action not found');
+    await this.audit.tenant(t.schema, 'handover.action_deleted', { actor: { id: user.id, email: user.email }, targetType: 'handover_action', targetId: id, detail: { description: row.description } });
+    return { ok: true };
+  }
+
   /* ------------------------------- notes ------------------------------- */
 
   listNotes(t: TenantContext) {
@@ -579,7 +659,7 @@ export class HandoverService {
     const ids = scope?.ids ?? [];
     const codes = scope?.codes ?? [];
 
-    const [sites, phoneNumbers, analogue, voicemailGroups, network, noteRows, lastSync, ranges] = await Promise.all([
+    const [sites, phoneNumbers, analogue, voicemailGroups, network, noteRows, lastSync, ranges, openActions] = await Promise.all([
       scoped
         .selectFrom('discovery_sites')
         .select(['id', 'sitecode', 'name', 'address', 'country', 'region', 'overview'])
@@ -644,6 +724,18 @@ export class HandoverService {
         .$if(bySite, (qb) => qb.where('sitecode', 'in', codes))
         .orderBy('sitecode')
         .orderBy('range_start')
+        .execute(),
+
+      // Outstanding actions still open: the all-sites ones always, a site's when that site is in the pack.
+      scoped
+        .selectFrom('handover_actions as a')
+        .leftJoin('discovery_sites as ds', 'ds.id', 'a.site_id')
+        .select(['ds.sitecode as sitecode', 'a.description as description', 'a.owner as owner'])
+        .where('a.done_at', 'is', null)
+        .$if(bySite, (qb) => qb.where((eb) => eb.or([eb('a.site_id', 'is', null), eb('a.site_id', 'in', ids)])))
+        .orderBy('ds.sitecode', (ob) => ob.nullsFirst())
+        .orderBy('a.position')
+        .orderBy('a.created_at')
         .execute(),
     ]);
 
@@ -957,7 +1049,7 @@ export class HandoverService {
         return blocks(out);
       })(),
 
-      outstanding_actions: outstandingActionsContent(notesFor('outstanding_actions')),
+      outstanding_actions: outstandingActionsContent(openActions),
     };
 
     // Service support model and paging are written by hand as notes (bullets and sub-headings drawn from the note's lines).

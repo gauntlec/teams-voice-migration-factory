@@ -130,6 +130,18 @@ export const handoverNoteSchema = z.object({
   body: z.string().max(20000),
 });
 
+/** A Service Handover outstanding action: for one site, or every site (siteId null). */
+export const handoverActionCreateSchema = z
+  .object({ siteId: z.guid().nullable(), description: z.string().trim().min(1).max(1000), owner: z.string().trim().max(300).optional() })
+  .strict();
+export type HandoverActionCreateInput = z.infer<typeof handoverActionCreateSchema>;
+/** Edit the words, or tick it off (`done: true`) or open it again (`done: false`). */
+export const handoverActionPatchSchema = z
+  .object({ description: z.string().trim().min(1).max(1000).optional(), owner: z.string().trim().max(300).optional(), done: z.boolean().optional() })
+  .strict()
+  .refine((v) => Object.keys(v).length > 0, { message: 'nothing to change' });
+export type HandoverActionPatchInput = z.infer<typeof handoverActionPatchSchema>;
+
 export const totpEnrolStartSchema = z.preprocess(
   (v) => v ?? {},
   z.object({ currentTotp: z.string().regex(/^\d{6}$/).optional() }),
