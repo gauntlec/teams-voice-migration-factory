@@ -111,8 +111,8 @@ the real risk once numbers are imported as independent copies rather than a
 single shared claim. |
 | `build_caps` | CAPS | as `build_users` (its own discovery_cap_id) plus function, display_name, phone_model, device_config_profile, mac_address, serial_number, phone_location, lan_jack |
 | `build_resource_accounts` | derived | **site_id**, discovery_resource_account_id, upn, display_name, kind (`auto_attendant`/`call_queue`), location_id, phone_number, number_type, voice_routing_policy, `application_id` (set once `New-CsOnlineApplicationInstance` has run and the account is licensed - gates the number/policy phase, see `docs/DEPLOYMENT.md`), status jsonb, errors |
-| `build_auto_attendants` | AUTO ATTENDANTS | name, resource_accounts (jsonb), language, timezone, dial_by_name scope/exclusions, default_call_flow (jsonb), menu_options (jsonb), after_hours (jsonb), holidays (jsonb), voice_app_admins (jsonb) |
-| `build_call_queues` | CALL QUEUES | name, resource_accounts (jsonb), routing_method, presence_based, agent_alert_time, agents (jsonb), overflow (jsonb), timeout (jsonb), music_on_hold, greeting (jsonb) |
+| `build_auto_attendants` | AUTO ATTENDANTS | name, resource_accounts (jsonb), language, timezone, dial_by_name scope/exclusions, default_call_flow (jsonb), menu_options (jsonb), after_hours (jsonb), holidays (jsonb), voice_app_admins (jsonb), `teams_identity` (the Teams object it deploys to, migration 0096) |
+| `build_call_queues` | CALL QUEUES | name, resource_accounts (jsonb), routing_method, presence_based, agent_alert_time, agents (jsonb), overflow (jsonb), timeout (jsonb), music_on_hold, greeting (jsonb), `teams_identity` (as for auto attendants) |
 | `build_m365_groups` | M365 GROUPS | name, email, description, used_for_voicemail, owners (jsonb), members (jsonb), group_id |
 | `build_holidays` | HOLIDAYS | name, dates (jsonb) |
 | `build_policies_catalog` | Policies | cached list of the tenant's existing policies per type, refreshed on connect |

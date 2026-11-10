@@ -65,6 +65,8 @@ import {
   type CallingPolicySiteMapSetInput,
   discoveryBulkDeleteSchema,
   type DiscoveryBulkDeleteInput,
+  flowImportSchema,
+  type FlowImportInput,
 } from '@tvmf/shared';
 import { CurrentUser, TenantCtx } from '../../auth/auth.decorators';
 import type { AuthedUser, TenantContext } from '../../common/request';
@@ -460,8 +462,8 @@ export class BuildController {
 
   @Post('flows/:id/import')
   @RequirePermission('build:write')
-  importFlowWizard(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string) {
-    return this.svc.importFlowWizard(t, user, id);
+  importFlowWizard(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id') id: string, @Body(new ZodBody(flowImportSchema)) body: FlowImportInput) {
+    return this.svc.importFlowWizard(t, user, id, { confirmed: body?.confirm === true });
   }
 
   /* validate */

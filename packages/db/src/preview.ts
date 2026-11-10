@@ -35,6 +35,8 @@ import {
   resolveAutoAttendantDeepContext,
   resolveLiveAutoAttendantState,
   resolveLiveCallQueueState,
+  liveVoiceAppNamesInUse,
+  nameTakenInTeamsReason,
   resolveLiveIdentityState,
   resolveLivePolicyNames,
   resolveLiveSharedCallingPolicyState,
@@ -284,10 +286,11 @@ export async function previewSiteChanges(s: Scoped, query: DeploymentPreviewQuer
       })),
     );
     const allUpns = [...rows.flatMap((r) => (r.agents as string[] | null) ?? []), ...ras.map((r) => r.upn), ...cqTargetUpns];
-    const [liveIdentity, liveQueues, audio] = await Promise.all([
+    const [liveIdentity, liveQueues, audio, namesInUse] = await Promise.all([
       resolveLiveIdentityState(s, allUpns),
       resolveLiveCallQueueState(s, rows),
       audioImportMap(s, rows),
+      liveVoiceAppNamesInUse(s, 'call_queue', rows.map((r) => r.name)),
     ]);
     const agentObjectIds = new Map<string, string>();
     for (const [upn, v] of liveIdentity) if (v.objectId) agentObjectIds.set(upn, v.objectId);
@@ -318,6 +321,10 @@ export async function previewSiteChanges(s: Scoped, query: DeploymentPreviewQuer
         voicemail_triage_template_id: row.voicemail_triage_template_id,
       };
       const live: CallQueueLiveState | undefined = liveQueues.get(row.id);
+      if (!live && namesInUse.has(row.name.trim().toLowerCase())) {
+        out.push({ rowId: row.id, objectType: 'call_queue', upn: row.name, calls: [], renderedCommands: [], warnings: [], skipReasons: [nameTakenInTeamsReason('call_queue', row.name)] });
+        continue;
+      }
       const calls = planCallQueueRow(planRow, agentObjectIds, raObjectIds, live, audio);
       const warnings = callQueueRowWarnings(planRow, agentObjectIds, raObjectIds);
       // say why a live queue is being changed, as an auto attendant does
@@ -360,6 +367,7 @@ export async function previewSiteChanges(s: Scoped, query: DeploymentPreviewQuer
     }
     const deep = await resolveAutoAttendantDeepContext(s, crossRef);
     const liveAutoAttendants = await resolveLiveAutoAttendantState(s, rows, deep);
+    const namesInUse = await liveVoiceAppNamesInUse(s, 'auto_attendant', rows.map((r) => r.name));
 
     const planRows: BuildAutoAttendantRow[] = rows.map((row) => ({
       id: row.id,
@@ -387,6 +395,10 @@ export async function previewSiteChanges(s: Scoped, query: DeploymentPreviewQuer
 
     for (const planRow of planRows) {
       const live: AutoAttendantLiveState | undefined = liveAutoAttendants.get(planRow.id);
+      if (!live && namesInUse.has(planRow.name.trim().toLowerCase())) {
+        out.push({ rowId: planRow.id, objectType: 'auto_attendant', upn: planRow.name, calls: [], renderedCommands: [], warnings: [], skipReasons: [nameTakenInTeamsReason('auto_attendant', planRow.name)] });
+        continue;
+      }
       const calls = planAutoAttendantRow(planRow, crossRef, raObjectIds, userObjectIds, live, targetNames);
       const warnings = autoAttendantRowWarnings(planRow, crossRef, raObjectIds, userObjectIds, targetNames, live);
       // say why a live auto attendant is being changed, so a row that looks unchanged to the engineer is not a mystery

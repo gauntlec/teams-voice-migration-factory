@@ -65,13 +65,15 @@ describe('linking voice apps that already exist', () => {
     const first = await deploy.previewChanges(c.t, { siteId: site, sheets: ['auto_attendants'] } as never);
     expect(first.map((r) => [r.upn, r.calls.map((x) => x.cmdlet)])).toEqual([]);
 
-    // a second row for the overflow attendant (made by hand, no link) is not mistaken for the live object: the linked rows still match
+    // a second row for the overflow attendant (made by hand, no link) is not mistaken for the live object: the linked rows still match,
+    // and it is not created again in Teams either, because Teams already has an attendant with its name
     await c.s.insertInto('build_auto_attendants').values({
       site_id: site, name: 'AA-Overflow', language_id: 'en-US', time_zone_id: 'Eastern Standard Time',
       default_call_flow: { greetings: [{ type: 'Text', text: 'Hi' }], menu: { options: [{ dtmf: 'Automatic', action: 'DisconnectCall' }] } },
     } as never).execute();
     const second = await deploy.previewChanges(c.t, { siteId: site, sheets: ['auto_attendants'] } as never);
-    expect(second.map((r) => [r.upn, r.calls.map((x) => x.cmdlet)])).toEqual([['AA-Overflow', ['New-CsAutoAttendant']]]);
+    expect(second.map((r) => [r.upn, r.calls.map((x) => x.cmdlet)])).toEqual([['AA-Overflow', []]]);
+    expect(second[0]!.skipReasons?.join(' ')).toMatch(/An auto attendant called "AA-Overflow" already exists in Teams/);
   });
 
   it('keeps two live auto attendants with the same name apart', async () => {
