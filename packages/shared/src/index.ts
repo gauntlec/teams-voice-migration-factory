@@ -179,7 +179,23 @@ export interface BugReport {
   created_at: string;
   updated_at: string;
   status_changed_at: string;
+  /** How many files are attached. */
+  attachment_count: number;
 }
+
+/** A file attached to a bug report. The bytes are fetched separately. */
+export interface BugReportAttachment {
+  id: string;
+  filename: string;
+  content_type: string;
+  size: number;
+  uploaded_by: string | null;
+  uploaded_by_name: string | null;
+  created_at: string;
+}
+
+/** Largest file a bug report takes: the same 10 MB as an incident attachment. */
+export const BUG_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 
 /* ------------------ Discovery (live customer-tenant inventory) ------------------ */
 

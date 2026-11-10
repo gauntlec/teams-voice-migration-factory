@@ -1,5 +1,8 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import {
+  BUG_ATTACHMENT_MAX_BYTES,
   bugReportCreateSchema,
   can,
   bugReportUpdateSchema,
@@ -58,5 +61,36 @@ export class BugReportsController {
   @RequirePermission('bug:create')
   remove(@Param('id') id: string, @CurrentUser() user: AuthedUser) {
     return this.bugs.remove(id, this.actor(user), can(user.role, 'bug:manage'));
+  }
+
+  @Get(':id/attachments')
+  @RequirePermission('bug:read')
+  attachments(@Param('id') id: string) {
+    return this.bugs.attachments(id);
+  }
+
+  /** An administrator, or the person who reported the bug. */
+  @Post(':id/attachments')
+  @RequirePermission('bug:create')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: BUG_ATTACHMENT_MAX_BYTES } }))
+  attach(@Param('id') id: string, @UploadedFile() file: Express.Multer.File, @CurrentUser() user: AuthedUser) {
+    return this.bugs.attach(id, file, this.actor(user), can(user.role, 'bug:manage'));
+  }
+
+  @Get(':id/attachments/:attachmentId')
+  @RequirePermission('bug:read')
+  async attachment(@Param('id') id: string, @Param('attachmentId') attachmentId: string, @Res() res: Response) {
+    const row = await this.bugs.attachment(id, attachmentId);
+    res.setHeader('Content-Type', row.content_type);
+    res.setHeader('Content-Disposition', `attachment; filename="${row.filename.replace(/["\r\n]/g, '')}"`);
+    res.setHeader('Content-Length', String(row.size));
+    res.send(row.content);
+  }
+
+  /** An administrator, or whoever attached the file. */
+  @Delete(':id/attachments/:attachmentId')
+  @RequirePermission('bug:create')
+  removeAttachment(@Param('id') id: string, @Param('attachmentId') attachmentId: string, @CurrentUser() user: AuthedUser) {
+    return this.bugs.removeAttachment(id, attachmentId, this.actor(user), can(user.role, 'bug:manage'));
   }
 }
