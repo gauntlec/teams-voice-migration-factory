@@ -133,6 +133,21 @@ describe('Call Queue graph: PowerShell-only extras', () => {
     expect([both.sublabel, both.details]).toEqual(['Leave a message', ['🔊 hold.wav']]);
   });
 
+  it('draws one "Caller hears" box when several exits say the same thing and go to the same place', () => {
+    const same = { action: 'Disconnect', redirectPrompt: 'Sorry, nobody can take your call. Goodbye.' } as const;
+    const g = cq(same, { timeout: same, noAgentAction: same });
+    const heard = g.nodes.filter((n) => n.kind === 'announcement');
+    expect(heard).toHaveLength(1);
+    const id = heard[0]!.id;
+    expect(g.edges.map((e) => [e.source, e.label, e.target])).toEqual([
+      ['cq:q1', 'Overflow + Timeout + No agents', id],
+      [id, 'then', 'disconnect'],
+    ]);
+    // different words, or a different place to go, keep their own boxes
+    const other = cq(same, { timeout: { ...same, redirectPrompt: 'We are closed.' }, noAgentAction: { action: 'Voicemail', target: 'jo@contoso.test', redirectPrompt: same.redirectPrompt } });
+    expect(other.nodes.filter((n) => n.kind === 'announcement')).toHaveLength(3);
+  });
+
   it('ignores extras on an action they do not belong to', () => {
     const g = cq({ action: 'SharedVoicemail', target: 'group-id', priority: 3, redirectPrompt: 'Hello' });
     expect(g.edges.map((e) => e.label)).toEqual(['Overflow']);
