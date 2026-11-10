@@ -109,6 +109,8 @@ class GraphBuilder {
   private nodes = new Map<string, CallFlowNode>();
   private edges: CallFlowEdge[] = [];
   private edgeIndexByPair = new Map<string, number>();
+  /** "Caller hears" boxes by what they say and where the call goes next - see addActionEdge. */
+  readonly announcementByContent = new Map<string, string>();
 
   ensureNode(node: CallFlowNode): string {
     const existing = this.nodes.get(node.id);
@@ -319,13 +321,19 @@ function addActionEdge(b: GraphBuilder, sourceId: string, targetId: string, labe
     b.addEdge(sourceId, targetId, edgeLabel, branch);
     return;
   }
-  const heardId = b.ensureNode({
-    id: `${sourceId}:redirect:${branch}`,
-    kind: 'announcement',
-    label: 'Caller hears',
-    sublabel: extras.prompt ? snippet([extras.prompt], false) : `🔊 ${extras.audio}`,
-    details: extras.prompt && extras.audio ? [`🔊 ${extras.audio}`] : undefined,
-  });
+  // Exits that say exactly the same thing and go to the same place share one box, the line into it naming them all ("Overflow +
+  // Timeout + No agents"), instead of the same text drawn once per exit (bug report "Call Flow Diagrams").
+  const content = JSON.stringify([sourceId, extras.prompt ?? null, extras.audio ?? null, targetId]);
+  const heardId =
+    b.announcementByContent.get(content) ??
+    b.ensureNode({
+      id: `${sourceId}:redirect:${branch}`,
+      kind: 'announcement',
+      label: 'Caller hears',
+      sublabel: extras.prompt ? snippet([extras.prompt], false) : `🔊 ${extras.audio}`,
+      details: extras.prompt && extras.audio ? [`🔊 ${extras.audio}`] : undefined,
+    });
+  b.announcementByContent.set(content, heardId);
   b.addEdge(sourceId, heardId, edgeLabel, branch);
   b.addEdge(heardId, targetId, 'then', branch);
 }
