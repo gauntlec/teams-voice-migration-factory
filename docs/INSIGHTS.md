@@ -172,7 +172,8 @@ customer (`reportAvailable`), with the same rules as the data behind each one:
 | Report | Period | Data | Who |
 | --- | --- | --- | --- |
 | Migration progress | yes | `/insights/metrics` now, and `/insights/history` for the period | everyone on the customer |
-| Number management | no (as it is now) | `/insights/numbers`: every range and number in Site Data (at most 50,000 numbers) with site, country, status (Assigned / Spare / Reserved / Parked) and holder (Teams's when Discovery has seen one, else Site Data's). Excel gives three sheets: Number ranges, All numbers, Assigned numbers | `discovery:read` |
+| Number management | no (as it is now) | `/insights/numbers`: every range and number on the customer's sites (at most 50,000 numbers) with site, country, status (Assigned / Spare / Reserved / Parked) and holder (Teams's when Discovery has seen one, else Site Data's). Excel gives three sheets: Number ranges, All numbers, Assigned numbers | `discovery:read` |
+| Numbers not on a site | no (as it is now) | `/insights/numbers/off-site`: ranges with no site and their numbers - mostly the "Found in Teams" ranges a Discovery sync makes for numbers Teams has in none of the customer's ranges - with status, holder and why each is on no site. Customer-wide: no site filter, and empty for someone limited to some sites. Excel gives two sheets: Numbers, Ranges with no site | `discovery:read` |
 | Change log | yes | `/insights/changes` (new): changes by live runs, newest first, at most 5,000 | people who can see deployments or the customer's audit log |
 | Incidents and service levels | yes | `/incidents/report` | Managed Services on, `inc:read` |
 | Service requests | yes | `/service-requests/report` | Managed Services on, `sr:read` |

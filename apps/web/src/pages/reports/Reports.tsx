@@ -12,6 +12,7 @@ import {
   DocumentTableRegular,
   HistoryRegular,
   NumberSymbolRegular,
+  NumberSymbolSquareRegular,
   PhoneRegular,
   BotRegular,
   MailCheckmarkRegular,
@@ -30,6 +31,7 @@ import {
   buildChangeLogReport,
   buildDeviceReport,
   buildNumberReport,
+  buildOffSiteNumberReport,
   buildExecutiveSummary,
   buildIncidentReport,
   buildMigrationReport,
@@ -43,6 +45,7 @@ import {
   type AssistantActivityData,
   type ChangeLogData,
   type NumberReportData,
+  type OffSiteNumberData,
   type DeviceAvailabilityData,
   type CustomerMetrics,
   type DeviceStatusOverview,
@@ -128,6 +131,7 @@ const ICONS: Record<ReportKey, JSX.Element> = {
   executive: <SparkleRegular />,
   migration: <TaskListLtrRegular />,
   numbers: <NumberSymbolRegular />,
+  'numbers-off-site': <NumberSymbolSquareRegular />,
   changes: <HistoryRegular />,
   incidents: <WarningRegular />,
   'service-requests': <ReceiptRegular />,
@@ -241,7 +245,8 @@ export function ReportPage() {
   const siteRow = site ? sites.find((x) => x.id === site) : undefined;
   const siteLabel = siteRow ? [siteRow.sitecode, siteRow.name].filter(Boolean).join(' ') : undefined;
   const raw = useReport(usable ? reportKey : null, activeTenantId ?? '', period, compare, today, site);
-  const doc = useMemo(() => ({ ...raw, data: raw.data && site ? { ...raw.data, site: siteLabel ?? 'One site' } : raw.data }), [raw, site, siteLabel]);
+  // Numbers not on a site is customer-wide: no site filter.
+  const doc = useMemo(() => ({ ...raw, data: raw.data && site && reportKey !== 'numbers-off-site' ? { ...raw.data, site: siteLabel ?? 'One site' } : raw.data }), [raw, site, siteLabel, reportKey]);
 
   if (!activeTenantId || !tenant) return <NoTenant />;
   if (!reportKey || !usable) {
@@ -314,7 +319,7 @@ export function ReportPage() {
             )}
           </>
         )}
-        {sites.length > 1 && (
+        {sites.length > 1 && reportKey !== 'numbers-off-site' && (
           <Field label="Site" className={s.period}>
             <Dropdown
               value={siteLabel ?? 'All sites'}
@@ -416,6 +421,7 @@ function useReport(key: ReportKey | null, tenantId: string, period: ReportPeriod
     queryFn: () => api<DeviceAvailabilityData>(`${t}/insights/devices/availability?from=${prevPeriod.from}&to=${prevPeriod.to}${and}`),
   });
   const numbers = useQuery({ queryKey: ['report', 'numbers', tenantId, site], enabled: enabled('numbers'), queryFn: () => api<NumberReportData>(`${t}/insights/numbers${sq ? `?${sq}` : ''}`) });
+  const offSite = useQuery({ queryKey: ['report', 'numbers-off-site', tenantId], enabled: enabled('numbers-off-site'), queryFn: () => api<OffSiteNumberData>(`${t}/insights/numbers/off-site`) });
   const devices = useQuery({ queryKey: ['report', 'devices', tenantId, site], enabled: enabled('devices'), queryFn: () => api<DeviceStatusOverview>(`${t}/device-status${sq ? `?${sq}` : ''}`) });
 
   const pick = (...qs2: { isLoading: boolean; error: unknown }[]) => ({ isLoading: qs2.some((q) => q.isLoading), error: (qs2.find((q) => q.error)?.error as Error | undefined) ?? null });
@@ -441,6 +447,8 @@ function useReport(key: ReportKey | null, tenantId: string, period: ReportPeriod
       };
     case 'numbers':
       return { ...pick(numbers), data: numbers.data ? buildNumberReport(numbers.data, today) : undefined };
+    case 'numbers-off-site':
+      return { ...pick(offSite), data: offSite.data ? buildOffSiteNumberReport(offSite.data, today) : undefined };
     case 'changes':
       return { ...pick(changes), data: changes.data ? buildChangeLogReport(changes.data, period) : undefined };
     case 'devices':
