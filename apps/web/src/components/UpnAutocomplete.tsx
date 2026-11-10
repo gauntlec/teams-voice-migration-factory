@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Combobox, Option } from '@fluentui/react-components';
+import { Combobox, Link, Option, Text, tokens } from '@fluentui/react-components';
 import type { Paginated } from '@tvmf/shared';
 import { api } from '../api';
 import { useDebounced } from '../hooks/useDebounced';
@@ -22,6 +22,10 @@ interface TenantUserHit {
  * Stays `freeform` either way: a calling-settings target can be a raw phone
  * number or SIP address, not only a person, so the dropdown is a
  * suggestion list, never a constraint on what can be typed/saved.
+ *
+ * Searching uses only the part before the @, so a full address that is close to a real one still offers the real one (bug report
+ * "UPN Mismatch": typing first.last@ offered nothing when the person is first.last1@, and it was saved as typed). An address that is
+ * not a user in Teams gets a note under the field, with the nearest match to use instead.
  */
 export function UpnAutocomplete({
   tenantId,
@@ -41,7 +45,8 @@ export function UpnAutocomplete({
   style?: React.CSSProperties;
   className?: string;
 }) {
-  const term = useDebounced(value);
+  const settled = useDebounced(value);
+  const term = settled.includes('@') ? settled.slice(0, settled.indexOf('@')) : settled;
 
   const live = useQuery({
     queryKey: ['upn-autocomplete', tenantId, term],
@@ -64,22 +69,46 @@ export function UpnAutocomplete({
     return [...liveItems, ...collectedOnly];
   }, [live.data, collected.data]);
 
+  // Only an email-shaped value is checked: this field also takes phone numbers and SIP addresses, which are never users.
+  const typed = value.trim();
+  const looksLikeUpn = /^[^@\s:]+@[^@\s]+$/.test(typed);
+  const checked = looksLikeUpn && settled === value && live.isSuccess && !live.isFetching;
+  const inTeams = options.some((o) => o.synced && o.upn.toLowerCase() === typed.toLowerCase());
+  const inSiteData = options.some((o) => !o.synced && o.upn.toLowerCase() === typed.toLowerCase());
+  const nearest = options.find((o) => o.synced && o.upn.toLowerCase() !== typed.toLowerCase());
+  const note =
+    checked && !inTeams ? (
+      <Text size={200} style={{ color: inSiteData ? tokens.colorNeutralForeground3 : tokens.colorStatusWarningForeground1, width: 0, minWidth: '100%' }}>
+        {inSiteData ? 'In Site Data, not found in Teams yet.' : 'Not a user in Teams.'}
+        {nearest && (
+          <>
+            {' '}
+            <Link as="button" onClick={() => onChange(nearest.upn)}>
+              Use {nearest.upn}
+            </Link>
+          </>
+        )}
+      </Text>
+    ) : null;
+
   return (
-    <Combobox
-      freeform
-      value={value}
-      placeholder={placeholder}
-      style={style}
-      className={className}
-      onChange={(e) => onChange(e.target.value)}
-      onOptionSelect={(_, data) => onChange(data.optionText ?? data.optionValue ?? '')}
-    >
-      {options.map((u) => (
-        <Option key={u.upn} value={u.upn} text={u.upn}>
-          {u.display_name ? `${u.upn} — ${u.display_name}` : u.upn}
-          {!u.synced && ' (not yet synced)'}
-        </Option>
-      ))}
-    </Combobox>
+    <span className={className} style={{ display: 'inline-flex', flexDirection: 'column', gap: 2, ...style }}>
+      <Combobox
+        freeform
+        value={value}
+        placeholder={placeholder}
+        style={{ width: '100%', minWidth: 0 }}
+        onChange={(e) => onChange(e.target.value)}
+        onOptionSelect={(_, data) => onChange(data.optionText ?? data.optionValue ?? '')}
+      >
+        {options.map((u) => (
+          <Option key={u.upn} value={u.upn} text={u.upn}>
+            {u.display_name ? `${u.upn} — ${u.display_name}` : u.upn}
+            {!u.synced && ' (not yet synced)'}
+          </Option>
+        ))}
+      </Combobox>
+      {note}
+    </span>
   );
 }
