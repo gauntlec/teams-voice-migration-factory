@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Card, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Link, ProgressBar, Spinner, Text, tokens , makeStyles, shorthands, mergeClasses } from '@fluentui/react-components';
+import { Badge, Button, Card, Checkbox, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Link, ProgressBar, Spinner, Text, tokens, makeStyles, shorthands, mergeClasses } from '@fluentui/react-components';
+import { Dialog } from '../../components/AppDialog';
 import { ArrowSyncRegular, CheckmarkRegular, ChevronDownRegular, ChevronRightRegular, DeleteRegular, PlugConnectedRegular } from '@fluentui/react-icons';
 import { TENANT_DISCOVERY_STEPS, TENANT_DISCOVERY_STEP_LABELS, TENANT_DISCOVERY_STEP_TYPES, TENANT_OBJECT_TYPE_LABELS, type TenantConnectionInfo, type TenantDiscoveryRun, type TenantDiscoveryStep, type TenantDiscoverySummary, type TenantObjectType } from '@tvmf/shared';
 import { api, ApiError } from '../../api';

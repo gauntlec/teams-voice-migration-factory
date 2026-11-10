@@ -4,7 +4,6 @@ import {
   Badge,
   Button,
   Checkbox,
-  Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
@@ -19,6 +18,7 @@ import {
   makeStyles,
   tokens,
 } from '@fluentui/react-components';
+import { Dialog } from '../../components/AppDialog';
 import { AddRegular, ArrowUndoRegular, DeleteRegular } from '@fluentui/react-icons';
 import { MAX_CONTACTS_PER_ROLE, SITE_CONTACT_ROLES, contactLabel, type SiteContact, type SiteContactRole, type SiteContacts } from '@tvmf/shared';
 

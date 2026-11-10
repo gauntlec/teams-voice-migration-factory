@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Select, Spinner, Text, Textarea, makeStyles, shorthands, tokens , mergeClasses } from '@fluentui/react-components';
+import { Button, Card, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Select, Spinner, Text, Textarea, makeStyles, shorthands, tokens, mergeClasses } from '@fluentui/react-components';
+import { Dialog } from './AppDialog';
 import { INC_CATEGORIES } from '@tvmf/shared';
 import { api } from '../api';
 import { errorText } from '../pages/ServiceRequests';

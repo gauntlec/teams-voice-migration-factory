@@ -152,7 +152,13 @@ export class BugReportsService {
     return row;
   }
 
-  async remove(id: string, actor: AuditActor) {
+  async remove(id: string, actor: AuditActor, canManage = true) {
+    if (!canManage) {
+      const existing = await platformDb(this.db).selectFrom('bug_reports').select(['status', 'reported_by']).where('id', '=', id).executeTakeFirst();
+      if (!existing) throw new NotFoundException('Bug report not found');
+      if (!actor.id || existing.reported_by !== actor.id) throw new ForbiddenException('Only the person who reported this bug, or an administrator, can delete it.');
+      if (existing.status !== 'new') throw new ForbiddenException('This bug is already being worked on, so only an administrator can delete it now.');
+    }
     const row = await platformDb(this.db)
       .deleteFrom('bug_reports')
       .where('id', '=', id)

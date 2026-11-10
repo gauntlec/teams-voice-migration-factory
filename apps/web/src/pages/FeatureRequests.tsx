@@ -4,7 +4,6 @@ import {
   Badge,
   Button,
   Card,
-  Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
@@ -31,6 +30,7 @@ import {
   shorthands,
   tokens,
 } from '@fluentui/react-components';
+import { Dialog } from '../components/AppDialog';
 import {
   AddRegular,
   CheckmarkRegular,
@@ -352,11 +352,14 @@ function toForm(f: FeatureRequest): FormState {
 
 function FeatureForm({
   mode,
+  admin = false,
   initial,
   onClose,
   onSaved,
 }: {
   mode: 'create' | 'edit';
+  /** An administrator also writes the decision note; the requester edits only the request. */
+  admin?: boolean;
   initial?: FeatureRequest;
   onClose: () => void;
   onSaved: () => void;
@@ -384,7 +387,7 @@ function FeatureForm({
         ? api('/feature-requests', { method: 'POST', body: JSON.stringify(base) })
         : api(`/feature-requests/${initial!.id}`, {
             method: 'PATCH',
-            body: JSON.stringify({ ...base, decision_note: v.decision_note.trim() }),
+            body: JSON.stringify(admin ? { ...base, decision_note: v.decision_note.trim() } : base),
           });
     },
     onSuccess: () => {
@@ -550,7 +553,7 @@ function FeatureForm({
                 </Dropdown>
               </Field>
 
-              {mode === 'edit' && (
+              {mode === 'edit' && admin && (
                 <Field
                   label="Decision note"
                   hint="Why it was declined, or scheduling / triage notes. Shown on the card."
@@ -600,12 +603,12 @@ function DetailRow({ label, value }: { label: string; value: ReactNode }) {
 
 function DetailDialog({
   f,
-  canManage,
+  canEdit,
   onEdit,
   onClose,
 }: {
   f: FeatureRequest;
-  canManage: boolean;
+  canEdit: boolean;
   onEdit: () => void;
   onClose: () => void;
 }) {
@@ -665,7 +668,7 @@ function DetailDialog({
             >
               {copied ? 'Copied' : 'Copy prompt'}
             </Button>
-            {canManage && (
+            {canEdit && (
               <Button
                 appearance="secondary"
                 icon={<EditRegular />}
@@ -692,6 +695,7 @@ function DetailDialog({
 function RequestCard({
   f,
   canManage,
+  canOwn,
   onOpen,
   onEdit,
   onMove,
@@ -699,6 +703,8 @@ function RequestCard({
 }: {
   f: FeatureRequest;
   canManage: boolean;
+  /** The requester's own request, still New: they may edit or withdraw it. */
+  canOwn: boolean;
   onOpen: () => void;
   onEdit: () => void;
   onMove: (status: FeatureStatus) => void;
@@ -768,7 +774,7 @@ function RequestCard({
           >
             {copied ? 'Copied' : 'Prompt'}
           </Button>
-          {canManage && (
+          {(canManage || canOwn) && (
             <Menu>
               <MenuTrigger disableButtonEnhancement>
                 <Button
@@ -783,7 +789,7 @@ function RequestCard({
                   <MenuItem icon={<EditRegular />} onClick={onEdit}>
                     Edit…
                   </MenuItem>
-                  {FEATURE_STATUSES.filter((st) => st !== f.status).map((st) => (
+                  {canManage && FEATURE_STATUSES.filter((st) => st !== f.status).map((st) => (
                     <MenuItem key={st} onClick={() => onMove(st)}>
                       Move to {FEATURE_STATUS_LABELS[st]}
                     </MenuItem>
@@ -807,8 +813,10 @@ export function FeatureRequests() {
   const ls = useLocalStyles();
   const s = useStyles();
   const qc = useQueryClient();
-  const { can } = useAuth();
+  const { can, me } = useAuth();
   const canManage = can('feature:manage');
+  /** The person who asked for a feature may change or withdraw it while it is still New. */
+  const isOwnNew = (f: FeatureRequest) => !!me?.id && f.submitted_by === me.id && f.status === 'new';
   const canCreate = can('feature:create');
 
   const [dialog, setDialog] = useState<{ mode: 'create' } | { mode: 'edit'; f: FeatureRequest } | null>(
@@ -832,12 +840,15 @@ export function FeatureRequests() {
       api(`/feature-requests/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
     onSuccess: invalidate,
   });
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const remove = useMutation({
     mutationFn: (id: string) => api(`/feature-requests/${id}`, { method: 'DELETE' }),
     onSuccess: () => {
       setConfirmDelete(null);
+      setDeleteError(null);
       invalidate();
     },
+    onError: (e) => setDeleteError(e instanceof ApiError ? e.message : 'Could not delete the request.'),
   });
 
   const byStatus = useMemo(() => {
@@ -916,6 +927,7 @@ export function FeatureRequests() {
                         key={f.id}
                         f={f}
                         canManage={canManage}
+                        canOwn={isOwnNew(f)}
                         onOpen={() => setDetail(f)}
                         onEdit={() => setDialog({ mode: 'edit', f })}
                         onMove={(status) => move.mutate({ id: f.id, status })}
@@ -933,7 +945,7 @@ export function FeatureRequests() {
       {detail && (
         <DetailDialog
           f={(list.data ?? []).find((x) => x.id === detail.id) ?? detail}
-          canManage={canManage}
+          canEdit={canManage || isOwnNew((list.data ?? []).find((x) => x.id === detail.id) ?? detail)}
           onEdit={() => setDialog({ mode: 'edit', f: detail })}
           onClose={() => setDetail(null)}
         />
@@ -945,6 +957,7 @@ export function FeatureRequests() {
       {dialog?.mode === 'edit' && (
         <FeatureForm
           mode="edit"
+          admin={canManage}
           initial={dialog.f}
           onClose={() => setDialog(null)}
           onSaved={invalidate}
@@ -952,12 +965,17 @@ export function FeatureRequests() {
       )}
 
       {confirmDelete && (
-        <Dialog open onOpenChange={(_, d) => !d.open && setConfirmDelete(null)}>
+        <Dialog open onOpenChange={(_, d) => !d.open && (setConfirmDelete(null), setDeleteError(null))}>
           <DialogSurface>
             <DialogBody>
               <DialogTitle>Delete this feature request?</DialogTitle>
               <DialogContent>
                 “{confirmDelete.title}” will be permanently removed. This cannot be undone.
+                {deleteError && (
+                  <MessageBar intent="error">
+                    <MessageBarBody>{deleteError}</MessageBarBody>
+                  </MessageBar>
+                )}
               </DialogContent>
               <DialogActions>
                 <DialogTrigger disableButtonEnhancement>

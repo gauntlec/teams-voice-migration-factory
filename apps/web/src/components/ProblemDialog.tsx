@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Select, Text, Textarea, makeStyles, tokens } from '@fluentui/react-components';
+import { Button, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Select, Text, Textarea, makeStyles, tokens } from '@fluentui/react-components';
+import { Dialog } from './AppDialog';
 import { INC_CATEGORIES, INC_CATEGORY_BY_KEY, INC_PROBLEM_STATUSES, INC_PROBLEM_STATUS_LABELS, type IncProblemStatus } from '@tvmf/shared';
 import { api } from '../api';
 import { errorText } from '../pages/ServiceRequests';

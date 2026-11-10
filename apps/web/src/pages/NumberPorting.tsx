@@ -6,7 +6,6 @@ import {
   Button,
   Card,
   Checkbox,
-  Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
@@ -25,10 +24,10 @@ import {
   TableRow,
   Text,
   Textarea,
-
   makeStyles,
   shorthands,
 } from '@fluentui/react-components';
+import { Dialog } from '../components/AppDialog';
 import { AddRegular, ArrowLeftRegular, ArrowRightRegular, ArrowUploadRegular, ArrowUndoRegular, CheckmarkCircleRegular, DeleteRegular } from '@fluentui/react-icons';
 import { PORT_STAGE_LABELS, portDue, portStage, portStageText, type Paginated } from '@tvmf/shared';
 import { api, apiDownload, apiUpload, ApiError } from '../api';

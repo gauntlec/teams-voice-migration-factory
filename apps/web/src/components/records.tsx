@@ -7,7 +7,6 @@ import {
   Button,
   Card,
   Checkbox,
-  Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
@@ -41,6 +40,7 @@ import {
   shorthands,
   tokens,
 } from '@fluentui/react-components';
+import { Dialog } from './AppDialog';
 import {
   AddRegular,
   ChevronLeftRegular,

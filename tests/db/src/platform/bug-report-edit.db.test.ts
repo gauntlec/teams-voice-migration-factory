@@ -42,3 +42,17 @@ describe('editing a bug report', () => {
     expect(await svc.update(bug.id, { title: 'Changed by an administrator' }, actor(admin), true)).toMatchObject({ title: 'Changed by an administrator' });
   });
 });
+
+describe('deleting a bug report', () => {
+  it('lets the reporter withdraw their own New report, but not anyone else, and not once triage has started', async () => {
+    const mine = await svc.create(base, actor(reporter));
+    await expect(svc.remove(mine.id, actor(other), false)).rejects.toThrow(/Only the person who reported/);
+    expect(await svc.remove(mine.id, actor(reporter), false)).toEqual({ ok: true });
+
+    const started = await svc.create(base, actor(reporter));
+    await platformDb(handle.db).updateTable('bug_reports').set({ status: 'confirmed' }).where('id', '=', started.id).execute();
+    await expect(svc.remove(started.id, actor(reporter), false)).rejects.toThrow(/already being worked on/);
+    const admin = await seedUser(handle, 'SUPER_ADMIN');
+    expect(await svc.remove(started.id, actor(admin), true)).toEqual({ ok: true });
+  });
+});

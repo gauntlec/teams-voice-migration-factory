@@ -5,7 +5,6 @@ import {
   Button,
   Card,
   Checkbox,
-  Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
@@ -30,6 +29,7 @@ import {
   makeStyles,
   tokens,
 } from '@fluentui/react-components';
+import { Dialog } from '../components/AppDialog';
 import { INC_CATEGORY_BY_KEY, INC_PRIORITIES, INC_PRIORITY_LABELS, INC_STATUSES, INC_STATUS_LABELS, type IncMajorClock, type IncPriority, type IncStatus } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { useAuth } from '../auth';

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Text, Textarea, makeStyles, tokens } from '@fluentui/react-components';
+import { Button, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Text, Textarea, makeStyles, tokens } from '@fluentui/react-components';
+import { Dialog } from '../../components/AppDialog';
 import type { BuildQuickAddResult } from '@tvmf/shared';
 import { api, ApiError } from '../../api';
 import { DangerText } from '../../components/ui';

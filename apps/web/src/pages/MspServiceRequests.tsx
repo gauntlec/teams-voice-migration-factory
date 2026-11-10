@@ -6,7 +6,6 @@ import {
   Button,
   Card,
   Checkbox,
-  Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
@@ -29,6 +28,7 @@ import {
   makeStyles,
   tokens,
 } from '@fluentui/react-components';
+import { Dialog } from '../components/AppDialog';
 import { SR_PRIORITIES, SR_STATUS_LABELS, SR_STATUSES, SR_TYPE_DEFS, type SrClock, type SrPriority, type SrStatus, type SrType } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { QueueTiles, SlaBadge, queueFilter, type QueueFilter } from '../components/SrTarget';

@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Button,
-  Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
@@ -15,10 +14,10 @@ import {
   Option,
   Text,
   tokens,
-
   makeStyles,
   shorthands,
 } from '@fluentui/react-components';
+import { Dialog } from './AppDialog';
 import type { Paginated } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { DangerText } from './ui';

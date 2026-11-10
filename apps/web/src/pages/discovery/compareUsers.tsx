@@ -1,6 +1,7 @@
 import { Fragment, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, makeStyles, tokens } from '@fluentui/react-components';
+import { Badge, Button, Checkbox, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Spinner, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, makeStyles, tokens } from '@fluentui/react-components';
+import { Dialog } from '../../components/AppDialog';
 import type { VoiceCompareRow, VoiceProfile } from '@tvmf/shared';
 import { api } from '../../api';
 import { DataTable } from '../../components/DataTable';

@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { platformDb } from '@tvmf/db';
 import type { FeatureRequestCreateInput, FeatureRequestUpdateInput } from '@tvmf/shared';
 import { APP_CONFIG, type AppConfig } from '../common/config';
@@ -9,6 +9,8 @@ import { MailService } from '../mail/mail.service';
 /** Optional free-text columns — a cleared form field ('') is stored as NULL. */
 const TEXT_COLS = ['current_behavior', 'examples', 'acceptance', 'constraints', 'decision_note'] as const;
 const nullifyBlank = (v: string | undefined | null) => (v == null || v === '' ? null : v);
+/** What the person who asked for a feature may still change while it is New: the request itself, not its place on the board or the decision. */
+export const REQUESTER_EDITABLE = ['title', 'area', 'priority', 'problem', 'proposal', 'current_behavior', 'examples', 'acceptance', 'constraints', 'affected_roles'] as const;
 
 @Injectable()
 export class FeatureRequestsService {
@@ -80,13 +82,18 @@ export class FeatureRequestsService {
     return row;
   }
 
-  async update(id: string, input: FeatureRequestUpdateInput, actor: AuditActor) {
+  async update(id: string, input: FeatureRequestUpdateInput, actor: AuditActor, canManage = true) {
     const existing = await platformDb(this.db)
       .selectFrom('feature_requests')
       .select(['id', 'status', 'submitted_by'])
       .where('id', '=', id)
       .executeTakeFirst();
     if (!existing) throw new NotFoundException('Feature request not found');
+    if (!canManage) {
+      ownNewRequest(existing, actor, 'edit');
+      const other = Object.keys(input).filter((k) => input[k as keyof FeatureRequestUpdateInput] !== undefined && !(REQUESTER_EDITABLE as readonly string[]).includes(k));
+      if (other.length) throw new ForbiddenException(`Only an administrator can change ${other.join(', ')}.`);
+    }
 
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     for (const [k, v] of Object.entries(input)) {
@@ -143,7 +150,12 @@ export class FeatureRequestsService {
     return row;
   }
 
-  async remove(id: string, actor: AuditActor) {
+  async remove(id: string, actor: AuditActor, canManage = true) {
+    if (!canManage) {
+      const existing = await platformDb(this.db).selectFrom('feature_requests').select(['status', 'submitted_by']).where('id', '=', id).executeTakeFirst();
+      if (!existing) throw new NotFoundException('Feature request not found');
+      ownNewRequest(existing, actor, 'delete');
+    }
     const row = await platformDb(this.db)
       .deleteFrom('feature_requests')
       .where('id', '=', id)
@@ -158,4 +170,10 @@ export class FeatureRequestsService {
     });
     return { ok: true };
   }
+}
+
+/** The person who asked for a feature may change or withdraw it until an administrator has picked it up; after that it is the board's. */
+function ownNewRequest(existing: { status: string; submitted_by: string | null }, actor: AuditActor, what: 'edit' | 'delete') {
+  if (!actor.id || existing.submitted_by !== actor.id) throw new ForbiddenException(`Only the person who asked for this feature, or an administrator, can ${what} it.`);
+  if (existing.status !== 'new') throw new ForbiddenException(`This request has already been picked up, so only an administrator can ${what} it now.`);
 }

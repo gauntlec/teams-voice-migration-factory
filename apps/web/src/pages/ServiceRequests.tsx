@@ -14,7 +14,6 @@ import {
   MenuTrigger,
   Checkbox,
   Combobox,
-  Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
@@ -37,6 +36,7 @@ import {
   shorthands,
   tokens,
 } from '@fluentui/react-components';
+import { Dialog } from '../components/AppDialog';
 import {
   COUNTRY_CODES,
   NUMBER_NEED_NEW,

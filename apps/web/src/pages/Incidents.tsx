@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Link, Menu, MenuItem, MenuList, MenuPopover, MenuTrigger, Select, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text } from '@fluentui/react-components';
+import { Button, Card, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Link, Menu, MenuItem, MenuList, MenuPopover, MenuTrigger, Select, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text } from '@fluentui/react-components';
+import { Dialog } from '../components/AppDialog';
 import { INC_CATEGORIES, INC_CATEGORY_BY_KEY, INC_PRIORITIES, INC_PRIORITY_LABELS, INC_STATUSES, INC_STATUS_CUSTOMER_LABELS, INC_STATUS_LABELS } from '@tvmf/shared';
 import { api } from '../api';
 import { useAuth } from '../auth';

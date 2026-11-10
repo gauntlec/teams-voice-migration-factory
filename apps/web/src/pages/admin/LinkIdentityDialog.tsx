@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Select, Spinner, Text, makeStyles, shorthands } from '@fluentui/react-components';
+import { Badge, Button, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Select, Spinner, Text, makeStyles, shorthands } from '@fluentui/react-components';
+import { Dialog } from '../../components/AppDialog';
 import type { SsoIdentityView, SsoLinkRequestView, SsoSettingsView } from '@tvmf/shared';
 import { api } from '../../api';
 import { DangerText, MutedText } from '../../components/ui';

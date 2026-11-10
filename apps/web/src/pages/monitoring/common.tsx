@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Card, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Select, Switch, Text, makeStyles, tokens } from '@fluentui/react-components';
+import { Badge, Button, Card, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Select, Switch, Text, makeStyles, tokens } from '@fluentui/react-components';
+import { Dialog } from '../../components/AppDialog';
 import { DEVICE_CHECK_LABEL, DEVICE_KINDS, DEVICE_KIND_LABEL, SNMP_DEFAULT_PORT, SNMP_OID, SNMP_OPERATORS, SNMP_OPERATOR_LABEL, SNMP_PRESETS, SNMP_VERSIONS, SNMP_VERSION_LABEL, type SnmpOperator, type SnmpVersion, type DeviceCheckType, type DeviceInventoryRow, type DeviceKind, type DeviceState, type DeviceStatusOverview } from '@tvmf/shared';
 import { api, ApiError } from '../../api';
 import { DangerText, MutedText } from '../../components/ui';

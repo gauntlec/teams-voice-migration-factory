@@ -4,7 +4,6 @@ import {
   Badge,
   Button,
   Card,
-  Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
@@ -31,6 +30,7 @@ import {
   shorthands,
   tokens,
 } from '@fluentui/react-components';
+import { Dialog } from '../components/AppDialog';
 import {
   AddRegular,
   CheckmarkRegular,
@@ -622,6 +622,7 @@ function DetailDialog({
 function BugCard({
   b,
   canManage,
+  canOwn,
   onOpen,
   onEdit,
   onMove,
@@ -629,6 +630,8 @@ function BugCard({
 }: {
   b: BugReport;
   canManage: boolean;
+  /** The reporter's own report, still New: they may edit or withdraw it. */
+  canOwn: boolean;
   onOpen: () => void;
   onEdit: () => void;
   onMove: (status: BugStatus) => void;
@@ -698,7 +701,7 @@ function BugCard({
           >
             {copied ? 'Copied' : 'Prompt'}
           </Button>
-          {canManage && (
+          {(canManage || canOwn) && (
             <Menu>
               <MenuTrigger disableButtonEnhancement>
                 <Button
@@ -713,7 +716,7 @@ function BugCard({
                   <MenuItem icon={<EditRegular />} onClick={onEdit}>
                     Edit…
                   </MenuItem>
-                  {BUG_STATUSES.filter((st) => st !== b.status).map((st) => (
+                  {canManage && BUG_STATUSES.filter((st) => st !== b.status).map((st) => (
                     <MenuItem key={st} onClick={() => onMove(st)}>
                       Move to {BUG_STATUS_LABELS[st]}
                     </MenuItem>
@@ -740,7 +743,8 @@ export function BugReports() {
   const { can, me } = useAuth();
   const canManage = can('bug:manage');
   /** An administrator edits any report; the person who reported a bug edits its description while it is still New. */
-  const canEdit = (b: BugReport) => canManage || (!!me?.id && b.reported_by === me.id && b.status === 'new');
+  const isOwnNew = (b: BugReport) => !!me?.id && b.reported_by === me.id && b.status === 'new';
+  const canEdit = (b: BugReport) => canManage || isOwnNew(b);
   const canCreate = can('bug:create');
 
   const [dialog, setDialog] = useState<{ mode: 'create' } | { mode: 'edit'; b: BugReport } | null>(null);
@@ -762,12 +766,15 @@ export function BugReports() {
       api(`/bug-reports/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
     onSuccess: invalidate,
   });
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const remove = useMutation({
     mutationFn: (id: string) => api(`/bug-reports/${id}`, { method: 'DELETE' }),
     onSuccess: () => {
       setConfirmDelete(null);
+      setDeleteError(null);
       invalidate();
     },
+    onError: (e) => setDeleteError(e instanceof ApiError ? e.message : 'Could not delete the report.'),
   });
 
   const byStatus = useMemo(() => {
@@ -848,6 +855,7 @@ export function BugReports() {
                         key={b.id}
                         b={b}
                         canManage={canManage}
+                        canOwn={isOwnNew(b)}
                         onOpen={() => setDetail(b)}
                         onEdit={() => setDialog({ mode: 'edit', b })}
                         onMove={(status) => move.mutate({ id: b.id, status })}
@@ -879,12 +887,17 @@ export function BugReports() {
       )}
 
       {confirmDelete && (
-        <Dialog open onOpenChange={(_, d) => !d.open && setConfirmDelete(null)}>
+        <Dialog open onOpenChange={(_, d) => !d.open && (setConfirmDelete(null), setDeleteError(null))}>
           <DialogSurface>
             <DialogBody>
               <DialogTitle>Delete this bug report?</DialogTitle>
               <DialogContent>
                 “{confirmDelete.title}” will be permanently removed. This cannot be undone.
+                {deleteError && (
+                  <MessageBar intent="error">
+                    <MessageBarBody>{deleteError}</MessageBarBody>
+                  </MessageBar>
+                )}
               </DialogContent>
               <DialogActions>
                 <DialogTrigger disableButtonEnhancement>

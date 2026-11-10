@@ -6,7 +6,6 @@ import {
   Button,
   Card,
   Checkbox,
-  Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
@@ -20,9 +19,9 @@ import {
   makeStyles,
   shorthands,
   tokens,
-
   mergeClasses,
 } from '@fluentui/react-components';
+import { Dialog } from './AppDialog';
 import { DeleteRegular } from '@fluentui/react-icons';
 import { INC_MAJOR_DEFAULT_INTERVAL, INC_MAJOR_MAX_INTERVAL, INC_MAJOR_MIN_INTERVAL, type IncMajorClock, type IncPriority, type IncStatus } from '@tvmf/shared';
 import { api } from '../api';

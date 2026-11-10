@@ -4,7 +4,6 @@ import {
   Badge,
   Button,
   Checkbox,
-  Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
@@ -25,6 +24,7 @@ import {
   shorthands,
   tokens,
 } from '@fluentui/react-components';
+import { Dialog } from '../../components/AppDialog';
 import { AddRegular, ArrowDownloadRegular, DeleteRegular, EditRegular, OpenRegular, SendRegular } from '@fluentui/react-icons';
 import { useNavigate } from 'react-router';
 import {

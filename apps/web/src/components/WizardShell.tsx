@@ -1,7 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import {
   Button,
-  Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
@@ -10,10 +9,10 @@ import {
   DialogTrigger,
   Text,
   tokens,
-
   makeStyles,
   shorthands,
 } from '@fluentui/react-components';
+import { Dialog } from './AppDialog';
 
 const useLocalStyles = makeStyles({
   maxW640: { maxWidth: '640px' },
