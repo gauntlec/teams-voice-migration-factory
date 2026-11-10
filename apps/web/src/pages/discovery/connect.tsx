@@ -784,6 +784,7 @@ export function PurgeCard({
         Removes every discovered object, the Users and Policies projections, the M365 group cache
         and the run history for this customer. Site Data entries are kept, but lose their link to a discovered user.
         Design &amp; Build calling-policy choices that point at a discovered policy are removed too (the sites and calling policies themselves stay).
+        Numbers Discovery found in Teams but in none of your ranges are removed, and every other number forgets who Teams had it on.
         Re-run discovery to rebuild. This cannot be undone.
       </Text>
       <div className={s.row}>

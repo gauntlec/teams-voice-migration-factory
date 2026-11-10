@@ -232,3 +232,63 @@ export async function refreshNumberConflict(s: Scoped, numberId: string): Promis
     .where('id', '=', numberId)
     .execute();
 }
+
+export interface ForgetTeamsNumbersResult {
+  /** numbers removed: Discovery added them, and nothing here holds, reserves, parks or uses them */
+  numbersRemoved: number;
+  /** "Found in Teams" ranges removed once empty */
+  rangesRemoved: number;
+  /** numbers that kept their place but lost what Teams said about them */
+  numbersCleared: number;
+}
+
+/** The comment a Discovery sync puts on the site-less range it makes for numbers live in Teams but in none of our ranges. */
+export const FOUND_IN_TEAMS_COMMENT = 'Found in Teams by Discovery%';
+
+/**
+ * Undoes what Discovery syncs did to the number inventory, for "Delete discovered data" (bug report "Delete All Data Button"): the
+ * site-less "Found in Teams" ranges go, with every number in them that nothing here holds, reserves, parks or uses, and every other
+ * number forgets what Teams said about it (holder, UPN, name, clash). Numbers a person put in Site Data stay as they are.
+ */
+export async function forgetTeamsNumbers(s: Scoped): Promise<ForgetTeamsNumbersResult> {
+  const found = s
+    .selectFrom('discovery_number_ranges')
+    .select('id')
+    .where('sitecode', 'is', null)
+    .where('comments', 'like', FOUND_IN_TEAMS_COMMENT);
+  const used = (table: 'build_users' | 'build_caps' | 'build_resource_accounts') => s.selectFrom(table).select('phone_number_id').where('phone_number_id', 'is not', null);
+  const removed = await s
+    .deleteFrom('phone_numbers')
+    .where('range_id', 'in', found)
+    .where('holder_id', 'is', null)
+    .where('status', 'not in', ['reserved', 'parked'])
+    .where('id', 'not in', used('build_users'))
+    .where('id', 'not in', used('build_caps'))
+    .where('id', 'not in', used('build_resource_accounts'))
+    .executeTakeFirst();
+  const ranges = await s
+    .deleteFrom('discovery_number_ranges')
+    .where('id', 'in', found)
+    .where((eb) => eb.not(eb.exists(eb.selectFrom('phone_numbers').select('id').whereRef('phone_numbers.range_id', '=', 'discovery_number_ranges.id'))))
+    .executeTakeFirst();
+  const cleared = await s
+    .updateTable('phone_numbers')
+    .set({
+      status: sql<NumberStatus>`case when live_only and holder_id is null then 'available' else status end`,
+      live_status: null,
+      live_holder_kind: null,
+      live_holder_upn: null,
+      live_holder_name: null,
+      live_seen_at: null,
+      live_only: false,
+      conflict: null,
+    })
+    .where((eb) => eb.or([eb('live_status', 'is not', null), eb('live_only', '=', true), eb('conflict', 'is not', null), eb('live_holder_upn', 'is not', null)]))
+    .executeTakeFirst();
+  return {
+    numbersRemoved: Number(removed.numDeletedRows ?? 0),
+    rangesRemoved: Number(ranges.numDeletedRows ?? 0),
+    numbersCleared: Number(cleared.numUpdatedRows ?? 0),
+  };
+}
+type NumberStatus = 'available' | 'reserved' | 'assigned' | 'parked';
