@@ -214,6 +214,17 @@ export interface FeatureRequestsTable {
   status_changed_by: string | null;
 }
 
+export interface BugReportAttachmentsTable {
+  id: Generated<string>;
+  bug_report_id: string;
+  filename: string;
+  content_type: string;
+  size: number;
+  content: Buffer;
+  uploaded_by: string | null;
+  created_at: Ts;
+}
+
 export interface BugReportsTable {
   id: Generated<string>;
   title: string;
@@ -1877,6 +1888,7 @@ export interface DB {
   email_attachments: EmailAttachmentsTable;
   feature_requests: FeatureRequestsTable;
   bug_reports: BugReportsTable;
+  bug_report_attachments: BugReportAttachmentsTable;
   platform_audit_log: PlatformAuditLogTable;
   maintenance_notice: MaintenanceNoticeTable;
   app_settings: AppSettingsTable;

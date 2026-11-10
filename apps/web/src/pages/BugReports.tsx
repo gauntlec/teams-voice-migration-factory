@@ -13,6 +13,7 @@ import {
   Dropdown,
   Field,
   Input,
+  Link,
   Menu,
   MenuItem,
   MenuList,
@@ -33,6 +34,7 @@ import {
 import { Dialog } from '../components/AppDialog';
 import {
   AddRegular,
+  AttachRegular,
   CheckmarkRegular,
   CopyRegular,
   DeleteRegular,
@@ -44,13 +46,15 @@ import {
   BUG_SEVERITY_LABELS,
   BUG_STATUSES,
   BUG_STATUS_LABELS,
+  BUG_ATTACHMENT_MAX_BYTES,
   FEATURE_AREAS,
   type BugReport,
+  type BugReportAttachment,
   type BugSeverity,
   type BugStatus,
   type FeatureArea,
 } from '@tvmf/shared';
-import { api, ApiError } from '../api';
+import { api, apiDownload, ApiError, apiUpload } from '../api';
 import { useAuth } from '../auth';
 import { Page } from '../components/Page';
 
@@ -532,15 +536,98 @@ function DetailRow({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
+const fileSize = (n: number) => (n >= 1024 * 1024 ? `${(n / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+
+/** The files on a report: download any; attach when you reported it or administer the board; remove what you attached. */
+function Attachments({ b, canAttach, canRemove }: { b: BugReport; canAttach: boolean; canRemove: (a: BugReportAttachment) => boolean }) {
+  const s = useStyles();
+  const qc = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const key = ['bug-report-attachments', b.id];
+  const list = useQuery({ queryKey: key, queryFn: () => api<BugReportAttachment[]>(`/bug-reports/${b.id}/attachments`) });
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: key });
+    qc.invalidateQueries({ queryKey: ['bug-reports'] });
+  };
+  const upload = useMutation({
+    mutationFn: (f: File) => {
+      if (f.size > BUG_ATTACHMENT_MAX_BYTES) throw new ApiError(400, 'That file is too large (10 MB at most).');
+      return apiUpload(`/bug-reports/${b.id}/attachments`, f);
+    },
+    onSuccess: () => {
+      setError(null);
+      refresh();
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Could not attach the file.'),
+  });
+  const remove = useMutation({
+    mutationFn: (a: BugReportAttachment) => api(`/bug-reports/${b.id}/attachments/${a.id}`, { method: 'DELETE' }),
+    onSuccess: refresh,
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Could not remove the file.'),
+  });
+  const items = list.data ?? [];
+  if (!canAttach && items.length === 0) return null;
+  return (
+    <div className={s.detailField}>
+      <span className={s.detailLabel}>Attachments</span>
+      {list.isLoading && <Spinner size="tiny" />}
+      {items.map((a) => (
+        <div key={a.id} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+          <AttachRegular />
+          <Link
+            onClick={() => apiDownload(`/bug-reports/${b.id}/attachments/${a.id}`, a.filename).catch((e) => setError(e instanceof ApiError ? e.message : 'Could not download the file.'))}
+          >
+            {a.filename}
+          </Link>
+          <Text size={200} className={s.meta}>
+            {fileSize(a.size)} · {a.uploaded_by_name ?? 'Unknown'} · {timeAgo(a.created_at)}
+          </Text>
+          {canRemove(a) && (
+            <Button size="small" appearance="subtle" icon={<DeleteRegular />} aria-label={`Remove ${a.filename}`} disabled={remove.isPending} onClick={() => remove.mutate(a)} />
+          )}
+        </div>
+      ))}
+      {canAttach && (
+        <div>
+          <input
+            id={`bug-attach-${b.id}`}
+            type="file"
+            hidden
+            accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.txt,.csv,.docx,.xlsx,.pptx,.doc,.xls"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = '';
+              if (f) upload.mutate(f);
+            }}
+          />
+          <Button size="small" icon={<AttachRegular />} disabled={upload.isPending} onClick={() => document.getElementById(`bug-attach-${b.id}`)?.click()}>
+            {upload.isPending ? 'Attaching…' : 'Attach a file'}
+          </Button>
+        </div>
+      )}
+      {error && (
+        <MessageBar intent="error">
+          <MessageBarBody>{error}</MessageBarBody>
+        </MessageBar>
+      )}
+    </div>
+  );
+}
+
 function DetailDialog({
   b,
   canEdit,
+  canAttach,
+  canRemoveAttachment,
   onEdit,
   onClose,
 }: {
   b: BugReport;
   /** an administrator, or the reporter while the bug is New */
   canEdit: boolean;
+  /** an administrator, or the reporter at any stage */
+  canAttach: boolean;
+  canRemoveAttachment: (a: BugReportAttachment) => boolean;
   onEdit: () => void;
   onClose: () => void;
 }) {
@@ -580,6 +667,7 @@ function DetailDialog({
               <DetailRow label="Expected behaviour" value={b.expected_behavior} />
               <DetailRow label="Actual behaviour" value={b.actual_behavior} />
               <DetailRow label="Resolution note" value={b.resolution_note} />
+              <Attachments b={b} canAttach={canAttach} canRemove={canRemoveAttachment} />
             </div>
           </DialogContent>
           <DialogActions>
@@ -689,6 +777,12 @@ function BugCard({
       <div className={s.cardFoot}>
         <Text className={s.meta}>
           {b.reported_by_name ?? 'Unknown'} · {timeAgo(b.created_at)}
+          {b.attachment_count > 0 && (
+            <span title={`${b.attachment_count} attached file${b.attachment_count === 1 ? '' : 's'}`}>
+              {' · '}
+              <AttachRegular style={{ verticalAlign: 'text-bottom' }} /> {b.attachment_count}
+            </span>
+          )}
         </Text>
         <div className={ls.flexGap2}>
           <Button
@@ -874,6 +968,8 @@ export function BugReports() {
         <DetailDialog
           b={(list.data ?? []).find((x) => x.id === detail.id) ?? detail}
           canEdit={canEdit((list.data ?? []).find((x) => x.id === detail.id) ?? detail)}
+          canAttach={canManage || (!!me?.id && detail.reported_by === me.id)}
+          canRemoveAttachment={(a) => canManage || (!!me?.id && a.uploaded_by === me.id)}
           onEdit={() => setDialog({ mode: 'edit', b: detail })}
           onClose={() => setDetail(null)}
         />

@@ -1,6 +1,7 @@
-import { ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { sql } from 'kysely';
 import { platformDb } from '@tvmf/db';
-import type { BugReportCreateInput, BugReportUpdateInput } from '@tvmf/shared';
+import { BUG_ATTACHMENT_MAX_BYTES, SR_ATTACHMENT_TYPES, type BugReportAttachment, type BugReportCreateInput, type BugReportUpdateInput } from '@tvmf/shared';
 import { APP_CONFIG, type AppConfig } from '../common/config';
 import { AuditService, type AuditActor } from '../common/audit.service';
 import { InjectDb, type Db } from '../db/db.module';
@@ -47,9 +48,66 @@ export class BugReportsService {
         'b.updated_at',
         'b.status_changed_at',
         'u.display_name as reported_by_name',
+        sql<number>`(select count(*)::int from platform.bug_report_attachments a where a.bug_report_id = b.id)`.as('attachment_count'),
       ])
       .orderBy('b.created_at', 'desc')
       .execute();
+  }
+
+  /** The files attached to a report, oldest first, without their bytes. */
+  async attachments(id: string): Promise<BugReportAttachment[]> {
+    await this.mustExist(id);
+    const rows = await platformDb(this.db)
+      .selectFrom('bug_report_attachments as a')
+      .leftJoin('users as u', 'u.id', 'a.uploaded_by')
+      .select(['a.id', 'a.filename', 'a.content_type', 'a.size', 'a.uploaded_by', 'a.created_at', 'u.display_name as uploaded_by_name'])
+      .where('a.bug_report_id', '=', id)
+      .orderBy('a.created_at', 'asc')
+      .execute();
+    return rows.map((r) => ({ ...r, created_at: new Date(r.created_at as unknown as string).toISOString() }));
+  }
+
+  /**
+   * Adds a file: a screenshot, a log, a written-up investigation. An administrator can attach to any report; the person who reported
+   * the bug can attach to their own at any stage, since evidence often turns up after triage has started.
+   */
+  async attach(id: string, file: { originalname: string; mimetype: string; buffer: Buffer; size: number } | undefined, actor: AuditActor, canManage: boolean): Promise<BugReportAttachment> {
+    const report = await this.mustExist(id);
+    if (!canManage && (!actor.id || report.reported_by !== actor.id)) throw new ForbiddenException('Only the person who reported this bug, or an administrator, can attach files to it.');
+    if (!file) throw new BadRequestException('Choose a file to attach.');
+    if (file.size > BUG_ATTACHMENT_MAX_BYTES) throw new BadRequestException('That file is too large (10 MB at most).');
+    if (!SR_ATTACHMENT_TYPES.test(file.mimetype)) throw new BadRequestException("That kind of file can't be attached. Use a picture, PDF, Word, Excel, PowerPoint, CSV or text file.");
+    const filename = file.originalname.replace(/[/\\]/g, '_').trim().slice(0, 200) || 'file';
+    const row = await platformDb(this.db)
+      .insertInto('bug_report_attachments')
+      .values({ bug_report_id: id, filename, content_type: file.mimetype, size: file.size, content: file.buffer, uploaded_by: actor.id ?? null })
+      .returning(['id', 'filename', 'content_type', 'size', 'uploaded_by', 'created_at'])
+      .executeTakeFirstOrThrow();
+    await this.audit.platform('bug.attachment_added', { actor, targetType: 'bug_report', targetId: id, detail: { filename, size: file.size } });
+    return { ...row, uploaded_by_name: null, created_at: new Date(row.created_at as unknown as string).toISOString() };
+  }
+
+  /** One attached file with its bytes, if it belongs to this report. */
+  async attachment(id: string, attachmentId: string) {
+    const row = await platformDb(this.db).selectFrom('bug_report_attachments').selectAll().where('id', '=', attachmentId).where('bug_report_id', '=', id).executeTakeFirst();
+    if (!row) throw new NotFoundException('Attachment not found');
+    return row;
+  }
+
+  /** Removes a file: an administrator, or whoever attached it. */
+  async removeAttachment(id: string, attachmentId: string, actor: AuditActor, canManage: boolean) {
+    const row = await platformDb(this.db).selectFrom('bug_report_attachments').select(['id', 'filename', 'uploaded_by']).where('id', '=', attachmentId).where('bug_report_id', '=', id).executeTakeFirst();
+    if (!row) throw new NotFoundException('Attachment not found');
+    if (!canManage && (!actor.id || row.uploaded_by !== actor.id)) throw new ForbiddenException('Only whoever attached this file, or an administrator, can remove it.');
+    await platformDb(this.db).deleteFrom('bug_report_attachments').where('id', '=', attachmentId).execute();
+    await this.audit.platform('bug.attachment_removed', { actor, targetType: 'bug_report', targetId: id, detail: { filename: row.filename } });
+    return { ok: true };
+  }
+
+  private async mustExist(id: string) {
+    const row = await platformDb(this.db).selectFrom('bug_reports').select(['id', 'reported_by']).where('id', '=', id).executeTakeFirst();
+    if (!row) throw new NotFoundException('Bug report not found');
+    return row;
   }
 
   async create(input: BugReportCreateInput, actor: AuditActor) {
