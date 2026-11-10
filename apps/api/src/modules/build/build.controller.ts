@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors, ParseUUIDPipe } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
   can,
@@ -17,6 +17,7 @@ import {
   buildImportAndLinkResourceAccountSchema,
   buildListQuerySchema,
   buildPopulateSchema,
+  buildSharedCallingPopulateSchema,
   buildResourceAccountCreateSchema,
   buildResourceAccountPatchSchema,
   buildResourceAccountRequestSchema,
@@ -46,6 +47,7 @@ import {
   type BuildImportAndLinkResourceAccountInput,
   type BuildListQuery,
   type BuildPopulateInput,
+  type BuildSharedCallingPopulateInput,
   type BuildResourceAccountCreateInput,
   type BuildResourceAccountPatchInput,
   type BuildResourceAccountRequestInput,
@@ -313,6 +315,17 @@ export class BuildController {
   @RequirePermission('build:read')
   listSharedCallingPolicies(@TenantCtx() t: TenantContext, @Query(new ZodBody(buildListQuerySchema)) q: BuildListQuery) {
     return this.svc.listSharedCallingPolicies(t, q);
+  }
+  /** The Shared Calling policies Discovery read from Teams, for the Populate dialog (Global left out). */
+  @Get('shared-calling-policies/live')
+  @RequirePermission('build:read')
+  liveSharedCallingPolicies(@TenantCtx() t: TenantContext, @Query('siteId', ParseUUIDPipe) siteId: string) {
+    return this.svc.liveSharedCallingPolicies(t, siteId);
+  }
+  @Post('shared-calling-policies/populate')
+  @RequirePermission('build:write')
+  populateSharedCallingPolicies(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Body(new ZodBody(buildSharedCallingPopulateSchema)) body: BuildSharedCallingPopulateInput) {
+    return this.svc.populateSharedCallingPolicies(t, user, body);
   }
   @Get('shared-calling-policies/:id')
   @RequirePermission('build:read')
