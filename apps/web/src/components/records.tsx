@@ -1,6 +1,6 @@
 import { AddressListEditor, addressesToPayload, addressesToText } from './AddressListEditor';
 import { UnansweredCallEditor } from './UnansweredCallEditor';
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDebounced } from '../hooks/useDebounced';
 import {
@@ -1129,6 +1129,88 @@ function sortValueOf(c: ColumnDef, r: Row): string | number | boolean | null | u
 }
 const columnSortable = (c: ColumnDef, rows: Row[]) => c.sortable !== false && rows.some((r) => sortValueOf(c, r) != null);
 /** Which columns a person has hidden on a table, remembered in this browser (the first column, the identifier, is always shown). */
+const COLUMN_MIN_WIDTH = 56;
+
+/**
+ * Column widths a person dragged (bug report "Re-size columns"), remembered per table in this browser like the hidden columns. A column
+ * with no width keeps sizing to its content; double-clicking its edge puts it back.
+ */
+function useColumnWidths(tableId: string | undefined) {
+  const storageKey = tableId ? `voxshift.columnWidths.${tableId}` : null;
+  const [widths, setWidths] = useState<Record<string, number>>(() => {
+    if (!storageKey) return {};
+    try {
+      const raw = localStorage.getItem(storageKey);
+      return raw ? (JSON.parse(raw) as Record<string, number>) : {};
+    } catch {
+      return {};
+    }
+  });
+  const save = (next: Record<string, number>) => {
+    if (!storageKey) return;
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(next));
+    } catch {
+      /* storage blocked: the widths last until reload */
+    }
+  };
+  const setWidth = (key: string, width: number | null, persist = true) =>
+    setWidths((prev) => {
+      const next = { ...prev };
+      if (width == null) delete next[key];
+      else next[key] = Math.max(COLUMN_MIN_WIDTH, Math.round(width));
+      if (persist) save(next);
+      return next;
+    });
+  return { widths, setWidth };
+}
+
+/** The handle on a column's right edge: drag to resize, arrow keys to nudge, double-click to size it to its content again. */
+function ColumnResizeHandle({ label, onResize, onReset }: { label: string; onResize: (width: number, persist: boolean) => void; onReset: () => void }) {
+  const drag = useRef<{ x: number; width: number } | null>(null);
+  const cellWidth = (el: HTMLElement) => el.closest('th')?.getBoundingClientRect().width ?? 0;
+  const onPointerDown = (e: ReactPointerEvent<HTMLSpanElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    drag.current = { x: e.clientX, width: cellWidth(e.currentTarget) };
+  };
+  const onPointerMove = (e: ReactPointerEvent<HTMLSpanElement>) => {
+    if (!drag.current) return;
+    onResize(drag.current.width + e.clientX - drag.current.x, false);
+  };
+  const onPointerUp = (e: ReactPointerEvent<HTMLSpanElement>) => {
+    if (!drag.current) return;
+    onResize(drag.current.width + e.clientX - drag.current.x, true);
+    drag.current = null;
+  };
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLSpanElement>) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    e.stopPropagation();
+    onResize(cellWidth(e.currentTarget) + (e.key === 'ArrowRight' ? 16 : -16), true);
+  };
+  return (
+    <span
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={`Resize ${label}`}
+      tabIndex={0}
+      title="Drag to resize. Double-click to fit the content again."
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => {
+        e.stopPropagation();
+        onReset();
+      }}
+      onKeyDown={onKeyDown}
+      style={{ position: 'absolute', top: 0, right: -4, width: 9, height: '100%', cursor: 'col-resize', touchAction: 'none', zIndex: 2 }}
+    />
+  );
+}
+
 function useColumnPrefs(tableId: string | undefined, columns: ColumnDef[]) {
   const storageKey = tableId ? `voxshift.columns.${tableId}` : null;
   const [hidden, setHidden] = useState<Set<string>>(() => {
@@ -1189,6 +1271,9 @@ function RecordTable({
   // Delete asks once, in the row itself - a stray click used to remove the row (and free its number) outright.
   const [confirming, setConfirming] = useState<string | null>(null);
   const { visible: chosen, hiddenKeys, setVisibleKeys } = useColumnPrefs(tableId, columns);
+  const { widths, setWidth } = useColumnWidths(tableId);
+  /** A dragged width holds the column at that size, even when its content is wider (the cell shows an ellipsis). */
+  const widthStyle = (key: string) => (widths[key] ? { boxSizing: 'border-box' as const, width: widths[key], minWidth: widths[key], maxWidth: widths[key] } : undefined);
   // In a fit-to-screen list, policy columns with nothing in them on any row are left out: most of a site's policy columns are empty, and
   // each one costs a screen-width of sideways scrolling. The person's own choice in Columns still applies to the rest.
   const [showEmpty, setShowEmpty] = useState(false);
@@ -1275,7 +1360,8 @@ function RecordTable({
               <TableHeaderCell
                 key={c.key}
                 className={stickyIdentifier && i === 0 ? s.stickyFirst : undefined}
-                style={stickyIdentifier && i === 0 ? { left: selectable ? 40 : 0 } : undefined}
+                style={{ position: stickyIdentifier && i === 0 ? undefined : 'relative', ...(stickyIdentifier && i === 0 ? { left: selectable ? 40 : 0 } : {}), ...widthStyle(c.key) }}
+                aside={<ColumnResizeHandle label={c.label} onResize={(w, persist) => setWidth(c.key, w, persist)} onReset={() => setWidth(c.key, null)} />}
                 sortable={canSort}
                 sortDirection={dir}
                 onClick={canSort ? () => setSort(dir === 'ascending' ? { key: c.key, dir: 'descending' } : dir === 'descending' ? null : { key: c.key, dir: 'ascending' }) : undefined}
@@ -1306,7 +1392,7 @@ function RecordTable({
                   <TableCell
                     key={c.key}
                     className={stickyIdentifier && i === 0 ? s.stickyFirst : undefined}
-                    style={stickyIdentifier && i === 0 ? { left: selectable ? 40 : 0 } : undefined}
+                    style={{ ...(stickyIdentifier && i === 0 ? { left: selectable ? 40 : 0 } : {}), ...widthStyle(c.key) }}
                     title={typeof content === 'string' ? content : undefined}
                   >
                     {content}
