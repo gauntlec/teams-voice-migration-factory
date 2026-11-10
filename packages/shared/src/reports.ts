@@ -143,7 +143,7 @@ export interface ReportDocument {
   sections: ReportSection[];
 }
 
-export const REPORT_KEYS = ['executive', 'migration', 'incidents', 'service-requests', 'assistants', 'changes', 'devices'] as const;
+export const REPORT_KEYS = ['executive', 'migration', 'numbers', 'incidents', 'service-requests', 'assistants', 'changes', 'devices'] as const;
 export type ReportKey = (typeof REPORT_KEYS)[number];
 
 /** The catalogue: what each report is for, in plain words. */
@@ -156,6 +156,12 @@ export const REPORT_CATALOGUE: Record<ReportKey, { title: string; group: (typeof
     period: true,
   },
   migration: { title: 'Migration progress', group: 'Migration', description: 'Sites by stage, users and numbers live, each site’s go-live date and status, and the figures day by day.', period: true },
+  numbers: {
+    title: 'Number management',
+    group: 'Migration',
+    description: 'Every number range and phone number, whether each number is assigned, spare, reserved or parked, and who has the assigned ones. Best downloaded as Excel.',
+    period: false,
+  },
   changes: { title: 'Change log', group: 'Migration', description: 'Every change Voxshift made in the customer’s Teams tenant, and whether it applied. For auditors and change boards.', period: true },
   incidents: { title: 'Incidents and service levels', group: 'Service', description: 'Raised and resolved, time to acknowledge and restore, targets met, where incidents come from, and the open backlog.', period: true },
   'service-requests': { title: 'Service requests', group: 'Service', description: 'Requests by type, time to complete, targets met, the open backlog, and how many an assistant completed.', period: true },
@@ -177,6 +183,8 @@ export function reportAvailableFor(key: ReportKey, can: (p: Permission) => boole
     case 'executive':
     case 'migration':
       return true;
+    case 'numbers':
+      return can('discovery:read');
     case 'changes':
       return can('deployment:read') || can('audit:read:tenant');
     case 'incidents':
@@ -317,6 +325,25 @@ export interface ChangeLogData {
   to: string;
   rows: ChangeLogRow[];
   /** more changes than the report reads; the newest are shown */
+  truncated: boolean;
+}
+
+/** GET /t/:tenantId/insights/numbers (InsightsService.numbers): the ranges and numbers in Site Data, with who holds each. */
+export type NumberReportStatus = 'Assigned' | 'Spare' | 'Reserved' | 'Parked';
+export interface NumberReportData {
+  ranges: { start: string; end: string; size: number; kind: 'new' | 'port' | 'retain'; carrier: string | null; sitecode: string | null; siteName: string | null; country: string | null }[];
+  numbers: {
+    e164: string;
+    status: NumberReportStatus;
+    sitecode: string | null;
+    siteName: string | null;
+    country: string | null;
+    /** who has it: Teams's holder when Discovery has seen one, otherwise the Site Data holder */
+    upn: string | null;
+    name: string | null;
+    holderType: string | null;
+  }[];
+  /** more numbers than the report reads; the first by number are shown */
   truncated: boolean;
 }
 
@@ -630,6 +657,62 @@ export function buildChangeLogReport(c: ChangeLogData, period: ReportPeriod): Re
     title: REPORT_CATALOGUE.changes.title,
     summary: `${c.rows.length.toLocaleString('en-GB')} changes · ${failed} failed`,
     period,
+    sections,
+  };
+}
+
+const RANGE_KIND: Record<NumberReportData['ranges'][number]['kind'], string> = { new: 'New', port: 'Port', retain: 'Re-point' };
+const HOLDER_TYPE: Record<string, string> = { user: 'User', cap: 'Common area phone', resource_account: 'Resource account', analogue: 'Analogue', other: 'Other' };
+
+const count = (n: number, one: string) => `${n.toLocaleString('en-GB')} ${one}${n === 1 ? '' : 's'}`;
+
+/** Number management: three tables (ranges, every number, the assigned ones), each its own Excel sheet. */
+export function buildNumberReport(d: NumberReportData, today: string): ReportDocument {
+  const n = (st: NumberReportStatus) => d.numbers.filter((x) => x.status === st).length;
+  const assigned = d.numbers.filter((x) => x.status === 'Assigned');
+  const sections: ReportSection[] = [
+    {
+      kind: 'figures',
+      title: 'Numbers',
+      figures: [
+        { label: 'Number ranges', value: d.ranges.length, better: null },
+        { label: 'Numbers', value: d.numbers.length, better: null },
+        { label: 'Assigned', value: assigned.length, better: null },
+        { label: 'Spare', value: n('Spare'), better: null },
+        { label: 'Reserved', value: n('Reserved'), better: null },
+        { label: 'Parked', value: n('Parked'), better: null },
+      ],
+    },
+    {
+      kind: 'table',
+      title: 'Number ranges',
+      columns: ['Range', 'Size', 'Country', 'Site code', 'Site name', 'Number transition', 'Carrier'],
+      numeric: [1],
+      rows: d.ranges.map((r) => [r.start === r.end ? r.start : `${r.start} – ${r.end}`, r.size, r.country, r.sitecode, r.siteName, RANGE_KIND[r.kind] ?? r.kind, r.carrier]),
+      empty: 'No number ranges are recorded in Site Data.',
+    },
+    {
+      kind: 'table',
+      title: 'All numbers',
+      columns: ['Number', 'Status', 'Site code', 'Site name', 'Country'],
+      rows: d.numbers.map((x) => [x.e164, x.status, x.sitecode, x.siteName, x.country]),
+      empty: 'No phone numbers are recorded in Site Data.',
+    },
+    {
+      kind: 'table',
+      title: 'Assigned numbers',
+      columns: ['Number', 'UPN', 'Name', 'Assigned to', 'Site code', 'Site name', 'Country'],
+      rows: assigned.map((x) => [x.e164, x.upn, x.name, x.holderType ? (HOLDER_TYPE[x.holderType] ?? x.holderType) : null, x.sitecode, x.siteName, x.country]),
+      empty: 'No numbers are assigned.',
+      note: 'Assigned means Teams has the number on an account, or Site Data gives it to a user, common area phone or resource account.',
+    },
+  ];
+  if (d.truncated) sections.push({ kind: 'note', text: 'There are more numbers than the report reads; the first ones by number are shown. Choose a site to see all of its numbers.' });
+  return {
+    key: 'numbers',
+    title: REPORT_CATALOGUE.numbers.title,
+    summary: `${count(d.ranges.length, 'range')} · ${count(d.numbers.length, 'number')} · ${assigned.length.toLocaleString('en-GB')} assigned`,
+    period: { from: today, to: today },
     sections,
   };
 }

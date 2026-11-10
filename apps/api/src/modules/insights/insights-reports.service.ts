@@ -9,6 +9,7 @@ import {
   buildExecutiveSummary,
   buildIncidentReport,
   buildMigrationReport,
+  buildNumberReport,
   buildServiceRequestReport,
   can,
   previousReportPeriod,
@@ -98,6 +99,8 @@ export class InsightsReportsService {
         const [cur, before] = await Promise.all([this.assistants.activity(t, role, iso), compare ? this.assistants.activity(t, role, prevIso) : Promise.resolve(null)]);
         return buildAssistantReport(cur, before, period, prev);
       }
+      case 'numbers':
+        return buildNumberReport(await this.insights.numbers(t), today);
       case 'changes':
         return buildChangeLogReport(await this.insights.changeLog(t, role, period, now), period);
       case 'devices': {

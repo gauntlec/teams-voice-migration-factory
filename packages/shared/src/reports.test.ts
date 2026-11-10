@@ -6,6 +6,7 @@ import {
   buildChangeLogReport,
   buildExecutiveSummary,
   buildIncidentReport,
+  buildNumberReport,
   figureChange,
   previousReportPeriod,
   reportFileName,
@@ -112,6 +113,38 @@ describe('report queries and availability', () => {
     expect(reportAvailableFor('incidents', all, { managedServices: false, monitoring: true })).toBe(false);
     expect(reportAvailableFor('devices', all, { managedServices: true, monitoring: false })).toBe(false);
     expect(reportAvailableFor('changes', (p) => p === 'audit:read:tenant', { managedServices: false, monitoring: false })).toBe(true);
+    expect(reportAvailableFor('numbers', (p) => p === 'discovery:read', { managedServices: false, monitoring: false })).toBe(true);
+    expect(reportAvailableFor('numbers', () => false, { managedServices: false, monitoring: false })).toBe(false);
+  });
+});
+
+describe('the Number management report', () => {
+  it('has three sheets: ranges, every number with its status, and the assigned ones with who has them', () => {
+    const site = { sitecode: 'LON01', siteName: 'London', country: 'GB' };
+    const doc = buildNumberReport(
+      {
+        ranges: [{ start: '+442070000200', end: '+442070000209', size: 10, kind: 'port', carrier: 'Carrier X', ...site }],
+        numbers: [
+          { e164: '+442070000200', status: 'Assigned', ...site, upn: 'jo@contoso.test', name: 'Jo Bloggs', holderType: 'user' },
+          { e164: '+442070000201', status: 'Spare', ...site, upn: null, name: null, holderType: null },
+          { e164: '+442070000202', status: 'Parked', ...site, upn: null, name: null, holderType: null },
+        ],
+        truncated: false,
+      },
+      '2026-11-10',
+    );
+    const sheets = reportSheets(doc, 'Contoso');
+    expect(sheets.map((x) => x.name)).toEqual(['Summary', 'Number ranges', 'All numbers', 'Assigned numbers']);
+    expect(sheets[1]!.rows).toEqual([
+      ['Range', 'Size', 'Country', 'Site code', 'Site name', 'Number transition', 'Carrier'],
+      ['+442070000200 – +442070000209', 10, 'GB', 'LON01', 'London', 'Port', 'Carrier X'],
+    ]);
+    expect(sheets[2]!.rows.slice(1).map((r) => r[1])).toEqual(['Assigned', 'Spare', 'Parked']);
+    expect(sheets[3]!.rows).toEqual([
+      ['Number', 'UPN', 'Name', 'Assigned to', 'Site code', 'Site name', 'Country'],
+      ['+442070000200', 'jo@contoso.test', 'Jo Bloggs', 'User', 'LON01', 'London', 'GB'],
+    ]);
+    expect(doc.summary).toBe('1 range · 3 numbers · 1 assigned');
   });
 });
 
