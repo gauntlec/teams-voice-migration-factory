@@ -260,6 +260,8 @@ function buildClaudePrompt(b: BugReport): string {
     '## Resolution notes so far',
     b.resolution_note || na,
     '',
+    b.attachment_count ? `_${b.attachment_count} file${b.attachment_count === 1 ? ' is' : 's are'} attached to this report on the Bug reports board._` : null,
+    b.attachment_count ? '' : null,
     '---',
     'Reproduce this in the codebase today, find the root cause, and fix it following the repo conventions in `docs/ARCHITECTURE.md` (shared `DataTable`, `makeStyles` for styling, RBAC in `packages/shared/src/rbac.ts`, plain-SQL migrations, zod DTOs in `packages/shared/src/dto.ts`). Typecheck every workspace and build the web app before finishing. When the fix ships, set this bug report to "Deployed".',
   ];

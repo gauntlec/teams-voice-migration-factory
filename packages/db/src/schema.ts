@@ -214,6 +214,18 @@ export interface FeatureRequestsTable {
   status_changed_by: string | null;
 }
 
+/** 0043: a file attached to a feature request, as bug_report_attachments. */
+export interface FeatureRequestAttachmentsTable {
+  id: Generated<string>;
+  feature_request_id: string;
+  filename: string;
+  content_type: string;
+  size: number;
+  content: Buffer;
+  uploaded_by: string | null;
+  created_at: Ts;
+}
+
 export interface BugReportAttachmentsTable {
   id: Generated<string>;
   bug_report_id: string;
@@ -1909,6 +1921,7 @@ export interface DB {
   feature_requests: FeatureRequestsTable;
   bug_reports: BugReportsTable;
   bug_report_attachments: BugReportAttachmentsTable;
+  feature_request_attachments: FeatureRequestAttachmentsTable;
   platform_audit_log: PlatformAuditLogTable;
   maintenance_notice: MaintenanceNoticeTable;
   app_settings: AppSettingsTable;

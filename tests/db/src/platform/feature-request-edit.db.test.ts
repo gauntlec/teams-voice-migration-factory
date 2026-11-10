@@ -60,3 +60,44 @@ describe('withdrawing a feature request', () => {
     await expect(svc.remove(picked.id, actor(requester), false)).rejects.toThrow(/already been picked up/);
   });
 });
+
+describe('attaching files to a feature request', () => {
+  const pdf = (bytes = 64) => ({ originalname: 'Mock-up.pdf', mimetype: 'application/pdf', buffer: Buffer.alloc(bytes, 7), size: bytes });
+
+  it('lets the requester and an administrator attach, counts them on the board, and returns the same bytes', async () => {
+    const f = await svc.create(base, actor(requester));
+    const admin = await seedUser(handle, 'SUPER_ADMIN');
+    const mine = await svc.attach(f.id, pdf(), actor(requester), false);
+    expect(mine).toMatchObject({ filename: 'Mock-up.pdf', content_type: 'application/pdf', size: 64, uploaded_by: requester.id });
+    await svc.attach(f.id, pdf(128), actor(admin), true);
+    expect((await svc.attachments(f.id)).map((a) => [a.filename, a.size])).toEqual([['Mock-up.pdf', 64], ['Mock-up.pdf', 128]]);
+    expect((await svc.list()).find((x) => x.id === f.id)?.attachment_count).toBe(2);
+    const file = await svc.attachment(f.id, mine.id);
+    expect(Buffer.from(file.content).equals(Buffer.alloc(64, 7))).toBe(true);
+    // still allowed once the request is being worked on
+    await platformDb(handle.db).updateTable('feature_requests').set({ status: 'under_review' }).where('id', '=', f.id).execute();
+    await svc.attach(f.id, pdf(), actor(requester), false);
+  });
+
+  it('refuses someone else, a kind of file it can’t take, a file too large, and a file from another request', async () => {
+    const f = await svc.create(base, actor(requester));
+    const otherRequest = await svc.create(base, actor(requester));
+    await expect(svc.attach(f.id, pdf(), actor(other), false)).rejects.toThrow(/Only the person who asked/);
+    await expect(svc.attach(f.id, { ...pdf(), mimetype: 'application/x-msdownload' }, actor(requester), false)).rejects.toThrow(/can't be attached/);
+    await expect(svc.attach(f.id, { ...pdf(), size: 11 * 1024 * 1024 }, actor(requester), false)).rejects.toThrow(/too large/);
+    const a = await svc.attach(f.id, pdf(), actor(requester), false);
+    await expect(svc.attachment(otherRequest.id, a.id)).rejects.toThrow(/not found/);
+  });
+
+  it('lets whoever attached a file, or an administrator, remove it, and removes files with their request', async () => {
+    const f = await svc.create(base, actor(requester));
+    const a = await svc.attach(f.id, pdf(), actor(requester), false);
+    await expect(svc.removeAttachment(f.id, a.id, actor(other), false)).rejects.toThrow(/Only whoever attached/);
+    expect(await svc.removeAttachment(f.id, a.id, actor(requester), false)).toEqual({ ok: true });
+    expect(await svc.attachments(f.id)).toEqual([]);
+
+    const b = await svc.attach(f.id, pdf(), actor(requester), false);
+    await svc.remove(f.id, actor(requester), false);
+    expect(await platformDb(handle.db).selectFrom('feature_request_attachments').select('id').where('id', '=', b.id).execute()).toEqual([]);
+  });
+});

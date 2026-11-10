@@ -1,6 +1,7 @@
-import { ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { sql } from 'kysely';
 import { platformDb } from '@tvmf/db';
-import type { FeatureRequestCreateInput, FeatureRequestUpdateInput } from '@tvmf/shared';
+import { FEATURE_ATTACHMENT_MAX_BYTES, SR_ATTACHMENT_TYPES, type FeatureRequestAttachment, type FeatureRequestCreateInput, type FeatureRequestUpdateInput } from '@tvmf/shared';
 import { APP_CONFIG, type AppConfig } from '../common/config';
 import { AuditService, type AuditActor } from '../common/audit.service';
 import { InjectDb, type Db } from '../db/db.module';
@@ -49,9 +50,66 @@ export class FeatureRequestsService {
         'f.updated_at',
         'f.status_changed_at',
         'u.display_name as submitted_by_name',
+        sql<number>`(select count(*)::int from platform.feature_request_attachments a where a.feature_request_id = f.id)`.as('attachment_count'),
       ])
       .orderBy('f.created_at', 'desc')
       .execute();
+  }
+
+  /** The files attached to a request, oldest first, without their bytes. */
+  async attachments(id: string): Promise<FeatureRequestAttachment[]> {
+    await this.mustExist(id);
+    const rows = await platformDb(this.db)
+      .selectFrom('feature_request_attachments as a')
+      .leftJoin('users as u', 'u.id', 'a.uploaded_by')
+      .select(['a.id', 'a.filename', 'a.content_type', 'a.size', 'a.uploaded_by', 'a.created_at', 'u.display_name as uploaded_by_name'])
+      .where('a.feature_request_id', '=', id)
+      .orderBy('a.created_at', 'asc')
+      .execute();
+    return rows.map((r) => ({ ...r, created_at: new Date(r.created_at as unknown as string).toISOString() }));
+  }
+
+  /**
+   * Adds a file: a mock-up, a spreadsheet, an example document. An administrator can attach to any request; the person who asked
+   * for it can attach to their own at any stage, as with bug reports.
+   */
+  async attach(id: string, file: { originalname: string; mimetype: string; buffer: Buffer; size: number } | undefined, actor: AuditActor, canManage: boolean): Promise<FeatureRequestAttachment> {
+    const request = await this.mustExist(id);
+    if (!canManage && (!actor.id || request.submitted_by !== actor.id)) throw new ForbiddenException('Only the person who asked for this, or an administrator, can attach files to it.');
+    if (!file) throw new BadRequestException('Choose a file to attach.');
+    if (file.size > FEATURE_ATTACHMENT_MAX_BYTES) throw new BadRequestException('That file is too large (10 MB at most).');
+    if (!SR_ATTACHMENT_TYPES.test(file.mimetype)) throw new BadRequestException("That kind of file can't be attached. Use a picture, PDF, Word, Excel, PowerPoint, CSV or text file.");
+    const filename = file.originalname.replace(/[/\\]/g, '_').trim().slice(0, 200) || 'file';
+    const row = await platformDb(this.db)
+      .insertInto('feature_request_attachments')
+      .values({ feature_request_id: id, filename, content_type: file.mimetype, size: file.size, content: file.buffer, uploaded_by: actor.id ?? null })
+      .returning(['id', 'filename', 'content_type', 'size', 'uploaded_by', 'created_at'])
+      .executeTakeFirstOrThrow();
+    await this.audit.platform('feature.attachment_added', { actor, targetType: 'feature_request', targetId: id, detail: { filename, size: file.size } });
+    return { ...row, uploaded_by_name: null, created_at: new Date(row.created_at as unknown as string).toISOString() };
+  }
+
+  /** One attached file with its bytes, if it belongs to this request. */
+  async attachment(id: string, attachmentId: string) {
+    const row = await platformDb(this.db).selectFrom('feature_request_attachments').selectAll().where('id', '=', attachmentId).where('feature_request_id', '=', id).executeTakeFirst();
+    if (!row) throw new NotFoundException('Attachment not found');
+    return row;
+  }
+
+  /** Removes a file: an administrator, or whoever attached it. */
+  async removeAttachment(id: string, attachmentId: string, actor: AuditActor, canManage: boolean) {
+    const row = await platformDb(this.db).selectFrom('feature_request_attachments').select(['id', 'filename', 'uploaded_by']).where('id', '=', attachmentId).where('feature_request_id', '=', id).executeTakeFirst();
+    if (!row) throw new NotFoundException('Attachment not found');
+    if (!canManage && (!actor.id || row.uploaded_by !== actor.id)) throw new ForbiddenException('Only whoever attached this file, or an administrator, can remove it.');
+    await platformDb(this.db).deleteFrom('feature_request_attachments').where('id', '=', attachmentId).execute();
+    await this.audit.platform('feature.attachment_removed', { actor, targetType: 'feature_request', targetId: id, detail: { filename: row.filename } });
+    return { ok: true };
+  }
+
+  private async mustExist(id: string) {
+    const row = await platformDb(this.db).selectFrom('feature_requests').select(['id', 'submitted_by']).where('id', '=', id).executeTakeFirst();
+    if (!row) throw new NotFoundException('Feature request not found');
+    return row;
   }
 
   async create(input: FeatureRequestCreateInput, actor: AuditActor) {

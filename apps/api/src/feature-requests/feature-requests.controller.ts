@@ -1,5 +1,8 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import {
+  FEATURE_ATTACHMENT_MAX_BYTES,
   featureRequestCreateSchema,
   can,
   featureRequestUpdateSchema,
@@ -59,5 +62,36 @@ export class FeatureRequestsController {
   @RequirePermission('feature:create')
   remove(@Param('id') id: string, @CurrentUser() user: AuthedUser) {
     return this.features.remove(id, this.actor(user), can(user.role, 'feature:manage'));
+  }
+
+  @Get(':id/attachments')
+  @RequirePermission('feature:read')
+  attachments(@Param('id') id: string) {
+    return this.features.attachments(id);
+  }
+
+  /** An administrator, or the person who asked for it. */
+  @Post(':id/attachments')
+  @RequirePermission('feature:create')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: FEATURE_ATTACHMENT_MAX_BYTES } }))
+  attach(@Param('id') id: string, @UploadedFile() file: Express.Multer.File, @CurrentUser() user: AuthedUser) {
+    return this.features.attach(id, file, this.actor(user), can(user.role, 'feature:manage'));
+  }
+
+  @Get(':id/attachments/:attachmentId')
+  @RequirePermission('feature:read')
+  async attachment(@Param('id') id: string, @Param('attachmentId') attachmentId: string, @Res() res: Response) {
+    const row = await this.features.attachment(id, attachmentId);
+    res.setHeader('Content-Type', row.content_type);
+    res.setHeader('Content-Disposition', `attachment; filename="${row.filename.replace(/["\r\n]/g, '')}"`);
+    res.setHeader('Content-Length', String(row.size));
+    res.send(row.content);
+  }
+
+  /** An administrator, or whoever attached the file. */
+  @Delete(':id/attachments/:attachmentId')
+  @RequirePermission('feature:create')
+  removeAttachment(@Param('id') id: string, @Param('attachmentId') attachmentId: string, @CurrentUser() user: AuthedUser) {
+    return this.features.removeAttachment(id, attachmentId, this.actor(user), can(user.role, 'feature:manage'));
   }
 }
