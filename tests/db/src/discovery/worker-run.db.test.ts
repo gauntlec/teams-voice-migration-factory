@@ -6,7 +6,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { handleTenantDiscoveryRun } from '../../../../apps/worker/src/discovery/run';
 import type { EnqueueMailInput } from '../../../../apps/worker/src/mail/enqueue';
 import type { TeamsExecutor } from '../../../../apps/worker/src/teams/executor';
-import { seedConnection, seedCustomer, seedUser, useDb, type TestCustomer } from '../helpers';
+import { seedConnection, seedCustomer, seedSite, seedUser, useDb, type TestCustomer } from '../helpers';
 
 type Rec = Record<string, unknown>;
 
@@ -117,6 +117,58 @@ describe('discovery worker', () => {
     const obj = await c.s.selectFrom('tenant_objects').select('id').where('object_key', '=', 'id-alex-1').executeTakeFirst();
     expect(obj).toBeDefined();
     expect(await versionsFor('id-alex-1')).toEqual([{ change_kind: 'added', changed_fields: [], run_id: r.id }]);
+  });
+
+  /** Answers Get-CsOnlineUser for each UPN bucket with the users in `who` whose UPN starts with that letter. */
+  const usersBy = (who: () => Rec[]) =>
+    fakeExecutor((cmd, params) => {
+      if (cmd !== 'Get-CsOnlineUser') return [];
+      const letter = /UserPrincipalName -like '(.)\*'/.exec(String(params.Filter))?.[1];
+      return letter ? who().filter((u) => String(u.UserPrincipalName).startsWith(letter)) : [];
+    });
+  const liveUser = (upn: string) =>
+    c.s.selectFrom('tenant_users').select(['id', 'upn', 'entra_id']).where('upn', '=', upn).where('removed_at', 'is', null).execute();
+  const usersErrors = (r: { progress: unknown }) =>
+    ((r.progress as { errors?: { step?: string; message?: string }[] }).errors ?? []).filter((e) => /tenant_users|users/i.test(`${e.step} ${e.message}`));
+
+  it('stores an account deleted and created again with the same UPN, and moves Site Data to it', async () => {
+    let who = [user('id-sam-old', 'sam@contoso.test')];
+    const exec = usersBy(() => who);
+    const first = await run(exec, { scopeTypes: ['user'], filterUsers: false });
+    expect(usersErrors(first.run)).toEqual([]);
+    const [old] = await liveUser('sam@contoso.test');
+    const site = await seedSite(c.s);
+    const du = await c.s
+      .insertInto('discovery_users')
+      .values({ site_id: site.id, upn: 'sam@contoso.test', display_name: 'Sam', tenant_user_id: old.id } as never)
+      .returning('id')
+      .executeTakeFirstOrThrow();
+
+    who = [user('id-sam-new', 'sam@contoso.test')];
+    const second = await run(exec, { scopeTypes: ['user'], filterUsers: false });
+    expect(usersErrors(second.run)).toEqual([]);
+    const live = await liveUser('sam@contoso.test');
+    expect(live).toHaveLength(1);
+    expect(live[0].entra_id).toBe('id-sam-new');
+    const oldNow = await c.s.selectFrom('tenant_users').select('removed_at').where('id', '=', old.id).executeTakeFirstOrThrow();
+    expect(oldNow.removed_at).not.toBeNull();
+    const linked = await c.s.selectFrom('discovery_users').select('tenant_user_id').where('id', '=', du.id).executeTakeFirstOrThrow();
+    expect(linked.tenant_user_id).toBe(live[0].id);
+
+    // and a third run (the old row long removed) still stores it without an error
+    const third = await run(exec, { scopeTypes: ['user'], filterUsers: false });
+    expect(usersErrors(third.run)).toEqual([]);
+  });
+
+  it('stores two accounts that swapped UPNs', async () => {
+    let who = [user('id-kim', 'kim@contoso.test'), user('id-lee', 'lee@contoso.test')];
+    const exec = usersBy(() => who);
+    await run(exec, { scopeTypes: ['user'], filterUsers: false });
+    who = [user('id-kim', 'lee@contoso.test'), user('id-lee', 'kim@contoso.test')];
+    const { run: r } = await run(exec, { scopeTypes: ['user'], filterUsers: false });
+    expect(usersErrors(r)).toEqual([]);
+    expect((await liveUser('kim@contoso.test')).map((u) => u.entra_id)).toEqual(['id-lee']);
+    expect((await liveUser('lee@contoso.test')).map((u) => u.entra_id)).toEqual(['id-kim']);
   });
 
   it('an unexpected error marks the run failed and sends exactly one completion email', async () => {
