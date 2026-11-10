@@ -15,6 +15,7 @@ import {
   CALL_QUEUE_ROUTING_METHODS,
   CALL_QUEUE_TIMEOUT_ACTIONS,
   convertAutoAttendantWizard,
+  wizardFlowRefs,
   convertCallQueueWizard,
   decodeCallQueueEnum,
   liveAutoAttendantToStructured,
@@ -2120,7 +2121,18 @@ export class BuildService {
    * no-op the UI can detect (imported_at set).
    */
   /** `opts.populating`: called by Populate, which adds and links the resource accounts itself straight after. */
-  async importFlowWizard(t: TenantContext, u: AuthedUser, flowId: string, opts: { populating?: boolean } = {}) {
+  /**
+   * One Import also brings in the captures this one points at (a call queue set up inside an auto attendant's wizard, or a
+   * planned capture picked as a destination), dependencies first, so the links resolve in the same step. A capture already in
+   * Design & Build is linked as it is, never re-synced, so an engineer's edits there are kept. `chain` (internal) is the
+   * captures this Import is already handling, so a queue that points back at its attendant can't loop.
+   */
+  async importFlowWizard(
+    t: TenantContext,
+    u: AuthedUser,
+    flowId: string,
+    opts: { populating?: boolean; chain?: Set<string> } = {},
+  ): Promise<{ row: { id: string }; flow: Selectable<DB['discovery_flows']>; warnings: string[]; alsoImported: { flowId: string; name: string; kind: string }[] }> {
     const s = this.s(t);
     const flow = await s.selectFrom('discovery_flows').selectAll().where('id', '=', flowId).executeTakeFirst();
     if (!flow) throw new NotFoundException('flow not found');
@@ -2133,11 +2145,45 @@ export class BuildService {
       const linked = await s.selectFrom('discovery_flows').selectAll().where('id', '=', flowId).executeTakeFirstOrThrow();
       const rowId = linked.build_auto_attendant_id ?? linked.build_call_queue_id;
       if (!rowId) throw new BadRequestException('This discovered voice app could not be added to Design & Build.');
-      return { row: { id: rowId }, flow: linked, warnings: [] as string[] };
+      return { row: { id: rowId }, flow: linked, warnings: [] as string[], alsoImported: [] };
     }
     if (!flow.wizard_answers) throw new BadRequestException('This call flow has no wizard capture to import.');
     if (!flow.site_id) throw new BadRequestException('This call flow has no site.');
     const siteId = flow.site_id;
+
+    // The captures this one points at go first (only those not yet in Design & Build), so resolveFlow below finds their rows.
+    const chain = opts.chain ?? new Set<string>();
+    chain.add(flowId);
+    const alsoImported: { flowId: string; name: string; kind: string }[] = [];
+    const nestedWarnings = new Map<string, string[]>();
+    const pointsBack: string[] = [];
+    const names = new Map<string, string>();
+    const refs = wizardFlowRefs(flow.wizard_answers).filter((id) => !chain.has(id));
+    if (refs.length) {
+      const nested = await s
+        .selectFrom('discovery_flows')
+        .select(['id', 'name', 'kind', 'wizard_answers', 'tenant_object_id', 'voice_app_id', 'build_auto_attendant_id', 'build_call_queue_id'])
+        .where('site_id', '=', siteId)
+        .where('id', 'in', refs)
+        .execute();
+      for (const n of nested) {
+        if (chain.has(n.id) || n.build_auto_attendant_id || n.build_call_queue_id) continue;
+        if (!n.wizard_answers && !(n.tenant_object_id && n.voice_app_id)) continue;
+        let r: Awaited<ReturnType<BuildService['importFlowWizard']>>;
+        try {
+          r = await this.importFlowWizard(t, u, n.id, { ...opts, chain });
+        } catch (e) {
+          // one capture that can't be imported doesn't stop the rest: its link is left unresolved and the warning says why
+          nestedWarnings.set(n.id, [`couldn't be imported: ${e instanceof Error ? e.message : String(e)}`]);
+          names.set(n.id, n.name);
+          continue;
+        }
+        names.set(n.id, n.name);
+        alsoImported.push({ flowId: n.id, name: n.name, kind: n.kind }, ...r.alsoImported);
+        nestedWarnings.set(n.id, r.warnings);
+        if (wizardFlowRefs(n.wizard_answers).includes(flowId)) pointsBack.push(n.id);
+      }
+    }
 
     // Best-effort free-text-name -> UPN matching against the tenant's live
     // synced users (tenant_users) or - failing that - this site's own Data
@@ -2283,14 +2329,22 @@ export class BuildService {
       .returningAll()
       .executeTakeFirstOrThrow();
 
+    // A capture imported above that points back at this one (a queue whose overflow goes to its attendant) couldn't link it
+    // then; its row was made moments ago in this same Import, so syncing it again only adds the link.
+    for (const id of pointsBack) {
+      const r = await this.importFlowWizard(t, u, id, { ...opts, chain });
+      nestedWarnings.set(id, r.warnings);
+    }
+    for (const [id, w] of nestedWarnings) warnings.push(...w.map((x) => `${names.get(id) ?? 'A linked call flow'}: ${x}`));
+
     await this.audit.tenant(t.schema, 'build.flow_wizard_imported', {
       actor: actorOf(u),
       targetType: flow.kind === 'auto_attendant' ? 'build_auto_attendant' : 'build_call_queue',
       targetId: result.id,
-      detail: { flowId, warnings: warnings.length, resynced: !!(flow.build_auto_attendant_id || flow.build_call_queue_id) },
+      detail: { flowId, warnings: warnings.length, resynced: !!(flow.build_auto_attendant_id || flow.build_call_queue_id), alsoImported: alsoImported.length },
     });
 
-    return { row: result, flow: updatedFlow, warnings };
+    return { row: result, flow: updatedFlow, warnings, alsoImported };
   }
 
   /** Well-known Microsoft ApplicationId for this account's kind - what New-CsOnlineApplicationInstance needs. */

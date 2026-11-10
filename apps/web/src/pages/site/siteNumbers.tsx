@@ -484,12 +484,14 @@ export function FlowImportButton({
 }) {
   const ls = useLocalStyles();
   const [warnings, setWarnings] = useState<string[] | null>(null);
+  const [alsoImported, setAlsoImported] = useState<{ name: string; kind: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
   const doImport = useMutation({
-    mutationFn: () => api<{ warnings: string[] }>(`/t/${tid}/build/flows/${flow.id}/import`, { method: 'POST' }),
+    mutationFn: () => api<{ warnings: string[]; alsoImported?: { name: string; kind: string }[] }>(`/t/${tid}/build/flows/${flow.id}/import`, { method: 'POST' }),
     onSuccess: (r) => {
       setError(null);
       setWarnings(r.warnings ?? []);
+      setAlsoImported(r.alsoImported ?? []);
       onChanged();
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Import failed'),
@@ -535,6 +537,12 @@ export function FlowImportButton({
             <DialogTitle>{error ? 'Sync failed' : 'Synced to Design & Build'}</DialogTitle>
             <DialogContent>
               {error && <Text block>{error}</Text>}
+              {!error && alsoImported.length > 0 && (
+                <Text block>
+                  Also imported, because this call flow sends calls to them:{' '}
+                  {alsoImported.map((a) => `${a.name} (${a.kind === 'auto_attendant' ? 'auto attendant' : 'call queue'})`).join(', ')}.
+                </Text>
+              )}
               {warnings && warnings.length === 0 && <Text block>Everything resolved cleanly - no follow-up needed.</Text>}
               {warnings && warnings.length > 0 && (
                 <div className={ls.gridGap4}>

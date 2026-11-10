@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { autoAttendantToWizard, callQueueToWizard } from './voice-app-wizard';
-import { convertAutoAttendantWizard, convertCallQueueWizard } from './wizard-convert';
+import { convertAutoAttendantWizard, convertCallQueueWizard, wizardFlowRefs } from './wizard-convert';
 import { autoAttendantWizardAnswersSchema, callQueueWizardAnswersSchema } from './wizard';
 
 const weekdays = { monday: [{ start: '09:00', end: '17:00' }], tuesday: [{ start: '09:00', end: '17:00' }], wednesday: [{ start: '09:00', end: '17:00' }], thursday: [{ start: '09:00', end: '17:00' }], friday: [{ start: '09:00', end: '17:00' }], saturday: [], sunday: [] };
@@ -114,5 +114,20 @@ describe('"Play the message, then hang up"', () => {
   it('warns when there is no message to play', () => {
     const { warnings } = convertAutoAttendantWizard({ ...base, afterHoursFlow: { mode: 'disconnect' } }, { siteId: 's', name: 'Main' });
     expect(warnings).toContain('After hours: the call is ended with no message - add the message to play in Design & Build if one is wanted.');
+  });
+});
+
+describe('the call flows a wizard points at', () => {
+  it('finds every flowId, in menus, after hours, holidays and the operator, once each', () => {
+    const a = '11111111-1111-4111-8111-111111111111';
+    const b = '22222222-2222-4222-8222-222222222222';
+    const answers = {
+      businessFlow: { mode: 'menu', options: [{ key: '1', label: 'Sales', target: { kind: 'call_queue', flowId: a } }, { key: '2', label: 'Ops', target: { kind: 'team', label: 'Ops' } }] },
+      afterHoursFlow: { mode: 'direct', target: { kind: 'team', flowId: b } },
+      holidays: [{ name: 'Xmas', flow: { mode: 'direct', target: { kind: 'call_queue', flowId: a } } }],
+      operator: { kind: 'person', label: 'Jo' },
+    };
+    expect(wizardFlowRefs(answers).sort()).toEqual([a, b]);
+    expect(wizardFlowRefs(null)).toEqual([]);
   });
 });
