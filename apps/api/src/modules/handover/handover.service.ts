@@ -81,11 +81,16 @@ interface PackLayout {
   pageSize: 'letter' | 'a4';
 }
 
-function targetSummary(settings: { action?: string; threshold?: number; target?: string | null } | null): string {
+/**
+ * A queue action in words. The threshold means different things (Microsoft Learn, New-CsCallQueue): -OverflowThreshold is a number of
+ * calls waiting in the queue, -TimeoutThreshold a number of seconds. The overflow used to print "(2s)" for two calls (feature request
+ * "Service Handover Pack", item 6).
+ */
+function targetSummary(settings: { action?: string; threshold?: number; target?: string | null } | null, threshold: 'calls' | 'seconds' = 'seconds'): string {
   if (!settings?.action) return '—';
   const parts = [settings.action];
   if (settings.target) parts.push(`→ ${settings.target}`);
-  if (settings.threshold != null) parts.push(`(${settings.threshold}s)`);
+  if (settings.threshold != null) parts.push(threshold === 'calls' ? `(${settings.threshold} ${settings.threshold === 1 ? 'call' : 'calls'} waiting)` : `(${settings.threshold}s)`);
   return parts.join(' ');
 }
 
@@ -1043,7 +1048,7 @@ export class HandoverService {
         ['Routing Method', q.routing_method],
         ['Alert Time (Sec)', String(q.agent_alert_time)],
         ['Agents', agentText],
-        ['Overflow', targetSummary(q.overflow as { action?: string; threshold?: number; target?: string | null } | null)],
+        ['Overflow', targetSummary(q.overflow as { action?: string; threshold?: number; target?: string | null } | null, 'calls')],
         ['Timeout (Sec)', targetSummary(q.timeout as { action?: string; threshold?: number; target?: string | null } | null)],
         ['No Agents', targetSummary(q.no_agent_action as { action?: string; threshold?: number; target?: string | null } | null)],
       ]);

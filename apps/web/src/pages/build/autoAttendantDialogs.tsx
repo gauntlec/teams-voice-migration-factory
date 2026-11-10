@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Button, Card, Checkbox, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Dropdown, Field, Input, Option, Spinner, Text, Textarea, tokens, makeStyles, shorthands } from '@fluentui/react-components';
+import { Button, Card, Checkbox, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Dropdown, Field, Input, Option, Spinner, Text, Textarea, tokens, makeStyles, shorthands, Switch } from '@fluentui/react-components';
 import { Dialog } from '../../components/AppDialog';
 import { DeleteRegular } from '@fluentui/react-icons';
 import { AA_CALLABLE_ENTITY_KINDS, AA_DIRECTORY_SEARCH_METHODS, AA_DTMF_RESPONSES, AA_MENU_OPTION_ACTIONS, AA_SCHEDULE_TYPES, type AutoAttendantCallableEntity, type AutoAttendantCallFlow, type AutoAttendantHolidayCallFlow, type AutoAttendantMenuOption, type AutoAttendantSchedule, type AutoAttendantTimeRange, type Paginated } from '@tvmf/shared';
@@ -352,10 +352,18 @@ function ScheduleEditor({ value, onChange }: { value: AutoAttendantSchedule; onC
   const setType = (type: (typeof AA_SCHEDULE_TYPES)[number]) =>
     onChange(type === 'weekly' ? { type: 'weekly', weekly: value.weekly ?? emptyWeekly() } : { type: 'fixed', fixed: value.fixed ?? { ranges: [] } });
 
+  // "Same hours Monday to Friday" (on when they already match): one row edits all five weekdays, as Teams Admin Center offers.
+  const MON_FRI = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'] as const;
+  const weekdaysMatch = (w: NonNullable<AutoAttendantSchedule['weekly']>) => MON_FRI.every((d) => JSON.stringify(w[d] ?? []) === JSON.stringify(w.monday ?? []));
+  const [sameWeekdays, setSameWeekdays] = useState(() => !!value.weekly && weekdaysMatch(value.weekly));
   const setDayRanges = (day: (typeof WEEKDAYS)[number]['key'], ranges: AutoAttendantTimeRange[]) => {
     if (!value.weekly) return;
-    onChange({ ...value, weekly: { ...value.weekly, [day]: ranges } });
+    const days: string[] = sameWeekdays && (MON_FRI as readonly string[]).includes(day) ? [...MON_FRI] : [day];
+    onChange({ ...value, weekly: { ...value.weekly, ...Object.fromEntries(days.map((d) => [d, ranges])) } });
   };
+  const shownDays = sameWeekdays
+    ? [{ key: 'monday' as const, label: 'Mon–Fri' }, ...WEEKDAYS.filter((d) => d.key === 'saturday' || d.key === 'sunday')]
+    : WEEKDAYS;
 
   return (
     <div className={ls.gridGap10}>
@@ -370,8 +378,19 @@ function ScheduleEditor({ value, onChange }: { value: AutoAttendantSchedule; onC
       </Field>
       {value.type === 'weekly' && value.weekly && (
         <>
+          <Switch
+            label="Same hours Monday to Friday"
+            checked={sameWeekdays}
+            onChange={(_, d) => {
+              setSameWeekdays(d.checked);
+              // Turning it on copies Monday's hours to the other weekdays, so what is shown is what is saved.
+              if (d.checked && value.weekly && !weekdaysMatch(value.weekly)) {
+                onChange({ ...value, weekly: { ...value.weekly, ...Object.fromEntries(MON_FRI.map((day) => [day, value.weekly!.monday ?? []])) } });
+              }
+            }}
+          />
           <div className={ls.gridGap6}>
-            {WEEKDAYS.map(({ key, label }) => {
+            {shownDays.map(({ key, label }) => {
               const ranges = value.weekly![key] ?? [];
               return (
                 <div key={key} className={ls.flexWrapItemsCenterGap8}>

@@ -16,9 +16,9 @@ import {
   RadioGroup,
   Text,
   Textarea,
-
   makeStyles,
   shorthands,
+  Switch,
 } from '@fluentui/react-components';
 import {
   AA_SUPPORTED_LANGUAGES,
@@ -80,37 +80,50 @@ const STANDARD_9_TO_5: WizardWeeklyHours = {
   sunday: [],
 };
 
+const WEEKDAYS: (keyof WizardWeeklyHours)[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'];
+/** Monday to Friday all have the same hours. */
+const sameWeekdayHours = (v: WizardWeeklyHours) => WEEKDAYS.every((d) => JSON.stringify(v[d]) === JSON.stringify(v.monday));
+
+/**
+ * Opening hours, one row per day. "Same hours Monday to Friday" (on when they already match, as Teams Admin Center offers) shows one row
+ * for the five weekdays, so the hours are set once rather than five times; Saturday and Sunday stay separate.
+ */
 function WeeklyHoursEditor({ value, onChange }: { value: WizardWeeklyHours; onChange: (v: WizardWeeklyHours) => void }) {
   const ls = useLocalStyles();
+  const [sameWeekdays, setSameWeekdays] = useState(() => sameWeekdayHours(value));
+  const setDays = (days: (keyof WizardWeeklyHours)[], ranges: WizardWeeklyHours['monday']) =>
+    onChange({ ...value, ...Object.fromEntries(days.map((d) => [d, ranges])) } as WizardWeeklyHours);
+  const rows: { key: string; label: string; days: (keyof WizardWeeklyHours)[] }[] = sameWeekdays
+    ? [{ key: 'weekdays', label: 'Monday to Friday', days: WEEKDAYS }, ...(['saturday', 'sunday'] as const).map((d) => ({ key: d, label: DAY_LABELS[d]!, days: [d] }))]
+    : DAYS.map((d) => ({ key: d, label: DAY_LABELS[d]!, days: [d] }));
   return (
     <div className={ls.gridGap6}>
-      {DAYS.map((d) => {
-        const range = value[d][0];
+      <Switch
+        label="Same hours Monday to Friday"
+        checked={sameWeekdays}
+        onChange={(_, d) => {
+          setSameWeekdays(d.checked);
+          // Turning it on copies Monday's hours to the other weekdays, so what is shown is what is saved.
+          if (d.checked && !sameWeekdayHours(value)) setDays(WEEKDAYS, value.monday);
+        }}
+      />
+      {rows.map(({ key, label, days }) => {
+        const range = value[days[0]!][0];
         return (
-          <div key={d} className={ls.flexItemsCenterGap8}>
+          <div key={key} className={ls.flexItemsCenterGap8}>
             <div className={ls.w90}>
-              <Text size={200}>{DAY_LABELS[d]}</Text>
+              <Text size={200}>{label}</Text>
             </div>
             <Checkbox
               checked={!!range}
               label="Open"
-              onChange={(_, c) => onChange({ ...value, [d]: c.checked ? [{ start: '09:00', end: '17:00' }] : [] })}
+              onChange={(_, c) => setDays(days, c.checked ? [{ start: '09:00', end: '17:00' }] : [])}
             />
             {range && (
               <>
-                <Input
-                  type="time"
-                  value={range.start}
-                  onChange={(_, ev) => onChange({ ...value, [d]: [{ ...range, start: ev.value }] })}
-                  className={ls.w120}
-                />
+                <Input type="time" value={range.start} onChange={(_, ev) => setDays(days, [{ ...range, start: ev.value }])} className={ls.w120} />
                 <Text size={200}>to</Text>
-                <Input
-                  type="time"
-                  value={range.end}
-                  onChange={(_, ev) => onChange({ ...value, [d]: [{ ...range, end: ev.value }] })}
-                  className={ls.w120}
-                />
+                <Input type="time" value={range.end} onChange={(_, ev) => setDays(days, [{ ...range, end: ev.value }])} className={ls.w120} />
               </>
             )}
           </div>
