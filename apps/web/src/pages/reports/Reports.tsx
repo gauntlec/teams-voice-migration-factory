@@ -11,6 +11,7 @@ import {
   ChevronRightRegular,
   DocumentTableRegular,
   HistoryRegular,
+  NumberSymbolRegular,
   PhoneRegular,
   BotRegular,
   MailCheckmarkRegular,
@@ -28,6 +29,7 @@ import {
   buildAssistantReport,
   buildChangeLogReport,
   buildDeviceReport,
+  buildNumberReport,
   buildExecutiveSummary,
   buildIncidentReport,
   buildMigrationReport,
@@ -40,6 +42,7 @@ import {
   utcDay,
   type AssistantActivityData,
   type ChangeLogData,
+  type NumberReportData,
   type DeviceAvailabilityData,
   type CustomerMetrics,
   type DeviceStatusOverview,
@@ -124,6 +127,7 @@ const useStyles = makeStyles({
 const ICONS: Record<ReportKey, JSX.Element> = {
   executive: <SparkleRegular />,
   migration: <TaskListLtrRegular />,
+  numbers: <NumberSymbolRegular />,
   changes: <HistoryRegular />,
   incidents: <WarningRegular />,
   'service-requests': <ReceiptRegular />,
@@ -411,6 +415,7 @@ function useReport(key: ReportKey | null, tenantId: string, period: ReportPeriod
     enabled: enabled('devices') && compare,
     queryFn: () => api<DeviceAvailabilityData>(`${t}/insights/devices/availability?from=${prevPeriod.from}&to=${prevPeriod.to}${and}`),
   });
+  const numbers = useQuery({ queryKey: ['report', 'numbers', tenantId, site], enabled: enabled('numbers'), queryFn: () => api<NumberReportData>(`${t}/insights/numbers${sq ? `?${sq}` : ''}`) });
   const devices = useQuery({ queryKey: ['report', 'devices', tenantId, site], enabled: enabled('devices'), queryFn: () => api<DeviceStatusOverview>(`${t}/device-status${sq ? `?${sq}` : ''}`) });
 
   const pick = (...qs2: { isLoading: boolean; error: unknown }[]) => ({ isLoading: qs2.some((q) => q.isLoading), error: (qs2.find((q) => q.error)?.error as Error | undefined) ?? null });
@@ -434,6 +439,8 @@ function useReport(key: ReportKey | null, tenantId: string, period: ReportPeriod
         ...pick(assistants, ...(compare ? [assistantsPrev] : [])),
         data: assistants.data && (!compare || assistantsPrev.data) ? buildAssistantReport(assistants.data, compare ? (assistantsPrev.data ?? null) : null, period, prevPeriod) : undefined,
       };
+    case 'numbers':
+      return { ...pick(numbers), data: numbers.data ? buildNumberReport(numbers.data, today) : undefined };
     case 'changes':
       return { ...pick(changes), data: changes.data ? buildChangeLogReport(changes.data, period) : undefined };
     case 'devices':

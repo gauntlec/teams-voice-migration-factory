@@ -2,6 +2,8 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { sql } from 'kysely';
 import { deviceStatusOverview, platformDb, tenantDb } from '@tvmf/db';
 import {
+  type NumberReportData,
+  type NumberReportStatus,
   can,
   customerGoLiveStatus,
   goLiveDate,
@@ -35,6 +37,8 @@ const DELIVERY_STAGES: readonly ProgressStageViewKey[] = ['designed', 'validated
 const DAY_MS = 86_400_000;
 /** Cap on the changes one Change log report reads, so a very busy period can't make it slow. */
 const CHANGE_LOG_LIMIT = 5000;
+/** The Number management report reads at most this many numbers (a site filter shows a big customer's numbers whole). */
+const NUMBER_REPORT_LIMIT = 50000;
 const pct = (part: number, whole: number) => (whole === 0 ? null : Math.round((part / whole) * 1000) / 10);
 
 /**
@@ -281,6 +285,77 @@ export class InsightsService {
    * (deployment_changes is append-only, so this is the record auditors ask for). People who can see deployments or the
    * customer's audit log may read it; a site contact gets their own sites' runs.
    */
+  /**
+   * The Number management report's data: every number range and number in Site Data with its site and country, and who has each
+   * assigned one (Teams's holder when Discovery has seen one, otherwise the Site Data holder). Narrowed to the caller's sites.
+   */
+  async numbers(t: TenantContext): Promise<NumberReportData> {
+    const s = tenantDb(this.db, t.schema);
+    const codes = isSiteScoped(t) ? (await s.selectFrom('discovery_sites').select('sitecode').where('id', 'in', t.siteScope).execute()).map((x) => x.sitecode) : null;
+    if (codes && !codes.length) return { ranges: [], numbers: [], truncated: false };
+    const [ranges, rows] = await Promise.all([
+      s
+        .selectFrom('discovery_number_ranges as r')
+        .leftJoin('discovery_sites as ds', 'ds.sitecode', 'r.sitecode')
+        .select(['r.range_start as start', 'r.range_end as end', 'r.kind as kind', 'r.carrier as carrier', 'r.sitecode as sitecode', 'ds.name as siteName', 'ds.country as country'])
+        .$if(!!codes, (qb) => qb.where('r.sitecode', 'in', codes!))
+        .orderBy('r.sitecode')
+        .orderBy('r.range_start')
+        .execute(),
+      s
+        .selectFrom('phone_numbers as pn')
+        .innerJoin('discovery_number_ranges as r', 'r.id', 'pn.range_id')
+        .leftJoin('discovery_sites as ds', 'ds.sitecode', 'r.sitecode')
+        .leftJoin('discovery_users as du', (j) => j.onRef('du.id', '=', 'pn.holder_id').on('pn.holder_type', '=', 'user'))
+        .leftJoin('discovery_caps as dc', (j) => j.onRef('dc.id', '=', 'pn.holder_id').on('pn.holder_type', '=', 'cap'))
+        .leftJoin('discovery_resource_accounts as dra', (j) => j.onRef('dra.id', '=', 'pn.holder_id').on('pn.holder_type', '=', 'resource_account'))
+        .select([
+          'pn.e164 as e164',
+          'pn.status as status',
+          'pn.holder_type as holderType',
+          'pn.live_holder_upn as liveUpn',
+          'pn.live_holder_name as liveName',
+          'pn.live_holder_kind as liveKind',
+          'pn.note as note',
+          'r.sitecode as sitecode',
+          'ds.name as siteName',
+          'ds.country as country',
+          sql<string | null>`coalesce(du.upn, dc.upn, dra.upn)`.as('designUpn'),
+          sql<string | null>`coalesce(du.display_name, dc.display_name, dra.name)`.as('designName'),
+        ])
+        .$if(!!codes, (qb) => qb.where('r.sitecode', 'in', codes!))
+        .orderBy('pn.e164')
+        .limit(NUMBER_REPORT_LIMIT + 1)
+        .execute(),
+    ]);
+    const size = (a: string, b: string) => {
+      const x = a.replace(/\D/g, '');
+      const y = b.replace(/\D/g, '');
+      if (!x || !y) return 1;
+      const n = BigInt(y) - BigInt(x) + 1n;
+      return n > 0n ? Number(n) : 1;
+    };
+    const numbers = rows.slice(0, NUMBER_REPORT_LIMIT).map((r) => {
+      const live = !!r.liveUpn;
+      const status: NumberReportStatus = live || r.holderType || r.status === 'assigned' ? 'Assigned' : r.status === 'parked' ? 'Parked' : r.status === 'reserved' ? 'Reserved' : 'Spare';
+      return {
+        e164: r.e164,
+        status,
+        sitecode: r.sitecode,
+        siteName: r.siteName,
+        country: r.country,
+        upn: live ? r.liveUpn : r.designUpn,
+        name: live ? r.liveName : (r.designName ?? (r.holderType === 'analogue' ? r.note : null)),
+        holderType: live ? (r.liveKind === 'resource_account' ? 'resource_account' : r.liveKind === 'user' ? (r.holderType === 'cap' ? 'cap' : 'user') : 'other') : r.holderType,
+      };
+    });
+    return {
+      ranges: ranges.map((r) => ({ ...r, size: size(r.start, r.end) })),
+      numbers,
+      truncated: rows.length > NUMBER_REPORT_LIMIT,
+    };
+  }
+
   async changeLog(t: TenantContext, role: Role, q: { from?: string; to?: string }, now = new Date()): Promise<ChangeLogData> {
     if (!can(role, 'deployment:read') && !can(role, 'audit:read:tenant')) throw new ForbiddenException('The change log is for people who can see deployments or the audit log.');
     const period = insightsPeriod(q, now);

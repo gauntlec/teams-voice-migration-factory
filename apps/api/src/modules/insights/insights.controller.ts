@@ -59,6 +59,13 @@ export class InsightsController {
     return this.svc.changeLog(narrowToSite(t, q.site), user.role, q);
   }
 
+  /** The Number management report: every range and number in Site Data, and who has the assigned ones. */
+  @Get('numbers')
+  @RequirePermission('discovery:read')
+  numbers(@TenantCtx() t: TenantContext, @Query(new ZodBody(insightsPeriodQuerySchema)) q: InsightsPeriodQuery) {
+    return this.svc.numbers(narrowToSite(t, q.site));
+  }
+
   /** The Assistant activity report: what the AI assistants did in the period (Managed Services, inc:read or sr:read). */
   @Get('assistants')
   @RequirePermission('tenant:read')
