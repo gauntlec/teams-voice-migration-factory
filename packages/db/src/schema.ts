@@ -783,6 +783,9 @@ export interface DiscoveryUsersTable {
   call_forwarding: ColumnType<import('@tvmf/shared').CallForwardingSettings | null, import('@tvmf/shared').CallForwardingSettings | null | undefined, import('@tvmf/shared').CallForwardingSettings | null>;
   requires_handset: ColumnType<boolean, boolean | undefined, boolean>;
   handset_model: string | null;
+  /** When the handset was installed and working (migration 0093), and who ticked it. */
+  handset_installed_at: ColumnType<string | null, string | null | undefined, string | null>;
+  handset_installed_by: ColumnType<string | null, string | null | undefined, string | null>;
   access_port_id: string | null;
   comments: string | null;
   /** number the customer asked for (imported from a spreadsheet); free text,
@@ -801,6 +804,9 @@ export interface DiscoveryCapsTable {
   display_name: string;
   upn: string | null;
   device_model: string | null;
+  /** When the phone was installed and working (migration 0093), and who ticked it. */
+  handset_installed_at: ColumnType<string | null, string | null | undefined, string | null>;
+  handset_installed_by: ColumnType<string | null, string | null | undefined, string | null>;
   calling_policy_id: string | null;
   caller_id: 'user' | 'anonymous' | 'main_number' | null;
   access_port_id: string | null;

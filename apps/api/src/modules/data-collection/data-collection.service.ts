@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { sql } from 'kysely';
-import { platformDb, setHandsetStage, siteHandsets, tenantDb } from '@tvmf/db';
+import { platformDb, setHandsetStage, setHandsetInstalled, siteHandsetDevices, siteHandsets, tenantDb } from '@tvmf/db';
 import { asSiteRegion, contactUserIds, goLiveDate, handsetModelKey, type SiteContact, type SiteContacts, type SiteHandsetStatusInput } from '@tvmf/shared';
 import type {
   DiscoveryFlowInput,
@@ -203,6 +203,26 @@ export class DataCollectionService {
       detail: { model: row.model, status: input.status },
     });
     return this.siteHandsets(t, siteId);
+  }
+
+  /** Every user who gets a handset and every common area phone at a site, with whether it has been installed (Deployment > Handsets). */
+  async siteHandsetDevices(t: TenantContext, siteId: string) {
+    await this.siteHandsets(t, siteId);
+    return siteHandsetDevices(this.scoped(t), siteId);
+  }
+
+  /** Ticks a user's or common area phone's handset as installed and working, or clears it. Not a design change, so allowed after submission. */
+  async setHandsetInstalled(t: TenantContext, user: AuthedUser, siteId: string, kind: 'user' | 'cap', id: string, installed: boolean) {
+    await this.siteHandsets(t, siteId);
+    const found = await setHandsetInstalled(this.scoped(t), siteId, kind, id, installed, user.displayName);
+    if (!found) throw new NotFoundException(kind === 'user' ? 'no such user on this site' : 'no such common area phone on this site');
+    await this.audit.tenant(t.schema, installed ? 'discovery.handset_installed' : 'discovery.handset_install_cleared', {
+      actor: actorOf(user),
+      targetType: kind === 'user' ? 'discovery_user' : 'discovery_cap',
+      targetId: id,
+      detail: { siteId },
+    });
+    return siteHandsetDevices(this.scoped(t), siteId);
   }
 
   /** Header payload for a single site's workspace. */

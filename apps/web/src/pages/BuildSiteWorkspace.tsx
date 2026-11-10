@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { HandsetCell, HandsetListFilterDropdown, type HandsetListFilter } from './site/siteHandsets';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { Badge, Button, Card, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Spinner, Tab, TabList, Text, Tooltip, tokens, makeStyles } from '@fluentui/react-components';
@@ -305,6 +306,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
   // fields once in one dialog, apply to every selected row in a single
   // PATCH .../bulk request - see BuildService.bulkUpdateIdentity.
   const [usersSelected, setUsersSelected] = useState<Set<string>>(new Set());
+  const [usersHandset, setUsersHandset] = useState<HandsetListFilter>('');
   const [capsSelected, setCapsSelected] = useState<Set<string>>(new Set());
   const [bulkOpen, setBulkOpen] = useState<'users' | 'caps' | null>(null);
   const [bulkError, setBulkError] = useState<string | null>(null);
@@ -626,7 +628,7 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           hint="Teams users with Enterprise Voice - target numbers and policies for this site. Replaces the USERS build sheet."
           endpoint={`${base}/users`}
           queryKey={['users', tid, siteId]}
-          params={listParams}
+          params={{ ...listParams, handset: usersHandset || undefined }}
           fixed={{ site_id: siteId }}
           readOnly={!canWrite}
           bulkDelete={siteTools ? { noun: "user", plural: "users", note: "Their numbers go back to this site's free pool. Nothing is changed in Teams or in Site Data." } : undefined}
@@ -636,7 +638,9 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
           selected={usersSelected}
           onSelectedChange={setUsersSelected}
           headerActions={
-            siteTools && (
+            <>
+              <HandsetListFilterDropdown value={usersHandset} onChange={setUsersHandset} />
+              {siteTools && (
               <>
                 <Button size="small" onClick={() => setQuickAdd('users')}>
                   Quick add
@@ -654,7 +658,8 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
                   Templates
                 </Button>
               </>
-            )
+              )}
+            </>
           }
           columns={[
             withSrTags({ key: 'upn', label: 'UPN' }),
@@ -669,6 +674,12 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
                 if (vm?.enabled == null) return '—';
                 return vm.enabled ? `On${vm.language ? ` (${vm.language})` : ''}` : 'Off';
               },
+            },
+            {
+              key: 'requested_handset_model',
+              label: 'Handset',
+              sortable: false,
+              render: (r) => <HandsetCell needed={!!r.requested_handset} model={r.requested_handset_model as string | null} installedAt={r.handset_installed_at as string | null} />,
             },
             { key: 'migration_wave', label: 'Wave' },
             {

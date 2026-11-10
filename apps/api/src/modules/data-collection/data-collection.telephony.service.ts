@@ -255,6 +255,11 @@ export class TelephonyService {
       const like = `%${q.q}%`;
       b = b.where((eb) => eb.or([eb('upn', 'ilike', like), eb('display_name', 'ilike', like)]));
     }
+    if (q.handset) {
+      // the same test as needsHandset (@tvmf/shared): marked as needing one, or a model named
+      const has = sql<boolean>`(requires_handset or coalesce(btrim(handset_model), '') <> '')`;
+      b = b.where(q.handset === 'yes' ? has : sql<boolean>`not ${has}`);
+    }
     const [items, cnt] = await Promise.all([
       b.selectAll().orderBy('upn').limit(limit).offset(offset).execute(),
       b.select((eb) => eb.fn.countAll<string>().as('n')).executeTakeFirst(),

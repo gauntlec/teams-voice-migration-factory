@@ -15,7 +15,7 @@ import { WizardTiles, useTeamChoices } from '../components/WizardTiles';
 import { BulkEditDialog, LoadError, NoTenant, PagedSection, useRecordStyles, type Choice, type FieldDef, type Row } from '../components/records';
 import { RelinkUsersButton, TAB_LABEL, isFlowStale, TABS, numKey, type SiteSummary, type TabKey } from './site/siteShared';
 import { OverviewTab, NetworkDiagramCard } from './site/siteOverview';
-import { HandsetTrackerCard } from './site/siteHandsets';
+import { HandsetCell, HandsetListFilterDropdown, HandsetTrackerCard, type HandsetListFilter } from './site/siteHandsets';
 import { SiteSuggestionsCard } from './discovery/siteSuggestions';
 import { SiteChangesCard, SiteReviewBar } from './site/siteReview';
 import { goLiveQueryKey, SiteGoLive } from './site/siteGoLive';
@@ -110,6 +110,7 @@ export function SiteWorkspace() {
   // PATCH .../bulk request - see TelephonyService.bulkUpdateUsers/Caps,
   // shared with Design & Build's identical flow via applyBulkPatch.
   const [usersSelected, setUsersSelected] = useState<Set<string>>(new Set());
+  const [usersHandset, setUsersHandset] = useState<HandsetListFilter>('');
   const [capsSelected, setCapsSelected] = useState<Set<string>>(new Set());
   const [bulkOpen, setBulkOpen] = useState<'users' | 'caps' | null>(null);
   const [bulkError, setBulkError] = useState<string | null>(null);
@@ -353,7 +354,7 @@ export function SiteWorkspace() {
           hint="Teams users with Enterprise Voice. Each holds at most one number from this site's inventory."
           endpoint={`${base}/users`}
           queryKey={['users', tid, siteId]}
-          params={{ siteId }}
+          params={{ siteId, handset: usersHandset || undefined }}
           fixed={{ site_id: siteId }}
           readOnly={locked}
           onChanged={refreshSummary}
@@ -362,6 +363,7 @@ export function SiteWorkspace() {
           onSelectedChange={setUsersSelected}
           headerActions={
             <>
+              <HandsetListFilterDropdown value={usersHandset} onChange={setUsersHandset} />
               <RelinkUsersButton
                 base={base}
                 siteId={siteId}
@@ -425,6 +427,12 @@ export function SiteWorkspace() {
             },
             { key: 'caller_id', label: 'Caller ID' },
             { key: 'voicemail_enabled', label: 'Voicemail', render: (r) => yesNo(r.voicemail_enabled) },
+            {
+              key: 'handset_model',
+              label: 'Handset',
+              sortValue: (r) => (r.handset_model as string | null) || (r.requires_handset ? ' ' : ''),
+              render: (r) => <HandsetCell needed={!!r.requires_handset} model={r.handset_model as string | null} installedAt={r.handset_installed_at as string | null} />,
+            },
             {
               key: 'tenant_user_id',
               label: 'Tenant',

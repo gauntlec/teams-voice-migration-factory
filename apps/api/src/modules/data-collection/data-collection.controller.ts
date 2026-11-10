@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
 import {
   can,
   discoveryFlowSchema,
@@ -7,6 +7,8 @@ import {
   discoverySiteOverviewSchema,
   discoverySiteSchema,
   siteHandsetStatusSchema,
+  handsetInstalledSchema,
+  type HandsetInstalledInput,
   type DiscoveryFlowInput,
   type DiscoveryListQuery,
   type DiscoveryNetworkInput,
@@ -74,6 +76,28 @@ export class DataCollectionController {
     @Body(new ZodBody(siteHandsetStatusSchema)) body: SiteHandsetStatusInput,
   ) {
     return this.svc.setSiteHandsetStatus(t, u, siteId, body);
+  }
+
+  /** Deployment > Handsets: each user who gets a handset and each common area phone, with its installed tick. */
+  @Get('sites/:siteId/handset-devices')
+  @RequirePermission('discovery:read')
+  siteHandsetDevices(@TenantCtx() t: TenantContext, @Param('siteId') siteId: string) {
+    return this.svc.siteHandsetDevices(t, siteId);
+  }
+
+  /** Ticks a handset as installed and working, or clears it. Same people as the handset stages above. */
+  @Put('sites/:siteId/handset-devices/:kind/:id')
+  @RequirePermission('discovery:sites:manage')
+  setHandsetInstalled(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() u: AuthedUser,
+    @Param('siteId') siteId: string,
+    @Param('kind') kind: string,
+    @Param('id') id: string,
+    @Body(new ZodBody(handsetInstalledSchema)) body: HandsetInstalledInput,
+  ) {
+    if (kind !== 'user' && kind !== 'cap') throw new NotFoundException();
+    return this.svc.setHandsetInstalled(t, u, siteId, kind, id, body.installed);
   }
 
   /** Active users that can be picked for a site's roles (Site contact(s), Provider PM, ...). */
