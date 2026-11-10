@@ -488,6 +488,11 @@ class GraphBusyError extends Error {
  */
 const connectionLocks = new Map<string, Promise<void>>();
 
+/** The link step planned for a queue or attendant created in the same run: it reads the new object back by name (see linkNewVoiceApp). */
+function linksNewObject(call: CmdletInvocation): boolean {
+  return call.cmdlet === 'New-CsOnlineApplicationInstanceAssociation' && typeof call.parameters.ConfigurationId === 'object' && call.parameters.ConfigurationId !== null;
+}
+
 /**
  * How long a live run waits before re-reading what it changed - Teams can take
  * a little while to report a change it has just accepted, and re-reading at
@@ -897,13 +902,19 @@ async function handleDeploymentRun(job: Job) {
         audio,
       );
       let created = false;
+      let createFailed = false;
       for (const planned of calls) {
+        if (createFailed && linksNewObject(planned)) {
+          await record(planned, { result: 'skipped', before: {}, after: {}, message: 'Not linked: the queue was not created, so there is nothing to link the resource account to yet.' });
+          continue;
+        }
         // Redirect audio prompts not yet in Teams are imported first, in this run (they must be used within 48 hours).
         const { call, imported } = await resolveAudioPlaceholders(planned);
         const result = await runCall(call);
         // An import the queue never took would be deleted by Teams: forget it so the next run imports again.
         if (result !== 'applied' && imported.length) await scoped.updateTable('voice_audio_files').set({ teams_audio_file_id: null, imported_at: null }).where('id', 'in', imported).execute();
         if (call.cmdlet === 'New-CsCallQueue' && result === 'applied') created = true;
+        if (call.cmdlet === 'New-CsCallQueue' && result === 'failed') createFailed = true;
       }
       // See refreshCrossRefEntry - lets an Auto Attendant deployed later in
       // THIS run transfer to a queue this run just created, instead of
@@ -980,9 +991,15 @@ async function handleDeploymentRun(job: Job) {
       }
       const calls = planAutoAttendantRow(planRow, crossRef!, raObjectIds, userObjectIds, liveAutoAttendants.get(planRow.id), targetNames);
       let created = false;
+      let createFailed = false;
       for (const call of calls) {
+        if (createFailed && linksNewObject(call)) {
+          await record(call, { result: 'skipped', before: {}, after: {}, message: 'Not linked: the auto attendant was not created, so there is nothing to link the resource account to yet.' });
+          continue;
+        }
         const result = await runCall(call);
         if (call.cmdlet === 'New-CsAutoAttendant' && result === 'applied') created = true;
+        if (call.cmdlet === 'New-CsAutoAttendant' && result === 'failed') createFailed = true;
       }
       // See refreshCrossRefEntry - lets a later row in this same batch (or a
       // future sheet, though auto_attendants already runs last) transfer to

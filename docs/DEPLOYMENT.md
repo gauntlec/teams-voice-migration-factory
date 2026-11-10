@@ -124,6 +124,15 @@ Design & Build's "Site Data" column so the engineer can pick or create
 the matching `caller_id_policy` (a `POLICY_KINDS` entry, deployed via
 `Grant-CsCallingLineIdentity` same as the others in step 3).
 
+## Linking a new call queue or auto attendant to its resource account
+
+`New-CsOnlineApplicationInstanceAssociation` needs the queue's or attendant's own id (`-ConfigurationId`), which exists only once `New-CsCallQueue` / `New-CsAutoAttendant` has run. A run that creates one now links it straight away: the plan adds a step that reads the new object back by exact name (`$created = Get-CsCallQueue -NameFilter '<name>' | Where-Object { $_.Name -eq '<name>' }`) and links `$created.Identity` (`linkNewVoiceApp` in `deployment.ts`). Before this, the number reached nothing until a Discovery sync had read the new object and a second deployment sent the link.
+
+- **Preview, What-If and the script:** show the link step under the create.
+- **When the create fails:** the worker records the link as skipped, with the reason, rather than failing it as well.
+- **When the read finds nothing:** the link fails on its own. The queue or attendant stays created, and the next deployment, which then sees it live, links it.
+- **Already in Teams:** a queue or attendant that already exists is linked by its known id, as before.
+
 ## Resource accounts - a genuine two-phase gate
 
 `New-CsOnlineApplicationInstance` always needs a Phone System / Resource

@@ -1133,6 +1133,29 @@ export function callQueueRowWarnings(
  * see the Phase B plan for the full list of what's deliberately left out
  * (ConferenceMode, DistributionLists, compliance recording, etc).
  */
+/**
+ * Links the resource accounts to a call queue or auto attendant created earlier in the same run. New-CsOnlineApplicationInstanceAssociation
+ * needs the new object's id (Microsoft Learn: -ConfigurationId, the identity of the configuration), which only exists once
+ * New-CsCallQueue/New-CsAutoAttendant has run, so it is read back by its exact name first. Without this the number reached nothing until
+ * a second deployment after a Discovery sync. If the create fails, the worker leaves this out; if the read finds nothing, it fails on its
+ * own and the next deployment, which then sees the object live, links it.
+ */
+function linkNewVoiceApp(
+  configurationType: 'CallQueue' | 'AutoAttendant',
+  getCmdlet: 'Get-CsCallQueue' | 'Get-CsAutoAttendant',
+  objectType: 'call_queue' | 'auto_attendant',
+  row: { id: string; name: string },
+  instanceIds: string[],
+): CmdletInvocation {
+  return {
+    cmdlet: 'New-CsOnlineApplicationInstanceAssociation',
+    parameters: { Identities: instanceIds, ConfigurationId: { $var: 'created', prop: 'Identity' }, ConfigurationType: configurationType },
+    preamble: [{ assignTo: 'created', cmdlet: getCmdlet, parameters: { NameFilter: row.name }, exactName: row.name }],
+    objectType,
+    objectId: row.id,
+  };
+}
+
 export function planCallQueueRow(
   row: BuildCallQueueRow,
   agentObjectIds: Map<string, string>,
@@ -1256,6 +1279,8 @@ export function planCallQueueRow(
       objectId: row.id,
       differences: [{ setting: 'Linked resource accounts', design: shownList(linkedInstanceIds), teams: shownList(live.applicationInstanceIds ?? []) }],
     });
+  } else if (!live && linkedInstanceIds.length > 0 && calls.some((c) => c.cmdlet === 'New-CsCallQueue')) {
+    calls.push(linkNewVoiceApp('CallQueue', 'Get-CsCallQueue', 'call_queue', row, linkedInstanceIds));
   }
   // A resource account unlinked in Design & Build keeps its live
   // association forever otherwise (confirmed bug: the diff above only ever
@@ -2502,6 +2527,8 @@ export function planAutoAttendantRow(
       objectId: row.id,
       differences: [{ setting: 'Linked resource accounts', design: shownList(linkedInstanceIds), teams: shownList(live.applicationInstanceIds ?? []) }],
     });
+  } else if (!live && linkedInstanceIds.length > 0 && calls.some((c) => c.cmdlet === 'New-CsAutoAttendant')) {
+    calls.push(linkNewVoiceApp('AutoAttendant', 'Get-CsAutoAttendant', 'auto_attendant', row, linkedInstanceIds));
   }
   // A resource account unlinked in Design & Build keeps its live
   // association forever otherwise (confirmed bug: the diff above only ever
