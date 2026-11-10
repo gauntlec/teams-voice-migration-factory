@@ -549,7 +549,7 @@ export const HANDOVER_SECTIONS = [
   { key: 'teams_configuration', title: 'MS Teams Configuration Information' },
   { key: 'network_data', title: 'Network Data' },
   // As-built check: what Design & Build has that Teams doesn't (yet). See HandoverService.asBuilt.
-  { key: 'not_yet_live', title: 'Designed but Not Yet Live' },
+  { key: 'not_yet_live', title: 'Deployment Issues' },
   { key: 'outstanding_actions', title: 'Outstanding Actions' },
 ] as const;
 

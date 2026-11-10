@@ -121,7 +121,7 @@ const EMPTY_TEXT: Record<string, string> = {
   resource_accounts: 'No resource accounts were created.',
   voicemail_groups: 'No voicemail groups were deployed.',
   network_data: 'No network data was recorded.',
-  not_yet_live: 'Everything designed is live in Teams.',
+  not_yet_live: 'No deployment issues were observed.',
   outstanding_actions: 'There are no outstanding actions.',
 };
 
@@ -242,6 +242,20 @@ function cardTables(cards: [string, string][][], total: number): Table[] {
   return out;
 }
 
+/** One card per row, the page's width: label and value, for a card with long values (a call queue). */
+function cardTables1(cards: [string, string][][], total: number): Table[] {
+  const widths = [Math.round(total * 0.3), total - Math.round(total * 0.3)];
+  return cards.map(
+    (c) =>
+      new Table({
+        width: { size: total, type: WidthType.DXA },
+        columnWidths: widths,
+        layout: TableLayoutType.FIXED,
+        rows: c.map(([k, v]) => new TableRow({ cantSplit: true, children: [cell([cellText(k, { header: true })], { width: widths[0]!, fill: NAVY }), cell(valueLines(v), { width: widths[1]! })] })),
+      }),
+  );
+}
+
 /** Outstanding Actions: Task Ref (<section>.<n>, grey), Description, Owner and Action - the template's table. */
 function actionsTable(items: { description: string; owner: string }[], section: number, total: number): Table {
   const widths = [0.107, 0.605].map((f) => Math.round(total * f));
@@ -268,8 +282,8 @@ function actionsTable(items: { description: string; owner: string }[], section: 
  * "Table N – <caption>": a Word SEQ Table field (so Word keeps the numbers in order if tables are added or removed) holding
  * the number already, so it shows in any viewer before Word updates it.
  */
-function caption(n: number, label: string): Paragraph {
-  return new Paragraph({ style: 'Caption', children: [new TextRun({ text: 'Table ' }), new SimpleField('SEQ Table \\* ARABIC', String(n)), new TextRun({ text: ` – ${label}` })] });
+function caption(n: number, label: string, kind: 'Table' | 'Figure' = 'Table'): Paragraph {
+  return new Paragraph({ style: 'Caption', children: [new TextRun({ text: `${kind} ` }), new SimpleField(`SEQ ${kind} \\* ARABIC`, String(n)), new TextRun({ text: ` – ${label}` })] });
 }
 
 const body = (t: string, bold = false, keepNext = false) => new Paragraph({ spacing: { after: 120 }, keepNext, children: [text(t, { bold })] });
@@ -334,24 +348,25 @@ function noteParagraphs(lines: string[], outline: Outline): Paragraph[] {
   });
 }
 
-function sectionBody(section: HandoverSectionData, total: number, nextTable: () => number, number: number, images: Map<string, Buffer>, maxImageHeight: number, outline: Outline): (Paragraph | Table)[] {
+function sectionBody(section: HandoverSectionData, total: number, next: { table: () => number; figure: () => number }, number: number, images: Map<string, Buffer>, maxImageHeight: number, outline: Outline): (Paragraph | Table)[] {
   const out: (Paragraph | Table)[] = [outline.h1(section.title)];
   const { content } = section;
-  const captionFor = (label?: string) => caption(nextTable(), label ?? CAPTION[section.key] ?? `${section.title} Table`);
+  const captionFor = (label?: string) => caption(next.table(), label ?? CAPTION[section.key] ?? `${section.title} Table`);
+  const figureFor = (label: string) => caption(next.figure(), label, 'Figure');
   if (content.kind === 'placeholder') return [...out, new Paragraph({ spacing: { after: 120 }, children: [text(content.note, { italics: true, color: CAPTION_GREY })] })];
   if (content.kind === 'paragraphs') {
     if (content.paragraphs.length === 0) return [...out, body(EMPTY_TEXT[section.key] ?? 'Nothing recorded.')];
     return [...out, ...noteParagraphs(content.paragraphs, outline)];
   }
   if (content.kind === 'blocks') {
-    for (const b of content.blocks) out.push(...blockBody(b, total, captionFor, number, images, maxImageHeight, outline));
+    for (const b of content.blocks) out.push(...blockBody(b, total, captionFor, figureFor, number, images, maxImageHeight, outline));
     return out;
   }
   if (content.rows.length === 0) return [...out, body(EMPTY_TEXT[section.key] ?? 'Nothing recorded.')];
   return [...out, dataTable(content.columns, content.rows, total), captionFor()];
 }
 
-function blockBody(b: HandoverBlock, total: number, captionFor: (label?: string) => Paragraph, section: number, images: Map<string, Buffer>, maxImageHeight: number, outline: Outline): (Paragraph | Table)[] {
+function blockBody(b: HandoverBlock, total: number, captionFor: (label?: string) => Paragraph, figureFor: (label: string) => Paragraph, section: number, images: Map<string, Buffer>, maxImageHeight: number, outline: Outline): (Paragraph | Table)[] {
   switch (b.kind) {
     case 'image': {
       const data = images.get(b.fileId);
@@ -360,11 +375,14 @@ function blockBody(b: HandoverBlock, total: number, captionFor: (label?: string)
       const size = fit(b.width, b.height, Math.round((total / 20) * (96 / 72)), maxImageHeight);
       const scale = Math.min(size.width / (b.width || 1), size.height / (b.height || 1));
       return [
-        new Paragraph({ spacing: { before: 120, after: 60 }, keepNext: true, children: [text(b.title, { bold: true })] }),
+        // the caption under the picture names it; without one, the name goes above
+        ...(b.caption ? [] : [new Paragraph({ spacing: { before: 120, after: 60 }, keepNext: true, children: [text(b.title, { bold: true })] })]),
         new Paragraph({
-          spacing: { after: 200 },
+          spacing: { before: b.caption ? 120 : 0, after: b.caption ? 60 : 200 },
+          keepNext: !!b.caption,
           children: [new ImageRun({ type: 'png', data, transformation: { width: Math.round(b.width * scale), height: Math.round(b.height * scale) }, altText: { title: `Call flow: ${b.title}`, description: `Call flow diagram for ${b.title}`, name: `Call flow ${b.title}` } })],
         }),
+        ...(b.caption ? [figureFor(b.caption)] : []),
       ];
     }
     case 'heading':
@@ -384,7 +402,7 @@ function blockBody(b: HandoverBlock, total: number, captionFor: (label?: string)
     case 'labels':
       return [labelTable(b.rows, Math.round(total * (b.title ? 0.65 : 1)), b.title ? 0.49 : 0.33), captionFor(b.caption)];
     case 'cards':
-      return [...cardTables(b.cards, total), captionFor(b.caption)];
+      return [...(b.perRow === 1 ? cardTables1(b.cards, total) : cardTables(b.cards, total)), captionFor(b.caption)];
     case 'actions':
       return [actionsTable(b.items, section, total), ...(b.caption ? [captionFor(b.caption)] : [])];
   }
@@ -511,10 +529,12 @@ export class HandoverDocumentService {
     ];
     const outline = new Outline();
 
-    // An issued pack leaves out the engineers' checklist of what isn't live yet (drafts only).
-    const sections = input.sections.filter((s) => !(input.status.kind === 'issued' && s.key === 'not_yet_live'));
+    // Deployment Issues is in issued packs too: the customer sees what is still open, or that there was nothing.
+    const sections = input.sections;
     let tables = 0;
+    let figures = 0;
     const nextTable = () => ++tables;
+    const next = { table: nextTable, figure: () => ++figures };
 
     // 1. Approvals & Sign-Off, and 1.1 Document Control (the template's first section, before the Introduction).
     const signed = (label: string, value: string | null) =>
@@ -533,8 +553,8 @@ export class HandoverDocumentService {
     ];
     // the data sections follow from 2.
     // room for a picture on a page: the page less its margins, header and footer, in pixels
-    const maxImageHeight = Math.round(((page.height - 2 * MARGIN) / 20) * (96 / 72)) - 80;
-    const content = [...approvals, ...sections.flatMap((s, i) => sectionBody(s, total, nextTable, i + 2, input.images ?? new Map(), maxImageHeight, outline))];
+    const maxImageHeight = Math.round(((page.height - 2 * MARGIN) / 20) * (96 / 72)) - 100;
+    const content = [...approvals, ...sections.flatMap((s, i) => sectionBody(s, total, next, i + 2, input.images ?? new Map(), maxImageHeight, outline))];
 
     const doc = new Document({
       creator: author,

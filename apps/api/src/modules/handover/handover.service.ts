@@ -12,6 +12,7 @@ import {
   HANDOVER_SECTIONS,
   handoverScopeLabel,
   lineUriToNumber,
+  NUMBER_RANGE_KIND_LABELS,
   verificationRowDifferences,
   type LiveIdentityState,
   noteSectionContent,
@@ -31,6 +32,7 @@ import {
 import { AuditService } from '../../common/audit.service';
 import type { AuthedUser, TenantContext } from '../../common/request';
 import { DocumentBrandingService } from '../branding/document-branding.service';
+import { BuildService } from '../build/build.service';
 import { InjectDb, type Db } from '../../db/db.module';
 import { assertCustomerWide } from '../data-collection/site-scope';
 import { FilesService } from '../files/files.service';
@@ -119,6 +121,8 @@ export class HandoverService {
     private readonly audit: AuditService,
     /** whose branding packs carry (docs/BRANDING.md); optional so tests can leave it out (Voxshift's) */
     @Optional() private readonly branding?: DocumentBrandingService,
+    /** the Validation issues listed under Deployment Issues; optional so tests can leave it out (no issues listed) */
+    @Optional() private readonly build?: BuildService,
   ) {}
 
   /**
@@ -575,7 +579,7 @@ export class HandoverService {
     const ids = scope?.ids ?? [];
     const codes = scope?.codes ?? [];
 
-    const [sites, phoneNumbers, analogue, voicemailGroups, network, noteRows, lastSync] = await Promise.all([
+    const [sites, phoneNumbers, analogue, voicemailGroups, network, noteRows, lastSync, ranges] = await Promise.all([
       scoped
         .selectFrom('discovery_sites')
         .select(['id', 'sitecode', 'name', 'address', 'country', 'region', 'overview'])
@@ -632,7 +636,19 @@ export class HandoverService {
         .where('status', '=', 'completed')
         .orderBy('finished_at', 'desc')
         .executeTakeFirst(),
+
+      // The site's number ranges, for the table that opens the phone numbers section.
+      scoped
+        .selectFrom('discovery_number_ranges')
+        .select(['range_start', 'range_end', 'kind', 'carrier', 'sitecode'])
+        .$if(bySite, (qb) => qb.where('sitecode', 'in', codes))
+        .orderBy('sitecode')
+        .orderBy('range_start')
+        .execute(),
     ]);
+
+    // Deployment issues: what Design & Build's Validation issues tab lists for each site (accept/reject records left out).
+    const siteIssues = this.build ? (await Promise.all(sites.map((x) => this.build!.siteIssues(t, x.id).then((rows) => rows.map((r) => ({ r, sitecode: x.sitecode })))))).flat() : [];
 
     const built = await this.asBuilt(t, sites);
 
@@ -678,6 +694,40 @@ export class HandoverService {
     const numberGroup = (kind: 'new' | 'port' | 'retain' | null) => numberRows.filter((n) => n.kind === kind).map((n) => n.row);
     const count = (status: string) => numberRows.filter((n) => n.row[1] === status).length;
     const phoneBlocks: HandoverBlock[] = [];
+    // Number Ranges: every range at the site, how it reaches Teams, and how many numbers it holds.
+    if (ranges.length) {
+      const size = (r: { range_start: string; range_end: string }) => {
+        const a = r.range_start.replace(/\D/g, '');
+        const b = r.range_end.replace(/\D/g, '');
+        if (!a || !b) return 1;
+        const n = BigInt(b) - BigInt(a) + 1n;
+        return n > 0n ? Number(n) : 1;
+      };
+      const rangeRows = ranges.map((r) => {
+        const n = size(r);
+        return { n, row: [r.range_start === r.range_end ? r.range_start : `${r.range_start} – ${r.range_end}`, NUMBER_RANGE_KIND_LABELS[r.kind] ?? r.kind, r.carrier ?? '—', r.sitecode ?? '—', String(n)] };
+      });
+      const total = rangeRows.reduce((a, r) => a + r.n, 0);
+      phoneBlocks.push(
+        { kind: 'heading', title: 'Number Ranges' },
+        { kind: 'text', text: `A total of ${plural(total, 'number')} in ${plural(ranges.length, 'range')} were provided for this site:` },
+        { kind: 'table', columns: ['Number range', 'Number transition', 'Carrier', 'Site', 'Numbers'], rows: rangeRows.map((r) => r.row), caption: 'Number Ranges Table' },
+      );
+    }
+    // Number Allocations: always the same four rows, so packs read alike (Reserved only appears when a number is reserved).
+    if (numberRows.length || ranges.length) {
+      const parkedCarriers = [...new Set(numberRows.filter((n) => n.row[1] === 'Parked').map((n) => n.row[4]).filter((c) => c && c !== '—'))];
+      const carriers = parkedCarriers.length ? parkedCarriers : [...new Set(ranges.map((r) => r.carrier).filter((c): c is string => !!c))];
+      const carrier = carriers.length === 1 ? `${carriers[0]} retains` : 'The carrier retains';
+      const allocation: string[][] = [
+        ['Assigned to an object', String(count('In use')), 'For example, User, CAP, Auto Attendant.'],
+        ['Spare', String(count('Spare')), 'Available for immediate use.'],
+        ...(count('Reserved') ? [['Reserved', String(count('Reserved')), 'Held for a planned use.']] : []),
+        ['Parked', String(count('Parked')), `${carrier} control of the number, but a contractual change will be required to bring the number back into service.`],
+        ['Customer to cease', '0', "Provide the quantity of numbers that are to be requested to be ceased 'Post Migration'."],
+      ];
+      phoneBlocks.push({ kind: 'heading', title: 'Number Allocations' }, { kind: 'table', columns: ['Allocation', 'Quantity', 'Comments'], rows: allocation, caption: 'Number Allocations Table' });
+    }
     const groups: { kind: 'new' | 'port' | 'retain' | null; title: string; none: string | null; lead: (n: number) => string; caption: string }[] = [
       { kind: 'new', title: 'New Numbers', none: 'No new numbers were provided for the site.', lead: (n) => `A total of ${plural(n, 'new number')} were provided for this site:`, caption: "'New' Numbers Table" },
       { kind: 'port', title: 'Ported Numbers', none: null, lead: (n) => `A total of ${plural(n, 'number')} were ported in for this site:`, caption: "'Ported' Numbers Table" },
@@ -691,16 +741,6 @@ export class HandoverService {
       if (rows.length === 0) phoneBlocks.push({ kind: 'text', text: g.none! });
       else phoneBlocks.push({ kind: 'text', text: g.lead(rows.length) }, { kind: 'table', columns: numberColumns, rows, caption: g.caption });
     }
-    if (numberRows.length) {
-      const allocation: string[][] = [
-        ['Assigned to an object', String(count('In use')), 'For example, User, CAP, Auto Attendant.'],
-        ['Spare', String(count('Spare')), 'Available for immediate use.'],
-        ...(count('Reserved') ? [['Reserved', String(count('Reserved')), 'Held for a planned use.']] : []),
-        ...(count('Parked') ? [['Parked', String(count('Parked')), 'Kept with the carrier; a contractual change is needed to bring the number back into service.']] : []),
-      ];
-      phoneBlocks.push({ kind: 'heading', title: 'Number Allocations' }, { kind: 'table', columns: ['Allocation', 'Quantity', 'Comments'], rows: allocation, caption: 'Number Allocations Table' });
-    }
-
     // The policies used at the site, read from what its users and common area phones have in Teams.
     const used = (type: keyof typeof built.policiesUsed) => [...built.policiesUsed[type]].sort();
     const emergency = used('TeamsEmergencyCallingPolicy');
@@ -835,7 +875,7 @@ export class HandoverService {
                 const live = new Set(built.autoAttendants.map((a) => a[0]!.toLowerCase()));
                 const shown = diagrams.filter((d) => live.has(d.name.toLowerCase()));
                 return shown.length
-                  ? [{ kind: 'heading', title: 'Call Flow Diagram' }, ...shown.map((d): HandoverBlock => ({ kind: 'image', fileId: d.fileId, title: d.name, width: d.width, height: d.height }))]
+                  ? [{ kind: 'heading', title: 'Call Flow Diagram' }, ...shown.map((d): HandoverBlock => ({ kind: 'image', fileId: d.fileId, title: d.name, width: d.width, height: d.height, caption: `Call Flow Diagram – ${d.name}` }))]
                   : [];
               })(),
             ]
@@ -844,7 +884,10 @@ export class HandoverService {
 
       call_queues: blocks(
         built.callQueues.length
-          ? [{ kind: 'text', text: 'The following call queues were created:' }, { kind: 'cards', cards: built.callQueues, caption: 'Call Queues Information Table' }]
+          ? [
+              { kind: 'text', text: 'The following call queues were created:' },
+              ...built.callQueues.map((card): HandoverBlock => ({ kind: 'cards', cards: [card], perRow: 1, caption: `Call Queue – ${card[0]?.[1] ?? 'Call queue'}` })),
+            ]
           : [{ kind: 'text', text: 'No call queues were created.' }],
       ),
 
@@ -886,9 +929,33 @@ export class HandoverService {
           : [{ kind: 'text', text: 'No network data was recorded.' }],
       ),
 
-      not_yet_live: built.notLive.length
-        ? blocks([{ kind: 'table', columns: ['Item', 'Type', 'Site', 'What differs from the design'], rows: built.notLive, caption: "'Designed but Not Yet Live' Table" }])
-        : blocks([{ kind: 'text', text: 'Everything designed in Design & Build for these sites is live in Teams.' }]),
+      // Deployment Issues: what is designed but not live in Teams, then the outstanding validation issues.
+      not_yet_live: ((): HandoverSectionContent => {
+        const issues = siteIssues.filter((x) => x.r.issue.severity !== 'info');
+        if (!built.notLive.length && !issues.length) return blocks([{ kind: 'text', text: 'No deployment issues were observed.' }]);
+        const out: HandoverBlock[] = [];
+        if (built.notLive.length) {
+          out.push(
+            { kind: 'heading', title: 'Designed but Not Yet Live' },
+            { kind: 'text', text: 'These items are in Design & Build but are not yet as designed in Teams:' },
+            { kind: 'table', columns: ['Item', 'Type', 'Site', 'What differs from the design'], rows: built.notLive, caption: "'Designed but Not Yet Live' Table" },
+          );
+        }
+        if (issues.length) {
+          const sheet = { users: 'User', caps: 'Common area phone', 'resource-accounts': 'Resource account' } as Record<string, string>;
+          out.push(
+            { kind: 'heading', title: 'Validation Issues' },
+            { kind: 'text', text: 'These validation issues were still open when the pack was produced:' },
+            {
+              kind: 'table',
+              columns: ['Item', 'Type', 'Site', 'Issue', 'Detail'],
+              rows: issues.map(({ r, sitecode }) => [r.upn || r.displayName || '—', sheet[r.sheet] ?? r.sheet, sitecode, `${r.issue.label}${r.issue.severity === 'blocking' ? ' (blocks deployment)' : ''}`, r.issue.detail]),
+              caption: 'Validation Issues Table',
+            },
+          );
+        }
+        return blocks(out);
+      })(),
 
       outstanding_actions: outstandingActionsContent(notesFor('outstanding_actions')),
     };

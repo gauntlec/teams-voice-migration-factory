@@ -24,10 +24,10 @@ export type HandoverBlock =
   /** share: the table's width as a part of the text width (1 = full width), for a narrow table such as a list of policies */
   | { kind: 'table'; columns: string[]; rows: string[][]; caption?: string; share?: number }
   | { kind: 'labels'; rows: [string, string][]; caption?: string; title?: string }
-  | { kind: 'cards'; cards: [string, string][][]; caption?: string }
+  | { kind: 'cards'; cards: [string, string][][]; caption?: string; /** cards side by side (default 2); 1 gives each card the page's width */ perRow?: 1 | 2 }
   | { kind: 'actions'; items: { description: string; owner: string }[]; caption?: string }
   /** a picture kept with the pack (a call flow diagram): the stored file, what it shows, and its size in pixels */
-  | { kind: 'image'; fileId: string; title: string; width: number; height: number };
+  | { kind: 'image'; fileId: string; title: string; width: number; height: number; /** "Figure N – <this>" under the picture */ caption?: string };
 
 /** A note line that is a bullet ("- " or "• ") or a numbered sub-heading ("## "), as the document and preview draw it. */
 export function noteLine(line: string): { kind: 'bullet' | 'heading' | 'text'; text: string } {
