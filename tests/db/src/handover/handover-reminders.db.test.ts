@@ -9,6 +9,7 @@ import { FilesService } from '../../../../apps/api/src/modules/files/files.servi
 import { HandoverDocumentService } from '../../../../apps/api/src/modules/handover/handover-document.service';
 import { HandoverService } from '../../../../apps/api/src/modules/handover/handover.service';
 import { sweepHandoverReminders } from '../../../../apps/worker/src/handover-reminders';
+import type { MailEnqueuer } from '../../../../apps/worker/src/mail/enqueue';
 import { seedCustomer, seedSite, seedUser, useDb } from '../helpers';
 
 const handle = useDb();
@@ -58,7 +59,7 @@ describe('Service Handover reminders', () => {
     expect((await svc.listActions(d.t, man)).filter((a) => a.overdue).map((a) => a.description).sort()).toEqual(['Hand over the admin guide', 'Test 999 on the lobby phone']);
 
     const sent: { to: { email: string }; context: HandoverActionsReminderContext }[] = [];
-    const enqueue = async (m: never) => void sent.push(m);
+    const enqueue: MailEnqueuer = async (m) => void sent.push(m as never);
     expect(await sweepHandoverReminders(handle.db, enqueue, { tenantId: d.t.id })).toEqual({ emails: 3, actions: 3 });
     const forEmail = (email: string) => sent.find((m) => m.to.email === email)!.context;
     const listed = (c: HandoverActionsReminderContext) => c.sites.map((s) => [s.sitecode, s.actions.map((a) => a.description)]);
@@ -99,7 +100,7 @@ describe('Service Handover reminders', () => {
     const a = await svc.createAction(d.t, engineer, { siteId: site, description: 'Check the paging zone' });
     await d.s.updateTable('handover_actions').set({ created_at: new Date(Date.now() - 20 * DAY).toISOString() } as never).where('id', '=', a.id).execute();
     const sent: unknown[] = [];
-    const enqueue = async (m: never) => void sent.push(m);
+    const enqueue: MailEnqueuer = async (m) => void sent.push(m as never);
     expect(await sweepHandoverReminders(handle.db, enqueue, { tenantId: d.t.id })).toEqual({ emails: 0, actions: 0 });
     await svc.generate(d.t, engineer, { siteIds: [site] });
     expect(await sweepHandoverReminders(handle.db, enqueue, { tenantId: d.t.id })).toEqual({ emails: 1, actions: 1 });
