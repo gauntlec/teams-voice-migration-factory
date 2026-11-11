@@ -93,6 +93,11 @@ describe('defaults from the site', () => {
     expect(callFlowDefaultsForSite({ country: 'US', address: 'Phoenix, AZ' }).timeZoneId).toBe('US Mountain Standard Time');
     expect(callFlowDefaultsForSite({ country: null, address: null })).toEqual({ languageId: 'en-US', timeZoneId: 'Eastern Standard Time' });
     expect(callFlowDefaultsForSite({ country: 'Atlantis' })).toEqual({ languageId: 'en-US', timeZoneId: 'Eastern Standard Time' });
+    // a state before its ZIP wins over a later pair of capitals; a very long address is read quickly (CodeQL js/polynomial-redos)
+    expect(callFlowDefaultsForSite({ country: 'US', address: 'Suite CA 1, Denver, CO 80202, US' }).timeZoneId).toBe('Mountain Standard Time');
+    const started = Date.now();
+    callFlowDefaultsForSite({ country: 'US', address: `TX${' '.repeat(50_000)}!` });
+    expect(Date.now() - started).toBeLessThan(200);
   });
 
   it('only ever gives a language and time zone Teams accepts', () => {

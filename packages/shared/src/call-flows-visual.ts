@@ -590,9 +590,12 @@ export function callFlowDefaultsForSite(site: { country?: string | null; address
   });
   for (const [re, lang, tz] of COUNTRY_DEFAULTS) if (re.test(country)) return known(lang, tz);
   if (!country || /^(us|usa|united states|united states of america|america)$/.test(country)) {
-    // "…, Austin, TX 78701" or "…, Austin, TX": the last two capital letters that are a state, before a ZIP or the end
-    const states = [...(site.address ?? '').matchAll(/\b([A-Z]{2})\b(?=\s*(?:\d{5}(?:-\d{4})?)?\s*(?:,|$|\n|USA|United States))/g)].map((m) => m[1]!).filter((s) => US_STATES.has(s));
-    const state = states.at(-1);
+    // "…, Austin, TX 78701" or "…, Austin, TX": the address in words; a state's two capitals just before a ZIP, else the last ones
+    const words = (site.address ?? '').split(/[^A-Za-z0-9-]+/).filter(Boolean);
+    const isState = (w: string | undefined): w is string => !!w && w.length === 2 && w === w.toUpperCase() && US_STATES.has(w);
+    let state: string | undefined;
+    for (let i = 1; i < words.length; i++) if (/^\d{5}(-\d{4})?$/.test(words[i]!) && isState(words[i - 1])) state = words[i - 1];
+    state ??= words.filter(isState).at(-1);
     return known('en-US', (state && US_ZONES[state]) || 'Eastern Standard Time');
   }
   return known('en-US', 'Eastern Standard Time');
