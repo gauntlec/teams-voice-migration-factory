@@ -663,6 +663,8 @@ export const discoveryFlowSchema = z
     voice_app_id: z.preprocess((v) => (v === '' ? null : v), z.guid().nullable().optional()),
     /** discovery_resource_accounts.id - the resource account that answers this, if already known: it joins the flow's voice app. */
     resource_account_id: z.preprocess((v) => (v === '' ? null : v), z.guid().nullable().optional()),
+    /** Which wizard made it: 'call-flows' = Call Flows (preview). Left out = a classic wizard (or by hand). */
+    editor: z.enum(['call-flows']).nullable().optional(),
   })
   .strict();
 export type DiscoveryFlowInput = z.infer<typeof discoveryFlowSchema>;

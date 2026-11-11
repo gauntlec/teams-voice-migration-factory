@@ -1,8 +1,8 @@
 # Call Flows (preview): plan
 
-Version 0.1 (draft for review), 10 November 2026. From Chris Rae's feature request "Visual Auto Attendant and Call Queue Wizard".
+Version 0.2, 11 November 2026. From the feature request "Visual Auto Attendant and Call Queue Wizard". 0.2: the four decisions answered, and step 2 built.
 
-## What Chris asked for
+## What was asked for
 
 - A **second, alternative** wizard called **Call Flows**, clearly labelled as a preview. The existing Auto Attendant and Call Queue wizards stay exactly as they are.
 - A visual screen, like the call flow diagrams in the handover pack, where the call flow is built up.
@@ -54,13 +54,21 @@ So everything downstream works unchanged: the Call flows list, the diagram, Impo
 2. **Screens 1 to 3 and Save:** enough for the common case of a number, then a menu or a group.
 3. **The canvas, with + and the side panels.**
 4. **After hours, reopening and editing, validation messages, keyboard and screen reader access.**
-5. **Holidays, and a session with Chris on real sites.** The "preview" label stays until he's happy.
+5. **Holidays, and a session with the requester on real sites.** The "preview" label stays until they're happy.
 
-Steps 1 and 2 are a first PR Chris can try. Each step after that is its own PR.
+Steps 1 and 2 are a first version to try. Each step after that is its own PR.
 
-## Decisions for Craig and Chris
+## Decisions (answered 10 November 2026)
 
-1. **Top level:** if the first answer is "Ring a group of people", the number goes straight to a call queue, with no auto attendant in front. That's simpler, but a menu can't be added later without rebuilding. Or always put an auto attendant at the front? I propose straight to the queue, with an "Add a menu in front" button later.
-2. **Where it lives:** Site Data > Call flows gets a **New call flow (preview)** button beside the existing two. Should customers see it too, or engineers only while it's a preview?
-3. **Number reuse:** if the number is already on a voice app, offer to open that flow instead of starting a new one?
-4. **Holidays:** OK to leave them to phase 5?
+1. **Top level:** an auto attendant is always in front by default. When the flow is only "ring this group" all the time, with no greeting, a switch on screen 3 sends calls **straight to the group** (a call queue) instead.
+2. **Where it lives:** Site Data > Auto attendants & call queues gets a **New call flow** tile with a **Preview** badge beside the two classic ones. **Engineers only** while it's a preview: customers don't see the tile, and the server refuses them.
+3. **Number reuse:** yes. Typing a number that already answers a call flow offers **Open that call flow** instead, and the server refuses to use it again, naming the flow.
+4. **Holidays:** left to step 5.
+
+## Step 2 as built
+
+- **Screens:** the number (spare number tiles, searchable, a national "0141 …" finds "+44141 …") and the flow's name; opening hours (Same 24x7, or business hours: Mon to Fri 9 to 5, 8 to 6, or other hours with the classic wizard's hours control); what happens (the six tiles); **after hours** with the same tiles, built now rather than in step 4 because a flow with business hours can't be saved without it; review.
+- **Until the canvas (step 3):** a menu's options, a group's people, how their phones ring and what happens if nobody answers are filled in below the tile chosen. A group's other settings take the defaults above.
+- **Review:** the written summary, what Voxshift will create with the Teams names in grey, and the language and time zone from the site's country (and US state), which can be changed there.
+- **Saving:** one request, `POST /api/t/:tenantId/discovery/call-flows` (TelephonyService.saveVisualCallFlow). Everything is checked first, in words; then the number is taken (a resource account answering the auto attendant, as adding a voice app with a number does), one call queue capture per group, and the auto attendant capture linking to them by id. All are marked `editor = 'call-flows'` (tenant migration 0101). If anything fails, nothing is left behind.
+- **Not yet:** reopening a saved flow in the preview (step 4). "Edit call flow" on a flow it made opens the classic wizard, and the row shows a Preview badge.

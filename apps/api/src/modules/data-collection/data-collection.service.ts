@@ -829,6 +829,7 @@ export class DataCollectionService {
         wizard_version: input.wizard_version ?? null,
         voice_app_id: voiceAppId,
         resource_account_id: input.resource_account_id ?? null,
+        editor: input.editor ?? null,
       })
       .returningAll()
       .executeTakeFirstOrThrow();

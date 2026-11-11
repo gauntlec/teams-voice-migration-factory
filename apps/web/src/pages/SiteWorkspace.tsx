@@ -13,6 +13,8 @@ import { BulkRangesDialog } from '../components/BulkRangesDialog';
 import { ImportUsersDialog } from '../components/ImportUsersDialog';
 import { Page } from '../components/Page';
 import { WizardTiles, useTeamChoices } from '../components/WizardTiles';
+import { CallFlowsPreviewWizard, PreviewBadge } from '../components/CallFlowsPreviewWizard';
+import { useNotify } from '../hooks/useNotify';
 import { BulkEditDialog, LoadError, NoTenant, PagedSection, useRecordStyles, type Choice, type FieldDef, type Row } from '../components/records';
 import { RelinkUsersButton, TAB_LABEL, isFlowStale, TABS, numKey, type SiteSummary, type TabKey } from './site/siteShared';
 import { OverviewTab, NetworkDiagramCard } from './site/siteOverview';
@@ -33,7 +35,8 @@ export function SiteWorkspace() {
   const ls = useLocalStyles();
   const s = useRecordStyles();
   const { siteId = '' } = useParams();
-  const { activeTenantId, can } = useAuth();
+  const { activeTenantId, can, me } = useAuth();
+  const notify = useNotify();
   const qc = useQueryClient();
   // ?tab=ranges opens the site on that tab (the Number porting screen's Back button uses it); otherwise Overview.
   const [searchParams] = useSearchParams();
@@ -81,7 +84,8 @@ export function SiteWorkspace() {
   });
   const siteVoiceApps = useQuery({
     queryKey: ['voice-apps-choices', tid, siteId],
-    queryFn: () => api<Paginated<{ id: string; name: string; kind: string }>>(`${base}/voice-apps?siteId=${siteId}&limit=200`),
+    queryFn: () =>
+      api<Paginated<{ id: string; name: string; kind: string; resource_accounts: { numbers: string[] }[]; call_flow: Row | null; }>>(`${base}/voice-apps?siteId=${siteId}&limit=200`),
   });
   const voiceAppChoices: Choice[] = useMemo(
     () => (siteVoiceApps.data?.items ?? []).map((v) => ({ value: v.id, label: `${v.name} (${v.kind === 'call_queue' ? 'call queue' : 'auto attendant'})` })),
@@ -99,6 +103,16 @@ export function SiteWorkspace() {
   // The wizard-captured Call flows row currently reopened for editing (see
   // onEditRow on the flows PagedSection below) - null when nothing's open.
   const [editingFlow, setEditingFlow] = useState<Row | null>(null);
+  // Call Flows (preview): engineers only while it is a preview (decided 10 Nov 2026)
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const canPreview = !!me && me.role !== 'CUSTOMER';
+  /** A number already answering a call flow: open that flow (in the classic wizard until step 4 reopens it in the preview). */
+  const openVoiceAppFlow = (voiceAppId: string) => {
+    const app = siteVoiceApps.data?.items.find((a) => a.id === voiceAppId);
+    if (!app) return;
+    if (app.call_flow?.wizard_answers) setEditingFlow(app.call_flow);
+    else setDesignFor({ id: app.id, name: app.name, kind: app.kind as 'auto_attendant' | 'call_queue', resourceAccountId: null });
+  };
   const [designFor, setDesignFor] = useState<{ id: string; name: string; kind: 'auto_attendant' | 'call_queue'; resourceAccountId: string | null } | null>(null);
 
   const numberChoicesFor = (row: Row | null): Choice[] => {
@@ -603,7 +617,14 @@ export function SiteWorkspace() {
       {tab === 'voice-apps' && (
         <>
         {!locked && (
-          <WizardTiles base={base} tenantId={tid} siteId={siteId} resourceAccountChoices={resourceAccountChoices} onCreated={refreshVoiceApps} />
+          <WizardTiles
+            base={base}
+            tenantId={tid}
+            siteId={siteId}
+            resourceAccountChoices={resourceAccountChoices}
+            onCreated={refreshVoiceApps}
+            onCallFlowsPreview={canPreview ? () => setPreviewOpen(true) : undefined}
+          />
         )}
         <PagedSection
           title="Auto attendants & call queues"
@@ -674,6 +695,7 @@ export function SiteWorkspace() {
                 return (
                   <div className={ls.flexWrapGap4}>
                     <Badge appearance="tint" color="brand">{flow.tenant_object_id ? 'Discovery' : flow.wizard_answers ? 'Designed' : 'Notes'}</Badge>
+                    {flow.editor === 'call-flows' && <PreviewBadge />}
                     {!!flow.imported_at && !isFlowStale(flow) && (
                       <Badge appearance="tint" color="success" title="In Design & Build">
                         Imported
@@ -864,6 +886,27 @@ export function SiteWorkspace() {
           onCreated={() => {
             setEditingFlow(null);
             refreshVoiceApps();
+          }}
+        />
+      )}
+      {tid && canPreview && !locked && (
+        <CallFlowsPreviewWizard
+          open={previewOpen}
+          onOpenChange={setPreviewOpen}
+          base={base}
+          tenantId={tid}
+          siteId={siteId}
+          site={{ country: (site.country as string | null) ?? null, address: (site.address as string | null) ?? null }}
+          spareNumbers={avail.data?.items ?? []}
+          voiceApps={(siteVoiceApps.data?.items ?? []).map((a) => ({ id: a.id, name: a.name, numbers: a.resource_accounts.flatMap((r) => r.numbers) }))}
+          teamChoices={teamChoices}
+          onOpenExisting={openVoiceAppFlow}
+          onCreated={(name) => {
+            refreshVoiceApps();
+            qc.invalidateQueries({ queryKey: ['ras', tid, siteId] });
+            qc.invalidateQueries({ queryKey: ['site-ras-lite', tid, siteId] });
+            qc.invalidateQueries({ queryKey: ['wizard-team-planned-flows', tid, siteId] });
+            notify(`Saved "${name}"`, { body: 'It is on the Call flows list, ready to import to Design & Build.', intent: 'success' });
           }}
         />
       )}

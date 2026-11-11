@@ -8,7 +8,9 @@
  * classic capture it can't express (holidays, an operator, a menu inside a menu) is reported, so the page can offer the classic
  * wizard instead of losing anything.
  */
-import type { AutoAttendantWizardAnswers, CallQueueWizardAnswers, WizardCallFlow, WizardMenuOption, WizardTarget, WizardWeeklyHours } from './wizard';
+import { z } from 'zod';
+import { AA_SUPPORTED_LANGUAGES, AA_TIME_ZONES } from './domain';
+import { wizardWeeklyHoursSchema, type AutoAttendantWizardAnswers, type CallQueueWizardAnswers, type WizardCallFlow, type WizardMenuOption, type WizardTarget, type WizardWeeklyHours } from './wizard';
 
 /** How a group's phones ring: everyone at once, one after another in order, whoever has waited longest, or taking turns. */
 export type VisualRinging = 'all' | 'in_order' | 'longest_idle' | 'take_turns';
@@ -52,7 +54,8 @@ export interface VisualGroup {
 export type VisualStep =
   | VisualGroup
   | { kind: 'person'; who: string }
-  | { kind: 'shared_voicemail'; group: string }
+  /** a shared voicemail: the Microsoft 365 group picked from the customer's (`groupId`), typed, or one still to be made (`newGroup`) */
+  | { kind: 'shared_voicemail'; group: string; groupId?: string; newGroup?: boolean }
   | { kind: 'forward'; number: string }
   | { kind: 'hangup' }
   /** another call flow on the site, by its capture id when picked from the list, or a name typed */
@@ -142,7 +145,7 @@ function stepTarget(s: VisualOptionStep | VisualStep, groups: VisualGroup[]): Wi
     case 'person':
       return { kind: 'person', label: s.who };
     case 'shared_voicemail':
-      return { kind: 'voicemail', label: s.group };
+      return { kind: 'voicemail', label: s.group, ...(s.groupId ? { groupId: s.groupId } : {}), ...(s.newGroup ? { newGroup: true } : {}) };
     case 'forward':
       return { kind: 'external', label: s.number };
     case 'link':
@@ -252,6 +255,10 @@ export function queueAnswersToGroup(c: FlowCapture<CallQueueWizardAnswers>, reas
   };
 }
 
+function voicemailStep(t: WizardTarget | undefined): VisualStep {
+  return { kind: 'shared_voicemail', group: t?.label ?? '', ...(t?.groupId ? { groupId: t.groupId } : {}), ...(t?.newGroup ? { newGroup: true } : {}) };
+}
+
 function targetToStep(t: WizardTarget | undefined, queues: Map<string, FlowCapture<CallQueueWizardAnswers>>, reasons: string[], where: string, inMenu: boolean): VisualOptionStep | VisualStep {
   if (!t) {
     reasons.push(`${where}: has no destination.`);
@@ -267,7 +274,7 @@ function targetToStep(t: WizardTarget | undefined, queues: Map<string, FlowCaptu
     case 'person':
       return { kind: 'person', who: t.label ?? '' };
     case 'voicemail':
-      return { kind: 'shared_voicemail', group: t.label ?? '' };
+      return voicemailStep(t);
     case 'external':
       return { kind: 'forward', number: t.label ?? '' };
     case 'message':
@@ -302,7 +309,7 @@ function callFlowToPath(cf: WizardCallFlow, queues: Map<string, FlowCapture<Call
     case 'disconnect':
       return { ...greeting, then: { kind: 'hangup' } };
     case 'voicemail':
-      return { ...greeting, then: { kind: 'shared_voicemail', group: cf.target?.label ?? '' } };
+      return { ...greeting, then: voicemailStep(cf.target) };
     case 'direct': {
       const step = targetToStep(cf.target, queues, reasons, where, false);
       return { ...greeting, then: step as VisualStep };
@@ -367,4 +374,334 @@ export function newVisualGroup(id: string, name: string, languageId: string): Vi
     presenceBased: true,
     languageId,
   };
+}
+
+/* ------------------------------- step 2: saving, checking, defaults, words ------------------------------- */
+
+/** Every group in the flow, in the order a caller meets them (a group reached from two places appears twice). */
+export function visualFlowGroups(f: VisualCallFlow): VisualGroup[] {
+  const out: VisualGroup[] = [];
+  for (const p of [f.business, f.afterHours]) {
+    if (!p) continue;
+    if (p.then.kind === 'group') out.push(p.then);
+    if (p.then.kind === 'menu') for (const o of p.then.options) if (o.then.kind === 'group') out.push(o.then);
+  }
+  return out;
+}
+
+/** The flow with every group replaced by `fn(group)`: the server gives each group its saved capture's id this way. */
+export function mapVisualGroups(f: VisualCallFlow, fn: (g: VisualGroup) => VisualGroup): VisualCallFlow {
+  const path = (p: VisualPath): VisualPath => {
+    const t = p.then;
+    if (t.kind === 'group') return { ...p, then: fn(t) };
+    if (t.kind === 'menu') return { ...p, then: { ...t, options: t.options.map((o) => (o.then.kind === 'group' ? { ...o, then: fn(o.then) } : o)) } };
+    return p;
+  };
+  return { ...f, business: path(f.business), ...(f.afterHours ? { afterHours: path(f.afterHours) } : {}) };
+}
+
+const text = (max: number) => z.string().trim().max(max);
+const need = (max: number) => text(max).min(1);
+
+const groupEndShapes = [
+  z.object({ kind: z.literal('hangup'), message: text(1000).optional() }).strict(),
+  z.object({ kind: z.literal('person_voicemail'), who: need(200) }).strict(),
+  z.object({ kind: z.literal('shared_voicemail'), group: need(200) }).strict(),
+  z.object({ kind: z.literal('forward'), to: need(200) }).strict(),
+] as const;
+const groupEndSchema = z.discriminatedUnion('kind', [...groupEndShapes]);
+
+export const visualGroupSchema = z
+  .object({
+    kind: z.literal('group'),
+    /** the editor's own key for the group; the server gives it its saved capture's id */
+    id: need(64),
+    name: need(200),
+    people: z.array(need(200)).max(50),
+    ringing: z.enum(['all', 'in_order', 'longest_idle', 'take_turns']),
+    ringSeconds: z.number().int().min(15).max(180),
+    maxWaitSeconds: z.number().int().min(0).max(2700),
+    ifNoAnswer: groupEndSchema,
+    maxWaiting: z.number().int().min(0).max(200),
+    ifTooBusy: groupEndSchema,
+    ifNobodyAvailable: z.discriminatedUnion('kind', [...groupEndShapes, z.object({ kind: z.literal('keep_waiting') }).strict()]),
+    nobodyAvailableAppliesTo: z.enum(['NewCalls', 'AllCalls']),
+    presenceBased: z.boolean(),
+    languageId: need(20),
+  })
+  .strict();
+
+const stepShapes = [
+  visualGroupSchema,
+  z.object({ kind: z.literal('person'), who: need(200) }).strict(),
+  z.object({ kind: z.literal('shared_voicemail'), group: need(200), groupId: z.guid().optional(), newGroup: z.boolean().optional() }).strict(),
+  z.object({ kind: z.literal('forward'), number: need(200) }).strict(),
+  z.object({ kind: z.literal('link'), flowId: z.guid().optional(), name: need(200) }).strict(),
+] as const;
+const hangupShape = z.object({ kind: z.literal('hangup') }).strict();
+
+const menuShape = z
+  .object({
+    kind: z.literal('menu'),
+    prompt: text(1000).optional(),
+    options: z
+      .array(
+        z
+          .object({
+            key: need(4),
+            label: need(100),
+            say: text(256).optional(),
+            then: z.discriminatedUnion('kind', [...stepShapes, z.object({ kind: z.literal('announcement'), text: need(1000) }).strict(), z.object({ kind: z.literal('operator') }).strict()]),
+          })
+          .strict(),
+      )
+      .max(12),
+    dialByName: z.boolean().optional(),
+  })
+  .strict();
+
+const visualPathSchema = z.object({ greeting: text(1000).optional(), then: z.discriminatedUnion('kind', [menuShape, ...stepShapes, hangupShape]) }).strict();
+
+export const visualCallFlowSchema = z
+  .object({
+    name: need(200),
+    languageId: need(20),
+    timeZoneId: need(80),
+    voiceInputs: z.boolean().optional(),
+    hours: z.discriminatedUnion('type', [
+      z.object({ type: z.literal('always') }).strict(),
+      z.object({ type: z.literal('standard') }).strict(),
+      z.object({ type: z.literal('custom'), weekly: wizardWeeklyHoursSchema }).strict(),
+    ]),
+    business: visualPathSchema,
+    afterHours: visualPathSchema.optional(),
+  })
+  .strict();
+
+/** POST .../discovery/call-flows: a call flow made in Call Flows (preview), answered by one of the site's spare numbers. */
+export const saveVisualCallFlowSchema = z
+  .object({
+    site_id: z.guid(),
+    phone_number_id: z.guid(),
+    flow: visualCallFlowSchema,
+    /** the number goes straight to the flow's one group (a call queue), with no auto attendant in front (decided 10 Nov 2026: in front by default) */
+    straight_to_queue: z.boolean().optional(),
+  })
+  .strict();
+export type SaveVisualCallFlowInput = z.infer<typeof saveVisualCallFlowSchema>;
+
+/** Which wizard made a Call flow capture: 'call-flows' = Call Flows (preview), so it can reopen there. null = a classic wizard. */
+export const FLOW_EDITORS = ['call-flows'] as const;
+export type FlowEditor = (typeof FLOW_EDITORS)[number];
+
+function endProblem(e: VisualGroupEnd | { kind: 'keep_waiting' }, where: string): string | null {
+  if (e.kind === 'person_voicemail' && !e.who.trim()) return `${where}: choose whose voicemail.`;
+  if (e.kind === 'shared_voicemail' && !e.group.trim()) return `${where}: choose the voicemail group.`;
+  if (e.kind === 'forward' && !e.to.trim()) return `${where}: type the person or number calls go to.`;
+  return null;
+}
+
+function stepProblem(s: VisualOptionStep | VisualStep, where: string): string | null {
+  switch (s.kind) {
+    case 'group': {
+      const name = s.name.trim();
+      if (!name) return `${where}: give the group a name, for example "Sales".`;
+      if (!s.people.some((p) => p.trim())) return `${where}: add at least one person to the group "${name}".`;
+      return endProblem(s.ifNoAnswer, `${name}, if nobody answers`) ?? endProblem(s.ifTooBusy, `${name}, if too many are waiting`) ?? endProblem(s.ifNobodyAvailable, `${name}, if nobody is available`);
+    }
+    case 'person':
+      return s.who.trim() ? null : `${where}: choose the person.`;
+    case 'shared_voicemail':
+      return s.group.trim() ? null : `${where}: choose the voicemail group, or type the name of a new one.`;
+    case 'forward':
+      return s.number.trim() ? null : `${where}: type the number calls are forwarded to.`;
+    case 'link':
+      return s.name.trim() ? null : `${where}: choose the call flow.`;
+    case 'announcement':
+      return s.text.trim() ? null : `${where}: type the message callers hear.`;
+    default:
+      return null;
+  }
+}
+
+/** What's missing from one path (business hours, or after hours), in words, or null: each screen of the preview checks its own. */
+export function visualPathProblem(p: VisualPath | undefined, where: string): string | null {
+  if (!p) return `${where}: choose what happens.`;
+  const t = p.then;
+  if (t.kind === 'hangup') return p.greeting?.trim() ? null : `${where}: type the message callers hear before the call ends.`;
+  if (t.kind !== 'menu') return stepProblem(t, where);
+  if (t.options.length === 0) return `${where}: add at least one menu option.`;
+  for (const [i, o] of t.options.entries()) {
+    const button = `${where}, button ${o.key.trim() || i + 1}`;
+    if (!o.key.trim()) return `${where}: choose which button option ${i + 1} uses.`;
+    if (!o.label.trim()) return `${button}: give it a name, for example "Sales".`;
+    const step = stepProblem(o.then, button);
+    if (step) return step;
+  }
+  const keys = t.options.map((o) => o.key.trim());
+  const dup = keys.find((k, i) => keys.indexOf(k) !== i);
+  return dup ? `${where}: button ${dup} is used twice. Give each option its own button.` : null;
+}
+
+/** The first thing missing from a visual flow, in words, or null. The wizard checks each screen with this, and the server once more. */
+export function visualCallFlowProblem(f: VisualCallFlow): string | null {
+  if (!f.name.trim()) return 'Give the call flow a name, for example "Main Line".';
+  const always = f.hours.type === 'always';
+  if (f.hours.type === 'custom' && !Object.values(f.hours.weekly).some((d) => d.length > 0)) return 'Choose at least one day the business is open.';
+  return visualPathProblem(f.business, always ? 'When someone calls' : 'During business hours') ?? (always ? null : visualPathProblem(f.afterHours, 'After hours'));
+}
+
+/* defaults from the site: the plan's "language and time zone from the site's country and address" */
+
+const US_ZONES: Record<string, string> = {
+  ...Object.fromEntries(['CA', 'WA', 'OR', 'NV'].map((s) => [s, 'Pacific Standard Time'])),
+  ...Object.fromEntries(['CO', 'UT', 'NM', 'WY', 'MT', 'ID'].map((s) => [s, 'Mountain Standard Time'])),
+  AZ: 'US Mountain Standard Time',
+  ...Object.fromEntries(['TX', 'IL', 'MN', 'WI', 'IA', 'MO', 'AR', 'LA', 'MS', 'AL', 'OK', 'KS', 'NE', 'SD', 'ND', 'TN'].map((s) => [s, 'Central Standard Time'])),
+  AK: 'Alaskan Standard Time',
+  HI: 'Hawaiian Standard Time',
+};
+const US_STATES = new Set([...Object.keys(US_ZONES), 'NY', 'NJ', 'PA', 'MA', 'CT', 'RI', 'NH', 'VT', 'ME', 'DE', 'MD', 'DC', 'VA', 'WV', 'NC', 'SC', 'GA', 'FL', 'OH', 'MI', 'IN', 'KY']);
+
+const COUNTRY_DEFAULTS: [RegExp, string, string][] = [
+  [/^(gb|uk|united kingdom|great britain|england|scotland|wales|northern ireland)$/, 'en-GB', 'GMT Standard Time'],
+  [/^(ie|ireland|republic of ireland)$/, 'en-IE', 'GMT Standard Time'],
+  [/^(au|australia)$/, 'en-AU', 'AUS Eastern Standard Time'],
+  [/^(ca|canada)$/, 'en-CA', 'Eastern Standard Time'],
+  [/^(in|india)$/, 'en-IN', 'India Standard Time'],
+  [/^(za|south africa)$/, 'en-ZA', 'South Africa Standard Time'],
+  [/^(nz|new zealand)$/, 'en-GB', 'New Zealand Standard Time'],
+  [/^(fr|france)$/, 'fr-FR', 'Romance Standard Time'],
+  [/^(de|germany|deutschland)$/, 'de-DE', 'W. Europe Standard Time'],
+  [/^(nl|netherlands|the netherlands)$/, 'nl-NL', 'W. Europe Standard Time'],
+  [/^(es|spain)$/, 'es-ES', 'Romance Standard Time'],
+  [/^(it|italy)$/, 'it-IT', 'W. Europe Standard Time'],
+];
+
+/**
+ * The language and time zone a new call flow starts with, from the site's country and (in the US) the state in its address. Anything
+ * not recognised gets US English and Eastern time, as the classic wizard does; the review screen shows both and they can be changed.
+ */
+export function callFlowDefaultsForSite(site: { country?: string | null; address?: string | null }): { languageId: string; timeZoneId: string } {
+  const country = (site.country ?? '').trim().toLowerCase().replace(/\./g, '');
+  const known = (lang: string, tz: string) => ({
+    languageId: AA_SUPPORTED_LANGUAGES.some((l) => l.code === lang) ? lang : 'en-US',
+    timeZoneId: AA_TIME_ZONES.some((z) => z.id === tz) ? tz : 'Eastern Standard Time',
+  });
+  for (const [re, lang, tz] of COUNTRY_DEFAULTS) if (re.test(country)) return known(lang, tz);
+  if (!country || /^(us|usa|united states|united states of america|america)$/.test(country)) {
+    // "…, Austin, TX 78701" or "…, Austin, TX": the address in words; a state's two capitals just before a ZIP, else the last ones
+    const words = (site.address ?? '').split(/[^A-Za-z0-9-]+/).filter(Boolean);
+    const isState = (w: string | undefined): w is string => !!w && w.length === 2 && w === w.toUpperCase() && US_STATES.has(w);
+    let state: string | undefined;
+    for (let i = 1; i < words.length; i++) if (/^\d{5}(-\d{4})?$/.test(words[i]!) && isState(words[i - 1])) state = words[i - 1];
+    state ??= words.filter(isState).at(-1);
+    return known('en-US', (state && US_ZONES[state]) || 'Eastern Standard Time');
+  }
+  return known('en-US', 'Eastern Standard Time');
+}
+
+/* the review screen's words */
+
+const RINGING_WORDS: Record<VisualRinging, string> = {
+  all: 'everyone at once',
+  in_order: 'one after another, in order',
+  longest_idle: 'whoever has been free longest first',
+  take_turns: 'taking turns',
+};
+
+function endWords(e: VisualGroupEnd | { kind: 'keep_waiting' }): string {
+  switch (e.kind) {
+    case 'hangup':
+      return e.message?.trim() ? `plays "${e.message.trim()}" and hangs up` : 'hangs up';
+    case 'person_voicemail':
+      return `goes to ${e.who}'s voicemail`;
+    case 'shared_voicemail':
+      return `goes to the shared voicemail "${e.group}"`;
+    case 'forward':
+      return `is forwarded to ${e.to}`;
+    case 'keep_waiting':
+      return 'keeps waiting';
+  }
+}
+
+export function visualStepWords(s: VisualOptionStep | VisualStep): string {
+  switch (s.kind) {
+    case 'group': {
+      const n = s.people.filter((p) => p.trim()).length;
+      return `rings the group "${s.name}" (${n} ${n === 1 ? 'person' : 'people'}, ${RINGING_WORDS[s.ringing]}); if nobody answers, the call ${endWords(s.ifNoAnswer)}`;
+    }
+    case 'person':
+      return `rings ${s.who}`;
+    case 'shared_voicemail':
+      return `goes to the shared voicemail "${s.group}"${s.newGroup ? ' (a group still to be made)' : ''}`;
+    case 'forward':
+      return `is forwarded to ${s.number}`;
+    case 'link':
+      return `goes to the call flow "${s.name}"`;
+    case 'announcement':
+      return `plays "${s.text}", then the menu again`;
+    case 'operator':
+      return 'goes to the operator';
+    case 'hangup':
+      return 'hangs up';
+  }
+}
+
+const DAY_ORDER: (keyof WizardWeeklyHours)[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+const DAY_NAMES: Record<keyof WizardWeeklyHours, string> = { monday: 'Monday', tuesday: 'Tuesday', wednesday: 'Wednesday', thursday: 'Thursday', friday: 'Friday', saturday: 'Saturday', sunday: 'Sunday' };
+
+export function visualHoursWords(h: VisualCallFlow['hours']): string {
+  if (h.type === 'always') return 'It works the same way all the time.';
+  if (h.type === 'standard') return 'Business hours are Monday to Friday, 9:00 to 17:00.';
+  const open = DAY_ORDER.filter((d) => h.weekly[d].length);
+  if (open.length === 0) return 'No business hours are set.';
+  const span = (d: keyof WizardWeeklyHours) => h.weekly[d].map((r) => `${r.start} to ${r.end}`).join(' and ');
+  const weekdays = DAY_ORDER.slice(0, 5);
+  if (weekdays.every((d) => h.weekly[d].length && span(d) === span('monday'))) {
+    const rest = open.filter((d) => !weekdays.includes(d)).map((d) => `${DAY_NAMES[d]} ${span(d)}`);
+    return `Business hours are Monday to Friday, ${span('monday')}${rest.length ? `; ${rest.join('; ')}` : ''}.`;
+  }
+  return `Business hours are ${open.map((d) => `${DAY_NAMES[d]} ${span(d)}`).join('; ')}.`;
+}
+
+function pathWords(p: VisualPath, heading: string): string[] {
+  const lines: string[] = [];
+  const greet = p.greeting?.trim() ? `plays "${p.greeting.trim()}", then ` : '';
+  const t = p.then;
+  if (t.kind === 'menu') {
+    lines.push(`${heading}: ${greet}offers a menu${t.prompt?.trim() ? ` ("${t.prompt.trim()}")` : ''}:`);
+    for (const o of t.options) lines.push(`  · press ${o.key}${o.say?.trim() ? ` or say "${o.say.trim()}"` : ''} for ${o.label}: the call ${visualStepWords(o.then)}`);
+  } else if (t.kind === 'hangup') {
+    lines.push(`${heading}: plays "${p.greeting?.trim() ?? ''}" and hangs up.`);
+  } else {
+    lines.push(`${heading}: ${greet}the call ${visualStepWords(t)}.`);
+  }
+  return lines;
+}
+
+/** The written summary on the review screen, like the handover pack's. */
+export function visualFlowSummary(f: VisualCallFlow, number: string | null): string[] {
+  const always = f.hours.type === 'always';
+  return [
+    `"${f.name}"${number ? ` answers calls to ${number}` : ''}.`,
+    visualHoursWords(f.hours),
+    ...pathWords(f.business, always ? 'When someone calls' : 'During business hours'),
+    ...(!always && f.afterHours ? pathWords(f.afterHours, 'After hours') : []),
+  ];
+}
+
+/** What Voxshift will create, in plain words with the Teams name alongside. */
+export function visualFlowCreates(f: VisualCallFlow, opts: { straightToQueue?: boolean; number?: string | null } = {}): { plain: string; teams: string; name: string }[] {
+  const straight = opts.straightToQueue ? onlyRingsAGroup(f) : null;
+  const top = straight ? straight.name : f.name;
+  const out = [{ plain: opts.number ? `The number ${opts.number}, answered for the call flow` : 'The number, answered for the call flow', teams: 'resource account', name: top }];
+  if (!straight) out.push({ plain: 'A phone menu that answers the number', teams: 'auto attendant', name: f.name });
+  const seen = new Set<string>();
+  for (const g of straight ? [straight] : visualFlowGroups(f)) {
+    if (seen.has(g.id)) continue;
+    seen.add(g.id);
+    out.push({ plain: 'A group of people who answer together', teams: 'call queue', name: g.name });
+  }
+  return out;
 }

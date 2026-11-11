@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Card, CardHeader, Text, makeStyles, shorthands } from '@fluentui/react-components';
+import { PreviewBadge } from './CallFlowsPreviewWizard';
 import type { Paginated } from '@tvmf/shared';
 import { api } from '../api';
 import { AutoAttendantWizard } from './AutoAttendantWizard';
@@ -79,12 +80,15 @@ export function WizardTiles({
   siteId,
   resourceAccountChoices,
   onCreated,
+  onCallFlowsPreview,
 }: {
   base: string;
   tenantId: string;
   siteId: string;
   resourceAccountChoices: Choice[];
   onCreated: () => void;
+  /** Call Flows (preview), docs/CALL-FLOWS-WIZARD.md: a third tile, shown to engineers only while it is a preview. */
+  onCallFlowsPreview?: () => void;
 }) {
   const s = useStyles();
   const [open, setOpen] = useState<WizardTileDef['key'] | null>(null);
@@ -100,6 +104,12 @@ export function WizardTiles({
             <Text size={200}>{tile.desc}</Text>
           </Card>
         ))}
+        {onCallFlowsPreview && (
+          <Card className={s.card} onClick={onCallFlowsPreview}>
+            <CardHeader header={<Text weight="semibold">New call flow</Text>} action={<PreviewBadge />} />
+            <Text size={200}>Start from the phone number and choose what happens, without needing to know auto attendants from call queues.</Text>
+          </Card>
+        )}
       </div>
       <AutoAttendantWizard
         open={open === 'auto-attendant'}

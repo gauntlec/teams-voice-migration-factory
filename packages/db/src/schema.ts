@@ -480,6 +480,8 @@ export interface DiscoveryFlowsTable {
   voice_app_id: string | null;
   /** FK -> discovery_resource_accounts.id (ON DELETE SET NULL) - the resource account that answers this, if one is chosen. */
   resource_account_id: string | null;
+  /** Which wizard made it (0101): 'call-flows' = Call Flows (preview), so it reopens there; null = a classic wizard, by hand or Discovery. */
+  editor: ColumnType<'call-flows' | null, 'call-flows' | null | undefined, 'call-flows' | null>;
   /** FK -> tenant_objects.id: the discovered auto attendant / call queue this row was made from (see 0061); null for a manual or wizard row. */
   tenant_object_id: string | null;
   /** Set once "Import to Design & Build" has run for this row. */

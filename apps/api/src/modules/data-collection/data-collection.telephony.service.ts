@@ -1,6 +1,8 @@
+import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -25,6 +27,18 @@ import {
   coolingMessage,
   PARKED_NUMBER_MESSAGE,
   parkingInOperationsMessage,
+  autoAttendantWizardAnswersSchema,
+  autoAttendantWizardProblem,
+  callQueueWizardAnswersSchema,
+  groupToQueueAnswers,
+  mapVisualGroups,
+  onlyRingsAGroup,
+  toCaptures,
+  visualCallFlowProblem,
+  visualFlowGroups,
+  type SaveVisualCallFlowInput,
+  type VisualCallFlow,
+  type VisualGroup,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
 import { applyBulkPatch, auditBulkPatch } from '../../common/bulk-patch';
@@ -1525,6 +1539,93 @@ export class TelephonyService {
     await this.audit.tenant(t.schema, 'discovery.voice_app_deleted', { actor: actorOf(u), targetType: 'discovery_voice_app', targetId: id, detail: { callFlows: flows.length } });
     await this.trackRows(t, u, tracked, 'Voice app', 'removed');
     return { ok: true, callFlowsDeleted: flows.length };
+  }
+
+  /* ====================== Call Flows (preview) ====================== */
+
+  /**
+   * Saves a call flow made in Call Flows (preview) (docs/CALL-FLOWS-WIZARD.md step 2) as the classic wizards would have: the number on a
+   * resource account answering an auto attendant, one call queue capture per group linked to it by flowId, each marked editor
+   * 'call-flows'. With `straight_to_queue` the number answers the flow's one group directly. Engineers only while it is a preview.
+   * Everything is checked before anything is written; the number is taken first, as it is the step most likely to be refused.
+   */
+  async saveVisualCallFlow(t: TenantContext, u: AuthedUser, input: SaveVisualCallFlowInput, canReview: boolean) {
+    if (u.role === 'CUSTOMER') throw new ForbiddenException('Call Flows (preview) is for engineers while it is a preview.');
+    const siteId = await this.resolveHolderSite(t, input.site_id);
+    const flow = input.flow as VisualCallFlow;
+    const problem = visualCallFlowProblem(flow);
+    if (problem) throw new BadRequestException(problem);
+    const straight = input.straight_to_queue ? onlyRingsAGroup(flow) : null;
+    if (input.straight_to_queue && !straight) throw new BadRequestException('Only a call flow that rings one group all the time, with no greeting, can send calls straight to the group.');
+
+    // A number already answering a call flow: open that one instead (decided 10 Nov 2026).
+    await this.assertNumberInScope(t, input.phone_number_id);
+    const held = await this.s(t)
+      .selectFrom('phone_numbers as n')
+      .innerJoin('discovery_resource_accounts as ra', (j) => j.onRef('ra.id', '=', 'n.holder_id').on('n.holder_type', '=', 'resource_account'))
+      .leftJoin('discovery_voice_apps as va', 'va.id', 'ra.voice_app_id')
+      .select(['n.e164', 'ra.name as ra_name', 'va.name as app_name'])
+      .where('n.id', '=', input.phone_number_id)
+      .executeTakeFirst();
+    if (held) throw new ConflictException(`${held.e164} already answers "${held.app_name ?? held.ra_name}". Open that call flow instead, or choose another number.`);
+
+    // Each group's answers, and the attendant's with ids standing in for the groups' captures: all checked before anything is written.
+    const groups = new Map<string, VisualGroup>();
+    for (const g of visualFlowGroups(flow)) if (!groups.has(g.id)) groups.set(g.id, g);
+    const queueAnswers = new Map([...groups].map(([id, g]) => [id, callQueueWizardAnswersSchema.parse(groupToQueueAnswers(g))]));
+    const attendantAnswers = (ids: Map<string, string>) => {
+      const c = toCaptures(mapVisualGroups(flow, (g) => ({ ...g, id: ids.get(g.id)! })), { attendantFlowId: randomUUID(), attendantInFront: true });
+      const answers = autoAttendantWizardAnswersSchema.parse(c.top.capture.answers);
+      const words = autoAttendantWizardProblem(answers);
+      if (words) throw new BadRequestException(words);
+      return answers;
+    };
+    if (!straight) attendantAnswers(new Map([...groups.keys()].map((id) => [id, randomUUID()])));
+
+    const description = (what: string) => `Made in Call Flows (preview) - ${what}`;
+    const madeApps: string[] = [];
+    try {
+      const top = await this.addVoiceApp(t, u, { site_id: siteId, name: straight ? straight.name : flow.name, kind: straight ? 'call_queue' : 'auto_attendant', phone_number_id: input.phone_number_id }, canReview);
+      madeApps.push(top.id);
+      const ra = await this.s(t).selectFrom('discovery_resource_accounts').select('id').where('voice_app_id', '=', top.id).executeTakeFirstOrThrow();
+      if (straight) {
+        const row = await this.base.addFlow(
+          t,
+          u,
+          { site_id: siteId, kind: 'call_queue', name: straight.name, description: description(`rings ${straight.people.length} people`), wizard_answers: queueAnswers.get(straight.id)!, wizard_version: 1, voice_app_id: top.id, resource_account_id: ra.id, editor: 'call-flows' },
+          canReview,
+        );
+        return { voiceAppId: top.id, flowId: row.id, queues: 0 };
+      }
+      const ids = new Map<string, string>();
+      for (const [id, g] of groups) {
+        const row = await this.base.addFlow(
+          t,
+          u,
+          { site_id: siteId, kind: 'call_queue', name: g.name, description: description(`a group in "${flow.name}"`), wizard_answers: queueAnswers.get(id)!, wizard_version: 1, editor: 'call-flows' },
+          canReview,
+        );
+        ids.set(id, row.id);
+        if (row.voice_app_id) madeApps.push(row.voice_app_id);
+      }
+      const row = await this.base.addFlow(
+        t,
+        u,
+        { site_id: siteId, kind: 'auto_attendant', name: flow.name, description: description('answers the number'), wizard_answers: attendantAnswers(ids), wizard_version: 1, voice_app_id: top.id, resource_account_id: ra.id, editor: 'call-flows' },
+        canReview,
+      );
+      return { voiceAppId: top.id, flowId: row.id, queues: ids.size };
+    } catch (e) {
+      // nothing half made: the number freed, its resource account, the voice apps and their Call flows removed
+      if (madeApps.length) {
+        const ras = await this.s(t).selectFrom('discovery_resource_accounts').select('id').where('voice_app_id', 'in', madeApps).execute();
+        for (const r of ras) await this.releaseHolder(t, 'resource_account', r.id);
+        if (ras.length) await this.s(t).deleteFrom('discovery_resource_accounts').where('id', 'in', ras.map((r) => r.id)).execute();
+        await this.s(t).deleteFrom('discovery_flows').where('voice_app_id', 'in', madeApps).execute();
+        await this.s(t).deleteFrom('discovery_voice_apps').where('id', 'in', madeApps).execute();
+      }
+      throw e;
+    }
   }
 
   /* ====================== resource accounts ====================== */
