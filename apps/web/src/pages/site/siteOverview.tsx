@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Button, Card, Dropdown, Field, Input, Option, Spinner, Text } from '@fluentui/react-components';
 import { LICENSING_MODELS, SITE_REGIONS, type DiscoverySiteOverview, type Paginated, type SiteContacts } from '@tvmf/shared';
@@ -62,10 +62,17 @@ export function OverviewTab({
   const [contacts, setContacts] = useState<SiteContacts>(overview.contacts ?? {});
   const [error, setError] = useState<string | null>(null);
 
+  // When the overview reloads (after a save here, or people saved straight away), a field changed here and not saved yet keeps its
+  // text; the rest take the saved values.
+  const lastOverview = useRef(overview);
   useEffect(() => {
-    setDraft(initial());
+    const before = lastOverview.current as Record<string, string> | undefined;
+    const now = overview as Record<string, string> | undefined;
+    setDraft((prev) =>
+      Object.fromEntries(OVERVIEW_FIELDS.map((f) => [f.key, (prev[f.key] ?? '') === (before?.[f.key] ?? '') ? (now?.[f.key] ?? '') : prev[f.key]!])),
+    );
     setContacts(overview.contacts ?? {});
-    setError(null);
+    lastOverview.current = overview;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overview]);
 
@@ -75,17 +82,37 @@ export function OverviewTab({
     queryFn: () => api<ContactUser[]>(`${base}/contact-candidates`),
   });
 
+  // People are saved as soon as they change (below), so only the fields count here.
   const dirty = useMemo(
-    () =>
-      OVERVIEW_FIELDS.some(
-        (f) => (draft[f.key] ?? '') !== ((overview as Record<string, string>)?.[f.key] ?? ''),
-      ) || contactsKey(contacts) !== contactsKey(overview.contacts),
-    [draft, contacts, overview],
+    () => OVERVIEW_FIELDS.some((f) => (draft[f.key] ?? '') !== ((overview as Record<string, string>)?.[f.key] ?? '')),
+    [draft, overview],
   );
+
+  // Bug report "Adding Contacts to Site Data" (11 Nov 2026): a person added and not followed by Save was lost on leaving the page.
+  // Each change to the people is now saved straight away; only the people are sent, so the fields above keep their own Save.
+  const [contactsState, setContactsState] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const saveContacts = useMutation({
+    mutationFn: (next: SiteContacts) => api(`${base}/sites/${siteId}/overview`, { method: 'PATCH', body: JSON.stringify({ contacts: next }) }),
+    onMutate: () => setContactsState('saving'),
+    onSuccess: () => {
+      setError(null);
+      setContactsState('saved');
+      onSaved();
+    },
+    onError: (e) => {
+      setContactsState('idle');
+      setContacts(overview.contacts ?? {});
+      setError(e instanceof ApiError ? `The change to the people wasn't saved: ${e.message}` : "The change to the people wasn't saved.");
+    },
+  });
+  const changeContacts = (next: SiteContacts) => {
+    setContacts(next);
+    if (contactsKey(next) !== contactsKey(contacts)) saveContacts.mutate(next);
+  };
 
   const save = useMutation({
     mutationFn: () => {
-      const body: Record<string, unknown> = { ...draft, contacts };
+      const body: Record<string, unknown> = { ...draft };
       // Numeric overview fields (e.g. portDocReminderDays) are optional server-side,
       // but an empty string would coerce to 0 and fail its min() check - omit instead.
       for (const f of OVERVIEW_FIELDS) {
@@ -173,11 +200,17 @@ export function OverviewTab({
           <Text weight="semibold">People</Text>
           <Text size={200} className={s.muted} block>
             Who is on this site, by role. Pick from the active users or add someone by name and email. Each role can hold several people.
+            {editable && ' Changes to the people are saved straight away.'}
           </Text>
+          {editable && contactsState !== 'idle' && (
+            <Text size={200} className={s.muted} block role="status">
+              {contactsState === 'saving' ? 'Saving…' : 'Saved'}
+            </Text>
+          )}
         </div>
         <SiteContactsEditor
           value={contacts}
-          onChange={setContacts}
+          onChange={changeContacts}
           editable={editable}
           candidates={candidates.data ?? []}
           knownUsers={contactUsers}

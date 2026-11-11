@@ -156,7 +156,7 @@ function RolePanel({
 }) {
   const s = useStyles();
   const [adding, setAdding] = useState(false);
-  // The last person taken off, so a slip is one click to undo (until the next change). Nothing is saved until Save, either.
+  // The last person taken off, so a slip is one click to undo (until the next change). Each change is saved straight away (siteOverview.tsx), and so is the undo.
   const [removed, setRemoved] = useState<{ person: SiteContact; index: number; name: string } | null>(null);
   const full = list.length >= MAX_CONTACTS_PER_ROLE;
 
