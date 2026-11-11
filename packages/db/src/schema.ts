@@ -1049,6 +1049,8 @@ export interface BuildResourceAccountsTable {
   errors: string | null;
   created_at: Ts;
   updated_at: Ts;
+  /** 0100 - when an engineer made, edited or confirmed it; null = brought in from Site Data and not looked at yet ("imported") */
+  designed_at: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** Set-CsTeamsSharedCallingRoutingPolicy-shaped row - see 0031_shared_calling_policies.sql for the cmdlet mapping. */

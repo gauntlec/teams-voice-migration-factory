@@ -1287,6 +1287,8 @@ export class BuildService {
         voice_routing_policy_id: resolved?.policy_ids.voice_routing_policy ?? null,
         application_id: body.created ? RESOURCE_ACCOUNT_APPLICATION_IDS[body.kind] : null,
         status: {},
+        // made by hand: designed from the start
+        designed_at: new Date().toISOString(),
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -1313,7 +1315,8 @@ export class BuildService {
   async updateResourceAccount(t: TenantContext, u: AuthedUser, id: string, body: BuildResourceAccountPatchInput) {
     await this.assertNotSrLocked(t, [id]);
     const { phone_number_id, created, voice_routing_policy_id, ...rest } = body;
-    const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString() };
+    // an engineer's edit makes an imported row designed
+    const patch: Record<string, unknown> = { ...rest, updated_at: new Date().toISOString(), designed_at: new Date().toISOString() };
     const row = await this.inTx(t, async () => {
       const existing = await this.getResourceAccount(t, id);
       if (phone_number_id !== undefined) {
@@ -1352,6 +1355,18 @@ export class BuildService {
       detail: { fields: Object.keys(patch) },
     });
     return row;
+  }
+
+  /**
+   * Confirms resource accounts brought in from Site Data as designed, nothing needing changing (bug report "Design and Build - Resource
+   * Account"). Rows already designed are left as they are.
+   */
+  async confirmResourceAccounts(t: TenantContext, u: AuthedUser, siteId: string, ids?: string[]) {
+    let q = this.s(t).updateTable('build_resource_accounts').set({ designed_at: new Date().toISOString() }).where('site_id', '=', siteId).where('designed_at', 'is', null);
+    if (ids) q = q.where('id', 'in', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']);
+    const rows = await q.returning('id').execute();
+    await this.audit.tenant(t.schema, 'build.resource_accounts_confirmed', { actor: actorOf(u), targetType: 'discovery_site', targetId: siteId, detail: { count: rows.length } });
+    return { confirmed: rows.length };
   }
 
   /* shared calling policies */
@@ -1824,6 +1839,7 @@ export class BuildService {
       const upn = d.upn ?? liveUpn ?? '';
       const byUpn = upn ? existing.find((e) => e.upn.toLowerCase() === upn.toLowerCase() && !e.discovery_resource_account_id) : undefined;
       if (byUpn) {
+        // a row made by hand keeps its design: only linked to its Site Data row
         await s.updateTable('build_resource_accounts').set({ discovery_resource_account_id: d.id }).where('id', '=', byUpn.id).execute();
         continue;
       }

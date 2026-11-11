@@ -1228,6 +1228,9 @@ export type BuildQuickAddInput = z.infer<typeof buildQuickAddSchema>;
 export const buildPopulateSchema = z.object({ site_id: z.guid() }).strict();
 export type BuildPopulateInput = z.infer<typeof buildPopulateSchema>;
 
+/** Confirm resource accounts brought in from Site Data as designed: the site's, or just `ids`. */
+export const buildResourceAccountConfirmSchema = z.object({ site_id: z.guid(), ids: z.array(z.guid()).max(500).optional() }).strict();
+
 /**
  * Shared calling policies from Teams into Design & Build (Discovery's tenant_policies). `names`: the live policies to bring in
  * (matched by name, case-insensitive). `updateExisting`: also overwrite a Design & Build row of the same name with what Teams

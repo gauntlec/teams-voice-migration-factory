@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors, ParseUUIDPipe } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, NotFoundException, Param, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors, ParseUUIDPipe } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
   can,
@@ -17,6 +17,7 @@ import {
   buildImportAndLinkResourceAccountSchema,
   buildListQuerySchema,
   buildPopulateSchema,
+  buildResourceAccountConfirmSchema,
   buildSharedCallingPopulateSchema,
   buildResourceAccountCreateSchema,
   buildResourceAccountPatchSchema,
@@ -291,6 +292,13 @@ export class BuildController {
     @Body(new ZodBody(buildPopulateSchema)) body: BuildPopulateInput,
   ) {
     return this.svc.populateAll(t, user, body.site_id);
+  }
+  /** Confirm resource accounts brought in from Site Data as designed (all the site's, or `ids`). */
+  @Post('resource-accounts/confirm')
+  @HttpCode(200)
+  @RequirePermission('build:write')
+  confirmResourceAccounts(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Body(new ZodBody(buildResourceAccountConfirmSchema)) body: { site_id: string; ids?: string[] }) {
+    return this.svc.confirmResourceAccounts(t, user, body.site_id, body.ids);
   }
   @Post('resource-accounts/import-and-link')
   @RequirePermission('build:write')
