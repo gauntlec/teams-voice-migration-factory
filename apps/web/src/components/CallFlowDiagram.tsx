@@ -505,6 +505,15 @@ async function addDiagramPages(pdf: jsPDF, shot: Shot, portrait: boolean, title:
   }
 }
 
+/** The A4 PDF of a diagram: the cover with the key facts, then the diagram. The PDF button makes it; so does a Service Handover pack, to embed. */
+async function callFlowPdf(shot: Shot, title: string, graph: CallFlowGraph, portrait: boolean, tenantId: string | null): Promise<jsPDF> {
+  const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const brand = await loadPdfBrand(tenantId);
+  addCover(pdf, title, callFlowSummary(graph), brand);
+  await addDiagramPages(pdf, shot, portrait, title, brand);
+  return pdf;
+}
+
 /**
  * Export-to-PNG/PDF buttons - a child of ReactFlow so useReactFlow can read the laid-out node positions/sizes. The PDF is A4: a cover page with
  * the key facts, then the diagram (see addDiagramPages). An export never carries the review warnings: `prepare` lays the diagram out without
@@ -528,11 +537,7 @@ function ExportControls({ filename, title, direction, graph, prepare }: { filena
       if (kind === 'png') {
         downloadDataUrl(shot.dataUrl, `${filename}.png`);
       } else {
-        const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-        const brand = await loadPdfBrand(activeTenantId);
-        addCover(pdf, title, callFlowSummary(graph), brand);
-        await addDiagramPages(pdf, shot, direction === 'TB', title, brand);
-        pdf.save(`${filename}.pdf`);
+        (await callFlowPdf(shot, title, graph, direction === 'TB', activeTenantId)).save(`${filename}.pdf`);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Export failed.');
@@ -809,7 +814,8 @@ function FlowCanvas({
  * hand-rolled tree layout won't fit every real Auto Attendant/Call Queue
  * chain. Portrait (top to bottom) by default: it fits an A4 page.
  */
-export type CapturedDiagram = { blob: Blob; width: number; height: number };
+/** blob: the PNG; pdf: the same diagram as the PDF button makes it (cover and diagram), when it could be made */
+export type CapturedDiagram = { blob: Blob; width: number; height: number; pdf?: Blob };
 
 function dataUrlToPngBlob(dataUrl: string): Blob {
   const bytes = atob(dataUrl.slice(dataUrl.indexOf(',') + 1));
@@ -819,8 +825,9 @@ function dataUrlToPngBlob(dataUrl: string): Blob {
 }
 
 /**
- * Draws a diagram off-screen and hands back its picture, left to right as in the handover pack: used when a pack is generated
- * (Service Handover), where the server has no browser to draw it with. No review warnings: the picture is for the customer.
+ * Draws a diagram off-screen and hands back its picture and its PDF, left to right as in the handover pack: used when a pack is generated
+ * (Service Handover), where the server has no browser to draw it with. No review warnings: the picture is for the customer. The pack
+ * embeds the PDF under the picture; without one (it couldn't be made) the server makes a plainer one from the picture.
  */
 export function CallFlowCapture({ graph: drawn, onDone }: { graph: CallFlowGraph; onDone: (shot: CapturedDiagram | null, error?: string) => void }) {
   const { activeTenantId } = useAuth();
@@ -839,7 +846,15 @@ export function CallFlowCapture({ graph: drawn, onDone }: { graph: CallFlowGraph
           filename="call-flow"
           title={drawn.nodes[0]?.label ?? 'Call flow'}
           showWarnings={false}
-          onCapture={(shot, error) => onDone(shot ? { blob: dataUrlToPngBlob(shot.dataUrl), width: shot.width, height: shot.height } : null, error)}
+          onCapture={(shot, error) => {
+            if (!shot) return onDone(null, error);
+            const png = { blob: dataUrlToPngBlob(shot.dataUrl), width: shot.width, height: shot.height };
+            const title = drawn.nodes[0]?.label ?? 'Call flow';
+            callFlowPdf(shot, title, graph, false, activeTenantId).then(
+              (pdf) => onDone({ ...png, pdf: pdf.output('blob') }),
+              () => onDone(png),
+            );
+          }}
         />
       </ReactFlowProvider>
     </div>

@@ -26,8 +26,11 @@ export type HandoverBlock =
   | { kind: 'labels'; rows: [string, string][]; caption?: string; title?: string }
   | { kind: 'cards'; cards: [string, string][][]; caption?: string; /** cards side by side (default 2); 1 gives each card the page's width */ perRow?: 1 | 2 }
   | { kind: 'actions'; items: { description: string; owner: string }[]; caption?: string }
-  /** a picture kept with the pack (a call flow diagram): the stored file, what it shows, and its size in pixels */
-  | { kind: 'image'; fileId: string; title: string; width: number; height: number; /** "Figure N – <this>" under the picture */ caption?: string };
+  /**
+   * a picture kept with the pack (a call flow diagram): the stored file, what it shows, and its size in pixels. Under its caption the pack
+   * embeds the diagram as a PDF the reader double-clicks to open: the stored PDF (pdfFileId), or one made from the picture.
+   */
+  | { kind: 'image'; fileId: string; title: string; width: number; height: number; /** "Figure N – <this>" under the picture */ caption?: string; pdfFileId?: string };
 
 /** A note line that is a bullet ("- " or "• ") or a numbered sub-heading ("## "), as the document and preview draw it. */
 export function noteLine(line: string): { kind: 'bullet' | 'heading' | 'text'; text: string } {
