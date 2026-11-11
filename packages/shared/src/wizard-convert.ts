@@ -77,14 +77,18 @@ const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * An Auto Attendant's "Voicemail" destination is always a shared mailbox - a
  * Microsoft 365 group (Microsoft Learn: "the voice mailbox associated with a
  * Microsoft 365 Group that you specify"); there is no personal-voicemail
- * option on an AA. The wizard can't search groups, so the engineer picks the
- * group in Design & Build unless a group id was typed.
+ * option on an AA. The wizard's group is used when it was picked from the
+ * customer's groups (or its id typed); otherwise the engineer picks it in
+ * Design & Build - with a note when the group is still to be made.
  */
-function sharedVoicemailTarget(label: string | undefined, warnings: string[], where: string): AutoAttendantCallableEntity {
-  const id = (label ?? '').trim();
-  if (GUID_RE.test(id)) return { kind: 'shared_voicemail', groupId: id };
+function sharedVoicemailTarget(t: WizardTarget | undefined, warnings: string[], where: string): AutoAttendantCallableEntity {
+  const label = (t?.label ?? '').trim();
+  const id = t?.groupId ?? (GUID_RE.test(label) ? label : undefined);
+  if (id && !t?.newGroup) return { kind: 'shared_voicemail', groupId: id };
   warnings.push(
-    `${where}: goes to voicemail${id ? ` ("${id}")` : ''} - in Teams that's a shared voicemail on a Microsoft 365 group. Choose the group in Design & Build, or calls will be disconnected.`,
+    t?.newGroup
+      ? `${where}: goes to the voicemail of a new Microsoft 365 group${label ? ` "${label}"` : ''} that doesn't exist yet. Make the group in Microsoft 365, then choose it in Design & Build, or calls will be disconnected.`
+      : `${where}: goes to voicemail${label ? ` ("${label}")` : ''} - in Teams that's a shared voicemail on a Microsoft 365 group. Choose the group in Design & Build, or calls will be disconnected.`,
   );
   return { kind: 'shared_voicemail' };
 }
@@ -122,7 +126,7 @@ function convertTarget(t: WizardTarget | undefined, resolvers: WizardResolvers, 
       warnings.push(`${where}: playing a message is only possible as a menu option - choose a destination for this after import.`);
       return undefined;
     case 'voicemail':
-      return sharedVoicemailTarget(t.label, warnings, where);
+      return sharedVoicemailTarget(t, warnings, where);
     case 'external':
       if (!t.label) {
         warnings.push(`${where}: no outside number was entered.`);
@@ -177,7 +181,7 @@ function convertCallFlow(cf: WizardCallFlow, resolvers: WizardResolvers, warning
     return { greetings, menu: { options: [{ dtmf: 'Automatic', action: 'DisconnectCall' }] } };
   }
   if (cf.mode === 'voicemail') {
-    return { greetings, menu: { options: [{ dtmf: 'Automatic', action: 'TransferCallToTarget', target: sharedVoicemailTarget(undefined, warnings, label) }] } };
+    return { greetings, menu: { options: [{ dtmf: 'Automatic', action: 'TransferCallToTarget', target: sharedVoicemailTarget(cf.target?.kind === 'voicemail' ? cf.target : undefined, warnings, label) }] } };
   }
   const target = convertTarget(cf.target, resolvers, warnings, label);
   if (!target) warnings.push(`${label}: no destination was chosen - calls will be disconnected until this is set.`);

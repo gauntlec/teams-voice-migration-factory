@@ -15,7 +15,7 @@ describe('a discovered auto attendant as wizard answers', () => {
         operator: { kind: 'user', upn: 'op@x.test' },
         schedule: { type: 'weekly', weekly: { ...weekdays, complement: true } } as never,
         defaultCallFlow: { greetings: [{ type: 'Text', text: 'Hello' }], menu: { enableDialByName: true, options: [{ dtmf: 'Tone1', action: 'TransferCallToTarget', target: { kind: 'call_queue', buildId: 'cq1' } }, { dtmf: 'Tone2', action: 'TransferCallToTarget', target: { kind: 'external', number: 'tel:+442071234567' } }, { dtmf: 'Tone0', action: 'TransferCallToOperator' }] } },
-        afterHoursCallFlow: { greetings: [], menu: { options: [{ dtmf: 'Automatic', action: 'TransferCallToTarget', target: { kind: 'shared_voicemail', groupId: 'g1' } }] } },
+        afterHoursCallFlow: { greetings: [], menu: { options: [{ dtmf: 'Automatic', action: 'TransferCallToTarget', target: { kind: 'shared_voicemail', groupId: '11111111-2222-4333-8444-555555555555' } }] } },
         holidayCallFlows: [{ name: 'Christmas', schedule: { type: 'fixed', fixed: { ranges: [{ start: '2026-12-25T00:00:00', end: '2026-12-27T00:00:00' }] } } as never, callFlow: { greetings: [], menu: { options: [{ dtmf: 'Automatic', action: 'DisconnectCall' }] } } }],
       },
       ctx,
@@ -30,7 +30,8 @@ describe('a discovered auto attendant as wizard answers', () => {
       { key: '2', label: '+442071234567', target: { kind: 'external', label: '+442071234567' } },
       { key: '0', label: 'Operator', target: { kind: 'operator' } },
     ]);
-    expect(answers!.afterHoursFlow).toEqual({ mode: 'voicemail' });
+    // the shared voicemail's group comes along
+    expect(answers!.afterHoursFlow).toEqual({ mode: 'voicemail', target: { kind: 'voicemail', groupId: '11111111-2222-4333-8444-555555555555' } });
     expect(answers!.operator).toEqual({ kind: 'person', label: 'op@x.test' });
     // the stored end is exclusive; the wizard's dates are whole days, both included
     expect(answers!.holidays![0]!.dateRange).toEqual({ start: '2026-12-25', end: '2026-12-26' });

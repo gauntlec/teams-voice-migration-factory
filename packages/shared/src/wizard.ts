@@ -29,6 +29,13 @@ export const wizardTargetSchema = z
     label: str(200).optional(),
     /** The discovery_flows row this points at, when the target was picked by id rather than typed/matched by name - always set for kind 'call_queue' (the "Set up a new call queue" nested wizard flow), optionally set for kind 'team' when picked from the picker's "planned" suggestions (see TargetPicker.tsx). */
     flowId: z.guid().optional(),
+    /**
+     * kind 'voicemail': the Microsoft 365 group whose shared voicemail takes the calls (Teams has no other voicemail for an auto attendant),
+     * picked from the customer's groups; `label` is its name. Typed only (a customer, or a group not read yet), `label` alone.
+     */
+    groupId: z.guid().optional(),
+    /** kind 'voicemail': the group doesn't exist yet and will be made; `label` is the name it should have (bug report "Auto Attendnat Wizard #3"). */
+    newGroup: z.boolean().optional(),
   })
   .strict();
 export type WizardTarget = z.infer<typeof wizardTargetSchema>;
@@ -53,7 +60,7 @@ export const wizardCallFlowSchema = z
     greeting: str(1000).optional(),
     /** mode === 'menu' only: read out to offer the choices (New-CsAutoAttendantMenu -Prompts). Left out, the greeting is used when deploying. */
     menuPrompt: str(1000).optional(),
-    /** mode === 'direct' only. */
+    /** mode === 'direct': where every call goes. mode === 'voicemail': the group whose voicemail takes them (kind 'voicemail'). */
     target: wizardTargetSchema.optional(),
     /** mode === 'menu' only. */
     options: z.array(wizardMenuOptionSchema).max(12).optional(),

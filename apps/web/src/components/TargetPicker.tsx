@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Combobox, Dropdown, Field, Input, Option, Text, Textarea , makeStyles, shorthands } from '@fluentui/react-components';
+import { Checkbox, Combobox, Dropdown, Field, Input, Option, Text, Textarea, makeStyles, shorthands } from '@fluentui/react-components';
 import type { Paginated, WizardTarget } from '@tvmf/shared';
 import { api } from '../api';
+import { useAuth } from '../auth';
+import { GroupAutocomplete } from './GroupAutocomplete';
 import { CallQueueWizard } from './CallQueueWizard';
 import { UpnAutocomplete } from './UpnAutocomplete';
 import type { Choice } from './records';
@@ -12,6 +14,7 @@ const useLocalStyles = makeStyles({
   minW220: { minWidth: '220px' },
   minW260: { minWidth: '260px' },
   minW200: { minWidth: '200px' },
+  groupField: { display: 'grid', rowGap: '4px' },
 });
 
 
@@ -140,6 +143,8 @@ export function TargetPicker({
             className={ls.minW260}
           />
         </Field>
+      ) : kind === 'voicemail' ? (
+        <VoicemailGroupField value={value} onChange={onChange} tenantId={tenantId} />
       ) : kind === 'person' && tenantId ? (
         <Field label="Name or email">
           <UpnAutocomplete
@@ -199,6 +204,48 @@ export function TargetPicker({
           }}
         />
       )}
+    </div>
+  );
+}
+
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Whose voicemail: in Teams an auto attendant's voicemail is always a Microsoft 365 group's shared voicemail (bug report "Auto Attendnat
+ * Wizard #3": the wizard gave no way to say which). Staff search the customer's groups (read by Discovery); anyone can type a name. A
+ * group that doesn't exist yet is named here, and the engineer makes it and picks it in Design & Build.
+ */
+export function VoicemailGroupField({ value, onChange, tenantId }: { value: WizardTarget | undefined; onChange: (t: WizardTarget) => void; tenantId?: string }) {
+  const ls = useLocalStyles();
+  const { can } = useAuth();
+  const isNew = !!value?.newGroup;
+  const canSearch = !!tenantId && can('tenantdiscovery:read');
+  return (
+    <div className={ls.groupField}>
+      {isNew ? (
+        <Field label="Name for the new group" hint="Voxshift doesn't make the group: it's made in Microsoft 365, then chosen in Design & Build.">
+          <Input value={value?.label ?? ''} placeholder="Reception voicemail" className={ls.minW260} onChange={(_, d) => onChange({ kind: 'voicemail', label: d.value, newGroup: true })} />
+        </Field>
+      ) : canSearch ? (
+        <Field label="Microsoft 365 group" hint="The group whose voicemail takes the calls. Type part of its name.">
+          <GroupAutocomplete
+            tenantId={tenantId!}
+            value={value?.groupId ?? value?.label ?? ''}
+            placeholder="Search the customer's groups"
+            className={ls.minW260}
+            onChange={(v) => onChange(GUID.test(v.trim()) ? { kind: 'voicemail', groupId: v.trim() } : { kind: 'voicemail', label: v })}
+          />
+        </Field>
+      ) : (
+        <Field label="Microsoft 365 group" hint="The group whose voicemail takes the calls, by name.">
+          <Input value={value?.label ?? ''} placeholder="Reception voicemail" className={ls.minW260} onChange={(_, d) => onChange({ kind: 'voicemail', label: d.value })} />
+        </Field>
+      )}
+      <Checkbox
+        checked={isNew}
+        label="This group doesn't exist yet"
+        onChange={(_, d) => onChange(d.checked ? { kind: 'voicemail', label: value?.groupId ? '' : (value?.label ?? ''), newGroup: true } : { kind: 'voicemail', label: value?.label ?? '' })}
+      />
     </div>
   );
 }
