@@ -19,6 +19,7 @@ import { DataTable } from '../../components/DataTable';
 import { ReviewStatusBadge } from '../../components/ReviewStatusBadge';
 import { LoadError, useRecordStyles } from '../../components/records';
 import { DangerText } from '../../components/ui';
+import { siteChangesKeyPrefix, siteChangesQuery, type SiteChangesList } from './siteChangesQuery';
 
 const useStyles = makeStyles({
   bar: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', ...shorthands.gap('10px') },
@@ -29,16 +30,6 @@ export interface SiteReview {
   status: DiscoveryStatus;
   submitted_at: string | null;
   accepted_at: string | null;
-}
-
-interface SiteChange {
-  id: string;
-  changed_at: string;
-  actor_name: string | null;
-  entity: string;
-  entity_label: string | null;
-  action: 'added' | 'changed' | 'removed';
-  detail: string | null;
 }
 
 const ACTION_COLOR = { added: 'success', changed: 'warning', removed: 'danger' } as const;
@@ -106,17 +97,29 @@ export function SiteReviewBar({
   );
 }
 
-/** For the engineer: what changed on this site since it was submitted, until they mark it as reviewed. */
-export function SiteChangesCard({ base, siteId, onChanged }: { base: string; siteId: string; onChanged: () => void }) {
+/**
+ * For the engineer: what changed on this site since it was submitted, until they mark it as reviewed.
+ * `pendingChanges` is the count from the site summary; the list is read again whenever it changes (see siteChangesQuery).
+ */
+export function SiteChangesCard({
+  base,
+  siteId,
+  pendingChanges,
+  onChanged,
+}: {
+  base: string;
+  siteId: string;
+  pendingChanges: number;
+  onChanged: () => void;
+}) {
   const s = useStyles();
   const rs = useRecordStyles();
   const qc = useQueryClient();
-  const key = ['site-changes', base, siteId];
-  const list = useQuery({ queryKey: key, queryFn: () => api<{ items: SiteChange[]; total: number }>(`${base}/sites/${siteId}/changes`) });
+  const list = useQuery(siteChangesQuery(base, siteId, pendingChanges, () => api<SiteChangesList>(`${base}/sites/${siteId}/changes`)));
   const ack = useMutation({
     mutationFn: () => api(`${base}/sites/${siteId}/changes/acknowledge`, { method: 'POST' }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: key });
+      qc.invalidateQueries({ queryKey: siteChangesKeyPrefix(base, siteId) });
       onChanged();
     },
   });
