@@ -36,7 +36,6 @@ import { noteLine, type HandoverApproval, type HandoverBlock, type HandoverHisto
 import { VOX_TILE_PNG_BASE64 } from '../deployment/assets/vox-tile';
 import { columnWidths, wordsFit } from './column-widths';
 import { PackPageNumbers, type PackHeading } from './pack-page-numbers';
-import { diagramPdf, embedMarker, embedPdfs, type PdfEmbed } from './embedded-pdf';
 import { bannerPng } from '../branding/banner-png';
 import { VOXSHIFT_DOCUMENT_BRAND, type DocumentBrand } from '../branding/document-branding.service';
 
@@ -76,7 +75,7 @@ export interface HandoverSectionData {
 export interface HandoverDocumentInput {
   /** whose branding the pack carries (DocumentBrandingService); Voxshift's when not given */
   brand?: DocumentBrand;
-  /** the pictures the sections name (call flow diagrams) and the PDFs of them to embed, by stored file id */
+  /** the pictures the sections name (call flow diagrams), by stored file id */
   images?: Map<string, Buffer>;
   /** the customer's own logo, for the right of the page header (whichever branding the pack carries) */
   customerLogo?: DocumentBrand['logo'];
@@ -283,8 +282,8 @@ function actionsTable(items: { description: string; owner: string }[], section: 
  * "Table N – <caption>": a Word SEQ Table field (so Word keeps the numbers in order if tables are added or removed) holding
  * the number already, so it shows in any viewer before Word updates it.
  */
-function caption(n: number, label: string, kind: 'Table' | 'Figure' = 'Table', keepNext = false): Paragraph {
-  return new Paragraph({ style: 'Caption', keepNext, children: [new TextRun({ text: `${kind} ` }), new SimpleField(`SEQ ${kind} \\* ARABIC`, String(n)), new TextRun({ text: ` – ${label}` })] });
+function caption(n: number, label: string, kind: 'Table' | 'Figure' = 'Table'): Paragraph {
+  return new Paragraph({ style: 'Caption', children: [new TextRun({ text: `${kind} ` }), new SimpleField(`SEQ ${kind} \\* ARABIC`, String(n)), new TextRun({ text: ` – ${label}` })] });
 }
 
 const body = (t: string, bold = false, keepNext = false) => new Paragraph({ spacing: { after: 120 }, keepNext, children: [text(t, { bold })] });
@@ -349,42 +348,25 @@ function noteParagraphs(lines: string[], outline: Outline): Paragraph[] {
   });
 }
 
-function sectionBody(section: HandoverSectionData, total: number, next: { table: () => number; figure: () => number }, number: number, images: Map<string, Buffer>, maxImageHeight: number, outline: Outline, attach: Attach): (Paragraph | Table)[] {
+function sectionBody(section: HandoverSectionData, total: number, next: { table: () => number; figure: () => number }, number: number, images: Map<string, Buffer>, maxImageHeight: number, outline: Outline): (Paragraph | Table)[] {
   const out: (Paragraph | Table)[] = [outline.h1(section.title)];
   const { content } = section;
   const captionFor = (label?: string) => caption(next.table(), label ?? CAPTION[section.key] ?? `${section.title} Table`);
-  const figureFor = (label: string, keepNext?: boolean) => caption(next.figure(), label, 'Figure', keepNext);
+  const figureFor = (label: string) => caption(next.figure(), label, 'Figure');
   if (content.kind === 'placeholder') return [...out, new Paragraph({ spacing: { after: 120 }, children: [text(content.note, { italics: true, color: CAPTION_GREY })] })];
   if (content.kind === 'paragraphs') {
     if (content.paragraphs.length === 0) return [...out, body(EMPTY_TEXT[section.key] ?? 'Nothing recorded.')];
     return [...out, ...noteParagraphs(content.paragraphs, outline)];
   }
   if (content.kind === 'blocks') {
-    for (const b of content.blocks) out.push(...blockBody(b, total, captionFor, figureFor, number, images, maxImageHeight, outline, attach));
+    for (const b of content.blocks) out.push(...blockBody(b, total, captionFor, figureFor, number, images, maxImageHeight, outline));
     return out;
   }
   if (content.rows.length === 0) return [...out, body(EMPTY_TEXT[section.key] ?? 'Nothing recorded.')];
   return [...out, dataTable(content.columns, content.rows, total), captionFor()];
 }
 
-/** The paragraphs that embed a diagram's PDF (an icon to double-click, and what it is), or none when there is no PDF for it. */
-type Attach = (b: Extract<HandoverBlock, { kind: 'image' }>) => Paragraph[];
-
-/** A diagram PDF's name as the reader sees it when it opens: "Call Flow Diagram - Main Line.pdf". */
-const diagramPdfName = (title: string) => `Call Flow Diagram - ${title}.pdf`;
-
-/**
- * Under a diagram: a paragraph holding only the marker that embedPdfs swaps for the icon, kept with the line under it that names the PDF
- * and says how to open it.
- */
-function attachParagraphs(n: number, title: string): Paragraph[] {
-  return [
-    new Paragraph({ spacing: { before: 0, after: 0 }, keepNext: true, keepLines: true, children: [new TextRun(embedMarker(n))] }),
-    new Paragraph({ spacing: { before: 40, after: 240 }, children: [text(`${diagramPdfName(title)} - double-click the icon to open the diagram as a PDF.`, { italics: true, color: CAPTION_GREY, size: 18 })] }),
-  ];
-}
-
-function blockBody(b: HandoverBlock, total: number, captionFor: (label?: string) => Paragraph, figureFor: (label: string, keepNext?: boolean) => Paragraph, section: number, images: Map<string, Buffer>, maxImageHeight: number, outline: Outline, attach: Attach): (Paragraph | Table)[] {
+function blockBody(b: HandoverBlock, total: number, captionFor: (label?: string) => Paragraph, figureFor: (label: string) => Paragraph, section: number, images: Map<string, Buffer>, maxImageHeight: number, outline: Outline): (Paragraph | Table)[] {
   switch (b.kind) {
     case 'image': {
       const data = images.get(b.fileId);
@@ -392,18 +374,15 @@ function blockBody(b: HandoverBlock, total: number, captionFor: (label?: string)
       // as wide as the text (twentieths of a point to pixels), and never taller than the page has room for
       const size = fit(b.width, b.height, Math.round((total / 20) * (96 / 72)), maxImageHeight);
       const scale = Math.min(size.width / (b.width || 1), size.height / (b.height || 1));
-      // the diagram's PDF to double-click, kept on the page with the picture and its caption
-      const attached = attach(b);
       return [
         // the caption under the picture names it; without one, the name goes above
         ...(b.caption ? [] : [new Paragraph({ spacing: { before: 120, after: 60 }, keepNext: true, children: [text(b.title, { bold: true })] })]),
         new Paragraph({
           spacing: { before: b.caption ? 120 : 0, after: b.caption ? 60 : 200 },
-          keepNext: !!b.caption || attached.length > 0,
+          keepNext: !!b.caption,
           children: [new ImageRun({ type: 'png', data, transformation: { width: Math.round(b.width * scale), height: Math.round(b.height * scale) }, altText: { title: `Call flow: ${b.title}`, description: `Call flow diagram for ${b.title}`, name: `Call flow ${b.title}` } })],
         }),
-        ...(b.caption ? [figureFor(b.caption, attached.length > 0)] : []),
-        ...attached,
+        ...(b.caption ? [figureFor(b.caption)] : []),
       ];
     }
     case 'heading':
@@ -435,36 +414,14 @@ export class HandoverDocumentService {
   constructor(@Optional() private readonly pageNumbers?: PackPageNumbers) {}
 
   async build(input: HandoverDocumentInput): Promise<Buffer> {
-    const pdfs = await this.diagramPdfs(input);
-    if (!this.pageNumbers) return (await this.draw(input, null, false, pdfs)).docx;
+    if (!this.pageNumbers) return (await this.draw(input, null, false)).docx;
     // Drawn once with a stand-in page number on every contents line, so the contents takes the same room, to see where the headings fall.
-    // The measured copy holds the embedded PDFs too, so their icons take the same room.
-    const measured = await this.draw(input, null, true, pdfs);
+    const measured = await this.draw(input, null, true);
     const pages = await this.pageNumbers.locate(measured.docx, measured.headings);
-    return (await this.draw(input, pages, false, pdfs)).docx;
+    return (await this.draw(input, pages, false)).docx;
   }
 
-  /**
-   * The PDF to embed under each diagram, by the picture's file id: the one the browser uploaded with it (the call flow page's PDF
-   * export), or else one made here from the picture (a pack drawn before the browser uploaded PDFs). A diagram whose picture is
-   * missing gets none; one that can't be made is left out, never failing the pack.
-   */
-  private async diagramPdfs(input: HandoverDocumentInput): Promise<Map<string, Buffer>> {
-    const images = input.images ?? new Map<string, Buffer>();
-    const out = new Map<string, Buffer>();
-    for (const s of input.sections) {
-      if (s.content.kind !== 'blocks') continue;
-      for (const b of s.content.blocks) {
-        if (b.kind !== 'image' || out.has(b.fileId) || !images.has(b.fileId)) continue;
-        const uploaded = b.pdfFileId ? images.get(b.pdfFileId) : undefined;
-        if (uploaded) out.set(b.fileId, uploaded);
-        else await diagramPdf(images.get(b.fileId)!, `Call flow: ${b.title}`, b).then((pdf) => out.set(b.fileId, pdf), () => undefined);
-      }
-    }
-    return out;
-  }
-
-  private async draw(input: HandoverDocumentInput, pages: Map<string, number> | null, placeholders: boolean, pdfs: Map<string, Buffer>): Promise<{ docx: Buffer; headings: PackHeading[] }> {
+  private async draw(input: HandoverDocumentInput, pages: Map<string, number> | null, placeholders: boolean): Promise<{ docx: Buffer; headings: PackHeading[] }> {
     const brand = input.brand ?? VOXSHIFT_DOCUMENT_BRAND;
     const page = PAGES[input.pageSize ?? 'a4'];
     const total = page.width - 2 * MARGIN;
@@ -597,15 +554,7 @@ export class HandoverDocumentService {
     // the data sections follow from 2.
     // room for a picture on a page: the page less its margins, header and footer, in pixels
     const maxImageHeight = Math.round(((page.height - 2 * MARGIN) / 20) * (96 / 72)) - 100;
-    // each diagram's PDF, embedded under it once the document is packed
-    const embeds: PdfEmbed[] = [];
-    const attach: Attach = (b) => {
-      const pdf = pdfs.get(b.fileId);
-      if (!pdf) return [];
-      embeds.push({ fileName: diagramPdfName(b.title), pdf });
-      return attachParagraphs(embeds.length - 1, b.title);
-    };
-    const content = [...approvals, ...sections.flatMap((s, i) => sectionBody(s, total, next, i + 2, input.images ?? new Map(), maxImageHeight, outline, attach))];
+    const content = [...approvals, ...sections.flatMap((s, i) => sectionBody(s, total, next, i + 2, input.images ?? new Map(), maxImageHeight, outline))];
 
     const doc = new Document({
       creator: author,
@@ -661,6 +610,6 @@ export class HandoverDocumentService {
       ],
     });
 
-    return { docx: await embedPdfs(await Packer.toBuffer(doc), embeds), headings: outline.headings };
+    return { docx: await Packer.toBuffer(doc), headings: outline.headings };
   }
 }

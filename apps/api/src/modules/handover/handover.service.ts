@@ -67,8 +67,6 @@ export interface HandoverGenerateInput {
 export interface PackDiagram {
   name: string;
   fileId: string;
-  /** the same diagram as a PDF (the call flow page's PDF export), embedded in the pack under the picture */
-  pdfFileId?: string;
   width: number;
   height: number;
 }
@@ -344,16 +342,14 @@ export class HandoverService {
   async uploadDiagram(t: TenantContext, user: AuthedUser, file: { originalname: string; buffer: Buffer } | undefined) {
     assertCustomerWide(t, 'The Service Handover pack');
     if (!file) throw new BadRequestException('Choose a diagram to upload.');
-    // the picture for the page, or the same diagram as a PDF to embed in the pack
-    const pdf = file.buffer.subarray(0, 5).toString('latin1') === '%PDF-';
-    if (!pdf && file.buffer.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') throw new BadRequestException('A call flow diagram must be a PNG picture or a PDF.');
+    if (file.buffer.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') throw new BadRequestException('A call flow diagram must be a PNG picture.');
     const stored = await this.files.store(t, {
       category: 'handover_diagram',
       sourceType: 'handover_diagram',
       sourceId: randomUUID(),
       siteId: null,
-      filename: file.originalname || (pdf ? 'call-flow.pdf' : 'call-flow.png'),
-      contentType: pdf ? 'application/pdf' : 'image/png',
+      filename: file.originalname || 'call-flow.png',
+      contentType: 'image/png',
       data: file.buffer,
       uploadedBy: user.id,
     });
@@ -363,27 +359,22 @@ export class HandoverService {
   /** The diagrams named in a generate request that really are this customer's stored diagrams. */
   private async knownDiagrams(t: TenantContext, diagrams: PackDiagram[] | undefined): Promise<PackDiagram[]> {
     if (!diagrams?.length) return [];
-    const ids = diagrams.flatMap((d) => (d.pdfFileId ? [d.fileId, d.pdfFileId] : [d.fileId]));
-    const rows = await tenantDb(this.db, t.schema).selectFrom('files').select('id').where('category', '=', 'handover_diagram').where('id', 'in', ids).execute();
+    const rows = await tenantDb(this.db, t.schema).selectFrom('files').select('id').where('category', '=', 'handover_diagram').where('id', 'in', diagrams.map((d) => d.fileId)).execute();
     const known = new Set(rows.map((r) => r.id));
-    // a PDF that isn't one of this customer's diagrams is dropped: the pack makes one from the picture instead
-    return diagrams.filter((d) => known.has(d.fileId)).map((d) => (d.pdfFileId && !known.has(d.pdfFileId) ? { ...d, pdfFileId: undefined } : d));
+    return diagrams.filter((d) => known.has(d.fileId));
   }
 
-  /** The bytes of the pictures (and their PDFs) a pack's sections name, for the document. One that can't be read is left out, never failing the pack. */
+  /** The bytes of the pictures a pack's sections name, for the document. One that can't be read is left out, never failing the pack. */
   private async packImages(t: TenantContext, sections: { content: HandoverSectionContent }[]): Promise<Map<string, Buffer>> {
     const out = new Map<string, Buffer>();
     for (const sec of sections) {
       if (sec.content.kind !== 'blocks') continue;
       for (const b of sec.content.blocks) {
-        if (b.kind !== 'image') continue;
-        for (const id of b.pdfFileId ? [b.fileId, b.pdfFileId] : [b.fileId]) {
-          if (out.has(id)) continue;
-          try {
-            out.set(id, (await this.files.readBytes(t, id)).data);
-          } catch {
-            // drawn without it: the document says the diagram isn't available (a missing PDF is made from the picture)
-          }
+        if (b.kind !== 'image' || out.has(b.fileId)) continue;
+        try {
+          out.set(b.fileId, (await this.files.readBytes(t, b.fileId)).data);
+        } catch {
+          // drawn without it: the document says the diagram isn't available
         }
       }
     }
@@ -1255,7 +1246,7 @@ export class HandoverService {
                 const live = new Set(built.autoAttendants.map((a) => a[0]!.toLowerCase()));
                 const shown = diagrams.filter((d) => live.has(d.name.toLowerCase()));
                 return shown.length
-                  ? [{ kind: 'heading', title: 'Call Flow Diagram' }, ...shown.map((d): HandoverBlock => ({ kind: 'image', fileId: d.fileId, ...(d.pdfFileId ? { pdfFileId: d.pdfFileId } : {}), title: d.name, width: d.width, height: d.height, caption: `Call Flow Diagram – ${d.name}` }))]
+                  ? [{ kind: 'heading', title: 'Call Flow Diagram' }, ...shown.map((d): HandoverBlock => ({ kind: 'image', fileId: d.fileId, title: d.name, width: d.width, height: d.height, caption: `Call Flow Diagram – ${d.name}` }))]
                   : [];
               })(),
             ]
