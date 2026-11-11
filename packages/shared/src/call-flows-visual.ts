@@ -5,7 +5,7 @@
  * The visual editor saves exactly what the classic wizards save: one Auto Attendant capture, plus one Call Queue capture per
  * group of people, linked by `flowId` as "Set up a new call queue" does. So import, deployment, diagrams and the handover pack
  * work unchanged. `toCaptures` and `fromCaptures` are each other's inverse for everything the visual editor can express; a
- * classic capture it can't express (holidays, an operator, a menu inside a menu) is reported, so the page can offer the classic
+ * classic capture it can't express (an operator, a menu inside a menu) is reported, so the page can offer the classic
  * wizard instead of losing anything.
  */
 import { z } from 'zod';
@@ -87,6 +87,16 @@ export interface VisualCallFlow {
   business: VisualPath;
   /** only when hours aren't 'always' */
   afterHours?: VisualPath;
+  /** days handled differently (docs/CALL-FLOWS-WIZARD.md step 5): Teams checks these first, whatever the hours */
+  holidays?: VisualHoliday[];
+}
+
+/** A public holiday or closure: its name, its first and last day (inclusive, YYYY-MM-DD), and what happens on it. */
+export interface VisualHoliday {
+  name: string;
+  start: string;
+  end: string;
+  path: VisualPath;
 }
 
 export interface FlowCapture<A> {
@@ -184,7 +194,7 @@ function pathToCallFlow(p: VisualPath, groups: VisualGroup[]): WizardCallFlow {
 
 /** Whether the flow is nothing but "ring this group", so the number can go straight to its call queue. */
 export function onlyRingsAGroup(f: VisualCallFlow): VisualGroup | null {
-  return f.hours.type === 'always' && !f.business.greeting?.trim() && f.business.then.kind === 'group' ? f.business.then : null;
+  return f.hours.type === 'always' && !f.holidays?.length && !f.business.greeting?.trim() && f.business.then.kind === 'group' ? f.business.then : null;
 }
 
 /**
@@ -204,7 +214,8 @@ export function toCaptures(f: VisualCallFlow, opts: { attendantFlowId: string; a
     ...(f.hours.type === 'custom' ? { customHours: f.hours.weekly } : {}),
     businessFlow: pathToCallFlow(f.business, groups),
     ...(f.hours.type !== 'always' && f.afterHours ? { afterHoursFlow: pathToCallFlow(f.afterHours, groups) } : {}),
-    holidaysEnabled: false,
+    holidaysEnabled: !!f.holidays?.length,
+    ...(f.holidays?.length ? { holidays: f.holidays.map((h) => ({ name: h.name, dateRange: { start: h.start, end: h.end }, flow: pathToCallFlow(h.path, groups) })) } : {}),
   };
   // one capture per group, even if it's reached from more than one place
   const seen = new Set<string>();
@@ -334,11 +345,11 @@ export function fromCaptures(
     return { ok: true, attendantFlowId: null, flow: { name: g.name, languageId: g.languageId, timeZoneId: site.timeZoneId, hours: { type: 'always' }, business: { then: g } } };
   }
   const a = top.capture.answers;
-  if (a.holidaysEnabled && a.holidays?.length) reasons.push('It has holiday call handling, which the preview doesn’t show yet.');
   if (a.operator) reasons.push('It names an operator, which the preview doesn’t show yet.');
   const byId = new Map(queues.map((q) => [q.flowId, q]));
   const business = callFlowToPath(a.businessFlow, byId, reasons, 'Business hours');
   const afterHours = a.hoursType !== 'always' && a.afterHoursFlow ? callFlowToPath(a.afterHoursFlow, byId, reasons, 'After hours') : undefined;
+  const holidays: VisualHoliday[] = a.holidaysEnabled ? (a.holidays ?? []).map((h) => ({ name: h.name, start: h.dateRange.start, end: h.dateRange.end, path: callFlowToPath(h.flow, byId, reasons, `Holiday "${h.name}"`) })) : [];
   if (reasons.length) return { ok: false, reasons };
   const hours: VisualCallFlow['hours'] = a.hoursType === 'custom' ? { type: 'custom', weekly: a.customHours! } : { type: a.hoursType };
   return {
@@ -352,6 +363,7 @@ export function fromCaptures(
       hours,
       business,
       ...(afterHours ? { afterHours } : {}),
+      ...(holidays.length ? { holidays } : {}),
     },
   };
 }
@@ -381,7 +393,7 @@ export function newVisualGroup(id: string, name: string, languageId: string): Vi
 /** Every group in the flow, in the order a caller meets them (a group reached from two places appears twice). */
 export function visualFlowGroups(f: VisualCallFlow): VisualGroup[] {
   const out: VisualGroup[] = [];
-  for (const p of [f.business, f.afterHours]) {
+  for (const p of [f.business, f.afterHours, ...(f.holidays ?? []).map((h) => h.path)]) {
     if (!p) continue;
     if (p.then.kind === 'group') out.push(p.then);
     if (p.then.kind === 'menu') for (const o of p.then.options) if (o.then.kind === 'group') out.push(o.then);
@@ -397,7 +409,12 @@ export function mapVisualGroups(f: VisualCallFlow, fn: (g: VisualGroup) => Visua
     if (t.kind === 'menu') return { ...p, then: { ...t, options: t.options.map((o) => (o.then.kind === 'group' ? { ...o, then: fn(o.then) } : o)) } };
     return p;
   };
-  return { ...f, business: path(f.business), ...(f.afterHours ? { afterHours: path(f.afterHours) } : {}) };
+  return {
+    ...f,
+    business: path(f.business),
+    ...(f.afterHours ? { afterHours: path(f.afterHours) } : {}),
+    ...(f.holidays ? { holidays: f.holidays.map((h) => ({ ...h, path: path(h.path) })) } : {}),
+  };
 }
 
 const text = (max: number) => z.string().trim().max(max);
@@ -475,6 +492,10 @@ export const visualCallFlowSchema = z
     ]),
     business: visualPathSchema,
     afterHours: visualPathSchema.optional(),
+    holidays: z
+      .array(z.object({ name: need(160), start: text(10), end: text(10), path: visualPathSchema }).strict())
+      .max(10)
+      .optional(),
   })
   .strict();
 
@@ -548,7 +569,31 @@ export function visualCallFlowProblem(f: VisualCallFlow): string | null {
   if (!f.name.trim()) return 'Give the call flow a name, for example "Main Line".';
   const always = f.hours.type === 'always';
   if (f.hours.type === 'custom' && !Object.values(f.hours.weekly).some((d) => d.length > 0)) return 'Choose at least one day the business is open.';
-  return visualPathProblem(f.business, always ? 'When someone calls' : 'During business hours') ?? (always ? null : visualPathProblem(f.afterHours, 'After hours'));
+  // holidays first, as Teams checks them first and the canvas draws them first
+  return (
+    (f.holidays ?? []).reduce<string | null>((found, h, i) => found ?? visualHolidayProblem(h, i) ?? visualPathProblem(h.path, holidayWhere(h, i)), null) ??
+    visualPathProblem(f.business, always ? 'When someone calls' : 'During business hours') ??
+    (always ? null : visualPathProblem(f.afterHours, 'After hours'))
+  );
+}
+
+const holidayWhere = (h: VisualHoliday, i: number) => (h.name.trim() ? `Holiday "${h.name.trim()}"` : `Holiday ${i + 1}`);
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** What's missing from a holiday's name and dates (not what happens on it), in words, or null. */
+export function visualHolidayProblem(h: VisualHoliday, i: number): string | null {
+  if (!h.name.trim()) return `Give holiday ${i + 1} a name, for example "Christmas Day".`;
+  const where = holidayWhere(h, i);
+  if (!ISO_DAY.test(h.start) || !ISO_DAY.test(h.end)) return `${where}: choose the first and last day.`;
+  if (h.end < h.start) return `${where}: the last day is before the first day.`;
+  return null;
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** "25 Dec 2026", or "24 Dec 2026 to 2 Jan 2027". */
+export function visualHolidayDates(h: Pick<VisualHoliday, 'start' | 'end'>): string {
+  const day = (d: string) => (ISO_DAY.test(d) ? `${Number(d.slice(8, 10))} ${MONTHS[Number(d.slice(5, 7)) - 1]} ${d.slice(0, 4)}` : 'no date');
+  return !h.end || h.end === h.start ? day(h.start) : `${day(h.start)} to ${day(h.end)}`;
 }
 
 /* defaults from the site: the plan's "language and time zone from the site's country and address" */
@@ -707,6 +752,7 @@ export function visualFlowSummary(f: VisualCallFlow, number: string | null): str
     visualHoursWords(f.hours),
     ...pathWords(f.business, always ? 'When someone calls' : 'During business hours'),
     ...(!always && f.afterHours ? pathWords(f.afterHours, 'After hours') : []),
+    ...(f.holidays ?? []).flatMap((h, i) => pathWords(h.path, `${holidayWhere(h, i)} (${visualHolidayDates(h)})`)),
   ];
 }
 
@@ -734,10 +780,11 @@ export function visualFlowCreates(f: VisualCallFlow, opts: { straightToQueue?: b
  * - 'business.then' / 'after.then': a path's one step (not a menu);
  * - 'business.o2' / 'after.o0': a menu option (its button, its words, and what it does).
  */
-export type VisualAddress = 'front' | 'business' | 'after' | `${'business' | 'after'}.then` | `${'business' | 'after'}.o${number}`;
+export type VisualPathKey = 'business' | 'after' | `h${number}`;
+export type VisualAddress = 'front' | VisualPathKey | `${VisualPathKey}.then` | `${VisualPathKey}.o${number}`;
 
 /** What can follow a box, offered as a + on it. */
-export type VisualPlus = { kind: 'choose'; label: string } | { kind: 'add_option'; label: string } | { kind: 'if_no_answer'; label: string };
+export type VisualPlus = { kind: 'choose'; label: string } | { kind: 'add_option'; label: string } | { kind: 'if_no_answer'; label: string } | { kind: 'add_holiday'; label: string };
 
 export interface VisualCanvas {
   graph: import('./call-flow-graph').CallFlowGraph;
@@ -857,12 +904,22 @@ export function visualFlowCanvas(f: VisualCallFlow, opts: { number?: string | nu
   const front = node({ id: 'front', kind: 'auto_attendant', label: f.name.trim() || 'New call flow', badge: 'Front door', details: [...numberLine, ...(always ? [] : [visualHoursWords(f.hours).replace(/^Business hours are /, 'Open ').replace(/\.$/, '')])] }, 'front');
   if (!f.name.trim()) problem(front, 'Give the call flow a name, for example "Main Line".');
   if (f.hours.type === 'custom' && !Object.values(f.hours.weekly).some((d) => d.length > 0)) problem(front, 'Choose at least one day the business is open.');
-  const paths: ['business' | 'after', VisualPath | undefined, string, Branch][] = [['business', f.business, always ? 'Every call' : 'Business hours', 'business_hours']];
-  if (!always) paths.push(['after', f.afterHours, 'After hours', 'after_hours']);
-  for (const [key, p, label, branch] of paths) {
-    const pathId = node({ id: key, kind: 'auto_attendant', label, sublabel: p?.greeting?.trim() ? `"${clip(p.greeting, 60)}"` : undefined }, key);
-    edge(front, pathId, label, branch);
-    const where = always ? 'When someone calls' : key === 'business' ? 'During business hours' : 'After hours';
+  if ((f.holidays?.length ?? 0) < 10) plus[front] = { kind: 'add_holiday', label: 'Add a holiday' };
+  // Teams checks a holiday first, so holidays are drawn first
+  const paths: [VisualPathKey, VisualPath | undefined, string, Branch, string, string[]?][] = (f.holidays ?? []).map((h, i) => [
+    `h${i}` as VisualPathKey,
+    h.path,
+    h.name.trim() ? `Holiday: ${h.name.trim()}` : `Holiday ${i + 1}`,
+    'holiday' as Branch,
+    holidayWhere(h, i),
+    [visualHolidayDates(h)],
+  ]);
+  paths.push(['business', f.business, always ? 'Every call' : 'Business hours', 'business_hours', always ? 'When someone calls' : 'During business hours']);
+  if (!always) paths.push(['after', f.afterHours, 'After hours', 'after_hours', 'After hours']);
+  for (const [key, p, label, branch, where, details] of paths) {
+    const pathId = node({ id: key, kind: 'auto_attendant', label, sublabel: p?.greeting?.trim() ? `"${clip(p.greeting, 60)}"` : undefined, details }, key);
+    edge(front, pathId, branch === 'holiday' ? 'Holiday' : label, branch);
+    if (branch === 'holiday') problem(pathId, visualHolidayProblem(f.holidays![Number(key.slice(1))]!, Number(key.slice(1))));
     if (!p) {
       plus[pathId] = { kind: 'choose', label: 'Choose what happens' };
       problem(pathId, `${where}: choose what happens.`);
@@ -871,7 +928,7 @@ export function visualFlowCanvas(f: VisualCallFlow, opts: { number?: string | nu
     const t = p.then;
     if (t.kind === 'menu') {
       const n = nodes.find((x) => x.id === pathId)!;
-      n.details = [t.options.length ? `Menu: ${t.options.length} option${t.options.length === 1 ? '' : 's'}` : 'Menu: no options yet'];
+      n.details = [...(details ?? []), t.options.length ? `Menu: ${t.options.length} option${t.options.length === 1 ? '' : 's'}` : 'Menu: no options yet'];
       if (t.options.length < 10) plus[pathId] = { kind: 'add_option', label: 'Add an option' };
       if (!t.options.length) problem(pathId, `${where}: add at least one menu option.`);
       const keys = t.options.map((o) => o.key.trim());
@@ -904,7 +961,8 @@ function outlineOf(nodes: import('./call-flow-graph').CallFlowNode[], edges: imp
     const d = into ? depth.get(into.source)! + 1 : 0;
     depth.set(n.id, d);
     const what = [n.badge === 'Front door' ? 'Front door' : null, n.label, n.sublabel].filter(Boolean).join(', ');
-    const text = into && into.label !== n.label ? `${into.label}: ${what}` : what;
+    // the line's words, unless the box already starts with them ("Business hours", "Holiday: Christmas")
+    const text = into && !n.label.startsWith(into.label) ? `${into.label}: ${what}` : what;
     return { nodeId: n.id, text: n.warnings?.length ? `${text} (still to do)` : text, depth: d };
   });
 }

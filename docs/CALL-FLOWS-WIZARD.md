@@ -1,6 +1,6 @@
 # Call Flows (preview): plan
 
-Version 0.4, 11 November 2026. From the feature request "Visual Auto Attendant and Call Queue Wizard". 0.2: the four decisions answered, and step 2 built. 0.3: step 3, the canvas. 0.4: step 4, reopening, messages, keyboard and screen readers.
+Version 0.5, 11 November 2026. From the feature request "Visual Auto Attendant and Call Queue Wizard". 0.2: the four decisions answered, and step 2 built. 0.3: step 3, the canvas. 0.4: step 4, reopening, messages, keyboard and screen readers. 0.5: step 5's holidays.
 
 ## What was asked for
 
@@ -95,3 +95,13 @@ Steps 1 and 2 are a first version to try. Each step after that is its own PR.
   - Under the diagram, **a list of the boxes** in order (what leads to each, how deep it is, "still to do" where something is missing): each is a button that opens the box's panel and moves the keyboard into it.
   - Tiles are buttons that say whether they're chosen; each group of tiles is one Tab stop, and the arrow keys (Home, End) move along it without choosing, so going past a tile can't throw away what was filled in. Enter or Space chooses.
   - "Still to do" is announced as it changes. The panel is a labelled region.
+
+## Step 5 as built: holidays
+
+- **Adding one:** "+ Add a holiday" on the front door box (or "Add a holiday" in its panel). Each holiday has a name, a first and last day (inclusive; choosing the first day fills the last), and what happens on those days, with the same tiles, menus and groups as any other path. A new holiday starts as "Play a message and hang up".
+- **On the canvas** holidays are drawn first, on their own purple line, because Teams checks them first whatever the opening hours; each box shows its dates. Up to 10.
+- **Saved as the classic wizard saves them** (`holidaysEnabled`, `holidays[]` with `dateRange` and its call flow), so Design & Build, deployment and the handover pack are unchanged. A group used only on a holiday is its own call queue capture like any other, and reopening and changing work as in step 4.
+- **Checks:** a name, both days, the last not before the first, and what happens; holidays are checked first, so "Still to do" and the server name the same thing.
+- A flow with holidays always has its auto attendant in front: a call queue can't handle holidays.
+- Flows the classic wizard made with holidays are no longer sent to the classic wizard for that reason (an operator still is).
+- **Still to do for step 5:** the session with the requester on real sites. The "Preview" label stays until they're happy.

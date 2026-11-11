@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   callFlowDefaultsForSite,
+  onlyRingsAGroup,
   fromCaptures,
   mapVisualGroups,
   newVisualGroup,
@@ -165,7 +166,7 @@ describe('the canvas (step 3)', () => {
 
   it('offers a + where something can follow', () => {
     const c = visualFlowCanvas(menuFlow);
-    expect(c.plus).toEqual({ business: { kind: 'add_option', label: 'Add an option' }, 'group:g1': { kind: 'if_no_answer', label: 'If nobody answers' } });
+    expect(c.plus).toEqual({ front: { kind: 'add_holiday', label: 'Add a holiday' }, business: { kind: 'add_option', label: 'Add an option' }, 'group:g1': { kind: 'if_no_answer', label: 'If nobody answers' } });
     const empty = visualFlowCanvas({ ...menuFlow, afterHours: undefined });
     expect(empty.plus.after).toEqual({ kind: 'choose', label: 'Choose what happens' });
   });
@@ -220,5 +221,60 @@ describe('what is still to do, and the list of boxes (step 4)', () => {
       { nodeId: 'after:then', text: 'Then: Shared voicemail, Main voicemail', depth: 2 },
     ]);
     expect(visualFlowCanvas({ ...menuFlow, afterHours: undefined }).outline.find((o) => o.nodeId === 'after')!.text).toBe('After hours (still to do)');
+  });
+});
+
+describe('holidays (step 5)', () => {
+  const xmas = { name: 'Christmas', start: '2026-12-25', end: '2026-12-26', path: { greeting: 'We are closed for Christmas.', then: { kind: 'hangup' as const } } };
+  const withHolidays: VisualCallFlow = {
+    ...menuFlow,
+    holidays: [xmas, { name: 'Office party', start: '2026-12-18', end: '2026-12-18', path: { then: { kind: 'menu', options: [{ key: '1', label: 'Emergencies', then: { ...newVisualGroup('g9', 'On call', 'en-GB'), people: ['oncall@contoso.test'] } }] } } }],
+  };
+
+  it('saves them as the classic wizard does, with their groups, and reads them back', () => {
+    const c = toCaptures(mapVisualGroups(withHolidays, (g) => ({ ...g, id: g.id === 'g1' ? GROUP_ID : '66666666-6666-4666-8666-666666666666' })), { attendantFlowId: GROUP_ID });
+    const aa = c.top.capture.answers as import('./wizard').AutoAttendantWizardAnswers;
+    expect(autoAttendantWizardAnswersSchema.safeParse(aa).success).toBe(true);
+    expect(aa.holidaysEnabled).toBe(true);
+    expect(aa.holidays!.map((h) => [h.name, h.dateRange, h.flow.mode])).toEqual([
+      ['Christmas', { start: '2026-12-25', end: '2026-12-26' }, 'disconnect'],
+      ['Office party', { start: '2026-12-18', end: '2026-12-18' }, 'menu'],
+    ]);
+    expect(c.queues.map((q) => q.name)).toEqual(['Sales', 'On call']);
+    const back = fromCaptures(c.top, c.queues);
+    expect(back.ok && back.flow.holidays!.map((h) => [h.name, h.start, h.end, h.path.then.kind])).toEqual([
+      ['Christmas', '2026-12-25', '2026-12-26', 'hangup'],
+      ['Office party', '2026-12-18', '2026-12-18', 'menu'],
+    ]);
+    expect(visualCallFlowSchema.safeParse(withHolidays).success).toBe(true);
+  });
+
+  it('checks the name, the dates and what happens', () => {
+    expect(visualCallFlowProblem(withHolidays)).toBeNull();
+    expect(visualCallFlowProblem({ ...menuFlow, holidays: [{ ...xmas, name: '' }] })).toBe('Give holiday 1 a name, for example "Christmas Day".');
+    expect(visualCallFlowProblem({ ...menuFlow, holidays: [{ ...xmas, start: '' }] })).toBe('Holiday "Christmas": choose the first and last day.');
+    expect(visualCallFlowProblem({ ...menuFlow, holidays: [{ ...xmas, end: '2026-12-01' }] })).toBe('Holiday "Christmas": the last day is before the first day.');
+    expect(visualCallFlowProblem({ ...menuFlow, holidays: [{ ...xmas, path: { then: { kind: 'hangup' } } }] })).toBe('Holiday "Christmas": type the message callers hear before the call ends.');
+  });
+
+  it('draws them first, as Teams checks them first, and a flow with holidays can’t go straight to a group', () => {
+    const c = visualFlowCanvas(withHolidays);
+    expect(c.graph.nodes.slice(0, 3).map((n) => [n.id, n.label, n.details])).toEqual([
+      ['front', 'Main Line', ['No number chosen', 'Open Monday to Friday, 9:00 to 17:00']],
+      ['h0', 'Holiday: Christmas', ['25 Dec 2026 to 26 Dec 2026']],
+      ['h0:hangup', 'Hang up', undefined],
+    ]);
+    expect(c.graph.edges.find((e) => e.target === 'h0')).toMatchObject({ label: 'Holiday', branch: 'holiday' });
+    expect(c.addressOf['group:g9']).toBe('h1.o0');
+    expect(c.outline.find((o) => o.nodeId === 'h0')!.text).toBe('Holiday: Christmas, "We are closed for Christmas."');
+    expect(visualFlowSummary(withHolidays, null).slice(-2)).toEqual([
+      'Holiday "Office party" (18 Dec 2026): offers a menu:',
+      '  · press 1 for Emergencies: the call rings the group "On call" (1 person, everyone at once); if nobody answers, the call hangs up',
+    ]);
+    expect(onlyRingsAGroup({ ...groupOnly, holidays: [xmas] })).toBeNull();
+    expect(visualFlowCanvas({ ...menuFlow, holidays: [{ ...xmas, name: '' }] }).problems[0]).toEqual({ nodeId: 'h0', message: 'Give holiday 1 a name, for example "Christmas Day".' });
+    // with something missing in a holiday and in business hours, the canvas and the server name the same one first
+    const both: VisualCallFlow = { ...menuFlow, business: { then: { kind: 'menu', options: [] } }, holidays: [{ ...xmas, start: '' }] };
+    expect(visualFlowCanvas(both).problems[0]!.message).toBe(visualCallFlowProblem(both));
   });
 });
