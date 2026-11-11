@@ -66,13 +66,13 @@ Version 0.2, 11 November 2026. From the feature request "Service Handover View";
 - **The pack:** the Outstanding Actions table lists the **open** actions, numbered as today. A done action drops out of the next version.
 - **Main list:** the yes/no column counts open and total.
 
-### 5. Reminders to the project manager
+### 5. Reminders
 
-- **Setting:** on the Service Handover page, per customer: "Remind the Provider PM when actions are still open after **N** days" (default 7, 0 = off).
-- **When:** a daily worker job finds sites with an action open longer than N days, not reminded in the last N days.
-- **How:**
-  - an **email** to the site's Provider PMs who are platform users or have an email address, when email is on;
-  - always a **badge** on the Service Handover menu item and the site row ("2 actions overdue"), so it works with email off.
+- **Setting:** on the Service Handover page, per customer: "Reminders: after **N** days" (default 7, 0 = off). Stored as `tenants.handover_reminder_days`.
+- **Overdue:** an outstanding action still open N days after it was added.
+- **Who:** the site's Provider PM(s) (users, or typed names with an email) and whoever generated the site's newest pack (decided 10 Nov 2026). An all-sites action prints in every site's pack, so it goes to every site's people and to whoever generated the newest all-sites pack.
+- **When:** the worker checks hourly. Each person gets one email per customer listing their overdue actions by site. Each action is reminded again only once N days have passed since its last reminder (`handover_actions.last_reminded_at`). An action with nobody to tell stays due until someone is set.
+- **Without email:** a count on the Service Handover menu item (staff), "N overdue" on the site row and the site page, and "Overdue" on the action.
 
 ## Build order
 
@@ -95,5 +95,5 @@ Each step is its own PR, with DB tests. Steps 1 and 2 are the most visible.
 
 - Step 1, actions as records: live in 2026.11.27 (PR #100).
 - Step 2, the list and the site page: the site list (`GET handover/sites`), `/handover/sites/:siteId`, and actions and notes kept to staff (PR #113).
-- Step 3, upload an edited copy: `POST handover/packs/:id/upload`, "Upload an edited copy" on the site page.
-- Step 4: not started.
+- Step 3, upload an edited copy: live in 2026.11.40 (PR #114).
+- Step 4, reminders: `GET handover/overdue`, `PUT handover/settings`, the worker's `sweepHandoverReminders`, email `handover_actions_reminder`.

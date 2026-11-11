@@ -7,6 +7,7 @@ import {
   handoverGenerateSchema,
   handoverIssueSchema,
   handoverNoteSchema,
+  handoverSettingsSchema,
   type HandoverActionCreateInput,
   type HandoverActionPatchInput,
   type HandoverIssueInput,
@@ -39,6 +40,20 @@ export class HandoverController {
   @RequirePermission('handover:read')
   sites(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser) {
     return this.handover.sites(t, user);
+  }
+
+  /** The reminder setting and how many outstanding actions are overdue (the menu's count). Staff only, like the actions. */
+  @Get('overdue')
+  @RequirePermission('handover:generate')
+  overdue(@TenantCtx() t: TenantContext) {
+    return this.handover.overdue(t);
+  }
+
+  /** Remind after this many days (0 = off). */
+  @Put('settings')
+  @RequirePermission('handover:generate')
+  settings(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Body(new ZodBody(handoverSettingsSchema)) body: { reminderDays: number }) {
+    return this.handover.setReminderDays(t, user, body.reminderDays);
   }
 
   @Post('packs')

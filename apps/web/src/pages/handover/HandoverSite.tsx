@@ -37,6 +37,7 @@ const useStyles = makeStyles({
   noteRow: { display: 'contents' },
   clip: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 },
   muted: { color: tokens.colorNeutralForeground3 },
+  overdue: { color: tokens.colorPaletteRedForeground1, fontWeight: tokens.fontWeightSemibold },
 });
 
 interface Note {
@@ -102,6 +103,7 @@ export function HandoverSite() {
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['handover', activeTenantId] });
     qc.invalidateQueries({ queryKey: ['handover-sites', activeTenantId] });
+    qc.invalidateQueries({ queryKey: ['handover-overdue', activeTenantId] });
   };
   const download = (p: Pack) => downloadPack(activeTenantId, p).catch((e) => setError(e instanceof ApiError ? e.message : 'Could not download the file'));
 
@@ -149,7 +151,10 @@ export function HandoverSite() {
                 <Text size={200} className={s.label}>
                   Outstanding actions
                 </Text>
-                <Text>{row.actions.total === 0 ? 'None' : row.actions.open === 0 ? 'All done' : `${row.actions.open} open of ${row.actions.total}`}</Text>
+                <Text>
+                  {row.actions.total === 0 ? 'None' : row.actions.open === 0 ? 'All done' : `${row.actions.open} open of ${row.actions.total}`}
+                  {row.actions.overdue > 0 && <span className={s.overdue}>{` · ${row.actions.overdue} overdue`}</span>}
+                </Text>
               </div>
             )}
           </div>

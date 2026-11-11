@@ -33,11 +33,27 @@ export const EMAIL_TEMPLATES = [
   'sso_admin_signin',
   'sso_staff_access_request',
   'scheduled_report',
+  'handover_actions_reminder',
 ] as const;
 export type EmailTemplate = (typeof EMAIL_TEMPLATES)[number];
 
 export const EMAIL_STATUSES = ['queued', 'sent', 'failed', 'skipped'] as const;
 export type EmailStatus = (typeof EMAIL_STATUSES)[number];
+
+/**
+ * Context for `handover_actions_reminder` (docs/HANDOVER-VIEW.md step 4): one email per person per customer, listing the outstanding
+ * actions on their sites that are still open after the customer's reminder interval.
+ */
+export interface HandoverActionsReminderContext {
+  recipientName: string | null;
+  customerName: string;
+  /** the customer's reminder interval */
+  days: number;
+  /** the Service Handover page */
+  listUrl: string;
+  /** by site; an all-sites action has sitecode null */
+  sites: { sitecode: string | null; siteName: string | null; url: string; actions: { description: string; owner: string; daysOpen: number }[] }[];
+}
 
 /** Context for the `scheduled_report` template: a report sent on its schedule, with its PDF attached (docs/INSIGHTS.md, step 4b). */
 export interface ScheduledReportContext {

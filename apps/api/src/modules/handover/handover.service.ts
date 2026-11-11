@@ -35,6 +35,8 @@ import {
   type HandoverSiteRow,
   type SiteContacts,
   handoverSiteStatus,
+  handoverActionOverdue,
+  HANDOVER_REMINDER_MAX_DAYS,
   portStageText,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
@@ -172,6 +174,35 @@ export class HandoverService {
     return { pack: staff ? pack : withoutInternalNote(pack), sections };
   }
 
+  /** The customer's reminder interval in days (0 = reminders off). */
+  private async reminderDays(t: TenantContext): Promise<number> {
+    const row = await platformDb(this.db).selectFrom('tenants').select('handover_reminder_days').where('id', '=', t.id).executeTakeFirst();
+    return row?.handover_reminder_days ?? 0;
+  }
+
+  /** The reminder setting and how many open actions are overdue, for the menu's count (staff). */
+  async overdue(t: TenantContext): Promise<{ reminderDays: number; overdue: number }> {
+    assertCustomerWide(t, 'The Service Handover pack');
+    const reminderDays = await this.reminderDays(t);
+    if (reminderDays === 0) return { reminderDays, overdue: 0 };
+    const row = await tenantDb(this.db, t.schema)
+      .selectFrom('handover_actions')
+      .select((eb) => eb.fn.countAll<string>().as('n'))
+      .where('done_at', 'is', null)
+      .where(sql<boolean>`created_at <= now() - make_interval(days => ${reminderDays})`)
+      .executeTakeFirst();
+    return { reminderDays, overdue: Number(row?.n ?? 0) };
+  }
+
+  /** Remind after this many days (0 = off): the customer's setting, on the Service Handover page. */
+  async setReminderDays(t: TenantContext, user: AuthedUser, days: number) {
+    assertCustomerWide(t, 'The Service Handover pack');
+    if (!Number.isInteger(days) || days < 0 || days > HANDOVER_REMINDER_MAX_DAYS) throw new BadRequestException(`Choose a number of days from 0 to ${HANDOVER_REMINDER_MAX_DAYS}.`);
+    await platformDb(this.db).updateTable('tenants').set({ handover_reminder_days: days }).where('id', '=', t.id).execute();
+    await this.audit.tenant(t.schema, 'handover.reminder_days_set', { actor: { id: user.id, email: user.email }, targetType: 'tenant', targetId: t.id, detail: { days } });
+    return { reminderDays: days };
+  }
+
   /**
    * Every site with its handover status (docs/HANDOVER-VIEW.md): set by the packs for that one site only. Customer users see issued
    * packs only, so a site whose only pack is a draft is "Not created" to them, and they don't see the outstanding actions.
@@ -188,11 +219,18 @@ export class HandoverService {
         .$if(!staff, (qb) => qb.where('status', '=', 'issued'))
         .execute(),
       staff
-        ? s
-            .selectFrom('handover_actions')
-            .select((eb) => ['site_id', eb.fn.countAll<string>().as('total'), sql<string>`count(*) filter (where done_at is null)`.as('open')])
-            .groupBy('site_id')
-            .execute()
+        ? this.reminderDays(t).then((days) =>
+            s
+              .selectFrom('handover_actions')
+              .select((eb) => [
+                'site_id',
+                eb.fn.countAll<string>().as('total'),
+                sql<string>`count(*) filter (where done_at is null)`.as('open'),
+                sql<string>`count(*) filter (where done_at is null and ${days} > 0 and created_at <= now() - make_interval(days => ${days}))`.as('overdue'),
+              ])
+              .groupBy('site_id')
+              .execute(),
+          )
         : Promise.resolve([]),
     ]);
 
@@ -204,7 +242,7 @@ export class HandoverService {
     }
     const count = (siteId: string | null) => {
       const r = actions.find((a) => a.site_id === siteId);
-      return { open: Number(r?.open ?? 0), total: Number(r?.total ?? 0) };
+      return { open: Number(r?.open ?? 0), total: Number(r?.total ?? 0), overdue: Number(r?.overdue ?? 0) };
     };
     const everySite = count(null);
 
@@ -237,7 +275,7 @@ export class HandoverService {
         latestVersion: st.latestVersion,
         issuedVersion: st.issuedVersion,
         lastChange: st.lastChange ? { at: st.lastChange.at.toISOString(), by: st.lastChange.byId ? (users.get(st.lastChange.byId)?.display_name ?? null) : null, what: st.lastChange.what } : null,
-        actions: staff ? { open: own.open + everySite.open, total: own.total + everySite.total } : null,
+        actions: staff ? { open: own.open + everySite.open, total: own.total + everySite.total, overdue: own.overdue + everySite.overdue } : null,
         providerPms: providerPms(overviews[i]!),
       };
     });
@@ -780,8 +818,10 @@ export class HandoverService {
       .execute();
     const ids = [...new Set(rows.flatMap((r) => [r.created_by, r.done_by]).filter((x): x is string => !!x))];
     const names = new Map(ids.length ? (await platformDb(this.db).selectFrom('users').select(['id', 'display_name']).where('id', 'in', ids).execute()).map((u) => [u.id, u.display_name] as [string, string]) : []);
+    const days = await this.reminderDays(t);
     return rows.map((r) => ({
       ...r,
+      overdue: handoverActionOverdue(r, days),
       created_at: new Date(r.created_at).toISOString(),
       done_at: r.done_at ? new Date(r.done_at).toISOString() : null,
       created_by_name: names.get(r.created_by) ?? null,

@@ -42,6 +42,7 @@ const useStyles = makeStyles({
   },
   done: { color: tokens.colorNeutralForeground3, textDecorationLine: 'line-through' },
   muted: { color: tokens.colorNeutralForeground3 },
+  overdue: { color: tokens.colorPaletteRedForeground1, fontWeight: tokens.fontWeightSemibold },
 });
 
 interface SiteOption {
@@ -95,6 +96,7 @@ export function HandoverActionsPanel({ tenantId, sites, site: fixed, canEdit }: 
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ['handover-actions', tenantId] });
     void qc.invalidateQueries({ queryKey: ['handover-sites', tenantId] });
+    void qc.invalidateQueries({ queryKey: ['handover-overdue', tenantId] });
   };
   const add = useMutation({
     mutationFn: () => api(`/t/${tenantId}/handover/actions`, { method: 'POST', body: JSON.stringify({ siteId: site || null, description, owner }) }),
@@ -188,6 +190,12 @@ export function HandoverActionsPanel({ tenantId, sites, site: fixed, canEdit }: 
                     {a.created_by_name ? ` by ${a.created_by_name}` : ''}
                     {a.done_at ? ` · Done ${when(a.done_at)}${a.done_by_name ? ` by ${a.done_by_name}` : ''}` : ''}
                   </Text>
+                  {a.overdue && (
+                    <Text size={100} className={s.overdue}>
+                      {' '}
+                      · Overdue
+                    </Text>
+                  )}
                 </div>
                 <Text size={200}>{a.owner || '—'}</Text>
                 {canEdit ? (

@@ -132,6 +132,9 @@ export const handoverNoteSchema = z.object({
   body: z.string().max(20000),
 });
 
+/** Service Handover reminders: remind after this many days (0 = off). */
+export const handoverSettingsSchema = z.object({ reminderDays: z.number().int().min(0).max(365) });
+
 /** A Service Handover outstanding action: for one site, or every site (siteId null). */
 export const handoverActionCreateSchema = z
   .object({ siteId: z.guid().nullable(), description: z.string().trim().min(1).max(1000), owner: z.string().trim().max(300).optional() })

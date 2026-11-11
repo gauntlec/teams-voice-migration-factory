@@ -68,6 +68,7 @@ const useLocalStyles = makeStyles({
   toolbar: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: tokens.spacingHorizontalM, rowGap: tokens.spacingVerticalS },
   search: { flex: '1 1 260px', maxWidth: '380px' },
   muted: { color: tokens.colorNeutralForeground3 },
+  overdue: { color: tokens.colorPaletteRedForeground1, fontWeight: tokens.fontWeightSemibold },
   cardHead: { display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-start', columnGap: tokens.spacingHorizontalL, rowGap: tokens.spacingVerticalS },
 });
 
@@ -212,6 +213,12 @@ export function Handover() {
 
   const packs = useHandoverPacks(activeTenantId);
   const sitesQ = useHandoverSites(activeTenantId);
+  const overdueQ = useQuery({
+    queryKey: ['handover-overdue', activeTenantId],
+    enabled: !!activeTenantId && can('handover:generate'),
+    queryFn: () => api<{ reminderDays: number; overdue: number }>(`/t/${activeTenantId}/handover/overdue`),
+  });
+  const [remindersOpen, setRemindersOpen] = useState(false);
   const sites = useMemo(() => (sitesQ.data ?? []).map((r) => ({ id: r.id, sitecode: r.sitecode, name: r.name })), [sitesQ.data]);
   const staff = can('handover:generate');
   const canIssue = can('handover:issue');
@@ -241,6 +248,7 @@ export function Handover() {
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['handover', activeTenantId] });
     qc.invalidateQueries({ queryKey: ['handover-sites', activeTenantId] });
+    qc.invalidateQueries({ queryKey: ['handover-overdue', activeTenantId] });
   };
 
   return (
@@ -256,6 +264,9 @@ export function Handover() {
           <div className={cs.rowActions}>
             <Button onClick={() => setActionsOpen(true)}>Outstanding actions</Button>
             <Button onClick={() => setNotesOpen(true)}>Edit notes</Button>
+            <Button onClick={() => setRemindersOpen(true)} disabled={!overdueQ.data}>
+              {overdueQ.data?.reminderDays ? `Reminders: after ${overdueQ.data.reminderDays} ${overdueQ.data.reminderDays === 1 ? 'day' : 'days'}` : 'Reminders: off'}
+            </Button>
           </div>
         )
       }
@@ -343,9 +354,16 @@ export function Handover() {
                           Yes: all done
                         </Badge>
                       ) : (
-                        <Badge appearance="tint" color="warning">
-                          Yes: {r.actions.open} open of {r.actions.total}
-                        </Badge>
+                        <>
+                          <Badge appearance="tint" color="warning">
+                            Yes: {r.actions.open} open of {r.actions.total}
+                          </Badge>
+                          {r.actions.overdue > 0 && (
+                            <Text size={100} block className={ls.overdue}>
+                              {r.actions.overdue} overdue
+                            </Text>
+                          )}
+                        </>
                       )}
                     </TableCell>
                   )}
@@ -416,6 +434,7 @@ export function Handover() {
         />
       )}
       {previewId && <PreviewDialog tenantId={activeTenantId} packId={previewId} onClose={() => setPreviewId(null)} />}
+      {remindersOpen && overdueQ.data && <RemindersDialog tenantId={activeTenantId} days={overdueQ.data.reminderDays} onClose={() => setRemindersOpen(false)} />}
       {issuing && (
         <IssueDialog
           tenantId={activeTenantId}
@@ -638,6 +657,53 @@ export function UploadDialog({ tenantId, base, packs, onClose, onDone }: { tenan
             </Button>
             <Button appearance="primary" disabled={!file || upload.isPending} onClick={() => upload.mutate()}>
               {upload.isPending ? 'Uploading…' : `Upload as ${next}`}
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  );
+}
+
+/**
+ * The customer's reminder setting (docs/HANDOVER-VIEW.md step 4): an outstanding action still open this many days after it was added is
+ * overdue. It's counted on the menu, and the site's Provider PM(s) and whoever generated its pack are emailed.
+ */
+function RemindersDialog({ tenantId, days, onClose }: { tenantId: string; days: number; onClose: () => void }) {
+  const cs = useStyles();
+  const qc = useQueryClient();
+  const [value, setValue] = useState(String(days));
+  const n = Number(value);
+  const valid = value.trim() !== '' && Number.isInteger(n) && n >= 0 && n <= 365;
+  const save = useMutation({
+    mutationFn: () => api(`/t/${tenantId}/handover/settings`, { method: 'PUT', body: JSON.stringify({ reminderDays: n }) }),
+    onSuccess: () => {
+      for (const key of ['handover-overdue', 'handover-sites', 'handover-actions']) qc.invalidateQueries({ queryKey: [key, tenantId] });
+      onClose();
+    },
+  });
+  return (
+    <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
+      <DialogSurface>
+        <DialogBody>
+          <DialogTitle>Outstanding action reminders</DialogTitle>
+          <DialogContent className={cs.stack}>
+            <Text size={200}>
+              An outstanding action still open this many days after it was added is overdue. The Service Handover menu item and the site show how many,
+              and the site&apos;s Provider PM(s) and whoever generated its pack are emailed, then again every time that many days pass while it&apos;s
+              open. An action for all sites goes to every site&apos;s people.
+            </Text>
+            <Field label="Remind after (days)" hint="0 switches reminders off. Emails are only sent while email is switched on for Voxshift." validationState={valid ? 'none' : 'error'} validationMessage={valid ? undefined : 'A whole number from 0 to 365.'}>
+              <Input type="number" min={0} max={365} value={value} onChange={(_, d) => setValue(d.value)} />
+            </Field>
+            {save.isError && <DangerText>{errorMessage(save.error, 'Could not save the setting')}</DangerText>}
+          </DialogContent>
+          <DialogActions>
+            <Button appearance="secondary" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button appearance="primary" disabled={!valid || save.isPending} onClick={() => save.mutate()}>
+              {save.isPending ? 'Saving…' : 'Save'}
             </Button>
           </DialogActions>
         </DialogBody>

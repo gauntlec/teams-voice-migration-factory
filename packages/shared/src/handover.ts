@@ -53,6 +53,17 @@ export interface HandoverAction {
   done_at: string | null;
   done_by: string | null;
   done_by_name: string | null;
+  /** still open after the customer's reminder interval (docs/HANDOVER-VIEW.md step 4); never true when reminders are off */
+  overdue?: boolean;
+}
+
+/** Service Handover reminders: an action open this many days is overdue (default 7, 0 = off). */
+export const HANDOVER_REMINDER_DEFAULT_DAYS = 7;
+export const HANDOVER_REMINDER_MAX_DAYS = 365;
+
+/** Is an open action overdue? Added at least `days` days ago and not done; never with reminders off (0). */
+export function handoverActionOverdue(a: { created_at: string | Date; done_at: string | Date | null }, days: number, now = new Date()): boolean {
+  return days > 0 && !a.done_at && now.getTime() - new Date(a.created_at).getTime() >= days * 86_400_000;
 }
 
 /**
@@ -145,7 +156,7 @@ export interface HandoverSiteRow {
   /** the newest thing that happened to the site's packs: a draft generated, or a pack issued */
   lastChange: { at: string; by: string | null; what: 'generated' | 'issued' } | null;
   /** the site's outstanding actions and the all-sites ones (both print in its pack); null for customer users, who don't see them */
-  actions: { open: number; total: number } | null;
+  actions: { open: number; total: number; overdue: number } | null;
   /** the site's Provider PM(s) from the Site Overview, as names */
   providerPms: string[];
 }

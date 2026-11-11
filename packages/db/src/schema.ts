@@ -47,6 +47,8 @@ export interface TenantsTable {
   teams_tenant_id: ColumnType<string | null, string | null | undefined, string | null>;
   teams_tenant_name: ColumnType<string | null, string | null | undefined, string | null>;
   teams_tenant_recorded_at: ColumnType<string | null, string | null | undefined, string | null>;
+  /** Service Handover: an outstanding action open this many days is overdue and reminded; 0 = off (0046_handover_reminder_days.sql). */
+  handover_reminder_days: ColumnType<number, number | undefined, number>;
 }
 
 export interface UsersTable {
@@ -1737,6 +1739,8 @@ export interface HandoverActionsTable {
   created_at: Ts;
   done_at: string | null;
   done_by: string | null;
+  /** 0099 - when it was last in a Service Handover reminder email (docs/HANDOVER-VIEW.md step 4) */
+  last_reminded_at: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 export interface HandoverNotesTable {
