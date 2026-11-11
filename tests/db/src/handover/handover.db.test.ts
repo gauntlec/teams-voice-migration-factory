@@ -13,7 +13,9 @@ import { FilesService } from '../../../../apps/api/src/modules/files/files.servi
 import { VOX_TILE_PNG_BASE64 } from '../../../../apps/api/src/modules/deployment/assets/vox-tile';
 import { readCompoundFile, readPackage } from '../../../../apps/api/src/modules/handover/embedded-pdf';
 import { HandoverDocumentService } from '../../../../apps/api/src/modules/handover/handover-document.service';
+import { HandoverController } from '../../../../apps/api/src/modules/handover/handover.controller';
 import { HandoverService } from '../../../../apps/api/src/modules/handover/handover.service';
+import { REQUIRE_PERMISSION } from '../../../../apps/api/src/rbac/require-permission.decorator';
 import { seedCustomer, seedNumbers, seedSite, seedUser, unused, useDb, type TestCustomer } from '../helpers';
 
 const handle = useDb();
@@ -211,11 +213,11 @@ describe('Service Handover', () => {
     expect((await label(a.id)).version_label).toBe('0.1');
     expect((await label(b.id)).version_label).toBe('0.2');
 
-    const issued = await svc2.issue(c2.t, engineer, b.id, { approverCompany: 'AT&T', approverName: 'Leigh Manton, AT&T Consulting, Director EMEA', approvalDate: '2026-10-30' });
+    const issued = await svc2.issue(c2.t, engineer, b.id, { approverCompany: 'Contoso & Partners', approverName: 'Alex Example, Contoso & Partners, Director EMEA', approvalDate: '2026-10-30' });
     expect(issued.version_label).toBe('1.0');
-    expect(((await label(b.id)).source as Record<string, unknown>).approval).toEqual({ company: 'AT&T', name: 'Leigh Manton, AT&T Consulting, Director EMEA', date: '2026-10-30' });
+    expect(((await label(b.id)).source as Record<string, unknown>).approval).toEqual({ company: 'Contoso & Partners', name: 'Alex Example, Contoso & Partners, Director EMEA', date: '2026-10-30' });
     const doc = await docText((await files.readBytes(c2.t, issued.file_id!)).data);
-    for (const t of ['Approved and signed off by:', 'AT&amp;T', 'Leigh Manton, AT&amp;T Consulting, Director EMEA', '30 October 2026', 'Document Control', '0.1 (draft)', 'Draft issued for comment', 'Section 7 added for call queues', 'Version 1.0']) expect(doc).toContain(t);
+    for (const t of ['Approved and signed off by:', 'Contoso &amp; Partners', 'Alex Example, Contoso &amp; Partners, Director EMEA', '30 October 2026', 'Document Control', '0.1 (draft)', 'Draft issued for comment', 'Section 7 added for call queues', 'Version 1.0']) expect(doc).toContain(t);
 
     // after the first issue, the next pack is 1.1
     const c = await svc2.generate(c2.t, engineer, {});
@@ -503,5 +505,57 @@ describe('Service Handover with numbers still to port', () => {
     await svc.generate(d.t, engineer, { acceptUnported: true });
     await svc.generate(d.t, engineer, { siteIds: [gla] });
     expect(await d.s.selectFrom('handover_packs').select('id').execute()).toHaveLength(2);
+  });
+});
+
+// Feature request "Service Handover View": the page lists every site with its own status, set only by the packs for that one site.
+// Customers see issued packs only, and never the outstanding actions or notes (decided 10 Nov 2026: nothing before it's issued).
+describe('Service Handover site list', () => {
+  it('gives each site its status from its own packs, its open actions and its Provider PMs; customers see issued packs only', async () => {
+    const d = await seedCustomer(handle);
+    const pm = await seedUser(handle, 'PROJECT_MANAGER', { displayName: 'Pam Manager' });
+    const man = (await seedSite(d.s, { sitecode: 'MAN01', name: 'Manchester' })).id;
+    const gla = (await seedSite(d.s, { sitecode: 'GLA01', name: 'Glasgow' })).id;
+    const edi = (await seedSite(d.s, { sitecode: 'EDI01', name: 'Edinburgh' })).id;
+    await d.s.updateTable('discovery_sites').set({ overview: { contacts: { providerPm: [{ userId: pm.id }, { name: 'Typed PM', email: 'pm@contoso.test' }] } } } as never).where('id', '=', man).execute();
+    // an overview saved before the contact roles: its project managers are the Provider PMs
+    await d.s.updateTable('discovery_sites').set({ overview: { assignedUserIds: [pm.id, engineer.id] } } as never).where('id', '=', gla).execute();
+
+    // Manchester: 0.1 issued as 1.0, then draft 1.1. Glasgow: draft 0.1 only. Edinburgh: only in an all-sites pack.
+    const first = await svc.generate(d.t, engineer, { siteIds: [man] });
+    await svc.issue(d.t, engineer, first.id);
+    await svc.generate(d.t, engineer, { siteIds: [man] });
+    await svc.generate(d.t, engineer, { siteIds: [gla] });
+    await svc.generate(d.t, engineer, {});
+    await svc.generate(d.t, engineer, { siteIds: [gla, edi] });
+
+    await svc.createAction(d.t, engineer, { siteId: null, description: 'Hand over the admin guide' });
+    await svc.createAction(d.t, engineer, { siteId: man, description: 'Test 999 on the lobby phone' });
+    const done = await svc.createAction(d.t, engineer, { siteId: man, description: 'Retire the old PBX' });
+    await svc.updateAction(d.t, engineer, done.id, { done: true });
+
+    const rows = await svc.sites(d.t, engineer);
+    expect(rows.map((r) => r.sitecode)).toEqual(['EDI01', 'GLA01', 'MAN01']);
+    const [e, g, m] = rows;
+    expect(e).toMatchObject({ status: 'not_created', latestVersion: null, issuedVersion: null, lastChange: null, actions: { open: 1, total: 1 }, providerPms: [] });
+    expect(g).toMatchObject({ status: 'draft', latestVersion: '0.1', issuedVersion: null, lastChange: { what: 'generated', by: 'Eve Engineer' }, providerPms: ['Pam Manager'] });
+    expect(m).toMatchObject({ status: 'draft', latestVersion: '1.1', issuedVersion: '1.0', actions: { open: 2, total: 3 }, providerPms: ['Pam Manager', 'Typed PM'] });
+
+    // the customer: Manchester's issued 1.0 only; Glasgow's draft isn't theirs to see; no actions
+    const theirs = await svc.sites(d.t, customer);
+    expect(theirs.map((r) => [r.sitecode, r.status, r.latestVersion, r.actions])).toEqual([
+      ['EDI01', 'not_created', null, null],
+      ['GLA01', 'not_created', null, null],
+      ['MAN01', 'issued', '1.0', null],
+    ]);
+    expect(theirs[2]!.lastChange).toMatchObject({ what: 'issued' });
+  });
+
+  it('keeps the working list of actions and notes to staff', () => {
+    const needs = (method: keyof HandoverController) => Reflect.getMetadata(REQUIRE_PERMISSION, HandoverController.prototype[method]) as string[];
+    expect(needs('actions')).toEqual(['handover:generate']);
+    expect(needs('notes')).toEqual(['handover:generate']);
+    expect(needs('sites')).toEqual(['handover:read']);
+    expect(needs('list')).toEqual(['handover:read']);
   });
 });

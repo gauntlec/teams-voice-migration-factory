@@ -20,6 +20,7 @@ import { DeploymentSites } from './pages/DeploymentSites';
 import { DeploymentSiteWorkspace } from './pages/DeploymentSiteWorkspace';
 import { Files } from './pages/Files';
 import { Handover } from './pages/Handover';
+import { HandoverSite } from './pages/handover/HandoverSite';
 import { AdminUsers } from './pages/admin/Users';
 import { AdminTenants } from './pages/admin/Tenants';
 import { AdminMsps } from './pages/admin/Msps';
@@ -132,6 +133,7 @@ export function App() {
           }
         />
         <Route path="/handover" element={<Handover />} />
+        <Route path="/handover/sites/:siteId" element={<HandoverSite />} />
         <Route
           path="/files"
           element={
