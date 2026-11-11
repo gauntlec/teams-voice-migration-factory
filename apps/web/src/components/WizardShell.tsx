@@ -50,6 +50,7 @@ export function WizardShell({
   completeLabel = 'Create',
   error,
   wide,
+  initialStep,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -61,17 +62,19 @@ export function WizardShell({
   error?: string | null;
   /** a wider dialog, for a step with a diagram (Call Flows (preview)'s canvas) */
   wide?: boolean;
+  /** the step it opens on: a saved Call Flows (preview) flow opens on its canvas */
+  initialStep?: number;
 }) {
   const ls = useLocalStyles();
-  const [index, setIndex] = useState(0);
+  const [index, setIndex] = useState(initialStep ?? 0);
   const [stepError, setStepError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
-      setIndex(0);
+      setIndex(initialStep ?? 0);
       setStepError(null);
     }
-  }, [open]);
+  }, [open, initialStep]);
 
   const step = steps[index];
   const isLast = index === steps.length - 1;

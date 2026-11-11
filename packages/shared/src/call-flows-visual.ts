@@ -745,6 +745,10 @@ export interface VisualCanvas {
   addressOf: Record<string, VisualAddress>;
   /** boxes with a + on them */
   plus: Record<string, VisualPlus>;
+  /** what is still missing, box by box, in the order the checks find it (the first is visualCallFlowProblem's) */
+  problems: { nodeId: string; message: string }[];
+  /** the boxes as a list, in order, for the keyboard and screen readers: what leads to each box, and how deep it is */
+  outline: { nodeId: string; text: string; depth: number }[];
 }
 
 const clip = (s: string | undefined, n = 80) => {
@@ -764,6 +768,15 @@ export function visualFlowCanvas(f: VisualCallFlow, opts: { number?: string | nu
   const edges: Edge[] = [];
   const addressOf: Record<string, VisualAddress> = {};
   const plus: Record<string, VisualPlus> = {};
+  const problems: { nodeId: string; message: string }[] = [];
+  const problem = (nodeId: string, message: string | null) => {
+    if (!message) return;
+    problems.push({ nodeId, message });
+    const n = nodes.find((x) => x.id === nodeId);
+    // on the box, the words after "where:" (the box says where)
+    const short = message.includes(': ') ? message.slice(message.indexOf(': ') + 2) : message;
+    if (n && !n.warnings?.includes(short)) n.warnings = [...(n.warnings ?? []), short.charAt(0).toUpperCase() + short.slice(1)];
+  };
   const node = (n: Node, address: VisualAddress) => {
     if (!nodes.some((x) => x.id === n.id)) nodes.push(n);
     addressOf[n.id] ??= address;
@@ -800,7 +813,6 @@ export function visualFlowCanvas(f: VisualCallFlow, opts: { number?: string | nu
         label: g.name.trim() || 'New group',
         sublabel: `${RINGING_WORDS[g.ringing][0]!.toUpperCase()}${RINGING_WORDS[g.ringing].slice(1)} · ${g.ringSeconds}s each`,
         agents: people.length ? people : undefined,
-        warnings: people.length ? undefined : ['Nobody in this group yet: click it to add people.'],
         ...extra,
       },
       address,
@@ -837,36 +849,126 @@ export function visualFlowCanvas(f: VisualCallFlow, opts: { number?: string | nu
   const straight = opts.straightToQueue ? onlyRingsAGroup({ ...f, business: { then: f.business.then } }) : null;
   const numberLine = opts.number ? [opts.number] : ['No number chosen'];
   if (straight) {
-    groupNode(straight, 'business.then', { badge: 'Front door', details: numberLine });
-    return { graph: { nodes, edges }, addressOf, plus };
+    const id = groupNode(straight, 'business.then', { badge: 'Front door', details: numberLine });
+    problem(id, stepProblem(straight, 'When someone calls'));
+    return { graph: { nodes, edges }, addressOf, plus, problems, outline: outlineOf(nodes, edges) };
   }
 
   const front = node({ id: 'front', kind: 'auto_attendant', label: f.name.trim() || 'New call flow', badge: 'Front door', details: [...numberLine, ...(always ? [] : [visualHoursWords(f.hours).replace(/^Business hours are /, 'Open ').replace(/\.$/, '')])] }, 'front');
+  if (!f.name.trim()) problem(front, 'Give the call flow a name, for example "Main Line".');
+  if (f.hours.type === 'custom' && !Object.values(f.hours.weekly).some((d) => d.length > 0)) problem(front, 'Choose at least one day the business is open.');
   const paths: ['business' | 'after', VisualPath | undefined, string, Branch][] = [['business', f.business, always ? 'Every call' : 'Business hours', 'business_hours']];
   if (!always) paths.push(['after', f.afterHours, 'After hours', 'after_hours']);
   for (const [key, p, label, branch] of paths) {
     const pathId = node({ id: key, kind: 'auto_attendant', label, sublabel: p?.greeting?.trim() ? `"${clip(p.greeting, 60)}"` : undefined }, key);
     edge(front, pathId, label, branch);
+    const where = always ? 'When someone calls' : key === 'business' ? 'During business hours' : 'After hours';
     if (!p) {
       plus[pathId] = { kind: 'choose', label: 'Choose what happens' };
+      problem(pathId, `${where}: choose what happens.`);
       continue;
     }
     const t = p.then;
     if (t.kind === 'menu') {
       const n = nodes.find((x) => x.id === pathId)!;
       n.details = [t.options.length ? `Menu: ${t.options.length} option${t.options.length === 1 ? '' : 's'}` : 'Menu: no options yet'];
-      if (!t.options.length) n.warnings = ['Add the first menu option.'];
       if (t.options.length < 10) plus[pathId] = { kind: 'add_option', label: 'Add an option' };
+      if (!t.options.length) problem(pathId, `${where}: add at least one menu option.`);
+      const keys = t.options.map((o) => o.key.trim());
       t.options.forEach((o, i) => {
         const address = `${key}.o${i}` as VisualAddress;
         const target = stepNode(o.then, `${key}:o${i}`, address);
         edge(pathId, target, `Press ${o.key}${o.label.trim() ? `: ${clip(o.label, 24)}` : ''}`, branch);
+        const button = `${where}, button ${o.key.trim() || i + 1}`;
+        if (!o.label.trim()) problem(target, `${button}: give it a name, for example "Sales".`);
+        problem(target, stepProblem(o.then, button));
+        if (keys.indexOf(o.key.trim()) !== i) problem(target, `${where}: button ${o.key.trim()} is used twice. Give each option its own button.`);
       });
     } else if (t.kind === 'hangup') {
       edge(pathId, node({ id: `${key}:hangup`, kind: 'disconnect', label: 'Hang up' }, `${key}.then`), 'Then', branch);
+      if (!p.greeting?.trim()) problem(pathId, `${where}: type the message callers hear before the call ends.`);
     } else {
-      edge(pathId, stepNode(t, `${key}:then`, `${key}.then`), 'Then', branch);
+      const target = stepNode(t, `${key}:then`, `${key}.then`);
+      edge(pathId, target, 'Then', branch);
+      problem(target, stepProblem(t, where));
     }
   }
-  return { graph: { nodes, edges }, addressOf, plus };
+  return { graph: { nodes, edges }, addressOf, plus, problems, outline: outlineOf(nodes, edges) };
+}
+
+/** The boxes in order, each with the line that leads to it ("Press 1: Sales") and how far from the front door it is. */
+function outlineOf(nodes: import('./call-flow-graph').CallFlowNode[], edges: import('./call-flow-graph').CallFlowEdge[]): VisualCanvas['outline'] {
+  const depth = new Map<string, number>();
+  return nodes.map((n) => {
+    const into = edges.find((e) => e.target === n.id && depth.has(e.source));
+    const d = into ? depth.get(into.source)! + 1 : 0;
+    depth.set(n.id, d);
+    const what = [n.badge === 'Front door' ? 'Front door' : null, n.label, n.sublabel].filter(Boolean).join(', ');
+    const text = into && into.label !== n.label ? `${into.label}: ${what}` : what;
+    return { nodeId: n.id, text: n.warnings?.length ? `${text} (still to do)` : text, depth: d };
+  });
+}
+
+/* ------------------------------- step 4: reopening ------------------------------- */
+
+/** PUT .../discovery/call-flows/:flowId: a call flow made in Call Flows (preview), changed there. The number stays as it is. */
+export const updateVisualCallFlowSchema = z
+  .object({
+    flow: visualCallFlowSchema,
+    /** must match how it was saved: straight to the group, or an auto attendant in front */
+    straight_to_queue: z.boolean().optional(),
+  })
+  .strict();
+export type UpdateVisualCallFlowInput = z.infer<typeof updateVisualCallFlowSchema>;
+
+/** The Call flow captures an auto attendant's answers point at by id (its menu options and direct steps, every path). */
+export function attendantFlowIds(a: AutoAttendantWizardAnswers): string[] {
+  const ids = new Set<string>();
+  const flows = [a.businessFlow, a.afterHoursFlow, ...(a.holidays ?? []).map((h) => h.flow)];
+  for (const cf of flows) {
+    if (!cf) continue;
+    if (cf.target?.flowId) ids.add(cf.target.flowId);
+    for (const o of cf.options ?? []) if (o.target.flowId) ids.add(o.target.flowId);
+  }
+  if (a.operator?.flowId) ids.add(a.operator.flowId);
+  return [...ids];
+}
+
+/** A saved Call flow row, as the list and the server read it. */
+export interface VisualFlowRow {
+  id: string;
+  kind: string;
+  name: string;
+  wizard_answers: unknown;
+  editor?: string | null;
+  resource_account_id?: string | null;
+}
+
+/**
+ * The saved flow a preview capture belongs to, read back into the preview: an auto attendant with the groups it made, or a group the number
+ * goes straight to. A group the preview made inside an auto attendant opens that auto attendant. Only the preview's own captures are
+ * groups to edit; any other capture an option points at stays a link to "another call flow".
+ */
+export function visualFlowFromRows(
+  row: VisualFlowRow,
+  rows: VisualFlowRow[],
+  site: { timeZoneId: string },
+): (FromCapturesResult & { top: VisualFlowRow; straightToQueue: boolean }) | { ok: false; reasons: string[]; top: VisualFlowRow | null } {
+  let top: VisualFlowRow | undefined = row;
+  if (row.kind === 'call_queue' && !row.resource_account_id) {
+    top = rows.find((r) => r.kind === 'auto_attendant' && r.editor === 'call-flows' && !!r.wizard_answers && attendantFlowIds(r.wizard_answers as AutoAttendantWizardAnswers).includes(row.id));
+    if (!top) return { ok: false, top: null, reasons: ['This group isn’t part of a call flow made in the preview.'] };
+  }
+  if (!top.wizard_answers) return { ok: false, top, reasons: ['It has no answers saved.'] };
+  if (top.kind === 'call_queue') {
+    const r = fromCaptures({ kind: 'call_queue', capture: { flowId: top.id, name: top.name, answers: top.wizard_answers as CallQueueWizardAnswers } }, [], site);
+    return { ...r, top, straightToQueue: true };
+  }
+  const answers = top.wizard_answers as AutoAttendantWizardAnswers;
+  const ids = new Set(attendantFlowIds(answers));
+  const queues = rows
+    .filter((r) => ids.has(r.id) && r.kind === 'call_queue' && r.editor === 'call-flows' && !!r.wizard_answers)
+    .map((r) => ({ flowId: r.id, name: r.name, answers: r.wizard_answers as CallQueueWizardAnswers }));
+  const r = fromCaptures({ kind: 'auto_attendant', capture: { flowId: top.id, name: top.name, answers } }, queues, site);
+  return { ...r, top, straightToQueue: false };
 }

@@ -1,6 +1,6 @@
 # Call Flows (preview): plan
 
-Version 0.3, 11 November 2026. From the feature request "Visual Auto Attendant and Call Queue Wizard". 0.2: the four decisions answered, and step 2 built. 0.3: step 3, the canvas.
+Version 0.4, 11 November 2026. From the feature request "Visual Auto Attendant and Call Queue Wizard". 0.2: the four decisions answered, and step 2 built. 0.3: step 3, the canvas. 0.4: step 4, reopening, messages, keyboard and screen readers.
 
 ## What was asked for
 
@@ -71,7 +71,7 @@ Steps 1 and 2 are a first version to try. Each step after that is its own PR.
 - **Until the canvas (step 3):** a menu's options, a group's people, how their phones ring and what happens if nobody answers are filled in below the tile chosen. A group's other settings take the defaults above.
 - **Review:** the written summary, what Voxshift will create with the Teams names in grey, and the language and time zone from the site's country (and US state), which can be changed there.
 - **Saving:** one request, `POST /api/t/:tenantId/discovery/call-flows` (TelephonyService.saveVisualCallFlow). Everything is checked first, in words; then the number is taken (a resource account answering the auto attendant, as adding a voice app with a number does), one call queue capture per group, and the auto attendant capture linking to them by id. All are marked `editor = 'call-flows'` (tenant migration 0101). If anything fails, nothing is left behind.
-- **Not yet:** reopening a saved flow in the preview (step 4). "Edit call flow" on a flow it made opens the classic wizard, and the row shows a Preview badge.
+- Reopening came in step 4 (below).
 
 ## Step 3 as built
 
@@ -85,3 +85,13 @@ Steps 1 and 2 are a first version to try. Each step after that is its own PR.
 - **A + on a box** offers what can follow it: "Add an option" on a menu, "If nobody answers" on a group, "Choose what happens" on a path not chosen yet.
 - **"Still to do"** above the canvas names the first thing missing, in the same words the server uses; Next waits until nothing is.
 - While the flow is edited the boxes stay where they are until the new layout is ready, and the view is fitted again only when boxes come or go.
+
+## Step 4 as built
+
+- **Reopening.** "Edit call flow" on a flow the preview made (the row's Preview badge) opens it in the preview, on its canvas. Its auto attendant and the groups it made are read back (`visualFlowFromRows`); a group's own row opens the call flow it belongs to. Anything the preview can't show (holidays, an operator, something changed in a classic wizard it doesn't know) opens the classic wizard instead, saying why. Flows the classic wizards made still open there.
+- **Saving changes:** `PUT /api/t/:tenantId/discovery/call-flows/:id` (TelephonyService.updateVisualCallFlow). The captures are changed in place: the auto attendant, each group it already had (renamed with its voice app when renamed), a new call queue capture for each new group, and a group taken out is deleted with its voice app unless another Call flow points at it. The number stays, and whether it goes straight to a group can't change here. Everything is checked first.
+- **Messages.** Each box with something missing says what, on the box. "Still to do" names the first (the same words the server uses), says how many more, and **Show me** opens that box's panel. When nothing is missing it says so.
+- **Keyboard and screen readers.**
+  - Under the diagram, **a list of the boxes** in order (what leads to each, how deep it is, "still to do" where something is missing): each is a button that opens the box's panel and moves the keyboard into it.
+  - Tiles are buttons that say whether they're chosen; each group of tiles is one Tab stop, and the arrow keys (Home, End) move along it without choosing, so going past a tile can't throw away what was filled in. Enter or Space chooses.
+  - "Still to do" is announced as it changes. The panel is a labelled region.

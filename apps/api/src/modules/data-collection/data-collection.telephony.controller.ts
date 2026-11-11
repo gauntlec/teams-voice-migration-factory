@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
 import {
   callingPolicySchema,
   can,
@@ -25,6 +25,8 @@ import {
   resourceAccountNumberSchema,
   saveVisualCallFlowSchema,
   type SaveVisualCallFlowInput,
+  updateVisualCallFlowSchema,
+  type UpdateVisualCallFlowInput,
   usersImportSchema,
   type CallingPolicyInput,
   type DiscoveryCapBulkPatchInput,
@@ -411,6 +413,13 @@ export class TelephonyController {
   @RequirePermission('discovery:write')
   saveVisualCallFlow(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Body(new ZodBody(saveVisualCallFlowSchema)) body: SaveVisualCallFlowInput) {
     return this.svc.saveVisualCallFlow(t, u, body, this.review(u));
+  }
+
+  /** A call flow made in Call Flows (preview), changed there: its captures updated in place (docs/CALL-FLOWS-WIZARD.md step 4). */
+  @Put('call-flows/:id')
+  @RequirePermission('discovery:write')
+  updateVisualCallFlow(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Param('id') id: string, @Body(new ZodBody(updateVisualCallFlowSchema)) body: UpdateVisualCallFlowInput) {
+    return this.svc.updateVisualCallFlow(t, u, id, body, this.review(u));
   }
 
   /* ----------------------- resource accounts ----------------------- */
