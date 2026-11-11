@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactElement, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactElement, type ReactNode } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import {
   AddRegular,
@@ -100,6 +100,11 @@ const useStyles = makeStyles({
   list: { display: 'grid', ...shorthands.gap('4px'), ...shorthands.margin(0), paddingLeft: '18px' },
   summary: { whiteSpace: 'pre-wrap', fontFamily: 'inherit', ...shorthands.margin(0), display: 'grid', ...shorthands.gap('2px') },
   two: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', ...shorthands.gap('10px') },
+  done: { color: tokens.colorPaletteGreenForeground1 },
+  canvasColumn: { display: 'grid', ...shorthands.gap('8px'), minWidth: 0 },
+  outline: { maxHeight: '120px', overflowY: 'auto', ...shorthands.border('1px', 'solid', tokens.colorNeutralStroke2), ...shorthands.borderRadius(tokens.borderRadiusMedium), ...shorthands.padding('4px') },
+  outlineList: { listStyleType: 'none', ...shorthands.margin(0), ...shorthands.padding(0), display: 'grid', ...shorthands.gap('1px') },
+  outlineButton: { justifyContent: 'flex-start', textAlign: 'left', fontWeight: 'normal', minWidth: 0, maxWidth: '100%' },
   canvasLayout: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 340px', ...shorthands.gap('12px'), '@media (max-width: 900px)': { gridTemplateColumns: '1fr' } },
   sidePanel: {
     display: 'grid',
@@ -109,8 +114,9 @@ const useStyles = makeStyles({
     ...shorthands.borderRadius(tokens.borderRadiusMedium),
     ...shorthands.border('1px', 'solid', tokens.colorNeutralStroke2),
     backgroundColor: tokens.colorNeutralBackground2,
-    maxHeight: '480px',
+    maxHeight: '540px',
     overflowY: 'auto',
+    ':focus-visible': { outlineStyle: 'solid', outlineWidth: '2px', outlineColor: tokens.colorStrokeFocus2 },
   },
 });
 
@@ -124,16 +130,34 @@ interface TileDef<K extends string> {
 }
 
 /** A row of icon tiles, one chosen: a radio group a person can read at a glance instead of a drop-down. */
+/**
+ * Arrow keys (and Home / End) move between the tiles of one group; Tab leaves the group. Moving doesn't choose: Enter or Space does, so going
+ * past a tile can't throw away what was filled in under the one chosen.
+ */
+function onTileKeys(e: KeyboardEvent<HTMLDivElement>) {
+  const buttons = [...e.currentTarget.querySelectorAll<HTMLButtonElement>(':scope > button')];
+  const i = buttons.indexOf(document.activeElement as HTMLButtonElement);
+  if (i < 0) return;
+  const next = { ArrowRight: i + 1, ArrowDown: i + 1, ArrowLeft: i - 1, ArrowUp: i - 1, Home: 0, End: buttons.length - 1 }[e.key];
+  if (next === undefined) return;
+  e.preventDefault();
+  buttons[(next + buttons.length) % buttons.length]!.focus();
+}
+
+/** One tab stop per group: the chosen tile, or the first. */
+const tabStop = (chosen: boolean, first: boolean, anyChosen: boolean) => (chosen || (first && !anyChosen) ? 0 : -1);
+
 function Tiles<K extends string>({ label, tiles, value, onChange, big, compact }: { label: string; tiles: TileDef<K>[]; value: K | null; onChange: (k: K) => void; big?: boolean; compact?: boolean }) {
   const s = useStyles();
+  const anyChosen = tiles.some((t) => t.key === value);
   return (
-    <div role="radiogroup" aria-label={label} className={big ? s.bigTiles : compact ? s.compactTiles : s.tiles}>
-      {tiles.map((t) => (
+    <div role="group" aria-label={label} className={big ? s.bigTiles : compact ? s.compactTiles : s.tiles} onKeyDown={onTileKeys}>
+      {tiles.map((t, i) => (
         <button
           key={t.key}
           type="button"
-          role="radio"
-          aria-checked={value === t.key}
+          aria-pressed={value === t.key}
+          tabIndex={tabStop(value === t.key, i === 0, anyChosen)}
           aria-label={t.desc ? `${t.title}: ${t.desc}` : t.title}
           className={mergeClasses(s.tile, value === t.key && s.tileOn)}
           onClick={() => onChange(t.key)}
@@ -580,6 +604,7 @@ export function CallFlowsPreviewWizard({
   teamChoices,
   onOpenExisting,
   onCreated,
+  editing,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -593,26 +618,42 @@ export function CallFlowsPreviewWizard({
   /** opens a voice app's call flow (decided 10 Nov 2026: a number already in use offers that instead of a new flow) */
   onOpenExisting: (voiceAppId: string) => void;
   onCreated: (name: string) => void;
+  /** a flow made in the preview, opened again (docs/CALL-FLOWS-WIZARD.md step 4): it opens on its canvas and saves in place. Render with a `key` per flow. */
+  editing?: { flowId: string; flow: VisualCallFlow; straightToQueue: boolean; number: string | null };
 }) {
   const s = useStyles();
   const defaults = useMemo(() => callFlowDefaultsForSite(site), [site]);
-  const [name, setName] = useState('');
+  const was = editing?.flow;
+  const [name, setName] = useState(was?.name ?? '');
   const [numberId, setNumberId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [hours, setHours] = useState<HoursKind | null>(null);
-  const [weekly, setWeekly] = useState<WizardWeeklyHours>(weekdays('09:00', '17:00'));
-  const [business, setBusiness] = useState<VisualPath | null>(null);
-  const [afterHours, setAfterHours] = useState<VisualPath | null>(null);
-  const [straight, setStraight] = useState(false);
-  const [languageId, setLanguageId] = useState(defaults.languageId);
-  const [timeZoneId, setTimeZoneId] = useState(defaults.timeZoneId);
+  const [hours, setHours] = useState<HoursKind | null>(!was ? null : was.hours.type === 'custom' ? (isEightSix(was.hours.weekly) ? 'eight_six' : 'custom') : was.hours.type);
+  const [weekly, setWeekly] = useState<WizardWeeklyHours>(was?.hours.type === 'custom' ? was.hours.weekly : weekdays('09:00', '17:00'));
+  const [business, setBusiness] = useState<VisualPath | null>(was?.business ?? null);
+  const [afterHours, setAfterHours] = useState<VisualPath | null>(was?.afterHours ?? null);
+  const [straight, setStraight] = useState(!!editing?.straightToQueue);
+  const [languageId, setLanguageId] = useState(was?.languageId || defaults.languageId);
+  const [timeZoneId, setTimeZoneId] = useState(was?.timeZoneId || defaults.timeZoneId);
   const [error, setError] = useState<string | null>(null);
-  const [voiceInputs, setVoiceInputs] = useState(false);
+  const [voiceInputs, setVoiceInputs] = useState(!!was?.voiceInputs);
   /** the box on the canvas whose panel is open */
   const [selected, setSelected] = useState<string | null>(null);
+  // a box chosen from the list or "Show me" moves the keyboard into its panel
+  const panelRef = useRef<HTMLDivElement>(null);
+  const focusPanel = useRef(false);
+  const choose = (id: string, fromKeyboard: boolean) => {
+    focusPanel.current = fromKeyboard;
+    setSelected(id);
+  };
+  useEffect(() => {
+    if (focusPanel.current && selected) {
+      focusPanel.current = false;
+      requestAnimationFrame(() => panelRef.current?.focus());
+    }
+  }, [selected]);
 
   const ctx: Ctx = { tenantId, siteId, teamChoices };
-  const number = spareNumbers.find((n) => n.id === numberId) ?? null;
+  const number: { e164: string } | null = editing ? (editing.number ? { e164: editing.number } : null) : (spareNumbers.find((n) => n.id === numberId) ?? null);
   const always = hours === 'always';
 
   const speech = !!AA_SUPPORTED_LANGUAGES.find((l) => l.code === languageId)?.speechInput;
@@ -637,7 +678,7 @@ export function CallFlowsPreviewWizard({
   const goStraight = straight && canGoStraight;
   const sent: VisualCallFlow | null = useMemo(() => (flow && goStraight ? { ...flow, business: { then: flow.business.then } } : flow), [flow, goStraight]);
   const canvas = useMemo(() => (sent ? visualFlowCanvas(sent, { number: number?.e164 ?? null, straightToQueue: goStraight }) : null), [sent, number, goStraight]);
-  const problem = sent ? visualCallFlowProblem(sent) : null;
+  const problems = canvas?.problems ?? [];
 
   // the canvas's panels: what the selected box is, and how to change it
   const pathOf = (k: PathKey) => (k === 'business' ? business : afterHours);
@@ -734,7 +775,10 @@ export function CallFlowsPreviewWizard({
   };
 
   const save = useMutation({
-    mutationFn: () => api<{ voiceAppId: string; flowId: string; queues: number }>(`${base}/call-flows`, { method: 'POST', body: JSON.stringify({ site_id: siteId, phone_number_id: numberId, flow: sent, ...(goStraight ? { straight_to_queue: true } : {}) }) }),
+    mutationFn: () =>
+      editing
+        ? api<{ flowId: string; queues: number }>(`${base}/call-flows/${editing.flowId}`, { method: 'PUT', body: JSON.stringify({ flow: sent, ...(editing.straightToQueue ? { straight_to_queue: true } : {}) }) })
+        : api<{ voiceAppId: string; flowId: string; queues: number }>(`${base}/call-flows`, { method: 'POST', body: JSON.stringify({ site_id: siteId, phone_number_id: numberId, flow: sent, ...(goStraight ? { straight_to_queue: true } : {}) }) }),
     onSuccess: () => {
       const made = name.trim();
       onOpenChange(false);
@@ -755,8 +799,18 @@ export function CallFlowsPreviewWizard({
     {
       key: 'number',
       title: 'The number',
-      validate: () => (!numberId ? 'Choose the number people will call.' : !name.trim() ? 'Give the call flow a name, for example "Main Line".' : null),
-      content: (
+      validate: () => (!editing && !numberId ? 'Choose the number people will call.' : !name.trim() ? 'Give the call flow a name, for example "Main Line".' : null),
+      content: editing ? (
+        <>
+          <Text weight="semibold" size={400}>
+            The number
+          </Text>
+          <Text>{editing.number ? `${editing.number} stays the number for this call flow.` : 'This call flow has no number yet.'}</Text>
+          <Field label="What should we call it?" required hint="Callers don't hear this. It's the name in Teams and in the handover pack.">
+            <Input value={name} placeholder="Main Line" onChange={(_, d) => setName(d.value)} />
+          </Field>
+        </>
+      ) : (
         <>
           <Text weight="semibold" size={400}>
             What number will people call?
@@ -786,9 +840,15 @@ export function CallFlowsPreviewWizard({
           ) : matches.length === 0 ? (
             <Text className={s.muted}>None of this site's spare numbers match "{search}".</Text>
           ) : (
-            <div role="radiogroup" aria-label="Spare numbers" className={s.numbers}>
-              {shown.map((n) => (
-                <button key={n.id} type="button" role="radio" aria-checked={numberId === n.id} aria-label={n.e164} className={mergeClasses(s.tile, s.numberTile, numberId === n.id && s.tileOn)} onClick={() => setNumberId(n.id)}>
+            <div role="group" aria-label="Spare numbers" className={s.numbers} onKeyDown={onTileKeys}>
+              {shown.map((n, i) => (
+                <button
+                  key={n.id}
+                  type="button"
+                  aria-pressed={numberId === n.id}
+                  tabIndex={tabStop(numberId === n.id, i === 0, shown.some((x) => x.id === numberId))}
+                  aria-label={n.e164}
+                  className={mergeClasses(s.tile, s.numberTile, numberId === n.id && s.tileOn)} onClick={() => setNumberId(n.id)}>
                   <Text weight={numberId === n.id ? 'semibold' : 'regular'}>{n.e164}</Text>
                 </button>
               ))}
@@ -856,8 +916,13 @@ export function CallFlowsPreviewWizard({
             {always ? 'When someone calls, what should happen?' : 'When someone calls during business hours, what should happen?'}
           </Text>
           <PathTiles label="What should happen" path={business} groupName={name.trim()} onChange={setBusiness} languageId={languageId} />
-          {always && business?.then.kind === 'group' && (
+          {always && business?.then.kind === 'group' && !editing && (
             <Switch checked={straight} onChange={(_, d) => setStraight(d.checked)} label="Send calls straight to the group, with no phone menu in front" />
+          )}
+          {editing && (
+            <Text className={s.muted}>
+              {editing.straightToQueue ? 'Calls go straight to the group, with no phone menu in front. That stays as it is.' : 'A phone menu (auto attendant) answers the number. That stays as it is.'}
+            </Text>
           )}
           {business && <Text className={s.muted}>Next you'll see the call flow drawn out, and fill in the details there.</Text>}
         </>
@@ -892,14 +957,45 @@ export function CallFlowsPreviewWizard({
             </Text>
             <Text className={s.muted}>Click a box to fill it in or change it. A + adds what can come next.</Text>
           </div>
-          {problem && (
-            <Text className={s.warn} role="status">
-              Still to do: {problem}
-            </Text>
-          )}
+          <div role="status" aria-live="polite" className={s.row}>
+            {problems.length > 0 ? (
+              <>
+                <Text className={s.warn}>
+                  Still to do: {problems[0]!.message}
+                  {problems.length > 1 ? ` (and ${problems.length - 1} more)` : ''}
+                </Text>
+                <Button size="small" appearance="subtle" onClick={() => choose(problems[0]!.nodeId, true)}>
+                  Show me
+                </Button>
+              </>
+            ) : (
+              <Text className={s.done}>Nothing missing: it's ready to review.</Text>
+            )}
+          </div>
           <div className={s.canvasLayout}>
-            <CallFlowEditorCanvas graph={canvas.graph} editing={{ selectedId: selected, plus: canvas.plus, onSelect: setSelected, onPlus }} />
-            <div className={s.sidePanel} aria-label="Details of the selected box">
+            <div className={s.canvasColumn}>
+              <div aria-label="Diagram of the call flow. The list of boxes under it does the same from the keyboard.">
+                <CallFlowEditorCanvas height={400} graph={canvas.graph} editing={{ selectedId: selected, plus: canvas.plus, onSelect: (id) => choose(id, false), onPlus }} />
+              </div>
+              <nav aria-label="Boxes in the call flow" className={s.outline}>
+                <ul className={s.outlineList}>
+                  {canvas.outline.map((o) => (
+                    <li key={o.nodeId} style={{ paddingLeft: o.depth * 14 }}>
+                      <Button
+                        size="small"
+                        appearance={selected === o.nodeId ? 'secondary' : 'transparent'}
+                        aria-current={selected === o.nodeId ? 'true' : undefined}
+                        className={s.outlineButton}
+                        onClick={() => choose(o.nodeId, true)}
+                      >
+                        {o.text}
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </nav>
+            </div>
+            <div ref={panelRef} tabIndex={-1} className={s.sidePanel} role="region" aria-label="Details of the selected box">
               {panel}
             </div>
           </div>
@@ -971,15 +1067,16 @@ export function CallFlowsPreviewWizard({
         onOpenChange(o);
         if (!o) setError(null);
       }}
-      title="New call flow (preview)"
+      title={editing ? 'Change call flow (preview)' : 'New call flow (preview)'}
       wide
+      initialStep={editing ? steps.findIndex((x) => x.key === 'canvas') : undefined}
       steps={steps}
       onComplete={() => {
         setError(null);
         save.mutate();
       }}
       completing={save.isPending}
-      completeLabel="Save"
+      completeLabel={editing ? 'Save changes' : 'Save'}
       error={error}
     />
   );

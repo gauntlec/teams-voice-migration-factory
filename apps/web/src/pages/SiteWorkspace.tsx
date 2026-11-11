@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Badge, Button, Spinner, Tab, TabList, Text , makeStyles, shorthands, tokens } from '@fluentui/react-components';
 import { ArrowLeftRegular, ArrowUploadRegular, WarningRegular } from '@fluentui/react-icons';
-import { portDue, portStageText, CALLER_ID_OPTIONS, FLOW_KINDS, NETWORK_LOCATIONS, NETWORK_SCOPES, NETWORK_TYPES, NUMBER_RANGE_KINDS, NUMBER_RANGE_KIND_LABELS, type NumberRangeKind, RESOURCE_ACCOUNT_KINDS, VOICEMAIL_PROMPT_LANGUAGES, type AutoAttendantWizardAnswers, type CallQueueWizardAnswers, type Paginated, type TenantUserSummary } from '@tvmf/shared';
+import { portDue, portStageText, CALLER_ID_OPTIONS, FLOW_KINDS, NETWORK_LOCATIONS, NETWORK_SCOPES, NETWORK_TYPES, NUMBER_RANGE_KINDS, NUMBER_RANGE_KIND_LABELS, type NumberRangeKind, RESOURCE_ACCOUNT_KINDS, VOICEMAIL_PROMPT_LANGUAGES, type AutoAttendantWizardAnswers, type CallQueueWizardAnswers, type Paginated, type TenantUserSummary, callFlowDefaultsForSite, visualFlowFromRows, type VisualCallFlow, type VisualFlowRow } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { AutoAttendantWizard } from '../components/AutoAttendantWizard';
@@ -106,11 +106,34 @@ export function SiteWorkspace() {
   // Call Flows (preview): engineers only while it is a preview (decided 10 Nov 2026)
   const [previewOpen, setPreviewOpen] = useState(false);
   const canPreview = !!me && me.role !== 'CUSTOMER';
-  /** A number already answering a call flow: open that flow (in the classic wizard until step 4 reopens it in the preview). */
+  /** A saved Call flow reopened: one made in Call Flows (preview) opens there (step 4), anything else in its classic wizard. */
+  const [previewEdit, setPreviewEdit] = useState<{ flowId: string; flow: VisualCallFlow; straightToQueue: boolean; number: string | null } | null>(null);
+  const openFlow = async (flow: Row) => {
+    if (flow.editor !== 'call-flows' || !canPreview || !tid) {
+      setEditingFlow(flow);
+      return;
+    }
+    try {
+      const rows = (await api<Paginated<VisualFlowRow & { voice_app_id: string | null }>>(`${base}/flows?siteId=${siteId}&limit=200`)).items;
+      const site = summary.data?.site as { country?: string | null; address?: string | null } | undefined;
+      const r = visualFlowFromRows(flow as unknown as VisualFlowRow, rows, { timeZoneId: callFlowDefaultsForSite(site ?? {}).timeZoneId });
+      if (!r.ok) {
+        notify('Opened in the classic wizard', { body: `The preview can't show all of it: ${r.reasons.join(' ')}`, intent: 'info' });
+        setEditingFlow(flow);
+        return;
+      }
+      const top = rows.find((x) => x.id === r.top.id);
+      const app = siteVoiceApps.data?.items.find((a) => a.id === top?.voice_app_id);
+      setPreviewEdit({ flowId: r.top.id, flow: r.flow, straightToQueue: r.straightToQueue, number: app?.resource_accounts.flatMap((ra) => ra.numbers)[0] ?? null });
+    } catch (e) {
+      notify('Couldn’t open the call flow', { body: e instanceof ApiError ? e.message : 'Try again.', intent: 'error' });
+    }
+  };
+  /** A number already answering a call flow: open that flow instead. */
   const openVoiceAppFlow = (voiceAppId: string) => {
     const app = siteVoiceApps.data?.items.find((a) => a.id === voiceAppId);
     if (!app) return;
-    if (app.call_flow?.wizard_answers) setEditingFlow(app.call_flow);
+    if (app.call_flow?.wizard_answers) void openFlow(app.call_flow);
     else setDesignFor({ id: app.id, name: app.name, kind: app.kind as 'auto_attendant' | 'call_queue', resourceAccountId: null });
   };
   const [designFor, setDesignFor] = useState<{ id: string; name: string; kind: 'auto_attendant' | 'call_queue'; resourceAccountId: string | null } | null>(null);
@@ -652,7 +675,7 @@ export function SiteWorkspace() {
             if (flow?.wizard_answers) {
               return (
                 <span className={ls.flexWrapGap4}>
-                  <Button size="small" appearance="subtle" onClick={() => setEditingFlow(flow)}>
+                  <Button size="small" appearance="subtle" onClick={() => void openFlow(flow)}>
                     Edit call flow
                   </Button>
                   {can('build:write') && <FlowImportButton flow={flow} tid={tid} siteId={siteId} onChanged={refreshVoiceApps} />}
@@ -907,6 +930,28 @@ export function SiteWorkspace() {
             qc.invalidateQueries({ queryKey: ['site-ras-lite', tid, siteId] });
             qc.invalidateQueries({ queryKey: ['wizard-team-planned-flows', tid, siteId] });
             notify(`Saved "${name}"`, { body: 'It is on the Call flows list, ready to import to Design & Build.', intent: 'success' });
+          }}
+        />
+      )}
+      {tid && canPreview && !locked && previewEdit && (
+        <CallFlowsPreviewWizard
+          key={previewEdit.flowId}
+          open
+          onOpenChange={(o) => !o && setPreviewEdit(null)}
+          editing={previewEdit}
+          base={base}
+          tenantId={tid}
+          siteId={siteId}
+          site={{ country: (site.country as string | null) ?? null, address: (site.address as string | null) ?? null }}
+          spareNumbers={[]}
+          voiceApps={[]}
+          teamChoices={teamChoices.filter((c) => c.flowId !== previewEdit.flowId)}
+          onOpenExisting={() => {}}
+          onCreated={(name) => {
+            setPreviewEdit(null);
+            refreshVoiceApps();
+            qc.invalidateQueries({ queryKey: ['wizard-team-planned-flows', tid, siteId] });
+            notify(`Saved changes to "${name}"`, { intent: 'success' });
           }}
         />
       )}

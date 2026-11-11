@@ -183,6 +183,42 @@ describe('the canvas (step 3)', () => {
 
   it('warns on a group with nobody in it', () => {
     const c = visualFlowCanvas({ ...groupOnly, business: { then: { ...sales, people: [] } } });
-    expect(c.graph.nodes.find((n) => n.id === 'group:g1')!.warnings).toEqual(['Nobody in this group yet: click it to add people.']);
+    expect(c.graph.nodes.find((n) => n.id === 'group:g1')!.warnings).toEqual(['Add at least one person to the group "Sales".']);
+    expect(c.problems).toEqual([{ nodeId: 'group:g1', message: 'When someone calls: add at least one person to the group "Sales".' }]);
+  });
+});
+
+describe('what is still to do, and the list of boxes (step 4)', () => {
+  const blank = (o: Partial<VisualCallFlow>): VisualCallFlow => ({ ...menuFlow, ...o });
+  it('puts each problem on its own box, the first being the one the server would give', () => {
+    const flows: VisualCallFlow[] = [
+      blank({ name: '' }),
+      blank({ afterHours: undefined }),
+      blank({ business: { then: { kind: 'menu', options: [] } } }),
+      blank({ business: { then: { kind: 'menu', options: [{ key: '1', label: '', then: { kind: 'person', who: 'a' } }] } } }),
+      blank({ business: { then: { kind: 'menu', options: [{ key: '1', label: 'A', then: { kind: 'forward', number: '' } }] } } }),
+      blank({ afterHours: { then: { kind: 'hangup' } } }),
+      { ...groupOnly, business: { then: { kind: 'person', who: '' } } },
+    ];
+    for (const f of flows) {
+      const c = visualFlowCanvas(f);
+      expect(c.problems[0]?.message).toBe(visualCallFlowProblem(f));
+      expect(c.graph.nodes.find((n) => n.id === c.problems[0]!.nodeId)!.warnings?.length).toBeGreaterThan(0);
+    }
+    expect(visualFlowCanvas(menuFlow).problems).toEqual([]);
+    expect(visualFlowCanvas(blank({ business: { then: { kind: 'menu', options: [{ key: '1', label: '', then: { kind: 'forward', number: '' } }] } } })).problems.map((p) => p.nodeId)).toEqual(['business:o0', 'business:o0']);
+  });
+
+  it('lists the boxes in order with what leads to each', () => {
+    expect(visualFlowCanvas(menuFlow, { number: '+44 20 7000 0201' }).outline).toEqual([
+      { nodeId: 'front', text: 'Front door, Main Line', depth: 0 },
+      { nodeId: 'business', text: 'Business hours, "Welcome to Contoso."', depth: 1 },
+      { nodeId: 'group:g1', text: 'Press 1: Sales: Sales, Everyone at once · 30s each', depth: 2 },
+      { nodeId: 'group:g1:timeout', text: 'Nobody answers: Hang up', depth: 3 },
+      { nodeId: 'business:o1', text: 'Press 2: Accounts: pat@contoso.test', depth: 2 },
+      { nodeId: 'after', text: 'After hours', depth: 1 },
+      { nodeId: 'after:then', text: 'Then: Shared voicemail, Main voicemail', depth: 2 },
+    ]);
+    expect(visualFlowCanvas({ ...menuFlow, afterHours: undefined }).outline.find((o) => o.nodeId === 'after')!.text).toBe('After hours (still to do)');
   });
 });

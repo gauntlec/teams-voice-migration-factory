@@ -37,6 +37,10 @@ import {
   visualCallFlowProblem,
   visualFlowGroups,
   type SaveVisualCallFlowInput,
+  type UpdateVisualCallFlowInput,
+  attendantFlowIds,
+  visualFlowFromRows,
+  type AutoAttendantWizardAnswers,
   type VisualCallFlow,
   type VisualGroup,
 } from '@tvmf/shared';
@@ -1626,6 +1630,79 @@ export class TelephonyService {
       }
       throw e;
     }
+  }
+
+  /**
+   * A call flow made in Call Flows (preview), changed there (docs/CALL-FLOWS-WIZARD.md step 4). Its captures are updated in place: the
+   * auto attendant (or the group the number goes straight to), each group it already had, a new call queue capture for each new group, and a
+   * group taken out is deleted with its voice app unless another Call flow still points at it. The number and resource account are kept;
+   * whether it goes straight to a group can't change here. Everything is checked before anything is written.
+   */
+  async updateVisualCallFlow(t: TenantContext, u: AuthedUser, flowId: string, input: UpdateVisualCallFlowInput, canReview: boolean) {
+    if (u.role === 'CUSTOMER') throw new ForbiddenException('Call Flows (preview) is for engineers while it is a preview.');
+    const top = await this.s(t).selectFrom('discovery_flows').selectAll().where('id', '=', flowId).executeTakeFirst();
+    if (!top) throw new NotFoundException('flow not found');
+    assertSiteInScope(t, top.site_id);
+    if (top.editor !== 'call-flows' || !top.wizard_answers) throw new BadRequestException('This call flow wasn’t made in Call Flows (preview). Open it in the classic wizard.');
+    const flow = input.flow as VisualCallFlow;
+    const problem = visualCallFlowProblem(flow);
+    if (problem) throw new BadRequestException(problem);
+    const straight = top.kind === 'call_queue';
+    if (!!input.straight_to_queue !== straight) throw new BadRequestException(straight ? 'This call flow sends calls straight to its group: that can’t be changed here.' : 'This call flow has a phone menu in front: that can’t be changed here.');
+    const description = (what: string) => `Made in Call Flows (preview) - ${what}`;
+    const rename = async (voiceAppId: string | null, name: string) => {
+      if (voiceAppId) await this.s(t).updateTable('discovery_voice_apps').set({ name, updated_at: new Date().toISOString() }).where('id', '=', voiceAppId).execute();
+    };
+
+    if (straight) {
+      const g = onlyRingsAGroup({ ...flow, business: { then: flow.business.then } });
+      if (!g) throw new BadRequestException('Only a call flow that rings one group all the time, with no greeting, can send calls straight to the group.');
+      const answers = callQueueWizardAnswersSchema.parse(groupToQueueAnswers(g));
+      await this.base.updateFlow(t, u, top.id, { name: g.name, wizard_answers: answers, description: description(`rings ${g.people.length} people`) }, canReview);
+      await rename(top.voice_app_id, g.name);
+      return { flowId: top.id, queues: 0 };
+    }
+
+    // the groups this auto attendant already had: the preview's own call queue captures it points at
+    const rows = await this.s(t).selectFrom('discovery_flows').select(['id', 'kind', 'name', 'wizard_answers', 'editor', 'voice_app_id']).where('site_id', '=', top.site_id).execute();
+    const had = new Set(attendantFlowIds(top.wizard_answers as AutoAttendantWizardAnswers).filter((id) => rows.some((r) => r.id === id && r.kind === 'call_queue' && r.editor === 'call-flows')));
+    const groups = new Map<string, VisualGroup>();
+    for (const g of visualFlowGroups(flow)) if (!groups.has(g.id)) groups.set(g.id, g);
+    const queueAnswers = new Map([...groups].map(([id, g]) => [id, callQueueWizardAnswersSchema.parse(groupToQueueAnswers(g))]));
+    const attendantAnswers = (ids: Map<string, string>) => {
+      const c = toCaptures(mapVisualGroups(flow, (g) => ({ ...g, id: ids.get(g.id)! })), { attendantFlowId: top.id, attendantInFront: true });
+      const answers = autoAttendantWizardAnswersSchema.parse(c.top.capture.answers);
+      const words = autoAttendantWizardProblem(answers);
+      if (words) throw new BadRequestException(words);
+      return answers;
+    };
+    attendantAnswers(new Map([...groups.keys()].map((id) => [id, had.has(id) ? id : randomUUID()])));
+
+    const ids = new Map<string, string>();
+    for (const [id, g] of groups) {
+      if (had.has(id)) {
+        const row = rows.find((r) => r.id === id)!;
+        await this.base.updateFlow(t, u, id, { name: g.name, wizard_answers: queueAnswers.get(id)!, description: description(`a group in "${flow.name}"`) }, canReview);
+        await rename(row.voice_app_id, g.name);
+        ids.set(id, id);
+      } else {
+        const row = await this.base.addFlow(t, u, { site_id: top.site_id, kind: 'call_queue', name: g.name, description: description(`a group in "${flow.name}"`), wizard_answers: queueAnswers.get(id)!, wizard_version: 1, editor: 'call-flows' }, canReview);
+        ids.set(id, row.id);
+      }
+    }
+    await this.base.updateFlow(t, u, top.id, { name: flow.name, wizard_answers: attendantAnswers(ids), description: description('answers the number') }, canReview);
+    await rename(top.voice_app_id, flow.name);
+
+    // a group taken out goes, unless another Call flow still points at it
+    let removed = 0;
+    for (const id of had) {
+      if (groups.has(id)) continue;
+      const pointedAt = rows.some((r) => r.id !== top.id && r.kind === 'auto_attendant' && !!r.wizard_answers && attendantFlowIds(r.wizard_answers as AutoAttendantWizardAnswers).includes(id));
+      if (pointedAt) continue;
+      await this.base.deleteFlow(t, u, id, canReview);
+      removed++;
+    }
+    return { flowId: top.id, queues: ids.size, removed };
   }
 
   /* ====================== resource accounts ====================== */
