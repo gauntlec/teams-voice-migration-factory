@@ -14,6 +14,7 @@ import {
   type DiscoveryListQuery,
   type DiscoveryNumberRangeInput,
   type NumberRangesImportInput,
+  type NumberRangesBulkUpdateInput,
   type DiscoveryResourceAccountInput,
   type DiscoveryVoiceAppInput,
   type DiscoveryUserBulkPatchInput,
@@ -723,7 +724,7 @@ export class TelephonyService {
    */
   async importRanges(t: TenantContext, u: AuthedUser, input: NumberRangesImportInput, canReview: boolean) {
     assertSiteInScope(t, input.site_id);
-    if (input.kind === 'port' && !nz(input.new_carrier)) throw new BadRequestException('Say which carrier these numbers are moving to (the new carrier).');
+    // a port row needs its new carrier: its own, or the one chosen for every row (checked per row below)
     const site = await this.s(t)
       .selectFrom('discovery_sites')
       .select(['id', 'sitecode'])
@@ -738,6 +739,9 @@ export class TelephonyService {
     for (let idx = 0; idx < input.rows.length; idx++) {
       const row = input.rows[idx];
       try {
+        const kind = row.kind ?? input.kind;
+        const newCarrier = nz(row.new_carrier) ?? nz(input.new_carrier);
+        if (kind === 'port' && !newCarrier) throw new Error('A port needs the carrier the numbers are moving to (NEW CARRIER).');
         const e164s = expandRange(row.range_start, row.range_end);
         const existing = new Set<string>();
         for (let k = 0; k < e164s.length; k += 1000) {
@@ -757,7 +761,15 @@ export class TelephonyService {
         const { generated } = await this.insertRange(
           t,
           u,
-          { sitecode: site.sitecode, range_start: row.range_start, range_end: row.range_end, kind: input.kind, carrier: input.carrier, new_carrier: input.new_carrier },
+          {
+            sitecode: site.sitecode,
+            range_start: row.range_start,
+            range_end: row.range_end,
+            kind,
+            carrier: nz(row.carrier) ?? input.carrier,
+            new_carrier: newCarrier ?? undefined,
+            comments: nz(row.comments) ?? undefined,
+          },
           e164s,
         );
         created += 1;
@@ -813,6 +825,31 @@ export class TelephonyService {
     });
     await this.base.trackChange(t, u, { sitecode: row.sitecode, entity: 'Number range', action: 'changed', label: `${row.range_start} – ${row.range_end}`, detail: Object.keys(set).join(', ') });
     return row;
+  }
+
+  /**
+   * The same change to several ranges (bug report "Number Range Import from Excel": tick any number of ranges and change, say, their
+   * Number transition). Each range goes through updateRange, so each is checked as editing it alone would be; one that can't change is
+   * reported and the rest still change.
+   */
+  async bulkUpdateRanges(t: TenantContext, u: AuthedUser, input: NumberRangesBulkUpdateInput, canReview: boolean) {
+    const patch: Partial<DiscoveryNumberRangeInput> = {};
+    if (input.kind !== undefined) patch.kind = input.kind;
+    if (input.carrier !== undefined) patch.carrier = input.carrier;
+    if (input.new_carrier !== undefined) patch.new_carrier = input.new_carrier;
+    if (Object.keys(patch).length === 0) throw new BadRequestException('Choose what to change.');
+    let updated = 0;
+    const errors: { id: string; range: string | null; message: string }[] = [];
+    for (const id of [...new Set(input.ids)]) {
+      try {
+        await this.updateRange(t, u, id, patch, canReview);
+        updated += 1;
+      } catch (e) {
+        const r = await this.s(t).selectFrom('discovery_number_ranges').select(['range_start', 'range_end']).where('id', '=', id).executeTakeFirst();
+        errors.push({ id, range: r ? `${r.range_start} – ${r.range_end}` : null, message: (e as Error).message });
+      }
+    }
+    return { updated, errors };
   }
 
   async deleteRange(t: TenantContext, u: AuthedUser, id: string, canReview: boolean) {

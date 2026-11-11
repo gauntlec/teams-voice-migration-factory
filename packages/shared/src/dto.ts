@@ -516,13 +516,42 @@ export const numberRangesImportSchema = z
     carrier: optStr(160),
     /** for a port-in: the carrier the numbers are moving to */
     new_carrier: optStr(160),
+    /**
+     * One per spreadsheet row. A row's own transition, carrier, new carrier and comments (the template's optional columns, bug report
+     * "Number Range Import from Excel") win over the choices above, which fill in what a row leaves blank.
+     */
     rows: z
-      .array(z.object({ range_start: e164ish, range_end: e164ish }).strict())
+      .array(
+        z
+          .object({
+            range_start: e164ish,
+            range_end: e164ish,
+            kind: z.enum(NUMBER_RANGE_KINDS).optional(),
+            carrier: optStr(160),
+            new_carrier: optStr(160),
+            comments: optStr(2000),
+          })
+          .strict(),
+      )
       .min(1)
       .max(500),
   })
   .strict();
 export type NumberRangesImportInput = z.infer<typeof numberRangesImportSchema>;
+
+/**
+ * Change several number ranges at once (bug report "Number Range Import from Excel"): each field given is set on every range, each
+ * checked as editing one range is. Left out = left as it is.
+ */
+export const numberRangesBulkUpdateSchema = z
+  .object({
+    ids: z.array(z.guid()).min(1).max(500),
+    kind: z.enum(NUMBER_RANGE_KINDS).optional(),
+    carrier: optStr(160),
+    new_carrier: optStr(160),
+  })
+  .strict();
+export type NumberRangesBulkUpdateInput = z.infer<typeof numberRangesBulkUpdateSchema>;
 
 /* --------------------- Number-port document collection --------------------- */
 // "LOA Site Data and Tracking" - a number-port request's document
