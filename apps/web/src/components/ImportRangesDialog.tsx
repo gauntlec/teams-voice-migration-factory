@@ -31,7 +31,9 @@ import { DangerText } from './ui';
 
 /**
  * Bulk-add number ranges to a Site Data site from an xlsx/csv with the
- * columns DID-START and DID-END. Parsing and the template are done in the
+ * columns DID-START and DID-END, and optionally NUMBER TRANSITION, CARRIER,
+ * NEW CARRIER and COMMENTS per row (bug report "Number Range Import from
+ * Excel"); a blank cell takes the choice made on screen. Parsing and the template are done in the
  * browser with a lazy-loaded SheetJS (same approach as ImportUsersDialog) - the
  * API only ever sees validated rows.
  */
@@ -59,17 +61,37 @@ const RANGE_TYPE_LABEL: Record<NumberRangeKind, string> = NUMBER_RANGE_KIND_LABE
 const START_HEADERS = ['did-start', 'did start', 'did_start', 'didstart', 'start', 'range start', 'from'];
 const END_HEADERS = ['did-end', 'did end', 'did_end', 'didend', 'end', 'range end', 'to'];
 
-const TEMPLATE_COLUMNS = ['DID-START', 'DID-END'];
+const KIND_HEADERS = ['number transition', 'number-transition', 'transition', 'type', 'kind'];
+const CARRIER_HEADERS = ['carrier', 'current carrier'];
+const NEW_CARRIER_HEADERS = ['new carrier', 'new-carrier', 'new_carrier', 'moving to'];
+const COMMENTS_HEADERS = ['comments', 'comment', 'notes'];
+
+const TEMPLATE_COLUMNS = ['DID-START', 'DID-END', 'NUMBER TRANSITION', 'CARRIER', 'NEW CARRIER', 'COMMENTS'];
 const TEMPLATE_EXAMPLES = [
-  ['+441234567000', '+441234567099'],
-  ['+441234568000', '+441234568009'],
-  ['+441234569100', '+441234569100'],
+  ['+441234567000', '+441234567099', 'Port', 'BT', 'Gamma', 'Main DDI block'],
+  ['+441234568000', '+441234568009', 'New', 'Gamma', '', ''],
+  ['+441234569100', '+441234569100', 'Re-point', 'BT', '', 'Fax line'],
 ];
+
+/** "Port", "re-point", "Repoint", "retain", "new" -> the stored kind; '' when the cell is blank; null when it can't be read. */
+function readKind(raw: unknown): NumberRangeKind | '' | null {
+  const v = String(raw ?? '').trim().toLowerCase().replace(/[\s_-]/g, '');
+  if (!v) return '';
+  if (v === 'new') return 'new';
+  if (v === 'port' || v === 'portin') return 'port';
+  if (v === 'repoint' || v === 'retain' || v === 'repointed') return 'retain';
+  return null;
+}
 
 type Parsed = {
   n: number;
   start: string;
   end: string;
+  /** the row's own values: blank ones take the choices made on screen */
+  kind?: NumberRangeKind;
+  carrier?: string;
+  newCarrier?: string;
+  comments?: string;
   count: number;
   status: 'ok' | 'warn' | 'error';
   notes: string[];
@@ -115,6 +137,8 @@ export function ImportRangesDialog({
 
   const validRows = useMemo(() => (parsed ?? []).filter((p) => p.status !== 'error'), [parsed]);
   const totalNumbers = validRows.reduce((sum, p) => sum + p.count, 0);
+  // every Port row has a new carrier: its own, or the one entered on screen
+  const portRowsCovered = validRows.every((p) => (p.kind ?? kind) !== 'port' || !!p.newCarrier || !!newCarrier.trim());
 
   async function handleFile(file: File) {
     setErr(null);
@@ -134,6 +158,12 @@ export function ImportRangesDialog({
       if (si < 0 || ei < 0) {
         throw new Error('The first row must have the column headings DID-START and DID-END.');
       }
+      const col = (names: string[]) => headerRow.findIndex((h) => names.includes(h));
+      const ki = col(KIND_HEADERS);
+      const ci = col(CARRIER_HEADERS);
+      const ni = col(NEW_CARRIER_HEADERS);
+      const mi = col(COMMENTS_HEADERS);
+      const cell = (cells: unknown[], i: number) => (i < 0 ? '' : String(cells[i] ?? '').trim());
 
       const out: Parsed[] = [];
       const seen: { n: number; s: bigint; e: bigint }[] = [];
@@ -175,7 +205,23 @@ export function ImportRangesDialog({
             seen.push({ n: r + 1, s: b0, e: b1 });
           }
         }
-        out.push({ n: r + 1, start, end, count, status, notes });
+        const kindCell = ki < 0 ? '' : readKind(cells[ki]);
+        if (kindCell === null) {
+          status = 'error';
+          notes.push(`NUMBER TRANSITION "${cell(cells, ki)}" isn't New, Port or Re-point`);
+        }
+        out.push({
+          n: r + 1,
+          start,
+          end,
+          count,
+          status,
+          notes,
+          ...(kindCell ? { kind: kindCell } : {}),
+          ...(cell(cells, ci) ? { carrier: cell(cells, ci).slice(0, 160) } : {}),
+          ...(cell(cells, ni) ? { newCarrier: cell(cells, ni).slice(0, 160) } : {}),
+          ...(cell(cells, mi) ? { comments: cell(cells, mi).slice(0, 2000) } : {}),
+        });
       }
       if (!out.length) throw new Error('No data rows below the header.');
       if (out.length > 500) throw new Error('A file can hold up to 500 ranges. Split it and import in more than one go.');
@@ -194,15 +240,19 @@ export function ImportRangesDialog({
     try {
       const XLSX = await loadXlsx();
       const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_COLUMNS, ...TEMPLATE_EXAMPLES]);
-      ws['!cols'] = [{ wch: 20 }, { wch: 20 }];
+      ws['!cols'] = [{ wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 18 }, { wch: 18 }, { wch: 30 }];
       const notes = XLSX.utils.aoa_to_sheet([
         ['Column', 'Required', 'Notes'],
         ['DID-START', 'Yes', 'First number in the range. E.164 (+441234567000) is best. Keep the cells formatted as Text so leading zeros are not lost.'],
         ['DID-END', 'Yes', `Last number in the range, with the same number of digits as DID-START. A single number has the same value in both columns. A range can hold up to ${MAX_RANGE_SIZE} numbers.`],
+        ['NUMBER TRANSITION', 'No', 'New, Port or Re-point. Leave it blank to use the choice made on screen when you import.'],
+        ['CARRIER', 'No', 'Where the numbers are now. Blank uses the carrier entered on screen, if any.'],
+        ['NEW CARRIER', 'For a port', 'The carrier the numbers are moving to. A Port row needs one here or on screen.'],
+        ['COMMENTS', 'No', 'Anything worth noting about the range.'],
         [],
         ['Replace the three example rows on the first sheet with your own, one range per row.'],
-        ['The type of range (new, port or re-point) and the carrier are chosen on screen when you import, and apply to every row.'],
         ['Numbers that are already in the inventory are skipped, so it is safe to import the same file twice.'],
+        ['After importing, tick ranges on the Number ranges list and use "Change selected" to change several at once.'],
       ]);
       notes['!cols'] = [{ wch: 14 }, { wch: 10 }, { wch: 100 }];
       const wb = XLSX.utils.book_new();
@@ -229,7 +279,14 @@ export function ImportRangesDialog({
             kind,
             ...(carrier.trim() ? { carrier: carrier.trim() } : {}),
             ...(kind === 'port' ? { new_carrier: newCarrier.trim() } : {}),
-            rows: validRows.map((p) => ({ range_start: p.start, range_end: p.end })),
+            rows: validRows.map((p) => ({
+              range_start: p.start,
+              range_end: p.end,
+              ...(p.kind ? { kind: p.kind } : {}),
+              ...(p.carrier ? { carrier: p.carrier } : {}),
+              ...(p.newCarrier ? { new_carrier: p.newCarrier } : {}),
+              ...(p.comments ? { comments: p.comments } : {}),
+            })),
           }),
         },
       ),
@@ -263,11 +320,11 @@ export function ImportRangesDialog({
                 >
                   {templateDone ? 'Downloaded' : 'Download template'}
                 </Button>
-                <Text className={s.muted}>.xlsx or .csv · first row is the header · columns DID-START and DID-END</Text>
+                <Text className={s.muted}>.xlsx or .csv · first row is the header · columns DID-START and DID-END, and optionally NUMBER TRANSITION, CARRIER, NEW CARRIER, COMMENTS</Text>
               </div>
 
               <div className={s.options}>
-                <Field label="Number transition (all rows)">
+                <Field label="Number transition (rows that leave it blank)">
                   <Select value={kind} onChange={(_, d) => setKind(d.value as NumberRangeKind)}>
                     {NUMBER_RANGE_KINDS.map((k) => (
                       <option key={k} value={k}>
@@ -276,11 +333,11 @@ export function ImportRangesDialog({
                     ))}
                   </Select>
                 </Field>
-                <Field label={kind === 'port' ? 'Current carrier (optional, all rows)' : 'Carrier (optional, all rows)'}>
+                <Field label={kind === 'port' ? 'Current carrier (optional, rows that leave it blank)' : 'Carrier (optional, rows that leave it blank)'}>
                   <Input value={carrier} onChange={(_, d) => setCarrier(d.value)} maxLength={160} />
                 </Field>
-                {kind === 'port' && (
-                  <Field label="New carrier (all rows)" required hint="The carrier the numbers are moving to. When the port completes, the range's carrier switches to this one." style={{ gridColumn: '1 / -1' }}>
+                {(kind === 'port' || validRows.some((p) => p.kind === 'port')) && (
+                  <Field label="New carrier (rows that leave it blank)" required={!portRowsCovered} hint="The carrier the numbers are moving to. When the port completes, the range's carrier switches to this one." style={{ gridColumn: '1 / -1' }}>
                     <Input value={newCarrier} onChange={(_, d) => setNewCarrier(d.value)} maxLength={160} />
                   </Field>
                 )}
@@ -344,13 +401,15 @@ export function ImportRangesDialog({
                     <Text className={s.muted}>{totalNumbers} numbers in total</Text>
                   </div>
                   <div className={s.scroll}>
-                    <DataTable size="small" minWidth={560}>
+                    <DataTable size="small" minWidth={760}>
                       <TableHeader>
                         <TableRow>
                           <TableHeaderCell>Row</TableHeaderCell>
                           <TableHeaderCell>DID-START</TableHeaderCell>
                           <TableHeaderCell>DID-END</TableHeaderCell>
                           <TableHeaderCell>Numbers</TableHeaderCell>
+                          <TableHeaderCell>Transition</TableHeaderCell>
+                          <TableHeaderCell>Carrier</TableHeaderCell>
                           <TableHeaderCell>Status</TableHeaderCell>
                         </TableRow>
                       </TableHeader>
@@ -361,6 +420,12 @@ export function ImportRangesDialog({
                             <TableCell>{p.start || '—'}</TableCell>
                             <TableCell>{p.end || '—'}</TableCell>
                             <TableCell>{p.count || '—'}</TableCell>
+                            <TableCell>{RANGE_TYPE_LABEL[p.kind ?? kind]}{p.kind ? '' : ' (on screen)'}</TableCell>
+                            <TableCell>
+                              {(p.kind ?? kind) === 'port'
+                                ? `${p.carrier || carrier.trim() || '?'} → ${p.newCarrier || newCarrier.trim() || 'new carrier needed'}`
+                                : p.carrier || carrier.trim() || '—'}
+                            </TableCell>
                             <TableCell>
                               <Badge
                                 appearance="tint"
@@ -387,7 +452,7 @@ export function ImportRangesDialog({
               <Button
                 appearance="primary"
                 icon={<ArrowUploadRegular />}
-                disabled={validRows.length === 0 || importMut.isPending || (kind === 'port' && !newCarrier.trim())}
+                disabled={validRows.length === 0 || importMut.isPending || !portRowsCovered}
                 onClick={() => {
                   setErr(null);
                   importMut.mutate();

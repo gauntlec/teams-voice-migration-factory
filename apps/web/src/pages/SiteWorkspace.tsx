@@ -9,6 +9,7 @@ import { useAuth } from '../auth';
 import { AutoAttendantWizard } from '../components/AutoAttendantWizard';
 import { CallQueueWizard } from '../components/CallQueueWizard';
 import { ImportRangesDialog } from '../components/ImportRangesDialog';
+import { BulkRangesDialog } from '../components/BulkRangesDialog';
 import { ImportUsersDialog } from '../components/ImportUsersDialog';
 import { Page } from '../components/Page';
 import { WizardTiles, useTeamChoices } from '../components/WizardTiles';
@@ -41,6 +42,9 @@ export function SiteWorkspace() {
   const [tab, setTab] = useState<TabKey>((TABS as readonly string[]).includes(wantedTab ?? '') ? (wantedTab as TabKey) : 'overview');
   const [importOpen, setImportOpen] = useState(false);
   const [importRangesOpen, setImportRangesOpen] = useState(false);
+  // ranges ticked for "Change selected" (bug report "Number Range Import from Excel")
+  const [rangesSelected, setRangesSelected] = useState<Set<string>>(new Set());
+  const [bulkRangesOpen, setBulkRangesOpen] = useState(false);
 
   const tid = activeTenantId;
   const base = `/t/${tid}/discovery`;
@@ -275,11 +279,19 @@ export function SiteWorkspace() {
           fixed={{ sitecode: site.sitecode }}
           readOnly={locked}
           onChanged={refreshSummary}
+          selectable={!locked}
+          selected={rangesSelected}
+          onSelectedChange={setRangesSelected}
           headerActions={
             <>
               {!locked && (
                 <Button size="small" icon={<ArrowUploadRegular />} onClick={() => setImportRangesOpen(true)}>
                   Import from Excel…
+                </Button>
+              )}
+              {!locked && (
+                <Button size="small" disabled={rangesSelected.size === 0} onClick={() => setBulkRangesOpen(true)}>
+                  Change selected ({rangesSelected.size})
                 </Button>
               )}
               <Link to={`/data-collection/sites/${siteId}/number-porting`}>
@@ -491,6 +503,21 @@ export function SiteWorkspace() {
             { key: 'access_port_id', label: 'Access port ID' },
             { key: 'comments', label: 'Comments', type: 'textarea', full: true },
           ]}
+        />
+      )}
+
+      {bulkRangesOpen && (
+        <BulkRangesDialog
+          base={base}
+          ids={[...rangesSelected]}
+          onClose={() => {
+            setBulkRangesOpen(false);
+            setRangesSelected(new Set());
+          }}
+          onDone={() => {
+            qc.invalidateQueries({ queryKey: ['ranges', tid, siteId] });
+            refreshSummary();
+          }}
         />
       )}
 

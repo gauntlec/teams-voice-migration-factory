@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import {
   callingPolicySchema,
   can,
@@ -9,6 +9,8 @@ import {
   discoveryListQuerySchema,
   discoveryNumberRangeSchema,
   numberRangesImportSchema,
+  numberRangesBulkUpdateSchema,
+  type NumberRangesBulkUpdateInput,
   discoveryResourceAccountSchema,
   discoveryVoiceAppSchema,
   discoveryUserBulkPatchSchema,
@@ -172,6 +174,14 @@ export class TelephonyController {
     @Body(new ZodBody(numberRangesImportSchema)) body: NumberRangesImportInput,
   ) {
     return this.svc.importRanges(t, u, body, this.review(u));
+  }
+
+  /** The same change to several ranges (Number transition, carrier, new carrier); each is checked as editing it alone would be. */
+  @Post('number-ranges/bulk-update')
+  @HttpCode(200)
+  @RequirePermission('discovery:write')
+  bulkUpdateRanges(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Body(new ZodBody(numberRangesBulkUpdateSchema)) body: NumberRangesBulkUpdateInput) {
+    return this.svc.bulkUpdateRanges(t, u, body, this.review(u));
   }
 
   @Patch('number-ranges/:id')
