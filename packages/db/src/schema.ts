@@ -227,6 +227,8 @@ export interface FeatureRequestAttachmentsTable {
   size: number;
   content: Buffer;
   uploaded_by: string | null;
+  /** 0045: set when the file came with a reply rather than on the card itself. */
+  reply_id: ColumnType<string | null, string | null | undefined, string | null>;
   created_at: Ts;
 }
 
@@ -238,6 +240,26 @@ export interface BugReportAttachmentsTable {
   size: number;
   content: Buffer;
   uploaded_by: string | null;
+  /** 0045: set when the file came with a reply rather than on the card itself. */
+  reply_id: ColumnType<string | null, string | null | undefined, string | null>;
+  created_at: Ts;
+}
+
+/** 0045: a reply on a Bug reports card. */
+export interface BugReportRepliesTable {
+  id: Generated<string>;
+  bug_report_id: string;
+  body: string;
+  author_id: string | null;
+  created_at: Ts;
+}
+
+/** 0045: a reply on a Feature requests card. */
+export interface FeatureRequestRepliesTable {
+  id: Generated<string>;
+  feature_request_id: string;
+  body: string;
+  author_id: string | null;
   created_at: Ts;
 }
 
@@ -1935,6 +1957,8 @@ export interface DB {
   bug_reports: BugReportsTable;
   bug_report_attachments: BugReportAttachmentsTable;
   feature_request_attachments: FeatureRequestAttachmentsTable;
+  bug_report_replies: BugReportRepliesTable;
+  feature_request_replies: FeatureRequestRepliesTable;
   platform_audit_log: PlatformAuditLogTable;
   maintenance_notice: MaintenanceNoticeTable;
   app_settings: AppSettingsTable;

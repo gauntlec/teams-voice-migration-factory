@@ -1,11 +1,12 @@
 import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { sql } from 'kysely';
 import { platformDb } from '@tvmf/db';
-import { BUG_ATTACHMENT_MAX_BYTES, SR_ATTACHMENT_TYPES, type BugReportAttachment, type BugReportCreateInput, type BugReportUpdateInput } from '@tvmf/shared';
+import { BUG_ATTACHMENT_MAX_BYTES, SR_ATTACHMENT_TYPES, type BugReportAttachment, type BugReportCreateInput, type BugReportUpdateInput, type BoardReplyCreateInput } from '@tvmf/shared';
 import { APP_CONFIG, type AppConfig } from '../common/config';
 import { AuditService, type AuditActor } from '../common/audit.service';
 import { InjectDb, type Db } from '../db/db.module';
 import { MailService } from '../mail/mail.service';
+import { BoardReplies, BUG_REPLIES, type UploadedBoardFile } from '../common/board-replies';
 
 /** Optional free-text columns — a cleared form field ('') is stored as NULL. */
 const TEXT_COLS = ['affected_customer', 'environment', 'resolution_note'] as const;
@@ -20,7 +21,24 @@ export class BugReportsService {
     private readonly audit: AuditService,
     private readonly mail: MailService,
     @Inject(APP_CONFIG) private readonly cfg: AppConfig,
-  ) {}
+  ) {
+    this.replies = new BoardReplies(db, audit, mail, () => this.boardUrl(), BUG_REPLIES);
+  }
+
+  /** The reply thread on each card (0045). */
+  private readonly replies: BoardReplies;
+
+  listReplies(id: string) {
+    return this.replies.list(id);
+  }
+
+  addReply(id: string, input: BoardReplyCreateInput, file: UploadedBoardFile | undefined, actor: AuditActor) {
+    return this.replies.add(id, input, file, actor);
+  }
+
+  removeReply(id: string, replyId: string, actor: AuditActor, canManage: boolean) {
+    return this.replies.remove(id, replyId, actor, canManage);
+  }
 
   private boardUrl(): string {
     return `${this.cfg.WEB_ORIGIN.replace(/\/+$/, '')}/bug-reports`;
@@ -48,7 +66,10 @@ export class BugReportsService {
         'b.updated_at',
         'b.status_changed_at',
         'u.display_name as reported_by_name',
-        sql<number>`(select count(*)::int from platform.bug_report_attachments a where a.bug_report_id = b.id)`.as('attachment_count'),
+        sql<number>`(select count(*)::int from platform.bug_report_attachments a where a.bug_report_id = b.id and a.reply_id is null)`.as('attachment_count'),
+        sql<number>`(select count(*)::int from platform.bug_report_replies r where r.bug_report_id = b.id)`.as('reply_count'),
+        sql<string | null>`(select max(r.created_at) from platform.bug_report_replies r where r.bug_report_id = b.id)`.as('last_reply_at'),
+        sql<string | null>`(select r.author_id from platform.bug_report_replies r where r.bug_report_id = b.id order by r.created_at desc, r.id desc limit 1)`.as('last_reply_by'),
       ])
       .orderBy('b.created_at', 'desc')
       .execute();
@@ -62,6 +83,8 @@ export class BugReportsService {
       .leftJoin('users as u', 'u.id', 'a.uploaded_by')
       .select(['a.id', 'a.filename', 'a.content_type', 'a.size', 'a.uploaded_by', 'a.created_at', 'u.display_name as uploaded_by_name'])
       .where('a.bug_report_id', '=', id)
+      // files that came with a reply are listed under the reply
+      .where('a.reply_id', 'is', null)
       .orderBy('a.created_at', 'asc')
       .execute();
     return rows.map((r) => ({ ...r, created_at: new Date(r.created_at as unknown as string).toISOString() }));

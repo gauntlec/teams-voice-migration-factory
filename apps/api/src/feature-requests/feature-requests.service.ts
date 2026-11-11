@@ -1,11 +1,12 @@
 import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { sql } from 'kysely';
 import { platformDb } from '@tvmf/db';
-import { FEATURE_ATTACHMENT_MAX_BYTES, SR_ATTACHMENT_TYPES, type FeatureRequestAttachment, type FeatureRequestCreateInput, type FeatureRequestUpdateInput } from '@tvmf/shared';
+import { FEATURE_ATTACHMENT_MAX_BYTES, SR_ATTACHMENT_TYPES, type FeatureRequestAttachment, type FeatureRequestCreateInput, type FeatureRequestUpdateInput, type BoardReplyCreateInput } from '@tvmf/shared';
 import { APP_CONFIG, type AppConfig } from '../common/config';
 import { AuditService, type AuditActor } from '../common/audit.service';
 import { InjectDb, type Db } from '../db/db.module';
 import { MailService } from '../mail/mail.service';
+import { BoardReplies, FEATURE_REPLIES, type UploadedBoardFile } from '../common/board-replies';
 
 /** Optional free-text columns — a cleared form field ('') is stored as NULL. */
 const TEXT_COLS = ['current_behavior', 'examples', 'acceptance', 'constraints', 'decision_note'] as const;
@@ -20,7 +21,24 @@ export class FeatureRequestsService {
     private readonly audit: AuditService,
     private readonly mail: MailService,
     @Inject(APP_CONFIG) private readonly cfg: AppConfig,
-  ) {}
+  ) {
+    this.replies = new BoardReplies(db, audit, mail, () => this.boardUrl(), FEATURE_REPLIES);
+  }
+
+  /** The reply thread on each card (0045). */
+  private readonly replies: BoardReplies;
+
+  listReplies(id: string) {
+    return this.replies.list(id);
+  }
+
+  addReply(id: string, input: BoardReplyCreateInput, file: UploadedBoardFile | undefined, actor: AuditActor) {
+    return this.replies.add(id, input, file, actor);
+  }
+
+  removeReply(id: string, replyId: string, actor: AuditActor, canManage: boolean) {
+    return this.replies.remove(id, replyId, actor, canManage);
+  }
 
   private boardUrl(): string {
     return `${this.cfg.WEB_ORIGIN.replace(/\/+$/, '')}/feature-requests`;
@@ -50,7 +68,10 @@ export class FeatureRequestsService {
         'f.updated_at',
         'f.status_changed_at',
         'u.display_name as submitted_by_name',
-        sql<number>`(select count(*)::int from platform.feature_request_attachments a where a.feature_request_id = f.id)`.as('attachment_count'),
+        sql<number>`(select count(*)::int from platform.feature_request_attachments a where a.feature_request_id = f.id and a.reply_id is null)`.as('attachment_count'),
+        sql<number>`(select count(*)::int from platform.feature_request_replies r where r.feature_request_id = f.id)`.as('reply_count'),
+        sql<string | null>`(select max(r.created_at) from platform.feature_request_replies r where r.feature_request_id = f.id)`.as('last_reply_at'),
+        sql<string | null>`(select r.author_id from platform.feature_request_replies r where r.feature_request_id = f.id order by r.created_at desc, r.id desc limit 1)`.as('last_reply_by'),
       ])
       .orderBy('f.created_at', 'desc')
       .execute();
@@ -64,6 +85,8 @@ export class FeatureRequestsService {
       .leftJoin('users as u', 'u.id', 'a.uploaded_by')
       .select(['a.id', 'a.filename', 'a.content_type', 'a.size', 'a.uploaded_by', 'a.created_at', 'u.display_name as uploaded_by_name'])
       .where('a.feature_request_id', '=', id)
+      // files that came with a reply are listed under the reply
+      .where('a.reply_id', 'is', null)
       .orderBy('a.created_at', 'asc')
       .execute();
     return rows.map((r) => ({ ...r, created_at: new Date(r.created_at as unknown as string).toISOString() }));

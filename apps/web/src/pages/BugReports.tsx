@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import {
   Badge,
   Button,
@@ -53,10 +53,13 @@ import {
   type BugSeverity,
   type BugStatus,
   type FeatureArea,
+  boardRepliesForPrompt,
+  type BoardReply,
 } from '@tvmf/shared';
 import { api, apiDownload, ApiError, apiUpload } from '../api';
 import { useAuth } from '../auth';
 import { Page } from '../components/Page';
+import { CardReplies, ReplyCount, copyText, copyTextLater, fetchReplies } from '../components/CardReplies';
 
 const useLocalStyles = makeStyles({
   flexGap2: { display: "flex", ...shorthands.gap('2px') },
@@ -237,7 +240,7 @@ const AREA_COLOR: Record<FeatureArea, { fg: string; bg: string; border: string }
   Other: { fg: tokens.colorPalettePlatinumForeground2, bg: tokens.colorPalettePlatinumBackground2, border: tokens.colorPalettePlatinumBorderActive },
 };
 
-function buildClaudePrompt(b: BugReport): string {
+function buildClaudePrompt(b: BugReport, replies: readonly BoardReply[] = []): string {
   const na = '_Not specified._';
   const lines: (string | null)[] = [
     `# Bug report: ${b.title}`,
@@ -262,34 +265,17 @@ function buildClaudePrompt(b: BugReport): string {
     '',
     b.attachment_count ? `_${b.attachment_count} file${b.attachment_count === 1 ? ' is' : 's are'} attached to this report on the Bug reports board._` : null,
     b.attachment_count ? '' : null,
+    ...boardRepliesForPrompt(replies),
     '---',
     'Reproduce this in the codebase today, find the root cause, and fix it following the repo conventions in `docs/ARCHITECTURE.md` (shared `DataTable`, `makeStyles` for styling, RBAC in `packages/shared/src/rbac.ts`, plain-SQL migrations, zod DTOs in `packages/shared/src/dto.ts`). Typecheck every workspace and build the web app before finishing. When the fix ships, set this bug report to "Deployed".',
   ];
   return lines.filter((l) => l !== null).join('\n');
 }
 
-async function copyText(text: string): Promise<boolean> {
-  try {
-    if (typeof navigator !== 'undefined' && navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    /* fall through */
-  }
-  try {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand('copy');
-    document.body.removeChild(ta);
-    return ok;
-  } catch {
-    return false;
-  }
+/** Copies a card's prompt, with its replies (fetched fresh, so the latest answers are in it). */
+function copyPrompt(qc: QueryClient, b: BugReport): Promise<boolean> {
+  if (!b.reply_count) return copyText(buildClaudePrompt(b));
+  return copyTextLater(async () => buildClaudePrompt(b, await fetchReplies(qc, '/bug-reports', b.id)));
 }
 
 function timeAgo(iso: string): string {
@@ -623,8 +609,13 @@ function DetailDialog({
   canRemoveAttachment,
   onEdit,
   onClose,
+  meId,
+  canManage,
 }: {
   b: BugReport;
+  meId: string | undefined;
+  /** an administrator of the board: may delete any reply */
+  canManage: boolean;
   /** an administrator, or the reporter while the bug is New */
   canEdit: boolean;
   /** an administrator, or the reporter at any stage */
@@ -634,6 +625,7 @@ function DetailDialog({
   onClose: () => void;
 }) {
   const s = useStyles();
+  const qc = useQueryClient();
   const [copied, setCopied] = useState(false);
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
@@ -670,6 +662,7 @@ function DetailDialog({
               <DetailRow label="Actual behaviour" value={b.actual_behavior} />
               <DetailRow label="Resolution note" value={b.resolution_note} />
               <Attachments b={b} canAttach={canAttach} canRemove={canRemoveAttachment} />
+              <CardReplies path="/bug-reports" cardId={b.id} meId={meId} canManage={canManage} listKey={['bug-reports']} />
             </div>
           </DialogContent>
           <DialogActions>
@@ -677,7 +670,7 @@ function DetailDialog({
               appearance="subtle"
               icon={copied ? <CheckmarkRegular /> : <CopyRegular />}
               onClick={async () => {
-                if (await copyText(buildClaudePrompt(b))) {
+                if (await copyPrompt(qc, b)) {
                   setCopied(true);
                   setTimeout(() => setCopied(false), 1500);
                 }
@@ -717,7 +710,9 @@ function BugCard({
   onEdit,
   onMove,
   onDelete,
+  meId,
 }: {
+  meId: string | undefined;
   b: BugReport;
   canManage: boolean;
   /** The reporter's own report, still New: they may edit or withdraw it. */
@@ -729,10 +724,11 @@ function BugCard({
 }) {
   const ls = useLocalStyles();
   const s = useStyles();
+  const qc = useQueryClient();
   const [copied, setCopied] = useState(false);
 
   const copy = async () => {
-    const ok = await copyText(buildClaudePrompt(b));
+    const ok = await copyPrompt(qc, b);
     if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
@@ -785,6 +781,7 @@ function BugCard({
               <AttachRegular style={{ verticalAlign: 'text-bottom' }} /> {b.attachment_count}
             </span>
           )}
+          <ReplyCount cardId={b.id} count={b.reply_count} lastAt={b.last_reply_at} lastBy={b.last_reply_by} meId={meId} />
         </Text>
         <div className={ls.flexGap2}>
           <Button
@@ -949,6 +946,7 @@ export function BugReports() {
                     items.map((b) => (
                       <BugCard
                         key={b.id}
+                        meId={me?.id}
                         b={b}
                         canManage={canManage}
                         canOwn={isOwnNew(b)}
@@ -974,6 +972,8 @@ export function BugReports() {
           canRemoveAttachment={(a) => canManage || (!!me?.id && a.uploaded_by === me.id)}
           onEdit={() => setDialog({ mode: 'edit', b: detail })}
           onClose={() => setDetail(null)}
+          meId={me?.id}
+          canManage={canManage}
         />
       )}
 

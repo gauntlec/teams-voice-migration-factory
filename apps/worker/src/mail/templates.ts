@@ -3,6 +3,7 @@ import {
   SR_STATUS_CUSTOMER_LABELS,
   FEATURE_STATUS_LABELS,
   type BugReportStatusChangedContext,
+  type BoardReplyContext,
   type DeploymentCompletedContext,
   type DeviceAlertContext,
   type DiscoveryCompletedContext,
@@ -71,6 +72,8 @@ export function renderEmail(template: string, context: Record<string, unknown>, 
       return featureRequestStatusChanged(context as unknown as FeatureRequestStatusChangedContext);
     case 'bug_report_status_changed':
       return bugReportStatusChanged(context as unknown as BugReportStatusChangedContext);
+    case 'board_reply':
+      return boardReply(context as unknown as BoardReplyContext);
     case 'service_request_created':
       return serviceRequestCreated(context as unknown as ServiceRequestCreatedContext, branding);
     case 'service_request_status_changed':
@@ -490,6 +493,34 @@ function bugReportStatusChanged(c: BugReportStatusChangedContext): RenderedEmail
     ],
     cta: { label: 'View bug report', url: c.runUrl },
     outro: ['You are receiving this because you reported this bug.'],
+  };
+  return { subject, html: renderHtml(layout), text: renderText(layout) };
+}
+
+/** Someone replied on a Bug reports or Feature requests card: to its owner, the others in the thread, and whoever is working it. */
+function boardReply(c: BoardReplyContext): RenderedEmail {
+  const what = c.board === 'bug' ? 'bug report' : 'feature request';
+  const subject = `New reply — ${c.title}`;
+  const why =
+    c.reason === 'owner'
+      ? c.board === 'bug'
+        ? 'You are receiving this because you reported this bug.'
+        : 'You are receiving this because you submitted this feature request.'
+      : c.reason === 'thread'
+        ? `You are receiving this because you replied on this ${what}.`
+        : `You are receiving this because you are working on this ${what}.`;
+  const layout: LayoutInput = {
+    previewText: `${c.author}: ${c.body.slice(0, 120)}`,
+    eyebrow: c.board === 'bug' ? 'Bug report' : 'Feature request',
+    heading: `New reply — ${c.title}`,
+    intro: [
+      `${c.author} replied on the ${what} "${c.title}" (${c.area}):`,
+      // One paragraph per line, so a numbered list of answers keeps its shape (a paragraph would run the lines together).
+      ...c.body.split(/\r?\n/).map((l) => l.trim()).filter(Boolean),
+      ...(c.attachments?.length ? [`Attached: ${c.attachments.join(', ')}`] : []),
+    ],
+    cta: { label: c.board === 'bug' ? 'View bug report' : 'View feature request', url: c.runUrl },
+    outro: ['Reply on the card so everyone working it sees the answer.', why],
   };
   return { subject, html: renderHtml(layout), text: renderText(layout) };
 }
