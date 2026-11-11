@@ -96,6 +96,9 @@ describe('defaults from the site', () => {
     expect(callFlowDefaultsForSite({ country: 'Atlantis' })).toEqual({ languageId: 'en-US', timeZoneId: 'Eastern Standard Time' });
     // a state before its ZIP wins over a later pair of capitals; a very long address is read quickly (CodeQL js/polynomial-redos)
     expect(callFlowDefaultsForSite({ country: 'US', address: 'Suite CA 1, Denver, CO 80202, US' }).timeZoneId).toBe('Mountain Standard Time');
+    expect(callFlowDefaultsForSite({ country: 'US', address: '2200S 3600 W, West Valley City, Utah, 84119' }).timeZoneId).toBe('Mountain Standard Time');
+    expect(callFlowDefaultsForSite({ country: 'US', address: '1 Capitol St, Charleston, West Virginia 25301' }).timeZoneId).toBe('Eastern Standard Time');
+    expect(callFlowDefaultsForSite({ country: 'US', address: '500 Main St, Seattle, Washington' }).timeZoneId).toBe('Pacific Standard Time');
     const started = Date.now();
     callFlowDefaultsForSite({ country: 'US', address: `TX${' '.repeat(50_000)}!` });
     expect(Date.now() - started).toBeLessThan(200);
