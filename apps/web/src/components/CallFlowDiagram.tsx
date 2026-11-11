@@ -4,7 +4,7 @@ import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
 import { toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
-import { Button, Text, Tooltip, tokens , makeStyles, shorthands } from '@fluentui/react-components';
+import { Button, Text, Tooltip, tokens, makeStyles, mergeClasses, shorthands } from '@fluentui/react-components';
 import { ArrowDownloadRegular, ArrowDownRegular, ArrowRightRegular } from '@fluentui/react-icons';
 import { callFlowSummary, type DocumentBrandingView, type CallFlowBranch, type CallFlowGraph, type CallFlowNodeKind, type CallFlowSummary } from '@tvmf/shared';
 import { api } from '../api';
@@ -25,6 +25,20 @@ const useLocalStyles = makeStyles({
   flexWrapItemsCenterGap14: { display: "flex", ...shorthands.gap('14px'), flexWrap: "wrap", alignItems: "center" },
   detail: { fontSize: '10px', color: '#374151', marginTop: '2px', lineHeight: '14px' },
   flexItemsCenterGap4: { display: "flex", alignItems: "center", ...shorthands.gap('4px') },
+  plus: {
+    marginTop: '6px',
+    fontSize: '11px',
+    fontWeight: 600,
+    fontFamily: 'inherit',
+    cursor: 'pointer',
+    color: '#4657D2',
+    backgroundColor: '#FFFFFF',
+    ...shorthands.border('1px', 'dashed', '#4657D2'),
+    ...shorthands.borderRadius('999px'),
+    ...shorthands.padding('2px', '10px'),
+    ':hover': { backgroundColor: '#EEF2FF' },
+    ':focus-visible': { outlineStyle: 'solid', outlineWidth: '2px', outlineColor: '#4657D2' },
+  },
 });
 
 
@@ -172,6 +186,9 @@ interface BoxData extends Record<string, unknown> {
   down?: boolean;
   /** The agents' box: the arrow from its queue arrives at the top. */
   top?: boolean;
+  /** Call Flows (preview) canvas: the box being edited, and whether a click opens its panel. */
+  selected?: boolean;
+  clickable?: boolean;
 }
 
 /**
@@ -181,7 +198,24 @@ interface BoxData extends Record<string, unknown> {
 function FlowBox({ data }: NodeProps) {
   const d = data as BoxData;
   return (
-    <div style={{ width: NODE_WIDTH, boxSizing: 'border-box', background: d.bg, border: `2px solid ${d.border}`, borderRadius: 8, padding: 8, fontSize: 12, lineHeight: '16px', color: '#242424', textAlign: 'center', whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
+    <div
+      style={{
+        width: NODE_WIDTH,
+        boxSizing: 'border-box',
+        background: d.bg,
+        border: `2px solid ${d.border}`,
+        borderRadius: 8,
+        padding: 8,
+        fontSize: 12,
+        lineHeight: '16px',
+        color: '#242424',
+        textAlign: 'center',
+        whiteSpace: 'normal',
+        overflowWrap: 'anywhere',
+        cursor: d.clickable ? 'pointer' : undefined,
+        boxShadow: d.selected ? `0 0 0 3px #FFFFFF, 0 0 0 6px ${d.border}` : undefined,
+      }}
+    >
       {d.inPos && <Handle type="target" id="in" position={d.inPos} style={HIDDEN_HANDLE} isConnectable={false} />}
       {d.top && <Handle type="target" id="top" position={Position.Top} style={HIDDEN_HANDLE} isConnectable={false} />}
       {d.content}
@@ -585,7 +619,21 @@ function DirectionControls({ direction, onChange }: { direction: Direction; onCh
 }
 
 /** The boxes and lines, not yet placed: each box is drawn (hidden) first so its real size can be measured. */
-function buildElements(graph: CallFlowGraph, direction: Direction, ls: ReturnType<typeof useLocalStyles>, withWarnings: boolean): { nodes: Node[]; edges: Edge[] } {
+/** Call Flows (preview): the canvas the flow is edited on. A click on a box opens its panel; a + offers what can follow it. */
+export interface CallFlowEditing {
+  selectedId?: string | null;
+  plus?: Record<string, { label: string }>;
+  onSelect: (id: string) => void;
+  onPlus: (id: string) => void;
+}
+
+function buildElements(
+  graph: CallFlowGraph,
+  direction: Direction,
+  ls: ReturnType<typeof useLocalStyles>,
+  withWarnings: boolean,
+  editing?: { selectedId?: string | null; plus?: Record<string, { label: string }>; onPlus: (id: string) => void },
+): { nodes: Node[]; edges: Edge[] } {
   const inPos = direction === 'LR' ? Position.Left : Position.Top;
   const outPos = direction === 'LR' ? Position.Right : Position.Bottom;
   const nodes: Node[] = [];
@@ -605,6 +653,8 @@ function buildElements(graph: CallFlowGraph, direction: Direction, ls: ReturnTyp
         // In portrait the agents sit where a queue's other lines would leave from, so those leave from its side instead.
         outPos: hasAgents && direction === 'TB' ? Position.Right : outPos,
         down: hasAgents,
+        selected: !!editing && editing.selectedId === n.id,
+        clickable: !!editing,
         content: (
           <div>
             <div>
@@ -622,6 +672,18 @@ function buildElements(graph: CallFlowGraph, direction: Direction, ls: ReturnTyp
                 {w}
               </div>
             ))}
+            {editing?.plus?.[n.id] && (
+              <button
+                type="button"
+                className={mergeClasses('nodrag', 'nopan', ls.plus)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  editing.onPlus(n.id);
+                }}
+              >
+                + {editing.plus[n.id]!.label}
+              </button>
+            )}
           </div>
         ),
       } satisfies BoxData,
@@ -637,6 +699,7 @@ function buildElements(graph: CallFlowGraph, direction: Direction, ls: ReturnTyp
           bg: KIND_STYLE.person.bg,
           border: KIND_STYLE.person.border,
           top: true,
+          clickable: !!editing,
           content: (
             <div>
               <div className={ls.agentsTitle}>
@@ -695,6 +758,7 @@ function FlowCanvas({
   title,
   showWarnings,
   onCapture,
+  editing,
 }: {
   graph: CallFlowGraph;
   direction: Direction;
@@ -704,12 +768,24 @@ function FlowCanvas({
   showWarnings: boolean;
   /** drawn only to be captured (CallFlowCapture): called with the picture once the diagram is placed */
   onCapture?: (shot: Shot | null, error?: string) => void;
+  /** Call Flows (preview): the flow is edited on this canvas */
+  editing?: CallFlowEditing;
 }) {
   const ls = useLocalStyles();
   // While an export is being captured the warnings are left out (exports are for customers); the diagram is laid out again without them.
   const [exporting, setExporting] = useState(false);
   const withWarnings = showWarnings && !exporting;
-  const base = useMemo(() => buildElements(graph, direction, ls, withWarnings), [graph, direction, ls, withWarnings]);
+  // the + handler through a ref, so a new callback each render doesn't redraw every box
+  const onPlusRef = useRef(editing?.onPlus);
+  onPlusRef.current = editing?.onPlus;
+  const isEditing = !!editing;
+  const selectedId = editing?.selectedId;
+  const plus = editing?.plus;
+  const base = useMemo(
+    () => buildElements(graph, direction, ls, withWarnings, isEditing ? { selectedId, plus, onPlus: (id) => onPlusRef.current?.(id) } : undefined),
+    [graph, direction, ls, withWarnings, isEditing, selectedId, plus],
+  );
+  const lastFit = useRef<string | null>(null);
   const onPlaced = useRef<(() => void) | null>(null);
   const paneRef = useRef<HTMLDivElement>(null);
   const [nodes, setNodes] = useState<Node[]>(base.nodes);
@@ -719,10 +795,28 @@ function FlowCanvas({
   const { getInternalNode, fitView, getNodes } = useReactFlow();
 
   useEffect(() => {
-    setNodes(base.nodes);
-    setEdges(base.edges);
+    if (isEditing) {
+      // While a flow is edited, a box already on the canvas stays where it is until the new layout is ready: no flicker as each letter is typed.
+      setNodes((prev) => {
+        const old = new Map(prev.map((n) => [n.id, n]));
+        return base.nodes.map((n) => {
+          const o = old.get(n.id);
+          return o && o.style?.visibility === 'visible' ? { ...n, position: o.position, style: { ...n.style, visibility: 'visible' } } : n;
+        });
+      });
+      setEdges((prev) => {
+        const old = new Map(prev.map((e) => [e.id, e]));
+        return base.edges.map((e) => {
+          const o = old.get(e.id);
+          return o && !o.hidden ? { ...e, hidden: false, data: { ...e.data, route: (o.data as { route?: unknown } | undefined)?.route } } : e;
+        });
+      });
+    } else {
+      setNodes(base.nodes);
+      setEdges(base.edges);
+    }
     setPlacedFor(null);
-  }, [base]);
+  }, [base, isEditing]);
 
   useEffect(() => {
     if (!initialized || placedFor === base) return;
@@ -741,7 +835,12 @@ function FlowCanvas({
       setNodes((ns) => ns.map((n) => ({ ...n, position: positions.get(n.id) ?? n.position, style: { ...n.style, visibility: 'visible' } })));
       setEdges((es) => es.map((e) => ({ ...e, hidden: false, data: { ...e.data, route: routes.get(e.id) } })));
       setPlacedFor(base);
-      requestAnimationFrame(() => void fitView({ padding: 0.06 }));
+      // Editing: the view is fitted again only when boxes come or go, not as each letter is typed.
+      const fitKey = graph.nodes.map((n) => n.id).join('|');
+      if (!isEditing || lastFit.current !== fitKey) {
+        lastFit.current = fitKey;
+        requestAnimationFrame(() => void fitView({ padding: isEditing ? 0.12 : 0.06, maxZoom: isEditing ? 1 : undefined }));
+      }
       // An export waiting for this layout goes once the placed boxes have been drawn.
       const done = onPlaced.current;
       onPlaced.current = null;
@@ -751,7 +850,7 @@ function FlowCanvas({
     return () => {
       cancelled = true;
     };
-  }, [initialized, placedFor, base, graph, direction, getInternalNode, fitView]);
+  }, [initialized, placedFor, base, graph, direction, getInternalNode, fitView, isEditing]);
 
   // Drawn only to be captured: once the boxes are placed (and have settled, e.g. group names arriving and re-placing them), take the picture.
   const captureRef = useRef(onCapture);
@@ -782,6 +881,7 @@ function FlowCanvas({
       nodeTypes={NODE_TYPES}
       edgeTypes={EDGE_TYPES}
       onNodesChange={(changes) => setNodes((ns) => applyNodeChanges(changes, ns))}
+      onNodeClick={editing ? (_, n) => editing.onSelect(n.id.replace(/::agents$/, '')) : undefined}
       fitView
       minZoom={0.05}
       nodesDraggable={false}
@@ -789,7 +889,13 @@ function FlowCanvas({
       edgesFocusable={false}
       proOptions={{ hideAttribution: true }}
     >
-      {!onCapture && (
+      {editing && (
+        <>
+          <Background />
+          <Controls showInteractive={false} />
+        </>
+      )}
+      {!onCapture && !editing && (
         <>
           <Background />
           <Controls showInteractive={false} />
@@ -887,6 +993,20 @@ export function CallFlowDiagram({ graph: drawn, exportFilename, title }: { graph
           <Text size={200}>Offered to the queue&apos;s agents</Text>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Call Flows (preview), docs/CALL-FLOWS-WIZARD.md step 3: the flow drawn exactly as the Call flows tab and the handover pack draw one, to edit it
+ * on: a click on a box opens its panel, and a + on a box offers what can follow it. Top to bottom, with no exports.
+ */
+export function CallFlowEditorCanvas({ graph, editing, height = 480 }: { graph: CallFlowGraph; editing: CallFlowEditing; height?: number }) {
+  return (
+    <div style={{ height, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: 8, background: '#ffffff', color: '#242424' }}>
+      <ReactFlowProvider>
+        <FlowCanvas graph={graph} direction="TB" onDirection={() => {}} filename="call-flow" title={graph.nodes[0]?.label ?? 'Call flow'} showWarnings editing={editing} />
+      </ReactFlowProvider>
     </div>
   );
 }

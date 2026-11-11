@@ -10,6 +10,7 @@ import {
   toCaptures,
   visualCallFlowProblem,
   visualCallFlowSchema,
+  visualFlowCanvas,
   visualFlowCreates,
   visualFlowGroups,
   visualFlowSummary,
@@ -131,5 +132,54 @@ describe('the review screen', () => {
     ]);
     expect(visualFlowCreates(groupOnly, { straightToQueue: true }).map((c) => c.teams)).toEqual(['resource account', 'call queue']);
     expect(visualFlowCreates(groupOnly).map((c) => c.teams)).toEqual(['resource account', 'auto attendant', 'call queue']);
+  });
+});
+
+describe('the canvas (step 3)', () => {
+  it('draws the front door, each path, each option and each group, every box with its address', () => {
+    const c = visualFlowCanvas(menuFlow, { number: '+44 20 7000 0201' });
+    expect(c.graph.nodes.map((n) => [n.id, n.kind, n.label])).toEqual([
+      ['front', 'auto_attendant', 'Main Line'],
+      ['business', 'auto_attendant', 'Business hours'],
+      ['group:g1', 'call_queue', 'Sales'],
+      ['group:g1:timeout', 'disconnect', 'Hang up'],
+      ['business:o1', 'person', 'pat@contoso.test'],
+      ['after', 'auto_attendant', 'After hours'],
+      ['after:then', 'shared_voicemail', 'Shared voicemail'],
+    ]);
+    expect(c.addressOf).toMatchObject({ front: 'front', business: 'business', 'group:g1': 'business.o0', 'group:g1:timeout': 'business.o0', 'business:o1': 'business.o1', after: 'after', 'after:then': 'after.then' });
+    expect(c.graph.edges.map((e) => [e.source, e.target, e.label, e.branch])).toEqual([
+      ['front', 'business', 'Business hours', 'business_hours'],
+      ['group:g1', 'group:g1:timeout', 'Nobody answers', 'timeout'],
+      ['business', 'group:g1', 'Press 1: Sales', 'business_hours'],
+      ['business', 'business:o1', 'Press 2: Accounts', 'business_hours'],
+      ['front', 'after', 'After hours', 'after_hours'],
+      ['after', 'after:then', 'Then', 'after_hours'],
+    ]);
+    expect(c.graph.nodes.find((n) => n.id === 'group:g1')!.agents).toEqual(['jo@contoso.test']);
+    expect(c.graph.nodes.find((n) => n.id === 'front')!.details).toEqual(['+44 20 7000 0201', 'Open Monday to Friday, 9:00 to 17:00']);
+  });
+
+  it('offers a + where something can follow', () => {
+    const c = visualFlowCanvas(menuFlow);
+    expect(c.plus).toEqual({ business: { kind: 'add_option', label: 'Add an option' }, 'group:g1': { kind: 'if_no_answer', label: 'If nobody answers' } });
+    const empty = visualFlowCanvas({ ...menuFlow, afterHours: undefined });
+    expect(empty.plus.after).toEqual({ kind: 'choose', label: 'Choose what happens' });
+  });
+
+  it('draws a group reached twice once, and a straight-to-group flow as the group alone', () => {
+    const twice: VisualCallFlow = { ...menuFlow, business: { then: { kind: 'menu', options: [{ key: '1', label: 'A', then: sales }, { key: '2', label: 'B', then: sales }] } } };
+    const c = visualFlowCanvas(twice);
+    expect(c.graph.nodes.filter((n) => n.id === 'group:g1')).toHaveLength(1);
+    expect(c.graph.edges.find((e) => e.source === 'business' && e.target === 'group:g1')!.label).toBe('Press 1: A + Press 2: B');
+    const s = visualFlowCanvas(groupOnly, { straightToQueue: true, number: '+1 555 0100' });
+    expect(s.graph.nodes.map((n) => n.id)).toEqual(['group:g1', 'group:g1:timeout']);
+    expect(s.graph.nodes[0]).toMatchObject({ badge: 'Front door', details: ['+1 555 0100'] });
+    expect(s.addressOf['group:g1']).toBe('business.then');
+  });
+
+  it('warns on a group with nobody in it', () => {
+    const c = visualFlowCanvas({ ...groupOnly, business: { then: { ...sales, people: [] } } });
+    expect(c.graph.nodes.find((n) => n.id === 'group:g1')!.warnings).toEqual(['Nobody in this group yet: click it to add people.']);
   });
 });
