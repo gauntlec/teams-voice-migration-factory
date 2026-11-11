@@ -11,7 +11,6 @@ import { BuildValidationService } from '../../../../apps/api/src/modules/build/b
 import { BuildService } from '../../../../apps/api/src/modules/build/build.service';
 import { FilesService } from '../../../../apps/api/src/modules/files/files.service';
 import { VOX_TILE_PNG_BASE64 } from '../../../../apps/api/src/modules/deployment/assets/vox-tile';
-import { readCompoundFile, readPackage } from '../../../../apps/api/src/modules/handover/embedded-pdf';
 import { HandoverDocumentService } from '../../../../apps/api/src/modules/handover/handover-document.service';
 import { HandoverController } from '../../../../apps/api/src/modules/handover/handover.controller';
 import { HandoverService } from '../../../../apps/api/src/modules/handover/handover.service';
@@ -328,6 +327,10 @@ describe('Service Handover', () => {
 
     const media = async (fileId: string) => Object.keys((await JSZip.loadAsync((await files.readBytes(c3.t, fileId)).data)).files).filter((f) => f.startsWith('word/media/')).length;
     const draftMedia = await media(pack.file_id!);
+    // the picture only: no file embedded under it (bug report "Handover Document", 11 Nov 2026, took out the PDFs added in 2026.11.38)
+    const parts = Object.keys((await JSZip.loadAsync((await files.readBytes(c3.t, pack.file_id!)).data)).files);
+    expect(parts.filter((f) => f.startsWith('word/embeddings/'))).toEqual([]);
+    expect(await svc.uploadDiagram(c3.t, engineer, { originalname: 'x.pdf', buffer: Buffer.from('%PDF-1.4\n') }).catch((e: unknown) => e)).toBeInstanceOf(BadRequestException);
     // issuing draws it again from the same stored picture
     const issued = await svc.issue(c3.t, engineer, pack.id, {});
     expect(await media(issued.file_id!)).toBe(draftMedia);
@@ -336,93 +339,6 @@ describe('Service Handover', () => {
     // they belong to the pack: not in the Files list, and not readable by a customer
     expect((await files.list(c3.t, {} as never)).some((f) => f.category === 'handover_diagram')).toBe(false);
     await expect(files.readBytes(c3.t, main, hide)).rejects.toBeInstanceOf(NotFoundException);
-  });
-
-  it('embeds each live diagram as a PDF to double-click: the PDF the browser uploaded, or one made from the picture', async () => {
-    const c4 = await seedCustomer(handle);
-    const site4 = (await seedSite(c4.s, { sitecode: 'GLA01' })).id;
-    const aa = (name: string) => ({ site_id: site4, name, resource_accounts: JSON.stringify([]), config: {}, holiday_call_flows: JSON.stringify([]) });
-    await c4.s.insertInto('build_auto_attendants').values([aa('Main Number'), aa('Night Service')] as never).execute();
-    await c4.s
-      .insertInto('tenant_objects')
-      .values([
-        { object_type: 'auto_attendant', object_key: 'aa-1', display_name: 'Main Number', data: JSON.stringify({}) },
-        { object_type: 'auto_attendant', object_key: 'aa-2', display_name: 'Night Service', data: JSON.stringify({}) },
-      ] as never)
-      .execute();
-
-    const png = Buffer.from(VOX_TILE_PNG_BASE64, 'base64');
-    const pdf = Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n', 'latin1');
-    const up = async (originalname: string, buffer: Buffer) => (await svc.uploadDiagram(c4.t, engineer, { originalname, buffer })).fileId;
-    const main = await up('call-flow-Main Number.png', png);
-    const mainPdf = await up('call-flow-Main Number.pdf', pdf);
-    const night = await up('call-flow-Night Service.png', png);
-    // a PDF is stored as a PDF; anything that is neither a PNG nor a PDF is refused
-    expect((await files.readBytes(c4.t, mainPdf)).data.equals(pdf)).toBe(true);
-    await expect(svc.uploadDiagram(c4.t, engineer, { originalname: 'x.pdf', buffer: Buffer.from('%PD not really') })).rejects.toBeInstanceOf(BadRequestException);
-
-    const pack = await svc.generate(c4.t, engineer, {
-      diagrams: [
-        { name: 'Main Number', fileId: main, pdfFileId: mainPdf, width: 1200, height: 500 },
-        // a PDF that isn't one of this customer's diagrams is dropped: the pack makes one from the picture
-        { name: 'Night Service', fileId: night, pdfFileId: '00000000-0000-4000-8000-000000000000', width: 600, height: 900 },
-      ],
-    });
-    const { sections } = await svc.get(c4.t, engineer, pack.id);
-    const images = (sections.find((x) => x.key === 'auto_attendants')!.content as { blocks: Block[] }).blocks.filter((b) => b.kind === 'image');
-    expect(images).toEqual([
-      { kind: 'image', fileId: main, pdfFileId: mainPdf, title: 'Main Number', width: 1200, height: 500, caption: 'Call Flow Diagram – Main Number' },
-      { kind: 'image', fileId: night, title: 'Night Service', width: 600, height: 900, caption: 'Call Flow Diagram – Night Service' },
-    ]);
-
-    /** What a Word reader needs of the pack: the objects, their parts, and relationships and content types that hold together. */
-    const check = async (fileId: string) => {
-      const zip = await JSZip.loadAsync((await files.readBytes(c4.t, fileId)).data);
-      const xml = await zip.file('word/document.xml')!.async('string');
-      expect(xml).not.toContain('__VXS_EMBED_');
-      expect(xml).toMatch(/<w:document [^>]*xmlns:v="urn:schemas-microsoft-com:vml"/);
-      expect(xml).toMatch(/<w:document [^>]*xmlns:o="urn:schemas-microsoft-com:office:office"/);
-      const objects = [...xml.matchAll(/<w:object w:dxaOrig="1200" w:dyaOrig="1500"><v:shape id="([^"]+)" type="#_x0000_t75" style="width:60pt;height:75pt" o:ole=""><v:imagedata r:id="([^"]+)" o:title=""\/><\/v:shape><o:OLEObject Type="Embed" ProgID="Package" ShapeID="([^"]+)" DrawAspect="Icon" ObjectID="_\d+" r:id="([^"]+)"\/><\/w:object>/g)];
-      expect(objects).toHaveLength(2);
-      for (const [, shape, , shapeRef] of objects) expect(shapeRef).toBe(shape);
-      // each object follows its figure caption, and names its PDF under the icon
-      expect(xml.indexOf('Call Flow Diagram - Main Number.pdf')).toBeGreaterThan(xml.indexOf(objects[0]![0]));
-      expect(xml.indexOf(objects[0]![0])).toBeGreaterThan(xml.indexOf('Call Flow Diagram – Main Number'));
-
-      // every relationship the document uses exists, and every one's target is in the package
-      const rels = await zip.file('word/_rels/document.xml.rels')!.async('string');
-      const relTargets = new Map([...rels.matchAll(/<Relationship ([^>]*)\/>/g)].map(([, a]) => [/Id="([^"]+)"/.exec(a!)![1]!, { type: /Type="([^"]+)"/.exec(a!)![1]!, target: /Target="([^"]+)"/.exec(a!)![1]!, external: /TargetMode="External"/.test(a!) }]));
-      expect(new Set(relTargets.keys()).size).toBe([...rels.matchAll(/<Relationship /g)].length); // ids unique
-      for (const [, id] of xml.matchAll(/r:(?:id|embed)="([^"]+)"/g)) expect(relTargets.has(id!), id).toBe(true);
-      for (const r of relTargets.values()) if (!r.external) expect(zip.file(`word/${r.target}`), r.target).not.toBeNull();
-      const oles = objects.map(([, , icon, , ole]) => {
-        expect(relTargets.get(icon!)).toEqual({ type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image', target: 'media/vxs-pdf-icon.png', external: false });
-        expect(relTargets.get(ole!)!.type).toBe('http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject');
-        return relTargets.get(ole!)!.target;
-      });
-      expect(oles).toEqual(['embeddings/oleObject1.bin', 'embeddings/oleObject2.bin']);
-
-      // every part has a content type: an override, or a default for its extension
-      const types = await zip.file('[Content_Types].xml')!.async('string');
-      const attr = (tag: string, name: string) => new RegExp(`\\b${name}="([^"]+)"`).exec(tag)?.[1];
-      const defaults = new Map([...types.matchAll(/<Default [^>]*>/g)].map(([tag]) => [attr(tag, 'Extension')!.toLowerCase(), attr(tag, 'ContentType')]));
-      const overrides = new Set([...types.matchAll(/<Override PartName="([^"]+)"/g)].map(([, p]) => p));
-      expect(defaults.get('bin')).toBe('application/vnd.openxmlformats-officedocument.oleObject');
-      expect(defaults.get('png')).toBe('image/png');
-      for (const part of Object.keys(zip.files).filter((f) => !zip.files[f]!.dir && f !== '[Content_Types].xml')) {
-        expect(overrides.has(`/${part}`) || defaults.has(part.split('.').pop()!.toLowerCase()), part).toBe(true);
-      }
-
-      // the objects carry the PDFs: the uploaded one as it was, and one made from the picture
-      const carried = await Promise.all(oles.map(async (t) => readPackage(readCompoundFile(await zip.file(`word/${t}`)!.async('nodebuffer')).streams.get('\u0001Ole10Native')!)));
-      expect(carried.map((p) => p.fileName)).toEqual(['Call Flow Diagram - Main Number.pdf', 'Call Flow Diagram - Night Service.pdf']);
-      expect(carried[0]!.data.equals(pdf)).toBe(true);
-      expect(carried[1]!.data.subarray(0, 5).toString('latin1')).toBe('%PDF-');
-      expect(carried[1]!.data.length).toBeGreaterThan(png.length);
-    };
-    await check(pack.file_id!);
-    // issuing draws the pack again from the stored diagrams: the objects are still there
-    await check((await svc.issue(c4.t, engineer, pack.id, {})).file_id!);
   });
 });
 
