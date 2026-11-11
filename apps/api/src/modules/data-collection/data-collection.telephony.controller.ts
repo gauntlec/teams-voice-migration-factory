@@ -23,6 +23,8 @@ import {
   type NumberPolicyPatchInput,
   relinkUsersSchema,
   resourceAccountNumberSchema,
+  saveVisualCallFlowSchema,
+  type SaveVisualCallFlowInput,
   usersImportSchema,
   type CallingPolicyInput,
   type DiscoveryCapBulkPatchInput,
@@ -400,6 +402,15 @@ export class TelephonyController {
   @RequirePermission('discovery:write')
   deleteVoiceApp(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Param('id') id: string) {
     return this.svc.deleteVoiceApp(t, u, id, this.review(u));
+  }
+
+  /* ----------------------- Call Flows (preview) ----------------------- */
+
+  /** A call flow made in Call Flows (preview): its number, auto attendant and call queues saved in one go (docs/CALL-FLOWS-WIZARD.md). */
+  @Post('call-flows')
+  @RequirePermission('discovery:write')
+  saveVisualCallFlow(@TenantCtx() t: TenantContext, @CurrentUser() u: AuthedUser, @Body(new ZodBody(saveVisualCallFlowSchema)) body: SaveVisualCallFlowInput) {
+    return this.svc.saveVisualCallFlow(t, u, body, this.review(u));
   }
 
   /* ----------------------- resource accounts ----------------------- */

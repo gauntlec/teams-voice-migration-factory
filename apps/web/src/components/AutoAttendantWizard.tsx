@@ -92,7 +92,7 @@ const sameWeekdayHours = (v: WizardWeeklyHours) => WEEKDAYS.every((d) => JSON.st
  * Opening hours, one row per day. "Same hours Monday to Friday" (on when they already match, as Teams Admin Center offers) shows one row
  * for the five weekdays, so the hours are set once rather than five times; Saturday and Sunday stay separate.
  */
-function WeeklyHoursEditor({ value, onChange }: { value: WizardWeeklyHours; onChange: (v: WizardWeeklyHours) => void }) {
+export function WeeklyHoursEditor({ value, onChange }: { value: WizardWeeklyHours; onChange: (v: WizardWeeklyHours) => void }) {
   const ls = useLocalStyles();
   const [sameWeekdays, setSameWeekdays] = useState(() => sameWeekdayHours(value));
   const setDays = (days: (keyof WizardWeeklyHours)[], ranges: WizardWeeklyHours['monday']) =>
