@@ -16,6 +16,7 @@ import {
   type IncidentResolvedContext,
   type IncidentStatusChangedContext,
   type FeatureRequestStatusChangedContext,
+  type HandoverActionsReminderContext,
   type PortDocumentItemSummary,
   type PortCompletedContext,
   type PortDocumentsCompletedContext,
@@ -54,6 +55,8 @@ export function renderEmail(template: string, context: Record<string, unknown>, 
       return invitation(context as unknown as UserInvitationContext, branding);
     case 'scheduled_report':
       return scheduledReport(context as unknown as ScheduledReportContext, branding);
+    case 'handover_actions_reminder':
+      return handoverActionsReminder(context as unknown as HandoverActionsReminderContext, branding);
     case 'discovery_completed':
       return discoveryCompleted(context as unknown as DiscoveryCompletedContext, branding);
     case 'deployment_completed':
@@ -405,6 +408,34 @@ function portDocumentsReminder(c: PortDocumentsReminderContext, branding?: Email
     ],
     cta: { label: 'Upload documents', url: c.portalUrl },
     outro: ['If you have already sent these another way, let your project contact know and we will update this request.'],
+  };
+  return { subject, html: renderHtml(layout, branding), text: renderText(layout) };
+}
+
+function handoverActionsReminder(c: HandoverActionsReminderContext, branding?: EmailBranding): RenderedEmail {
+  const total = c.sites.reduce((n, s) => n + s.actions.length, 0);
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const named = c.sites.filter((s) => s.sitecode);
+  const where = named.length === 1 ? (named[0]!.siteName ?? named[0]!.sitecode!) : c.customerName;
+  const subject = `Reminder: ${plural(total, 'handover action')} still open — ${where}`;
+  const lines = c.sites.flatMap((s) => [
+    s.sitecode ? `${s.sitecode}${s.siteName && s.siteName !== s.sitecode ? ` ${s.siteName}` : ''}:` : 'All sites:',
+    ...s.actions.map((a) => `• ${a.description}${a.owner ? ` (${a.owner})` : ''}, open ${plural(a.daysOpen, 'day')}`),
+  ]);
+  const layout: LayoutInput = {
+    previewText: `${plural(total, 'outstanding action')} on the Service Handover for ${c.customerName} have been open more than ${plural(c.days, 'day')}.`,
+    eyebrow: 'Service Handover · reminder',
+    heading: `${plural(total, 'action')} still open — ${c.customerName}`,
+    intro: [
+      `${c.recipientName ? `Hello ${c.recipientName}, these` : 'These'} outstanding actions on the Service Handover have been open more than ${plural(c.days, 'day')}:`,
+      ...lines,
+    ],
+    // one site named: straight to its page; several: the list
+    cta: { label: 'Open the Service Handover', url: named.length === 1 ? named[0]!.url : c.listUrl },
+    outro: [
+      'Tick each one off on the site’s handover page when it’s done: open actions are printed in the handover pack.',
+      'You are receiving this because you are the Provider PM for these sites or generated their handover pack.',
+    ],
   };
   return { subject, html: renderHtml(layout, branding), text: renderText(layout) };
 }

@@ -5,6 +5,7 @@ import {
   Avatar,
   Badge,
   Button,
+  CounterBadge,
   Dropdown,
   Menu,
   MenuDivider,
@@ -160,6 +161,7 @@ const useStyles = makeStyles({
     fontSize: tokens.fontSizeBase300,
     ...shorthands.borderLeft('3px', 'solid', 'transparent'),
   },
+  navCount: { marginLeft: 'auto' },
   navItemActive: {
     backgroundColor: tokens.colorNeutralBackground1Selected,
     borderLeftColor: tokens.colorBrandStroke1,
@@ -179,6 +181,8 @@ interface NavDef {
   requiresMonitoring?: boolean;
   /** Only shown to someone who works across more than one customer (or a Super Admin). */
   requiresMultiCustomer?: boolean;
+  /** A count shown on the item (see `navCounts`): what needs attention there. */
+  countKey?: 'handoverOverdue';
 }
 
 const MIGRATION: NavDef[] = [
@@ -188,7 +192,7 @@ const MIGRATION: NavDef[] = [
   { to: '/discovery', label: 'Discovery', icon: <Search24Regular />, permission: 'tenantdiscovery:read' },
   { to: '/build', label: 'Design & Build', icon: <Board24Regular />, permission: 'build:read' },
   { to: '/deployment', label: 'Deployment', icon: <CloudArrowUp24Regular />, permission: 'deployment:read' },
-  { to: '/handover', label: 'Service Handover', icon: <DocumentBulletListMultiple24Regular />, permission: 'handover:read' },
+  { to: '/handover', label: 'Service Handover', icon: <DocumentBulletListMultiple24Regular />, permission: 'handover:read', countKey: 'handoverOverdue' },
   { to: '/files', label: 'Files', icon: <DocumentFolder24Regular />, permission: 'files:read' },
 ];
 
@@ -287,6 +291,17 @@ export function AppShell({ children }: { children: ReactNode }) {
     refetchInterval: 60_000,
   });
 
+  // Service Handover: outstanding actions open longer than the customer's reminder interval (docs/HANDOVER-VIEW.md step 4), staff only.
+  const handoverOverdue = useQuery({
+    queryKey: ['handover-overdue', activeTenantId],
+    queryFn: () => api<{ reminderDays: number; overdue: number }>(`/t/${activeTenantId}/handover/overdue`),
+    enabled: !!activeTenantId && can('handover:generate'),
+    refetchInterval: 5 * 60_000,
+  });
+  const navCounts: Record<NonNullable<NavDef['countKey']>, { count: number; label: string }> = {
+    handoverOverdue: { count: handoverOverdue.data?.overdue ?? 0, label: `${handoverOverdue.data?.overdue ?? 0} outstanding actions overdue` },
+  };
+
   // Super Admins are told while the email switch is off, so it is not left off by mistake.
   const platformSettings = useQuery({
     queryKey: ['platform-settings'],
@@ -353,6 +368,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         >
           {i.icon}
           <span>{i.label}</span>
+          {i.countKey && navCounts[i.countKey].count > 0 && (
+            <CounterBadge className={s.navCount} count={navCounts[i.countKey].count} size="small" color="danger" aria-label={navCounts[i.countKey].label} title={navCounts[i.countKey].label} />
+          )}
         </NavLink>
       ));
 

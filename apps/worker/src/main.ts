@@ -63,6 +63,7 @@ import { sweepDeviceAlerts } from './device-alerts';
 import { sweepDeviceStatus } from './device-status';
 import { sweepKumaSync } from './kuma-manager';
 import { sweepIncidents } from './incidents';
+import { sweepHandoverReminders } from './handover-reminders';
 import { finishAgentDeployment, recordServiceRequestRun, sweepServiceRequests } from './service-requests';
 
 const QUEUE_NAME = 'deployments';
@@ -317,6 +318,10 @@ async function sweepPortDocumentReminders() {
 }
 setInterval(() => void sweepPortDocumentReminders(), 60 * 60_000).unref();
 void sweepPortDocumentReminders();
+// Service Handover: outstanding actions still open after the customer's reminder interval (docs/HANDOVER-VIEW.md step 4). Hourly: the
+// interval is in days, and each action is reminded once per interval.
+setInterval(() => void sweepHandoverReminders(db, enqueueMail).catch((e) => console.warn('handover reminder sweep failed', e)), 60 * 60_000).unref();
+void sweepHandoverReminders(db, enqueueMail).catch((e) => console.warn('handover reminder sweep failed', e));
 // Managed Services: waiting-on-customer reminders (and, later, target warnings).
 setInterval(() => void sweepServiceRequests(db, enqueueMail).catch((e) => console.warn('service request sweep failed', e)), 15 * 60_000).unref();
 void sweepServiceRequests(db, enqueueMail).catch((e) => console.warn('service request sweep failed', e));
