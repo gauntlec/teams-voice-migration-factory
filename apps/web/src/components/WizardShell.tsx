@@ -16,6 +16,7 @@ import { Dialog } from './AppDialog';
 
 const useLocalStyles = makeStyles({
   maxW640: { maxWidth: '640px' },
+  wide: { maxWidth: '1120px', width: '96vw' },
   flexGap4Mb8: { display: "flex", ...shorthands.gap('4px'), marginBottom: '8px' },
   mb12Muted: { color: tokens.colorNeutralForeground3, marginBottom: '12px' },
   gridGap12MinH240: { display: "grid", ...shorthands.gap('12px'), minHeight: '240px' },
@@ -48,6 +49,7 @@ export function WizardShell({
   completing,
   completeLabel = 'Create',
   error,
+  wide,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -57,6 +59,8 @@ export function WizardShell({
   completing: boolean;
   completeLabel?: string;
   error?: string | null;
+  /** a wider dialog, for a step with a diagram (Call Flows (preview)'s canvas) */
+  wide?: boolean;
 }) {
   const ls = useLocalStyles();
   const [index, setIndex] = useState(0);
@@ -89,7 +93,7 @@ export function WizardShell({
 
   return (
     <Dialog open={open} onOpenChange={(_, d) => onOpenChange(d.open)}>
-      <DialogSurface className={ls.maxW640}>
+      <DialogSurface className={wide ? ls.wide : ls.maxW640}>
         <DialogBody>
           <DialogTitle>{title}</DialogTitle>
           <DialogContent>

@@ -1,6 +1,6 @@
 # Call Flows (preview): plan
 
-Version 0.2, 11 November 2026. From the feature request "Visual Auto Attendant and Call Queue Wizard". 0.2: the four decisions answered, and step 2 built.
+Version 0.3, 11 November 2026. From the feature request "Visual Auto Attendant and Call Queue Wizard". 0.2: the four decisions answered, and step 2 built. 0.3: step 3, the canvas.
 
 ## What was asked for
 
@@ -72,3 +72,16 @@ Steps 1 and 2 are a first version to try. Each step after that is its own PR.
 - **Review:** the written summary, what Voxshift will create with the Teams names in grey, and the language and time zone from the site's country (and US state), which can be changed there.
 - **Saving:** one request, `POST /api/t/:tenantId/discovery/call-flows` (TelephonyService.saveVisualCallFlow). Everything is checked first, in words; then the number is taken (a resource account answering the auto attendant, as adding a voice app with a number does), one call queue capture per group, and the auto attendant capture linking to them by id. All are marked `editor = 'call-flows'` (tenant migration 0101). If anything fails, nothing is left behind.
 - **Not yet:** reopening a saved flow in the preview (step 4). "Edit call flow" on a flow it made opens the classic wizard, and the row shows a Preview badge.
+
+## Step 3 as built
+
+- **The tile screens only choose.** Screen 3 and after hours pick a tile (and the straight-to-the-group switch); the details are filled in on the canvas, the step after them and before the review.
+- **The canvas** is the same diagram the Call flows tab and the handover pack draw (`CallFlowEditorCanvas` in `CallFlowDiagram.tsx`, the same boxes, colours and layout), top to bottom, with zoom but no exports. Each box knows where it is in the flow (`visualFlowCanvas` in `call-flows-visual.ts`): the front door, each path, each menu option, each group and what happens when nobody answers. A group reached from two options is one box.
+- **A click on a box opens its panel** beside the canvas, in plain words:
+  - the front door: the name, the number, the hours, and whether callers can say their choice;
+  - a path: what happens (the six tiles), the greeting, and the menu's options, each opening its own panel;
+  - a menu option: its button, its name, what a caller can say (when speech is on), and what it does;
+  - a group: its name, its people, how their phones ring, and what happens if nobody answers.
+- **A + on a box** offers what can follow it: "Add an option" on a menu, "If nobody answers" on a group, "Choose what happens" on a path not chosen yet.
+- **"Still to do"** above the canvas names the first thing missing, in the same words the server uses; Next waits until nothing is.
+- While the flow is edited the boxes stay where they are until the new layout is ready, and the view is fitted again only when boxes come or go.

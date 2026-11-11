@@ -705,3 +705,149 @@ export function visualFlowCreates(f: VisualCallFlow, opts: { straightToQueue?: b
   }
   return out;
 }
+
+/* ------------------------------- step 3: the canvas ------------------------------- */
+
+/**
+ * Where a box on the canvas points in the flow, so clicking it opens the right panel:
+ * - 'front': the number and the flow's name (or, straight to a group, that group: see `front`'s address);
+ * - 'business' / 'after': a path's greeting and its menu or its one step;
+ * - 'business.then' / 'after.then': a path's one step (not a menu);
+ * - 'business.o2' / 'after.o0': a menu option (its button, its words, and what it does).
+ */
+export type VisualAddress = 'front' | 'business' | 'after' | `${'business' | 'after'}.then` | `${'business' | 'after'}.o${number}`;
+
+/** What can follow a box, offered as a + on it. */
+export type VisualPlus = { kind: 'choose'; label: string } | { kind: 'add_option'; label: string } | { kind: 'if_no_answer'; label: string };
+
+export interface VisualCanvas {
+  graph: import('./call-flow-graph').CallFlowGraph;
+  /** each box's address (the agents box under a group is its group's) */
+  addressOf: Record<string, VisualAddress>;
+  /** boxes with a + on them */
+  plus: Record<string, VisualPlus>;
+}
+
+const clip = (s: string | undefined, n = 80) => {
+  const t = (s ?? '').trim();
+  return t.length > n ? `${t.slice(0, n - 1)}…` : t || undefined;
+};
+
+/**
+ * The flow drawn as the Call flows tab and the handover pack draw one (the same CallFlowGraph, the same renderer), with each box's
+ * address in the flow and the + offered where something can follow. A group is one box however many options reach it.
+ */
+export function visualFlowCanvas(f: VisualCallFlow, opts: { number?: string | null; straightToQueue?: boolean } = {}): VisualCanvas {
+  type Node = import('./call-flow-graph').CallFlowNode;
+  type Edge = import('./call-flow-graph').CallFlowEdge;
+  type Branch = import('./call-flow-graph').CallFlowBranch;
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  const addressOf: Record<string, VisualAddress> = {};
+  const plus: Record<string, VisualPlus> = {};
+  const node = (n: Node, address: VisualAddress) => {
+    if (!nodes.some((x) => x.id === n.id)) nodes.push(n);
+    addressOf[n.id] ??= address;
+    return n.id;
+  };
+  const edge = (source: string, target: string, label: string, branch: Branch) => {
+    const id = `${source}->${target}`;
+    const same = edges.find((e) => e.id === id);
+    if (same) {
+      if (!same.label.split(' + ').includes(label)) same.label = `${same.label} + ${label}`;
+    } else edges.push({ id, source, target, label, branch });
+  };
+
+  const endNode = (groupId: string, which: string, e: VisualGroupEnd, address: VisualAddress): string => {
+    const id = `${groupId}:${which}`;
+    switch (e.kind) {
+      case 'hangup':
+        return node({ id, kind: 'disconnect', label: 'Hang up', sublabel: clip(e.message) }, address);
+      case 'person_voicemail':
+        return node({ id, kind: 'voicemail', label: 'Voicemail', sublabel: e.who || undefined }, address);
+      case 'shared_voicemail':
+        return node({ id, kind: 'shared_voicemail', label: 'Shared voicemail', sublabel: e.group || 'Choose the group' }, address);
+      case 'forward':
+        return node({ id, kind: e.to.trim().includes('@') ? 'person' : 'external_number', label: e.to.trim() || 'Choose where to forward' }, address);
+    }
+  };
+
+  const groupNode = (g: VisualGroup, address: VisualAddress, extra: Partial<Node> = {}): string => {
+    const people = g.people.map((p) => p.trim()).filter(Boolean);
+    const id = node(
+      {
+        id: `group:${g.id}`,
+        kind: 'call_queue',
+        label: g.name.trim() || 'New group',
+        sublabel: `${RINGING_WORDS[g.ringing][0]!.toUpperCase()}${RINGING_WORDS[g.ringing].slice(1)} · ${g.ringSeconds}s each`,
+        agents: people.length ? people : undefined,
+        warnings: people.length ? undefined : ['Nobody in this group yet: click it to add people.'],
+        ...extra,
+      },
+      address,
+    );
+    edge(id, endNode(`group:${g.id}`, 'timeout', g.ifNoAnswer, address), 'Nobody answers', 'timeout');
+    if (!(g.ifTooBusy.kind === 'hangup' && !g.ifTooBusy.message)) edge(id, endNode(`group:${g.id}`, 'overflow', g.ifTooBusy, address), `More than ${g.maxWaiting} waiting`, 'overflow');
+    if (g.ifNobodyAvailable.kind !== 'keep_waiting') edge(id, endNode(`group:${g.id}`, 'no_agent', g.ifNobodyAvailable, address), 'Nobody signed in', 'no_agent');
+    if (g.ifNoAnswer.kind === 'hangup') plus[id] = { kind: 'if_no_answer', label: 'If nobody answers' };
+    return id;
+  };
+
+  const stepNode = (s: VisualStep | VisualOptionStep, id: string, address: VisualAddress): string => {
+    switch (s.kind) {
+      case 'group':
+        return groupNode(s, address);
+      case 'person':
+        return node({ id, kind: 'person', label: s.who.trim() || 'Choose the person' }, address);
+      case 'shared_voicemail':
+        return node({ id, kind: 'shared_voicemail', label: 'Shared voicemail', sublabel: s.group.trim() || 'Choose the group' }, address);
+      case 'forward':
+        return node({ id, kind: 'external_number', label: s.number.trim() || 'Choose the number' }, address);
+      case 'link':
+        return node({ id, kind: 'auto_attendant', label: s.name.trim() || 'Choose the call flow', sublabel: 'Another call flow' }, address);
+      case 'announcement':
+        return node({ id, kind: 'announcement', label: 'Plays a message', sublabel: clip(s.text) ?? 'Type the message', details: ['Then the menu again'] }, address);
+      case 'operator':
+        return node({ id, kind: 'operator', label: 'Operator' }, address);
+      case 'hangup':
+        return node({ id, kind: 'disconnect', label: 'Hang up' }, address);
+    }
+  };
+
+  const always = f.hours.type === 'always';
+  const straight = opts.straightToQueue ? onlyRingsAGroup({ ...f, business: { then: f.business.then } }) : null;
+  const numberLine = opts.number ? [opts.number] : ['No number chosen'];
+  if (straight) {
+    groupNode(straight, 'business.then', { badge: 'Front door', details: numberLine });
+    return { graph: { nodes, edges }, addressOf, plus };
+  }
+
+  const front = node({ id: 'front', kind: 'auto_attendant', label: f.name.trim() || 'New call flow', badge: 'Front door', details: [...numberLine, ...(always ? [] : [visualHoursWords(f.hours).replace(/^Business hours are /, 'Open ').replace(/\.$/, '')])] }, 'front');
+  const paths: ['business' | 'after', VisualPath | undefined, string, Branch][] = [['business', f.business, always ? 'Every call' : 'Business hours', 'business_hours']];
+  if (!always) paths.push(['after', f.afterHours, 'After hours', 'after_hours']);
+  for (const [key, p, label, branch] of paths) {
+    const pathId = node({ id: key, kind: 'auto_attendant', label, sublabel: p?.greeting?.trim() ? `"${clip(p.greeting, 60)}"` : undefined }, key);
+    edge(front, pathId, label, branch);
+    if (!p) {
+      plus[pathId] = { kind: 'choose', label: 'Choose what happens' };
+      continue;
+    }
+    const t = p.then;
+    if (t.kind === 'menu') {
+      const n = nodes.find((x) => x.id === pathId)!;
+      n.details = [t.options.length ? `Menu: ${t.options.length} option${t.options.length === 1 ? '' : 's'}` : 'Menu: no options yet'];
+      if (!t.options.length) n.warnings = ['Add the first menu option.'];
+      if (t.options.length < 10) plus[pathId] = { kind: 'add_option', label: 'Add an option' };
+      t.options.forEach((o, i) => {
+        const address = `${key}.o${i}` as VisualAddress;
+        const target = stepNode(o.then, `${key}:o${i}`, address);
+        edge(pathId, target, `Press ${o.key}${o.label.trim() ? `: ${clip(o.label, 24)}` : ''}`, branch);
+      });
+    } else if (t.kind === 'hangup') {
+      edge(pathId, node({ id: `${key}:hangup`, kind: 'disconnect', label: 'Hang up' }, `${key}.then`), 'Then', branch);
+    } else {
+      edge(pathId, stepNode(t, `${key}:then`, `${key}.then`), 'Then', branch);
+    }
+  }
+  return { graph: { nodes, edges }, addressOf, plus };
+}

@@ -24,9 +24,11 @@ import {
   newVisualGroup,
   onlyRingsAGroup,
   visualCallFlowProblem,
+  visualFlowCanvas,
   visualFlowCreates,
   visualFlowSummary,
-  visualPathProblem,
+  visualHoursWords,
+  visualStepWords,
   type VisualCallFlow,
   type VisualGroup,
   type VisualGroupEnd,
@@ -40,6 +42,7 @@ import {
 } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { WeeklyHoursEditor } from './AutoAttendantWizard';
+import { CallFlowEditorCanvas } from './CallFlowDiagram';
 import { VoicemailGroupField, type TeamChoice } from './TargetPicker';
 import { UpnAutocomplete } from './UpnAutocomplete';
 import { WizardShell, type WizardStep } from './WizardShell';
@@ -53,6 +56,7 @@ import { WizardShell, type WizardStep } from './WizardShell';
 
 const useStyles = makeStyles({
   tiles: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', ...shorthands.gap('8px') },
+  compactTiles: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', ...shorthands.gap('6px') },
   bigTiles: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', ...shorthands.gap('10px') },
   tile: {
     display: 'grid',
@@ -96,6 +100,18 @@ const useStyles = makeStyles({
   list: { display: 'grid', ...shorthands.gap('4px'), ...shorthands.margin(0), paddingLeft: '18px' },
   summary: { whiteSpace: 'pre-wrap', fontFamily: 'inherit', ...shorthands.margin(0), display: 'grid', ...shorthands.gap('2px') },
   two: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', ...shorthands.gap('10px') },
+  canvasLayout: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 340px', ...shorthands.gap('12px'), '@media (max-width: 900px)': { gridTemplateColumns: '1fr' } },
+  sidePanel: {
+    display: 'grid',
+    alignContent: 'start',
+    ...shorthands.gap('10px'),
+    ...shorthands.padding('12px'),
+    ...shorthands.borderRadius(tokens.borderRadiusMedium),
+    ...shorthands.border('1px', 'solid', tokens.colorNeutralStroke2),
+    backgroundColor: tokens.colorNeutralBackground2,
+    maxHeight: '480px',
+    overflowY: 'auto',
+  },
 });
 
 /* ------------------------------------ tiles ------------------------------------ */
@@ -108,10 +124,10 @@ interface TileDef<K extends string> {
 }
 
 /** A row of icon tiles, one chosen: a radio group a person can read at a glance instead of a drop-down. */
-function Tiles<K extends string>({ label, tiles, value, onChange, big }: { label: string; tiles: TileDef<K>[]; value: K | null; onChange: (k: K) => void; big?: boolean }) {
+function Tiles<K extends string>({ label, tiles, value, onChange, big, compact }: { label: string; tiles: TileDef<K>[]; value: K | null; onChange: (k: K) => void; big?: boolean; compact?: boolean }) {
   const s = useStyles();
   return (
-    <div role="radiogroup" aria-label={label} className={big ? s.bigTiles : s.tiles}>
+    <div role="radiogroup" aria-label={label} className={big ? s.bigTiles : compact ? s.compactTiles : s.tiles}>
       {tiles.map((t) => (
         <button
           key={t.key}
@@ -126,7 +142,7 @@ function Tiles<K extends string>({ label, tiles, value, onChange, big }: { label
             {t.icon}
           </span>
           <Text weight="semibold">{t.title}</Text>
-          {t.desc ? (
+          {t.desc && !compact ? (
             <Text size={200} className={s.tileDesc}>
               {t.desc}
             </Text>
@@ -291,10 +307,11 @@ function GroupDetails({ group, onChange, ctx }: { group: VisualGroup; onChange: 
         </Button>
       </div>
       <Field label="How should their phones ring?">
-        <Tiles label="How their phones ring" tiles={RINGING.map((r) => ({ key: r.key, icon: <PeopleTeamRegular />, title: r.label }))} value={group.ringing} onChange={(ringing) => set({ ringing })} />
+        <Tiles compact label="How their phones ring" tiles={RINGING.map((r) => ({ key: r.key, icon: <PeopleTeamRegular />, title: r.label }))} value={group.ringing} onChange={(ringing) => set({ ringing })} />
       </Field>
       <Field label="If nobody answers">
         <Tiles<EndKind>
+          compact
           label="If nobody answers"
           tiles={[
             { key: 'hangup', icon: <CallEndRegular />, title: 'Hang up' },
@@ -323,79 +340,199 @@ function GroupDetails({ group, onChange, ctx }: { group: VisualGroup; onChange: 
 }
 
 const MENU_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
+type PathKey = 'business' | 'after';
 
-function MenuDetails({ options, onChange, ctx, languageId }: { options: VisualMenuOption[]; onChange: (o: VisualMenuOption[]) => void; ctx: Ctx; languageId: string }) {
-  const s = useStyles();
-  const setOption = (i: number, o: VisualMenuOption) => onChange(options.map((x, j) => (j === i ? o : x)));
-  const nextKey = MENU_KEYS.find((k) => !options.some((o) => o.key === k));
-  return (
-    <div className={s.panel}>
-      <Text weight="semibold">Menu options</Text>
-      {options.length === 0 && <Text className={s.muted}>Add the first option, for example "Press 1 for Sales".</Text>}
-      {options.map((o, i) => (
-        <div key={i} className={s.panel} style={{ backgroundColor: tokens.colorNeutralBackground1 }}>
-          <div className={s.rowTop}>
-            <Field label="Press">
-              <Dropdown className={s.keyBox} value={o.key} selectedOptions={[o.key]} onOptionSelect={(_, d) => setOption(i, { ...o, key: d.optionValue ?? o.key })} aria-label={`Button for option ${i + 1}`}>
-                {MENU_KEYS.filter((k) => k === o.key || !options.some((x) => x.key === k)).map((k) => (
-                  <Option key={k} value={k}>
-                    {k}
-                  </Option>
-                ))}
-              </Dropdown>
-            </Field>
-            <Field label="for" required className={s.grow}>
-              <Input value={o.label} placeholder="Sales" onChange={(_, d) => setOption(i, { ...o, label: d.value })} />
-            </Field>
-            <Button icon={<DeleteRegular />} appearance="subtle" aria-label={`Remove option ${o.key}`} onClick={() => onChange(options.filter((_, j) => j !== i))} style={{ alignSelf: 'end' }} />
-          </div>
-          <Tiles<OptionKind>
-            label={`What happens when a caller presses ${o.key}`}
-            tiles={OPTION_TILES}
-            value={o.then.kind === 'operator' ? null : (o.then.kind as OptionKind)}
-            onChange={(k) => k !== o.then.kind && setOption(i, { ...o, then: stepFor(k, languageId) as VisualOptionStep })}
-          />
-          <StepDetails step={o.then} onChange={(then) => setOption(i, { ...o, then: then as VisualOptionStep })} ctx={ctx} />
-        </div>
-      ))}
-      <div>
-        <Button size="small" icon={<AddRegular />} disabled={!nextKey} onClick={() => nextKey && onChange([...options, { key: nextKey, label: '', then: newVisualGroup(newLocalId(), '', languageId) }])}>
-          Add an option
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-/** One path: what happens when someone calls (or after hours), its greeting, and the details of the choice. */
-function PathEditor({ label, path, onChange, ctx, languageId, extra, groupName }: { label: string; path: VisualPath | null; onChange: (p: VisualPath) => void; ctx: Ctx; languageId: string; extra?: ReactNode; groupName?: string }) {
-  const t = path?.then;
-  const kind = (t?.kind ?? null) as PathKind | null;
+/** The six tiles for what happens: on screen 3 and after hours, and in a path's panel on the canvas. */
+function PathTiles({ label, path, onChange, languageId, groupName, compact }: { label: string; path: VisualPath | null; onChange: (p: VisualPath) => void; languageId: string; groupName?: string; compact?: boolean }) {
+  const kind = (path?.then.kind ?? null) as PathKind | null;
   const start = (k: PathKind): VisualPath['then'] => {
     const step = stepFor(k, languageId) as VisualPath['then'];
     return step.kind === 'group' && groupName ? { ...step, name: groupName } : step;
   };
+  return <Tiles<PathKind> label={label} compact={compact} tiles={PATH_TILES} value={kind} onChange={(k) => k !== kind && onChange({ ...(path?.greeting ? { greeting: path.greeting } : {}), then: start(k) })} />;
+}
+
+/* ------------------------------------ the canvas's panels ------------------------------------ */
+
+function PanelHeading({ title, sub }: { title: string; sub?: string }) {
+  const s = useStyles();
+  return (
+    <div>
+      <Text weight="semibold" size={400} block>
+        {title}
+      </Text>
+      {sub && (
+        <Text size={200} className={s.muted}>
+          {sub}
+        </Text>
+      )}
+    </div>
+  );
+}
+
+/** The front door: the flow's name and number, and whether callers can speak their choice. */
+function FrontPanel({ name, onName, number, hours, voiceInputs, onVoiceInputs, speech }: { name: string; onName: (v: string) => void; number: string | null; hours: string; voiceInputs: boolean; onVoiceInputs: (v: boolean) => void; speech: boolean }) {
   return (
     <>
-      <Tiles<PathKind> label={label} tiles={PATH_TILES} value={kind} onChange={(k) => k !== kind && onChange({ ...(path?.greeting ? { greeting: path.greeting } : {}), then: start(k) })} />
-      {path && t && (
+      <PanelHeading title="The phone number" sub="A phone menu (auto attendant) answers it." />
+      <Field label="Name" required>
+        <Input value={name} placeholder="Main Line" onChange={(_, d) => onName(d.value)} />
+      </Field>
+      <Text>{number ?? 'No number chosen.'}</Text>
+      <Text>{hours}</Text>
+      <Switch
+        checked={voiceInputs && speech}
+        disabled={!speech}
+        onChange={(_, d) => onVoiceInputs(d.checked)}
+        label={speech ? 'Callers can say their choice as well as pressing a key' : 'Teams can’t recognise speech in this language, so callers press keys'}
+      />
+    </>
+  );
+}
+
+/** A path (business hours, after hours, or every call): what happens, the greeting, and a menu's options. */
+function PathPanel({
+  title,
+  path,
+  onChange,
+  languageId,
+  groupName,
+  onOpenOption,
+  onAddOption,
+}: {
+  title: string;
+  path: VisualPath | null;
+  onChange: (p: VisualPath) => void;
+  languageId: string;
+  groupName?: string;
+  onOpenOption: (i: number) => void;
+  onAddOption: () => void;
+}) {
+  const s = useStyles();
+  const t = path?.then;
+  return (
+    <>
+      <PanelHeading title={title} sub="What should happen?" />
+      <PathTiles compact label={`What happens: ${title}`} path={path} onChange={onChange} languageId={languageId} groupName={groupName} />
+      {path && t?.kind === 'hangup' && (
+        <Field label="What callers hear before the call ends" required>
+          <Textarea value={path.greeting ?? ''} resize="vertical" placeholder="Thank you for calling. We're closed today." onChange={(_, d) => onChange({ ...path, greeting: d.value })} />
+        </Field>
+      )}
+      {path && t && t.kind !== 'hangup' && (
+        <Field label={t.kind === 'menu' ? 'Greeting (optional)' : 'Greeting played first (optional)'}>
+          <Textarea value={path.greeting ?? ''} resize="vertical" placeholder="Thank you for calling Contoso." onChange={(_, d) => onChange({ ...path, greeting: d.value })} />
+        </Field>
+      )}
+      {path && t?.kind === 'menu' && (
         <>
-          {extra}
-          {t.kind === 'hangup' ? (
-            <Field label="What should callers hear before the call ends?" required>
-              <Textarea value={path.greeting ?? ''} resize="vertical" placeholder="Thank you for calling. We're closed today." onChange={(_, d) => onChange({ ...path, greeting: d.value })} />
-            </Field>
-          ) : (
-            path.greeting !== undefined || t.kind === 'menu' ? (
-              <Field label={t.kind === 'menu' ? 'Greeting (optional)' : 'Greeting played first (optional)'}>
-                <Textarea value={path.greeting ?? ''} resize="vertical" placeholder="Thank you for calling Contoso." onChange={(_, d) => onChange({ ...path, greeting: d.value })} />
-              </Field>
-            ) : null
-          )}
-          {t.kind === 'menu' && <MenuDetails options={t.options} onChange={(options) => onChange({ ...path, then: { ...t, options } })} ctx={ctx} languageId={languageId} />}
-          {t.kind !== 'menu' && t.kind !== 'hangup' && <StepDetails step={t} onChange={(then) => onChange({ ...path, then: then as VisualStep })} ctx={ctx} />}
+          <Text weight="semibold">Menu options</Text>
+          {t.options.length === 0 && <Text className={s.muted}>No options yet.</Text>}
+          <ul className={s.list}>
+            {t.options.map((o, i) => (
+              <li key={i}>
+                <Button appearance="transparent" size="small" onClick={() => onOpenOption(i)}>
+                  Press {o.key}: {o.label.trim() || '(no name)'}
+                </Button>
+                <Text size={200} className={s.muted} block>
+                  The call {visualStepWords(o.then)}
+                </Text>
+              </li>
+            ))}
+          </ul>
+          <div>
+            <Button size="small" icon={<AddRegular />} disabled={t.options.length >= MENU_KEYS.length} onClick={onAddOption}>
+              Add an option
+            </Button>
+          </div>
         </>
       )}
+    </>
+  );
+}
+
+/** One menu option: its button, its name, what a caller can say, and what it does. */
+function OptionPanel({
+  option,
+  siblings,
+  onChange,
+  onRemove,
+  ctx,
+  languageId,
+  voiceInputs,
+}: {
+  option: VisualMenuOption;
+  siblings: VisualMenuOption[];
+  onChange: (o: VisualMenuOption) => void;
+  onRemove: () => void;
+  ctx: Ctx;
+  languageId: string;
+  voiceInputs: boolean;
+}) {
+  const s = useStyles();
+  const o = option;
+  return (
+    <>
+      <PanelHeading title={`Press ${o.key}${o.label.trim() ? ` for ${o.label.trim()}` : ''}`} sub="A menu option" />
+      <div className={s.rowTop}>
+        <Field label="Button">
+          <Dropdown className={s.keyBox} value={o.key} selectedOptions={[o.key]} onOptionSelect={(_, d) => onChange({ ...o, key: d.optionValue ?? o.key })}>
+            {MENU_KEYS.filter((k) => k === o.key || !siblings.some((x) => x.key === k)).map((k) => (
+              <Option key={k} value={k}>
+                {k}
+              </Option>
+            ))}
+          </Dropdown>
+        </Field>
+        <Field label="For" required className={s.grow}>
+          <Input value={o.label} placeholder="Sales" onChange={(_, d) => onChange({ ...o, label: d.value })} />
+        </Field>
+      </div>
+      {voiceInputs && (
+        <Field label="Or callers can say" hint="One word or a short phrase, for example “sales”.">
+          <Input value={o.say ?? ''} placeholder={o.label.trim().toLowerCase() || 'sales'} onChange={(_, d) => onChange({ ...o, say: d.value || undefined })} />
+        </Field>
+      )}
+      <Field label="What happens">
+        <Tiles<OptionKind>
+          compact
+          label={`What happens when a caller presses ${o.key}`}
+          tiles={OPTION_TILES}
+          value={o.then.kind === 'operator' ? null : (o.then.kind as OptionKind)}
+          onChange={(k) => k !== o.then.kind && onChange({ ...o, then: stepFor(k, languageId) as VisualOptionStep })}
+        />
+      </Field>
+      <StepDetails step={o.then} onChange={(then) => onChange({ ...o, then: then as VisualOptionStep })} ctx={ctx} />
+      <div>
+        <Button icon={<DeleteRegular />} appearance="subtle" onClick={onRemove}>
+          Remove this option
+        </Button>
+      </div>
+    </>
+  );
+}
+
+const STEP_TITLES: Record<string, string> = {
+  group: 'A group of people',
+  person: 'One person',
+  shared_voicemail: 'Voicemail',
+  forward: 'Forward to another number',
+  link: 'Another call flow',
+  announcement: 'A message',
+  operator: 'The operator',
+};
+
+/** A path's one step (not a menu): its details, with a way back to choosing something else. */
+function StepPanel({ step, onChange, ctx, onChangeKind }: { step: VisualStep; onChange: (s: VisualStep) => void; ctx: Ctx; onChangeKind: () => void }) {
+  return (
+    <>
+      <PanelHeading title={STEP_TITLES[step.kind] ?? 'What happens'} />
+      <StepDetails step={step} onChange={(v) => onChange(v as VisualStep)} ctx={ctx} />
+      <div>
+        <Button size="small" appearance="subtle" onClick={onChangeKind}>
+          Choose something else
+        </Button>
+      </div>
     </>
   );
 }
@@ -470,26 +607,115 @@ export function CallFlowsPreviewWizard({
   const [languageId, setLanguageId] = useState(defaults.languageId);
   const [timeZoneId, setTimeZoneId] = useState(defaults.timeZoneId);
   const [error, setError] = useState<string | null>(null);
+  const [voiceInputs, setVoiceInputs] = useState(false);
+  /** the box on the canvas whose panel is open */
+  const [selected, setSelected] = useState<string | null>(null);
 
   const ctx: Ctx = { tenantId, siteId, teamChoices };
   const number = spareNumbers.find((n) => n.id === numberId) ?? null;
   const always = hours === 'always';
 
-  const flow: VisualCallFlow | null =
-    business && hours
-      ? {
-          name: name.trim(),
-          languageId,
-          timeZoneId,
-          hours: hours === 'always' ? { type: 'always' } : hours === 'standard' ? { type: 'standard' } : { type: 'custom', weekly: hours === 'eight_six' ? EIGHT_SIX : weekly },
-          business: { ...business, then: withLanguage(business.then, languageId) },
-          ...(!always && afterHours ? { afterHours: { ...afterHours, then: withLanguage(afterHours.then, languageId) } } : {}),
-        }
-      : null;
+  const speech = !!AA_SUPPORTED_LANGUAGES.find((l) => l.code === languageId)?.speechInput;
+  // memoised, so the canvas is only drawn again when the flow itself changes
+  const flow: VisualCallFlow | null = useMemo(
+    () =>
+      business && hours
+        ? {
+            name: name.trim(),
+            languageId,
+            timeZoneId,
+            ...(voiceInputs && speech ? { voiceInputs: true } : {}),
+            hours: hours === 'always' ? { type: 'always' } : hours === 'standard' ? { type: 'standard' } : { type: 'custom', weekly: hours === 'eight_six' ? EIGHT_SIX : weekly },
+            business: { ...business, then: withLanguage(business.then, languageId) },
+            ...(hours !== 'always' && afterHours ? { afterHours: { ...afterHours, then: withLanguage(afterHours.then, languageId) } } : {}),
+          }
+        : null,
+    [business, hours, name, languageId, timeZoneId, voiceInputs, speech, weekly, afterHours],
+  );
   // straight to the group: the number answers the group's call queue, which can't play a greeting first
   const canGoStraight = !!flow && !!onlyRingsAGroup({ ...flow, business: { then: flow.business.then } });
   const goStraight = straight && canGoStraight;
-  const sent: VisualCallFlow | null = flow && goStraight ? { ...flow, business: { then: flow.business.then } } : flow;
+  const sent: VisualCallFlow | null = useMemo(() => (flow && goStraight ? { ...flow, business: { then: flow.business.then } } : flow), [flow, goStraight]);
+  const canvas = useMemo(() => (sent ? visualFlowCanvas(sent, { number: number?.e164 ?? null, straightToQueue: goStraight }) : null), [sent, number, goStraight]);
+  const problem = sent ? visualCallFlowProblem(sent) : null;
+
+  // the canvas's panels: what the selected box is, and how to change it
+  const pathOf = (k: PathKey) => (k === 'business' ? business : afterHours);
+  const setPath = (k: PathKey, p: VisualPath) => (k === 'business' ? setBusiness(p) : setAfterHours(p));
+  const optionNodeId = (k: PathKey, i: number, o: VisualMenuOption) => (o.then.kind === 'group' ? `group:${o.then.id}` : `${k}:o${i}`);
+  const addOption = (k: PathKey) => {
+    const p = pathOf(k);
+    if (!p || p.then.kind !== 'menu') return;
+    const menu = p.then;
+    const key = MENU_KEYS.find((x) => !menu.options.some((o) => o.key === x));
+    if (!key) return;
+    const o: VisualMenuOption = { key, label: '', then: newVisualGroup(newLocalId(), '', languageId) };
+    setPath(k, { ...p, then: { ...menu, options: [...menu.options, o] } });
+    setSelected(optionNodeId(k, menu.options.length, o));
+  };
+  const onPlus = (id: string) => {
+    const plus = canvas?.plus[id];
+    const address = canvas?.addressOf[id];
+    if (plus?.kind === 'add_option' && (address === 'business' || address === 'after')) addOption(address);
+    else setSelected(id);
+  };
+  const address = selected ? canvas?.addressOf[selected] : undefined;
+  const panel = ((): ReactNode => {
+    if (!address) return <Text className={s.muted}>Click a box on the left to see what it does and change it.</Text>;
+    if (address === 'front')
+      return (
+        <FrontPanel
+          name={name}
+          onName={setName}
+          number={number?.e164 ?? null}
+          hours={visualHoursWords(sent!.hours)}
+          voiceInputs={voiceInputs}
+          onVoiceInputs={setVoiceInputs}
+          speech={speech}
+        />
+      );
+    const [k, rest] = address.split('.') as [PathKey, string | undefined];
+    const p = pathOf(k);
+    const title = always ? 'When someone calls' : k === 'business' ? 'During business hours' : 'After hours';
+    const pathPanel = (
+      <PathPanel
+        title={title}
+        path={p}
+        onChange={(np) => setPath(k, np)}
+        languageId={languageId}
+        groupName={k === 'business' ? name.trim() : undefined}
+        onOpenOption={(i) => p?.then.kind === 'menu' && setSelected(optionNodeId(k, i, p.then.options[i]!))}
+        onAddOption={() => addOption(k)}
+      />
+    );
+    if (!rest || !p) return pathPanel;
+    const t = p.then;
+    if (rest === 'then') {
+      if (t.kind === 'menu' || t.kind === 'hangup') return pathPanel;
+      return <StepPanel step={t} onChange={(v) => setPath(k, { ...p, then: v })} ctx={ctx} onChangeKind={() => setSelected(k)} />;
+    }
+    const i = Number(rest.slice(1));
+    if (t.kind !== 'menu' || !t.options[i]) return pathPanel;
+    return (
+      <OptionPanel
+        key={`${k}.${i}`}
+        option={t.options[i]!}
+        siblings={t.options}
+        voiceInputs={!!sent?.voiceInputs}
+        ctx={ctx}
+        languageId={languageId}
+        onChange={(o) => {
+          setPath(k, { ...p, then: { ...t, options: t.options.map((x, j) => (j === i ? o : x)) } });
+          // a different kind of step is a different box: keep its panel open
+          if (o.then.kind !== t.options[i]!.then.kind || (o.then.kind === 'group' && t.options[i]!.then.kind === 'group' && o.then.id !== (t.options[i]!.then as VisualGroup).id)) setSelected(optionNodeId(k, i, o));
+        }}
+        onRemove={() => {
+          setPath(k, { ...p, then: { ...t, options: t.options.filter((_, j) => j !== i) } });
+          setSelected(k);
+        }}
+      />
+    );
+  })();
 
   const reset = () => {
     setName('');
@@ -502,6 +728,8 @@ export function CallFlowsPreviewWizard({
     setStraight(false);
     setLanguageId(defaults.languageId);
     setTimeZoneId(defaults.timeZoneId);
+    setVoiceInputs(false);
+    setSelected(null);
     setError(null);
   };
 
@@ -621,41 +849,17 @@ export function CallFlowsPreviewWizard({
     {
       key: 'business',
       title: always ? 'When someone calls' : 'During business hours',
-      validate: () => (!business ? 'Choose what should happen.' : visualPathProblem(goStraight ? { then: business.then } : business, always ? 'When someone calls' : 'During business hours')),
+      validate: () => (!business ? 'Choose what should happen.' : null),
       content: (
         <>
           <Text weight="semibold" size={400}>
             {always ? 'When someone calls, what should happen?' : 'When someone calls during business hours, what should happen?'}
           </Text>
-          <PathEditor
-            label="What should happen"
-            path={business}
-            groupName={name.trim()}
-            onChange={(p) => setBusiness(p)}
-            ctx={ctx}
-            languageId={languageId}
-            extra={
-              always && business?.then.kind === 'group' ? (
-                <Switch
-                  checked={straight}
-                  onChange={(_, d) => setStraight(d.checked)}
-                  label="Send calls straight to the group, with no phone menu in front"
-                />
-              ) : undefined
-            }
-          />
-          {always && business?.then.kind === 'group' && straight && business.greeting?.trim() && (
-            <Text size={200} className={s.warn}>
-              Calls that go straight to the group can't play a greeting first, so the greeting will be left out.
-            </Text>
+          <PathTiles label="What should happen" path={business} groupName={name.trim()} onChange={setBusiness} languageId={languageId} />
+          {always && business?.then.kind === 'group' && (
+            <Switch checked={straight} onChange={(_, d) => setStraight(d.checked)} label="Send calls straight to the group, with no phone menu in front" />
           )}
-          {business && business.then.kind !== 'menu' && business.then.kind !== 'hangup' && business.greeting === undefined && !(straight && always && business.then.kind === 'group') && (
-            <div>
-              <Button size="small" appearance="subtle" icon={<MegaphoneRegular />} onClick={() => setBusiness({ ...business, greeting: '' })}>
-                Play a greeting first
-              </Button>
-            </div>
-          )}
+          {business && <Text className={s.muted}>Next you'll see the call flow drawn out, and fill in the details there.</Text>}
         </>
       ),
     },
@@ -665,24 +869,45 @@ export function CallFlowsPreviewWizard({
           {
             key: 'after-hours',
             title: 'After hours',
-            validate: () => visualPathProblem(afterHours ?? undefined, 'After hours'),
+            validate: () => (!afterHours ? 'Choose what should happen after hours.' : null),
             content: (
               <>
                 <Text weight="semibold" size={400}>
                   When someone calls outside business hours, what should happen?
                 </Text>
-                <PathEditor label="What should happen after hours" path={afterHours} onChange={setAfterHours} ctx={ctx} languageId={languageId} />
-                {afterHours && afterHours.then.kind !== 'menu' && afterHours.then.kind !== 'hangup' && afterHours.greeting === undefined && (
-                  <div>
-                    <Button size="small" appearance="subtle" icon={<MegaphoneRegular />} onClick={() => setAfterHours({ ...afterHours, greeting: '' })}>
-                      Play a greeting first
-                    </Button>
-                  </div>
-                )}
+                <PathTiles label="What should happen after hours" path={afterHours} onChange={setAfterHours} languageId={languageId} />
               </>
             ),
           } satisfies WizardStep,
         ]),
+    {
+      key: 'canvas',
+      title: 'Your call flow',
+      validate: () => (sent ? visualCallFlowProblem(sent) : 'Something is missing. Go back and check each step.'),
+      content: canvas ? (
+        <>
+          <div>
+            <Text weight="semibold" size={400} block>
+              Your call flow
+            </Text>
+            <Text className={s.muted}>Click a box to fill it in or change it. A + adds what can come next.</Text>
+          </div>
+          {problem && (
+            <Text className={s.warn} role="status">
+              Still to do: {problem}
+            </Text>
+          )}
+          <div className={s.canvasLayout}>
+            <CallFlowEditorCanvas graph={canvas.graph} editing={{ selectedId: selected, plus: canvas.plus, onSelect: setSelected, onPlus }} />
+            <div className={s.sidePanel} aria-label="Details of the selected box">
+              {panel}
+            </div>
+          </div>
+        </>
+      ) : (
+        <Text>Something is missing. Go back and check each step.</Text>
+      ),
+    },
     {
       key: 'review',
       title: 'Review',
@@ -747,6 +972,7 @@ export function CallFlowsPreviewWizard({
         if (!o) setError(null);
       }}
       title="New call flow (preview)"
+      wide
       steps={steps}
       onComplete={() => {
         setError(null);
