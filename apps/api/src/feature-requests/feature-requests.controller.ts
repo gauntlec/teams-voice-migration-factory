@@ -8,6 +8,8 @@ import {
   featureRequestUpdateSchema,
   type FeatureRequestCreateInput,
   type FeatureRequestUpdateInput,
+  boardReplyCreateSchema,
+  type BoardReplyCreateInput,
 } from '@tvmf/shared';
 import { CurrentUser } from '../auth/auth.decorators';
 import type { AuthedUser } from '../common/request';
@@ -93,5 +95,32 @@ export class FeatureRequestsController {
   @RequirePermission('feature:create')
   removeAttachment(@Param('id') id: string, @Param('attachmentId') attachmentId: string, @CurrentUser() user: AuthedUser) {
     return this.features.removeAttachment(id, attachmentId, this.actor(user), can(user.role, 'feature:manage'));
+  }
+
+  /** The replies on a card, oldest first (0045). */
+  @Get(':id/replies')
+  @RequirePermission('feature:read')
+  replies(@Param('id') id: string) {
+    return this.features.listReplies(id);
+  }
+
+  /** Anyone who can see the board replies on any card, with one optional file: multipart, the text in a `body` field. */
+  @Post(':id/replies')
+  @RequirePermission('feature:read')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: FEATURE_ATTACHMENT_MAX_BYTES } }))
+  reply(
+    @Param('id') id: string,
+    @Body(new ZodBody(boardReplyCreateSchema)) body: BoardReplyCreateInput,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @CurrentUser() user: AuthedUser,
+  ) {
+    return this.features.addReply(id, body, file, this.actor(user));
+  }
+
+  /** Whoever wrote the reply, or an administrator. */
+  @Delete(':id/replies/:replyId')
+  @RequirePermission('feature:read')
+  removeReply(@Param('id') id: string, @Param('replyId') replyId: string, @CurrentUser() user: AuthedUser) {
+    return this.features.removeReply(id, replyId, this.actor(user), can(user.role, 'feature:manage'));
   }
 }

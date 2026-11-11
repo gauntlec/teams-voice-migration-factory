@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import {
   Badge,
   Button,
@@ -55,10 +55,13 @@ import {
   FEATURE_ATTACHMENT_MAX_BYTES,
   type FeatureStatus,
   type Role,
+  boardRepliesForPrompt,
+  type BoardReply,
 } from '@tvmf/shared';
 import { api, apiDownload, apiUpload, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { Page } from '../components/Page';
+import { CardReplies, ReplyCount, copyText, copyTextLater, fetchReplies } from '../components/CardReplies';
 
 const useLocalStyles = makeStyles({
   flexGap2: { display: "flex", ...shorthands.gap('2px') },
@@ -238,7 +241,7 @@ const AREA_COLOR: Record<FeatureArea, { fg: string; bg: string; border: string }
   Other: { fg: tokens.colorPalettePlatinumForeground2, bg: tokens.colorPalettePlatinumBackground2, border: tokens.colorPalettePlatinumBorderActive },
 };
 
-function buildClaudePrompt(f: FeatureRequest): string {
+function buildClaudePrompt(f: FeatureRequest, replies: readonly BoardReply[] = []): string {
   const na = '_Not specified._';
   const lines: (string | null)[] = [
     `# Feature request: ${f.title}`,
@@ -271,34 +274,17 @@ function buildClaudePrompt(f: FeatureRequest): string {
     '',
     f.attachment_count ? `_${f.attachment_count} file${f.attachment_count === 1 ? ' is' : 's are'} attached to this request on the Feature requests board._` : null,
     f.attachment_count ? '' : null,
+    ...boardRepliesForPrompt(replies),
     '---',
     'Review how this works in the codebase today, raise anything ambiguous, then implement it following the repo conventions in `docs/ARCHITECTURE.md` (shared `DataTable`, `makeStyles` for styling, RBAC in `packages/shared/src/rbac.ts`, plain-SQL migrations, zod DTOs in `packages/shared/src/dto.ts`). Typecheck every workspace and build the web app before finishing. When it ships, set this feature request to "Deployed".',
   ];
   return lines.filter((l) => l !== null).join('\n');
 }
 
-async function copyText(text: string): Promise<boolean> {
-  try {
-    if (typeof navigator !== 'undefined' && navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    /* fall through */
-  }
-  try {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand('copy');
-    document.body.removeChild(ta);
-    return ok;
-  } catch {
-    return false;
-  }
+/** Copies a card's prompt, with its replies (fetched fresh, so the latest answers are in it). */
+function copyPrompt(qc: QueryClient, f: FeatureRequest): Promise<boolean> {
+  if (!f.reply_count) return copyText(buildClaudePrompt(f));
+  return copyTextLater(async () => buildClaudePrompt(f, await fetchReplies(qc, '/feature-requests', f.id)));
 }
 
 function timeAgo(iso: string): string {
@@ -695,8 +681,13 @@ function DetailDialog({
   canRemoveAttachment,
   onEdit,
   onClose,
+  meId,
+  canManage,
 }: {
   f: FeatureRequest;
+  meId: string | undefined;
+  /** an administrator of the board: may delete any reply */
+  canManage: boolean;
   canEdit: boolean;
   canAttach: boolean;
   canRemoveAttachment: (a: FeatureRequestAttachment) => boolean;
@@ -704,6 +695,7 @@ function DetailDialog({
   onClose: () => void;
 }) {
   const s = useStyles();
+  const qc = useQueryClient();
   const [copied, setCopied] = useState(false);
   return (
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
@@ -745,6 +737,7 @@ function DetailDialog({
               <DetailRow label="Constraints / out of scope" value={f.constraints} />
               <DetailRow label="Decision note" value={f.decision_note} />
               <Attachments f={f} canAttach={canAttach} canRemove={canRemoveAttachment} />
+              <CardReplies path="/feature-requests" cardId={f.id} meId={meId} canManage={canManage} listKey={['feature-requests']} />
             </div>
           </DialogContent>
           <DialogActions>
@@ -752,7 +745,7 @@ function DetailDialog({
               appearance="subtle"
               icon={copied ? <CheckmarkRegular /> : <CopyRegular />}
               onClick={async () => {
-                if (await copyText(buildClaudePrompt(f))) {
+                if (await copyPrompt(qc, f)) {
                   setCopied(true);
                   setTimeout(() => setCopied(false), 1500);
                 }
@@ -792,7 +785,9 @@ function RequestCard({
   onEdit,
   onMove,
   onDelete,
+  meId,
 }: {
+  meId: string | undefined;
   f: FeatureRequest;
   canManage: boolean;
   /** The requester's own request, still New: they may edit or withdraw it. */
@@ -804,10 +799,11 @@ function RequestCard({
 }) {
   const ls = useLocalStyles();
   const s = useStyles();
+  const qc = useQueryClient();
   const [copied, setCopied] = useState(false);
 
   const copy = async () => {
-    const ok = await copyText(buildClaudePrompt(f));
+    const ok = await copyPrompt(qc, f);
     if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
@@ -860,6 +856,7 @@ function RequestCard({
               <AttachRegular style={{ verticalAlign: 'text-bottom' }} /> {f.attachment_count}
             </span>
           )}
+          <ReplyCount cardId={f.id} count={f.reply_count} lastAt={f.last_reply_at} lastBy={f.last_reply_by} meId={meId} />
         </Text>
         <div className={ls.flexGap2}>
           <Button
@@ -1023,6 +1020,7 @@ export function FeatureRequests() {
                     items.map((f) => (
                       <RequestCard
                         key={f.id}
+                        meId={me?.id}
                         f={f}
                         canManage={canManage}
                         canOwn={isOwnNew(f)}
@@ -1048,6 +1046,8 @@ export function FeatureRequests() {
           canRemoveAttachment={(a) => canManage || (!!me?.id && a.uploaded_by === me.id)}
           onEdit={() => setDialog({ mode: 'edit', f: detail })}
           onClose={() => setDetail(null)}
+          meId={me?.id}
+          canManage={canManage}
         />
       )}
 

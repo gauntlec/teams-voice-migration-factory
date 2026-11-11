@@ -16,6 +16,7 @@ export const EMAIL_TEMPLATES = [
   'validation_issues_alert',
   'feature_request_status_changed',
   'bug_report_status_changed',
+  'board_reply',
   'service_request_created',
   'service_request_status_changed',
   'service_request_message',
@@ -257,6 +258,22 @@ export interface BugReportStatusChangedContext {
   toStatus: import('./domain').BugStatus;
   resolutionNote?: string | null;
   /** absolute URL of the Bug Reports board */
+  runUrl: string;
+}
+
+/** Someone replied on a Bug reports or Feature requests card (0045). */
+export interface BoardReplyContext {
+  board: 'bug' | 'feature';
+  title: string;
+  area: string;
+  /** Who replied. */
+  author: string;
+  body: string;
+  /** File names that came with the reply. */
+  attachments?: string[];
+  /** Why this person is told: it is their card, they are in the thread, or they are working the card. */
+  reason: 'owner' | 'thread' | 'worker';
+  /** absolute URL of the board */
   runUrl: string;
 }
 

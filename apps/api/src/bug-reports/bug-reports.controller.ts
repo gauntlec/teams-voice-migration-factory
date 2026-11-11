@@ -8,6 +8,8 @@ import {
   bugReportUpdateSchema,
   type BugReportCreateInput,
   type BugReportUpdateInput,
+  boardReplyCreateSchema,
+  type BoardReplyCreateInput,
 } from '@tvmf/shared';
 import { CurrentUser } from '../auth/auth.decorators';
 import type { AuthedUser } from '../common/request';
@@ -92,5 +94,32 @@ export class BugReportsController {
   @RequirePermission('bug:create')
   removeAttachment(@Param('id') id: string, @Param('attachmentId') attachmentId: string, @CurrentUser() user: AuthedUser) {
     return this.bugs.removeAttachment(id, attachmentId, this.actor(user), can(user.role, 'bug:manage'));
+  }
+
+  /** The replies on a card, oldest first (0045). */
+  @Get(':id/replies')
+  @RequirePermission('bug:read')
+  replies(@Param('id') id: string) {
+    return this.bugs.listReplies(id);
+  }
+
+  /** Anyone who can see the board replies on any card, with one optional file: multipart, the text in a `body` field. */
+  @Post(':id/replies')
+  @RequirePermission('bug:read')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: BUG_ATTACHMENT_MAX_BYTES } }))
+  reply(
+    @Param('id') id: string,
+    @Body(new ZodBody(boardReplyCreateSchema)) body: BoardReplyCreateInput,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @CurrentUser() user: AuthedUser,
+  ) {
+    return this.bugs.addReply(id, body, file, this.actor(user));
+  }
+
+  /** Whoever wrote the reply, or an administrator. */
+  @Delete(':id/replies/:replyId')
+  @RequirePermission('bug:read')
+  removeReply(@Param('id') id: string, @Param('replyId') replyId: string, @CurrentUser() user: AuthedUser) {
+    return this.bugs.removeReply(id, replyId, this.actor(user), can(user.role, 'bug:manage'));
   }
 }

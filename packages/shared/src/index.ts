@@ -1,6 +1,7 @@
 export * from './rbac';
 export * from './domain';
 export * from './dto';
+export * from './board-replies';
 export * from './email';
 export * from './deployment';
 export * from './deployment-verify';
@@ -160,8 +161,12 @@ export interface FeatureRequest {
   created_at: string;
   updated_at: string;
   status_changed_at: string;
-  /** How many files are attached. */
+  /** How many files are attached to the card itself (files that came with a reply are listed under the reply). */
   attachment_count: number;
+  /** How many replies are on the card (0045), and when and by whom the latest was added, so a new one can be spotted. */
+  reply_count: number;
+  last_reply_at: string | null;
+  last_reply_by: string | null;
 }
 
 export interface BugReport {
@@ -181,8 +186,12 @@ export interface BugReport {
   created_at: string;
   updated_at: string;
   status_changed_at: string;
-  /** How many files are attached. */
+  /** How many files are attached to the card itself (files that came with a reply are listed under the reply). */
   attachment_count: number;
+  /** How many replies are on the card (0045), and when and by whom the latest was added, so a new one can be spotted. */
+  reply_count: number;
+  last_reply_at: string | null;
+  last_reply_by: string | null;
 }
 
 /** A file attached to a bug report. The bytes are fetched separately. */
