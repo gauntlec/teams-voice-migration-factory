@@ -17,6 +17,7 @@ import { ZodBody } from '../../common/zod.pipe';
 import { RequirePermission } from '../../rbac/require-permission.decorator';
 import { TenantGuard } from '../../rbac/tenant.guard';
 import { HandoverService, type HandoverGenerateInput, type HandoverNoteInput } from './handover.service';
+import { MAX_UPLOADED_PACK_BYTES } from './uploaded-pack';
 
 /**
  * Service Handover view — generates the handover pack (a branded .docx, see
@@ -78,6 +79,20 @@ export class HandoverController {
   @RequirePermission('handover:read')
   get(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser, @Param('id', ParseUUIDPipe) id: string) {
     return this.handover.get(t, user, id);
+  }
+
+  /** A pack edited in Word: uploaded as the next version of the same sites' pack, a draft until it is issued (field `file`, optional `changeNote`). */
+  @Post('packs/:id/upload')
+  @RequirePermission('handover:generate')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_UPLOADED_PACK_BYTES } }))
+  upload(
+    @TenantCtx() t: TenantContext,
+    @CurrentUser() user: AuthedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Body('changeNote') changeNote?: string,
+  ) {
+    return this.handover.upload(t, user, id, file, typeof changeNote === 'string' ? changeNote.slice(0, 300) : undefined);
   }
 
   /** Locks a draft pack as final. */

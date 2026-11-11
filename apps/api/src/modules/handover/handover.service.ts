@@ -45,6 +45,7 @@ import { InjectDb, type Db } from '../../db/db.module';
 import { assertCustomerWide } from '../data-collection/site-scope';
 import { FilesService } from '../files/files.service';
 import { HandoverDocumentService, type HandoverSectionContent, type HandoverSectionData } from './handover-document.service';
+import { checkUploadedDocx, markUploadedIssued, relabelUploadedDraft, UploadedPackError } from './uploaded-pack';
 
 /** What a pack covers: the sites chosen (empty = every site) and the section keys chosen (empty = every section). */
 export interface HandoverGenerateInput {
@@ -523,6 +524,84 @@ export class HandoverService {
    * Locks a draft pack as final. The pack's .docx was generated when the draft was
    * created, so this records who issued it and when rather than regenerating.
    */
+  /**
+   * A pack edited in Word, uploaded as the next version of the same sites' pack (docs/HANDOVER-VIEW.md step 3). It is a draft like any
+   * other and is issued the usual way, as uploaded: Voxshift doesn't rebuild it, it only moves the version and DRAFT markings.
+   */
+  async upload(t: TenantContext, user: AuthedUser, baseId: string, file: { originalname: string; buffer: Buffer } | undefined, changeNote?: string) {
+    assertCustomerWide(t, 'The Service Handover pack');
+    if (!file) throw new BadRequestException('Choose the edited Word document to upload.');
+    const scoped = tenantDb(this.db, t.schema);
+    const base = await scoped.selectFrom('handover_packs').selectAll().where('id', '=', baseId).executeTakeFirst();
+    if (!base) throw new NotFoundException('handover pack not found');
+    let zip;
+    try {
+      zip = await checkUploadedDocx(file.buffer, file.originalname);
+    } catch (e) {
+      if (e instanceof UploadedPackError) throw new BadRequestException(e.message);
+      throw e;
+    }
+    const baseSource = (base.source ?? {}) as Record<string, unknown> & { siteIds?: string[]; siteCodes?: string[] };
+    const { notes: _notes, approval: _approval, changeNote: _change, ...kept } = baseSource;
+    const uploadedAt = new Date();
+    const packId = randomUUID();
+
+    const { pack, version, versionLabel } = await this.db.transaction().execute(async (trx) => {
+      await sql`select pg_advisory_xact_lock(hashtext(${t.schema} || ':handover_pack'))`.execute(trx);
+      const s = tenantDb(trx, t.schema);
+      const last = await s.selectFrom('handover_packs').select((eb) => eb.fn.max('version').as('v')).executeTakeFirst();
+      const version = Number(last?.v ?? 0) + 1;
+      const versionLabel = nextHandoverVersionLabel(await this.packsForSites(s, baseSource.siteIds ?? []));
+      const pack = await s
+        .insertInto('handover_packs')
+        .values({
+          id: packId,
+          version,
+          version_label: versionLabel,
+          status: 'draft',
+          generated_by: user.id,
+          generated_at: uploadedAt.toISOString(),
+          source: {
+            ...kept,
+            origin: 'uploaded',
+            uploadedFrom: { id: base.id, version: base.version_label ?? String(base.version) },
+            uploadedFileName: file.originalname.slice(0, 200),
+            changeNote: changeNote?.trim() || null,
+            snapshotAt: uploadedAt.toISOString(),
+          },
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      return { pack, version, versionLabel };
+    });
+
+    let stored;
+    try {
+      stored = await this.files.store(t, {
+        category: 'handover_pack',
+        sourceType: 'handover_pack',
+        sourceId: pack.id,
+        siteId: null,
+        filename: handoverFileName(baseSource.siteCodes, versionLabel),
+        contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        data: await relabelUploadedDraft(zip, versionLabel),
+        uploadedBy: user.id,
+        metadata: { version, uploaded: true },
+      });
+    } catch (err) {
+      await scoped.deleteFrom('handover_packs').where('id', '=', pack.id).execute();
+      throw err;
+    }
+    const updated = await scoped.updateTable('handover_packs').set({ file_id: stored.id }).where('id', '=', pack.id).returningAll().executeTakeFirstOrThrow();
+    await this.audit.tenant(t.schema, 'handover.pack_uploaded', {
+      actor: { id: user.id, email: user.email },
+      targetType: 'handover_pack',
+      targetId: pack.id,
+      detail: { version, versionLabel, fileId: stored.id, from: base.id, fileName: file.originalname.slice(0, 200) },
+    });
+    return updated;
+  }
+
   async issue(t: TenantContext, user: AuthedUser, id: string, body: { approverCompany?: string; approverName?: string; approvalDate?: string } = {}) {
     assertCustomerWide(t, 'The Service Handover pack');
     const scoped = tenantDb(this.db, t.schema);
@@ -536,6 +615,7 @@ export class HandoverService {
     // with who issued it and when. Before, the issued pack kept the draft's
     // file, so a draft sent out early looked exactly like the final one.
     const full = await scoped.selectFrom('handover_packs').selectAll().where('id', '=', id).executeTakeFirstOrThrow();
+    if (((full.source ?? {}) as { origin?: string }).origin === 'uploaded') return this.issueUploaded(t, user, full);
     const savedSections = await scoped.selectFrom('handover_sections').selectAll().where('pack_id', '=', id).orderBy('ordinal').execute();
     const author = await platformDb(this.db).selectFrom('users').select('display_name').where('id', '=', full.generated_by).executeTakeFirst();
     const issuedAt = new Date();
@@ -608,6 +688,51 @@ export class HandoverService {
   }
 
   /**
+   * Issues an uploaded pack as it was uploaded, with Voxshift's DRAFT markings taken out and its version set. If anything else still says
+   * DRAFT, it isn't issued: the person fixes it in Word and uploads it again. Approvals and Document Control are whatever the document has.
+   */
+  private async issueUploaded(t: TenantContext, user: AuthedUser, full: { id: string; version: number; version_label: string | null; file_id: string | null; source: unknown }) {
+    const scoped = tenantDb(this.db, t.schema);
+    const source = (full.source ?? {}) as { siteIds?: string[]; siteCodes?: string[] };
+    const versionLabel = issuedHandoverVersionLabel(full.version_label, await this.packsForSites(scoped, source.siteIds ?? []));
+    const { data: uploaded } = await this.files.readBytes(t, full.file_id!);
+    const { data, draftLeft } = await markUploadedIssued(uploaded, versionLabel);
+    if (draftLeft) {
+      throw new ConflictException({
+        code: 'draft_marking_left',
+        message: 'The document still says DRAFT somewhere Voxshift didn’t put it. Take it out in Word, upload the document again, and issue that version.',
+      });
+    }
+    const issuedAt = new Date();
+    const file = await this.files.store(t, {
+      category: 'handover_pack',
+      sourceType: 'handover_pack',
+      sourceId: full.id,
+      siteId: null,
+      filename: handoverFileName(source.siteCodes, versionLabel),
+      contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      data,
+      uploadedBy: user.id,
+      metadata: { version: full.version, versionLabel, issued: true, uploaded: true },
+    });
+    const updated = await scoped
+      .updateTable('handover_packs')
+      .set({ status: 'issued', issued_by: user.id, issued_at: issuedAt.toISOString(), file_id: file.id, version_label: versionLabel })
+      .where('id', '=', full.id)
+      .where('status', '=', 'draft')
+      .returningAll()
+      .executeTakeFirst();
+    if (!updated) throw new ConflictException('This pack was just issued by someone else.');
+    await this.audit.tenant(t.schema, 'handover.pack_issued', {
+      actor: { id: user.id, email: user.email },
+      targetType: 'handover_pack',
+      targetId: full.id,
+      detail: { version: full.version, versionLabel, uploaded: true },
+    });
+    return updated;
+  }
+
+  /**
    * Document Control: the customer's earlier packs covering the same sites, oldest first, then this one. Each row is who
    * generated it, its version (a draft says so), when, and what changed (the note given when generating).
    */
@@ -625,13 +750,13 @@ export class HandoverService {
     const names = new Map(ids.length ? (await platformDb(this.db).selectFrom('users').select(['id', 'display_name']).where('id', 'in', ids).execute()).map((u) => [u.id, u.display_name] as [string, string]) : []);
     return [
       ...rows.map((r) => {
-        const src = (r.source ?? {}) as { changeNote?: string | null };
+        const src = (r.source ?? {}) as { changeNote?: string | null; origin?: string };
         const issued = r.status === 'issued';
         return {
           author: names.get(r.generated_by) ?? 'Voxshift',
           version: `${r.version_label ?? r.version}${issued ? '' : ' (draft)'}`,
           date: handoverDate(new Date(r.issued_at ?? r.generated_at ?? r.created_at)),
-          comments: src.changeNote || (issued ? 'Issued' : 'Draft for review'),
+          comments: src.changeNote || (src.origin === 'uploaded' ? 'Edited in Word and uploaded' : issued ? 'Issued' : 'Draft for review'),
         };
       }),
       current,
