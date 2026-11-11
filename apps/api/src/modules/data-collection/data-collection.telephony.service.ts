@@ -274,11 +274,28 @@ export class TelephonyService {
           .execute()
       : [];
     const byHolder = new Map(nums.map((n) => [n.holder_id as string, n]));
+    // A requested number the user doesn't hold: why not (bug report "Number not in site Ranges") - it isn't in any of the site's
+    // ranges, or it is but someone else has it (or it's parked or reserved).
+    const unmet = items.filter((u) => u.requested_number && numKey(u.requested_number) !== '' && numKey(u.requested_number) !== numKey(byHolder.get(u.id)?.e164));
+    const keys = [...new Set(unmet.map((u) => numKey(u.requested_number)))];
+    const onSites = keys.length
+      ? await s
+          .selectFrom('phone_numbers as n')
+          .innerJoin('discovery_number_ranges as r', 'r.id', 'n.range_id')
+          .innerJoin('discovery_sites as ds', 'ds.sitecode', 'r.sitecode')
+          .select(['ds.id as site_id', sql<string>`right(regexp_replace(n.e164, '\\D', '', 'g'), 10)`.as('k')])
+          .where(sql<boolean>`right(regexp_replace(n.e164, '\\D', '', 'g'), 10) in (${sql.join(keys)})`)
+          .execute()
+      : [];
+    const inSiteRange = new Set(onSites.map((r) => `${r.site_id}|${r.k}`));
+    const requestedState = (u: (typeof items)[number]): 'outside_site_ranges' | 'taken' | null =>
+      unmet.includes(u) ? (inSiteRange.has(`${u.site_id}|${numKey(u.requested_number)}`) ? 'taken' : 'outside_site_ranges') : null;
     return {
       items: items.map((u) => ({
         ...u,
         phone_number: byHolder.get(u.id)?.e164 ?? null,
         phone_number_id: byHolder.get(u.id)?.id ?? null,
+        requested_number_state: requestedState(u),
       })),
       total: Number(cnt?.n ?? 0),
       page,

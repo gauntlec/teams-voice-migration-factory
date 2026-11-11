@@ -28,6 +28,10 @@ import {
   type WizardMenuOption,
   type WizardTarget,
   type WizardWeeklyHours,
+  autoAttendantWizardProblem,
+  cleanAutoAttendantWizardAnswers,
+  wizardCallFlowProblem,
+  wizardHolidaysProblem,
 } from '@tvmf/shared';
 import { api, ApiError } from '../api';
 import { type Choice } from './records';
@@ -350,7 +354,7 @@ export function AutoAttendantWizard({
         ...(editing ? {} : { site_id: siteId, kind: 'auto_attendant', ...(forVoiceApp ? { voice_app_id: forVoiceApp.id } : {}) }),
         name,
         description: `Captured via the Auto Attendant wizard - ${flowSummary(answers.businessFlow, 'Business hours')[0] ?? ''}`,
-        wizard_answers: answers,
+        wizard_answers: cleanAutoAttendantWizardAnswers(answers),
         wizard_version: 1,
         resource_account_id: resourceAccountId || null,
       });
@@ -443,6 +447,7 @@ export function AutoAttendantWizard({
     {
       key: 'business',
       title: 'During business hours',
+      validate: () => wizardCallFlowProblem(answers.businessFlow, 'Business hours'),
       content: (
         <CallFlowEditor voiceInputs={!!answers.voiceInputs}
           value={answers.businessFlow}
@@ -460,6 +465,7 @@ export function AutoAttendantWizard({
           {
             key: 'after-hours',
             title: 'After hours',
+            validate: () => wizardCallFlowProblem(answers.afterHoursFlow, 'After hours'),
             content: (
               <CallFlowEditor voiceInputs={!!answers.voiceInputs}
                 value={answers.afterHoursFlow ?? { mode: 'voicemail' }}
@@ -496,6 +502,7 @@ export function AutoAttendantWizard({
     {
       key: 'holidays',
       title: 'Holidays',
+      validate: () => wizardHolidaysProblem(answers),
       content: (
         <>
           <Checkbox
@@ -660,8 +667,10 @@ export function AutoAttendantWizard({
       completeLabel={editing ? 'Save changes' : 'Create'}
       error={error}
       onComplete={() => {
-        setError(null);
-        save.mutate();
+        // checked once more: an earlier step may have been changed after it was passed
+        const problem = autoAttendantWizardProblem(answers);
+        setError(problem);
+        if (!problem) save.mutate();
       }}
     />
   );

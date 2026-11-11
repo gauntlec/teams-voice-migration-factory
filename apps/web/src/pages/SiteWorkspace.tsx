@@ -411,9 +411,16 @@ export function SiteWorkspace() {
                         color="warning"
                         size="small"
                         icon={<WarningRegular />}
-                        title="The number the customer requested isn't the one assigned here — reconcile in Design & Build."
+                        title={
+                          r.requested_number_state === 'outside_site_ranges'
+                            ? 'The number requested is not within the ranges defined for the site.'
+                            : r.requested_number_state === 'taken'
+                              ? 'The number requested is in this site’s ranges, but it’s already assigned, parked or reserved.'
+                              : 'The number requested isn’t the one assigned here. Reconcile it in Design & Build.'
+                        }
                       >
                         Requested {requested}
+                        {r.requested_number_state === 'outside_site_ranges' ? ': not in the site’s ranges' : r.requested_number_state === 'taken' ? ': already in use' : ''}
                       </Badge>
                     )}
                   </span>

@@ -78,7 +78,7 @@ export const wizardWeeklyHoursSchema = z
   .strict();
 export type WizardWeeklyHours = z.infer<typeof wizardWeeklyHoursSchema>;
 
-export const autoAttendantWizardAnswersSchema = z
+const autoAttendantWizardAnswersObject = z
   .object({
     languageId: str(20).min(1),
     timeZoneId: str(80).min(1),
@@ -106,7 +106,74 @@ export const autoAttendantWizardAnswersSchema = z
       .optional(),
   })
   .strict();
-export type AutoAttendantWizardAnswers = z.infer<typeof autoAttendantWizardAnswersSchema>;
+
+/**
+ * Holidays switched off: whatever holiday rows were filled in before the box was unticked are dropped, not checked (bug report "Auto
+ * Attendnat Wizard": ticking and unticking holidays left an empty row that failed with "holidays.0.name: Too small").
+ */
+export const autoAttendantWizardAnswersSchema = z.preprocess(
+  (v) => {
+    if (!v || typeof v !== 'object' || (v as { holidaysEnabled?: unknown }).holidaysEnabled !== false) return v;
+    const { holidays: _dropped, ...rest } = v as Record<string, unknown>;
+    return rest;
+  },
+  autoAttendantWizardAnswersObject,
+);
+export type AutoAttendantWizardAnswers = z.infer<typeof autoAttendantWizardAnswersObject>;
+
+/**
+ * What's missing from one call flow (business hours, after hours, a holiday), in words for the person filling in the wizard, or null.
+ * The wizard checks each step with this before moving on, so nothing reaches the server that it would refuse with a raw validation
+ * message (bug report "Auto Attendant Wizard #2": a button left without a name).
+ */
+export function wizardCallFlowProblem(flow: WizardCallFlow | undefined, where: string): string | null {
+  if (!flow) return null;
+  if (flow.mode === 'menu') {
+    const options = flow.options ?? [];
+    // a menu with no buttons is fine only when callers can reach people by name
+    if (options.length === 0 && !flow.allowDialByName) return `${where}: add at least one menu option, or choose another way to handle calls.`;
+    for (const [i, o] of options.entries()) {
+      const button = o.key.trim() ? `button ${o.key.trim()}` : `option ${i + 1}`;
+      if (!o.key.trim()) return `${where}: choose which button option ${i + 1} uses.`;
+      if (!o.label.trim()) return `${where}: give ${button} a name, for example "Sales".`;
+    }
+    const keys = options.map((o) => o.key.trim());
+    const dup = keys.find((k, i) => keys.indexOf(k) !== i);
+    if (dup) return `${where}: button ${dup} is used twice. Give each option its own button.`;
+  }
+  if (flow.mode === 'direct' && !flow.target) return `${where}: choose where every call goes.`;
+  return null;
+}
+
+/** What's missing from the holidays step, or null. Nothing when holidays are switched off: those rows are dropped when saving. */
+export function wizardHolidaysProblem(answers: Pick<AutoAttendantWizardAnswers, 'holidaysEnabled' | 'holidays'>): string | null {
+  if (!answers.holidaysEnabled) return null;
+  for (const [i, h] of (answers.holidays ?? []).entries()) {
+    const label = h.name.trim() || `Holiday ${i + 1}`;
+    if (!h.name.trim()) return `Give holiday ${i + 1} a name, for example "Christmas Day".`;
+    if (!h.dateRange.start.trim() || !h.dateRange.end.trim()) return `${label}: choose the first and last day.`;
+    if (h.dateRange.end < h.dateRange.start) return `${label}: the last day is before the first day.`;
+    const flow = wizardCallFlowProblem(h.flow, label);
+    if (flow) return flow;
+  }
+  return null;
+}
+
+/** The first thing missing anywhere in an auto attendant's answers, or null: checked once more before saving. */
+export function autoAttendantWizardProblem(answers: AutoAttendantWizardAnswers): string | null {
+  return (
+    wizardCallFlowProblem(answers.businessFlow, 'Business hours') ??
+    (answers.hoursType === 'always' ? null : wizardCallFlowProblem(answers.afterHoursFlow, 'After hours')) ??
+    wizardHolidaysProblem(answers)
+  );
+}
+
+/** The answers as saved: holidays dropped when switched off, so an emptied row can't fail validation. */
+export function cleanAutoAttendantWizardAnswers(answers: AutoAttendantWizardAnswers): AutoAttendantWizardAnswers {
+  if (answers.holidaysEnabled) return answers;
+  const { holidays: _dropped, ...rest } = answers;
+  return rest;
+}
 
 const callQueueActionAnswerSchema = (actions: readonly [string, ...string[]]) =>
   z
