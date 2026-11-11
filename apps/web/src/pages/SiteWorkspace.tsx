@@ -223,7 +223,7 @@ export function SiteWorkspace() {
         canReview={canReview}
         onChanged={refreshSummary}
       />
-      {canReview && pendingChanges > 0 && <SiteChangesCard base={base} siteId={siteId} onChanged={refreshSummary} />}
+      {canReview && pendingChanges > 0 && <SiteChangesCard base={base} siteId={siteId} pendingChanges={pendingChanges} onChanged={refreshSummary} />}
 
       <BulkEditDialog
         open={bulkOpen !== null}
