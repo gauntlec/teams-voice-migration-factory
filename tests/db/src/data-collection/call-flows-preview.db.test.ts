@@ -207,3 +207,40 @@ describe('Call Flows (preview): reopening and changing a saved flow (step 4)', (
     await expect(svc.updateVisualCallFlow(c.t, customer, classic.id, { flow: menuFlow }, false)).rejects.toThrow(/for engineers/);
   });
 });
+
+describe('Call Flows (preview): holidays (step 5)', () => {
+  it('saves holidays as the classic wizard does, with a group of their own, and changes them in place', async () => {
+    const [n] = await seedNumbers(c.s, 'CFP01', ['+442070000501']);
+    const onCall = { ...newVisualGroup('local-oncall', 'On call', 'en-GB'), people: ['oncall@contoso.test'] };
+    const flow: VisualCallFlow = {
+      ...menuFlow,
+      name: 'Holiday line',
+      holidays: [
+        { name: 'Christmas', start: '2026-12-25', end: '2026-12-26', path: { greeting: 'We are closed.', then: { kind: 'hangup' } } },
+        { name: 'Stocktake', start: '2026-12-30', end: '2026-12-30', path: { then: onCall } },
+      ],
+    };
+    const made = await svc.saveVisualCallFlow(c.t, engineer, { site_id: site, phone_number_id: n!.id, flow }, true);
+    expect(made.queues).toBe(2);
+    const rows = await c.s.selectFrom('discovery_flows').select(['id', 'kind', 'name', 'wizard_answers', 'editor', 'resource_account_id']).where('site_id', '=', site).execute();
+    const aa = rows.find((r) => r.id === made.flowId)!.wizard_answers as AutoAttendantWizardAnswers;
+    expect(aa.holidaysEnabled).toBe(true);
+    const onCallRow = rows.find((r) => r.name === 'On call' && r.kind === 'call_queue')!;
+    expect(aa.holidays!.map((h) => [h.name, h.dateRange.start, h.dateRange.end, h.flow.mode, h.flow.target?.flowId ?? null])).toEqual([
+      ['Christmas', '2026-12-25', '2026-12-26', 'disconnect', null],
+      ['Stocktake', '2026-12-30', '2026-12-30', 'direct', onCallRow.id],
+    ]);
+
+    // reopened: the holidays come back, and the holiday's group is the saved one
+    const back = visualFlowFromRows(rows.find((r) => r.id === made.flowId)!, rows, { timeZoneId: 'GMT Standard Time' });
+    if (!back.ok) throw new Error(back.reasons.join(' '));
+    expect(back.flow.holidays!.map((h) => h.name)).toEqual(['Christmas', 'Stocktake']);
+    expect(back.flow.holidays![1]!.path.then).toMatchObject({ kind: 'group', id: onCallRow.id });
+
+    // drop Stocktake: its group goes too
+    await svc.updateVisualCallFlow(c.t, engineer, made.flowId, { flow: { ...back.flow, holidays: [back.flow.holidays![0]!] } }, true);
+    const after = await c.s.selectFrom('discovery_flows').select(['id', 'wizard_answers']).where('site_id', '=', site).execute();
+    expect(after.some((r) => r.id === onCallRow.id)).toBe(false);
+    expect((after.find((r) => r.id === made.flowId)!.wizard_answers as AutoAttendantWizardAnswers).holidays!.map((h) => h.name)).toEqual(['Christmas']);
+  });
+});

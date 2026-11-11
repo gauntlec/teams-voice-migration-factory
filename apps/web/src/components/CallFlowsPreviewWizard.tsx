@@ -34,7 +34,10 @@ import {
   type VisualGroupEnd,
   type VisualMenuOption,
   type VisualOptionStep,
+  type VisualHoliday,
   type VisualPath,
+  type VisualPathKey,
+  visualHolidayDates,
   type VisualRinging,
   type VisualStep,
   type WizardTarget,
@@ -364,7 +367,7 @@ function GroupDetails({ group, onChange, ctx }: { group: VisualGroup; onChange: 
 }
 
 const MENU_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
-type PathKey = 'business' | 'after';
+type PathKey = VisualPathKey;
 
 /** The six tiles for what happens: on screen 3 and after hours, and in a path's panel on the canvas. */
 function PathTiles({ label, path, onChange, languageId, groupName, compact }: { label: string; path: VisualPath | null; onChange: (p: VisualPath) => void; languageId: string; groupName?: string; compact?: boolean }) {
@@ -395,7 +398,30 @@ function PanelHeading({ title, sub }: { title: string; sub?: string }) {
 }
 
 /** The front door: the flow's name and number, and whether callers can speak their choice. */
-function FrontPanel({ name, onName, number, hours, voiceInputs, onVoiceInputs, speech }: { name: string; onName: (v: string) => void; number: string | null; hours: string; voiceInputs: boolean; onVoiceInputs: (v: boolean) => void; speech: boolean }) {
+function FrontPanel({
+  name,
+  onName,
+  number,
+  hours,
+  voiceInputs,
+  onVoiceInputs,
+  speech,
+  holidays,
+  onOpenHoliday,
+  onAddHoliday,
+}: {
+  name: string;
+  onName: (v: string) => void;
+  number: string | null;
+  hours: string;
+  voiceInputs: boolean;
+  onVoiceInputs: (v: boolean) => void;
+  speech: boolean;
+  holidays: VisualHoliday[];
+  onOpenHoliday: (i: number) => void;
+  onAddHoliday: () => void;
+}) {
+  const s = useStyles();
   return (
     <>
       <PanelHeading title="The phone number" sub="A phone menu (auto attendant) answers it." />
@@ -410,12 +436,58 @@ function FrontPanel({ name, onName, number, hours, voiceInputs, onVoiceInputs, s
         onChange={(_, d) => onVoiceInputs(d.checked)}
         label={speech ? 'Callers can say their choice as well as pressing a key' : 'Teams can’t recognise speech in this language, so callers press keys'}
       />
+      <Text weight="semibold">Holidays</Text>
+      <Text size={200} className={s.muted}>
+        Days handled differently, such as public holidays or a closure. On those days they come first, whatever the opening hours.
+      </Text>
+      {holidays.length > 0 && (
+        <ul className={s.list}>
+          {holidays.map((h, i) => (
+            <li key={i}>
+              <Button appearance="transparent" size="small" onClick={() => onOpenHoliday(i)}>
+                {h.name.trim() || `Holiday ${i + 1}`}: {visualHolidayDates(h)}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div>
+        <Button size="small" icon={<AddRegular />} disabled={holidays.length >= 10} onClick={onAddHoliday}>
+          Add a holiday
+        </Button>
+      </div>
+    </>
+  );
+}
+
+/** A holiday's name and days, above what happens on it. */
+function HolidayFields({ holiday, onChange, onRemove }: { holiday: VisualHoliday; onChange: (h: VisualHoliday) => void; onRemove: () => void }) {
+  const s = useStyles();
+  return (
+    <>
+      <Field label="Name" required>
+        <Input value={holiday.name} placeholder="Christmas Day" onChange={(_, d) => onChange({ ...holiday, name: d.value })} />
+      </Field>
+      <div className={s.rowTop}>
+        <Field label="First day" required>
+          <Input type="date" value={holiday.start} onChange={(_, d) => onChange({ ...holiday, start: d.value, end: !holiday.end || holiday.end < d.value ? d.value : holiday.end })} />
+        </Field>
+        <Field label="Last day" required>
+          <Input type="date" value={holiday.end} min={holiday.start || undefined} onChange={(_, d) => onChange({ ...holiday, end: d.value })} />
+        </Field>
+      </div>
+      <div>
+        <Button size="small" appearance="subtle" icon={<DeleteRegular />} onClick={onRemove}>
+          Remove this holiday
+        </Button>
+      </div>
     </>
   );
 }
 
 /** A path (business hours, after hours, or every call): what happens, the greeting, and a menu's options. */
 function PathPanel({
+  before,
   title,
   path,
   onChange,
@@ -424,6 +496,8 @@ function PathPanel({
   onOpenOption,
   onAddOption,
 }: {
+  /** a holiday's name and days, shown above what happens */
+  before?: ReactNode;
   title: string;
   path: VisualPath | null;
   onChange: (p: VisualPath) => void;
@@ -436,7 +510,9 @@ function PathPanel({
   const t = path?.then;
   return (
     <>
-      <PanelHeading title={title} sub="What should happen?" />
+      <PanelHeading title={title} sub={before ? 'A holiday' : 'What should happen?'} />
+      {before}
+      {before && <Text weight="semibold">What happens on these days</Text>}
       <PathTiles compact label={`What happens: ${title}`} path={path} onChange={onChange} languageId={languageId} groupName={groupName} />
       {path && t?.kind === 'hangup' && (
         <Field label="What callers hear before the call ends" required>
@@ -631,6 +707,7 @@ export function CallFlowsPreviewWizard({
   const [weekly, setWeekly] = useState<WizardWeeklyHours>(was?.hours.type === 'custom' ? was.hours.weekly : weekdays('09:00', '17:00'));
   const [business, setBusiness] = useState<VisualPath | null>(was?.business ?? null);
   const [afterHours, setAfterHours] = useState<VisualPath | null>(was?.afterHours ?? null);
+  const [holidays, setHolidays] = useState<VisualHoliday[]>(was?.holidays ?? []);
   const [straight, setStraight] = useState(!!editing?.straightToQueue);
   const [languageId, setLanguageId] = useState(was?.languageId || defaults.languageId);
   const [timeZoneId, setTimeZoneId] = useState(was?.timeZoneId || defaults.timeZoneId);
@@ -669,9 +746,10 @@ export function CallFlowsPreviewWizard({
             hours: hours === 'always' ? { type: 'always' } : hours === 'standard' ? { type: 'standard' } : { type: 'custom', weekly: hours === 'eight_six' ? EIGHT_SIX : weekly },
             business: { ...business, then: withLanguage(business.then, languageId) },
             ...(hours !== 'always' && afterHours ? { afterHours: { ...afterHours, then: withLanguage(afterHours.then, languageId) } } : {}),
+            ...(holidays.length ? { holidays: holidays.map((h) => ({ ...h, path: { ...h.path, then: withLanguage(h.path.then, languageId) } })) } : {}),
           }
         : null,
-    [business, hours, name, languageId, timeZoneId, voiceInputs, speech, weekly, afterHours],
+    [business, hours, name, languageId, timeZoneId, voiceInputs, speech, weekly, afterHours, holidays],
   );
   // straight to the group: the number answers the group's call queue, which can't play a greeting first
   const canGoStraight = !!flow && !!onlyRingsAGroup({ ...flow, business: { then: flow.business.then } });
@@ -681,8 +759,15 @@ export function CallFlowsPreviewWizard({
   const problems = canvas?.problems ?? [];
 
   // the canvas's panels: what the selected box is, and how to change it
-  const pathOf = (k: PathKey) => (k === 'business' ? business : afterHours);
-  const setPath = (k: PathKey, p: VisualPath) => (k === 'business' ? setBusiness(p) : setAfterHours(p));
+  const holidayIndex = (k: PathKey) => (k.startsWith('h') ? Number(k.slice(1)) : -1);
+  const pathOf = (k: PathKey) => (k === 'business' ? business : k === 'after' ? afterHours : (holidays[holidayIndex(k)]?.path ?? null));
+  const setPath = (k: PathKey, p: VisualPath) =>
+    k === 'business' ? setBusiness(p) : k === 'after' ? setAfterHours(p) : setHolidays((hs) => hs.map((h, i) => (i === holidayIndex(k) ? { ...h, path: p } : h)));
+  const addHoliday = () => {
+    if (holidays.length >= 10) return;
+    setHolidays((hs) => [...hs, { name: '', start: '', end: '', path: { greeting: '', then: { kind: 'hangup' } } }]);
+    choose(`h${holidays.length}`, true);
+  };
   const optionNodeId = (k: PathKey, i: number, o: VisualMenuOption) => (o.then.kind === 'group' ? `group:${o.then.id}` : `${k}:o${i}`);
   const addOption = (k: PathKey) => {
     const p = pathOf(k);
@@ -697,7 +782,8 @@ export function CallFlowsPreviewWizard({
   const onPlus = (id: string) => {
     const plus = canvas?.plus[id];
     const address = canvas?.addressOf[id];
-    if (plus?.kind === 'add_option' && (address === 'business' || address === 'after')) addOption(address);
+    if (plus?.kind === 'add_option' && address && address !== 'front' && !address.includes('.')) addOption(address as PathKey);
+    else if (plus?.kind === 'add_holiday') addHoliday();
     else setSelected(id);
   };
   const address = selected ? canvas?.addressOf[selected] : undefined;
@@ -713,13 +799,29 @@ export function CallFlowsPreviewWizard({
           voiceInputs={voiceInputs}
           onVoiceInputs={setVoiceInputs}
           speech={speech}
+          holidays={holidays}
+          onOpenHoliday={(i) => choose(`h${i}`, true)}
+          onAddHoliday={addHoliday}
         />
       );
     const [k, rest] = address.split('.') as [PathKey, string | undefined];
     const p = pathOf(k);
-    const title = always ? 'When someone calls' : k === 'business' ? 'During business hours' : 'After hours';
+    const hi = holidayIndex(k);
+    const title = hi >= 0 ? (holidays[hi]?.name.trim() ? `Holiday: ${holidays[hi]!.name.trim()}` : `Holiday ${hi + 1}`) : always ? 'When someone calls' : k === 'business' ? 'During business hours' : 'After hours';
     const pathPanel = (
       <PathPanel
+        before={
+          hi >= 0 && holidays[hi] ? (
+            <HolidayFields
+              holiday={holidays[hi]!}
+              onChange={(h) => setHolidays((hs) => hs.map((x, i) => (i === hi ? h : x)))}
+              onRemove={() => {
+                setHolidays((hs) => hs.filter((_, i) => i !== hi));
+                setSelected('front');
+              }}
+            />
+          ) : undefined
+        }
         title={title}
         path={p}
         onChange={(np) => setPath(k, np)}
@@ -766,6 +868,7 @@ export function CallFlowsPreviewWizard({
     setWeekly(weekdays('09:00', '17:00'));
     setBusiness(null);
     setAfterHours(null);
+    setHolidays([]);
     setStraight(false);
     setLanguageId(defaults.languageId);
     setTimeZoneId(defaults.timeZoneId);
@@ -900,6 +1003,9 @@ export function CallFlowsPreviewWizard({
                   setHours(k);
                 }}
               />
+              <Text size={200} className={s.muted}>
+                Public holidays and closures are added on the call flow diagram, with the + on the front door.
+              </Text>
               {hours === 'custom' && <WeeklyHoursEditor value={weekly} onChange={(w) => (isEightSix(w) ? (setWeekly(w), setHours('eight_six')) : setWeekly(w))} />}
             </>
           )}

@@ -156,8 +156,8 @@ describe('Call Flows (preview): captures back to the visual flow', () => {
     const r = fromCaptures({ kind: 'auto_attendant', capture: { flowId: MAIN, name: 'Main', answers: withHolidays } });
     expect(r.ok).toBe(false);
     if (r.ok) return;
+    // holidays are shown since step 5; an operator still isn't
     expect(r.reasons).toEqual([
-      'It has holiday call handling, which the preview doesn’t show yet.',
       'It names an operator, which the preview doesn’t show yet.',
       'Business hours: plays a message, which only a menu option can do.',
     ]);
