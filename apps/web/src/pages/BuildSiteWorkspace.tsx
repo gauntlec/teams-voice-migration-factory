@@ -27,6 +27,7 @@ import { AccessDialog } from './build/accessDialog';
 import { SharedCallingPopulateButton } from './build/sharedCallingPopulate';
 
 const useLocalStyles = makeStyles({
+  statusWithAction: { display: 'inline-flex', alignItems: 'center', gap: '6px' },
   mt8: { marginTop: '8px' },
   ml6: { marginLeft: '6px' },
   mt8Danger: { marginTop: '8px', color: tokens.colorPaletteRedForeground1 },
@@ -237,6 +238,12 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
       setRequestedFile(file);
       qc.invalidateQueries({ queryKey: ['resource-accounts', tid, siteId] });
     },
+  });
+  // Resource accounts brought in from Site Data show "imported" until an engineer edits them or confirms nothing needs changing (bug
+  // report "Design and Build - Resource Account").
+  const confirmAccounts = useMutation({
+    mutationFn: (ids?: string[]) => api<{ confirmed: number }>(`${base}/resource-accounts/confirm`, { method: 'POST', body: JSON.stringify({ site_id: siteId, ...(ids ? { ids } : {}) }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['resource-accounts', tid, siteId] }),
   });
   // "Link discovered resource account" - pulls one specific live resource
   // account straight into this site without visiting Site Data first
@@ -807,6 +814,14 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
                 <Button size="small" onClick={() => setLinkOpen(true)}>
                   Link discovered resource account…
                 </Button>
+                <Button
+                  size="small"
+                  disabled={confirmAccounts.isPending}
+                  title="Mark every resource account brought in from Site Data as designed, nothing needing changing"
+                  onClick={() => confirmAccounts.mutate(undefined)}
+                >
+                  Confirm all imported
+                </Button>
                 {requestedFile && (
                   <Button
                     size="small"
@@ -837,10 +852,21 @@ export function BuildSiteWorkspace({ embedded }: { embedded?: BuildEmbedding } =
                   <Badge appearance="tint" color="warning">
                     requested {new Date(String(r.requested_at)).toLocaleDateString()}
                   </Badge>
-                ) : (
+                ) : r.designed_at ? (
                   <Badge appearance="tint" color="informative">
                     designed
                   </Badge>
+                ) : (
+                  <span className={ls.statusWithAction}>
+                    <Badge appearance="outline" color="subtle" title="Brought in from Site Data and not checked yet. Edit it, or confirm nothing needs changing.">
+                      imported
+                    </Badge>
+                    {canWrite && (
+                      <Button size="small" appearance="transparent" disabled={confirmAccounts.isPending} onClick={() => confirmAccounts.mutate([String(r.id)])}>
+                        Confirm
+                      </Button>
+                    )}
+                  </span>
                 ),
             },
           ]}
