@@ -32,6 +32,9 @@ import {
   type HandoverActionPatchInput,
   type HandoverNoteSection,
   type HandoverUnportedRange,
+  type HandoverSiteRow,
+  type SiteContacts,
+  handoverSiteStatus,
   portStageText,
 } from '@tvmf/shared';
 import { AuditService } from '../../common/audit.service';
@@ -149,7 +152,11 @@ export class HandoverService {
       .$if(!staff, (qb) => qb.where('status', '=', 'issued'))
       .orderBy('version', 'desc')
       .execute();
-    return staff ? rows : rows.map(withoutInternalNote);
+    // who generated and issued each one, by name, for the site page's history
+    const ids = [...new Set(rows.flatMap((r) => [r.generated_by, r.issued_by]).filter((x): x is string => !!x))];
+    const names = new Map(ids.length ? (await platformDb(this.db).selectFrom('users').select(['id', 'display_name']).where('id', 'in', ids).execute()).map((u) => [u.id, u.display_name] as [string, string]) : []);
+    const named = rows.map((r) => ({ ...r, generated_by_name: r.generated_by ? (names.get(r.generated_by) ?? null) : null, issued_by_name: r.issued_by ? (names.get(r.issued_by) ?? null) : null }));
+    return staff ? named : named.map(withoutInternalNote);
   }
 
   async get(t: TenantContext, user: AuthedUser, id: string) {
@@ -162,6 +169,77 @@ export class HandoverService {
     const staff = isPackAuthor(user);
     if (!pack || (!staff && pack.status !== 'issued')) throw new NotFoundException('handover pack not found');
     return { pack: staff ? pack : withoutInternalNote(pack), sections };
+  }
+
+  /**
+   * Every site with its handover status (docs/HANDOVER-VIEW.md): set by the packs for that one site only. Customer users see issued
+   * packs only, so a site whose only pack is a draft is "Not created" to them, and they don't see the outstanding actions.
+   */
+  async sites(t: TenantContext, user: AuthedUser): Promise<HandoverSiteRow[]> {
+    assertCustomerWide(t, 'The Service Handover pack');
+    const staff = isPackAuthor(user);
+    const s = tenantDb(this.db, t.schema);
+    const [sites, packs, actions] = await Promise.all([
+      s.selectFrom('discovery_sites').select(['id', 'sitecode', 'name', 'country', 'region', 'overview']).orderBy('sitecode').execute(),
+      s
+        .selectFrom('handover_packs')
+        .select(['version', 'version_label', 'status', 'generated_by', 'generated_at', 'issued_by', 'issued_at', 'created_at', 'source'])
+        .$if(!staff, (qb) => qb.where('status', '=', 'issued'))
+        .execute(),
+      staff
+        ? s
+            .selectFrom('handover_actions')
+            .select((eb) => ['site_id', eb.fn.countAll<string>().as('total'), sql<string>`count(*) filter (where done_at is null)`.as('open')])
+            .groupBy('site_id')
+            .execute()
+        : Promise.resolve([]),
+    ]);
+
+    const packsBySite = new Map<string, typeof packs>();
+    for (const p of packs) {
+      const ids = ((p.source ?? {}) as { siteIds?: string[] }).siteIds ?? [];
+      if (ids.length !== 1) continue;
+      packsBySite.set(ids[0]!, [...(packsBySite.get(ids[0]!) ?? []), p]);
+    }
+    const count = (siteId: string | null) => {
+      const r = actions.find((a) => a.site_id === siteId);
+      return { open: Number(r?.open ?? 0), total: Number(r?.total ?? 0) };
+    };
+    const everySite = count(null);
+
+    // Provider PMs: the overview's contacts, or (older overviews) the project managers among its assigned staff.
+    const overviews = sites.map((x) => (x.overview ?? {}) as DiscoverySiteOverview);
+    const statuses = sites.map((x) => handoverSiteStatus(packsBySite.get(x.id) ?? []));
+    const userIds = new Set<string>();
+    for (const o of overviews) for (const id of o.contacts ? (o.contacts.providerPm ?? []).map((c) => c.userId) : (o.assignedUserIds ?? [])) if (id) userIds.add(id);
+    for (const st of statuses) if (st.lastChange?.byId) userIds.add(st.lastChange.byId);
+    const users = userIds.size
+      ? new Map((await platformDb(this.db).selectFrom('users').select(['id', 'display_name', 'role']).where('id', 'in', [...userIds]).execute()).map((u) => [u.id, u]))
+      : new Map<string, { id: string; display_name: string; role: string }>();
+    const providerPms = (o: DiscoverySiteOverview): string[] => {
+      const list: SiteContacts['providerPm'] = o.contacts
+        ? (o.contacts.providerPm ?? [])
+        : (o.assignedUserIds ?? []).filter((id) => users.get(id)?.role === 'PROJECT_MANAGER').map((userId) => ({ userId }));
+      return (list ?? []).map((c) => contactLabel(c, c.userId ? users.get(c.userId)?.display_name : null));
+    };
+
+    return sites.map((x, i) => {
+      const st = statuses[i]!;
+      const own = count(x.id);
+      return {
+        id: x.id,
+        sitecode: x.sitecode,
+        name: x.name,
+        country: x.country,
+        region: x.region,
+        status: st.status,
+        latestVersion: st.latestVersion,
+        issuedVersion: st.issuedVersion,
+        lastChange: st.lastChange ? { at: st.lastChange.at.toISOString(), by: st.lastChange.byId ? (users.get(st.lastChange.byId)?.display_name ?? null) : null, what: st.lastChange.what } : null,
+        actions: staff ? { open: own.open + everySite.open, total: own.total + everySite.total } : null,
+        providerPms: providerPms(overviews[i]!),
+      };
+    });
   }
 
   /** The sites a pack is limited to, checked against this tenant. No ids = every site (null). */

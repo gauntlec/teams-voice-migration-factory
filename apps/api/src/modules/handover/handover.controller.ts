@@ -33,6 +33,13 @@ export class HandoverController {
     return this.handover.list(t, user);
   }
 
+  /** Every site with its handover status, versions, outstanding actions (staff only) and Provider PMs. */
+  @Get('sites')
+  @RequirePermission('handover:read')
+  sites(@TenantCtx() t: TenantContext, @CurrentUser() user: AuthedUser) {
+    return this.handover.sites(t, user);
+  }
+
   @Post('packs')
   @RequirePermission('handover:generate')
   generate(
@@ -43,7 +50,6 @@ export class HandoverController {
     return this.handover.generate(t, user, body);
   }
 
-  /** What Teams has for a pack's auto attendants, as graphs for the browser to draw (a POST: a pack can name many sites). */
   /** Before a pack is generated: the port ranges on its sites that have not been ported yet, for the engineer to confirm. */
   @Post('pre-check')
   @HttpCode(200)
@@ -52,6 +58,7 @@ export class HandoverController {
     return this.handover.unportedRanges(t, body.siteIds).then((unportedRanges) => ({ unportedRanges }));
   }
 
+  /** What Teams has for a pack's auto attendants, as graphs for the browser to draw (a POST: a pack can name many sites). */
   @Post('call-flows')
   @HttpCode(200)
   @RequirePermission('handover:generate')
@@ -80,9 +87,12 @@ export class HandoverController {
     return this.handover.issue(t, user, id, body);
   }
 
-  /** Outstanding actions, open first; `siteId` narrows to one site plus the all-sites ones. */
+  /**
+   * Outstanding actions, open first; `siteId` narrows to one site plus the all-sites ones. Staff only: customers see what's
+   * outstanding in an issued pack, never the working list (feature request "Service Handover View", 10 Nov 2026).
+   */
   @Get('actions')
-  @RequirePermission('handover:read')
+  @RequirePermission('handover:generate')
   actions(@TenantCtx() t: TenantContext, @Query('siteId') siteId?: string) {
     if (siteId !== undefined && !/^[0-9a-f-]{36}$/i.test(siteId)) throw new BadRequestException('siteId must be a site id');
     return this.handover.listActions(t, siteId);
@@ -107,9 +117,9 @@ export class HandoverController {
     return this.handover.deleteAction(t, user, id);
   }
 
-  /** The hand-written notes behind the sections with no structured data source. */
+  /** The hand-written notes behind the sections with no structured data source. Staff only, like the actions: drafts in the making. */
   @Get('notes')
-  @RequirePermission('handover:read')
+  @RequirePermission('handover:generate')
   notes(@TenantCtx() t: TenantContext) {
     return this.handover.listNotes(t);
   }

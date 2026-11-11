@@ -124,6 +124,49 @@ export function sameHandoverScope(a: readonly string[] | null | undefined, b: re
   return [...(a ?? [])].sort().join(',') === [...(b ?? [])].sort().join(',');
 }
 
+/**
+ * A site on the Service Handover page (docs/HANDOVER-VIEW.md): its own packs set its status. A pack covering several sites (or every
+ * site) doesn't count towards any one site's, so the three statuses stay simple.
+ */
+export type HandoverSiteStatus = 'not_created' | 'draft' | 'issued';
+
+export const HANDOVER_SITE_STATUS_LABELS: Record<HandoverSiteStatus, string> = { not_created: 'Not created', draft: 'Draft', issued: 'Issued' };
+
+export interface HandoverSiteRow {
+  id: string;
+  sitecode: string;
+  name: string | null;
+  country: string | null;
+  region: string | null;
+  status: HandoverSiteStatus;
+  /** the newest pack's version ("1.1"), and the newest issued one's; null when there is none */
+  latestVersion: string | null;
+  issuedVersion: string | null;
+  /** the newest thing that happened to the site's packs: a draft generated, or a pack issued */
+  lastChange: { at: string; by: string | null; what: 'generated' | 'issued' } | null;
+  /** the site's outstanding actions and the all-sites ones (both print in its pack); null for customer users, who don't see them */
+  actions: { open: number; total: number } | null;
+  /** the site's Provider PM(s) from the Site Overview, as names */
+  providerPms: string[];
+}
+
+type SitePack = { status: 'draft' | 'issued'; version: number; version_label: string | null; generated_by?: string | null; generated_at: string | Date | null; issued_by?: string | null; issued_at: string | Date | null; created_at: string | Date };
+
+/** A site's status from its own packs (any order): none = Not created, else the newest pack's Draft or Issued. */
+export function handoverSiteStatus(packs: readonly SitePack[]): Pick<HandoverSiteRow, 'status' | 'latestVersion' | 'issuedVersion'> & { lastChange: { at: Date; byId: string | null; what: 'generated' | 'issued' } | null } {
+  if (packs.length === 0) return { status: 'not_created', latestVersion: null, issuedVersion: null, lastChange: null };
+  const byVersion = [...packs].sort((a, b) => b.version - a.version);
+  const latest = byVersion[0]!;
+  const issued = byVersion.find((p) => p.status === 'issued');
+  const label = (p: SitePack) => p.version_label ?? String(p.version);
+  const events = packs.flatMap((p) => [
+    { at: new Date(p.generated_at ?? p.created_at), byId: p.generated_by ?? null, what: 'generated' as const },
+    ...(p.issued_at ? [{ at: new Date(p.issued_at), byId: p.issued_by ?? null, what: 'issued' as const }] : []),
+  ]);
+  const lastChange = events.reduce((a, b) => (b.at.getTime() >= a.at.getTime() ? b : a));
+  return { status: latest.status, latestVersion: label(latest), issuedVersion: issued ? label(issued) : null, lastChange };
+}
+
 type VersionedPack = { status: 'draft' | 'issued'; version_label: string | null };
 const minorsOf = (packs: readonly VersionedPack[], major: 0 | 1) =>
   packs.map((p) => new RegExp(`^${major}\\.(\\d+)$`).exec(p.version_label ?? '')?.[1]).filter((m): m is string => !!m).map(Number);
@@ -157,7 +200,7 @@ export function handoverFileName(siteCodes: readonly string[] | null | undefined
 /** Approvals & Sign-Off, entered when a pack is issued. */
 export interface HandoverApproval {
   company: string;
-  /** name and title, e.g. "Leigh Manton, AT&T Consulting, Director EMEA" */
+  /** name and title, e.g. "Alex Example, Contoso & Partners, Director EMEA" */
   name: string;
   /** YYYY-MM-DD */
   date: string;

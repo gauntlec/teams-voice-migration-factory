@@ -16,6 +16,7 @@ import {
   MessageBar,
   MessageBarBody,
   MessageBarTitle,
+  SearchBox,
   Select,
   Spinner,
   TableBody,
@@ -43,6 +44,9 @@ import {
   issuedHandoverVersionLabel,
   sameHandoverScope,
   type HandoverUnportedRange,
+  HANDOVER_SITE_STATUS_LABELS,
+  type HandoverSiteRow,
+  type HandoverSiteStatus,
 } from '@tvmf/shared';
 import { api, apiDownload, apiUpload, ApiError } from '../api';
 import { useNotify } from '../hooks/useNotify';
@@ -52,17 +56,25 @@ import { DataTable } from '../components/DataTable';
 import { Page } from '../components/Page';
 import { LoadError, NoTenant } from './DataCollection';
 import { DangerText } from '../components/ui';
-import { TableSkeleton } from '../components/states';
+import { EmptyState, TableSkeleton } from '../components/states';
+import { RowLink } from '../components/RowLink';
+import { useSort } from '../lib/sort';
 import { HandoverActionsDialog } from './handover/handoverActions';
 
 const useLocalStyles = makeStyles({
   w92vwMaxW1100: { maxWidth: "1100px", width: "92vw" },
   maxH70vhScroll: { maxHeight: "70vh", overflowY: "auto" },
+  toolbar: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: tokens.spacingHorizontalM, rowGap: tokens.spacingVerticalS },
+  search: { flex: '1 1 260px', maxWidth: '380px' },
+  muted: { color: tokens.colorNeutralForeground3 },
+  cardHead: { display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-start', columnGap: tokens.spacingHorizontalL, rowGap: tokens.spacingVerticalS },
 });
 
 
-interface PackSource {
+export interface PackSource {
   siteCodes?: string[];
+  /** what changed in this version (printed in Document Control) */
+  changeNote?: string | null;
   sectionKeys?: string[];
   notes?: string | null;
   /** the cover's project line */
@@ -71,7 +83,7 @@ interface PackSource {
   siteIds?: string[];
 }
 
-interface Pack {
+export interface Pack {
   id: string;
   version: number;
   /** major.minor: 0.x drafts, 1.0 the first issue, then 1.x */
@@ -82,6 +94,8 @@ interface Pack {
   issued_at: string | null;
   source: PackSource | null;
   created_at: string;
+  generated_by_name?: string | null;
+  issued_by_name?: string | null;
 }
 
 interface PackSection {
@@ -101,7 +115,7 @@ interface Note {
   updated_at: string;
 }
 
-interface SiteOption {
+export interface SiteOption {
   id: string;
   sitecode: string;
   name: string | null;
@@ -131,129 +145,243 @@ function errorMessage(e: unknown, fallback: string) {
   return e instanceof ApiError ? e.message : fallback;
 }
 
+/** Every pack the user may see (customers: issued ones only), newest first. */
+export function useHandoverPacks(tenantId: string | null) {
+  return useQuery({
+    queryKey: ['handover', tenantId],
+    enabled: !!tenantId,
+    queryFn: () => api<Pack[]>(`/t/${tenantId}/handover/packs`),
+  });
+}
+
+/** Every site with its handover status (GET handover/sites). */
+export function useHandoverSites(tenantId: string | null) {
+  return useQuery({
+    queryKey: ['handover-sites', tenantId],
+    enabled: !!tenantId,
+    queryFn: () => api<HandoverSiteRow[]>(`/t/${tenantId}/handover/sites`),
+  });
+}
+
+/** A pack for exactly one site counts towards that site's status; any other is a pack covering several sites (or every site). */
+export const isSitePack = (p: Pack) => (p.source?.siteIds?.length ?? 0) === 1;
+
+export async function downloadPack(tenantId: string, p: Pack) {
+  await apiDownload(`/t/${tenantId}/files/${p.file_id}/download`, handoverFileName(p.source?.siteCodes, packVersion(p)));
+}
+
+const STATUS_COLOR: Record<HandoverSiteStatus, 'informative' | 'success' | 'subtle'> = { not_created: 'subtle', draft: 'informative', issued: 'success' };
+const STATUS_ORDER: Record<HandoverSiteStatus, number> = { not_created: 0, draft: 1, issued: 2 };
+
+/** A site's status as a badge: "Draft 1.1", "Issued 1.0", "Not created". */
+export function SiteStatusBadge({ row }: { row: Pick<HandoverSiteRow, 'status' | 'latestVersion'> }) {
+  return (
+    <Badge appearance="tint" color={STATUS_COLOR[row.status]}>
+      {HANDOVER_SITE_STATUS_LABELS[row.status]}
+      {row.latestVersion ? ` ${row.latestVersion}` : ''}
+    </Badge>
+  );
+}
+
+export const whenShort = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+
+/**
+ * Service Handover (docs/HANDOVER-VIEW.md): every site with its own pack's status, searchable, each opening its own page. Packs that
+ * cover several sites, or every site, are listed underneath and don't set any one site's status.
+ */
 export function Handover() {
   const { activeTenantId, can } = useAuth();
   const qc = useQueryClient();
   const cs = useStyles();
+  const ls = useLocalStyles();
   const [actionError, setActionError] = useState<string | null>(null);
   const [generateOpen, setGenerateOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [issuing, setIssuing] = useState<Pack | null>(null);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<HandoverSiteStatus | ''>('');
+  const [openOnly, setOpenOnly] = useState(false);
 
-  const packs = useQuery({
-    queryKey: ['handover', activeTenantId],
-    enabled: !!activeTenantId,
-    queryFn: () => api<Pack[]>(`/t/${activeTenantId}/handover/packs`),
-  });
-  const sitesQ = useQuery({
-    queryKey: ['discovery', activeTenantId],
-    enabled: !!activeTenantId,
-    queryFn: () => api<{ sites: SiteOption[] }>(`/t/${activeTenantId}/discovery`),
-  });
-  const sites = sitesQ.data?.sites ?? [];
+  const packs = useHandoverPacks(activeTenantId);
+  const sitesQ = useHandoverSites(activeTenantId);
+  const sites = useMemo(() => (sitesQ.data ?? []).map((r) => ({ id: r.id, sitecode: r.sitecode, name: r.name })), [sitesQ.data]);
+  const staff = can('handover:generate');
+  const canIssue = can('handover:issue');
 
-  const download = async (p: Pack) => {
-    setActionError(null);
-    try {
-      await apiDownload(`/t/${activeTenantId}/files/${p.file_id}/download`, handoverFileName(p.source?.siteCodes, packVersion(p)));
-    } catch (e) {
-      setActionError(errorMessage(e, 'Could not download the file'));
-    }
-  };
-
-  const [approval, setApproval] = useState({ company: '', name: '', date: new Date().toISOString().slice(0, 10) });
-  const issue = useMutation({
-    mutationFn: (id: string) =>
-      api(`/t/${activeTenantId}/handover/packs/${id}/issue`, {
-        method: 'POST',
-        body: JSON.stringify({ approverCompany: approval.company.trim() || undefined, approverName: approval.name.trim() || undefined, approvalDate: approval.date || undefined }),
-      }),
-    onSuccess: () => {
-      setIssuing(null);
-      qc.invalidateQueries({ queryKey: ['handover', activeTenantId] });
-    },
-    onError: (e) => {
-      setIssuing(null);
-      setActionError(errorMessage(e, 'Could not issue the pack'));
-    },
+  const term = search.trim().toLowerCase();
+  const filtered = (sitesQ.data ?? []).filter(
+    (r) =>
+      (!statusFilter || r.status === statusFilter) &&
+      (!openOnly || (r.actions?.open ?? 0) > 0) &&
+      (!term || [r.sitecode, r.name, r.country, r.region, ...r.providerPms].some((v) => (v ?? '').toLowerCase().includes(term))),
+  );
+  const { sorted, header } = useSort(filtered, {
+    sitecode: (r) => r.sitecode,
+    name: (r) => r.name ?? '',
+    country: (r) => r.country ?? '',
+    status: (r) => STATUS_ORDER[r.status] * 1000 + Number(r.latestVersion ?? 0),
+    changed: (r) => r.lastChange?.at ?? '',
+    actions: (r) => r.actions?.open ?? 0,
+    pm: (r) => r.providerPms.join(', '),
   });
+  const counts = (sitesQ.data ?? []).reduce((a, r) => ({ ...a, [r.status]: (a[r.status] ?? 0) + 1 }), {} as Partial<Record<HandoverSiteStatus, number>>);
+  const groupPacks = (packs.data ?? []).filter((p) => !isSitePack(p));
 
   if (!activeTenantId) return <NoTenant />;
-  if (packs.isError) return <LoadError message={(packs.error as Error).message} />;
+  if (sitesQ.isError) return <LoadError message={(sitesQ.error as Error).message} />;
 
-  const canGenerate = can('handover:generate');
-  const canIssue = can('handover:issue');
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['handover', activeTenantId] });
+    qc.invalidateQueries({ queryKey: ['handover-sites', activeTenantId] });
+  };
 
   return (
     <Page
       title="Service Handover"
-      subtitle="Generate a handover pack from the final configuration, for all sites or just some. Add the notes Voxshift can't collect itself, preview the pack, then issue it once it's final."
+      subtitle={
+        staff
+          ? 'Every site and the state of its handover pack. Open a site to generate its draft, work through its outstanding actions and issue it.'
+          : 'Every site and its issued handover pack. Open a site to download it.'
+      }
       actions={
-        <div className={cs.rowActions}>
-          <Button onClick={() => setActionsOpen(true)}>Outstanding actions</Button>
-          {canGenerate && (
-            <>
-              <Button onClick={() => setNotesOpen(true)}>Edit notes</Button>
-              <Button appearance="primary" onClick={() => setGenerateOpen(true)}>
-                Generate pack
-              </Button>
-            </>
-          )}
-        </div>
+        staff && (
+          <div className={cs.rowActions}>
+            <Button onClick={() => setActionsOpen(true)}>Outstanding actions</Button>
+            <Button onClick={() => setNotesOpen(true)}>Edit notes</Button>
+          </div>
+        )
       }
     >
       {actionError && <LoadError message={actionError} />}
       <Card>
-        {packs.isLoading ? (
-          <TableSkeleton rows={4} cols={5} />
-        ) : (packs.data?.length ?? 0) === 0 ? (
-          <Text size={200}>No handover packs generated yet.</Text>
+        <div className={ls.toolbar}>
+          <SearchBox
+            size="small"
+            className={ls.search}
+            placeholder="Search site code, name, country, region or PM"
+            value={search}
+            onChange={(_, d) => setSearch(d.value)}
+            aria-label="Search sites"
+          />
+          <Select size="small" value={statusFilter} onChange={(_, d) => setStatusFilter(d.value as HandoverSiteStatus | '')} aria-label="Status">
+            <option value="">Every status ({sitesQ.data?.length ?? 0})</option>
+            {(Object.keys(HANDOVER_SITE_STATUS_LABELS) as HandoverSiteStatus[]).map((k) => (
+              <option key={k} value={k}>
+                {HANDOVER_SITE_STATUS_LABELS[k]} ({counts[k] ?? 0})
+              </option>
+            ))}
+          </Select>
+          {staff && <Checkbox label="Open actions only" checked={openOnly} onChange={(_, d) => setOpenOnly(!!d.checked)} />}
+        </div>
+        {sitesQ.isLoading ? (
+          <TableSkeleton rows={5} cols={6} label="Loading sites" />
+        ) : (sitesQ.data?.length ?? 0) === 0 ? (
+          <EmptyState title="No sites yet" hint="Add sites in Site Data; each one gets its own handover pack." />
+        ) : sorted.length === 0 ? (
+          <EmptyState title="No sites match" hint="Clear the search or a filter." />
         ) : (
-          <DataTable size="small" minWidth={760}>
+          <DataTable size="small" minWidth={staff ? 900 : 720}>
             <TableHeader>
               <TableRow>
-                <TableHeaderCell>Version</TableHeaderCell>
-                <TableHeaderCell>Scope</TableHeaderCell>
-                <TableHeaderCell>Sections</TableHeaderCell>
-                <TableHeaderCell>Status</TableHeaderCell>
-                <TableHeaderCell>Created</TableHeaderCell>
-                <TableHeaderCell>Actions</TableHeaderCell>
+                <TableHeaderCell {...header('sitecode')}>Site code</TableHeaderCell>
+                <TableHeaderCell {...header('name')}>Name</TableHeaderCell>
+                <TableHeaderCell {...header('country')}>Country</TableHeaderCell>
+                <TableHeaderCell {...header('status')}>Status</TableHeaderCell>
+                <TableHeaderCell {...header('changed')}>Last change</TableHeaderCell>
+                {staff && <TableHeaderCell {...header('actions')}>Outstanding actions</TableHeaderCell>}
+                <TableHeaderCell {...header('pm')}>Provider PM</TableHeaderCell>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {packs.data!.map((p) => (
-                <TableRow key={p.id}>
-                  <TableCell>{packVersion(p)}</TableCell>
-                  <TableCell>{handoverScopeLabel(p.source?.siteCodes)}</TableCell>
+              {sorted.map((r) => (
+                <TableRow key={r.id}>
                   <TableCell>
-                    {p.source?.sectionKeys?.length ?? HANDOVER_SECTIONS.length} of {HANDOVER_SECTIONS.length}
+                    <RowLink to={`/handover/sites/${r.id}`}>{r.sitecode}</RowLink>
                   </TableCell>
+                  <TableCell>{r.name || '—'}</TableCell>
+                  <TableCell>{r.country || '—'}</TableCell>
                   <TableCell>
-                    <Badge appearance="tint" color={p.status === 'issued' ? 'success' : 'informative'}>
-                      {p.status}
-                    </Badge>
-                    {p.issued_at && (
-                      <Text size={100} block>
-                        {new Date(p.issued_at).toLocaleDateString()}
+                    <SiteStatusBadge row={r} />
+                    {r.status === 'draft' && r.issuedVersion && (
+                      <Text size={100} block className={ls.muted}>
+                        {r.issuedVersion} issued
                       </Text>
                     )}
                   </TableCell>
-                  <TableCell>{new Date(p.created_at).toLocaleString()}</TableCell>
                   <TableCell>
-                    <div className={cs.rowActions}>
-                      <Link onClick={() => setPreviewId(p.id)}>Preview</Link>
-                      {p.file_id && <Link onClick={() => download(p)}>Download .docx</Link>}
-                      {canIssue && p.status === 'draft' && p.file_id && <Link onClick={() => setIssuing(p)}>Issue</Link>}
-                    </div>
+                    {r.lastChange ? (
+                      <>
+                        <Text size={200} block>
+                          {r.lastChange.what === 'issued' ? 'Issued' : 'Generated'} {whenShort(r.lastChange.at)}
+                        </Text>
+                        {r.lastChange.by && (
+                          <Text size={100} className={ls.muted}>
+                            by {r.lastChange.by}
+                          </Text>
+                        )}
+                      </>
+                    ) : (
+                      '—'
+                    )}
                   </TableCell>
+                  {staff && (
+                    <TableCell>
+                      {!r.actions || r.actions.total === 0 ? (
+                        <Text size={200} className={ls.muted}>
+                          No
+                        </Text>
+                      ) : r.actions.open === 0 ? (
+                        <Badge appearance="tint" color="success">
+                          Yes: all done
+                        </Badge>
+                      ) : (
+                        <Badge appearance="tint" color="warning">
+                          Yes: {r.actions.open} open of {r.actions.total}
+                        </Badge>
+                      )}
+                    </TableCell>
+                  )}
+                  <TableCell>{r.providerPms.length ? r.providerPms.join(', ') : '—'}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </DataTable>
         )}
       </Card>
+
+      {(staff || groupPacks.length > 0) && (
+        <Card>
+          <div className={ls.cardHead}>
+            <div>
+              <Text weight="semibold" size={400} block>
+                Packs covering several sites
+              </Text>
+              <Text size={200} className={ls.muted}>
+                One pack for every site, or for a group of sites. These have their own version numbers and don&apos;t change any site&apos;s status.
+              </Text>
+            </div>
+            {staff && <Button onClick={() => setGenerateOpen(true)}>Generate a pack for several sites</Button>}
+          </div>
+          {packs.isLoading ? (
+            <TableSkeleton rows={2} cols={5} />
+          ) : groupPacks.length === 0 ? (
+            <Text size={200} className={ls.muted}>
+              None yet.
+            </Text>
+          ) : (
+            <PackTable
+              packs={groupPacks}
+              showScope
+              canIssue={canIssue}
+              onPreview={(p) => setPreviewId(p.id)}
+              onDownload={(p) => downloadPack(activeTenantId, p).catch((e) => setActionError(errorMessage(e, 'Could not download the file')))}
+              onIssue={setIssuing}
+            />
+          )}
+        </Card>
+      )}
 
       {generateOpen && (
         <GenerateDialog
@@ -263,61 +391,191 @@ export function Handover() {
           onClose={() => setGenerateOpen(false)}
           onDone={() => {
             setGenerateOpen(false);
-            qc.invalidateQueries({ queryKey: ['handover', activeTenantId] });
+            refresh();
           }}
         />
       )}
       {notesOpen && <NotesDialog tenantId={activeTenantId} sites={sites} onClose={() => setNotesOpen(false)} />}
-      {actionsOpen && <HandoverActionsDialog tenantId={activeTenantId} sites={sites} canEdit={canGenerate} onClose={() => setActionsOpen(false)} />}
+      {actionsOpen && (
+        <HandoverActionsDialog
+          tenantId={activeTenantId}
+          sites={sites}
+          canEdit={staff}
+          onClose={() => {
+            setActionsOpen(false);
+            refresh();
+          }}
+        />
+      )}
       {previewId && <PreviewDialog tenantId={activeTenantId} packId={previewId} onClose={() => setPreviewId(null)} />}
-
-      <Dialog open={!!issuing} onOpenChange={(_, d) => !d.open && setIssuing(null)}>
-        <DialogSurface>
-          <DialogBody>
-            <DialogTitle>Issue version {issuing ? issuedHandoverVersionLabel(issuing.version_label, (packs.data ?? []).filter((x) => sameHandoverScope(x.source?.siteIds, issuing.source?.siteIds))) : ''}?</DialogTitle>
-            <DialogContent className={cs.stack}>
-              <Text block>
-                This marks the pack as final and records who issued it and when. It can&apos;t be undone. To change anything afterwards, generate a new version.
-              </Text>
-              <Text block size={200}>
-                Who approved and signed it off is printed in the pack&apos;s Approvals &amp; Sign-Off section.
-              </Text>
-              <Field label="Approved by: company" hint="Leave empty for the company whose branding the pack carries.">
-                <Input value={approval.company} maxLength={120} onChange={(_, d) => setApproval((a) => ({ ...a, company: d.value }))} />
-              </Field>
-              <Field label="Approved by: name and title" hint="For example “Leigh Manton, AT&T Consulting, Director EMEA”.">
-                <Input value={approval.name} maxLength={200} onChange={(_, d) => setApproval((a) => ({ ...a, name: d.value }))} />
-              </Field>
-              <Field label="Date approved">
-                <Input type="date" value={approval.date} onChange={(_, d) => setApproval((a) => ({ ...a, date: d.value }))} />
-              </Field>
-            </DialogContent>
-            <DialogActions>
-              <Button appearance="secondary" onClick={() => setIssuing(null)}>
-                Cancel
-              </Button>
-              <Button appearance="primary" disabled={issue.isPending} onClick={() => issuing && issue.mutate(issuing.id)}>
-                Issue pack
-              </Button>
-            </DialogActions>
-          </DialogBody>
-        </DialogSurface>
-      </Dialog>
+      {issuing && (
+        <IssueDialog
+          tenantId={activeTenantId}
+          pack={issuing}
+          packs={packs.data ?? []}
+          onClose={() => setIssuing(null)}
+          onIssued={refresh}
+          onError={(m) => setActionError(m)}
+        />
+      )}
     </Page>
+  );
+}
+
+/** Packs as a table: version, (scope), status, created, and preview / download / issue. */
+export function PackTable({
+  packs,
+  showScope,
+  minWidth,
+  canIssue,
+  onPreview,
+  onDownload,
+  onIssue,
+}: {
+  packs: Pack[];
+  showScope?: boolean;
+  minWidth?: number;
+  canIssue: boolean;
+  onPreview: (p: Pack) => void;
+  onDownload: (p: Pack) => void;
+  onIssue: (p: Pack) => void;
+}) {
+  const cs = useStyles();
+  return (
+    <DataTable size="small" minWidth={minWidth ?? (showScope ? 760 : 640)}>
+      <TableHeader>
+        <TableRow>
+          <TableHeaderCell>Version</TableHeaderCell>
+          {showScope && <TableHeaderCell>Sites</TableHeaderCell>}
+          <TableHeaderCell>Status</TableHeaderCell>
+          <TableHeaderCell>Generated</TableHeaderCell>
+          <TableHeaderCell>What changed</TableHeaderCell>
+          <TableHeaderCell>Actions</TableHeaderCell>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {packs.map((p) => (
+          <TableRow key={p.id}>
+            <TableCell>{packVersion(p)}</TableCell>
+            {showScope && <TableCell>{handoverScopeLabel(p.source?.siteCodes)}</TableCell>}
+            <TableCell>
+              <Badge appearance="tint" color={p.status === 'issued' ? 'success' : 'informative'}>
+                {p.status === 'issued' ? 'Issued' : 'Draft'}
+              </Badge>
+              {p.issued_at && (
+                <Text size={100} block>
+                  {whenShort(p.issued_at)}
+                  {p.issued_by_name ? ` by ${p.issued_by_name}` : ''}
+                </Text>
+              )}
+            </TableCell>
+            <TableCell>
+              {whenShort(p.generated_at ?? p.created_at)}
+              {p.generated_by_name && (
+                <Text size={100} block>
+                  by {p.generated_by_name}
+                </Text>
+              )}
+            </TableCell>
+            <TableCell>{p.source?.changeNote || '—'}</TableCell>
+            <TableCell>
+              <div className={cs.rowActions}>
+                <Link onClick={() => onPreview(p)}>Preview</Link>
+                {p.file_id && <Link onClick={() => onDownload(p)}>Download .docx</Link>}
+                {canIssue && p.status === 'draft' && p.file_id && <Link onClick={() => onIssue(p)}>Issue</Link>}
+              </div>
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </DataTable>
+  );
+}
+
+/** Issues a draft: who approved it is printed in the pack's Approvals & Sign-Off section. */
+export function IssueDialog({
+  tenantId,
+  pack,
+  packs,
+  onClose,
+  onIssued,
+  onError,
+}: {
+  tenantId: string;
+  pack: Pack;
+  /** every pack, to work out the version it is issued as */
+  packs: Pack[];
+  onClose: () => void;
+  onIssued: () => void;
+  onError: (message: string) => void;
+}) {
+  const cs = useStyles();
+  const [approval, setApproval] = useState({ company: '', name: '', date: new Date().toISOString().slice(0, 10) });
+  const issue = useMutation({
+    mutationFn: () =>
+      api(`/t/${tenantId}/handover/packs/${pack.id}/issue`, {
+        method: 'POST',
+        body: JSON.stringify({ approverCompany: approval.company.trim() || undefined, approverName: approval.name.trim() || undefined, approvalDate: approval.date || undefined }),
+      }),
+    onSuccess: () => {
+      onClose();
+      onIssued();
+    },
+    onError: (e) => {
+      onClose();
+      onError(errorMessage(e, 'Could not issue the pack'));
+    },
+  });
+  return (
+    <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
+      <DialogSurface>
+        <DialogBody>
+          <DialogTitle>Issue version {issuedHandoverVersionLabel(pack.version_label, packs.filter((x) => sameHandoverScope(x.source?.siteIds, pack.source?.siteIds)))}?</DialogTitle>
+          <DialogContent className={cs.stack}>
+            <Text block>
+              This marks the pack as final and records who issued it and when. It can&apos;t be undone. To change anything afterwards, generate a new version.
+            </Text>
+            <Text block size={200}>
+              Who approved and signed it off is printed in the pack&apos;s Approvals &amp; Sign-Off section.
+            </Text>
+            <Field label="Approved by: company" hint="Leave empty for the company whose branding the pack carries.">
+              <Input value={approval.company} maxLength={120} onChange={(_, d) => setApproval((a) => ({ ...a, company: d.value }))} />
+            </Field>
+            <Field label="Approved by: name and title" hint="For example “Alex Example, Contoso, Director EMEA”.">
+              <Input value={approval.name} maxLength={200} onChange={(_, d) => setApproval((a) => ({ ...a, name: d.value }))} />
+            </Field>
+            <Field label="Date approved">
+              <Input type="date" value={approval.date} onChange={(_, d) => setApproval((a) => ({ ...a, date: d.value }))} />
+            </Field>
+          </DialogContent>
+          <DialogActions>
+            <Button appearance="secondary" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button appearance="primary" disabled={issue.isPending} onClick={() => issue.mutate()}>
+              {issue.isPending ? 'Issuing…' : 'Issue pack'}
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
   );
 }
 
 /* ------------------------------ generate ------------------------------ */
 
-function GenerateDialog({
+export function GenerateDialog({
   tenantId,
   sites,
+  fixedSite,
   lastProject,
   onClose,
   onDone,
 }: {
   tenantId: string;
   sites: SiteOption[];
+  /** a site's own page: the pack is for this site, and there's no choosing */
+  fixedSite?: SiteOption;
   /** the project line of the newest pack, offered again */
   lastProject: string;
   onClose: () => void;
@@ -364,8 +622,8 @@ function GenerateDialog({
     setDrawing(null);
     return { diagrams: out, failed };
   };
-  const [mode, setMode] = useState<'all' | 'sites'>('all');
-  const [siteIds, setSiteIds] = useState<Set<string>>(new Set());
+  const [mode, setMode] = useState<'all' | 'sites'>(fixedSite ? 'sites' : 'all');
+  const [siteIds, setSiteIds] = useState<Set<string>>(new Set(fixedSite ? [fixedSite.id] : []));
   const [sectionKeys, setSectionKeys] = useState<Set<string>>(new Set(HANDOVER_SECTIONS.map((s) => s.key)));
   const [notes, setNotes] = useState('');
 
@@ -432,8 +690,15 @@ function GenerateDialog({
     <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
       <DialogSurface>
         <DialogBody>
-          <DialogTitle>Generate handover pack</DialogTitle>
+          <DialogTitle>{fixedSite ? `Generate a draft for ${fixedSite.sitecode}` : 'Generate a pack for several sites'}</DialogTitle>
           <DialogContent className={cs.stack}>
+            {fixedSite ? (
+              <Text size={200}>
+                A new draft of {fixedSite.name && fixedSite.name !== fixedSite.sitecode ? `${fixedSite.sitecode} ${fixedSite.name}` : fixedSite.sitecode}&apos;s pack, from
+                what&apos;s live in Teams now and the site&apos;s notes and open actions.
+              </Text>
+            ) : (
+              <>
             <Field label="Sites">
               <Select value={mode} onChange={(_, d) => changeSites(() => setMode(d.value as 'all' | 'sites'))}>
                 <option value="all">All sites</option>
@@ -453,6 +718,8 @@ function GenerateDialog({
                 ))}
               </div>
             )}
+            </>
+            )}
             <Field label={`Sections (${sectionKeys.size} of ${HANDOVER_SECTIONS.length})`}>
               <div className={cs.list}>
                 {HANDOVER_SECTIONS.map((s) => (
@@ -465,7 +732,7 @@ function GenerateDialog({
                 ))}
               </div>
             </Field>
-            <Field label="Project name (optional)" hint="Printed on the front page under the customer's name, for example “AT&T Global Teams Project”.">
+            <Field label="Project name (optional)" hint="Printed on the front page under the customer's name, for example “Contoso Global Teams Project”.">
               <Input value={projectName} maxLength={120} onChange={(_, d) => setProjectName(d.value)} />
             </Field>
             <Field label="What changed in this version (optional)" hint="Printed in the pack's Document Control table, e.g. “Section 7 added for call queues”.">
@@ -515,7 +782,7 @@ function GenerateDialog({
               </Button>
             ) : (
               <Button appearance="primary" disabled={invalid || generate.isPending} onClick={() => generate.mutate(false)}>
-                {generate.isPending ? 'Generating…' : 'Generate pack'}
+                {generate.isPending ? 'Generating…' : fixedSite ? 'Generate draft' : 'Generate pack'}
               </Button>
             )}
           </DialogActions>
@@ -527,7 +794,7 @@ function GenerateDialog({
 
 /* ------------------------------- notes ------------------------------- */
 
-function NotesDialog({ tenantId, sites, onClose }: { tenantId: string; sites: SiteOption[]; onClose: () => void }) {
+export function NotesDialog({ tenantId, sites, initialSiteId = '', onClose }: { tenantId: string; sites: SiteOption[]; /** '' = every site */ initialSiteId?: string; onClose: () => void }) {
   const cs = useStyles();
   const qc = useQueryClient();
   const notesQ = useQuery({
@@ -537,7 +804,7 @@ function NotesDialog({ tenantId, sites, onClose }: { tenantId: string; sites: Si
   const notes = notesQ.data ?? [];
 
   const [section, setSection] = useState<HandoverNoteSection>(HANDOVER_NOTE_SECTIONS[0]);
-  const [siteId, setSiteId] = useState(''); // '' = every site
+  const [siteId, setSiteId] = useState(initialSiteId); // '' = every site
   // The draft is edited locally and re-seeded from the saved note whenever the section or site changes.
   const [draft, setDraft] = useState<string | null>(null);
 
@@ -634,7 +901,7 @@ function NotesDialog({ tenantId, sites, onClose }: { tenantId: string; sites: Si
 
 /* ------------------------------ preview ------------------------------ */
 
-function PreviewDialog({ tenantId, packId, onClose }: { tenantId: string; packId: string; onClose: () => void }) {
+export function PreviewDialog({ tenantId, packId, onClose }: { tenantId: string; packId: string; onClose: () => void }) {
   const ls = useLocalStyles();
   const cs = useStyles();
   const q = useQuery({
@@ -787,6 +1054,6 @@ function PreviewTable({ columns, rows, caption }: { columns: string[]; rows: str
 }
 
 /** A pack's version as printed in it: its major.minor label (older packs: their number). */
-function packVersion(p: Pack): string {
+export function packVersion(p: Pack): string {
   return p.version_label ?? String(p.version);
 }
