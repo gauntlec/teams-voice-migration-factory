@@ -42,6 +42,7 @@ import {
   type HandoverSectionContent,
   handoverFileName,
   issuedHandoverVersionLabel,
+  nextHandoverVersionLabel,
   sameHandoverScope,
   type HandoverUnportedRange,
   HANDOVER_SITE_STATUS_LABELS,
@@ -75,6 +76,10 @@ export interface PackSource {
   siteCodes?: string[];
   /** what changed in this version (printed in Document Control) */
   changeNote?: string | null;
+  /** 'uploaded': edited in Word and uploaded again (docs/HANDOVER-VIEW.md step 3); issued as uploaded */
+  origin?: 'uploaded';
+  uploadedFrom?: { id: string; version: string };
+  uploadedFileName?: string;
   sectionKeys?: string[];
   notes?: string | null;
   /** the cover's project line */
@@ -200,6 +205,7 @@ export function Handover() {
   const [actionsOpen, setActionsOpen] = useState(false);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [issuing, setIssuing] = useState<Pack | null>(null);
+  const [uploadBase, setUploadBase] = useState<Pack | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<HandoverSiteStatus | ''>('');
   const [openOnly, setOpenOnly] = useState(false);
@@ -378,10 +384,12 @@ export function Handover() {
               onPreview={(p) => setPreviewId(p.id)}
               onDownload={(p) => downloadPack(activeTenantId, p).catch((e) => setActionError(errorMessage(e, 'Could not download the file')))}
               onIssue={setIssuing}
+              onUpload={staff ? setUploadBase : undefined}
             />
           )}
         </Card>
       )}
+      {uploadBase && <UploadDialog tenantId={activeTenantId} base={uploadBase} packs={packs.data ?? []} onClose={() => setUploadBase(null)} onDone={refresh} />}
 
       {generateOpen && (
         <GenerateDialog
@@ -431,6 +439,7 @@ export function PackTable({
   onPreview,
   onDownload,
   onIssue,
+  onUpload,
 }: {
   packs: Pack[];
   showScope?: boolean;
@@ -439,6 +448,8 @@ export function PackTable({
   onPreview: (p: Pack) => void;
   onDownload: (p: Pack) => void;
   onIssue: (p: Pack) => void;
+  /** staff: upload a copy of this version edited in Word */
+  onUpload?: (p: Pack) => void;
 }) {
   const cs = useStyles();
   return (
@@ -456,7 +467,14 @@ export function PackTable({
       <TableBody>
         {packs.map((p) => (
           <TableRow key={p.id}>
-            <TableCell>{packVersion(p)}</TableCell>
+            <TableCell>
+              {packVersion(p)}
+              {p.source?.origin === 'uploaded' && (
+                <Text size={100} block>
+                  Edited in Word
+                </Text>
+              )}
+            </TableCell>
             {showScope && <TableCell>{handoverScopeLabel(p.source?.siteCodes)}</TableCell>}
             <TableCell>
               <Badge appearance="tint" color={p.status === 'issued' ? 'success' : 'informative'}>
@@ -477,12 +495,13 @@ export function PackTable({
                 </Text>
               )}
             </TableCell>
-            <TableCell>{p.source?.changeNote || '—'}</TableCell>
+            <TableCell>{p.source?.changeNote || (p.source?.uploadedFrom ? `Edited copy of ${p.source.uploadedFrom.version}` : '—')}</TableCell>
             <TableCell>
               <div className={cs.rowActions}>
-                <Link onClick={() => onPreview(p)}>Preview</Link>
+                {p.source?.origin !== 'uploaded' && <Link onClick={() => onPreview(p)}>Preview</Link>}
                 {p.file_id && <Link onClick={() => onDownload(p)}>Download .docx</Link>}
                 {canIssue && p.status === 'draft' && p.file_id && <Link onClick={() => onIssue(p)}>Issue</Link>}
+                {onUpload && <Link onClick={() => onUpload(p)}>Upload edited copy</Link>}
               </div>
             </TableCell>
           </TableRow>
@@ -510,12 +529,13 @@ export function IssueDialog({
   onError: (message: string) => void;
 }) {
   const cs = useStyles();
+  const uploaded = pack.source?.origin === 'uploaded';
   const [approval, setApproval] = useState({ company: '', name: '', date: new Date().toISOString().slice(0, 10) });
   const issue = useMutation({
     mutationFn: () =>
       api(`/t/${tenantId}/handover/packs/${pack.id}/issue`, {
         method: 'POST',
-        body: JSON.stringify({ approverCompany: approval.company.trim() || undefined, approverName: approval.name.trim() || undefined, approvalDate: approval.date || undefined }),
+        body: JSON.stringify(uploaded ? {} : { approverCompany: approval.company.trim() || undefined, approverName: approval.name.trim() || undefined, approvalDate: approval.date || undefined }),
       }),
     onSuccess: () => {
       onClose();
@@ -535,6 +555,14 @@ export function IssueDialog({
             <Text block>
               This marks the pack as final and records who issued it and when. It can&apos;t be undone. To change anything afterwards, generate a new version.
             </Text>
+            {uploaded ? (
+              <Text block size={200}>
+                This version was edited in Word and uploaded, so it&apos;s issued exactly as uploaded: Voxshift only takes out its DRAFT markings and
+                sets the version. Check its Approvals &amp; Sign-Off and Document Control in Word before you issue it; if anything still says DRAFT,
+                it won&apos;t be issued.
+              </Text>
+            ) : (
+              <>
             <Text block size={200}>
               Who approved and signed it off is printed in the pack&apos;s Approvals &amp; Sign-Off section.
             </Text>
@@ -547,6 +575,8 @@ export function IssueDialog({
             <Field label="Date approved">
               <Input type="date" value={approval.date} onChange={(_, d) => setApproval((a) => ({ ...a, date: d.value }))} />
             </Field>
+              </>
+            )}
           </DialogContent>
           <DialogActions>
             <Button appearance="secondary" onClick={onClose}>
@@ -562,12 +592,67 @@ export function IssueDialog({
   );
 }
 
+/**
+ * Upload a copy of a pack edited in Word (docs/HANDOVER-VIEW.md step 3). It becomes the next version of the same sites' pack, a draft
+ * issued the usual way.
+ */
+export function UploadDialog({ tenantId, base, packs, onClose, onDone }: { tenantId: string; base: Pack; packs: Pack[]; onClose: () => void; onDone: () => void }) {
+  const cs = useStyles();
+  const [file, setFile] = useState<File | null>(null);
+  const [changeNote, setChangeNote] = useState('');
+  const next = nextHandoverVersionLabel(packs.filter((p) => sameHandoverScope(p.source?.siteIds, base.source?.siteIds)));
+  const upload = useMutation({
+    mutationFn: () => {
+      const form = new FormData();
+      form.append('file', file!);
+      if (changeNote.trim()) form.append('changeNote', changeNote.trim());
+      return api(`/t/${tenantId}/handover/packs/${base.id}/upload`, { method: 'POST', body: form });
+    },
+    onSuccess: () => {
+      onClose();
+      onDone();
+    },
+  });
+  return (
+    <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
+      <DialogSurface>
+        <DialogBody>
+          <DialogTitle>Upload an edited copy of {packVersion(base)}</DialogTitle>
+          <DialogContent className={cs.stack}>
+            <Text size={200}>
+              Download version {packVersion(base)}, make your changes in Word and upload it here. It becomes version {next} (draft) of{' '}
+              {handoverScopeLabel(base.source?.siteCodes)}&apos;s pack. When it&apos;s final, issue it as usual: it&apos;s issued as you uploaded it,
+              with only its DRAFT markings taken out.
+            </Text>
+            <Field label="Edited document" hint="A Word document (.docx), up to 25 MB.">
+              <input type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            </Field>
+            <Field label="What changed in this version (optional)" hint="Shown under Versions, and in the Document Control of packs generated later.">
+              <Input value={changeNote} maxLength={300} onChange={(_, d) => setChangeNote(d.value)} />
+            </Field>
+            {upload.isError && <DangerText>{errorMessage(upload.error, 'Could not upload the document')}</DangerText>}
+          </DialogContent>
+          <DialogActions>
+            <Button appearance="secondary" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button appearance="primary" disabled={!file || upload.isPending} onClick={() => upload.mutate()}>
+              {upload.isPending ? 'Uploading…' : `Upload as ${next}`}
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  );
+}
+
 /* ------------------------------ generate ------------------------------ */
 
 export function GenerateDialog({
   tenantId,
   sites,
   fixedSite,
+  uploadedLatest,
   lastProject,
   onClose,
   onDone,
@@ -576,6 +661,8 @@ export function GenerateDialog({
   sites: SiteOption[];
   /** a site's own page: the pack is for this site, and there's no choosing */
   fixedSite?: SiteOption;
+  /** the site's newest version, when it was edited in Word and uploaded: a new draft from data won't have those edits */
+  uploadedLatest?: string;
   /** the project line of the newest pack, offered again */
   lastProject: string;
   onClose: () => void;
@@ -692,6 +779,15 @@ export function GenerateDialog({
         <DialogBody>
           <DialogTitle>{fixedSite ? `Generate a draft for ${fixedSite.sitecode}` : 'Generate a pack for several sites'}</DialogTitle>
           <DialogContent className={cs.stack}>
+            {uploadedLatest && (
+              <MessageBar intent="warning" layout="multiline">
+                <MessageBarBody>
+                  <MessageBarTitle>Version {uploadedLatest} was edited in Word</MessageBarTitle>
+                  A new draft is made from Voxshift&apos;s data, so it won&apos;t have those edits. Version {uploadedLatest} stays under Versions to
+                  download.
+                </MessageBarBody>
+              </MessageBar>
+            )}
             {fixedSite ? (
               <Text size={200}>
                 A new draft of {fixedSite.name && fixedSite.name !== fixedSite.sitecode ? `${fixedSite.sitecode} ${fixedSite.name}` : fixedSite.sitecode}&apos;s pack, from

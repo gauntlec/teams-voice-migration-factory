@@ -22,6 +22,7 @@ import {
   useHandoverSites,
   whenShort,
   type Pack,
+  UploadDialog,
 } from '../Handover';
 import { HandoverActionsPanel } from './handoverActions';
 
@@ -62,6 +63,7 @@ export function HandoverSite() {
   const [notesOpen, setNotesOpen] = useState(false);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [issuing, setIssuing] = useState<Pack | null>(null);
+  const [uploadBase, setUploadBase] = useState<Pack | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const sitesQ = useHandoverSites(activeTenantId);
@@ -164,7 +166,8 @@ export function HandoverSite() {
                 Download {packVersion(latest)}
               </Button>
             )}
-            {latest && <Button onClick={() => setPreviewId(latest.id)}>Preview {packVersion(latest)}</Button>}
+            {staff && latest?.file_id && <Button onClick={() => setUploadBase(latest)}>Upload an edited copy</Button>}
+            {latest && latest.source?.origin !== 'uploaded' && <Button onClick={() => setPreviewId(latest.id)}>Preview {packVersion(latest)}</Button>}
           </div>
         </Card>
 
@@ -237,6 +240,7 @@ export function HandoverSite() {
           tenantId={activeTenantId}
           sites={sites}
           fixedSite={site}
+          uploadedLatest={latest?.source?.origin === 'uploaded' ? packVersion(latest) : undefined}
           lastProject={latest?.source?.projectName ?? [...(packsQ.data ?? [])].sort((a, b) => b.version - a.version)[0]?.source?.projectName ?? ''}
           onClose={() => setGenerateOpen(false)}
           onDone={() => {
@@ -247,6 +251,7 @@ export function HandoverSite() {
       )}
       {notesOpen && <NotesDialog tenantId={activeTenantId} sites={sites} initialSiteId={site.id} onClose={() => setNotesOpen(false)} />}
       {previewId && <PreviewDialog tenantId={activeTenantId} packId={previewId} onClose={() => setPreviewId(null)} />}
+      {uploadBase && <UploadDialog tenantId={activeTenantId} base={uploadBase} packs={packsQ.data ?? []} onClose={() => setUploadBase(null)} onDone={refresh} />}
       {issuing && <IssueDialog tenantId={activeTenantId} pack={issuing} packs={packsQ.data ?? []} onClose={() => setIssuing(null)} onIssued={refresh} onError={setError} />}
     </Page>
   );

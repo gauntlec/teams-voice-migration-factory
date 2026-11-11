@@ -559,3 +559,63 @@ describe('Service Handover site list', () => {
     expect(needs('list')).toEqual(['handover:read']);
   });
 });
+
+// docs/HANDOVER-VIEW.md step 3: a pack edited in Word is uploaded as the next version, and issued as it was uploaded - with only
+// Voxshift's version and DRAFT markings moved - through the usual issue step.
+describe('Service Handover: an edited pack uploaded again', () => {
+  // the body, headers and footers (the version line is in the footer)
+  const allText = async (buf: Buffer) => {
+    const zip = await JSZip.loadAsync(buf);
+    const parts = Object.keys(zip.files).filter((n) => /^word\/(document|header\d*|footer\d*)\.xml$/.test(n));
+    return (await Promise.all(parts.map((n) => zip.file(n)!.async('string')))).join(' ').replace(/<[^>]+>/g, ' ');
+  };
+  const edit = async (buf: Buffer, words: string) => {
+    const zip = await JSZip.loadAsync(buf);
+    const xml = await zip.file('word/document.xml')!.async('string');
+    zip.file('word/document.xml', xml.replace('</w:body>', `<w:p><w:r><w:t>${words}</w:t></w:r></w:p></w:body>`));
+    return zip.generateAsync({ type: 'nodebuffer' });
+  };
+
+  it('becomes the next draft version with the edits, and is issued without DRAFT and without being rebuilt', async () => {
+    const d = await seedCustomer(handle);
+    const site = (await seedSite(d.s, { sitecode: 'BRS01' })).id;
+    const first = await svc.generate(d.t, engineer, { siteIds: [site] });
+    const original = (await files.readBytes(d.t, first.file_id!)).data;
+    const edited = await edit(original, 'Reception phones moved to the first floor.');
+
+    const up = await svc.upload(d.t, engineer, first.id, { originalname: 'BRS01 handover edited.docx', buffer: edited }, 'Reception notes added');
+    expect(up).toMatchObject({ version_label: '0.2', status: 'draft' });
+    expect(up.source).toMatchObject({ origin: 'uploaded', uploadedFrom: { id: first.id, version: '0.1' }, siteIds: [site], changeNote: 'Reception notes added' });
+    const draft = await allText((await files.readBytes(d.t, up.file_id!)).data);
+    expect(draft).toContain('Reception phones moved to the first floor.');
+    expect(draft).toContain('Version: 0.2 (draft)');
+    // the site list counts it like any other version
+    expect((await svc.sites(d.t, engineer))[0]).toMatchObject({ status: 'draft', latestVersion: '0.2' });
+
+    const issued = await svc.issue(d.t, engineer, up.id);
+    expect(issued).toMatchObject({ status: 'issued', version_label: '1.0' });
+    const doc = await allText((await files.readBytes(d.t, issued.file_id!)).data);
+    expect(doc).toContain('Reception phones moved to the first floor.');
+    expect(doc).toContain('Version: 1.0');
+    expect(doc).not.toMatch(/\bDRAFT\b/);
+    // and the next generated draft's Document Control says what that version was
+    const next = await svc.generate(d.t, engineer, { siteIds: [site] });
+    expect(next.version_label).toBe('1.1');
+    expect(await docText((await files.readBytes(d.t, next.file_id!)).data)).toContain('Reception notes added');
+  });
+
+  it('refuses a file that isn’t a Word document, and won’t issue one that still says DRAFT', async () => {
+    const d = await seedCustomer(handle);
+    const site = (await seedSite(d.s, { sitecode: 'CDF01' })).id;
+    const first = await svc.generate(d.t, engineer, { siteIds: [site] });
+    await expect(svc.upload(d.t, engineer, first.id, { originalname: 'pack.pdf', buffer: Buffer.from('%PDF-1.4') })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.upload(d.t, engineer, first.id, undefined)).rejects.toBeInstanceOf(BadRequestException);
+
+    const stillDraft = await edit((await files.readBytes(d.t, first.file_id!)).data, 'DRAFT wording someone typed');
+    const up = await svc.upload(d.t, engineer, first.id, { originalname: 'pack.docx', buffer: stillDraft });
+    const refused = await svc.issue(d.t, engineer, up.id).catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(ConflictException);
+    expect(((refused as ConflictException).getResponse() as { code: string }).code).toBe('draft_marking_left');
+    expect((await d.s.selectFrom('handover_packs').select('status').where('id', '=', up.id).executeTakeFirstOrThrow()).status).toBe('draft');
+  });
+});

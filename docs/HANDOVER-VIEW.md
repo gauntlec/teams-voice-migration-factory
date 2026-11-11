@@ -56,7 +56,8 @@ Version 0.2, 11 November 2026. From the feature request "Service Handover View";
 - An uploaded .docx becomes a **new minor version** of the site's pack. For example, the generated 0.2 is edited in Word and uploaded as 0.3.
 - It has `origin = 'uploaded'`. Issuing then issues the uploaded file as it is; Voxshift doesn't regenerate it.
 - Generating again afterwards makes a new draft from data. The page warns that this replaces the hand edits, and points to the uploaded version in History.
-- **Checks:** .docx only, through the same file store and size limit as other uploads, with the usual virus and type checks.
+- **Checks:** a Word document (.docx, not macro-enabled), 25 MB at most, kept in the same file store as the packs. (Voxshift has no virus scanner for uploads.)
+- **Markings (as built):** on upload, the footer's "Version: 0.2 (draft)" becomes the new version. On issue, Voxshift takes out its own DRAFT markings (the header, the footer version, Document Status) and sets the issued version; it touches nothing else. If the document still says DRAFT anywhere, it isn't issued: the person takes it out in Word and uploads again. Approvals & Sign-Off and Document Control are as the person left them in Word.
 
 ### 4. Outstanding actions become records
 
@@ -93,5 +94,6 @@ Each step is its own PR, with DB tests. Steps 1 and 2 are the most visible.
 ## Progress
 
 - Step 1, actions as records: live in 2026.11.27 (PR #100).
-- Step 2, the list and the site page: the site list (`GET handover/sites`), `/handover/sites/:siteId`, and actions and notes kept to staff.
-- Steps 3 and 4: not started.
+- Step 2, the list and the site page: the site list (`GET handover/sites`), `/handover/sites/:siteId`, and actions and notes kept to staff (PR #113).
+- Step 3, upload an edited copy: `POST handover/packs/:id/upload`, "Upload an edited copy" on the site page.
+- Step 4: not started.
