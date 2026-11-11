@@ -36,7 +36,7 @@ import {
 import { api, ApiError } from '../api';
 import { type Choice } from './records';
 import { ResourceAccountCreateDialog } from './ResourceAccountCreateDialog';
-import { TargetPicker, type TeamChoice } from './TargetPicker';
+import { TargetPicker, VoicemailGroupField, type TeamChoice } from './TargetPicker';
 import { WizardShell, type WizardStep } from './WizardShell';
 
 const useLocalStyles = makeStyles({
@@ -242,6 +242,9 @@ function CallFlowEditor({
           </Button>
         </div>
       )}
+      {value.mode === 'voicemail' && (
+        <VoicemailGroupField value={value.target?.kind === 'voicemail' ? value.target : undefined} onChange={(t) => onChange({ ...value, target: t })} tenantId={tenantId} />
+      )}
       {value.mode === 'direct' && (
         <TargetPicker
           value={value.target}
@@ -258,6 +261,16 @@ function CallFlowEditor({
   );
 }
 
+/** "voicemail of the group "Reception"", "voicemail of a new group "Reception" (to be made)", or just "voicemail" with no group named. */
+const voicemailSummary = (t: WizardTarget | undefined): string =>
+  t?.newGroup
+    ? `voicemail of a new group${t.label ? ` "${t.label}"` : ''} (to be made)`
+    : t?.label
+      ? `voicemail of the group "${t.label}"`
+      : t?.groupId
+        ? 'voicemail of the chosen group'
+        : 'voicemail (group not chosen yet)';
+
 const targetSummary = (t: WizardTarget | undefined): string => {
   if (!t) return 'nowhere (not set yet)';
   switch (t.kind) {
@@ -268,7 +281,7 @@ const targetSummary = (t: WizardTarget | undefined): string => {
     case 'message':
       return 'a recorded message';
     case 'voicemail':
-      return 'voicemail';
+      return voicemailSummary(t);
     case 'external':
       return `outside number "${t.label || '(none entered)'}"`;
     case 'operator':
@@ -285,7 +298,7 @@ function flowSummary(cf: WizardCallFlow | undefined, label: string): string[] {
     cf.mode === 'menu'
       ? `offers a menu of ${(cf.options ?? []).length} option(s)`
       : cf.mode === 'voicemail'
-        ? 'sends every call to voicemail'
+        ? `sends every call to ${voicemailSummary(cf.target?.kind === 'voicemail' ? cf.target : undefined)}`
         : cf.mode === 'disconnect'
           ? 'hangs up'
         : `sends every call to ${targetSummary(cf.target)}`

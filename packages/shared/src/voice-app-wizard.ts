@@ -24,6 +24,7 @@ export interface VoiceAppWizardContext {
   appOf?: (identity: string) => { name: string; flowId?: string } | undefined;
 }
 
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const keyOf = (dtmf: string) => dtmf.replace('Tone', '');
 const stripTel = (v: string) => v.replace(/^tel:/i, '').split(';')[0]!.trim();
 
@@ -31,7 +32,8 @@ function targetOf(e: AutoAttendantCallableEntity | null | undefined, ctx: VoiceA
   if (!e) return undefined;
   if (e.kind === 'user') return { kind: 'person', label: e.upn };
   if (e.kind === 'external') return { kind: 'external', label: e.number ? stripTel(e.number) : undefined };
-  if (e.kind === 'shared_voicemail' || e.kind === 'voicemail') return { kind: 'voicemail' };
+  // the group behind a shared voicemail is kept, when it is a real group id
+  if (e.kind === 'shared_voicemail' || e.kind === 'voicemail') return e.kind === 'shared_voicemail' && e.groupId && GUID.test(e.groupId) ? { kind: 'voicemail', groupId: e.groupId } : { kind: 'voicemail' };
   const app = e.buildId ? ctx.appOf?.(e.buildId) : undefined;
   if (e.kind === 'call_queue') return { kind: 'call_queue', label: app?.name ?? 'Call queue', ...(app?.flowId ? { flowId: app.flowId } : {}) };
   return { kind: 'team', label: app?.name ?? 'Auto attendant', ...(app?.flowId ? { flowId: app.flowId } : {}) };
@@ -49,7 +51,7 @@ function flowOf(cf: AutoAttendantCallFlow | null, operator: AutoAttendantCallabl
     if (o.action === 'TransferCallToOperator') return { mode: 'direct', ...greeting, target: operator ? (targetOf(operator, ctx) ?? { kind: 'operator' }) : { kind: 'operator' } };
     if (o.action === 'TransferCallToTarget') {
       const t = targetOf(o.target, ctx);
-      if (t?.kind === 'voicemail') return { mode: 'voicemail', ...greeting };
+      if (t?.kind === 'voicemail') return { mode: 'voicemail', ...greeting, ...(t.groupId ? { target: t } : {}) };
       if (t) return { mode: 'direct', ...greeting, target: t };
     }
     if (o.action === 'DisconnectCall') return { mode: 'disconnect', ...greeting };
