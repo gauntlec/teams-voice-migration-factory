@@ -332,8 +332,8 @@ function GenerateDialog({
   const [progress, setProgress] = useState<string | null>(null);
 
   /** Draws and uploads each auto attendant's diagram. A diagram that fails is left out and named afterwards, never stopping the pack. */
-  const drawDiagrams = async (): Promise<{ diagrams: { name: string; fileId: string; width: number; height: number }[]; failed: string[] }> => {
-    const out: { name: string; fileId: string; width: number; height: number }[] = [];
+  const drawDiagrams = async (): Promise<{ diagrams: { name: string; fileId: string; pdfFileId?: string; width: number; height: number }[]; failed: string[] }> => {
+    const out: { name: string; fileId: string; pdfFileId?: string; width: number; height: number }[] = [];
     const failed: string[] = [];
     if (!sectionKeys.has('auto_attendants')) return { diagrams: out, failed };
     setProgress('Reading the call flows from what Teams has…');
@@ -354,7 +354,9 @@ function GenerateDialog({
           });
         });
         const up = await apiUpload<{ fileId: string }>(`/t/${tenantId}/handover/diagrams`, new File([shot.blob], `call-flow-${g.name}.png`, { type: 'image/png' }));
-        out.push({ name: g.name, fileId: up.fileId, width: shot.width, height: shot.height });
+        // the same diagram as a PDF, embedded in the pack under the picture (the server makes one from the picture if this fails)
+        const pdf = shot.pdf ? await apiUpload<{ fileId: string }>(`/t/${tenantId}/handover/diagrams`, new File([shot.pdf], `call-flow-${g.name}.pdf`, { type: 'application/pdf' })).catch(() => null) : null;
+        out.push({ name: g.name, fileId: up.fileId, ...(pdf ? { pdfFileId: pdf.fileId } : {}), width: shot.width, height: shot.height });
       } catch {
         failed.push(g.name);
       }
