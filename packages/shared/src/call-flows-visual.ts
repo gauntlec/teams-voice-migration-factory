@@ -561,6 +561,16 @@ const US_ZONES: Record<string, string> = {
   AK: 'Alaskan Standard Time',
   HI: 'Hawaiian Standard Time',
 };
+/** A state written out in an address ("West Valley City, Utah, 84119"), by its two-letter code. */
+const US_STATE_NAMES: Record<string, string> = {
+  alabama: 'AL', alaska: 'AK', arizona: 'AZ', arkansas: 'AR', california: 'CA', colorado: 'CO', connecticut: 'CT', delaware: 'DE', florida: 'FL', georgia: 'GA',
+  hawaii: 'HI', idaho: 'ID', illinois: 'IL', indiana: 'IN', iowa: 'IA', kansas: 'KS', kentucky: 'KY', louisiana: 'LA', maine: 'ME', maryland: 'MD',
+  massachusetts: 'MA', michigan: 'MI', minnesota: 'MN', mississippi: 'MS', missouri: 'MO', montana: 'MT', nebraska: 'NE', nevada: 'NV', 'new hampshire': 'NH',
+  'new jersey': 'NJ', 'new mexico': 'NM', 'new york': 'NY', 'north carolina': 'NC', 'north dakota': 'ND', ohio: 'OH', oklahoma: 'OK', oregon: 'OR',
+  pennsylvania: 'PA', 'rhode island': 'RI', 'south carolina': 'SC', 'south dakota': 'SD', tennessee: 'TN', texas: 'TX', utah: 'UT', vermont: 'VT',
+  virginia: 'VA', washington: 'WA', 'west virginia': 'WV', wisconsin: 'WI', wyoming: 'WY', 'district of columbia': 'DC',
+};
+
 const US_STATES = new Set([...Object.keys(US_ZONES), 'NY', 'NJ', 'PA', 'MA', 'CT', 'RI', 'NH', 'VT', 'ME', 'DE', 'MD', 'DC', 'VA', 'WV', 'NC', 'SC', 'GA', 'FL', 'OH', 'MI', 'IN', 'KY']);
 
 const COUNTRY_DEFAULTS: [RegExp, string, string][] = [
@@ -596,6 +606,15 @@ export function callFlowDefaultsForSite(site: { country?: string | null; address
     let state: string | undefined;
     for (let i = 1; i < words.length; i++) if (/^\d{5}(-\d{4})?$/.test(words[i]!) && isState(words[i - 1])) state = words[i - 1];
     state ??= words.filter(isState).at(-1);
+    // else a state written out: the last part of the address that is one ("…, West Virginia, 25301" is not Virginia)
+    if (!state) {
+      const parts = (site.address ?? '').toLowerCase().split(/[,\n]/).map((x) => x.replace(/[^a-z ]/g, ' ').replace(/ +/g, ' ').trim());
+      for (const part of parts) {
+        const named = Object.keys(US_STATE_NAMES).filter((n) => part === n || part.endsWith(` ${n}`) || part.startsWith(`${n} `));
+        const longest = named.sort((a, b) => b.length - a.length)[0];
+        if (longest) state = US_STATE_NAMES[longest];
+      }
+    }
     return known('en-US', (state && US_ZONES[state]) || 'Eastern Standard Time');
   }
   return known('en-US', 'Eastern Standard Time');

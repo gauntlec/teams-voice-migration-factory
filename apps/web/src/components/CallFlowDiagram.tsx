@@ -836,7 +836,8 @@ function FlowCanvas({
       setEdges((es) => es.map((e) => ({ ...e, hidden: false, data: { ...e.data, route: routes.get(e.id) } })));
       setPlacedFor(base);
       // Editing: the view is fitted again only when boxes come or go, not as each letter is typed.
-      const fitKey = graph.nodes.map((n) => n.id).join('|');
+      // every drawn box, the people box under a group included (it isn't a node of the graph itself)
+      const fitKey = base.nodes.map((n) => n.id).join('|');
       if (!isEditing || lastFit.current !== fitKey) {
         lastFit.current = fitKey;
         requestAnimationFrame(() => void fitView({ padding: isEditing ? 0.12 : 0.06, maxZoom: isEditing ? 1 : undefined }));
