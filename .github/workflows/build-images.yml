@@ -74,7 +74,7 @@ jobs:
           [ "$code" = true ] || echo "Only documentation changed - skipping install, build and tests."
           echo "code=$code" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: steps.changes.outputs.code == 'true'
         with:
           node-version: 26
