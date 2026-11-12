@@ -15,15 +15,10 @@ on:
       - '.github/workflows/installer-checks.yml'
       - '.github/workflows/codeql.yml'
       - '.github/dependabot.yml'
+  # Pull requests run on EVERY change, docs too: `verify` is a required check on main, and a check that never starts blocks the merge
+  # for good. For a change that touches only the files listed above, `verify` passes after a quick look instead (see its first step).
   pull_request:
     branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
-      - 'deploy/install/check-*.sh'
-      - '.github/workflows/installer-checks.yml'
-      - '.github/workflows/codeql.yml'
-      - '.github/dependabot.yml'
   workflow_dispatch:
   # Weekly, unpinned worker-only build to a non-production :candidate tag -
   # surfaces a breaking MicrosoftTeams/Microsoft.Graph.Authentication
@@ -57,29 +52,57 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # A pull request checks out a merge commit; its first parent is main, so two commits are enough to list what changed.
+          fetch-depth: 2
+
+      # Docs-only pull request? Then skip the install, build and tests (they cannot be affected) and pass. Keep this list the same as
+      # the push paths-ignore above. Anything else - and every push or manual run - gets the full check.
+      - name: What changed
+        id: changes
+        run: |
+          code=true
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            code=false
+            while IFS= read -r f; do
+              case "$f" in
+                docs/*|*.md|deploy/install/check-*.sh|.github/workflows/installer-checks.yml|.github/workflows/codeql.yml|.github/dependabot.yml) ;;
+                *) code=true; echo "Code change: $f" ;;
+              esac
+            done < <(git diff --name-only HEAD^1 HEAD)
+          fi
+          [ "$code" = true ] || echo "Only documentation changed - skipping install, build and tests."
+          echo "code=$code" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-node@v4
+        if: steps.changes.outputs.code == 'true'
         with:
           node-version: 26
           cache: npm
 
       - run: npm install
+        if: steps.changes.outputs.code == 'true'
 
       # apps/api|worker|web import @tvmf/shared and @tvmf/db by their built
       # dist/ output (package.json "main"/"types"), not src/ - typecheck
       # fails with "Cannot find module" on every consumer without this.
       - run: npm run build:packages
+        if: steps.changes.outputs.code == 'true'
 
       - run: npm run typecheck --workspaces --if-present
+        if: steps.changes.outputs.code == 'true'
 
       - run: npm run test --workspaces --if-present
+        if: steps.changes.outputs.code == 'true'
 
       # The real api/worker services against a real Postgres 16 with every
       # migration applied (tests/db - one embedded Postgres for the run, a
       # fresh tenant schema per file). Catches data bugs unit tests can't see:
       # a number never freed, change history lost, a run stuck 'queued'.
       - run: npm run test:db
+        if: steps.changes.outputs.code == 'true'
 
+      # Runs even for a docs-only change: SECURITY.md is one of the two files it compares.
       # SECURITY.md and /.well-known/security.txt must show the same contact address (it lives in deploy/security/SECURITY_CONTACT_EMAIL).
       - name: Security contact is the same everywhere
         run: bash deploy/security/set-contact.sh --check
