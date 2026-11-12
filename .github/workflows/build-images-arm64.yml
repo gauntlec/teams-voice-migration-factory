@@ -88,7 +88,7 @@ jobs:
 
       # 1. Build it locally for ARM64 (nothing is pushed yet), 2. prove it starts and runs unprivileged, 3. scan it. Same checks as x86-64.
       - name: Build image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -119,7 +119,7 @@ jobs:
 
       # Pushed under its own tag first; nothing a user pulls changes until `merge` has seen all three succeed.
       - name: Push as <release>-arm64
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
