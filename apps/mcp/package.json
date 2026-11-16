@@ -15,7 +15,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.32.1",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@tvmf/shared": "0.1.0",
     "zod": "4.6.7"
   },
