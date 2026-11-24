@@ -54,6 +54,12 @@ describe('validationIssues', () => {
     expect(validationIssues({ ...clean, requestedNumberMismatch: undefined })).toEqual([]);
   });
 
+  it('keeps a number chosen in Design & Build instead of the requested one as a record that does not stop a deployment', () => {
+    const v: BuildRowValidation = { ...clean, requestedNumberMismatch: { requested: '+1 212 555 0999', assigned: '+12125550100', chosenInDesign: true } };
+    expect(validationIssues(v)).toEqual([expect.objectContaining({ code: 'requested_number_mismatch', severity: 'info', label: 'Requested number not used' })]);
+    expect(blockingIssues(v)).toEqual([]);
+  });
+
   it('does not list what deployment will change (a policy that differs from live, or one that was renamed) as an issue', () => {
     const v: BuildRowValidation = {
       ...clean,

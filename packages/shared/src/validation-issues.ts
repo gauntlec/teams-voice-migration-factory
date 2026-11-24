@@ -8,7 +8,8 @@ import type { BuildRowValidation } from './index';
  * - `blocking`: a deployment cannot apply this row correctly, so it is left out of the run
  *   (and listed in the change document under "Not deployed") until it is fixed in Design & Build.
  * - `warning`: the row still deploys, but something about the account is likely to cause trouble.
- * - `info`: nothing is wrong; only a record of an engineer's accept or reject of a number change (kept so it can be undone).
+ * - `info`: nothing is wrong; only a record of an engineer's decision: an accepted or rejected number change (kept so it can be
+ *   undone), or a number given in Design & Build instead of the one the customer requested.
  *
  * What deployment will change (a policy that differs from live, a renamed policy) is not a validation issue: the Deployment module
  * shows it in its preview.
@@ -67,7 +68,14 @@ export function validationIssues(v: BuildRowValidation | null | undefined): Vali
     });
   }
   const rn = v.requestedNumberMismatch;
-  if (rn) {
+  if (rn?.chosenInDesign) {
+    out.push({
+      code: 'requested_number_mismatch',
+      severity: 'info',
+      label: 'Requested number not used',
+      detail: `The customer asked for ${rn.requested}; the design gives ${rn.assigned} instead.`,
+    });
+  } else if (rn) {
     out.push({
       code: 'requested_number_mismatch',
       severity: 'blocking',
@@ -140,7 +148,8 @@ export function blockingIssues(v: BuildRowValidation | null | undefined): Valida
 
 /** True when the row needs an engineer's attention: a blocking issue or a warning. A number change that has been decided does not. */
 export function hasValidationIssue(v: BuildRowValidation | null | undefined): boolean {
-  return validationIssues(v).some((i) => !(i.code === 'number_change' && i.decision !== 'pending'));
+  // an info item is only a record of a decision already made
+  return validationIssues(v).some((i) => i.severity !== 'info');
 }
 
 /** One line of the Validation issues tab: an issue and the row it is on. */

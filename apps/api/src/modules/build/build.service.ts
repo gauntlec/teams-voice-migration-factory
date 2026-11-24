@@ -1902,7 +1902,39 @@ export class BuildService {
     const { results, dcIds } = await this.discovery.captureSelected(t, u, 'resource_account', [{ id: objectId, siteId }]);
     const raId = dcIds.get(objectId);
     const populated = raId ? await this.populateResourceAccounts(t, u, siteId, [raId]) : { created: 0, skipped: 0, total: 0 };
+    if (raId) await this.markLinkedResourceAccountLive(t, siteId, raId, objectId);
     return { imported: { created: results.filter((r) => r.dataCollection === 'added').length, skipped: results.filter((r) => r.dataCollection !== 'added').length }, populated, results };
+  }
+
+  /**
+   * After "Link discovered resource account" matched a live account to a Site Data row that already had a Design & Build row
+   * (bug report "Design and Build - Resource Account"): that row now stands for the live account, so it shows as created and
+   * licensed, as a row brought in from the live account would. Only when its UPN is the live one; a missing number is filled
+   * from the live account, an engineer's number is never replaced.
+   */
+  private async markLinkedResourceAccountLive(t: TenantContext, siteId: string, dcId: string, objectId: string) {
+    const s = this.s(t);
+    const live = await s.selectFrom('tenant_objects').select('data').where('id', '=', objectId).where('removed_at', 'is', null).executeTakeFirst();
+    const d = (live?.data ?? {}) as Record<string, unknown>;
+    const liveUpn = typeof d.UserPrincipalName === 'string' ? d.UserPrincipalName.toLowerCase() : null;
+    if (!liveUpn) return;
+    const livePhone = typeof d.PhoneNumber === 'string' ? d.PhoneNumber.replace(/^tel:/i, '').split(';')[0]!.trim() || null : null;
+    const rows = await s
+      .selectFrom('build_resource_accounts')
+      .select(['id', 'kind', 'upn', 'application_id', 'phone_number'])
+      .where('site_id', '=', siteId)
+      .where('discovery_resource_account_id', '=', dcId)
+      .execute();
+    for (const r of rows) {
+      if (r.upn.toLowerCase() !== liveUpn) continue;
+      const patch: Record<string, unknown> = {};
+      if (!r.application_id) {
+        patch.application_id = RESOURCE_ACCOUNT_APPLICATION_IDS[r.kind];
+        patch.linked_at = new Date().toISOString();
+      }
+      if (!r.phone_number && livePhone) patch.phone_number = livePhone;
+      if (Object.keys(patch).length) await s.updateTable('build_resource_accounts').set(patch as never).where('id', '=', r.id).execute();
+    }
   }
 
   /**

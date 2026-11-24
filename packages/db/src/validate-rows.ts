@@ -221,7 +221,7 @@ export async function validateIdentityRows(s: Scoped, rows: IdentityRow[]): Prom
         numberConflict: !!row.e164 && (dupeCounts.get(row.e164) ?? 0) > 1,
         numberTypeMissing: !!row.e164 && !row.number_type,
         numberChange,
-        requestedNumberMismatch: (row.discovery_user_id && requestedByDUser.get(row.discovery_user_id)) || null,
+        requestedNumberMismatch: requestedMismatch(row.discovery_user_id ? requestedByDUser.get(row.discovery_user_id) : undefined, row.e164),
         policyMismatches,
         unknownPolicies,
         renamedPolicies,
@@ -229,6 +229,18 @@ export async function validateIdentityRows(s: Scoped, rows: IdentityRow[]): Prom
       });
     }
     return out;
+}
+
+/**
+ * The customer's requested number against the number the design gives the row (bug report "Number not in Range"): Design &
+ * Build decides the number, so giving the row the requested number clears it. A different number chosen in Design & Build
+ * (not the one Site Data assigned) is the engineer's answer to the request: kept as a record, not a blocking issue.
+ * `fromSiteData` is the request and the number Site Data assigned, present only when those two differ.
+ */
+export function requestedMismatch(fromSiteData: { requested: string; assigned: string | null } | undefined, designed: string | null | undefined): BuildRowValidation['requestedNumberMismatch'] {
+  if (!fromSiteData || numKey(fromSiteData.requested) === numKey(designed)) return null;
+  const chosenInDesign = !!designed && numKey(designed) !== numKey(fromSiteData.assigned);
+  return { requested: fromSiteData.requested, assigned: designed ?? null, ...(chosenInDesign ? { chosenInDesign: true } : {}) };
 }
 
 /**
