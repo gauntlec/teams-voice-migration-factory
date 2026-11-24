@@ -647,3 +647,33 @@ describe('importing an auto attendant whose wizard set up other call flows', () 
     expect(await c.s.selectFrom('build_auto_attendants').select('id').where('site_id', '=', site).execute()).toHaveLength(2);
   });
 });
+
+describe('Link discovered resource account, after the UPN was changed in Design & Build only', () => {
+  // Bug report "Design and Build - Resource Account": the live account was added as a second entry instead of matching the design.
+  it('links the Site Data row behind the Design & Build row with that UPN and makes no second entry', async () => {
+    const site = (await seedSite(c.s, { sitecode: 'WVL01' })).id;
+    await c.s.insertInto('discovery_resource_accounts').values({ site_id: site, name: 'Main Number', kind: 'auto_attendant', upn: 'main.old@contoso.test' } as never).execute();
+    await build.populateResourceAccounts(c.t, engineer, site);
+    const designed = await c.s.selectFrom('build_resource_accounts').select(['id', 'application_id']).where('site_id', '=', site).executeTakeFirstOrThrow();
+    expect(designed.application_id).toBeNull();
+    await c.s.updateTable('build_resource_accounts').set({ upn: 'main.number@contoso.test', phone_number: '+16025550100' }).where('id', '=', designed.id).execute();
+
+    const live = await object('resource_account', 'ra-guid-wvl', 'Main Number', { UserPrincipalName: 'Main.Number@contoso.test', ApplicationId: AA_APP });
+    const res = await build.importAndLinkResourceAccount(c.t, engineer, live, site, true);
+    expect(res.results[0]).toMatchObject({ dataCollection: 'added' });
+    expect(res.results[0].note).toMatch(/Matched to your design/);
+
+    const dcRows = await c.s.selectFrom('discovery_resource_accounts').select(['upn', 'tenant_object_id']).where('site_id', '=', site).execute();
+    expect(dcRows).toEqual([{ upn: 'Main.Number@contoso.test', tenant_object_id: live }]);
+    const rows = await c.s.selectFrom('build_resource_accounts').select(['id', 'upn', 'application_id', 'linked_at', 'phone_number']).where('site_id', '=', site).execute();
+    expect(rows).toHaveLength(1);
+    // the design's own row, now shown as created and licensed, keeping the engineer's number
+    expect(rows[0]).toMatchObject({ id: designed.id, upn: 'main.number@contoso.test', application_id: AA_APP, phone_number: '+16025550100' });
+    expect(rows[0].linked_at).toBeTruthy();
+
+    // clicking it again changes nothing
+    await build.importAndLinkResourceAccount(c.t, engineer, live, site, true);
+    expect(await c.s.selectFrom('build_resource_accounts').select('id').where('site_id', '=', site).execute()).toHaveLength(1);
+    expect(await c.s.selectFrom('discovery_resource_accounts').select('id').where('site_id', '=', site).execute()).toHaveLength(1);
+  });
+});

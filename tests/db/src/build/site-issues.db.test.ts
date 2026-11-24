@@ -147,3 +147,27 @@ describe('number changes', () => {
     await expect(build.decideNumberChange(c.t, engineer, 'build_users', id, 'accepted')).rejects.toThrow(/no number change/);
   });
 });
+
+describe('a requested number the design answers', () => {
+  // Bug report "Number not in Range": giving the user a valid number in Design & Build did not clear the issue.
+  it('clears once Design & Build gives the requested number, and only records a different number chosen there', async () => {
+    const site = (await seedSite(c.s, { sitecode: 'NYC09' })).id;
+    await seedNumbers(c.s, 'NYC09', ['+12125559101', '+12125559102']);
+    await tenantUser('req.out@contoso.test', 'Rae Out', true);
+    await tenantUser('req.in@contoso.test', 'Ray In', true);
+    // both asked for a number outside the site's ranges, so Site Data could give them none
+    const out = await c.s.insertInto('discovery_users').values({ site_id: site, upn: 'req.out@contoso.test', requested_number: '+15550000000' } as never).returning('id').executeTakeFirstOrThrow();
+    const inn = await c.s.insertInto('discovery_users').values({ site_id: site, upn: 'req.in@contoso.test', requested_number: '+12125559102' } as never).returning('id').executeTakeFirstOrThrow();
+    const rOut = await c.s.insertInto('build_users').values({ site_id: site, upn: 'req.out@contoso.test', discovery_user_id: out.id } as never).returning('id').executeTakeFirstOrThrow();
+    const rIn = await c.s.insertInto('build_users').values({ site_id: site, upn: 'req.in@contoso.test', discovery_user_id: inn.id } as never).returning('id').executeTakeFirstOrThrow();
+    const summary = async () => (await build.siteIssues(c.t, site)).map((r) => `${r.issue.severity}:${r.upn}:${r.issue.code}`).sort();
+    expect(await summary()).toEqual(['blocking:req.in@contoso.test:requested_number_mismatch', 'blocking:req.out@contoso.test:requested_number_mismatch']);
+
+    // the engineer gives each a valid number in Design & Build
+    await c.s.updateTable('build_users').set({ e164: '+12125559101', number_type: 'DirectRouting' }).where('id', '=', rOut.id).execute();
+    await c.s.updateTable('build_users').set({ e164: '+12125559102', number_type: 'DirectRouting' }).where('id', '=', rIn.id).execute();
+    const rows = await build.siteIssues(c.t, site);
+    expect(rows.map((r) => `${r.issue.severity}:${r.upn}:${r.issue.code}`)).toEqual(['info:req.out@contoso.test:requested_number_mismatch']);
+    expect(rows[0].issue.detail).toBe('The customer asked for +15550000000; the design gives +12125559101 instead.');
+  });
+});

@@ -453,11 +453,12 @@ export interface BuildRowValidation {
    */
   usageLocationMismatch: { live: string | null; expected: string; country: string } | null;
   /**
-   * The customer's requested number (Site Data) differs from the number assigned to the user.
+   * The customer's requested number (Site Data) differs from the number the design gives the user (`assigned`).
    * null when they match, when nothing was requested, or for rows not linked to a Site Data user.
-   * Absent on validation stored before this check existed.
+   * `chosenInDesign`: Design & Build gives a different number from the one Site Data assigned, so the engineer has answered
+   * the request; only a record then. Absent on validation stored before this check existed.
    */
-  requestedNumberMismatch?: { requested: string; assigned: string | null } | null;
+  requestedNumberMismatch?: { requested: string; assigned: string | null; chosenInDesign?: boolean } | null;
   /**
    * The designed number differs from the number the user has live in the tenant, or (once the site has been
    * submitted for review) from the one Site Data assigned. The engineer accepts or rejects the change.

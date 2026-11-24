@@ -1058,20 +1058,25 @@ export class TelephonyService {
    * matches, or null. Purely additive - Site Data works without a run.
    */
   private async tenantUserIdFor(t: TenantContext, upn: string | null | undefined) {
+    return (await this.tenantUserFor(t, upn))?.id ?? null;
+  }
+
+  /** The linked tenant user and the name Teams has for them (bug report "Display name not showing"). */
+  private async tenantUserFor(t: TenantContext, upn: string | null | undefined) {
     if (!upn) return null;
     const row = await this.s(t)
       .selectFrom('tenant_users')
-      .select('id')
+      .select(['id', 'display_name'])
       .where(sql`lower(upn)`, '=', upn.trim().toLowerCase())
       .where('removed_at', 'is', null)
       .executeTakeFirst();
-    return row?.id ?? null;
+    return row ?? null;
   }
 
   async addUser(t: TenantContext, u: AuthedUser, i: DiscoveryUserInput, canReview: boolean) {
     const siteId = await this.resolveHolderSite(t, i.site_id);
     if (nz(i.phone_number_id)) await this.assertNumberInScope(t, nz(i.phone_number_id)!);
-    const tenantUserId = await this.tenantUserIdFor(t, i.upn);
+    const tenantUser = await this.tenantUserFor(t, i.upn);
     let row;
     try {
       row = await this.s(t)
@@ -1079,8 +1084,9 @@ export class TelephonyService {
         .values({
           site_id: siteId,
           upn: i.upn,
-          tenant_user_id: tenantUserId,
-          display_name: nz(i.display_name),
+          tenant_user_id: tenantUser?.id ?? null,
+          // a name typed in wins; left blank, a linked user gets the name Teams has for them
+          display_name: nz(i.display_name) ?? tenantUser?.display_name ?? null,
           calling_policy_id: nz(i.calling_policy_id),
           caller_id: nz(i.caller_id),
           voicemail_enabled: i.voicemail_enabled ?? true,
@@ -1134,8 +1140,15 @@ export class TelephonyService {
       if (k in patch) set[k] = typeof patch[k] === 'boolean' ? patch[k] : nz(patch[k] as string);
     }
     if ('call_forwarding' in patch) set.call_forwarding = patch.call_forwarding ?? null;
-    // a changed UPN re-resolves the Discovery link
-    if ('upn' in patch) set.tenant_user_id = await this.tenantUserIdFor(t, patch.upn);
+    // a changed UPN re-resolves the Discovery link; a newly linked user with no name takes the one Teams has
+    if ('upn' in patch) {
+      const tenantUser = await this.tenantUserFor(t, patch.upn);
+      set.tenant_user_id = tenantUser?.id ?? null;
+      if (tenantUser?.display_name && !set.display_name) {
+        const current = 'display_name' in patch ? null : (await this.s(t).selectFrom('discovery_users').select('display_name').where('id', '=', id).executeTakeFirst())?.display_name;
+        if (!current) set.display_name = tenantUser.display_name;
+      }
+    }
     if ('site_id' in patch) set.site_id = await this.resolveHolderSite(t, patch.site_id);
     if ('phone_number_id' in patch && nz(patch.phone_number_id ?? null)) {
       await this.assertNumberInScope(t, nz(patch.phone_number_id ?? null)!);
@@ -1329,13 +1342,15 @@ export class TelephonyService {
         ? (policyByName.get(row.calling_policy.trim().toLowerCase()) ?? null)
         : null;
       try {
-        const tenantUserId = await this.tenantUserIdFor(t, upn);
+        const tenantUser = await this.tenantUserFor(t, upn);
+        const tenantUserId = tenantUser?.id ?? null;
         const rec = await s
           .insertInto('discovery_users')
           .values({
             site_id: siteId,
             upn,
-            display_name: nz(row.display_name),
+            // the import template has no name column: a linked user gets the name Teams has for them
+            display_name: nz(row.display_name) ?? tenantUser?.display_name ?? null,
             calling_policy_id: policyId,
             caller_id: row.caller_id ?? null,
             voicemail_enabled: row.voicemail_enabled ?? true,

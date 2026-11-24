@@ -1525,6 +1525,27 @@ export class TenantDiscoveryService {
         const problems = await this.attachDiscoveredNumbers(t, user, design.id, siteId, numbers);
         return { status: 'matched', id: design.id, joined: false, problems };
       }
+      // The UPN may have been changed in Design & Build only (bug report "Design and Build - Resource Account"): Site Data still
+      // has the old one. A Design & Build row on this site with this UPN, made from a Site Data row not yet linked to anything
+      // live, is the same account: link that Site Data row (taking the live UPN) instead of adding a second one.
+      const designed = await s
+        .selectFrom('build_resource_accounts as b')
+        .innerJoin('discovery_resource_accounts as d', 'd.id', 'b.discovery_resource_account_id')
+        .select(['d.id as id', 'd.voice_app_id as voice_app_id'])
+        .where('b.site_id', '=', siteId)
+        .where('d.site_id', '=', siteId)
+        .where('d.tenant_object_id', 'is', null)
+        .where(sql`lower(b.upn)`, '=', upn)
+        .executeTakeFirst();
+      if (designed) {
+        await s
+          .updateTable('discovery_resource_accounts')
+          .set({ tenant_object_id: ra.id, upn: (d.UserPrincipalName as string) ?? upn, voice_app_id: designed.voice_app_id ?? voiceApp?.id ?? null, updated_at: new Date().toISOString() })
+          .where('id', '=', designed.id)
+          .execute();
+        const problems = await this.attachDiscoveredNumbers(t, user, designed.id, siteId, numbers);
+        return { status: 'matched', id: designed.id, joined: false, problems };
+      }
     }
     const row = await s
       .insertInto('discovery_resource_accounts')
